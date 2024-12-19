@@ -94,10 +94,6 @@ def load_diffusion_model(args, weight_dtype):
             subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
             **pretrained_load_args,
         )
-        if args.gradient_checkpointing_interval is not None:
-            transformer.set_gradient_checkpointing_interval(
-                int(args.gradient_checkpointing_interval)
-            )
     elif args.model_family.lower() == "flux" and args.flux_attention_masked_training:
         from helpers.models.flux.transformer import (
             FluxTransformer2DModelWithMasking,
@@ -137,6 +133,16 @@ def load_diffusion_model(args, weight_dtype):
         transformer = SmolDiT2DModel(**SmolDiTConfigurations[args.smoldit_config])
         if "lora" in args.model_type:
             raise ValueError("SmolDiT does not yet support LoRA training.")
+    elif args.model_family == "sana":
+        from helpers.models.sana.transformer import SanaTransformer2DModel
+
+        logger.info("Loading Sana flow-matching diffusion transformer..")
+        transformer = SanaTransformer2DModel.from_pretrained(
+            args.pretrained_transformer_model_name_or_path
+            or args.pretrained_model_name_or_path,
+            subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
+            **pretrained_load_args,
+        )
     else:
         from diffusers import UNet2DConditionModel
 
@@ -172,5 +178,22 @@ def load_diffusion_model(args, weight_dtype):
             )
 
             set_checkpoint_interval(int(args.gradient_checkpointing_interval))
+
+    if (
+        args.gradient_checkpointing_interval is not None
+        and args.gradient_checkpointing_interval > 1
+    ):
+        if transformer is not None and hasattr(
+            transformer, "set_gradient_checkpointing_interval"
+        ):
+            logger.info("Setting gradient checkpointing interval for transformer..")
+            transformer.set_gradient_checkpointing_interval(
+                int(args.gradient_checkpointing_interval)
+            )
+        if unet is not None and hasattr(unet, "set_gradient_checkpointing_interval"):
+            logger.info("Checking gradient checkpointing interval for U-Net..")
+            unet.set_gradient_checkpointing_interval(
+                int(args.gradient_checkpointing_interval)
+            )
 
     return unet, transformer

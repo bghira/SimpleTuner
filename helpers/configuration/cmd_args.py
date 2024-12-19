@@ -86,7 +86,16 @@ def get_argument_parser():
     )
     parser.add_argument(
         "--model_family",
-        choices=["pixart_sigma", "kolors", "sd3", "flux", "smoldit", "sdxl", "legacy"],
+        choices=[
+            "pixart_sigma",
+            "sana",
+            "kolors",
+            "sd3",
+            "flux",
+            "smoldit",
+            "sdxl",
+            "legacy",
+        ],
         default=None,
         required=True,
         help=("The model family to train. This option is required."),
@@ -1059,7 +1068,7 @@ def get_argument_parser():
         default=None,
         type=int,
         help=(
-            "Some models (Flux, SDXL, SD1.x/2.x) can have their gradient checkpointing limited to every nth block."
+            "Some models (Flux, SDXL, SD1.x/2.x, SD3) can have their gradient checkpointing limited to every nth block."
             " This can speed up training but will use more memory with larger intervals."
         ),
     )
@@ -1288,6 +1297,18 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--grad_clip_method",
+        default="value",
+        choices=["value", "norm"],
+        help=(
+            "When applying --max_grad_norm, the method to use for clipping the gradients."
+            " The previous default option 'norm' will scale ALL gradient values when any outliers in the gradient are encountered, which can reduce training precision."
+            " The new default option 'value' will clip individual gradient values using this value as a maximum, which may preserve precision while avoiding outliers, enhancing convergence."
+            " In simple terms, the default will help the model learn faster without blowing up (SD3.5 Medium was the main test model)."
+            " Use 'norm' to return to the old behaviour."
+        ),
+    )
+    parser.add_argument(
         "--push_to_hub",
         action="store_true",
         help="Whether or not to push the model to the Hub.",
@@ -1448,7 +1469,24 @@ def get_argument_parser():
             " the value given."
         ),
     )
-
+    parser.add_argument(
+        "--sana_complex_human_instruction",
+        type=str,
+        default=[
+            "Given a user prompt, generate an 'Enhanced prompt' that provides detailed visual descriptions suitable for image generation. Evaluate the level of detail in the user prompt:",
+            "- If the prompt is simple, focus on adding specifics about colors, shapes, sizes, textures, and spatial relationships to create vivid and concrete scenes.",
+            "- If the prompt is already detailed, refine and enhance the existing details slightly without overcomplicating.",
+            "Here are examples of how to transform or refine prompts:",
+            "- User Prompt: A cat sleeping -> Enhanced: A small, fluffy white cat curled up in a round shape, sleeping peacefully on a warm sunny windowsill, surrounded by pots of blooming red flowers.",
+            "- User Prompt: A busy city street -> Enhanced: A bustling city street scene at dusk, featuring glowing street lamps, a diverse crowd of people in colorful clothing, and a double-decker bus passing by towering glass skyscrapers.",
+            "Please generate only the enhanced description for the prompt below and avoid including any additional commentary or evaluations:",
+            "User Prompt: ",
+        ],
+        help=(
+            "When generating embeds for Sana, a complex human instruction will be attached to your prompt by default."
+            " This is required for the Gemma model to produce meaningful image caption embeds."
+        ),
+    )
     parser.add_argument(
         "--allow_tf32",
         action="store_true",
@@ -1636,12 +1674,13 @@ def get_argument_parser():
         "--mixed_precision",
         type=str,
         default="bf16",
-        choices=["bf16", "no"],
+        choices=["bf16", "fp16", "no"],
         help=(
             "SimpleTuner only supports bf16 training. Bf16 requires PyTorch >="
             " 1.10. on an Nvidia Ampere or later GPU, and PyTorch 2.3 or newer for Apple Silicon."
             " Default to the value of accelerate config of the current system or the"
             " flag passed with the `accelerate.launch` command. Use this argument to override the accelerate config."
+            " fp16 is offered as an experimental option, but is not recommended as it is less-tested and you will likely encounter errors."
         ),
     )
     parser.add_argument(
@@ -2066,8 +2105,9 @@ def get_default_config():
     return default_config
 
 
-def parse_cmdline_args(input_args=None):
+def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     parser = get_argument_parser()
+    args = None
     if input_args is not None:
         for key_val in input_args:
             print_on_main_thread(f"{key_val}")
@@ -2080,6 +2120,9 @@ def parse_cmdline_args(input_args=None):
             logger.error(traceback.format_exc())
     else:
         args = parser.parse_args()
+
+    if args is None and exit_on_error:
+        sys.exit(1)
 
     if args.optimizer == "adam_bfloat16" and args.mixed_precision != "bf16":
         if not torch.backends.mps.is_available():
@@ -2211,7 +2254,7 @@ def parse_cmdline_args(input_args=None):
 
     if (
         args.pretrained_vae_model_name_or_path is not None
-        and args.model_family in ["legacy", "flux", "sd3"]
+        and args.model_family in ["legacy", "flux", "sd3", "sana"]
         and "sdxl" in args.pretrained_vae_model_name_or_path
         and "deepfloyd" not in args.model_type
     ):
@@ -2300,7 +2343,7 @@ def parse_cmdline_args(input_args=None):
         args.pretrained_vae_model_name_or_path = None
         args.disable_compel = True
 
-    t5_max_length = 256
+    t5_max_length = 154
     if args.model_family == "sd3" and (
         args.tokenizer_max_length is None
         or int(args.tokenizer_max_length) > t5_max_length
@@ -2382,31 +2425,16 @@ def parse_cmdline_args(input_args=None):
         sys.exit(1)
 
     if not args.i_know_what_i_am_doing:
-        if args.model_family == "pixart_sigma" or args.model_family == "sd3":
+        if args.model_family == "pixart_sigma":
             if args.max_grad_norm is None or float(args.max_grad_norm) > 0.01:
                 warning_log(
-                    f"{'PixArt Sigma' if args.model_family == 'pixart_sigma' else 'Stable Diffusion 3'} requires --max_grad_norm=0.01 to prevent model collapse. Overriding value. Set this value manually to disable this warning."
+                    f"PixArt Sigma requires --max_grad_norm=0.01 to prevent model collapse. Overriding value. Set this value manually to disable this warning."
                 )
                 args.max_grad_norm = 0.01
     if args.gradient_checkpointing:
         # enable torch compile w/ activation checkpointing :[ slows us down.
         torch._dynamo.config.optimize_ddp = False
-    if args.gradient_accumulation_steps > 1:
-        if args.gradient_precision == "unmodified" or args.gradient_precision is None:
-            warning_log(
-                "Gradient accumulation steps are enabled, but gradient precision is set to 'unmodified'."
-                " This may lead to numeric instability. Consider disabling gradient accumulation steps. Continuing in 10 seconds.."
-            )
-            time.sleep(10)
-        elif args.gradient_precision == "fp32":
-            info_log(
-                "Gradient accumulation steps are enabled, and gradient precision is set to 'fp32'."
-            )
-            args.gradient_precision = "fp32"
 
-    # if args.use_ema:
-    #     if "lora" in args.model_type:
-    #         raise ValueError("Using EMA is not currently supported for LoRA training.")
     args.logging_dir = os.path.join(args.output_dir, args.logging_dir)
     args.accelerator_project_config = ProjectConfiguration(
         project_dir=args.output_dir, logging_dir=args.logging_dir
@@ -2440,10 +2468,10 @@ def parse_cmdline_args(input_args=None):
     args.weight_dtype = (
         torch.bfloat16
         if (
-            (args.mixed_precision == "bf16" or torch.backends.mps.is_available())
+            args.mixed_precision == "bf16"
             or (args.base_model_default_dtype == "bf16" and args.is_quantized)
         )
-        else torch.float32
+        else torch.float16 if args.mixed_precision == "fp16" else torch.float32
     )
     args.disable_accelerator = os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False)
 
@@ -2529,6 +2557,25 @@ def parse_cmdline_args(input_args=None):
         except Exception as e:
             logger.error(f"Could not load skip layers: {e}")
             raise
+
+    if (
+        args.sana_complex_human_instruction is not None
+        and type(args.sana_complex_human_instruction) is str
+        and args.sana_complex_human_instruction not in ["", "None"]
+    ):
+        try:
+            import json
+
+            args.sana_complex_human_instruction = json.loads(
+                args.sana_complex_human_instruction
+            )
+        except Exception as e:
+            logger.error(
+                f"Could not load complex human instruction ({args.sana_complex_human_instruction}): {e}"
+            )
+            raise
+    elif args.sana_complex_human_instruction == "None":
+        args.sana_complex_human_instruction = None
 
     if args.enable_xformers_memory_efficient_attention:
         if args.attention_mechanism != "xformers":

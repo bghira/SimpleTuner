@@ -1,3 +1,4 @@
+import logging, os
 import huggingface_hub
 from helpers.training.default_settings.safety_check import safety_check
 from helpers.publishing.huggingface import HubManager
@@ -7,15 +8,12 @@ import hashlib
 import json
 import copy
 import random
-import logging
 import math
-import os
 import sys
 import glob
 import wandb
 
-# Quiet down, you.
-os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
+
 from helpers import log_format  # noqa
 from helpers.configuration.loader import load_config
 from helpers.caching.memory import reclaim_memory
@@ -96,7 +94,6 @@ from helpers.models.sdxl.pipeline import StableDiffusionXLPipeline
 from diffusers import StableDiffusion3Pipeline
 
 from diffusers import (
-    AutoencoderKL,
     ControlNetModel,
     DDIMScheduler,
     DDPMScheduler,
@@ -157,12 +154,20 @@ diffusers.utils.logging.set_verbosity_warning()
 
 class Trainer:
     def __init__(
-        self, config: dict = None, disable_accelerator: bool = False, job_id: str = None
+        self,
+        config: dict = None,
+        disable_accelerator: bool = False,
+        job_id: str = None,
+        exit_on_error: bool = False,
     ):
         self.accelerator = None
         self.job_id = job_id
         StateTracker.set_job_id(job_id)
-        self.parse_arguments(args=config, disable_accelerator=disable_accelerator)
+        self.parse_arguments(
+            args=config,
+            disable_accelerator=disable_accelerator,
+            exit_on_error=exit_on_error,
+        )
         self._misc_init()
         self.lycoris_wrapped_network = None
         self.lycoris_config = None
@@ -184,8 +189,10 @@ class Trainer:
             return None
         return type("Config", (object,), config)
 
-    def parse_arguments(self, args=None, disable_accelerator: bool = False):
-        self.config = load_config(args)
+    def parse_arguments(
+        self, args=None, disable_accelerator: bool = False, exit_on_error: bool = False
+    ):
+        self.config = load_config(args, exit_on_error=exit_on_error)
         report_to = (
             None if self.config.report_to.lower() == "none" else self.config.report_to
         )
@@ -458,14 +465,19 @@ class Trainer:
             "force_upcast": False,
             "variant": self.config.variant,
         }
+        if StateTracker.get_args().model_family == "sana":
+            from diffusers import AutoencoderDC as AutoencoderClass
+        else:
+            from diffusers import AutoencoderKL as AutoencoderClass
+
         try:
-            self.vae = AutoencoderKL.from_pretrained(**self.config.vae_kwargs)
+            self.vae = AutoencoderClass.from_pretrained(**self.config.vae_kwargs)
         except:
             logger.warning(
                 "Couldn't load VAE with default path. Trying without a subfolder.."
             )
             self.config.vae_kwargs["subfolder"] = None
-            self.vae = AutoencoderKL.from_pretrained(**self.config.vae_kwargs)
+            self.vae = AutoencoderClass.from_pretrained(**self.config.vae_kwargs)
             if (
                 self.vae is not None
                 and self.config.vae_enable_tiling
@@ -1001,7 +1013,7 @@ class Trainer:
 
     def enable_gradient_checkpointing(self):
         if self.config.gradient_checkpointing:
-            logger.info("Enabling gradient checkpointing.")
+            logger.debug("Enabling gradient checkpointing.")
             if self.unet is not None:
                 unwrap_model(
                     self.accelerator, self.unet
@@ -1027,7 +1039,7 @@ class Trainer:
 
     def disable_gradient_checkpointing(self):
         if self.config.gradient_checkpointing:
-            logger.info("Disabling gradient checkpointing.")
+            logger.debug("Disabling gradient checkpointing.")
             if self.unet is not None:
                 unwrap_model(
                     self.accelerator, self.unet
@@ -1870,7 +1882,7 @@ class Trainer:
         initial_msg += f"\n-  Total optimization steps = {self.config.max_train_steps}"
         if self.state["global_step"] > 1:
             initial_msg += f"\n  - Steps completed: {self.state['global_step']}"
-        initial_msg += f"\n-  Total optimization steps remaining = {max(0, self.config.total_steps_remaining_at_start)}"
+        initial_msg += f"\n-  Total optimization steps remaining = {max(0, getattr(self.config, 'total_steps_remaining_at_start', self.config.max_train_steps))}"
         logger.info(initial_msg)
         self._send_webhook_msg(message=initial_msg)
         structured_data = {
@@ -1881,7 +1893,14 @@ class Trainer:
             "total_batch_size": self.config.total_batch_size,
             "micro_batch_size": self.config.train_batch_size,
             "current_step": self.state["global_step"],
-            "remaining_num_steps": max(0, self.config.total_steps_remaining_at_start),
+            "remaining_num_steps": max(
+                0,
+                getattr(
+                    self.config,
+                    "total_steps_remaining_at_start",
+                    self.config.max_train_steps,
+                ),
+            ),
         }
         self._send_webhook_raw(
             structured_data=structured_data, message_type="_train_initial_msg"
@@ -2142,7 +2161,21 @@ class Trainer:
                     ),
                     return_dict=False,
                 )[0]
+            elif self.config.model_family == "sana":
+                model_pred = self.transformer(
+                    noisy_latents.to(self.config.weight_dtype),
+                    encoder_hidden_states=encoder_hidden_states.to(
+                        self.config.weight_dtype
+                    ),
+                    encoder_attention_mask=batch["encoder_attention_mask"],
+                    timestep=timesteps,
+                    return_dict=False,
+                )[0]
             elif self.config.model_family == "pixart_sigma":
+                if noisy_latents.shape[1] != 4:
+                    raise ValueError(
+                        "Pixart Sigma models require a latent size of 4 channels. Ensure you are using the correct VAE cache path."
+                    )
                 model_pred = self.transformer(
                     noisy_latents,
                     encoder_hidden_states=encoder_hidden_states,
@@ -2207,21 +2240,17 @@ class Trainer:
 
         return model_pred
 
+    def _max_grad_value(self):
+        max_grad_value = float("-inf")  # Start with a very small number
+        for param in self._get_trainable_parameters():
+            if param.grad is not None:
+                max_grad_value = max(max_grad_value, param.grad.abs().max().item())
+
+        return max_grad_value
+
     def train(self):
         self.init_trackers()
         self._train_initial_msg()
-
-        if self.config.validation_on_startup and self.state["global_step"] <= 1:
-            # Just in Case.
-            self.mark_optimizer_eval()
-            # normal run-of-the-mill validation on startup.
-            if self.validation is not None:
-                self.enable_sageattention_inference()
-                self.disable_gradient_checkpointing()
-                self.validation.run_validations(validation_type="base_model", step=0)
-                self.disable_sageattention_inference()
-                self.enable_gradient_checkpointing()
-
         self.mark_optimizer_train()
 
         # Only show the progress bar once on each machine.
@@ -2699,7 +2728,7 @@ class Trainer:
                         avg_loss.item() / self.config.gradient_accumulation_steps
                     )
                     # Backpropagate
-                    grad_norm = None
+                    self.grad_norm = None
                     if not self.config.disable_accelerator:
                         training_logger.debug("Backwards pass.")
                         self.accelerator.backward(loss)
@@ -2719,9 +2748,24 @@ class Trainer:
                             and self.config.max_grad_norm > 0
                         ):
                             # StableAdamW does not need clipping, similar to Adafactor.
-                            grad_norm = self.accelerator.clip_grad_norm_(
-                                self.params_to_optimize, self.config.max_grad_norm
-                            )
+                            if self.config.grad_clip_method == "norm":
+                                self.grad_norm = self.accelerator.clip_grad_norm_(
+                                    self._get_trainable_parameters(),
+                                    self.config.max_grad_norm,
+                                )
+                            elif self.config.use_deepspeed_optimizer:
+                                # deepspeed can only do norm clipping (internally)
+                                pass
+                            elif self.config.grad_clip_method == "value":
+                                self.grad_norm = self._max_grad_value()
+                                self.accelerator.clip_grad_value_(
+                                    self._get_trainable_parameters(),
+                                    self.config.max_grad_norm,
+                                )
+                            else:
+                                raise ValueError(
+                                    f"Unknown grad clip method: {self.config.grad_clip_method}. Supported methods: value, norm"
+                                )
                         training_logger.debug("Stepping components forward.")
                         if self.config.optimizer_release_gradients:
                             step_offset = 0  # simpletuner indexes steps from 1.
@@ -2767,8 +2811,11 @@ class Trainer:
                         guidance_values = torch.tensor(self.guidance_values_list).mean()
                         wandb_logs["mean_cfg"] = guidance_values.item()
                         self.guidance_values_list = []
-                    if grad_norm is not None:
-                        wandb_logs["grad_norm"] = grad_norm
+                    if self.grad_norm is not None:
+                        if self.config.grad_clip_method == "norm":
+                            wandb_logs["grad_norm"] = self.grad_norm
+                        elif self.config.grad_clip_method == "value":
+                            wandb_logs["grad_absmax"] = self.grad_norm
                     if self.validation is not None and hasattr(
                         self.validation, "evaluation_result"
                     ):
@@ -2936,8 +2983,11 @@ class Trainer:
                     "step_loss": loss.detach().item(),
                     "lr": float(self.lr),
                 }
-                if "mean_cfg" in wandb_logs:
-                    logs["mean_cfg"] = wandb_logs["mean_cfg"]
+                if self.grad_norm is not None:
+                    if self.config.grad_clip_method == "norm":
+                        logs["grad_norm"] = float(self.grad_norm.clone().detach())
+                    elif self.config.grad_clip_method == "value":
+                        logs["grad_absmax"] = self.grad_norm
 
                 progress_bar.set_postfix(**logs)
                 self.mark_optimizer_eval()
@@ -3286,6 +3336,27 @@ class Trainer:
                         ),
                         transformer=self.transformer,
                         scheduler=None,
+                    )
+
+                elif self.config.model_family == "sana":
+                    from diffusers import SanaPipeline
+
+                    self.pipeline = SanaPipeline.from_pretrained(
+                        self.config.pretrained_model_name_or_path,
+                        text_encoder=self.text_encoder_1
+                        or (
+                            self.text_encoder_cls_1.from_pretrained(
+                                self.config.pretrained_model_name_or_path,
+                                subfolder="text_encoder",
+                                revision=self.config.revision,
+                                variant=self.config.variant,
+                            )
+                            if self.config.save_text_encoder
+                            else None
+                        ),
+                        tokenizer=self.tokenizer_1,
+                        vae=self.vae,
+                        transformer=self.transformer,
                     )
 
                 else:

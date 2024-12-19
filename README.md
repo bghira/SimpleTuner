@@ -11,6 +11,7 @@
 - [Features](#features)
   - [Flux](#flux1)
   - [PixArt Sigma](#pixart-sigma)
+  - [NVLabs Sana](#nvlabs-sana)
   - [Stable Diffusion 2.0/2.1](#stable-diffusion-20--21)
   - [Stable Diffusion 3.0](#stable-diffusion-3)
   - [Kwai Kolors](#kwai-kolors)
@@ -77,12 +78,25 @@ See [hardware requirements](#flux1-dev-schnell) or the [quickstart guide](/docum
 
 SimpleTuner has extensive training integration with PixArt Sigma - both the 600M & 900M models load without modification.
 
-- Text encoder training is not supported, as T5 is enormous.
+- Text encoder training is not supported.
 - LyCORIS and full tuning both work as expected
 - ControlNet training is not yet supported
 - [Two-stage PixArt](https://huggingface.co/ptx0/pixart-900m-1024-ft-v0.7-stage1) training support (see: [MIXTURE_OF_EXPERTS](/documentation/MIXTURE_OF_EXPERTS.md))
 
 See the [PixArt Quickstart](/documentation/quickstart/SIGMA.md) guide to start training.
+
+### NVLabs Sana
+
+SimpleTuner has preliminary training integration with NVLabs Sana.
+
+This is a lightweight, fun, and fast model that makes getting into model training highly accessible to a wider audience.
+
+- LyCORIS and full tuning both work as expected.
+- Text encoder training is not supported.
+- PEFT Standard LoRA is not supported.
+- ControlNet training is not yet supported
+
+See the [NVLabs Sana Quickstart](/documentation/quickstart/SANA.md) guide to start training.
 
 ### Stable Diffusion 3
 

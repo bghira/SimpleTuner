@@ -5,12 +5,8 @@ from io import BytesIO
 import os
 import logging
 import torch
-from typing import Any
-from regex import regex
-import fcntl
-import tempfile
-import shutil
-from helpers.training.multi_process import _get_rank
+from typing import Any, List, Tuple
+from atomicwrites import atomic_write
 
 logger = logging.getLogger("LocalDataBackend")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -23,74 +19,79 @@ class LocalDataBackend(BaseDataBackend):
         self.type = "local"
         self.compress_cache = compress_cache
 
-    def read(self, filepath, as_byteIO: bool = False):
+    def read(self, filepath: str, as_byteIO: bool = False) -> Any:
         """Read and return the content of the file."""
-        with open(filepath, "rb") as file:
-            # Acquire a shared lock
-            fcntl.flock(file, fcntl.LOCK_SH)
-            try:
+        try:
+            with open(filepath, "rb") as file:
                 data = file.read()
                 if not as_byteIO:
                     return data
                 return BytesIO(data)
-            finally:
-                # Release the lock
-                fcntl.flock(file, fcntl.LOCK_UN)
+        except FileNotFoundError:
+            logger.error(f"File not found: {filepath}")
+            raise
+        except Exception as e:
+            logger.error(f"Error reading file {filepath}: {e}")
+            raise
 
     def write(self, filepath: str, data: Any) -> None:
-        """Write the provided data to the specified filepath."""
+        """Write the provided data to the specified filepath atomically."""
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
-        temp_dir = os.path.dirname(filepath)
-        temp_file_path = os.path.join(temp_dir, f".{os.path.basename(filepath)}.tmp{_get_rank()}")
+        mode = "wb"
 
-        # Open the temporary file for writing
-        with open(temp_file_path, "wb") as temp_file:
-            # Acquire an exclusive lock on the temporary file
-            fcntl.flock(temp_file, fcntl.LOCK_EX)
-            try:
-                # Write data to the temporary file
+        try:
+            with atomic_write(
+                filepath, mode=mode, overwrite=True, encoding=None
+            ) as temp_file:
                 if isinstance(data, torch.Tensor):
-                    # Use the torch_save method, passing the temp file
                     self.torch_save(data, temp_file)
-                    os.rename(temp_file_path, filepath)
-                    return  # torch_save handles closing the file
                 elif isinstance(data, str):
-                    data = data.encode("utf-8")
+                    temp_file.write(data.encode("utf-8"))
+                elif isinstance(data, bytes):
+                    temp_file.write(data)
                 else:
                     logger.debug(
-                        f"Received an unknown data type to write to disk. Doing our best: {type(data)}"
+                        f"Received an unknown data type to write to disk. Attempting to write as bytes: {type(data)}"
                     )
-                temp_file.write(data)
-                temp_file.flush()
-                os.fsync(temp_file.fileno())
-            finally:
-                # Release the lock
-                fcntl.flock(temp_file, fcntl.LOCK_UN)
+                    temp_file.write(data)
+        except Exception as e:
+            logger.error(f"Failed to write data to {filepath}: {e}")
+            raise
 
-        # Atomically replace the target file with the temporary file
-        os.rename(temp_file_path, filepath)
-
-
-    def delete(self, filepath):
+    def delete(self, filepath: str) -> None:
         """Delete the specified file."""
-        if os.path.exists(filepath):
-            logger.debug(f"Deleting file: {filepath}")
-            os.remove(filepath)
-        else:
-            raise FileNotFoundError(f"{filepath} not found.")
-        # Check if file exists:
-        if self.exists(filepath):
-            raise Exception(f"Failed to delete {filepath}")
+        try:
+            if os.path.exists(filepath):
+                logger.debug(f"Deleting file: {filepath}")
+                os.remove(filepath)
+                logger.info(f"Successfully deleted file: {filepath}")
+            else:
+                raise FileNotFoundError(f"{filepath} not found.")
+        except Exception as e:
+            logger.error(f"Error deleting file {filepath}: {e}")
+            raise
 
-    def exists(self, filepath):
+        # Verify deletion
+        if self.exists(filepath):
+            error_msg = f"Failed to delete {filepath}"
+            logger.error(error_msg)
+            raise Exception(error_msg)
+
+    def exists(self, filepath: str) -> bool:
         """Check if the file exists."""
         return os.path.exists(filepath)
 
-    def open_file(self, filepath, mode):
+    def open_file(self, filepath: str, mode: str):
         """Open the file in the specified mode."""
-        return open(filepath, mode)
+        try:
+            return open(filepath, mode)
+        except Exception as e:
+            logger.error(f"Error opening file {filepath} with mode {mode}: {e}")
+            raise
 
-    def list_files(self, file_extensions: list, instance_data_dir: str):
+    def list_files(
+        self, file_extensions: List[str], instance_data_dir: str
+    ) -> List[Tuple[str, List, List[str]]]:
         """
         List all files matching the given file extensions.
         Creates Path objects of each file found.
@@ -98,19 +99,19 @@ class LocalDataBackend(BaseDataBackend):
         logger.debug(
             f"LocalDataBackend.list_files: file_extensions={file_extensions}, instance_data_dir={instance_data_dir}"
         )
-        if instance_data_dir is None:
+        if not instance_data_dir:
             raise ValueError("instance_data_dir must be specified.")
 
-        def _rglob_follow_symlinks(path: Path, extensions: list):
+        def _rglob_follow_symlinks(path: Path, extensions: List[str]):
             # Skip Spotlight and Jupyter directories
-            forbidden_directories = [
+            forbidden_directories = {
                 ".Spotlight-V100",
                 ".Trashes",
                 ".fseventsd",
                 ".TemporaryItems",
                 ".zfs",
                 ".ipynb_checkpoints",
-            ]
+            }
             if path.name in forbidden_directories:
                 return
 
@@ -122,17 +123,21 @@ class LocalDataBackend(BaseDataBackend):
             else:
                 for ext in extensions:
                     for p in path.rglob(ext):
-                        yield p
+                        if p.is_file():
+                            yield p
 
             for p in path.iterdir():
                 if p.is_dir() and not p.is_symlink():
                     yield from _rglob_follow_symlinks(p, extensions)
                 elif p.is_symlink():
-                    real_path = Path(os.readlink(p))
-                    if real_path.is_dir():
-                        yield from _rglob_follow_symlinks(real_path, extensions)
+                    try:
+                        real_path = p.resolve()
+                        if real_path.is_dir():
+                            yield from _rglob_follow_symlinks(real_path, extensions)
+                    except Exception as e:
+                        logger.warning(f"Broken symlink encountered: {p} - {e}")
 
-        # If file_extensions is None, list all files
+        # Prepare the extensions for globbing
         extensions = (
             [f"*.{ext.lower()}" for ext in file_extensions] if file_extensions else None
         )
@@ -143,41 +148,41 @@ class LocalDataBackend(BaseDataBackend):
         path_dict = {}
         for path in paths:
             parent = str(path.parent)
-            if parent not in path_dict:
-                path_dict[parent] = []
-            path_dict[parent].append(str(path.absolute()))
+            path_dict.setdefault(parent, []).append(str(path.absolute()))
 
         results = [(subdir, [], files) for subdir, files in path_dict.items()]
         return results
 
-    def read_image(self, filepath: str, delete_problematic_images: bool = False):
-        # Remove embedded null byte:
+    def read_image(self, filepath: str, delete_problematic_images: bool = False) -> Any:
+        """Read an image from the specified filepath."""
         filepath = filepath.replace("\x00", "")
         try:
             image = load_image(filepath)
             return image
         except Exception as e:
-            import traceback
-
             logger.error(
-                f"Encountered error opening image {filepath}: {e}, traceback: {traceback.format_exc()}"
+                f"Encountered error opening image {filepath}: {e}", exc_info=True
             )
             if delete_problematic_images:
-                logger.error(
-                    "Deleting image, because --delete_problematic_images is provided."
-                )
-                self.delete(filepath)
+                try:
+                    logger.error(
+                        "Deleting image, because --delete_problematic_images is provided."
+                    )
+                    self.delete(filepath)
+                except Exception as del_e:
+                    logger.error(
+                        f"Failed to delete problematic image {filepath}: {del_e}"
+                    )
             else:
-                exit(1)
                 raise e
 
     def read_image_batch(
-        self, filepaths: list, delete_problematic_images: bool = False
-    ) -> list:
+        self, filepaths: List[str], delete_problematic_images: bool = False
+    ) -> Tuple[List[str], List[Any]]:
         """Read a batch of images from the specified filepaths."""
-        if type(filepaths) != list:
+        if not isinstance(filepaths, list):
             raise ValueError(
-                f"read_image_batch must be given a list of image filepaths. we received: {filepaths}"
+                f"read_image_batch must be given a list of image filepaths. Received type: {type(filepaths)}"
             )
         output_images = []
         available_keys = []
@@ -194,89 +199,98 @@ class LocalDataBackend(BaseDataBackend):
                     logger.error(
                         f"Deleting image '{filepath}', because --delete_problematic_images is provided. Error: {e}"
                     )
+                    try:
+                        self.delete(filepath)
+                    except Exception as del_e:
+                        logger.error(
+                            f"Failed to delete problematic image {filepath}: {del_e}"
+                        )
                 else:
                     logger.warning(
-                        f"A problematic image {filepath} is detected, but we are not allowed to remove it, because --delete_problematic_image is not provided."
+                        f"A problematic image {filepath} is detected, but we are not allowed to remove it, because --delete_problematic_images is not provided."
                         f" Please correct this manually. Error: {e}"
                     )
-        return (available_keys, output_images)
+        return available_keys, output_images
 
-    def create_directory(self, directory_path):
+    def create_directory(self, directory_path: str) -> None:
+        """Create a directory if it does not exist."""
         if os.path.exists(directory_path):
             return
-        logger.debug(f"Creating directory: {directory_path}")
-        os.makedirs(directory_path, exist_ok=True)
+        try:
+            logger.debug(f"Creating directory: {directory_path}")
+            os.makedirs(directory_path, exist_ok=True)
+            logger.info(f"Directory created: {directory_path}")
+        except Exception as e:
+            logger.error(f"Failed to create directory {directory_path}: {e}")
+            raise
 
-    def torch_load(self, filename):
+    def torch_load(self, filename: str) -> torch.Tensor:
         """
         Load a torch tensor from a file.
         """
         if not self.exists(filename):
-            raise FileNotFoundError(f"{filename} not found.")
+            error_msg = f"{filename} not found."
+            logger.error(error_msg)
+            raise FileNotFoundError(error_msg)
 
-        stored_tensor = self.read(filename, as_byteIO=True)
-
-        if self.compress_cache:
-            try:
-                stored_tensor = self._decompress_torch(stored_tensor)
-            except Exception as e:
-                pass
-
-        if hasattr(stored_tensor, "seek"):
-            stored_tensor.seek(0)
         try:
-            loaded_tensor = torch.load(stored_tensor, map_location="cpu")
+            with self.read(filename, as_byteIO=True) as stored_tensor:
+                if self.compress_cache:
+                    stored_tensor = self._decompress_torch(stored_tensor)
+                stored_tensor.seek(0)
+                loaded_tensor = torch.load(stored_tensor, map_location="cpu")
+            return loaded_tensor
         except Exception as e:
-            logger.error(f"Failed to load corrupt torch file '{filename}': {e}")
+            logger.error(f"Failed to load torch file '{filename}': {e}", exc_info=True)
             if "invalid load key" in str(e):
-                self.delete(filename)
-            raise e
-        return loaded_tensor
-
-    def torch_save(self, data, original_location):
-        """
-        Save a torch tensor to a file.
-        """
-        if isinstance(original_location, str):
-            filepath = original_location
-            os.makedirs(os.path.dirname(filepath), exist_ok=True)
-            temp_dir = os.path.dirname(filepath)
-            temp_file_path = os.path.join(temp_dir, f".{os.path.basename(filepath)}.tmp{_get_rank()}")
-
-            with open(temp_file_path, "wb") as temp_file:
-                # Acquire an exclusive lock on the temporary file
-                fcntl.flock(temp_file, fcntl.LOCK_EX)
                 try:
+                    self.delete(filename)
+                    logger.info(f"Deleted corrupt torch file: {filename}")
+                except Exception as del_e:
+                    logger.error(
+                        f"Failed to delete corrupt torch file {filename}: {del_e}"
+                    )
+            raise e
+
+    def torch_save(self, data: torch.Tensor, original_location: Any) -> None:
+        """
+        Save a torch tensor to a file object or filepath.
+        """
+        try:
+            if isinstance(original_location, str):
+                # original_location is a filepath
+                with atomic_write(
+                    original_location, mode="wb", overwrite=True, encoding=None
+                ) as temp_file:
                     if self.compress_cache:
                         compressed_data = self._compress_torch(data)
                         temp_file.write(compressed_data)
                     else:
                         torch.save(data, temp_file)
-                    temp_file.flush()
-                    os.fsync(temp_file.fileno())
-                finally:
-                    # Release the lock
-                    fcntl.flock(temp_file, fcntl.LOCK_UN)
-            # Atomically replace the target file with the temporary file
-            os.rename(temp_file_path, filepath)
-        else:
-            # Handle the case where original_location is a file object
-            temp_file = original_location
-            # Acquire an exclusive lock on the file object
-            fcntl.flock(temp_file, fcntl.LOCK_EX)
-            try:
+            else:
+                # original_location is a file-like object
                 if self.compress_cache:
                     compressed_data = self._compress_torch(data)
-                    temp_file.write(compressed_data)
+                    original_location.write(compressed_data)
                 else:
-                    torch.save(data, temp_file)
-                temp_file.flush()
-                os.fsync(temp_file.fileno())
-            finally:
-                # Release the lock
-                fcntl.flock(temp_file, fcntl.LOCK_UN)
+                    torch.save(data, original_location)
+                original_location.flush()
+                os.fsync(original_location.fileno())
+        except Exception as e:
+            logger.error(f"Failed to save torch tensor: {e}", exc_info=True)
+            raise
 
-    def write_batch(self, filepaths: list, data_list: list) -> None:
-        """Write a batch of data to the specified filepaths."""
+    def write_batch(self, filepaths: List[str], data_list: List[Any]) -> None:
+        """Write a batch of data to the specified filepaths atomically."""
+        if len(filepaths) != len(data_list):
+            error_msg = "filepaths and data_list must have the same length."
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
         for filepath, data in zip(filepaths, data_list):
-            self.write(filepath, data)
+            try:
+                self.write(filepath, data)
+                logger.debug(f"Successfully wrote to {filepath}")
+            except Exception as e:
+                logger.error(f"Failed to write to {filepath}: {e}")
+                raise

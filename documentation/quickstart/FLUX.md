@@ -129,6 +129,7 @@ There, you will possibly need to modify the following variables:
 - `model_type` - Set this to `lora`.
 - `model_family` - Set this to `flux`.
 - `pretrained_model_name_or_path` - Set this to `black-forest-labs/FLUX.1-dev`.
+- `pretrained_vae_model_name_or_path` - Set this to `black-forest-labs/FLUX.1-dev`.
   - Note that you will need to log in to Huggingface and be granted access to download this model. We will go over logging in to Huggingface later in this tutorial.
 - `output_dir` - Set this to the directory where you want to store your checkpoints and validation images. It's recommended to use a full path here.
 - `train_batch_size` - this should be kept at 1, especially if you have a very small dataset.

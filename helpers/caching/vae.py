@@ -253,7 +253,10 @@ class VAECache(WebhookMixin):
         return all_image_files
 
     def init_vae(self):
-        from diffusers import AutoencoderKL
+        if StateTracker.get_args().model_family == "sana":
+            from diffusers import AutoencoderDC as AutoencoderClass
+        else:
+            from diffusers import AutoencoderKL as AutoencoderClass
 
         args = StateTracker.get_args()
         vae_path = (
@@ -262,7 +265,7 @@ class VAECache(WebhookMixin):
             else args.pretrained_vae_model_name_or_path
         )
         precached_vae = StateTracker.get_vae()
-        self.vae = precached_vae or AutoencoderKL.from_pretrained(
+        self.vae = precached_vae or AutoencoderClass.from_pretrained(
             vae_path,
             subfolder="vae" if args.pretrained_vae_model_name_or_path is None else None,
             revision=args.revision,
@@ -517,9 +520,9 @@ class VAECache(WebhookMixin):
                 processed_images = torch.stack(uncached_images).to(
                     self.accelerator.device, dtype=StateTracker.get_vae_dtype()
                 )
-                latents_uncached = self.vae.encode(
-                    processed_images
-                ).latent_dist.sample()
+                latents_uncached = self.vae.encode(processed_images)
+                if hasattr(latents_uncached, "latent_dist"):
+                    latents_uncached = latents_uncached.latent_dist.sample()
                 if (
                     hasattr(self.vae, "config")
                     and hasattr(self.vae.config, "shift_factor")
@@ -529,7 +532,9 @@ class VAECache(WebhookMixin):
                         latents_uncached - self.vae.config.shift_factor
                     ) * self.vae.config.scaling_factor
                 else:
-                    latents_uncached = latents_uncached * self.vae.config.scaling_factor
+                    latents_uncached = (
+                        latents_uncached.latent * self.vae.config.scaling_factor
+                    )
                 logger.debug(f"Latents shape: {latents_uncached.shape}")
 
             # Prepare final latents list by combining cached and newly computed latents

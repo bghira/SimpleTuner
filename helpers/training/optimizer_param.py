@@ -586,11 +586,12 @@ def determine_optimizer_class_with_config(
         extra_optimizer_args["weight_decay"] = args.adam_weight_decay
         default_settings = extra_optimizer_args
         optimizer_details = {}
-    elif is_quantized and not enable_adamw_bf16:
+    elif is_quantized and not enable_adamw_bf16 and args.optimizer == "adamw_bf16":
         logger.error(
             f"When --base_model_default_dtype=fp32, AdamWBF16 may not be used. Switching to AdamW."
         )
         optimizer_class, optimizer_details = optimizer_parameters("optimi-adamw", args)
+        default_settings = optimizer_details.get("default_settings")
     else:
         optimizer_class, optimizer_details = optimizer_parameters(args.optimizer, args)
         default_settings = optimizer_details.get("default_settings")
