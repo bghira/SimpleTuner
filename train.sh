@@ -8,10 +8,18 @@ if [ -z "${VENV_PATH}" ]; then
     # what if we have VIRTUAL_ENV? use that instead
     if [ -n "${VIRTUAL_ENV}" ]; then
         export VENV_PATH="${VIRTUAL_ENV}"
-    else
-        export VENV_PATH="$(pwd)/.venv"
+    elif [ -d "$PWD/.venv" ]; then
+        export VENV_PATH="$PWD/.venv"
+    elif [ -d "$PWD/venv" ]; then
+        export VENV_PATH="$PWD/venv"
     fi
 fi
+
+# If a venv hasn't already been activated, activate it now
+if [[ -z "${VIRTUAL_ENV}" ]]; then
+    source "${VENV_PATH}/bin/activate"
+fi
+
 if [ -z "${DISABLE_LD_OVERRIDE}" ]; then
     export NVJITLINK_PATH="$(find "${VENV_PATH}" -name nvjitlink -type d)/lib"
     # if it's not empty, we will add it to LD_LIBRARY_PATH at the front:
