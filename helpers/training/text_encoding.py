@@ -261,7 +261,6 @@ def load_tes(
             "EleutherAI/pile-t5-base",
             torch_dtype=weight_dtype,
         ).encoder
-        text_encoder_1.eval()
 
     if tokenizer_2 is not None:
         if args.model_family.lower() == "flux":
@@ -286,5 +285,10 @@ def load_tes(
             revision=args.revision,
             variant=args.variant,
         )
+
+    for te in [text_encoder_1, text_encoder_2, text_encoder_3]:
+        if te is None:
+            continue
+        te.eval()
 
     return text_encoder_variant, text_encoder_1, text_encoder_2, text_encoder_3
