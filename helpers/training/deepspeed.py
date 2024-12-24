@@ -1,8 +1,44 @@
-import accelerate, logging, os
+import accelerate, logging, os, contextlib, transformers
 from accelerate.state import AcceleratorState
+from transformers.integrations import HfDeepSpeedConfig
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("DeepSpeed")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+
+from transformers.integrations.deepspeed import (
+    is_deepspeed_zero3_enabled,
+    set_hf_deepspeed_config,
+    unset_hf_deepspeed_config,
+)
+
+
+@contextlib.contextmanager
+def temporarily_disable_deepspeed_zero3():
+    # https://github.com/huggingface/transformers/issues/28106
+    deepspeed_plugin = (
+        AcceleratorState().deepspeed_plugin
+        if accelerate.state.is_initialized()
+        else None
+    )
+    if deepspeed_plugin is None:
+        print("DeepSpeed was not enabled.")
+        return []
+
+    if deepspeed_plugin and is_deepspeed_zero3_enabled():
+        print("DeepSpeed being disabled.")
+        _hf_deepspeed_config_weak_ref = (
+            transformers.integrations.deepspeed._hf_deepspeed_config_weak_ref
+        )
+        unset_hf_deepspeed_config()
+        yield
+        print("DeepSpeed being enabled.")
+        set_hf_deepspeed_config(HfDeepSpeedConfig(deepspeed_plugin.deepspeed_config))
+        transformers.integrations.deepspeed._hf_deepspeed_config_weak_ref = (
+            _hf_deepspeed_config_weak_ref
+        )
+    else:
+        print(f"Doing nothing, deepspeed zero3 was not enabled?")
+        yield
 
 
 def deepspeed_zero_init_disabled_context_manager():
@@ -15,9 +51,16 @@ def deepspeed_zero_init_disabled_context_manager():
         else None
     )
     if deepspeed_plugin is None:
+        logger.debug("DeepSpeed context manager disabled, no DeepSpeed detected.")
         return []
 
-    return [deepspeed_plugin.zero3_init_context_manager(enable=False)]
+    logger.debug(
+        f"DeepSpeed context manager enabled, DeepSpeed detected: {deepspeed_plugin}"
+    )
+    return [
+        deepspeed_plugin.zero3_init_context_manager(enable=False),
+        temporarily_disable_deepspeed_zero3(),
+    ]
 
 
 def prepare_model_for_deepspeed(accelerator, args):
@@ -38,9 +81,19 @@ def prepare_model_for_deepspeed(accelerator, args):
             if offload_param["nvme_path"] == "none":
                 if args.offload_param_path is None:
                     raise ValueError(
-                        f"DeepSpeed is using {offload_param['device']} but nvme_path is not specified."
+                        f"DeepSpeed is using {offload_param['device']} but nvme_path is not specified. The configuration has '{offload_param['nvme_path']}' for 'nvme_path'."
                     )
                 else:
+                    offload_buffer = 100000000.0
+                    if args.model_family in ["flux"]:
+                        # flux is big
+                        offload_buffer = 131600000.0
+                    logger.info(
+                        f"Attempting to allocate {offload_buffer} size byte buffer."
+                    )
+                    accelerator.state.deepspeed_plugin.deepspeed_config[
+                        "zero_optimization"
+                    ]["offload_param"]["buffer_size"] = offload_buffer
                     accelerator.state.deepspeed_plugin.deepspeed_config[
                         "zero_optimization"
                     ]["offload_param"]["nvme_path"] = args.offload_param_path

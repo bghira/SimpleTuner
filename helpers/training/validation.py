@@ -27,6 +27,11 @@ from helpers.multiaspect.image import MultiaspectImage
 from helpers.image_manipulation.brightness import calculate_luminance
 from PIL import Image, ImageDraw, ImageFont
 from diffusers import SanaPipeline
+from helpers.training.deepspeed import (
+    deepspeed_zero_init_disabled_context_manager,
+    prepare_model_for_deepspeed,
+)
+from transformers.utils import ContextManagers
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
@@ -523,14 +528,17 @@ class Validation:
         self.vae = precached_vae
         if self.vae is None:
             logger.info(f"Initialising {AutoencoderClass}")
-            self.vae = AutoencoderClass.from_pretrained(
-                vae_path,
-                subfolder=(
-                    "vae" if args.pretrained_vae_model_name_or_path is None else None
-                ),
-                revision=args.revision,
-                force_upcast=False,
-            ).to(self.inference_device)
+            with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
+                self.vae = AutoencoderClass.from_pretrained(
+                    vae_path,
+                    subfolder=(
+                        "vae"
+                        if args.pretrained_vae_model_name_or_path is None
+                        else None
+                    ),
+                    revision=args.revision,
+                    force_upcast=False,
+                ).to(self.inference_device)
         StateTracker.set_vae(self.vae)
 
         return self.vae
