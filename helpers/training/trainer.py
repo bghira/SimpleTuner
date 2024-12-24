@@ -1620,6 +1620,7 @@ class Trainer:
             delattr(public_args, "weight_dtype")
             delattr(public_args, "base_weight_dtype")
             delattr(public_args, "vae_kwargs")
+            delattr(public_args, "sana_complex_human_instruction")
 
             # Hash the contents of public_args to reflect a deterministic ID for a single set of params:
             public_args_hash = hashlib.md5(
