@@ -48,7 +48,7 @@ if __name__ == "__main__":
         trainer.init_preprocessing_models()
         trainer.init_precision(preprocessing_models_only=True)
         trainer.init_data_backend()
-        trainer.init_validation_prompts()
+        # trainer.init_validation_prompts()
         trainer.init_unload_text_encoder()
         trainer.init_unload_vae()
 

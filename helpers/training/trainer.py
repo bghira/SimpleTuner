@@ -470,23 +470,24 @@ class Trainer:
         else:
             from diffusers import AutoencoderKL as AutoencoderClass
 
-        try:
-            self.vae = AutoencoderClass.from_pretrained(**self.config.vae_kwargs)
-        except:
-            logger.warning(
-                "Couldn't load VAE with default path. Trying without a subfolder.."
-            )
-            self.config.vae_kwargs["subfolder"] = None
-            self.vae = AutoencoderClass.from_pretrained(**self.config.vae_kwargs)
-            if (
-                self.vae is not None
-                and self.config.vae_enable_tiling
-                and hasattr(self.vae, "enable_tiling")
-            ):
+        with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
+            try:
+                self.vae = AutoencoderClass.from_pretrained(**self.config.vae_kwargs)
+            except:
                 logger.warning(
-                    "Enabling VAE tiling for greatly reduced memory consumption due to --vae_enable_tiling which may result in VAE tiling artifacts in encoded latents."
+                    "Couldn't load VAE with default path. Trying without a subfolder.."
                 )
-                self.vae.enable_tiling()
+                self.config.vae_kwargs["subfolder"] = None
+                self.vae = AutoencoderClass.from_pretrained(**self.config.vae_kwargs)
+        if (
+            self.vae is not None
+            and self.config.vae_enable_tiling
+            and hasattr(self.vae, "enable_tiling")
+        ):
+            logger.warning(
+                "Enabling VAE tiling for greatly reduced memory consumption due to --vae_enable_tiling which may result in VAE tiling artifacts in encoded latents."
+            )
+            self.vae.enable_tiling()
         if not move_to_accelerator:
             logger.debug("Not moving VAE to accelerator.")
             return
@@ -530,28 +531,28 @@ class Trainer:
             None,
             None,
         )
-        if self.tokenizer_1 is not None:
-            self.text_encoder_cls_1 = import_model_class_from_model_name_or_path(
-                self.config.text_encoder_path,
-                self.config.revision,
-                self.config,
-                subfolder=self.config.text_encoder_subfolder,
-            )
-        if self.tokenizer_2 is not None:
-            self.text_encoder_cls_2 = import_model_class_from_model_name_or_path(
-                self.config.pretrained_model_name_or_path,
-                self.config.revision,
-                self.config,
-                subfolder="text_encoder_2",
-            )
-        if self.tokenizer_3 is not None and self.config.model_family == "sd3":
-            self.text_encoder_cls_3 = import_model_class_from_model_name_or_path(
-                self.config.pretrained_model_name_or_path,
-                self.config.revision,
-                self.config,
-                subfolder="text_encoder_3",
-            )
         with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
+            if self.tokenizer_1 is not None:
+                self.text_encoder_cls_1 = import_model_class_from_model_name_or_path(
+                    self.config.text_encoder_path,
+                    self.config.revision,
+                    self.config,
+                    subfolder=self.config.text_encoder_subfolder,
+                )
+            if self.tokenizer_2 is not None:
+                self.text_encoder_cls_2 = import_model_class_from_model_name_or_path(
+                    self.config.pretrained_model_name_or_path,
+                    self.config.revision,
+                    self.config,
+                    subfolder="text_encoder_2",
+                )
+            if self.tokenizer_3 is not None and self.config.model_family == "sd3":
+                self.text_encoder_cls_3 = import_model_class_from_model_name_or_path(
+                    self.config.pretrained_model_name_or_path,
+                    self.config.revision,
+                    self.config,
+                    subfolder="text_encoder_3",
+                )
             tokenizers = [self.tokenizer_1, self.tokenizer_2, self.tokenizer_3]
             text_encoder_classes = [
                 self.text_encoder_cls_1,
@@ -669,7 +670,13 @@ class Trainer:
 
             raise e
 
-        self.init_validation_prompts()
+        try:
+            self.init_validation_prompts()
+        except Exception as e:
+            logger.error("Could not generate validation prompts.")
+            logger.error(e)
+            raise e
+
         # We calculate the number of steps per epoch by dividing the number of images by the effective batch divisor.
         # Gradient accumulation steps mean that we only update the model weights every /n/ steps.
         collected_data_backend_str = list(StateTracker.get_data_backends().keys())
@@ -695,6 +702,16 @@ class Trainer:
         self.accelerator.wait_for_everyone()
 
     def init_validation_prompts(self):
+        if (
+            hasattr(self.accelerator, "state")
+            and hasattr(self.accelerator.state, "deepspeed_plugin")
+            and getattr(self.accelerator.state.deepspeed_plugin, "deepspeed_config", {})
+            .get("zero_optimization", {})
+            .get("stage")
+            == 3
+        ):
+            logger.error("Cannot run validations with DeepSpeed ZeRO stage 3.")
+            return
         if self.accelerator.is_main_process:
             if self.config.model_family == "flux":
                 (
