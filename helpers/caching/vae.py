@@ -533,7 +533,8 @@ class VAECache(WebhookMixin):
                     ) * self.vae.config.scaling_factor
                 else:
                     latents_uncached = (
-                        latents_uncached.latent * self.vae.config.scaling_factor
+                        getattr(latents_uncached, "latent", latents_uncached)
+                        * self.vae.config.scaling_factor
                     )
                 logger.debug(f"Latents shape: {latents_uncached.shape}")
 
