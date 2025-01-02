@@ -46,6 +46,7 @@ fastapi = {extras = ["standard"], version = "^0.115.0"}
 bitsandbytes = "^0.44.1"
 atomicwrites = "^1.4.1"
 torchao = "^0.7.0"
+beautifulsoup4 = "^4.12.3"
 
 
 [build-system]

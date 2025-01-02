@@ -46,6 +46,7 @@ sentencepiece = "^0.2.0"
 torchao = "^0.7.0"
 torchaudio = "^2.5.0"
 atomicwrites = "^1.4.1"
+beautifulsoup4 = "^4.12.3"
 
 
 [build-system]
