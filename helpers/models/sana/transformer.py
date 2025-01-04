@@ -18,7 +18,13 @@ import torch
 from torch import nn
 
 from diffusers.configuration_utils import ConfigMixin, register_to_config
-from diffusers.utils import is_torch_version, logging
+from diffusers.utils import (
+    USE_PEFT_BACKEND,
+    is_torch_version,
+    logging,
+    scale_lora_layers,
+    unscale_lora_layers,
+)
 from diffusers.models.attention_processor import (
     Attention,
     AttentionProcessor,
@@ -256,6 +262,7 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin):
         patch_size: int = 1,
         norm_elementwise_affine: bool = False,
         norm_eps: float = 1e-6,
+        interpolation_scale: Optional[int] = None,
     ) -> None:
         super().__init__()
 
@@ -270,7 +277,7 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin):
             in_channels=in_channels,
             embed_dim=inner_dim,
             interpolation_scale=None,
-            pos_embed_type=None,
+            pos_embed_type="sincos" if interpolation_scale is not None else None,
         )
 
         # 2. Additional condition embeddings
@@ -401,6 +408,23 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin):
         attention_mask: Optional[torch.Tensor] = None,
         return_dict: bool = True,
     ) -> Union[Tuple[torch.Tensor, ...], Transformer2DModelOutput]:
+        if attention_kwargs is not None:
+            attention_kwargs = attention_kwargs.copy()
+            lora_scale = attention_kwargs.pop("scale", 1.0)
+        else:
+            lora_scale = 1.0
+
+        if USE_PEFT_BACKEND:
+            # weight the lora layers by setting `lora_scale` for each PEFT layer
+            scale_lora_layers(self, lora_scale)
+        else:
+            if (
+                attention_kwargs is not None
+                and attention_kwargs.get("scale", None) is not None
+            ):
+                logger.warning(
+                    "Passing `scale` via `attention_kwargs` when not using the PEFT backend is ineffective."
+                )
         # ensure attention_mask is a bias, and give it a singleton query_tokens dimension.
         #   we may have done this conversion already, e.g. if we came here via UNet2DConditionModel#forward.
         #   we can tell by counting dims; if ndim == 2: it's a mask rather than a bias.
@@ -498,6 +522,10 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin):
         output = hidden_states.reshape(
             batch_size, -1, post_patch_height * p, post_patch_width * p
         )
+
+        if USE_PEFT_BACKEND:
+            # remove `lora_scale` from each PEFT layer
+            unscale_lora_layers(self, lora_scale)
 
         if not return_dict:
             return (output,)
