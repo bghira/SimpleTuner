@@ -132,7 +132,7 @@ def get_argument_parser():
         ],
         default="all",
         help=(
-            "Flux has single and joint attention blocks."
+            "This option only applies to Standard LoRA, not Lycoris. Flux has single and joint attention blocks."
             " By default, all attention layers are trained, but not the feed-forward layers"
             " If 'mmdit' is provided, the text input layers will not be trained."
             " If 'context' is provided, then ONLY the text attention layers are trained"
@@ -147,8 +147,14 @@ def get_argument_parser():
     parser.add_argument(
         "--flow_matching_sigmoid_scale",
         type=float,
+        default=None,
+        help="Deprecated option. Replaced with --flow_sigmoid_scale.",
+    )
+    parser.add_argument(
+        "--flow_sigmoid_scale",
+        type=float,
         default=1.0,
-        help="Scale factor for sigmoid timestep sampling for flow-matching models..",
+        help="Scale factor for sigmoid timestep sampling for flow-matching models.",
     )
     parser.add_argument(
         "--flux_fast_schedule",
@@ -160,9 +166,16 @@ def get_argument_parser():
     )
     parser.add_argument(
         "--flux_use_uniform_schedule",
+        default=None,
+        action="store_true",
+        help="Deprecated option. Replaced with --flow_use_uniform_schedule.",
+    )
+    parser.add_argument(
+        "--flow_use_uniform_schedule",
+        default=False,
         action="store_true",
         help=(
-            "Whether or not to use a uniform schedule with Flux instead of sigmoid."
+            "Whether or not to use a uniform schedule with flow-matching models instead of sigmoid."
             " Using uniform sampling may help preserve more capabilities from the base model."
             " Some tasks may not benefit from this."
         ),
@@ -170,6 +183,13 @@ def get_argument_parser():
     parser.add_argument(
         "--flux_use_beta_schedule",
         action="store_true",
+        default=None,
+        help="Deprecated option. Replaced with --flow_use_beta_schedule.",
+    )
+    parser.add_argument(
+        "--flow_use_beta_schedule",
+        action="store_true",
+        default=False,
         help=(
             "Whether or not to use a beta schedule with Flux instead of sigmoid. The default values of alpha"
             " and beta approximate a sigmoid."
@@ -178,11 +198,23 @@ def get_argument_parser():
     parser.add_argument(
         "--flux_beta_schedule_alpha",
         type=float,
+        default=None,
+        help=("Deprecated option. Replaced with --flux_beta_schedule_alpha."),
+    )
+    parser.add_argument(
+        "--flow_beta_schedule_alpha",
+        type=float,
         default=2.0,
         help=("The alpha value of the flux beta schedule. Default is 2.0"),
     )
     parser.add_argument(
         "--flux_beta_schedule_beta",
+        type=float,
+        default=None,
+        help=("Deprecated option. Replaced with --flow_beta_schedule_beta."),
+    )
+    parser.add_argument(
+        "--flow_beta_schedule_beta",
         type=float,
         default=2.0,
         help=("The beta value of the flux beta schedule. Default is 2.0"),
@@ -190,18 +222,29 @@ def get_argument_parser():
     parser.add_argument(
         "--flux_schedule_shift",
         type=float,
+        default=None,
+        help=("Deprecated option. Replaced with --flow_schedule_shift."),
+    )
+    parser.add_argument(
+        "--flow_schedule_shift",
+        type=float,
         default=3,
         help=(
             "Shift the noise schedule. This is a value between 0 and ~4.0, where 0 disables the timestep-dependent shift,"
-            " and anything greater than 0 will shift the timestep sampling accordingly. The SD3 model was trained with"
-            " a shift value of 3. The value for Flux is unknown. Higher values result in less noisy timesteps sampled,"
-            " which results in a lower mean loss value, but not necessarily better results. Early reports indicate"
-            " that modification of this value can change how the contrast is learnt by the model, and whether fine"
-            " details are ignored or accentuated, removing fine details and making the outputs blurrier."
+            " and anything greater than 0 will shift the timestep sampling accordingly. Sana and SD3 were trained with"
+            " a shift value of 3. This value can change how contrast/brightness are learnt by the model, and whether fine"
+            " details are ignored or accentuated. A higher value will focus more on large compositional features,"
+            " and a lower value will focus on the high frequency fine details."
         ),
     )
     parser.add_argument(
         "--flux_schedule_auto_shift",
+        action="store_true",
+        default=None,
+        help="Deprecated option. Replaced with --flow_schedule_auto_shift.",
+    )
+    parser.add_argument(
+        "--flow_schedule_auto_shift",
         action="store_true",
         default=False,
         help=(
@@ -214,17 +257,12 @@ def get_argument_parser():
     parser.add_argument(
         "--flux_guidance_mode",
         type=str,
-        choices=["constant", "random-range", "mobius"],
+        choices=["constant", "random-range"],
         default="constant",
         help=(
             "Flux has a 'guidance' value used during training time that reflects the CFG range of your training samples."
             " The default mode 'constant' will use a single value for every sample."
             " The mode 'random-range' will randomly select a value from the range of the CFG for each sample."
-            " The mode 'mobius' will use a value that is a function of the remaining steps in the epoch, constructively"
-            " deconstructing the constructed deconstructions to then Mobius them back into the constructed reconstructions,"
-            " possibly resulting in the exploration of what is known as the Mobius space, a new continuous"
-            " realm of possibility brought about by destroying the model so that you can make it whole once more."
-            " Or so according to DataVoid, anyway. This is just a Flux-specific implementation of Mobius."
             " Set the range using --flux_guidance_min and --flux_guidance_max."
         ),
     )
@@ -2594,5 +2632,31 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         warning_log(
             "For non-CUDA systems, only Diffusers attention mechanism is officially supported."
         )
+
+    deprecated_options = {
+        "flux_beta_schedule_alpha": "flow_beta_schedule_alpha",
+        "flux_beta_schedule_beta": "flow_beta_schedule_beta",
+        "flux_use_beta_schedule": "flow_use_beta_schedule",
+        "flux_use_uniform_schedule": "flow_use_uniform_schedule",
+        "flux_schedule_shift": "flow_schedule_shift",
+        "flux_schedule_auto_shift": "flow_schedule_auto_shift",
+        "flow_matching_sigmoid_scale": "flow_sigmoid_scale",
+    }
+
+    for deprecated_option, replacement_option in deprecated_options.items():
+        if (
+            getattr(args, replacement_option) is not None
+            and getattr(args, deprecated_option) is not None
+            and type(getattr(args, deprecated_option)) is not object
+        ):
+            warning_log(
+                f"The option --{deprecated_option} has been replaced with --{replacement_option}."
+            )
+            setattr(args, replacement_option, getattr(args, deprecated_option))
+        elif getattr(args, deprecated_option) is not None:
+            error_log(
+                f"The option {deprecated_option} has been deprecated without a replacement option. Please remove it from your configuration."
+            )
+            sys.exit(1)
 
     return args

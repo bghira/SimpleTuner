@@ -325,10 +325,10 @@ def flux_schedule_info(args):
     output_args = []
     if args.flux_fast_schedule:
         output_args.append("flux_fast_schedule")
-    if args.flux_schedule_auto_shift:
-        output_args.append("flux_schedule_auto_shift")
-    if args.flux_schedule_shift is not None:
-        output_args.append(f"shift={args.flux_schedule_shift}")
+    if args.flow_schedule_auto_shift:
+        output_args.append("flow_schedule_auto_shift")
+    if args.flow_schedule_shift is not None:
+        output_args.append(f"shift={args.flow_schedule_shift}")
     output_args.append(f"flux_guidance_mode={args.flux_guidance_mode}")
     if args.flux_guidance_value:
         output_args.append(f"flux_guidance_value={args.flux_guidance_value}")
@@ -337,9 +337,9 @@ def flux_schedule_info(args):
     if args.flux_guidance_mode == "random-range":
         output_args.append(f"flux_guidance_max={args.flux_guidance_max}")
         output_args.append(f"flux_guidance_min={args.flux_guidance_min}")
-    if args.flux_use_beta_schedule:
-        output_args.append(f"flux_beta_schedule_alpha={args.flux_beta_schedule_alpha}")
-        output_args.append(f"flux_beta_schedule_beta={args.flux_beta_schedule_beta}")
+    if args.flow_use_beta_schedule:
+        output_args.append(f"flow_beta_schedule_alpha={args.flow_beta_schedule_alpha}")
+        output_args.append(f"flow_beta_schedule_beta={args.flow_beta_schedule_beta}")
     if args.flux_attention_masked_training:
         output_args.append("flux_attention_masked_training")
     if args.t5_padding != "unmodified":
@@ -364,15 +364,15 @@ def sd3_schedule_info(args):
     if args.model_family.lower() != "sd3":
         return ""
     output_args = []
-    if args.flux_schedule_auto_shift:
-        output_args.append("flux_schedule_auto_shift")
-    if args.flux_schedule_shift is not None:
-        output_args.append(f"shift={args.flux_schedule_shift}")
-    if args.flux_use_beta_schedule:
-        output_args.append(f"flux_beta_schedule_alpha={args.flux_beta_schedule_alpha}")
-        output_args.append(f"flux_beta_schedule_beta={args.flux_beta_schedule_beta}")
-    if args.flux_use_uniform_schedule:
-        output_args.append(f"flux_use_uniform_schedule")
+    if args.flow_schedule_auto_shift:
+        output_args.append("flow_schedule_auto_shift")
+    if args.flow_schedule_shift is not None:
+        output_args.append(f"shift={args.flow_schedule_shift}")
+    if args.flow_use_beta_schedule:
+        output_args.append(f"flow_beta_schedule_alpha={args.flow_beta_schedule_alpha}")
+        output_args.append(f"flow_beta_schedule_beta={args.flow_beta_schedule_beta}")
+    if args.flow_use_uniform_schedule:
+        output_args.append(f"flow_use_uniform_schedule")
     # if args.model_type == "lora" and args.lora_type == "standard":
     #     output_args.append(f"flux_lora_target={args.flux_lora_target}")
     output_str = (
