@@ -381,13 +381,13 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 {pixart_sigma,kolors,sd3,flux,smoldit,sdxl,legacy}
                 [--model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}]
                 [--flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,nano}]
-                [--flow_matching_sigmoid_scale FLOW_MATCHING_SIGMOID_SCALE]
-                [--flux_fast_schedule] [--flux_use_uniform_schedule]
-                [--flux_use_beta_schedule]
-                [--flux_beta_schedule_alpha FLUX_BETA_SCHEDULE_ALPHA]
-                [--flux_beta_schedule_beta FLUX_BETA_SCHEDULE_BETA]
-                [--flux_schedule_shift FLUX_SCHEDULE_SHIFT]
-                [--flux_schedule_auto_shift]
+                [--flow_sigmoid_scale flow_sigmoid_scale]
+                [--flux_fast_schedule] [--flow_use_uniform_schedule]
+                [--flow_use_beta_schedule]
+                [--flow_beta_schedule_alpha flow_beta_schedule_alpha]
+                [--flow_beta_schedule_beta flow_beta_schedule_beta]
+                [--flow_schedule_shift flow_schedule_shift]
+                [--flow_schedule_auto_shift]
                 [--flux_guidance_mode {constant,random-range,mobius}]
                 [--flux_guidance_value FLUX_GUIDANCE_VALUE]
                 [--flux_guidance_min FLUX_GUIDANCE_MIN]
@@ -602,29 +602,29 @@ options:
                         norms (based on ostris/ai-toolkit). If 'tiny' is
                         provided, only two layers will be trained. If 'nano'
                         is provided, only one layers will be trained.
-  --flow_matching_sigmoid_scale FLOW_MATCHING_SIGMOID_SCALE
+  --flow_sigmoid_scale flow_sigmoid_scale
                         Scale factor for sigmoid timestep sampling for flow-
                         matching models..
   --flux_fast_schedule  An experimental feature to train Flux.1S using a noise
                         schedule closer to what it was trained with, which has
                         improved results in short experiments. Thanks to
                         @mhirki for the contribution.
-  --flux_use_uniform_schedule
+  --flow_use_uniform_schedule
                         Whether or not to use a uniform schedule with Flux
                         instead of sigmoid. Using uniform sampling may help
                         preserve more capabilities from the base model. Some
                         tasks may not benefit from this.
-  --flux_use_beta_schedule
+  --flow_use_beta_schedule
                         Whether or not to use a beta schedule with Flux
                         instead of sigmoid. The default values of alpha and
                         beta approximate a sigmoid.
-  --flux_beta_schedule_alpha FLUX_BETA_SCHEDULE_ALPHA
+  --flow_beta_schedule_alpha flow_beta_schedule_alpha
                         The alpha value of the flux beta schedule. Default is
                         2.0
-  --flux_beta_schedule_beta FLUX_BETA_SCHEDULE_BETA
+  --flow_beta_schedule_beta flow_beta_schedule_beta
                         The beta value of the flux beta schedule. Default is
                         2.0
-  --flux_schedule_shift FLUX_SCHEDULE_SHIFT
+  --flow_schedule_shift flow_schedule_shift
                         Shift the noise schedule. This is a value between 0
                         and ~4.0, where 0 disables the timestep-dependent
                         shift, and anything greater than 0 will shift the
@@ -637,7 +637,7 @@ options:
                         contrast is learnt by the model, and whether fine
                         details are ignored or accentuated, removing fine
                         details and making the outputs blurrier.
-  --flux_schedule_auto_shift
+  --flow_schedule_auto_shift
                         Shift the noise schedule depending on image
                         resolution. The shift value calculation is taken from
                         the official Flux inference code. Shift value is

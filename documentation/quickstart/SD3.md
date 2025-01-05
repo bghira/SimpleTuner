@@ -195,12 +195,12 @@ In your `/home/user/simpletuner/config` directory, create a multidatabackend.jso
     "crop": true,
     "crop_aspect": "square",
     "crop_style": "center",
-    "resolution": 1.0,
+    "resolution": 1024,
     "minimum_image_size": 0,
-    "maximum_image_size": 1.0,
-    "target_downsample_size": 1.0,
-    "resolution_type": "area",
-    "cache_dir_vae": "cache/vae/sd3/pseudo-camera-10k",
+    "maximum_image_size": 1024,
+    "target_downsample_size": 1024,
+    "resolution_type": "pixel_area",
+    "cache_dir_vae": "/home/user/simpletuner/output/cache/vae/sd3/pseudo-camera-10k",
     "instance_data_dir": "/home/user/simpletuner/datasets/pseudo-camera-10k",
     "disabled": false,
     "skip_file_discovery": "",
@@ -277,8 +277,8 @@ The following values are recommended for `config.json`:
   "--validation_guidance_skip_layers_stop": 0.2,
   "--validation_guidance_skip_scale": 2.8,
   "--validation_guidance": 4.0,
-  "--flux_use_uniform_schedule": true,
-  "--flux_schedule_auto_shift": true
+  "--flow_use_uniform_schedule": true,
+  "--flow_schedule_auto_shift": true
 }
 ```
 
@@ -309,17 +309,17 @@ Some changes were made to SimpleTuner's SD3.5 support:
 - No longer zeroing T5 padding space by default (`--t5_padding`)
 - Offering a switch (`--sd3_clip_uncond_behaviour` and `--sd3_t5_uncond_behaviour`) to use empty encoded blank captions for unconditional predictions (`empty_string`, **default**) or zeros (`zero`), not a recommended setting to tweak.
 - SD3.5 training loss function was updated to match that found in the upstream StabilityAI/SD3.5 repository
-- Updated default `--flux_schedule_shift` value to 3 to match the static 1024px value for SD3
-  - StabilityAI followed-up with documentation to use `--flux_schedule_shift=1` with `--flux_use_uniform_schedule`
-  - Community members have reported that `--flux_schedule_auto_shift` works better when using mult-aspect or multi-resolution training
-- Updated the hard-coded tokeniser sequence length limit to **256** with the option to revert it to **77** tokens to save disk space or compute at the cost of output quality degradation
+- Updated default `--flow_schedule_shift` value to 3 to match the static 1024px value for SD3
+  - StabilityAI followed-up with documentation to use `--flow_schedule_shift=1` with `--flow_use_uniform_schedule`
+  - Community members have reported that `--flow_schedule_auto_shift` works better when using mult-aspect or multi-resolution training
+- Updated the hard-coded tokeniser sequence length limit to **154** with the option to revert it to **77** tokens to save disk space or compute at the cost of output quality degradation
 
 
 #### Stable configuration values
 
 These options have been known to keep SD3.5 in-tact for as long as possible:
 - optimizer=adamw_bf16
-- flux_schedule_shift=1
+- flow_schedule_shift=1
 - learning_rate=1e-4
 - batch_size=4 * 3 GPUs
 - max_grad_norm=0.1

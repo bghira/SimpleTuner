@@ -121,7 +121,7 @@ from helpers.models.flux import (
     pack_latents,
     unpack_latents,
     get_mobius_guidance,
-    apply_flux_schedule_shift,
+    apply_flow_schedule_shift,
 )
 
 is_optimi_available = False
@@ -2416,28 +2416,28 @@ class Trainer:
                     if self.config.flow_matching:
                         if not self.config.flux_fast_schedule and not any(
                             [
-                                self.config.flux_use_beta_schedule,
-                                self.config.flux_use_uniform_schedule,
+                                self.config.flow_use_beta_schedule,
+                                self.config.flow_use_uniform_schedule,
                             ]
                         ):
                             # imported from cloneofsimo's minRF trainer: https://github.com/cloneofsimo/minRF
                             # also used by: https://github.com/XLabs-AI/x-flux/tree/main
                             # and: https://github.com/kohya-ss/sd-scripts/commit/8a0f12dde812994ec3facdcdb7c08b362dbceb0f
                             sigmas = torch.sigmoid(
-                                self.config.flow_matching_sigmoid_scale
+                                self.config.flow_sigmoid_scale
                                 * torch.randn((bsz,), device=self.accelerator.device)
                             )
-                            sigmas = apply_flux_schedule_shift(
+                            sigmas = apply_flow_schedule_shift(
                                 self.config, self.noise_scheduler, sigmas, noise
                             )
-                        elif self.config.flux_use_uniform_schedule:
+                        elif self.config.flow_use_uniform_schedule:
                             sigmas = torch.rand((bsz,), device=self.accelerator.device)
-                            sigmas = apply_flux_schedule_shift(
+                            sigmas = apply_flow_schedule_shift(
                                 self.config, self.noise_scheduler, sigmas, noise
                             )
-                        elif self.config.flux_use_beta_schedule:
-                            alpha = self.config.flux_beta_schedule_alpha
-                            beta = self.config.flux_beta_schedule_beta
+                        elif self.config.flow_use_beta_schedule:
+                            alpha = self.config.flow_beta_schedule_alpha
+                            beta = self.config.flow_beta_schedule_beta
 
                             # Create a Beta distribution instance
                             beta_dist = Beta(alpha, beta)
@@ -2447,7 +2447,7 @@ class Trainer:
                                 device=self.accelerator.device
                             )
 
-                            sigmas = apply_flux_schedule_shift(
+                            sigmas = apply_flow_schedule_shift(
                                 self.config, self.noise_scheduler, sigmas, noise
                             )
                         else:
