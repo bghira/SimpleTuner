@@ -452,6 +452,7 @@ class Sine(LRScheduler):
         self.verbose = verbose
         self._last_lr = self.base_lrs
         self.total_steps = 0  # Track total steps for a continuous wave
+        super().__init__(optimizer, last_step, verbose)
 
     def get_lr(self):
         # Calculate learning rates using a continuous sine function based on total steps
