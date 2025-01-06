@@ -8,7 +8,7 @@ from helpers.caching.text_embeds import TextEmbeddingCache
 from helpers.training.exceptions import MultiDatasetExhausted
 from helpers.multiaspect.dataset import MultiAspectDataset
 from helpers.multiaspect.sampler import MultiAspectSampler
-from helpers.prompts import PromptHandler
+from helpers.prompts import PromptHandler, CaptionNotFoundError
 from helpers.caching.vae import VAECache
 from helpers.training.multi_process import should_log, rank_info, _get_rank as get_rank
 from helpers.training.collate import collate_fn

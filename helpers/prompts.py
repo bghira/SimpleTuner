@@ -99,6 +99,10 @@ logger = logging.getLogger("PromptHandler")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
+class CaptionNotFoundError(Exception):
+    pass
+
+
 class PromptHandler:
     def __init__(
         self,
@@ -250,7 +254,7 @@ class PromptHandler:
             image_filename_stem = os.path.splitext(image_filename_stem)[0]
         image_caption = metadata_backend.caption_cache_entry(image_filename_stem)
         if instance_prompt is None and fallback_caption_column and not image_caption:
-            raise ValueError(
+            raise CaptionNotFoundError(
                 f"Could not locate caption for image {image_path} in sampler_backend {sampler_backend_id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(parquet_db)} entries."
             )
         elif (
@@ -258,7 +262,7 @@ class PromptHandler:
             and not fallback_caption_column
             and not image_caption
         ):
-            raise ValueError(
+            raise CaptionNotFoundError(
                 f"Could not locate caption for image {image_path} in sampler_backend {sampler_backend_id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(parquet_db)} entries."
             )
         if type(image_caption) == bytes:
@@ -465,9 +469,7 @@ class PromptHandler:
                     raise ValueError(
                         f"Unsupported caption strategy: {caption_strategy}. Supported: 'filename', 'textfile', 'parquet', 'instanceprompt'"
                     )
-            except ValueError as e:
-                raise e
-            except Exception as e:
+            except CaptionNotFoundError as e:
                 logger.error(f"Could not load caption for image {image_path}: {e}")
                 images_missing_captions.append(image_path)
                 continue
