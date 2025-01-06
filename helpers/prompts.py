@@ -486,7 +486,7 @@ class PromptHandler:
 
         # Remove images that didn't have captions from the list.
         for image_path in images_missing_captions:
-            all_image_files.remove(image_path)
+            del all_image_files[image_path]
 
         if len(images_missing_captions) > 0:
             logger.info(
