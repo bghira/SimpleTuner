@@ -99,6 +99,10 @@ logger = logging.getLogger("PromptHandler")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
+class CaptionNotFoundError(Exception):
+    pass
+
+
 class PromptHandler:
     def __init__(
         self,
@@ -250,7 +254,7 @@ class PromptHandler:
             image_filename_stem = os.path.splitext(image_filename_stem)[0]
         image_caption = metadata_backend.caption_cache_entry(image_filename_stem)
         if instance_prompt is None and fallback_caption_column and not image_caption:
-            raise ValueError(
+            raise CaptionNotFoundError(
                 f"Could not locate caption for image {image_path} in sampler_backend {sampler_backend_id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(parquet_db)} entries."
             )
         elif (
@@ -258,7 +262,7 @@ class PromptHandler:
             and not fallback_caption_column
             and not image_caption
         ):
-            raise ValueError(
+            raise CaptionNotFoundError(
                 f"Could not locate caption for image {image_path} in sampler_backend {sampler_backend_id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(parquet_db)} entries."
             )
         if type(image_caption) == bytes:
@@ -406,6 +410,7 @@ class PromptHandler:
         instance_prompt: str = None,
     ) -> list:
         captions = []
+        images_missing_captions = []
         all_image_files = StateTracker.get_image_files(
             data_backend_id=data_backend.id
         ) or data_backend.list_files(
@@ -431,38 +436,43 @@ class PromptHandler:
             leave=False,
             ncols=125,
         ):
-            if caption_strategy == "filename":
-                caption = PromptHandler.prepare_instance_prompt_from_filename(
-                    image_path=str(image_path),
-                    use_captions=use_captions,
-                    prepend_instance_prompt=prepend_instance_prompt,
-                    instance_prompt=instance_prompt,
-                )
-            elif caption_strategy == "textfile":
-                caption = PromptHandler.prepare_instance_prompt_from_textfile(
-                    image_path,
-                    use_captions=use_captions,
-                    prepend_instance_prompt=prepend_instance_prompt,
-                    instance_prompt=instance_prompt,
-                    data_backend=data_backend,
-                )
-            elif caption_strategy == "parquet":
-                caption = PromptHandler.prepare_instance_prompt_from_parquet(
-                    image_path,
-                    use_captions=use_captions,
-                    prepend_instance_prompt=prepend_instance_prompt,
-                    instance_prompt=instance_prompt,
-                    data_backend=data_backend,
-                    sampler_backend_id=data_backend.id,
-                )
-            elif caption_strategy == "instanceprompt":
-                return [instance_prompt]
-            elif caption_strategy == "csv":
-                caption = data_backend.get_caption(image_path)
-            else:
-                raise ValueError(
-                    f"Unsupported caption strategy: {caption_strategy}. Supported: 'filename', 'textfile', 'parquet', 'instanceprompt'"
-                )
+            try:
+                if caption_strategy == "filename":
+                    caption = PromptHandler.prepare_instance_prompt_from_filename(
+                        image_path=str(image_path),
+                        use_captions=use_captions,
+                        prepend_instance_prompt=prepend_instance_prompt,
+                        instance_prompt=instance_prompt,
+                    )
+                elif caption_strategy == "textfile":
+                    caption = PromptHandler.prepare_instance_prompt_from_textfile(
+                        image_path,
+                        use_captions=use_captions,
+                        prepend_instance_prompt=prepend_instance_prompt,
+                        instance_prompt=instance_prompt,
+                        data_backend=data_backend,
+                    )
+                elif caption_strategy == "parquet":
+                    caption = PromptHandler.prepare_instance_prompt_from_parquet(
+                        image_path,
+                        use_captions=use_captions,
+                        prepend_instance_prompt=prepend_instance_prompt,
+                        instance_prompt=instance_prompt,
+                        data_backend=data_backend,
+                        sampler_backend_id=data_backend.id,
+                    )
+                elif caption_strategy == "instanceprompt":
+                    return [instance_prompt]
+                elif caption_strategy == "csv":
+                    caption = data_backend.get_caption(image_path)
+                else:
+                    raise ValueError(
+                        f"Unsupported caption strategy: {caption_strategy}. Supported: 'filename', 'textfile', 'parquet', 'instanceprompt'"
+                    )
+            except CaptionNotFoundError as e:
+                logger.error(f"Could not load caption for image {image_path}: {e}")
+                images_missing_captions.append(image_path)
+                continue
 
             if type(caption) not in [tuple, list, dict]:
                 captions.append(caption)
@@ -474,7 +484,19 @@ class PromptHandler:
         # TODO: Investigate why this prevents captions from processing on multigpu systems.
         # captions = list(set(captions))
 
-        return captions
+        # Remove images that didn't have captions from the list.
+        for image_path in images_missing_captions:
+            del all_image_files[image_path]
+
+        if len(images_missing_captions) > 0:
+            logger.info(
+                f"Updating image list to reflect {len(images_missing_captions)} missing captions."
+            )
+            StateTracker.set_image_files(
+                data_backend_id=data_backend.id, raw_file_list=all_image_files
+            )
+
+        return captions, images_missing_captions
 
     @staticmethod
     def filter_caption(data_backend: BaseDataBackend, caption: str) -> str:
