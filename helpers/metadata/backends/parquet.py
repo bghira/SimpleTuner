@@ -70,6 +70,26 @@ class ParquetMetadataBackend(MetadataBackend):
             logger.warning(
                 f"Missing captions for {len(self.missing_captions)} images: {self.missing_captions}"
             )
+            self._remove_images_with_missing_captions()
+
+    def _remove_images_with_missing_captions(self):
+        """
+        Remove images from the aspect ratio bucket indices that have missing captions.
+        """
+        for key in self.aspect_ratio_bucket_indices.keys():
+            len_before = len(self.aspect_ratio_bucket_indices[key])
+            self.aspect_ratio_bucket_indices[key] = [
+                path
+                for path in self.aspect_ratio_bucket_indices[key]
+                if path not in self.missing_captions
+            ]
+            len_after = len(self.aspect_ratio_bucket_indices[key])
+            if len_before != len_after:
+                logger.warning(
+                    f"Removed {len_before - len_after} images from aspect ratio bucket {key} due to missing captions."
+                )
+        self.save_cache(enforce_constraints=True)
+        self.missing_captions = []
 
     def load_parquet_database(self):
         """
