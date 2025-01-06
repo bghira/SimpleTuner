@@ -1001,7 +1001,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             and "text" not in backend.get("skip_file_discovery", "")
         ):
             info_log(f"(id={init_backend['id']}) Collecting captions.")
-            captions = PromptHandler.get_all_captions(
+            captions, images_missing_captions = PromptHandler.get_all_captions(
                 data_backend=init_backend["data_backend"],
                 instance_data_dir=init_backend["instance_data_dir"],
                 prepend_instance_prompt=prepend_instance_prompt,
@@ -1012,6 +1012,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             logger.debug(
                 f"Pre-computing text embeds / updating cache. We have {len(captions)} captions to process, though these will be filtered next."
             )
+            logger.debug(f"Data missing captions: {images_missing_captions}")
             caption_strategy = backend.get("caption_strategy", args.caption_strategy)
             info_log(
                 f"(id={init_backend['id']}) Initialise text embed pre-computation using the {caption_strategy} caption strategy. We have {len(captions)} captions to process."
