@@ -191,8 +191,8 @@ def get_argument_parser():
         action="store_true",
         default=False,
         help=(
-            "Whether or not to use a beta schedule with Flux instead of sigmoid. The default values of alpha"
-            " and beta approximate a sigmoid."
+            "Whether or not to use a beta schedule instead of sigmoid for flow-matching."
+            " The default values of alpha and beta approximate a sigmoid."
         ),
     )
     parser.add_argument(
@@ -205,7 +205,7 @@ def get_argument_parser():
         "--flow_beta_schedule_alpha",
         type=float,
         default=2.0,
-        help=("The alpha value of the flux beta schedule. Default is 2.0"),
+        help=("The alpha value of the flow-matching beta schedule. Default is 2.0"),
     )
     parser.add_argument(
         "--flux_beta_schedule_beta",
@@ -217,7 +217,7 @@ def get_argument_parser():
         "--flow_beta_schedule_beta",
         type=float,
         default=2.0,
-        help=("The beta value of the flux beta schedule. Default is 2.0"),
+        help=("The beta value of the flow-matching beta schedule. Default is 2.0"),
     )
     parser.add_argument(
         "--flux_schedule_shift",
@@ -290,15 +290,18 @@ def get_argument_parser():
         "--flux_attention_masked_training",
         action="store_true",
         default=False,
-        help="Use attention masking while training flux.",
+        help=(
+            "Use attention masking while training flux. This can be a destructive operation,"
+            " unless finetuning a model which was already trained with it."
+        ),
     )
     parser.add_argument(
         "--t5_padding",
         choices=["zero", "unmodified"],
         default="unmodified",
         help=(
-            "The padding behaviour for Flux. The default is 'zero', which will pad the input with zeros."
-            " The alternative is 'unmodified', which will not pad the input."
+            "The padding behaviour for Flux and SD3. 'zero' will pad the input with zeros."
+            " The default is 'unmodified', which will not pad the input."
         ),
     )
     parser.add_argument(
