@@ -484,18 +484,6 @@ class PromptHandler:
         # TODO: Investigate why this prevents captions from processing on multigpu systems.
         # captions = list(set(captions))
 
-        # Remove images that didn't have captions from the list.
-        for image_path in images_missing_captions:
-            del all_image_files[image_path]
-
-        if len(images_missing_captions) > 0:
-            logger.info(
-                f"Updating image list to reflect {len(images_missing_captions)} missing captions."
-            )
-            StateTracker.set_image_files(
-                data_backend_id=data_backend.id, raw_file_list=all_image_files
-            )
-
         return captions, images_missing_captions
 
     @staticmethod
