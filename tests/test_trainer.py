@@ -124,23 +124,39 @@ class TestTrainer(unittest.TestCase):
     @patch("accelerate.state.AcceleratorState", Mock())
     @patch(
         "argparse.ArgumentParser.parse_args",
-        return_value=MagicMock(
+        return_value=Mock(
             torch_num_threads=2,
             train_batch_size=1,
             weight_dtype=torch.float32,
+            model_type="full",
             optimizer="adamw_bf16",
+            optimizer_config=None,
             max_train_steps=2,
             num_train_epochs=0,
             timestep_bias_portion=0,
             metadata_update_interval=100,
             gradient_accumulation_steps=1,
+            validation_resolution=1024,
             mixed_precision="bf16",
             report_to="none",
             output_dir="output_dir",
-            flux_schedule_shift=3,
-            flux_schedule_auto_shift=False,
+            logging_dir="logging_dir",
+            learning_rate=1,
+            flow_schedule_shift=3,
+            user_prompt_library=None,
+            flow_schedule_auto_shift=False,
             validation_guidance_skip_layers=None,
+            pretrained_model_name_or_path="some/path",
+            base_model_precision="no_change",
             gradient_checkpointing_interval=None,
+            # deprecated options
+            flux_beta_schedule_alpha=None,
+            flux_beta_schedule_beta=None,
+            flux_use_beta_schedule=None,
+            flux_use_uniform_schedule=None,
+            flux_schedule_shift=None,
+            flux_schedule_auto_shift=None,
+            flow_matching_sigmoid_scale=None,
         ),
     )
     def test_misc_init(

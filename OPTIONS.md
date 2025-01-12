@@ -378,17 +378,22 @@ This is a basic overview meant to help you get started. For a complete list of o
 usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
                 --model_family
-                {pixart_sigma,kolors,sd3,flux,smoldit,sdxl,legacy}
+                {pixart_sigma,sana,kolors,sd3,flux,smoldit,sdxl,legacy}
                 [--model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}]
                 [--flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,nano}]
                 [--flow_matching_sigmoid_scale FLOW_MATCHING_SIGMOID_SCALE]
+                [--flow_sigmoid_scale FLOW_SIGMOID_SCALE]
                 [--flux_fast_schedule] [--flux_use_uniform_schedule]
-                [--flux_use_beta_schedule]
+                [--flow_use_uniform_schedule] [--flux_use_beta_schedule]
+                [--flow_use_beta_schedule]
                 [--flux_beta_schedule_alpha FLUX_BETA_SCHEDULE_ALPHA]
+                [--flow_beta_schedule_alpha FLOW_BETA_SCHEDULE_ALPHA]
                 [--flux_beta_schedule_beta FLUX_BETA_SCHEDULE_BETA]
+                [--flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA]
                 [--flux_schedule_shift FLUX_SCHEDULE_SHIFT]
-                [--flux_schedule_auto_shift]
-                [--flux_guidance_mode {constant,random-range,mobius}]
+                [--flow_schedule_shift FLOW_SCHEDULE_SHIFT]
+                [--flux_schedule_auto_shift] [--flow_schedule_auto_shift]
+                [--flux_guidance_mode {constant,random-range}]
                 [--flux_guidance_value FLUX_GUIDANCE_VALUE]
                 [--flux_guidance_min FLUX_GUIDANCE_MIN]
                 [--flux_guidance_max FLUX_GUIDANCE_MAX]
@@ -468,7 +473,9 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--checkpoints_total_limit CHECKPOINTS_TOTAL_LIMIT]
                 [--resume_from_checkpoint RESUME_FROM_CHECKPOINT]
                 [--gradient_accumulation_steps GRADIENT_ACCUMULATION_STEPS]
-                [--gradient_checkpointing] [--learning_rate LEARNING_RATE]
+                [--gradient_checkpointing]
+                [--gradient_checkpointing_interval GRADIENT_CHECKPOINTING_INTERVAL]
+                [--learning_rate LEARNING_RATE]
                 [--text_encoder_lr TEXT_ENCODER_LR] [--lr_scale]
                 [--lr_scheduler {linear,sine,cosine,cosine_with_restarts,polynomial,constant,constant_with_warmup}]
                 [--lr_warmup_steps LR_WARMUP_STEPS]
@@ -489,8 +496,8 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--adam_beta2 ADAM_BETA2]
                 [--adam_weight_decay ADAM_WEIGHT_DECAY]
                 [--adam_epsilon ADAM_EPSILON] [--max_grad_norm MAX_GRAD_NORM]
-                [--push_to_hub] [--push_checkpoints_to_hub]
-                [--hub_model_id HUB_MODEL_ID]
+                [--grad_clip_method {value,norm}] [--push_to_hub]
+                [--push_checkpoints_to_hub] [--hub_model_id HUB_MODEL_ID]
                 [--model_card_note MODEL_CARD_NOTE]
                 [--model_card_safe_for_work] [--logging_dir LOGGING_DIR]
                 [--benchmark_base_model] [--disable_benchmark]
@@ -504,6 +511,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--validation_guidance_skip_layers_start VALIDATION_GUIDANCE_SKIP_LAYERS_START]
                 [--validation_guidance_skip_layers_stop VALIDATION_GUIDANCE_SKIP_LAYERS_STOP]
                 [--validation_guidance_skip_scale VALIDATION_GUIDANCE_SKIP_SCALE]
+                [--sana_complex_human_instruction SANA_COMPLEX_HUMAN_INSTRUCTION]
                 [--allow_tf32] [--disable_tf32] [--validation_using_datasets]
                 [--webhook_config WEBHOOK_CONFIG]
                 [--webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL]
@@ -522,7 +530,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--validation_resolution VALIDATION_RESOLUTION]
                 [--validation_noise_scheduler {ddim,ddpm,euler,euler-a,unipc}]
                 [--validation_disable_unconditional] [--enable_watermark]
-                [--mixed_precision {bf16,no}]
+                [--mixed_precision {bf16,fp16,no}]
                 [--gradient_precision {unmodified,fp32}]
                 [--quantize_via {cpu,accelerator}]
                 [--base_model_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,fp8-quanto,fp8uz-quanto}]
@@ -579,17 +587,18 @@ options:
                         The standard deviation of the data used in the soft
                         min weighting method. This is required when using the
                         soft min SNR calculation method.
-  --model_family {pixart_sigma,kolors,sd3,flux,smoldit,sdxl,legacy}
+  --model_family {pixart_sigma,sana,kolors,sd3,flux,smoldit,sdxl,legacy}
                         The model family to train. This option is required.
   --model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}
                         The training type to use. 'full' will train the full
                         model, while 'lora' will train the LoRA model. LoRA is
                         a smaller model that can be used for faster training.
   --flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,nano}
-                        Flux has single and joint attention blocks. By
-                        default, all attention layers are trained, but not the
-                        feed-forward layers If 'mmdit' is provided, the text
-                        input layers will not be trained. If 'context' is
+                        This option only applies to Standard LoRA, not
+                        Lycoris. Flux has single and joint attention blocks.
+                        By default, all attention layers are trained, but not
+                        the feed-forward layers If 'mmdit' is provided, the
+                        text input layers will not be trained. If 'context' is
                         provided, then ONLY the text attention layers are
                         trained If 'context+ffs' is provided, then text
                         attention and text feed-forward layers are trained.
@@ -603,41 +612,59 @@ options:
                         provided, only two layers will be trained. If 'nano'
                         is provided, only one layers will be trained.
   --flow_matching_sigmoid_scale FLOW_MATCHING_SIGMOID_SCALE
+                        Deprecated option. Replaced with --flow_sigmoid_scale.
+  --flow_sigmoid_scale FLOW_SIGMOID_SCALE
                         Scale factor for sigmoid timestep sampling for flow-
-                        matching models..
+                        matching models.
   --flux_fast_schedule  An experimental feature to train Flux.1S using a noise
                         schedule closer to what it was trained with, which has
                         improved results in short experiments. Thanks to
                         @mhirki for the contribution.
   --flux_use_uniform_schedule
-                        Whether or not to use a uniform schedule with Flux
-                        instead of sigmoid. Using uniform sampling may help
-                        preserve more capabilities from the base model. Some
-                        tasks may not benefit from this.
+                        Deprecated option. Replaced with
+                        --flow_use_uniform_schedule.
+  --flow_use_uniform_schedule
+                        Whether or not to use a uniform schedule with flow-
+                        matching models instead of sigmoid. Using uniform
+                        sampling may help preserve more capabilities from the
+                        base model. Some tasks may not benefit from this.
   --flux_use_beta_schedule
-                        Whether or not to use a beta schedule with Flux
-                        instead of sigmoid. The default values of alpha and
-                        beta approximate a sigmoid.
+                        Deprecated option. Replaced with
+                        --flow_use_beta_schedule.
+  --flow_use_beta_schedule
+                        Whether or not to use a beta schedule instead of
+                        sigmoid for flow-matching. The default values of alpha
+                        and beta approximate a sigmoid.
   --flux_beta_schedule_alpha FLUX_BETA_SCHEDULE_ALPHA
-                        The alpha value of the flux beta schedule. Default is
-                        2.0
+                        Deprecated option. Replaced with
+                        --flux_beta_schedule_alpha.
+  --flow_beta_schedule_alpha FLOW_BETA_SCHEDULE_ALPHA
+                        The alpha value of the flow-matching beta schedule.
+                        Default is 2.0
   --flux_beta_schedule_beta FLUX_BETA_SCHEDULE_BETA
-                        The beta value of the flux beta schedule. Default is
-                        2.0
+                        Deprecated option. Replaced with
+                        --flow_beta_schedule_beta.
+  --flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA
+                        The beta value of the flow-matching beta schedule.
+                        Default is 2.0
   --flux_schedule_shift FLUX_SCHEDULE_SHIFT
+                        Deprecated option. Replaced with
+                        --flow_schedule_shift.
+  --flow_schedule_shift FLOW_SCHEDULE_SHIFT
                         Shift the noise schedule. This is a value between 0
                         and ~4.0, where 0 disables the timestep-dependent
                         shift, and anything greater than 0 will shift the
-                        timestep sampling accordingly. The SD3 model was
-                        trained with a shift value of 3. The value for Flux is
-                        unknown. Higher values result in less noisy timesteps
-                        sampled, which results in a lower mean loss value, but
-                        not necessarily better results. Early reports indicate
-                        that modification of this value can change how the
-                        contrast is learnt by the model, and whether fine
-                        details are ignored or accentuated, removing fine
-                        details and making the outputs blurrier.
+                        timestep sampling accordingly. Sana and SD3 were
+                        trained with a shift value of 3. This value can change
+                        how contrast/brightness are learnt by the model, and
+                        whether fine details are ignored or accentuated. A
+                        higher value will focus more on large compositional
+                        features, and a lower value will focus on the high
+                        frequency fine details.
   --flux_schedule_auto_shift
+                        Deprecated option. Replaced with
+                        --flow_schedule_auto_shift.
+  --flow_schedule_auto_shift
                         Shift the noise schedule depending on image
                         resolution. The shift value calculation is taken from
                         the official Flux inference code. Shift value is
@@ -647,24 +674,14 @@ options:
                         mix of different resolutions when this option is
                         enabled. You may need to lower your learning rate with
                         this enabled.
-  --flux_guidance_mode {constant,random-range,mobius}
+  --flux_guidance_mode {constant,random-range}
                         Flux has a 'guidance' value used during training time
                         that reflects the CFG range of your training samples.
                         The default mode 'constant' will use a single value
                         for every sample. The mode 'random-range' will
                         randomly select a value from the range of the CFG for
-                        each sample. The mode 'mobius' will use a value that
-                        is a function of the remaining steps in the epoch,
-                        constructively deconstructing the constructed
-                        deconstructions to then Mobius them back into the
-                        constructed reconstructions, possibly resulting in the
-                        exploration of what is known as the Mobius space, a
-                        new continuous realm of possibility brought about by
-                        destroying the model so that you can make it whole
-                        once more. Or so according to DataVoid, anyway. This
-                        is just a Flux-specific implementation of Mobius. Set
-                        the range using --flux_guidance_min and
-                        --flux_guidance_max.
+                        each sample. Set the range using --flux_guidance_min
+                        and --flux_guidance_max.
   --flux_guidance_value FLUX_GUIDANCE_VALUE
                         When using --flux_guidance_mode=constant, this value
                         will be used for every input sample. Using a value of
@@ -674,11 +691,13 @@ options:
   --flux_guidance_min FLUX_GUIDANCE_MIN
   --flux_guidance_max FLUX_GUIDANCE_MAX
   --flux_attention_masked_training
-                        Use attention masking while training flux.
+                        Use attention masking while training flux. This can be
+                        a destructive operation, unless finetuning a model
+                        which was already trained with it.
   --t5_padding {zero,unmodified}
-                        The padding behaviour for Flux. The default is 'zero',
-                        which will pad the input with zeros. The alternative
-                        is 'unmodified', which will not pad the input.
+                        The padding behaviour for Flux and SD3. 'zero' will
+                        pad the input with zeros. The default is 'unmodified',
+                        which will not pad the input.
   --smoldit             Use the experimental SmolDiT model architecture.
   --smoldit_config {smoldit-small,smoldit-swiglu,smoldit-base,smoldit-large,smoldit-huge}
                         The SmolDiT configuration to use. This is a list of
@@ -1144,6 +1163,11 @@ options:
   --gradient_checkpointing
                         Whether or not to use gradient checkpointing to save
                         memory at the expense of slower backward pass.
+  --gradient_checkpointing_interval GRADIENT_CHECKPOINTING_INTERVAL
+                        Some models (Flux, SDXL, SD1.x/2.x, SD3) can have
+                        their gradient checkpointing limited to every nth
+                        block. This can speed up training but will use more
+                        memory with larger intervals.
   --learning_rate LEARNING_RATE
                         Initial learning rate (after the potential warmup
                         period) to use. When using a cosine or sine schedule,
@@ -1248,6 +1272,19 @@ options:
                         exploding gradients, but may also harm training by
                         introducing artifacts or making it hard to train
                         artifacts away.
+  --grad_clip_method {value,norm}
+                        When applying --max_grad_norm, the method to use for
+                        clipping the gradients. The previous default option
+                        'norm' will scale ALL gradient values when any
+                        outliers in the gradient are encountered, which can
+                        reduce training precision. The new default option
+                        'value' will clip individual gradient values using
+                        this value as a maximum, which may preserve precision
+                        while avoiding outliers, enhancing convergence. In
+                        simple terms, the default will help the model learn
+                        faster without blowing up (SD3.5 Medium was the main
+                        test model). Use 'norm' to return to the old
+                        behaviour.
   --push_to_hub         Whether or not to push the model to the Hub.
   --push_checkpoints_to_hub
                         When set along with --push_to_hub, all intermediary
@@ -1327,6 +1364,11 @@ options:
                         skip scaling. When adding more layers, you must
                         increase the scale, eg. adding one more layer requires
                         doubling the value given.
+  --sana_complex_human_instruction SANA_COMPLEX_HUMAN_INSTRUCTION
+                        When generating embeds for Sana, a complex human
+                        instruction will be attached to your prompt by
+                        default. This is required for the Gemma model to
+                        produce meaningful image caption embeds.
   --allow_tf32          Deprecated option. TF32 is now enabled by default. Use
                         --disable_tf32 to disable.
   --disable_tf32        Previous defaults were to disable TF32 on Ampere GPUs.
@@ -1425,13 +1467,16 @@ options:
                         sharing the validation images, it is up to you to
                         ensure that you are complying with the license,
                         whether that is through this watermarker, or another.
-  --mixed_precision {bf16,no}
+  --mixed_precision {bf16,fp16,no}
                         SimpleTuner only supports bf16 training. Bf16 requires
                         PyTorch >= 1.10. on an Nvidia Ampere or later GPU, and
                         PyTorch 2.3 or newer for Apple Silicon. Default to the
                         value of accelerate config of the current system or
                         the flag passed with the `accelerate.launch` command.
                         Use this argument to override the accelerate config.
+                        fp16 is offered as an experimental option, but is not
+                        recommended as it is less-tested and you will likely
+                        encounter errors.
   --gradient_precision {unmodified,fp32}
                         One of the hallmark discoveries of the Llama 3.1 paper
                         is numeric instability when calculating gradients in

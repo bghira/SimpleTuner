@@ -51,6 +51,7 @@ lm-eval = "^0.4.4"
 nvidia-cudnn-cu12 = "*"
 nvidia-nccl-cu12 = "*"
 atomicwrites = "^1.4.1"
+beautifulsoup4 = "^4.12.3"
 
 
 
