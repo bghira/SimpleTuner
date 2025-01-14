@@ -38,16 +38,16 @@ class TestMetadataFunctions(unittest.TestCase):
         self.args.validation_using_datasets = False
         self.args.flow_matching_loss = "compatible"
         self.args.flux_fast_schedule = False
-        self.args.flux_schedule_auto_shift = False
-        self.args.flux_schedule_shift = None
+        self.args.flow_schedule_auto_shift = False
+        self.args.flow_schedule_shift = None
         self.args.flux_guidance_value = None
         self.args.flux_guidance_min = None
         self.args.flux_guidance_max = None
-        self.args.flux_use_beta_schedule = False
-        self.args.flux_beta_schedule_alpha = None
-        self.args.flux_beta_schedule_beta = None
+        self.args.flow_use_beta_schedule = False
+        self.args.flow_beta_schedule_alpha = None
+        self.args.flow_beta_schedule_beta = None
         self.args.flux_attention_masked_training = False
-        self.args.flux_use_uniform_schedule = False
+        self.args.flow_use_uniform_schedule = False
         self.args.flux_lora_target = None
         self.args.validation_guidance_skip_layers = None
         self.args.validation_seed = 1234
@@ -221,9 +221,9 @@ class TestMetadataFunctions(unittest.TestCase):
         output = sd3_schedule_info(self.args)
         self.assertIn("(no special parameters set)", output)
 
-        self.args.flux_schedule_auto_shift = True
+        self.args.flow_schedule_auto_shift = True
         output = sd3_schedule_info(self.args)
-        self.assertIn("flux_schedule_auto_shift", output)
+        self.assertIn("flow_schedule_auto_shift", output)
 
     def test_model_schedule_info(self):
         with patch(

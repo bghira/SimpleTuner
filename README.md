@@ -175,7 +175,3 @@ Enable debug logs for a more detailed insight by adding `export SIMPLETUNER_LOG_
 For performance analysis of the training loop, setting `SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL=DEBUG` will have timestamps that highlight any issues in your configuration.
 
 For a comprehensive list of options available, consult [this documentation](/OPTIONS.md).
-
-## Discord
-
-For more help or to discuss training with like-minded folks, join [our Discord server](https://discord.gg/cSmvcU9Me9)

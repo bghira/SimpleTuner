@@ -181,15 +181,15 @@ If you wish to enable evaluations to score the model's performance, see [this do
 Flow-matching models such as Sana, Sana, and SD3 have a property called "shift" that allows us to shift the trained portion of the timestep schedule using a simple decimal value.
 
 ##### Auto-shift
-A commonly-recommended approach is to follow several recent works and enable resolution-dependent timestep shift, `--flux_schedule_auto_shift` which uses higher shift values for larger images, and lower shift values for smaller images. This results in stable but potentially mediocre training results.
+A commonly-recommended approach is to follow several recent works and enable resolution-dependent timestep shift, `--flow_schedule_auto_shift` which uses higher shift values for larger images, and lower shift values for smaller images. This results in stable but potentially mediocre training results.
 
 ##### Manual specification
 _Thanks to General Awareness from Discord for the following examples_
 
-When using a `--flux_schedule_shift` value of 0.1 (a very low value), only the finer details of the image are affected:
+When using a `--flow_schedule_shift` value of 0.1 (a very low value), only the finer details of the image are affected:
 ![image](https://github.com/user-attachments/assets/991ca0ad-e25a-4b13-a3d6-b4f2de1fe982)
 
-When using a `--flux_schedule_shift` value of 4.0 (a very high value), the large compositional features and potentially colour space of the model becomes impacted:
+When using a `--flow_schedule_shift` value of 4.0 (a very high value), the large compositional features and potentially colour space of the model becomes impacted:
 ![image](https://github.com/user-attachments/assets/857a1f8a-07ab-4b75-8e6a-eecff616a28d)
 
 #### Dataset considerations
