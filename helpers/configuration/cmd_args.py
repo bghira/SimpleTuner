@@ -162,9 +162,8 @@ def get_argument_parser():
         "--flux_use_uniform_schedule",
         action="store_true",
         help=(
-            "Whether or not to use a uniform schedule with Flux instead of sigmoid."
-            " Using uniform sampling may help preserve more capabilities from the base model."
-            " Some tasks may not benefit from this."
+            "Whether or not to use a uniform schedule instead of sigmoid for flow-matching noise schedule."
+            " Using uniform sampling may cause a bias toward dark images, and should be used with caution."
         ),
     )
     parser.add_argument(
