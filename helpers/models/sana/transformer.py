@@ -406,6 +406,7 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin):
         timestep: torch.LongTensor,
         encoder_attention_mask: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
+        attention_kwargs: Optional[dict] = None,
         return_dict: bool = True,
     ) -> Union[Tuple[torch.Tensor, ...], Transformer2DModelOutput]:
         if attention_kwargs is not None:
