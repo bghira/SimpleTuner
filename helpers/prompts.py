@@ -462,7 +462,7 @@ class PromptHandler:
                         sampler_backend_id=data_backend.id,
                     )
                 elif caption_strategy == "instanceprompt":
-                    return [instance_prompt]
+                    return [instance_prompt], []
                 elif caption_strategy == "csv":
                     caption = data_backend.get_caption(image_path)
                 else:
