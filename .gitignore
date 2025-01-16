@@ -1,11 +1,12 @@
 *.code-workspace
-multidatabackend*json
 # Python and virtual environment files
+.ipynb_checkpoints/
+config/.ipynb_checkpoints/
+
 output/
 temp/
 env.sh
 *.pem
-*/config/config.json
 user_prompt_library.json
 __pycache__/
 .venv/
@@ -60,7 +61,6 @@ vendor/
 inference/
 webhooks.json
 untracked/
-config/*/
 config/*.toml
 static
 templates

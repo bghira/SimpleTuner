@@ -91,7 +91,14 @@ if [ -z "${DISABLE_UPDATES}" ]; then
 fi
 # Run the training script.
 if [[ -z "${ACCELERATE_CONFIG_PATH}" ]]; then
-    ACCELERATE_CONFIG_PATH="${HOME}/.cache/huggingface/accelerate/default_config.yaml"
+    ACCELERATE_CONFIG_PATH="${HOME}/enwik8-usw2/sd35lora/SimpleTuner/base_config.yaml"
+
+# If config doesn't work, use this:
+# ORIGINAL: 
+# ACCELERATE_CONFIG_PATH="${HOME}/.cache/huggingface/accelerate/default_config.yaml"
+# MOD:
+# ACCELERATE_CONFIG_PATH="${HOME}/SimpleTuner/base_config.yaml"
+
 fi
 if [ -f "${ACCELERATE_CONFIG_PATH}" ]; then
     echo "Using Accelerate config file: ${ACCELERATE_CONFIG_PATH}"
