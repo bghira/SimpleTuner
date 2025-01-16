@@ -55,6 +55,12 @@ except:
             "Could not load bitsandbytes library. BnB-specific optimisers and other functionality will be unavailable."
         )
 
+# Some optimizers are not available in multibackend bitsandbytes as of January 2025.
+is_ademamix_available = False
+if is_bitsandbytes_available:
+    if 'AdEMAMix' in dir(bitsandbytes.optim):
+        is_ademamix_available = True
+
 optimizer_choices = {
     "adamw_bf16": {
         "precision": "bf16",
@@ -353,6 +359,47 @@ if is_bitsandbytes_available:
                 },
                 "class": bitsandbytes.optim.PagedAdamW8bit,
             },
+            "bnb-lion": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.99),
+                    "weight_decay": 0.0,
+                    "min_8bit_size": 4096,
+                },
+                "class": bitsandbytes.optim.Lion,
+            },
+            "bnb-lion8bit": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.99),
+                    "weight_decay": 0.0,
+                    "min_8bit_size": 4096,
+                },
+                "class": bitsandbytes.optim.Lion8bit,
+            },
+            "bnb-lion-paged": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.99),
+                    "weight_decay": 0.0,
+                    "min_8bit_size": 4096,
+                },
+                "class": bitsandbytes.optim.PagedLion,
+            },
+            "bnb-lion8bit-paged": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.99),
+                    "weight_decay": 0.0,
+                    "min_8bit_size": 4096,
+                },
+                "class": bitsandbytes.optim.PagedLion8bit,
+            },
+        })
+
+if is_ademamix_available:
+    optimizer_choices.update(
+        {
             "bnb-ademamix": {
                 "precision": "any",
                 "default_settings": {
@@ -404,43 +451,7 @@ if is_bitsandbytes_available:
                     "min_8bit_size": 4096,
                 },
                 "class": bitsandbytes.optim.PagedAdEMAMix8bit,
-            },
-            "bnb-lion": {
-                "precision": "any",
-                "default_settings": {
-                    "betas": (0.9, 0.99),
-                    "weight_decay": 0.0,
-                    "min_8bit_size": 4096,
-                },
-                "class": bitsandbytes.optim.Lion,
-            },
-            "bnb-lion8bit": {
-                "precision": "any",
-                "default_settings": {
-                    "betas": (0.9, 0.99),
-                    "weight_decay": 0.0,
-                    "min_8bit_size": 4096,
-                },
-                "class": bitsandbytes.optim.Lion8bit,
-            },
-            "bnb-lion-paged": {
-                "precision": "any",
-                "default_settings": {
-                    "betas": (0.9, 0.99),
-                    "weight_decay": 0.0,
-                    "min_8bit_size": 4096,
-                },
-                "class": bitsandbytes.optim.PagedLion,
-            },
-            "bnb-lion8bit-paged": {
-                "precision": "any",
-                "default_settings": {
-                    "betas": (0.9, 0.99),
-                    "weight_decay": 0.0,
-                    "min_8bit_size": 4096,
-                },
-                "class": bitsandbytes.optim.PagedLion8bit,
-            },
+            }
         }
     )
 

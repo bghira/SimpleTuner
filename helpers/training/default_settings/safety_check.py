@@ -3,6 +3,7 @@ from os import environ
 from diffusers.utils import is_wandb_available
 from helpers.training.multi_process import _get_rank as get_rank
 from helpers.training.state_tracker import StateTracker
+from torch.version import cuda as cuda_version
 
 logger = logging.getLogger(__name__)
 if get_rank() == 0:
@@ -73,6 +74,7 @@ def safety_check(args, accelerator):
         accelerator is not None
         and accelerator.device.type == "cuda"
         and accelerator.is_main_process
+        and cuda_version is not None
     ):
         import subprocess
 
