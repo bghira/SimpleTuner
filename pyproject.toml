@@ -15,7 +15,7 @@ diffusers = {git = "https://github.com/huggingface/diffusers"}
 transformers = "^4.47.1"
 datasets = "^3.0.1"
 bitsandbytes = "^0.45.0"
-wandb = "^0.19.1"
+wandb = "^0.19.4"
 requests = "^2.32.3"
 pillow = "^11.0.0"
 opencv-python = "^4.10.0.84"
