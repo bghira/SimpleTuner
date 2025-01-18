@@ -58,7 +58,7 @@ except:
 # Some optimizers are not available in multibackend bitsandbytes as of January 2025.
 is_ademamix_available = False
 if is_bitsandbytes_available:
-    if 'AdEMAMix' in dir(bitsandbytes.optim):
+    if "AdEMAMix" in dir(bitsandbytes.optim):
         is_ademamix_available = True
 
 optimizer_choices = {
@@ -395,7 +395,8 @@ if is_bitsandbytes_available:
                 },
                 "class": bitsandbytes.optim.PagedLion8bit,
             },
-        })
+        }
+    )
 
 if is_ademamix_available:
     optimizer_choices.update(
@@ -451,7 +452,7 @@ if is_ademamix_available:
                     "min_8bit_size": 4096,
                 },
                 "class": bitsandbytes.optim.PagedAdEMAMix8bit,
-            }
+            },
         }
     )
 

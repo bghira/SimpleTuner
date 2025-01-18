@@ -106,7 +106,10 @@ class S3DataBackend(BaseDataBackend):
             except (NoCredentialsError, PartialCredentialsError) as e:
                 raise e  # Raise credential errors to the caller
             except Exception as e:
-                if "An error occurred (404) when calling the HeadObject operation: Not Found" in str(e):
+                if (
+                    "An error occurred (404) when calling the HeadObject operation: Not Found"
+                    in str(e)
+                ):
                     return False
                 logger.error(f'Error checking existence of S3 key "{s3_key}": {e}')
                 if i == self.read_retry_limit - 1:
