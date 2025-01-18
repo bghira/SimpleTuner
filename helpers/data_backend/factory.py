@@ -487,6 +487,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             )
 
         # Generate a TextEmbeddingCache object
+        logger.debug(f"rank {get_rank()} is creating TextEmbeddingCache")
         init_backend["text_embed_cache"] = TextEmbeddingCache(
             id=init_backend["id"],
             data_backend=init_backend["data_backend"],
@@ -497,11 +498,15 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             model_type=StateTracker.get_model_family(),
             write_batch_size=backend.get("write_batch_size", args.write_batch_size),
         )
+        logger.debug(f"rank {get_rank()} completed creation of TextEmbeddingCache")
         init_backend["text_embed_cache"].set_webhook_handler(
             StateTracker.get_webhook_handler()
         )
+        logger.debug(f"rank {get_rank()} might skip discovery..")
         with accelerator.main_process_first():
+            logger.debug(f"rank {get_rank()} is discovering all files")
             init_backend["text_embed_cache"].discover_all_files()
+        logger.debug(f"rank {get_rank()} is waiting for other processes")
         accelerator.wait_for_everyone()
 
         if backend.get("default", False):
@@ -510,12 +515,19 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             logger.debug(f"Set the default text embed cache to {init_backend['id']}.")
             # We will compute the null embedding for caption dropout here.
             info_log("Pre-computing null embedding")
+            logger.debug(f"rank {get_rank()} may skip computing the embedding..")
             with accelerator.main_process_first():
+                logger.debug(f"rank {get_rank()} is computing the null embed")
                 init_backend["text_embed_cache"].compute_embeddings_for_prompts(
                     [""], return_concat=False, load_from_cache=False
                 )
-            time.sleep(5)
+                logger.debug(
+                    f"rank {get_rank()} has completed computing the null embed"
+                )
+
+            logger.debug(f"rank {get_rank()} is waiting for other processes")
             accelerator.wait_for_everyone()
+            logger.debug(f"rank {get_rank()} is continuing")
         if args.caption_dropout_probability == 0.0:
             logger.warning(
                 "Not using caption dropout will potentially lead to overfitting on captions, eg. CFG will not work very well. Set --caption_dropout_probability=0.1 as a recommended value."
@@ -1013,6 +1025,11 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                 f"Pre-computing text embeds / updating cache. We have {len(captions)} captions to process, though these will be filtered next."
             )
             logger.debug(f"Data missing captions: {images_missing_captions}")
+            if len(images_missing_captions) > 0 and hasattr(
+                init_backend["metadata_backend"], "remove_images"
+            ):
+                # we'll tell the aspect bucket manager to remove these images.
+                init_backend["metadata_backend"].remove_images(images_missing_captions)
             caption_strategy = backend.get("caption_strategy", args.caption_strategy)
             info_log(
                 f"(id={init_backend['id']}) Initialise text embed pre-computation using the {caption_strategy} caption strategy. We have {len(captions)} captions to process."
