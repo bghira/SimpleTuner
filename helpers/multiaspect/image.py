@@ -124,6 +124,13 @@ class MultiaspectImage:
             logger.debug(
                 f"Returning the square edge {target_pixel_edge}x{target_pixel_edge} as the target size and original size as intermediary."
             )
+            if W_initial == H_initial:
+                # if we have squares, resizing straight to the target is alright.
+                return (
+                    (target_pixel_edge, target_pixel_edge),
+                    (target_pixel_edge, target_pixel_edge),
+                    aspect_ratio,
+                )
             return (
                 (target_pixel_edge, target_pixel_edge),
                 (W_initial, H_initial),
