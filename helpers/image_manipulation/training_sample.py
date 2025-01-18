@@ -341,6 +341,7 @@ class TrainingSample:
         if not self.crop_enabled:
             self.save_debug_image(f"images/{time.time()}-1b-nocrop-resize.png")
             self.resize()
+            self.save_debug_image(f"images/{time.time()}-2-final-output.png")
 
         image = self.image
         if return_tensor:
@@ -512,7 +513,9 @@ class TrainingSample:
                 self.aspect_ratio, self.resolution, self.original_size
             )
         )
-        if self.crop_aspect != "random" or not self.valid_metadata:
+        if (
+            self.crop_enabled and self.crop_aspect != "random"
+        ) or not self.valid_metadata:
             self.intermediary_size = calculated_intermediary_size
         self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
             self.target_size

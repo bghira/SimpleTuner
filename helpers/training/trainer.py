@@ -1648,18 +1648,32 @@ class Trainer:
             tracker_run_name = (
                 self.config.tracker_run_name or "simpletuner-training-run"
             )
-            self.accelerator.init_trackers(
-                project_name,
-                config=vars(public_args),
-                init_kwargs={
-                    "wandb": {
-                        "name": tracker_run_name,
-                        "id": f"{public_args_hash}",
-                        "resume": "allow",
-                        "allow_val_change": True,
-                    }
-                },
-            )
+            try:
+                self.accelerator.init_trackers(
+                    project_name,
+                    config=vars(public_args),
+                    init_kwargs={
+                        "wandb": {
+                            "name": tracker_run_name,
+                            "id": f"{public_args_hash}",
+                            "resume": "allow",
+                            "allow_val_change": True,
+                        }
+                    },
+                )
+            except Exception as e:
+                if "Object has no attribute 'disabled'" in repr(e):
+                    logger.warning(
+                        "WandB is disabled, and Accelerate was not quite happy about it."
+                    )
+                else:
+                    logger.error(f"Could not initialize trackers: {e}")
+                    self._send_webhook_raw(
+                        structured_data={
+                            "message": f"Could not initialize trackers. Continuing without. {e}"
+                        },
+                        message_type="error",
+                    )
             self._send_webhook_raw(
                 structured_data=public_args.__dict__,
                 message_type="training_config",
