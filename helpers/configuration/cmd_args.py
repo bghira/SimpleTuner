@@ -1066,6 +1066,15 @@ def get_argument_parser():
         help="Total number of training steps to perform.  If provided, overrides num_train_epochs.",
     )
     parser.add_argument(
+        "--ignore_final_epochs",
+        action="store_true",
+        default=False,
+        help=(
+            "When provided, the max epoch counter will not determine the end of the training run."
+            " Instead, it will end when it hits --max_train_steps."
+        )
+    )
+    parser.add_argument(
         "--checkpointing_steps",
         type=int,
         default=500,
