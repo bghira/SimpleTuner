@@ -3060,7 +3060,7 @@ class Trainer:
 
                 if (
                     self.state["global_step"] >= self.config.max_train_steps
-                    or epoch > self.config.num_train_epochs
+                    or (epoch > self.config.num_train_epochs and not self.config.ignore_final_epochs)
                 ):
                     logger.info(
                         f"Training has completed."
@@ -3069,7 +3069,7 @@ class Trainer:
                     break
             if (
                 self.state["global_step"] >= self.config.max_train_steps
-                or epoch > self.config.num_train_epochs
+                or (epoch > self.config.num_train_epochs and not self.config.ignore_final_epochs)
             ):
                 logger.info(
                     f"Exiting training loop. Beginning model unwind at epoch {epoch}, step {self.state['global_step']}"
