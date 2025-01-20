@@ -1146,7 +1146,7 @@ class Trainer:
                     "You must specify either --max_train_steps or --num_train_epochs with a value > 0"
                 )
             self.config.num_train_epochs = math.ceil(
-                self.config.max_train_steps / self.config.num_update_steps_per_epoch
+                self.config.max_train_steps / max(self.config.num_update_steps_per_epoch, 1)
             )
             logger.info(
                 f"Calculated our maximum training steps at {self.config.max_train_steps} because we have"
@@ -1618,7 +1618,7 @@ class Trainer:
                 * self.accelerator.num_processes
             )
 
-        if self.state["current_epoch"] > self.config.num_train_epochs + 1:
+        if self.state["current_epoch"] > self.config.num_train_epochs + 1 and not self.config.ignore_final_epochs:
             logger.info(
                 f"Reached the end ({self.state['current_epoch']} epochs) of our training run ({self.config.num_train_epochs} epochs). This run will do zero steps."
             )
@@ -2305,8 +2305,11 @@ class Trainer:
         current_epoch_step = None
         self.bf, fetch_thread = None, None
         iterator_fn = random_dataloader_iterator
-        for epoch in range(self.state["first_epoch"], self.config.num_train_epochs + 1):
-            if self.state["current_epoch"] > self.config.num_train_epochs + 1:
+        num_epochs_to_track = self.config.num_train_epochs + 1
+        if self.config.ignore_final_epochs:
+            num_epochs_to_track += 1000000
+        for epoch in range(self.state["first_epoch"], num_epochs_to_track):
+            if self.state["current_epoch"] > self.config.num_train_epochs + 1 and not self.config.ignore_final_epochs:
                 # This might immediately end training, but that's useful for simply exporting the model.
                 logger.info(
                     f"Training run is complete ({self.config.num_train_epochs}/{self.config.num_train_epochs} epochs, {self.state['global_step']}/{self.config.max_train_steps} steps)."
@@ -3060,7 +3063,7 @@ class Trainer:
 
                 if (
                     self.state["global_step"] >= self.config.max_train_steps
-                    or epoch > self.config.num_train_epochs
+                    or (epoch > self.config.num_train_epochs and not self.config.ignore_final_epochs)
                 ):
                     logger.info(
                         f"Training has completed."
@@ -3069,7 +3072,7 @@ class Trainer:
                     break
             if (
                 self.state["global_step"] >= self.config.max_train_steps
-                or epoch > self.config.num_train_epochs
+                or (epoch > self.config.num_train_epochs and not self.config.ignore_final_epochs)
             ):
                 logger.info(
                     f"Exiting training loop. Beginning model unwind at epoch {epoch}, step {self.state['global_step']}"
