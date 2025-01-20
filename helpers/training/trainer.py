@@ -2305,7 +2305,10 @@ class Trainer:
         current_epoch_step = None
         self.bf, fetch_thread = None, None
         iterator_fn = random_dataloader_iterator
-        for epoch in range(self.state["first_epoch"], self.config.num_train_epochs + 1):
+        num_epochs_to_track = self.config.num_train_epochs + 1
+        if self.config.ignore_final_epochs:
+            num_epochs_to_track += 1000000
+        for epoch in range(self.state["first_epoch"], num_epochs_to_track):
             if self.state["current_epoch"] > self.config.num_train_epochs + 1 and not self.config.ignore_final_epochs:
                 # This might immediately end training, but that's useful for simply exporting the model.
                 logger.info(
