@@ -1146,7 +1146,7 @@ class Trainer:
                     "You must specify either --max_train_steps or --num_train_epochs with a value > 0"
                 )
             self.config.num_train_epochs = math.ceil(
-                self.config.max_train_steps / self.config.num_update_steps_per_epoch
+                self.config.max_train_steps / max(self.config.num_update_steps_per_epoch, 1)
             )
             logger.info(
                 f"Calculated our maximum training steps at {self.config.max_train_steps} because we have"
