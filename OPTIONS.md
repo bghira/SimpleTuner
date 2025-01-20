@@ -272,6 +272,11 @@ A lot of settings are instead set through the [dataloader config](/documentation
 - **What**: Number of training steps to exit training after. If set to 0, will allow `--num_train_epochs` to take priority.
 - **Why**: Useful for shortening the length of training.
 
+### `--ignore_final_epochs`
+
+- **What**: Ignore the final counted epochs in favour of `--max_train_steps`.
+- **Why**: When changing the dataloader length, training may end earlier than you want because the epoch calculation changes. This option will ignore the final epochs and instead continue to train until `--max_train_steps` is reached.
+
 ### `--learning_rate`
 
 - **What**: Initial learning rate after potential warmup.
@@ -468,7 +473,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--tokenizer_max_length TOKENIZER_MAX_LENGTH]
                 [--train_batch_size TRAIN_BATCH_SIZE]
                 [--num_train_epochs NUM_TRAIN_EPOCHS]
-                [--max_train_steps MAX_TRAIN_STEPS]
+                [--max_train_steps MAX_TRAIN_STEPS] [--ignore_final_epochs]
                 [--checkpointing_steps CHECKPOINTING_STEPS]
                 [--checkpoints_total_limit CHECKPOINTS_TOTAL_LIMIT]
                 [--resume_from_checkpoint RESUME_FROM_CHECKPOINT]
@@ -486,7 +491,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--ema_update_interval EMA_UPDATE_INTERVAL]
                 [--ema_decay EMA_DECAY] [--non_ema_revision NON_EMA_REVISION]
                 [--offload_param_path OFFLOAD_PARAM_PATH] --optimizer
-                {adamw_bf16,ao-adamw8bit,ao-adamw4bit,ao-adamfp8,ao-adamwfp8,adamw_schedulefree,adamw_schedulefree+aggressive,adamw_schedulefree+no_kahan,optimi-stableadamw,optimi-adamw,optimi-lion,optimi-radam,optimi-ranger,optimi-adan,optimi-adam,optimi-sgd,soap,bnb-adagrad,bnb-adagrad8bit,bnb-adam,bnb-adam8bit,bnb-adamw,bnb-adamw8bit,bnb-adamw-paged,bnb-adamw8bit-paged,bnb-ademamix,bnb-ademamix8bit,bnb-ademamix-paged,bnb-ademamix8bit-paged,bnb-lion,bnb-lion8bit,bnb-lion-paged,bnb-lion8bit-paged}
+                {adamw_bf16,ao-adamw8bit,ao-adamw4bit,ao-adamfp8,ao-adamwfp8,adamw_schedulefree,adamw_schedulefree+aggressive,adamw_schedulefree+no_kahan,optimi-stableadamw,optimi-adamw,optimi-lion,optimi-radam,optimi-ranger,optimi-adan,optimi-adam,optimi-sgd,soap,bnb-adagrad,bnb-adagrad8bit,bnb-adam,bnb-adam8bit,bnb-adamw,bnb-adamw8bit,bnb-adamw-paged,bnb-adamw8bit-paged,bnb-lion,bnb-lion8bit,bnb-lion-paged,bnb-lion8bit-paged,bnb-ademamix,bnb-ademamix8bit,bnb-ademamix-paged,bnb-ademamix8bit-paged}
                 [--optimizer_config OPTIMIZER_CONFIG]
                 [--optimizer_cpu_offload_method {none}]
                 [--optimizer_offload_gradients] [--fuse_optimizer]
@@ -624,10 +629,10 @@ options:
                         Deprecated option. Replaced with
                         --flow_use_uniform_schedule.
   --flow_use_uniform_schedule
-                        Whether or not to use a uniform schedule with flow-
-                        matching models instead of sigmoid. Using uniform
-                        sampling may help preserve more capabilities from the
-                        base model. Some tasks may not benefit from this.
+                        Whether or not to use a uniform schedule instead of
+                        sigmoid for flow-matching noise schedule. Using
+                        uniform sampling may cause a bias toward dark images,
+                        and should be used with caution.
   --flux_use_beta_schedule
                         Deprecated option. Replaced with
                         --flow_use_beta_schedule.
@@ -1139,6 +1144,10 @@ options:
   --max_train_steps MAX_TRAIN_STEPS
                         Total number of training steps to perform. If
                         provided, overrides num_train_epochs.
+  --ignore_final_epochs
+                        When provided, the max epoch counter will not
+                        determine the end of the training run. Instead, it
+                        will end when it hits --max_train_steps.
   --checkpointing_steps CHECKPOINTING_STEPS
                         Save a checkpoint of the training state every X
                         updates. Checkpoints can be used for resuming training
@@ -1230,7 +1239,7 @@ options:
                         When using DeepSpeed ZeRo stage 2 or 3 with NVMe
                         offload, this may be specified to provide a path for
                         the offload.
-  --optimizer {adamw_bf16,ao-adamw8bit,ao-adamw4bit,ao-adamfp8,ao-adamwfp8,adamw_schedulefree,adamw_schedulefree+aggressive,adamw_schedulefree+no_kahan,optimi-stableadamw,optimi-adamw,optimi-lion,optimi-radam,optimi-ranger,optimi-adan,optimi-adam,optimi-sgd,soap,bnb-adagrad,bnb-adagrad8bit,bnb-adam,bnb-adam8bit,bnb-adamw,bnb-adamw8bit,bnb-adamw-paged,bnb-adamw8bit-paged,bnb-ademamix,bnb-ademamix8bit,bnb-ademamix-paged,bnb-ademamix8bit-paged,bnb-lion,bnb-lion8bit,bnb-lion-paged,bnb-lion8bit-paged}
+  --optimizer {adamw_bf16,ao-adamw8bit,ao-adamw4bit,ao-adamfp8,ao-adamwfp8,adamw_schedulefree,adamw_schedulefree+aggressive,adamw_schedulefree+no_kahan,optimi-stableadamw,optimi-adamw,optimi-lion,optimi-radam,optimi-ranger,optimi-adan,optimi-adam,optimi-sgd,soap,bnb-adagrad,bnb-adagrad8bit,bnb-adam,bnb-adam8bit,bnb-adamw,bnb-adamw8bit,bnb-adamw-paged,bnb-adamw8bit-paged,bnb-lion,bnb-lion8bit,bnb-lion-paged,bnb-lion8bit-paged,bnb-ademamix,bnb-ademamix8bit,bnb-ademamix-paged,bnb-ademamix8bit-paged}
   --optimizer_config OPTIMIZER_CONFIG
                         When setting a given optimizer, this allows a comma-
                         separated list of key-value pairs to be provided that
