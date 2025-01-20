@@ -1618,7 +1618,7 @@ class Trainer:
                 * self.accelerator.num_processes
             )
 
-        if self.state["current_epoch"] > self.config.num_train_epochs + 1:
+        if self.state["current_epoch"] > self.config.num_train_epochs + 1 and not self.config.ignore_final_epochs:
             logger.info(
                 f"Reached the end ({self.state['current_epoch']} epochs) of our training run ({self.config.num_train_epochs} epochs). This run will do zero steps."
             )
@@ -2306,7 +2306,7 @@ class Trainer:
         self.bf, fetch_thread = None, None
         iterator_fn = random_dataloader_iterator
         for epoch in range(self.state["first_epoch"], self.config.num_train_epochs + 1):
-            if self.state["current_epoch"] > self.config.num_train_epochs + 1:
+            if self.state["current_epoch"] > self.config.num_train_epochs + 1 and not self.config.ignore_final_epochs:
                 # This might immediately end training, but that's useful for simply exporting the model.
                 logger.info(
                     f"Training run is complete ({self.config.num_train_epochs}/{self.config.num_train_epochs} epochs, {self.state['global_step']}/{self.config.max_train_steps} steps)."
