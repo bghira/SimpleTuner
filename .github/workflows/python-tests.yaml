@@ -32,4 +32,4 @@ jobs:
       run: poetry -C install/apple install
 
     - name: Run Tests
-      run: poetry -C install/apple run python -m unittest discover tests/
+      run: poetry -C ./ -P install/apple run python -m unittest discover tests/
