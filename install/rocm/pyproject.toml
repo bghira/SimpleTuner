@@ -47,6 +47,7 @@ bitsandbytes = "^0.44.1"
 atomicwrites = "^1.4.1"
 torchao = "^0.7.0"
 beautifulsoup4 = "^4.12.3"
+prodigy-plus-schedule-free = "^1.8.51"
 
 
 [build-system]

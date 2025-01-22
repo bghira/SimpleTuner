@@ -61,6 +61,18 @@ if is_bitsandbytes_available:
     if "AdEMAMix" in dir(bitsandbytes.optim):
         is_ademamix_available = True
 
+is_prodigy_available = False
+try:
+    import prodigyplus
+
+    is_prodigy_available = True
+except:
+    if torch.cuda.is_available():
+        logger.warning(
+            "Could not load prodigyplus library. Prodigy will not be available."
+        )
+
+
 optimizer_choices = {
     "adamw_bf16": {
         "precision": "bf16",
@@ -456,6 +468,42 @@ if is_ademamix_available:
         }
     )
 
+if is_prodigy_available:
+    optimizer_choices.update(
+        {
+            "prodigy": {
+                "precision": "any",
+                "override_lr_scheduler": True,
+                "can_warmup": False,
+                "default_settings": {
+                    "lr": 1.0,
+                    "betas": (0.9, 0.99),
+                    "beta3": None,
+                    "weight_decay": 0.0,
+                    "weight_decay_by_lr": True,
+                    "use_bias_correction": False,
+                    "d0": 1e-6,
+                    "d_coef": 1,
+                    "prodigy_steps": 0,
+                    "use_speed": False,
+                    "eps": 1e-8,
+                    "split_groups": True,
+                    "split_groups_mean": True,
+                    "factored": True,
+                    "factored_fp32": True,
+                    "fused_back_pass": False,
+                    "use_stableadamw": True,
+                    "use_muon_pp": False,
+                    "use_cautious": False,
+                    "use_grams": False,
+                    "use_adopt": False,
+                    "stochastic_rounding": True,
+                },
+                "class": prodigyplus.prodigy_plus_schedulefree.ProdigyPlusScheduleFree,
+            }
+        }
+    )
+
 args_to_optimizer_mapping = {
     "use_adafactor_optimizer": "adafactor",
     "use_prodigy_optimizer": "prodigy",
@@ -465,7 +513,6 @@ args_to_optimizer_mapping = {
 }
 
 deprecated_optimizers = {
-    "prodigy": "Prodigy optimiser has been removed due to issues with precision levels and convergence. Please use adamw_schedulefree instead.",
     "dadaptation": "D-adaptation optimiser has been removed due to issues with precision levels and convergence. Please use adamw_schedulefree instead.",
     "adafactor": "Adafactor optimiser has been removed in favour of optimi-stableadamw, which offers improved memory efficiency and convergence.",
     "adamw8bit": "AdamW8Bit has been removed in favour of optimi-adamw optimiser, which offers better low-precision support. Please use this or adamw_bf16 instead.",
@@ -512,6 +559,16 @@ def optimizer_parameters(optimizer, args):
         if args.optimizer_release_gradients and "optimi-" in optimizer:
             optimizer_params["gradient_release"] = True
         optimizer_details["default_settings"] = optimizer_params
+        if args.optimizer == "prodigy":
+            prodigy_steps = args.prodigy_steps
+            if prodigy_steps and prodigy_steps > 0:
+                optimizer_params["prodigy_steps"] = prodigy_steps
+            else:
+                # 25% of the total number of steps
+                optimizer_params["prodigy_steps"] = int(args.max_train_steps * 0.25)
+            print(
+                f"Using Prodigy optimiser with {optimizer_params['prodigy_steps']} steps of learning rate adjustment."
+            )
         return optimizer_class, optimizer_details
     else:
         raise ValueError(f"Optimizer {optimizer} not found.")
