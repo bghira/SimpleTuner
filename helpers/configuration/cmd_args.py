@@ -1337,6 +1337,17 @@ def get_argument_parser():
         help="Epsilon value for the Adam optimizer",
     )
     parser.add_argument(
+        "--prodigy_steps",
+        type=int,
+        default=None,
+        help=(
+            "When training with Prodigy, this defines how many steps it should be adjusting its learning rate for."
+            " It seems to be that Diffusion models benefit from a capping off of the adjustments after 25 percent"
+            " of the training run (dependent on batch size, repeats, and epochs)."
+            " It this value is not supplied, it will be calculated at 25 percent of your training steps."
+        ),
+    )
+    parser.add_argument(
         "--max_grad_norm",
         default=2.0,
         type=float,
