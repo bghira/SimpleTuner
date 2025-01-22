@@ -283,6 +283,21 @@ A lot of settings are instead set through the [dataloader config](/documentation
 - **Choices**: constant, constant_with_warmup, cosine, cosine_with_restarts, **polynomial** (recommended), linear
 - **Why**: Models benefit from continual learning rate adjustments to further explore the loss landscape. A cosine schedule is used as the default; this allows the training to smoothly transition between two extremes. If using a constant learning rate, it is common to select a too-high or too-low value, causing divergence (too high) or getting stuck in a local minima (too low). A polynomial schedule is best paired with a warmup, where it will gradually approach the `learning_rate` value before then slowing down and approaching `--lr_end` by the end.
 
+### `--optimizer`
+
+- **What**: The optimizer to use for training.
+- **Choices**: adamw_bf16, ao-adamw8bit, ao-adamw4bit, ao-adamfp8, ao-adamwfp8, adamw_schedulefree, adamw_schedulefree+aggressive, adamw_schedulefree+no_kahan, optimi-stableadamw, optimi-adamw, optimi-lion, optimi-radam, optimi-ranger, optimi-adan, optimi-adam, optimi-sgd, soap, bnb-adagrad, bnb-adagrad8bit, bnb-adam, bnb-adam8bit, bnb-adamw, bnb-adamw8bit, bnb-adamw-paged, bnb-adamw8bit-paged, bnb-lion, bnb-lion8bit, bnb-lion-paged, bnb-lion8bit-paged, bnb-ademamix, bnb-ademamix8bit, bnb-ademamix-paged, bnb-ademamix8bit-paged, prodigy
+
+> Note: Some optimisers may not be available on non-NVIDIA hardware.
+
+### `--optimizer_config`
+
+- **What**: Tweak optimizer settings.
+- **Why**: Because optimizers have so many different settings, it's not feasible to provide a command-line argument for each one. Instead, you can provide a comma-separated list of values to override any of the default settings.
+- **Example**: You may wish to set the `d_coef` for the **prodigy** optimizer: `--optimizer_config=d_coef=0.1`
+
+> Note: Optimizer betas are overridden using dedicated parameters, `--optimizer_beta1`, `--optimizer_beta2`.
+
 ### `--train_batch_size`
 
 - **What**: Batch size for the training data loader.
@@ -292,6 +307,8 @@ A lot of settings are instead set through the [dataloader config](/documentation
 
 - **What**: Number of update steps to accumulate before performing a backward/update pass, essentially splitting the work over multiple batches to save memory at the cost of a higher training runtime.
 - **Why**: Useful for handling larger models or datasets.
+
+> Note: Do not enable fused backward pass for any optimizers when using gradient accumulation steps.
 
 ---
 
@@ -486,7 +503,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--ema_update_interval EMA_UPDATE_INTERVAL]
                 [--ema_decay EMA_DECAY] [--non_ema_revision NON_EMA_REVISION]
                 [--offload_param_path OFFLOAD_PARAM_PATH] --optimizer
-                {adamw_bf16,ao-adamw8bit,ao-adamw4bit,ao-adamfp8,ao-adamwfp8,adamw_schedulefree,adamw_schedulefree+aggressive,adamw_schedulefree+no_kahan,optimi-stableadamw,optimi-adamw,optimi-lion,optimi-radam,optimi-ranger,optimi-adan,optimi-adam,optimi-sgd,soap,bnb-adagrad,bnb-adagrad8bit,bnb-adam,bnb-adam8bit,bnb-adamw,bnb-adamw8bit,bnb-adamw-paged,bnb-adamw8bit-paged,bnb-ademamix,bnb-ademamix8bit,bnb-ademamix-paged,bnb-ademamix8bit-paged,bnb-lion,bnb-lion8bit,bnb-lion-paged,bnb-lion8bit-paged}
+                {adamw_bf16,ao-adamw8bit,ao-adamw4bit,ao-adamfp8,ao-adamwfp8,adamw_schedulefree,adamw_schedulefree+aggressive,adamw_schedulefree+no_kahan,optimi-stableadamw,optimi-adamw,optimi-lion,optimi-radam,optimi-ranger,optimi-adan,optimi-adam,optimi-sgd,soap,bnb-adagrad,bnb-adagrad8bit,bnb-adam,bnb-adam8bit,bnb-adamw,bnb-adamw8bit,bnb-adamw-paged,bnb-adamw8bit-paged,bnb-lion,bnb-lion8bit,bnb-lion-paged,bnb-lion8bit-paged,bnb-ademamix,bnb-ademamix8bit,bnb-ademamix-paged,bnb-ademamix8bit-paged,prodigy}
                 [--optimizer_config OPTIMIZER_CONFIG]
                 [--optimizer_cpu_offload_method {none}]
                 [--optimizer_offload_gradients] [--fuse_optimizer]
@@ -495,7 +512,8 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--optimizer_release_gradients] [--adam_beta1 ADAM_BETA1]
                 [--adam_beta2 ADAM_BETA2]
                 [--adam_weight_decay ADAM_WEIGHT_DECAY]
-                [--adam_epsilon ADAM_EPSILON] [--max_grad_norm MAX_GRAD_NORM]
+                [--adam_epsilon ADAM_EPSILON] [--prodigy_steps PRODIGY_STEPS]
+                [--max_grad_norm MAX_GRAD_NORM]
                 [--grad_clip_method {value,norm}] [--push_to_hub]
                 [--push_checkpoints_to_hub] [--hub_model_id HUB_MODEL_ID]
                 [--model_card_note MODEL_CARD_NOTE]
@@ -624,10 +642,10 @@ options:
                         Deprecated option. Replaced with
                         --flow_use_uniform_schedule.
   --flow_use_uniform_schedule
-                        Whether or not to use a uniform schedule with flow-
-                        matching models instead of sigmoid. Using uniform
-                        sampling may help preserve more capabilities from the
-                        base model. Some tasks may not benefit from this.
+                        Whether or not to use a uniform schedule instead of
+                        sigmoid for flow-matching noise schedule. Using
+                        uniform sampling may cause a bias toward dark images,
+                        and should be used with caution.
   --flux_use_beta_schedule
                         Deprecated option. Replaced with
                         --flow_use_beta_schedule.
@@ -1230,7 +1248,7 @@ options:
                         When using DeepSpeed ZeRo stage 2 or 3 with NVMe
                         offload, this may be specified to provide a path for
                         the offload.
-  --optimizer {adamw_bf16,ao-adamw8bit,ao-adamw4bit,ao-adamfp8,ao-adamwfp8,adamw_schedulefree,adamw_schedulefree+aggressive,adamw_schedulefree+no_kahan,optimi-stableadamw,optimi-adamw,optimi-lion,optimi-radam,optimi-ranger,optimi-adan,optimi-adam,optimi-sgd,soap,bnb-adagrad,bnb-adagrad8bit,bnb-adam,bnb-adam8bit,bnb-adamw,bnb-adamw8bit,bnb-adamw-paged,bnb-adamw8bit-paged,bnb-ademamix,bnb-ademamix8bit,bnb-ademamix-paged,bnb-ademamix8bit-paged,bnb-lion,bnb-lion8bit,bnb-lion-paged,bnb-lion8bit-paged}
+  --optimizer {adamw_bf16,ao-adamw8bit,ao-adamw4bit,ao-adamfp8,ao-adamwfp8,adamw_schedulefree,adamw_schedulefree+aggressive,adamw_schedulefree+no_kahan,optimi-stableadamw,optimi-adamw,optimi-lion,optimi-radam,optimi-ranger,optimi-adan,optimi-adam,optimi-sgd,soap,bnb-adagrad,bnb-adagrad8bit,bnb-adam,bnb-adam8bit,bnb-adamw,bnb-adamw8bit,bnb-adamw-paged,bnb-adamw8bit-paged,bnb-lion,bnb-lion8bit,bnb-lion-paged,bnb-lion8bit-paged,bnb-ademamix,bnb-ademamix8bit,bnb-ademamix-paged,bnb-ademamix8bit-paged,prodigy}
   --optimizer_config OPTIMIZER_CONFIG
                         When setting a given optimizer, this allows a comma-
                         separated list of key-value pairs to be provided that
@@ -1267,6 +1285,14 @@ options:
                         Weight decay to use.
   --adam_epsilon ADAM_EPSILON
                         Epsilon value for the Adam optimizer
+  --prodigy_steps PRODIGY_STEPS
+                        When training with Prodigy, this defines how many
+                        steps it should be adjusting its learning rate for. It
+                        seems to be that Diffusion models benefit from a
+                        capping off of the adjustments after 25 percent of the
+                        training run (dependent on batch size, repeats, and
+                        epochs). It this value is not supplied, it will be
+                        calculated at 25 percent of your training steps.
   --max_grad_norm MAX_GRAD_NORM
                         Clipping the max gradient norm can help prevent
                         exploding gradients, but may also harm training by
