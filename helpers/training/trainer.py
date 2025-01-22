@@ -1232,9 +1232,7 @@ class Trainer:
     def init_lr_scheduler(self):
         self.config.is_schedulefree = is_lr_scheduler_disabled(self.config.optimizer)
         if self.config.is_schedulefree:
-            logger.info(
-                "Using experimental AdamW ScheduleFree optimiser from Facebook. Experimental due to newly added Kahan summation."
-            )
+            logger.info("Using experimental ScheduleFree optimiser..")
             # we don't use LR schedulers with schedulefree optimisers
             lr_scheduler = None
         if not self.config.use_deepspeed_scheduler and not self.config.is_schedulefree:
@@ -2775,12 +2773,14 @@ class Trainer:
                                 if param.grad is not None:
                                     param.grad.data = param.grad.data.to(torch.float32)
 
+                        self.grad_norm = self._max_grad_value()
                         if (
                             self.accelerator.sync_gradients
-                            and self.config.optimizer != "optimi-stableadamw"
+                            and self.config.optimizer
+                            not in ["optimi-stableadamw", "prodigy"]
                             and self.config.max_grad_norm > 0
                         ):
-                            # StableAdamW does not need clipping, similar to Adafactor.
+                            # StableAdamW/Prodigy do not need clipping, similar to Adafactor.
                             if self.config.grad_clip_method == "norm":
                                 self.grad_norm = self.accelerator.clip_grad_norm_(
                                     self._get_trainable_parameters(),
@@ -2790,7 +2790,6 @@ class Trainer:
                                 # deepspeed can only do norm clipping (internally)
                                 pass
                             elif self.config.grad_clip_method == "value":
-                                self.grad_norm = self._max_grad_value()
                                 self.accelerator.clip_grad_value_(
                                     self._get_trainable_parameters(),
                                     self.config.max_grad_norm,
@@ -2821,7 +2820,22 @@ class Trainer:
                 wandb_logs = {}
                 if self.accelerator.sync_gradients:
                     try:
-                        if self.config.is_schedulefree:
+                        if "prodigy" in self.config.optimizer:
+                            self.lr = self.optimizer.param_groups[0]["d"]
+                            wandb_logs.update(
+                                {
+                                    "prodigy/d": self.optimizer.param_groups[0]["d"],
+                                    "prodigy/d_prev": self.optimizer.param_groups[0][
+                                        "d_prev"
+                                    ],
+                                    "prodigy/d0": self.optimizer.param_groups[0]["d0"],
+                                    "prodigy/d_coef": self.optimizer.param_groups[0][
+                                        "d_coef"
+                                    ],
+                                    "prodigy/k": self.optimizer.param_groups[0]["k"],
+                                }
+                            )
+                        elif self.config.is_schedulefree:
                             # hackjob method of retrieving LR from accelerated optims
                             self.lr = StateTracker.get_last_lr()
                         else:
@@ -2831,12 +2845,14 @@ class Trainer:
                         logger.error(
                             f"Failed to get the last learning rate from the scheduler. Error: {e}"
                         )
-                    wandb_logs = {
-                        "train_loss": self.train_loss,
-                        "optimization_loss": loss,
-                        "learning_rate": self.lr,
-                        "epoch": epoch,
-                    }
+                    wandb_logs.update(
+                        {
+                            "train_loss": self.train_loss,
+                            "optimization_loss": loss,
+                            "learning_rate": self.lr,
+                            "epoch": epoch,
+                        }
+                    )
                     if parent_loss is not None:
                         wandb_logs["regularisation_loss"] = parent_loss
                     if self.config.model_family == "flux" and self.guidance_values_list:
@@ -2847,7 +2863,7 @@ class Trainer:
                     if self.grad_norm is not None:
                         if self.config.grad_clip_method == "norm":
                             wandb_logs["grad_norm"] = self.grad_norm
-                        elif self.config.grad_clip_method == "value":
+                        else:
                             wandb_logs["grad_absmax"] = self.grad_norm
                     if self.validation is not None and hasattr(
                         self.validation, "evaluation_result"

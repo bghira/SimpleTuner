@@ -2730,6 +2730,20 @@ redis = ["redis"]
 tests = ["pytest (>=5.4.1)", "pytest-cov (>=2.8.1)", "pytest-mypy (>=0.8.0)", "pytest-timeout (>=2.1.0)", "redis", "sphinx (>=6.0.0)", "types-redis"]
 
 [[package]]
+name = "prodigy-plus-schedule-free"
+version = "1.8.51"
+description = "Automatic learning rate optimiser based on Prodigy and Schedule-Free"
+optional = false
+python-versions = ">=3.4"
+files = [
+    {file = "prodigy_plus_schedule_free-1.8.51-py3-none-any.whl", hash = "sha256:db2e8e7443e8a8b83e412c8e6b81ac67c72135a8065c1dc001d781a9d2f5dbef"},
+    {file = "prodigy_plus_schedule_free-1.8.51.tar.gz", hash = "sha256:19e5acb151c54f4326b11e6f308f57acbaa4fba5834bf3a32d759a5de11ba6e7"},
+]
+
+[package.dependencies]
+torch = ">=2.0"
+
+[[package]]
 name = "propcache"
 version = "0.2.0"
 description = "Accelerated property cache"
@@ -5359,4 +5373,4 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.12"
-content-hash = "c4655978cc7d793ef49f1906503b3ee53e1d625c473740cb982aabac16fe9929"
+content-hash = "0d8538a573aada976d0ae6ec34b7efa6328a7c7185188362482e1fa93ae72c53"
