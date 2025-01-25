@@ -1,7 +1,7 @@
 {
     "algo": "lokr",
     "multiplier": 1.0,
-    "linear_dim": 10000,
+    "full_matrix": true,
     "linear_alpha": 1,
     "factor": 16,
     "apply_preset": {
