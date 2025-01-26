@@ -295,6 +295,9 @@ class ParquetMetadataBackend(MetadataBackend):
         # Prune any buckets that have fewer samples than batch_size
         if enforce_constraints:
             self._enforce_min_bucket_size()
+        self._enforce_min_aspect_ratio()
+        self._enforce_max_aspect_ratio()
+
         if self.read_only:
             logger.debug("Metadata backend is read-only, skipping cache save.")
             return
