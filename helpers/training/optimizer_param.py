@@ -126,6 +126,7 @@ optimizer_choices = {
     "adamw_schedulefree": {
         "precision": "any",
         "override_lr_scheduler": True,
+        "is_schedulefree": True,
         "can_warmup": True,
         "default_settings": {
             "betas": (0.9, 0.999),
@@ -137,6 +138,7 @@ optimizer_choices = {
     "adamw_schedulefree+aggressive": {
         "precision": "any",
         "override_lr_scheduler": True,
+        "is_schedulefree": True,
         "can_warmup": True,
         "default_settings": {
             "betas": (0.9, 0.999),
@@ -148,6 +150,7 @@ optimizer_choices = {
     "adamw_schedulefree+no_kahan": {
         "precision": "any",
         "override_lr_scheduler": True,
+        "is_schedulefree": True,
         "can_warmup": True,
         "default_settings": {
             "betas": (0.9, 0.999),
@@ -473,7 +476,8 @@ if is_prodigy_available:
         {
             "prodigy": {
                 "precision": "any",
-                "override_lr_scheduler": True,
+                "override_lr_scheduler": False,
+                "is_schedulefree": True,
                 "can_warmup": False,
                 "default_settings": {
                     "lr": 1.0,
@@ -562,10 +566,7 @@ def optimizer_parameters(optimizer, args):
         if args.optimizer == "prodigy":
             prodigy_steps = args.prodigy_steps
             if prodigy_steps and prodigy_steps > 0:
-                optimizer_params["prodigy_steps"] = prodigy_steps
-            else:
-                # 25% of the total number of steps
-                optimizer_params["prodigy_steps"] = int(args.max_train_steps * 0.25)
+                optimizer_params["prodigy_steps"] = int(prodigy_steps)
             print(
                 f"Using Prodigy optimiser with {optimizer_params['prodigy_steps']} steps of learning rate adjustment."
             )
@@ -582,7 +583,19 @@ def is_lr_scheduler_disabled(optimizer: str):
             "override_lr_scheduler", False
         )
     return is_disabled
-
+def is_lr_schedulefree(optimizer: str):
+    """
+    Check if the optimizer has ScheduleFree logic.
+    
+    This is separate from the disabling of LR schedulers, because some optimizers
+    that contain ScheduleFree logic (Prodigy) can use an LR scheduler.
+    """
+    is_schedulefree = False
+    if optimizer in optimizer_choices:
+        is_schedulefree = optimizer_choices.get(optimizer).get(
+            "is_schedulefree", False
+        )
+    return is_schedulefree
 
 def show_optimizer_defaults(optimizer: str = None):
     """we'll print the defaults on a single line, eg. foo=bar, buz=baz"""
