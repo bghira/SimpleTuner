@@ -35,6 +35,7 @@ from helpers.training.optimizer_param import (
     determine_optimizer_class_with_config,
     determine_params_to_optimize,
     is_lr_scheduler_disabled,
+    is_lr_schedulefree,
     cpu_offload_optimizer,
 )
 from helpers.data_backend.factory import BatchFetcher
@@ -1231,23 +1232,14 @@ class Trainer:
             )
 
     def init_lr_scheduler(self):
-        self.config.is_schedulefree = is_lr_scheduler_disabled(self.config.optimizer)
+        self.config.is_schedulefree = is_lr_schedulefree(self.config.optimizer)
+        self.config.is_lr_scheduler_disabled = is_lr_scheduler_disabled(self.config.optimizer) or self.config.use_deepspeed_scheduler
         if self.config.is_schedulefree:
             logger.info("Using experimental ScheduleFree optimiser..")
+        if self.config.is_lr_scheduler_disabled:
             # we don't use LR schedulers with schedulefree optimisers
+            logger.info("Optimiser cannot use an LR scheduler, so we are disabling it.")
             lr_scheduler = None
-        if not self.config.use_deepspeed_scheduler and not self.config.is_schedulefree:
-            logger.info(
-                f"Loading {self.config.lr_scheduler} learning rate scheduler with {self.config.lr_warmup_steps} warmup steps"
-            )
-            lr_scheduler = get_lr_scheduler(
-                self.config,
-                self.optimizer,
-                self.accelerator,
-                logger,
-                use_deepspeed_scheduler=False,
-            )
-        else:
             logger.info(f"Using dummy learning rate scheduler")
             if torch.backends.mps.is_available():
                 lr_scheduler = None
@@ -1257,13 +1249,24 @@ class Trainer:
                     total_num_steps=self.config.max_train_steps,
                     warmup_num_steps=self.config.lr_warmup_steps,
                 )
-        if lr_scheduler is not None:
-            if hasattr(lr_scheduler, "num_update_steps_per_epoch"):
-                lr_scheduler.num_update_steps_per_epoch = (
-                    self.config.num_update_steps_per_epoch
-                )
-            if hasattr(lr_scheduler, "last_step"):
-                lr_scheduler.last_step = self.state.get("global_resume_step", 0)
+            return lr_scheduler
+
+        logger.info(
+            f"Loading {self.config.lr_scheduler} learning rate scheduler with {self.config.lr_warmup_steps} warmup steps"
+        )
+        lr_scheduler = get_lr_scheduler(
+            self.config,
+            self.optimizer,
+            self.accelerator,
+            logger,
+            use_deepspeed_scheduler=False,
+        )
+        if hasattr(lr_scheduler, "num_update_steps_per_epoch"):
+            lr_scheduler.num_update_steps_per_epoch = (
+                self.config.num_update_steps_per_epoch
+            )
+        if hasattr(lr_scheduler, "last_step"):
+            lr_scheduler.last_step = self.state.get("global_resume_step", 0)
 
         return lr_scheduler
 
@@ -1859,17 +1862,19 @@ class Trainer:
                 )
 
     def mark_optimizer_train(self):
-        if is_lr_scheduler_disabled(self.config.optimizer) and hasattr(
+        if is_lr_schedulefree(self.config.optimizer) and hasattr(
             self.optimizer, "train"
         ):
             # we typically have to call train() on the optim for schedulefree.
+            logger.debug("Setting optimiser into train() mode.")
             self.optimizer.train()
 
     def mark_optimizer_eval(self):
-        if is_lr_scheduler_disabled(self.config.optimizer) and hasattr(
+        if is_lr_schedulefree(self.config.optimizer) and hasattr(
             self.optimizer, "eval"
         ):
             # we typically have to call eval() on the optim for schedulefree before saving or running validations.
+            logger.debug("Setting optimiser into eval() mode.")
             self.optimizer.eval()
 
     def _send_webhook_msg(
@@ -2835,21 +2840,9 @@ class Trainer:
                 if self.accelerator.sync_gradients:
                     try:
                         if "prodigy" in self.config.optimizer:
+                            self.lr_scheduler.step(**self.extra_lr_scheduler_kwargs)
                             self.lr = self.optimizer.param_groups[0]["d"]
-                            wandb_logs.update(
-                                {
-                                    "prodigy/d": self.optimizer.param_groups[0]["d"],
-                                    "prodigy/d_prev": self.optimizer.param_groups[0][
-                                        "d_prev"
-                                    ],
-                                    "prodigy/d0": self.optimizer.param_groups[0]["d0"],
-                                    "prodigy/d_coef": self.optimizer.param_groups[0][
-                                        "d_coef"
-                                    ],
-                                    "prodigy/k": self.optimizer.param_groups[0]["k"],
-                                }
-                            )
-                        elif self.config.is_schedulefree:
+                        elif self.config.is_lr_scheduler_disabled:
                             # hackjob method of retrieving LR from accelerated optims
                             self.lr = StateTracker.get_last_lr()
                         else:
@@ -3053,9 +3046,9 @@ class Trainer:
                         logs["grad_absmax"] = self.grad_norm
 
                 progress_bar.set_postfix(**logs)
-                self.mark_optimizer_eval()
                 if self.validation is not None:
                     if self.validation.would_validate():
+                        self.mark_optimizer_eval()
                         self.enable_sageattention_inference()
                         self.disable_gradient_checkpointing()
                     self.validation.run_validations(
@@ -3064,7 +3057,7 @@ class Trainer:
                     if self.validation.would_validate():
                         self.disable_sageattention_inference()
                         self.enable_gradient_checkpointing()
-                self.mark_optimizer_train()
+                        self.mark_optimizer_train()
                 if (
                     self.config.push_to_hub
                     and self.config.push_checkpoints_to_hub
