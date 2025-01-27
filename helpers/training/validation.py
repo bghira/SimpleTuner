@@ -1796,12 +1796,12 @@ class Evaluation:
         self.accelerator = accelerator
 
     def would_evaluate(self, training_state: dict):
-        if self.config.evaluation_steps_interval is None:
+        if self.config.eval_steps_interval is None:
             return False
-        if self.config.evaluation_steps_interval == 0:
+        if self.config.eval_steps_interval == 0:
             return False
         if (
-            training_state["global_step"] % self.config.evaluation_steps_interval == 0
+            training_state["global_step"] % self.config.eval_steps_interval == 0
             and training_state["global_step"] > training_state["global_resume_step"]
         ):
             return True

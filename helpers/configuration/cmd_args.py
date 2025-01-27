@@ -1670,7 +1670,7 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
-        "--evaluation_steps_interval",
+        "--eval_steps_interval",
         type=int,
         default=None,
         help=(

@@ -1459,8 +1459,8 @@ class Trainer:
             return
         self.evaluation = None
         if (
-            self.config.evaluation_steps_interval is not None
-            and self.config.evaluation_steps_interval > 0
+            self.config.eval_steps_interval is not None
+            and self.config.eval_steps_interval > 0
         ):
             from helpers.training.validation import Evaluation
 

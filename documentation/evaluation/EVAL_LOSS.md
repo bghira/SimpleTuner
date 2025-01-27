@@ -54,10 +54,10 @@ To configure and enable evaluation loss calculations:
 
 ```json
 {
-    "--evaluation_steps_interval": 10,
+    "--eval_steps_interval": 10,
     "--num_eval_images": 1,
     "--report_to": "wandb",
 }
 ```
 
-> **Note**: Weights & Biases (wandb) is currently required for the full evaluation charting functionality.
+> **Note**: Weights & Biases (wandb) is currently required for the full evaluation charting functionality. Other trackers only receive the single mean value.
