@@ -42,6 +42,8 @@ class MetadataBackend:
         delete_unwanted_images: bool = False,
         metadata_update_interval: int = 3600,
         minimum_image_size: int = None,
+        minimum_aspect_ratio: int = None,
+        maximum_aspect_ratio: int = None,
         cache_file_suffix: str = None,
         repeats: int = 0,
     ):
@@ -73,6 +75,12 @@ class MetadataBackend:
         self.metadata_update_interval = metadata_update_interval
         self.minimum_image_size = (
             float(minimum_image_size) if minimum_image_size else None
+        )
+        self.minimum_aspect_ratio = (
+            float(minimum_aspect_ratio) if minimum_aspect_ratio else None
+        )
+        self.maximum_aspect_ratio = (
+            float(maximum_aspect_ratio) if maximum_aspect_ratio else None
         )
         self.image_metadata_loaded = False
         self.vae_output_scaling_factor = 8
@@ -448,6 +456,9 @@ class MetadataBackend:
         """
         Remove buckets that have fewer samples than batch_size and enforce minimum image size constraints.
         """
+        if self.minimum_image_size is None:
+            return
+
         logger.info(
             f"Enforcing minimum image size of {self.minimum_image_size}."
             " This could take a while for very-large datasets."
@@ -463,6 +474,50 @@ class MetadataBackend:
                 self._enforce_resolution_constraints(bucket)
                 # We do this twice in case there were any new contenders for being too small.
                 self._prune_small_buckets(bucket)
+
+    def _enforce_min_aspect_ratio(self):
+        """
+        Remove buckets that have an aspect ratio outside the specified range.
+        """
+        if self.minimum_aspect_ratio is None or self.minimum_aspect_ratio == 0.0:
+            return
+
+        logger.info(
+            f"Enforcing minimum aspect ratio of {self.minimum_aspect_ratio}."
+            " This could take a while for very-large datasets."
+        )
+        for bucket in tqdm(
+            list(self.aspect_ratio_bucket_indices.keys()),
+            leave=False,
+            desc="Enforcing minimum aspect ratio",
+        ):  # Safe iteration over keys
+            if float(bucket) < self.minimum_aspect_ratio:
+                logger.info(
+                    f"Removing bucket {bucket} due to aspect ratio being less than {self.minimum_aspect_ratio}."
+                )
+                del self.aspect_ratio_bucket_indices[bucket]
+
+    def _enforce_max_aspect_ratio(self):
+        """
+        Remove buckets that have an aspect ratio outside the specified range.
+        """
+        if self.maximum_aspect_ratio is None or self.maximum_aspect_ratio == 0.0:
+            return
+
+        logger.info(
+            f"Enforcing maximum aspect ratio of {self.maximum_aspect_ratio}."
+            " This could take a while for very-large datasets."
+        )
+        for bucket in tqdm(
+            list(self.aspect_ratio_bucket_indices.keys()),
+            leave=False,
+            desc="Enforcing maximum aspect ratio",
+        ):  # Safe iteration over keys
+            if float(bucket) > self.maximum_aspect_ratio:
+                logger.info(
+                    f"Removing bucket {bucket} due to aspect ratio being greater than {self.maximum_aspect_ratio}."
+                )
+                del self.aspect_ratio_bucket_indices[bucket]
 
     def _prune_small_buckets(self, bucket):
         """

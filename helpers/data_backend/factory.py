@@ -804,6 +804,12 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             minimum_image_size=backend.get(
                 "minimum_image_size", args.minimum_image_size
             ),
+            minimum_aspect_ratio=backend.get(
+                "minimum_aspect_ratio", None
+            ),
+            maximum_aspect_ratio=backend.get(
+                "maximum_aspect_ratio", None
+            ),
             resolution_type=backend.get("resolution_type", args.resolution_type),
             batch_size=args.train_batch_size,
             metadata_update_interval=backend.get(
