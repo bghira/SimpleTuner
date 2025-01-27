@@ -1811,6 +1811,8 @@ class Evaluation:
     def execute_eval(
         self, prepare_batch, model_predict, calculate_loss, get_prediction_target
     ):
+        if not self.accelerator.is_main_process:
+            return
         accumulated_eval_losses = {}
         eval_batch = True
         evaluated_sample_count = 0
@@ -1869,13 +1871,19 @@ class Evaluation:
         return accumulated_eval_losses
 
     def generate_tracker_table(self, accumulated_evaluation_losses: dict):
-        if self.config.report_to == "wandb" and self.accelerator.is_main_process:
-            # Flatten out all the losses.
-            data_rows = []
-            for ts, loss_list in accumulated_evaluation_losses.items():
-                for loss_val in loss_list:
-                    data_rows.append([ts, loss_val])
+        if not self.accelerator.is_main_process:
+            return {}
 
+        # Flatten out all the losses.
+        data_rows = []
+        num_items = 0
+        for ts, loss_list in accumulated_evaluation_losses.items():
+            for loss_val in loss_list:
+                num_items += 1
+                data_rows.append([ts, loss_val])
+        total_loss = sum([x[1] for x in data_rows])
+        mean_loss = total_loss / num_items
+        if self.config.report_to == "wandb":
             table = wandb.Table(data=data_rows, columns=["timestep", "eval_loss"])
             return {
                 "plot": wandb.plot.line(
@@ -1884,5 +1892,6 @@ class Evaluation:
                     "eval_loss",
                     title="eval_loss by timestep",
                 ),
-                "mean": loss_val.mean(),
+                "mean": mean_loss,
             }
+        return {"mean": mean_loss}

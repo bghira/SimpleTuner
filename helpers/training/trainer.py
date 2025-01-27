@@ -3065,7 +3065,8 @@ class Trainer:
                         tracker_table = self.evaluation.generate_tracker_table(
                             accumulated_evaluation_losses=accumulated_evaluation_losses
                         )
-                        wandb_logs["eval_loss_plot"] = tracker_table["plot"]
+                        if "plot" in tracker_table:
+                            wandb_logs["eval_loss_plot"] = tracker_table["plot"]
                         wandb_logs["eval_loss"] = tracker_table["mean"]
                         self.mark_optimizer_train()
 
