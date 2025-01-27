@@ -89,7 +89,7 @@ class BaseDataBackend(ABC):
         """
         pass
 
-    def _decompress_torch(self, gzip_data):
+    def _decompress_torch(self, gzip_data: BytesIO):
         """
         We've read the gzip from disk. Just decompress it.
         """

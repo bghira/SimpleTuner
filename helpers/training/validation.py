@@ -9,6 +9,7 @@ from tqdm import tqdm
 from helpers.training.wrappers import unwrap_model
 from PIL import Image
 from helpers.training.state_tracker import StateTracker
+from helpers.training.exceptions import MultiDatasetExhausted
 from helpers.models.sdxl.pipeline import (
     StableDiffusionXLPipeline,
     StableDiffusionXLImg2ImgPipeline,
@@ -95,6 +96,59 @@ def resize_validation_images(validation_images, edge_length):
             (validation_shortname, validation_prompt, training_sample_image)
         )
     return resized_validation_samples
+
+
+def reset_eval_datasets():
+    eval_datasets = StateTracker.get_data_backends(_type="eval")
+    for dataset_name, dataset in eval_datasets.items():
+        if "train_dataset" not in dataset:
+            logger.debug(
+                f"Skipping eval set {dataset_name} because it lacks a dataloader."
+            )
+        try:
+            dataset["sampler"]._reset_buckets(raise_exhaustion_signal=False)
+        except MultiDatasetExhausted as e:
+            pass
+
+
+def retrieve_eval_images():
+    """
+    For any "eval" dataset_type registered in StateTracker, we will build
+     a dict containing all elements needed to run a static loss calculation via
+     the transformer model:
+        - the latents
+        - the text embeddings
+        - any conditioning data that it comes with
+    """
+    eval_datasets = StateTracker.get_data_backends(_type="eval")
+    output = {}
+    eval_samples = None
+    from helpers.training.collate import collate_fn
+
+    new_sample = None
+    while new_sample is None:
+        for dataset_name, dataset in eval_datasets.items():
+            if "train_dataset" not in dataset:
+                logger.debug(
+                    f"Skipping eval set {dataset_name} because it lacks a dataloader."
+                )
+            try:
+                new_sample = next(dataset["sampler"].__iter__())
+                data_loaded = dataset["train_dataset"].__getitem__(new_sample)
+
+                eval_samples = data_loaded
+                if eval_samples:
+                    output = collate_fn([eval_samples])
+
+                new_sample = False
+                break
+
+            except MultiDatasetExhausted as e:
+                logger.debug("Ran out of evaluation samples. Resetting buckets.")
+                dataset["sampler"]._reset_buckets(raise_exhaustion_signal=False)
+                raise e
+
+    return output
 
 
 def retrieve_validation_images():
@@ -943,7 +997,9 @@ class Validation:
         if would_do_intermediary_validation and validation_type == "final":
             # If the validation would have fired off, we'll skip it.
             # This is useful at the end of training so we don't validate 2x.
-            logger.debug("Not running validation because intermediary might have already fired off.")
+            logger.debug(
+                "Not running validation because intermediary might have already fired off."
+            )
             return self
         if StateTracker.get_webhook_handler() is not None:
             StateTracker.get_webhook_handler().send(
@@ -971,7 +1027,9 @@ class Validation:
 
         return self
 
-    def should_perform_intermediary_validation(self, step, validation_prompts, validation_type):
+    def should_perform_intermediary_validation(
+        self, step, validation_prompts, validation_type
+    ):
         should_do_intermediary_validation = (
             validation_prompts
             and self.global_step % self.args.validation_steps == 0
@@ -1726,3 +1784,105 @@ class Validation:
         }
 
         return result
+
+
+class Evaluation:
+    """
+    A class for running eval loss calculations on prepared batches..
+    """
+
+    def __init__(self, accelerator):
+        self.config = StateTracker.get_args()
+        self.accelerator = accelerator
+
+    def would_evaluate(self, training_state: dict):
+        if self.config.evaluation_steps_interval is None:
+            return False
+        if self.config.evaluation_steps_interval == 0:
+            return False
+        if (
+            training_state["global_step"] % self.config.evaluation_steps_interval == 0
+            and training_state["global_step"] > training_state["global_resume_step"]
+        ):
+            return True
+
+        return False
+
+    def execute_eval(
+        self, prepare_batch, model_predict, calculate_loss, get_prediction_target
+    ):
+        accumulated_eval_losses = {}
+        eval_batch = True
+        evaluated_sample_count = 0
+        while eval_batch is not False:
+            try:
+                evaluated_sample_count += 1
+                if evaluated_sample_count > self.config.num_eval_images:
+                    reset_eval_datasets()
+                    raise MultiDatasetExhausted(
+                        "Max samples reached, resetting evaluations."
+                    )
+                eval_batch = retrieve_eval_images()
+            except MultiDatasetExhausted:
+                logger.info("Evaluation loss calculation completed.")
+                eval_batch = False
+
+            if eval_batch is not None and eval_batch is not False:
+                training_random_states = torch.get_rng_state()
+                # this seed is set for the prepare_batch to correctly set the eval noise seed.
+                torch.manual_seed(0)
+                prepared_eval_batch = prepare_batch(eval_batch)
+                if "latents" not in prepared_eval_batch:
+                    raise ValueError(f"Error calculating eval batch.")
+                with torch.no_grad():
+                    eval_timestep_list = range(0, 1000, 25)
+                    for eval_timestep in tqdm(
+                        eval_timestep_list.__reversed__(),
+                        total=len(eval_timestep_list),
+                        desc="Calculate eval loss",
+                        position=1,
+                        leave=False,
+                    ):
+                        if eval_timestep not in accumulated_eval_losses:
+                            accumulated_eval_losses[eval_timestep] = []
+                        torch.manual_seed(0)
+                        current_eval_timestep_tensor = (
+                            torch.Tensor([eval_timestep])
+                            .expand(prepared_eval_batch["noisy_latents"].shape[0])
+                            .to(
+                                dtype=self.config.weight_dtype,
+                                device=prepared_eval_batch["noisy_latents"].device,
+                            )
+                        )
+                        eval_prediction = model_predict(
+                            prepared_batch=prepared_eval_batch,
+                            custom_timesteps=current_eval_timestep_tensor,
+                        )
+                        eval_loss = calculate_loss(
+                            prepared_batch=prepared_eval_batch,
+                            model_pred=eval_prediction,
+                            target=get_prediction_target(prepared_eval_batch),
+                            apply_conditioning_mask=False,
+                        )
+                        accumulated_eval_losses[eval_timestep].append(eval_loss)
+                torch.set_rng_state(training_random_states)
+        return accumulated_eval_losses
+
+    def generate_tracker_table(self, accumulated_evaluation_losses: dict):
+        if self.config.report_to == "wandb" and self.accelerator.is_main_process:
+            # Flatten out all the losses.
+            data_rows = []
+            for ts, loss_list in accumulated_evaluation_losses.items():
+                for loss_val in loss_list:
+                    data_rows.append([ts, loss_val])
+
+            table = wandb.Table(data=data_rows, columns=["timestep", "eval_loss"])
+            return {
+                "plot": wandb.plot.line(
+                    table,
+                    "timestep",
+                    "eval_loss",
+                    title="eval_loss by timestep",
+                ),
+                "mean": loss_val.mean(),
+            }

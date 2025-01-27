@@ -1072,7 +1072,7 @@ def get_argument_parser():
         help=(
             "When provided, the max epoch counter will not determine the end of the training run."
             " Instead, it will end when it hits --max_train_steps."
-        )
+        ),
     )
     parser.add_argument(
         "--checkpointing_steps",
@@ -1667,6 +1667,16 @@ def get_argument_parser():
             "Run validation every X steps. Validation consists of running the prompt"
             " `args.validation_prompt` multiple times: `args.num_validation_images`"
             " and logging the images."
+        ),
+    )
+    parser.add_argument(
+        "--evaluation_steps_interval",
+        type=int,
+        default=None,
+        help=(
+            "When set, the model will be evaluated every X steps. This is useful for"
+            " monitoring the model's progress during training, but it requires an eval set"
+            " configured in your dataloader."
         ),
     )
     parser.add_argument(

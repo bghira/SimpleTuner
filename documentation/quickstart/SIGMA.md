@@ -221,6 +221,10 @@ For more information, see the [dataloader](/documentation/DATALOADER.md) and [tu
 
 If you wish to enable evaluations to score the model's performance, see [this document](/documentation/evaluation/CLIP_SCORES.md) for information on configuring and interpreting CLIP scores.
 
+# Stable evaluation loss
+
+If you wish to use stable MSE loss to score the model's performance, see [this document](/documentation/evaluation/EVAL_LOSS.md) for information on configuring and interpreting evaluation loss.
+
 ### SageAttention
 
 When using `--attention_mechanism=sageattention`, inference can be sped-up at validation time.

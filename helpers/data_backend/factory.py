@@ -134,7 +134,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
 
     # Image backend config
     output["dataset_type"] = backend.get("dataset_type", "image")
-    choices = ["image", "conditioning"]
+    choices = ["image", "conditioning", "eval"]
     if (
         StateTracker.get_args().controlnet
         and output["dataset_type"] == "image"
@@ -560,7 +560,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
     ###                                             ###
     for backend in data_backend_config:
         dataset_type = backend.get("dataset_type", None)
-        if dataset_type is None or dataset_type != "image_embeds":
+        if dataset_type is None or dataset_type not in ["image_embeds"]:
             continue
         if ("disabled" in backend and backend["disabled"]) or (
             "disable" in backend and backend["disable"]
@@ -619,10 +619,12 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
     vae_cache_dir_paths = []  # tracking for duplicates
     for backend in data_backend_config:
         dataset_type = backend.get("dataset_type", None)
-        if dataset_type is not None and (
-            dataset_type != "image" and dataset_type != "conditioning"
-        ):
-            # Skip configuration of text embed backends. It is done earlier.
+        if dataset_type is not None and dataset_type not in [
+            "image",
+            "conditioning",
+            "eval",
+        ]:
+            # image, conditioning, and eval sets are all included in this
             continue
         if ("disabled" in backend and backend["disabled"]) or (
             "disable" in backend and backend["disable"]
@@ -804,12 +806,8 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             minimum_image_size=backend.get(
                 "minimum_image_size", args.minimum_image_size
             ),
-            minimum_aspect_ratio=backend.get(
-                "minimum_aspect_ratio", None
-            ),
-            maximum_aspect_ratio=backend.get(
-                "maximum_aspect_ratio", None
-            ),
+            minimum_aspect_ratio=backend.get("minimum_aspect_ratio", None),
+            maximum_aspect_ratio=backend.get("maximum_aspect_ratio", None),
             resolution_type=backend.get("resolution_type", args.resolution_type),
             batch_size=args.train_batch_size,
             metadata_update_interval=backend.get(

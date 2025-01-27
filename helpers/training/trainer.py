@@ -109,6 +109,7 @@ from diffusers import (
 from peft import LoraConfig
 from peft.utils import get_peft_model_state_dict
 from helpers.training.ema import EMAModel
+from helpers.training.exceptions import MultiDatasetExhausted
 from diffusers.utils import (
     check_min_version,
     convert_state_dict_to_diffusers,
@@ -1147,7 +1148,8 @@ class Trainer:
                     "You must specify either --max_train_steps or --num_train_epochs with a value > 0"
                 )
             self.config.num_train_epochs = math.ceil(
-                self.config.max_train_steps / max(self.config.num_update_steps_per_epoch, 1)
+                self.config.max_train_steps
+                / max(self.config.num_update_steps_per_epoch, 1)
             )
             logger.info(
                 f"Calculated our maximum training steps at {self.config.max_train_steps} because we have"
@@ -1232,7 +1234,10 @@ class Trainer:
 
     def init_lr_scheduler(self):
         self.config.is_schedulefree = is_lr_schedulefree(self.config.optimizer)
-        self.config.is_lr_scheduler_disabled = is_lr_scheduler_disabled(self.config.optimizer) or self.config.use_deepspeed_scheduler
+        self.config.is_lr_scheduler_disabled = (
+            is_lr_scheduler_disabled(self.config.optimizer)
+            or self.config.use_deepspeed_scheduler
+        )
         if self.config.is_schedulefree:
             logger.info("Using experimental ScheduleFree optimiser..")
         if self.config.is_lr_scheduler_disabled:
@@ -1452,6 +1457,14 @@ class Trainer:
         ):
             logger.error("Cannot run validations with DeepSpeed ZeRO stage 3.")
             return
+        self.evaluation = None
+        if (
+            self.config.evaluation_steps_interval is not None
+            and self.config.evaluation_steps_interval > 0
+        ):
+            from helpers.training.validation import Evaluation
+
+            self.evaluation = Evaluation(accelerator=self.accelerator)
         model_evaluator = ModelEvaluator.from_config(args=self.config)
         self.validation = Validation(
             trainable_parameters=self._get_trainable_parameters,
@@ -1619,7 +1632,10 @@ class Trainer:
                 * self.accelerator.num_processes
             )
 
-        if self.state["current_epoch"] > self.config.num_train_epochs + 1 and not self.config.ignore_final_epochs:
+        if (
+            self.state["current_epoch"] > self.config.num_train_epochs + 1
+            and not self.config.ignore_final_epochs
+        ):
             logger.info(
                 f"Reached the end ({self.state['current_epoch']} epochs) of our training run ({self.config.num_train_epochs} epochs). This run will do zero steps."
             )
@@ -2019,22 +2035,24 @@ class Trainer:
 
     def model_predict(
         self,
-        batch,
-        latents,
-        noisy_latents,
-        encoder_hidden_states,
-        added_cond_kwargs,
-        add_text_embeds,
-        timesteps,
+        prepared_batch,
+        custom_timesteps: list = None,
     ):
         if self.config.controlnet:
             training_logger.debug(
-                f"Extra conditioning dtype: {batch['conditioning_pixel_values'].dtype}"
+                f"Extra conditioning dtype: {prepared_batch['conditioning_pixel_values'].dtype}"
             )
+        timesteps = prepared_batch.get("timesteps")
+        noisy_latents = prepared_batch.get("noisy_latents")
+        encoder_hidden_states = prepared_batch.get("encoder_hidden_states")
+        added_cond_kwargs = prepared_batch.get("added_cond_kwargs")
+        add_text_embeds = prepared_batch.get("add_time_embeds")
+        if custom_timesteps is not None:
+            timesteps = custom_timesteps
         if not self.config.disable_accelerator:
             if self.config.controlnet:
                 # ControlNet conditioning.
-                controlnet_image = batch["conditioning_pixel_values"].to(
+                controlnet_image = prepared_batch["conditioning_pixel_values"].to(
                     dtype=self.config.weight_dtype
                 )
                 training_logger.debug(f"Image shape: {controlnet_image.shape}")
@@ -2070,10 +2088,10 @@ class Trainer:
                 # handle guidance
                 packed_noisy_latents = pack_latents(
                     noisy_latents,
-                    batch_size=latents.shape[0],
-                    num_channels_latents=latents.shape[1],
-                    height=latents.shape[2],
-                    width=latents.shape[3],
+                    batch_size=prepared_batch["latents"].shape[0],
+                    num_channels_latents=prepared_batch["latents"].shape[1],
+                    height=prepared_batch["latents"].shape[2],
+                    width=prepared_batch["latents"].shape[3],
                 ).to(
                     dtype=self.config.base_weight_dtype,
                     device=self.accelerator.device,
@@ -2083,13 +2101,13 @@ class Trainer:
                         self.config,
                         self.state["global_step"],
                         self.config.num_update_steps_per_epoch,
-                        latents.shape[0],
+                        prepared_batch["latents"].shape[0],
                         self.accelerator.device,
                     )
                 elif self.config.flux_guidance_mode == "constant":
                     guidance_scales = [
                         float(self.config.flux_guidance_value)
-                    ] * latents.shape[0]
+                    ] * prepared_batch["latents"].shape[0]
 
                 elif self.config.flux_guidance_mode == "random-range":
                     # Generate a list of random values within the specified range for each latent
@@ -2098,7 +2116,7 @@ class Trainer:
                             self.config.flux_guidance_min,
                             self.config.flux_guidance_max,
                         )
-                        for _ in range(latents.shape[0])
+                        for _ in range(prepared_batch["latents"].shape[0])
                     ]
                 self.guidance_values_list.append(guidance_scales)
 
@@ -2117,9 +2135,9 @@ class Trainer:
                 else:
                     guidance = None
                 img_ids = prepare_latent_image_ids(
-                    latents.shape[0],
-                    latents.shape[2],
-                    latents.shape[3],
+                    prepared_batch["latents"].shape[0],
+                    prepared_batch["latents"].shape[2],
+                    prepared_batch["latents"].shape[3],
                     self.accelerator.device,
                     self.config.weight_dtype,
                 )
@@ -2131,7 +2149,7 @@ class Trainer:
                 )
 
                 text_ids = torch.zeros(
-                    batch["prompt_embeds"].shape[1],
+                    prepared_batch["prompt_embeds"].shape[1],
                     3,
                 ).to(
                     device=self.accelerator.device,
@@ -2151,11 +2169,11 @@ class Trainer:
                     # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
                     "timestep": timesteps,
                     "guidance": guidance,
-                    "pooled_projections": batch["add_text_embeds"].to(
+                    "pooled_projections": prepared_batch["add_text_embeds"].to(
                         device=self.accelerator.device,
                         dtype=self.config.base_weight_dtype,
                     ),
-                    "encoder_hidden_states": batch["prompt_embeds"].to(
+                    "encoder_hidden_states": prepared_batch["prompt_embeds"].to(
                         device=self.accelerator.device,
                         dtype=self.config.base_weight_dtype,
                     ),
@@ -2168,7 +2186,7 @@ class Trainer:
                     "return_dict": False,
                 }
                 if self.config.flux_attention_masked_training:
-                    flux_transformer_kwargs["attention_mask"] = batch[
+                    flux_transformer_kwargs["attention_mask"] = prepared_batch[
                         "encoder_attention_mask"
                     ]
                     if flux_transformer_kwargs["attention_mask"] is None:
@@ -2203,7 +2221,7 @@ class Trainer:
                     encoder_hidden_states=encoder_hidden_states.to(
                         self.config.weight_dtype
                     ),
-                    encoder_attention_mask=batch["encoder_attention_mask"],
+                    encoder_attention_mask=prepared_batch["encoder_attention_mask"],
                     timestep=timesteps,
                     return_dict=False,
                 )[0]
@@ -2215,7 +2233,7 @@ class Trainer:
                 model_pred = self.transformer(
                     noisy_latents,
                     encoder_hidden_states=encoder_hidden_states,
-                    encoder_attention_mask=batch["encoder_attention_mask"],
+                    encoder_attention_mask=prepared_batch["encoder_attention_mask"],
                     timestep=timesteps,
                     added_cond_kwargs=added_cond_kwargs,
                     return_dict=False,
@@ -2235,7 +2253,7 @@ class Trainer:
                     "hidden_states": noisy_latents,
                     "timestep": timesteps,
                     "encoder_hidden_states": encoder_hidden_states,
-                    "encoder_attention_mask": batch["encoder_attention_mask"],
+                    "encoder_attention_mask": prepared_batch["encoder_attention_mask"],
                     "image_rotary_emb": get_2d_rotary_pos_embed(
                         self.transformer.inner_dim
                         // self.transformer.config.num_attention_heads,
@@ -2266,13 +2284,21 @@ class Trainer:
             if self.config.model_family == "flux":
                 model_pred = unpack_latents(
                     model_pred,
-                    height=latents.shape[2] * 8,
-                    width=latents.shape[3] * 8,
+                    height=prepared_batch["latents"].shape[2] * 8,
+                    width=prepared_batch["latents"].shape[3] * 8,
                     vae_scale_factor=16,
                 )
         else:
             # Dummy model prediction for debugging.
             model_pred = torch.randn_like(noisy_latents)
+
+        # x-prediction requires that we now subtract the noise residual from the prediction to get the target sample.
+        if (
+            hasattr(self.noise_scheduler, "config")
+            and hasattr(self.noise_scheduler.config, "prediction_type")
+            and self.noise_scheduler.config.prediction_type == "sample"
+        ):
+            model_pred = model_pred - prepared_batch["noise"]
 
         return model_pred
 
@@ -2283,6 +2309,297 @@ class Trainer:
                 max_grad_value = max(max_grad_value, param.grad.abs().max().item())
 
         return max_grad_value
+
+    def prepare_batch(self, batch: list):
+        """
+        Prepare a batch for the model prediction.
+
+        Args:
+            batch (list): Batch from iterator_fn.
+
+        Returns:
+            batch (list): Prepared batch.
+        """
+        if not batch:
+            training_logger.debug(
+                f"No batch was returned by the iterator_fn, returning {batch}"
+            )
+            return batch
+
+        target_device_kwargs = {
+            "device": self.accelerator.device,
+            "dtype": self.config.weight_dtype,
+        }
+
+        batch["batch_luminance"] = batch.get("batch_luminance", -1.0)
+        batch["encoder_hidden_states"] = batch["prompt_embeds"].to(
+            **target_device_kwargs
+        )
+
+        pooled_embeds = batch.get("add_text_embeds")
+        if pooled_embeds is not None and hasattr(pooled_embeds, "to"):
+            batch["added_cond_kwargs"] = {
+                "text_embeds": pooled_embeds.to(**target_device_kwargs),
+                "time_ids": batch["batch_time_ids"].to(**target_device_kwargs),
+            }
+
+        latents = batch.get("latent_batch")
+        if not hasattr(latents, "to"):
+            logger.error("Batch received:")
+            logger.error(batch)
+            raise ValueError("Received invalid value for latents.")
+        batch["latents"] = latents.to(**target_device_kwargs)
+
+        encoder_attention_mask = batch.get("encoder_attention_mask")
+        if encoder_attention_mask is not None and hasattr(encoder_attention_mask, "to"):
+            batch["encoder_attention_mask"] = encoder_attention_mask.to(
+                **target_device_kwargs
+            )
+
+        if self.config.model_family in ["sdxl", "kolors"]:
+            batch["added_cond_kwargs"] = batch.get("added_cond_kwargs")
+        elif self.config.model_family in ["pixart_sigma", "smoldit"]:
+            batch["added_cond_kwargs"] = batch.get("batch_time_ids")
+        batch["is_regularisation_data"] = batch.get("is_regularisation_data", False)
+
+        # Sample noise that we'll add to the latents - self.config.noise_offset might need to be set to 0.1 by default.
+        noise = torch.randn_like(batch["latents"])
+        bsz = batch["latents"].shape[0]
+        if self.config.input_perturbation != 0 and (
+            not self.config.input_perturbation_steps
+            or self.state["global_step"] < self.config.input_perturbation_steps
+        ):
+            input_perturbation = self.config.input_perturbation
+            if self.config.input_perturbation_steps:
+                input_perturbation *= 1.0 - (
+                    self.state["global_step"] / self.config.input_perturbation_steps
+                )
+            batch["noise"] = noise + input_perturbation * torch.randn_like(
+                batch["latents"]
+            )
+        else:
+            batch["noise"] = noise
+        if self.config.flow_matching:
+            if not self.config.flux_fast_schedule and not any(
+                [
+                    self.config.flow_use_beta_schedule,
+                    self.config.flow_use_uniform_schedule,
+                ]
+            ):
+                # imported from cloneofsimo's minRF trainer: https://github.com/cloneofsimo/minRF
+                # also used by: https://github.com/XLabs-AI/x-flux/tree/main
+                # and: https://github.com/kohya-ss/sd-scripts/commit/8a0f12dde812994ec3facdcdb7c08b362dbceb0f
+                batch["sigmas"] = torch.sigmoid(
+                    self.config.flow_sigmoid_scale
+                    * torch.randn((bsz,), device=self.accelerator.device)
+                )
+                batch["sigmas"] = apply_flow_schedule_shift(
+                    self.config, self.noise_scheduler, batch["sigmas"], batch["noise"]
+                )
+            elif self.config.flow_use_uniform_schedule:
+                batch["sigmas"] = torch.rand((bsz,), device=self.accelerator.device)
+                batch["sigmas"] = apply_flow_schedule_shift(
+                    self.config, self.noise_scheduler, batch["sigmas"], batch["noise"]
+                )
+            elif self.config.flow_use_beta_schedule:
+                alpha = self.config.flow_beta_schedule_alpha
+                beta = self.config.flow_beta_schedule_beta
+
+                # Create a Beta distribution instance
+                beta_dist = Beta(alpha, beta)
+
+                # Sample from the Beta distribution
+                batch["sigmas"] = beta_dist.sample((bsz,)).to(
+                    device=self.accelerator.device
+                )
+
+                batch["sigmas"] = apply_flow_schedule_shift(
+                    self.config, self.noise_scheduler, batch["sigmas"], noise
+                )
+            else:
+                # fast schedule can only use these sigmas, and they can be sampled up to batch size times
+                available_sigmas = [
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                    0.75,
+                    0.5,
+                    0.25,
+                ]
+                batch["sigmas"] = torch.tensor(
+                    random.choices(available_sigmas, k=bsz),
+                    device=self.accelerator.device,
+                )
+            batch["timesteps"] = batch["sigmas"] * 1000.0
+            batch["sigmas"] = batch["sigmas"].view(-1, 1, 1, 1)
+        else:
+            if self.config.offset_noise:
+                if (
+                    self.config.noise_offset_probability == 1.0
+                    or random.random() < self.config.noise_offset_probability
+                ):
+                    noise = noise + self.config.noise_offset * torch.randn(
+                        batch["latents"].shape[0],
+                        batch["latents"].shape[1],
+                        1,
+                        1,
+                        device=batch["latents"].device,
+                    )
+            # Sample a random timestep for each image, potentially biased by the timestep weights.
+            # Biasing the timestep weights allows us to spend less time training irrelevant timesteps.
+            weights = generate_timestep_weights(
+                self.config, self.noise_scheduler.config.num_train_timesteps
+            ).to(self.accelerator.device)
+            # Instead of uniformly sampling the timestep range, we'll split our weights and schedule into bsz number of segments.
+            # This enables more broad sampling and potentially more effective training.
+            if bsz > 1 and not self.config.disable_segmented_timestep_sampling:
+                batch["timesteps"] = segmented_timestep_selection(
+                    actual_num_timesteps=self.noise_scheduler.config.num_train_timesteps,
+                    bsz=bsz,
+                    weights=weights,
+                    use_refiner_range=StateTracker.is_sdxl_refiner()
+                    and not StateTracker.get_args().sdxl_refiner_uses_full_range,
+                ).to(self.accelerator.device)
+            else:
+                batch["timesteps"] = torch.multinomial(
+                    weights, bsz, replacement=True
+                ).long()
+        if self.config.flow_matching:
+            batch["noisy_latents"] = (1 - batch["sigmas"]) * batch["latents"] + batch[
+                "sigmas"
+            ] * batch["noise"]
+        else:
+            # Add noise to the latents according to the noise magnitude at each timestep
+            # (this is the forward diffusion process)
+            batch["noisy_latents"] = self.noise_scheduler.add_noise(
+                batch["latents"].float(), batch["noise"].float(), batch["timesteps"]
+            ).to(
+                device=self.accelerator.device,
+                dtype=self.config.weight_dtype,
+            )
+
+        return batch
+
+    def get_prediction_target(self, prepared_batch: dict):
+        if self.config.flow_matching:
+            # This is the flow-matching target for vanilla SD3.
+            # If self.config.flow_matching_loss == "diffusion", we will instead use v_prediction (see below)
+            if self.config.flow_matching_loss == "diffusers":
+                target = prepared_batch["latents"]
+            elif self.config.flow_matching_loss == "compatible":
+                target = prepared_batch["noise"] - prepared_batch["latents"]
+            elif self.config.flow_matching_loss == "sd35":
+                sigma_reshaped = prepared_batch["sigmas"].view(
+                    -1, 1, 1, 1
+                )  # Ensure sigma has the correct shape
+                target = (
+                    prepared_batch["noisy_latents"] - prepared_batch["latents"]
+                ) / sigma_reshaped
+
+        elif self.noise_scheduler.config.prediction_type == "epsilon":
+            target = prepared_batch["noise"]
+        elif self.noise_scheduler.config.prediction_type == "v_prediction" or (
+            self.config.flow_matching and self.config.flow_matching_loss == "diffusion"
+        ):
+            # When not using flow-matching, train on velocity prediction objective.
+            target = self.noise_scheduler.get_velocity(
+                prepared_batch["latents"],
+                prepared_batch["noise"],
+                prepared_batch["timesteps"],
+            )
+        elif self.noise_scheduler.config.prediction_type == "sample":
+            # We set the target to latents here, but the model_pred will return the noise sample prediction.
+            # We will have to subtract the noise residual from the prediction to get the target sample.
+            target = prepared_batch["latents"]
+        else:
+            raise ValueError(
+                f"Unknown prediction type {self.noise_scheduler.config.prediction_type}"
+                "Supported types are 'epsilon', `sample`, and 'v_prediction'."
+            )
+
+        return target
+
+    def _calculate_loss(
+        self,
+        prepared_batch: dict,
+        model_pred,
+        target,
+        apply_conditioning_mask: bool = True,
+    ):
+        # Compute the per-pixel loss without reducing over spatial dimensions
+        if self.config.flow_matching:
+            # For flow matching, compute the per-pixel squared differences
+            loss = (
+                model_pred.float() - target.float()
+            ) ** 2  # Shape: (batch_size, C, H, W)
+        elif self.config.snr_gamma is None or self.config.snr_gamma == 0:
+            training_logger.debug("Calculating loss")
+            loss = self.config.snr_weight * F.mse_loss(
+                model_pred.float(), target.float(), reduction="none"
+            )  # Shape: (batch_size, C, H, W)
+        else:
+            # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
+            # Since we predict the noise instead of x_0, the original formulation is slightly changed.
+            # This is discussed in Section 4.2 of the same paper.
+            training_logger.debug("Using min-SNR loss")
+            snr = compute_snr(prepared_batch["timesteps"], self.noise_scheduler)
+            snr_divisor = snr
+            if self.noise_scheduler.config.prediction_type == "v_prediction" or (
+                self.config.flow_matching
+                and self.config.flow_matching_loss == "diffusion"
+            ):
+                snr_divisor = snr + 1
+
+            training_logger.debug("Calculating MSE loss weights using SNR as divisor")
+            mse_loss_weights = (
+                torch.stack(
+                    [
+                        snr,
+                        self.config.snr_gamma
+                        * torch.ones_like(prepared_batch["timesteps"]),
+                    ],
+                    dim=1,
+                ).min(dim=1)[0]
+                / snr_divisor
+            )  # Shape: (batch_size,)
+
+            # Compute the per-pixel MSE loss without reduction
+            loss = F.mse_loss(
+                model_pred.float(), target.float(), reduction="none"
+            )  # Shape: (batch_size, C, H, W)
+
+            # Reshape mse_loss_weights for broadcasting and apply to loss
+            mse_loss_weights = mse_loss_weights.view(
+                -1, 1, 1, 1
+            )  # Shape: (batch_size, 1, 1, 1)
+            loss = loss * mse_loss_weights  # Shape: (batch_size, C, H, W)
+
+        # Mask the loss using any conditioning data
+        conditioning_type = prepared_batch.get("conditioning_type")
+        if conditioning_type == "mask" and apply_conditioning_mask:
+            # Adapted from:
+            # https://github.com/kohya-ss/sd-scripts/blob/main/library/custom_train_functions.py#L482
+            mask_image = (
+                prepared_batch["conditioning_pixel_values"]
+                .to(dtype=loss.dtype, device=loss.device)[:, 0]
+                .unsqueeze(1)
+            )  # Shape: (batch_size, 1, H', W')
+            mask_image = torch.nn.functional.interpolate(
+                mask_image, size=loss.shape[2:], mode="area"
+            )  # Resize to match loss spatial dimensions
+            mask_image = mask_image / 2 + 0.5  # Normalize to [0,1]
+            loss = loss * mask_image  # Element-wise multiplication
+
+        # Reduce the loss by averaging over channels and spatial dimensions
+        loss = loss.mean(dim=list(range(1, len(loss.shape))))  # Shape: (batch_size,)
+
+        # Further reduce the loss by averaging over the batch dimension
+        loss = loss.mean()  # Scalar value
+        return loss
 
     def train(self):
         self.init_trackers()
@@ -2312,7 +2629,10 @@ class Trainer:
         if self.config.ignore_final_epochs:
             num_epochs_to_track += 1000000
         for epoch in range(self.state["first_epoch"], num_epochs_to_track):
-            if self.state["current_epoch"] > self.config.num_train_epochs + 1 and not self.config.ignore_final_epochs:
+            if (
+                self.state["current_epoch"] > self.config.num_train_epochs + 1
+                and not self.config.ignore_final_epochs
+            ):
                 # This might immediately end training, but that's useful for simply exporting the model.
                 logger.info(
                     f"Training run is complete ({self.config.num_train_epochs}/{self.config.num_train_epochs} epochs, {self.state['global_step']}/{self.config.max_train_steps} steps)."
@@ -2378,7 +2698,7 @@ class Trainer:
             while True:
                 self._exit_on_signal()
                 step += 1
-                batch = iterator_fn(step, *iterator_args)
+                prepared_batch = self.prepare_batch(iterator_fn(step, *iterator_args))
                 training_logger.debug(f"Iterator: {iterator_fn}")
                 if self.config.lr_scheduler == "cosine_with_restarts":
                     self.extra_lr_scheduler_kwargs["step"] = self.state["global_step"]
@@ -2389,11 +2709,11 @@ class Trainer:
                     )
 
                 # If we receive a False from the enumerator, we know we reached the next epoch.
-                if batch is False:
+                if prepared_batch is False:
                     logger.debug(f"Reached the end of epoch {epoch}")
                     break
 
-                if batch is None:
+                if prepared_batch is None:
                     import traceback
 
                     raise ValueError(
@@ -2401,238 +2721,44 @@ class Trainer:
                     )
 
                 # Add the current batch of training data's avg luminance to a list.
-                if "batch_luminance" in batch:
-                    training_luminance_values.append(batch["batch_luminance"])
+                if "batch_luminance" in prepared_batch:
+                    training_luminance_values.append(prepared_batch["batch_luminance"])
 
                 with self.accelerator.accumulate(training_models):
+                    bsz = prepared_batch["latents"].shape[0]
                     training_logger.debug("Sending latent batch to GPU.")
-                    latents = batch["latent_batch"].to(
-                        self.accelerator.device, dtype=self.config.weight_dtype
-                    )
 
-                    # Sample noise that we'll add to the latents - self.config.noise_offset might need to be set to 0.1 by default.
-                    noise = torch.randn_like(latents)
-                    if not self.config.flow_matching:
-                        if self.config.offset_noise:
-                            if (
-                                self.config.noise_offset_probability == 1.0
-                                or random.random()
-                                < self.config.noise_offset_probability
-                            ):
-                                noise = noise + self.config.noise_offset * torch.randn(
-                                    latents.shape[0],
-                                    latents.shape[1],
-                                    1,
-                                    1,
-                                    device=latents.device,
-                                )
-
-                    bsz = latents.shape[0]
                     if int(bsz) != int(self.config.train_batch_size):
                         logger.error(
                             f"Received {bsz} latents, but expected {self.config.train_batch_size}. Processing short batch."
                         )
                     training_logger.debug(f"Working on batch size: {bsz}")
-                    if self.config.flow_matching:
-                        if not self.config.flux_fast_schedule and not any(
-                            [
-                                self.config.flow_use_beta_schedule,
-                                self.config.flow_use_uniform_schedule,
-                            ]
-                        ):
-                            # imported from cloneofsimo's minRF trainer: https://github.com/cloneofsimo/minRF
-                            # also used by: https://github.com/XLabs-AI/x-flux/tree/main
-                            # and: https://github.com/kohya-ss/sd-scripts/commit/8a0f12dde812994ec3facdcdb7c08b362dbceb0f
-                            sigmas = torch.sigmoid(
-                                self.config.flow_sigmoid_scale
-                                * torch.randn((bsz,), device=self.accelerator.device)
-                            )
-                            sigmas = apply_flow_schedule_shift(
-                                self.config, self.noise_scheduler, sigmas, noise
-                            )
-                        elif self.config.flow_use_uniform_schedule:
-                            sigmas = torch.rand((bsz,), device=self.accelerator.device)
-                            sigmas = apply_flow_schedule_shift(
-                                self.config, self.noise_scheduler, sigmas, noise
-                            )
-                        elif self.config.flow_use_beta_schedule:
-                            alpha = self.config.flow_beta_schedule_alpha
-                            beta = self.config.flow_beta_schedule_beta
-
-                            # Create a Beta distribution instance
-                            beta_dist = Beta(alpha, beta)
-
-                            # Sample from the Beta distribution
-                            sigmas = beta_dist.sample((bsz,)).to(
-                                device=self.accelerator.device
-                            )
-
-                            sigmas = apply_flow_schedule_shift(
-                                self.config, self.noise_scheduler, sigmas, noise
-                            )
-                        else:
-                            # fast schedule can only use these sigmas, and they can be sampled up to batch size times
-                            available_sigmas = [
-                                1.0,
-                                1.0,
-                                1.0,
-                                1.0,
-                                1.0,
-                                1.0,
-                                1.0,
-                                0.75,
-                                0.5,
-                                0.25,
-                            ]
-                            sigmas = torch.tensor(
-                                random.choices(available_sigmas, k=bsz),
-                                device=self.accelerator.device,
-                            )
-                        timesteps = sigmas * 1000.0
-                        sigmas = sigmas.view(-1, 1, 1, 1)
-                    else:
-                        # Sample a random timestep for each image, potentially biased by the timestep weights.
-                        # Biasing the timestep weights allows us to spend less time training irrelevant timesteps.
-                        weights = generate_timestep_weights(
-                            self.config, self.noise_scheduler.config.num_train_timesteps
-                        ).to(self.accelerator.device)
-                        # Instead of uniformly sampling the timestep range, we'll split our weights and schedule into bsz number of segments.
-                        # This enables more broad sampling and potentially more effective training.
-                        if (
-                            bsz > 1
-                            and not self.config.disable_segmented_timestep_sampling
-                        ):
-                            timesteps = segmented_timestep_selection(
-                                actual_num_timesteps=self.noise_scheduler.config.num_train_timesteps,
-                                bsz=bsz,
-                                weights=weights,
-                                use_refiner_range=StateTracker.is_sdxl_refiner()
-                                and not StateTracker.get_args().sdxl_refiner_uses_full_range,
-                            ).to(self.accelerator.device)
-                        else:
-                            timesteps = torch.multinomial(
-                                weights, bsz, replacement=True
-                            ).long()
-
                     # Prepare the data for the scatter plot
-                    for timestep in timesteps.tolist():
+                    for timestep in prepared_batch["timesteps"].tolist():
                         self.timesteps_buffer.append(
                             (self.state["global_step"], timestep)
                         )
 
-                    if self.config.input_perturbation != 0 and (
-                        not self.config.input_perturbation_steps
-                        or self.state["global_step"]
-                        < self.config.input_perturbation_steps
-                    ):
-                        input_perturbation = self.config.input_perturbation
-                        if self.config.input_perturbation_steps:
-                            input_perturbation *= 1.0 - (
-                                self.state["global_step"]
-                                / self.config.input_perturbation_steps
-                            )
-                        input_noise = noise + input_perturbation * torch.randn_like(
-                            latents
-                        )
-                    else:
-                        input_noise = noise
-
-                    if self.config.flow_matching:
-                        noisy_latents = (1 - sigmas) * latents + sigmas * input_noise
-                    else:
-                        # Add noise to the latents according to the noise magnitude at each timestep
-                        # (this is the forward diffusion process)
-                        noisy_latents = self.noise_scheduler.add_noise(
-                            latents.float(), input_noise.float(), timesteps
-                        ).to(
-                            device=self.accelerator.device,
-                            dtype=self.config.weight_dtype,
-                        )
-
-                    encoder_hidden_states = batch["prompt_embeds"].to(
-                        dtype=self.config.weight_dtype, device=self.accelerator.device
-                    )
+                    encoder_hidden_states = prepared_batch["encoder_hidden_states"]
                     training_logger.debug(
                         f"Encoder hidden states: {encoder_hidden_states.shape}"
                     )
 
-                    add_text_embeds = batch["add_text_embeds"]
+                    add_text_embeds = prepared_batch["add_text_embeds"]
                     training_logger.debug(
                         f"Pooled embeds: {add_text_embeds.shape if add_text_embeds is not None else None}"
                     )
                     # Get the target for loss depending on the prediction type
-                    if self.config.flow_matching:
-                        # This is the flow-matching target for vanilla SD3.
-                        # If self.config.flow_matching_loss == "diffusion", we will instead use v_prediction (see below)
-                        if self.config.flow_matching_loss == "diffusers":
-                            target = latents
-                        elif self.config.flow_matching_loss == "compatible":
-                            target = noise - latents
-                        elif self.config.flow_matching_loss == "sd35":
-                            sigma_reshaped = sigmas.view(
-                                -1, 1, 1, 1
-                            )  # Ensure sigma has the correct shape
-                            target = (noisy_latents - latents) / sigma_reshaped
+                    target = self.get_prediction_target(prepared_batch)
 
-                    elif self.noise_scheduler.config.prediction_type == "epsilon":
-                        target = noise
-                    elif (
-                        self.noise_scheduler.config.prediction_type == "v_prediction"
-                        or (
-                            self.config.flow_matching
-                            and self.config.flow_matching_loss == "diffusion"
-                        )
-                    ):
-                        # When not using flow-matching, train on velocity prediction objective.
-                        target = self.noise_scheduler.get_velocity(
-                            latents, noise, timesteps
-                        )
-                    elif self.noise_scheduler.config.prediction_type == "sample":
-                        # We set the target to latents here, but the model_pred will return the noise sample prediction.
-                        # We will have to subtract the noise residual from the prediction to get the target sample.
-                        target = latents
-                    else:
-                        raise ValueError(
-                            f"Unknown prediction type {self.noise_scheduler.config.prediction_type}"
-                            "Supported types are 'epsilon', `sample`, and 'v_prediction'."
-                        )
+                    added_cond_kwargs = prepared_batch.get("added_cond_kwargs")
 
-                    added_cond_kwargs = None
                     # Predict the noise residual and compute loss
-                    if (
-                        StateTracker.get_model_family() == "sdxl"
-                        or self.config.model_family == "kolors"
-                    ):
-                        added_cond_kwargs = {
-                            "text_embeds": add_text_embeds.to(
-                                device=self.accelerator.device,
-                                dtype=self.config.weight_dtype,
-                            ),
-                            "time_ids": batch["batch_time_ids"].to(
-                                device=self.accelerator.device,
-                                dtype=self.config.weight_dtype,
-                            ),
-                        }
-                    elif (
-                        self.config.model_family == "pixart_sigma"
-                        or self.config.model_family == "smoldit"
-                    ):
-                        # pixart requires an input of {"resolution": .., "aspect_ratio": ..}
-                        if "batch_time_ids" in batch:
-                            added_cond_kwargs = batch["batch_time_ids"]
-                        batch["encoder_attention_mask"] = batch[
-                            "encoder_attention_mask"
-                        ].to(
-                            device=self.accelerator.device,
-                            dtype=self.config.weight_dtype,
-                        )
-
-                    # a marker to know whether we had a model capable of regularised data training.
-                    handled_regularisation = False
-                    is_regularisation_data = batch.get("is_regularisation_data", False)
+                    is_regularisation_data = prepared_batch.get(
+                        "is_regularisation_data", False
+                    )
                     if is_regularisation_data and self.config.model_type == "lora":
                         training_logger.debug("Predicting parent model residual.")
-                        handled_regularisation = True
                         with torch.no_grad():
                             if self.config.lora_type.lower() == "lycoris":
                                 training_logger.debug(
@@ -2644,13 +2770,7 @@ class Trainer:
                                     f"Cannot train parent-student networks on {self.config.lora_type} model. Only LyCORIS is supported."
                                 )
                             target = self.model_predict(
-                                batch=batch,
-                                latents=latents,
-                                noisy_latents=noisy_latents,
-                                encoder_hidden_states=encoder_hidden_states,
-                                added_cond_kwargs=added_cond_kwargs,
-                                add_text_embeds=add_text_embeds,
-                                timesteps=timesteps,
+                                prepared_batch=prepared_batch,
                             )
                             if self.config.lora_type.lower() == "lycoris":
                                 training_logger.debug(
@@ -2660,102 +2780,13 @@ class Trainer:
 
                     training_logger.debug("Predicting noise residual.")
                     model_pred = self.model_predict(
-                        batch=batch,
-                        latents=latents,
-                        noisy_latents=noisy_latents,
-                        encoder_hidden_states=encoder_hidden_states,
-                        added_cond_kwargs=added_cond_kwargs,
-                        add_text_embeds=add_text_embeds,
-                        timesteps=timesteps,
+                        prepared_batch=prepared_batch,
+                    )
+                    loss = self._calculate_loss(
+                        prepared_batch, model_pred, target, apply_conditioning_mask=True
                     )
 
-                    # x-prediction requires that we now subtract the noise residual from the prediction to get the target sample.
-                    if (
-                        hasattr(self.noise_scheduler, "config")
-                        and hasattr(self.noise_scheduler.config, "prediction_type")
-                        and self.noise_scheduler.config.prediction_type == "sample"
-                    ):
-                        model_pred = model_pred - noise
-
                     parent_loss = None
-
-                    # Compute the per-pixel loss without reducing over spatial dimensions
-                    if self.config.flow_matching:
-                        # For flow matching, compute the per-pixel squared differences
-                        loss = (
-                            model_pred.float() - target.float()
-                        ) ** 2  # Shape: (batch_size, C, H, W)
-                    elif self.config.snr_gamma is None or self.config.snr_gamma == 0:
-                        training_logger.debug("Calculating loss")
-                        loss = self.config.snr_weight * F.mse_loss(
-                            model_pred.float(), target.float(), reduction="none"
-                        )  # Shape: (batch_size, C, H, W)
-                    else:
-                        # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
-                        # Since we predict the noise instead of x_0, the original formulation is slightly changed.
-                        # This is discussed in Section 4.2 of the same paper.
-                        training_logger.debug("Using min-SNR loss")
-                        snr = compute_snr(timesteps, self.noise_scheduler)
-                        snr_divisor = snr
-                        if (
-                            self.noise_scheduler.config.prediction_type
-                            == "v_prediction"
-                            or (
-                                self.config.flow_matching
-                                and self.config.flow_matching_loss == "diffusion"
-                            )
-                        ):
-                            snr_divisor = snr + 1
-
-                        training_logger.debug(
-                            "Calculating MSE loss weights using SNR as divisor"
-                        )
-                        mse_loss_weights = (
-                            torch.stack(
-                                [
-                                    snr,
-                                    self.config.snr_gamma * torch.ones_like(timesteps),
-                                ],
-                                dim=1,
-                            ).min(dim=1)[0]
-                            / snr_divisor
-                        )  # Shape: (batch_size,)
-
-                        # Compute the per-pixel MSE loss without reduction
-                        loss = F.mse_loss(
-                            model_pred.float(), target.float(), reduction="none"
-                        )  # Shape: (batch_size, C, H, W)
-
-                        # Reshape mse_loss_weights for broadcasting and apply to loss
-                        mse_loss_weights = mse_loss_weights.view(
-                            -1, 1, 1, 1
-                        )  # Shape: (batch_size, 1, 1, 1)
-                        loss = loss * mse_loss_weights  # Shape: (batch_size, C, H, W)
-
-                    # Mask the loss using any conditioning data
-                    conditioning_type = batch.get("conditioning_type")
-                    if conditioning_type == "mask":
-                        # Adapted from:
-                        # https://github.com/kohya-ss/sd-scripts/blob/main/library/custom_train_functions.py#L482
-                        mask_image = (
-                            batch["conditioning_pixel_values"]
-                            .to(dtype=loss.dtype, device=loss.device)[:, 0]
-                            .unsqueeze(1)
-                        )  # Shape: (batch_size, 1, H', W')
-                        mask_image = torch.nn.functional.interpolate(
-                            mask_image, size=loss.shape[2:], mode="area"
-                        )  # Resize to match loss spatial dimensions
-                        mask_image = mask_image / 2 + 0.5  # Normalize to [0,1]
-                        loss = loss * mask_image  # Element-wise multiplication
-
-                    # Reduce the loss by averaging over channels and spatial dimensions
-                    loss = loss.mean(
-                        dim=list(range(1, len(loss.shape)))
-                    )  # Shape: (batch_size,)
-
-                    # Further reduce the loss by averaging over the batch dimension
-                    loss = loss.mean()  # Scalar value
-
                     if is_regularisation_data:
                         parent_loss = loss
 
@@ -2918,10 +2949,6 @@ class Trainer:
                     logger.debug(
                         f"Step {self.state['global_step']} of {self.config.max_train_steps}: loss {loss.item()}, lr {self.lr}, epoch {epoch}/{self.config.num_train_epochs}, ema_decay_value {ema_decay_value}, train_loss {self.train_loss}"
                     )
-                    self.accelerator.log(
-                        wandb_logs,
-                        step=self.state["global_step"],
-                    )
                     webhook_pending_msg = f"Step {self.state['global_step']} of {self.config.max_train_steps}: loss {round(loss.item(), 4)}, lr {self.lr}, epoch {epoch}/{self.config.num_train_epochs}, ema_decay_value {ema_decay_value}, train_loss {round(self.train_loss, 4)}"
 
                     # Reset some values for the next go.
@@ -3024,6 +3051,29 @@ class Trainer:
                     ):
                         reclaim_memory()
 
+                    # here we might run eval loss calculations.
+                    if self.evaluation is not None and self.evaluation.would_evaluate(
+                        self.state
+                    ):
+                        self.mark_optimizer_eval()
+                        accumulated_evaluation_losses = self.evaluation.execute_eval(
+                            prepare_batch=self.prepare_batch,
+                            model_predict=self.model_predict,
+                            calculate_loss=self._calculate_loss,
+                            get_prediction_target=self.get_prediction_target,
+                        )
+                        tracker_table = self.evaluation.generate_tracker_table(
+                            accumulated_evaluation_losses=accumulated_evaluation_losses
+                        )
+                        wandb_logs["eval_loss_plot"] = tracker_table["plot"]
+                        wandb_logs["eval_loss"] = tracker_table["mean"]
+                        self.mark_optimizer_train()
+
+                    self.accelerator.log(
+                        wandb_logs,
+                        step=self.state["global_step"],
+                    )
+
                 logs = {
                     "step_loss": loss.detach().item(),
                     "lr": float(self.lr),
@@ -3035,6 +3085,7 @@ class Trainer:
                         logs["grad_absmax"] = self.grad_norm
 
                 progress_bar.set_postfix(**logs)
+
                 if self.validation is not None:
                     if self.validation.would_validate():
                         self.mark_optimizer_eval()
@@ -3070,18 +3121,18 @@ class Trainer:
                             )
                 self.accelerator.wait_for_everyone()
 
-                if (
-                    self.state["global_step"] >= self.config.max_train_steps
-                    or (epoch > self.config.num_train_epochs and not self.config.ignore_final_epochs)
+                if self.state["global_step"] >= self.config.max_train_steps or (
+                    epoch > self.config.num_train_epochs
+                    and not self.config.ignore_final_epochs
                 ):
                     logger.info(
                         f"Training has completed."
                         f"\n -> global_step = {self.state['global_step']}, max_train_steps = {self.config.max_train_steps}, epoch = {epoch}, num_train_epochs = {self.config.num_train_epochs}",
                     )
                     break
-            if (
-                self.state["global_step"] >= self.config.max_train_steps
-                or (epoch > self.config.num_train_epochs and not self.config.ignore_final_epochs)
+            if self.state["global_step"] >= self.config.max_train_steps or (
+                epoch > self.config.num_train_epochs
+                and not self.config.ignore_final_epochs
             ):
                 logger.info(
                     f"Exiting training loop. Beginning model unwind at epoch {epoch}, step {self.state['global_step']}"

@@ -109,6 +109,10 @@ Stage two refiner training will automatically select images from each of your tr
 
 If you wish to enable evaluations to score the model's performance, see [this document](/documentation/evaluation/CLIP_SCORES.md) for information on configuring and interpreting CLIP scores.
 
+# Stable evaluation loss
+
+If you wish to use stable MSE loss to score the model's performance, see [this document](/documentation/evaluation/EVAL_LOSS.md) for information on configuring and interpreting evaluation loss.
+
 ## Putting it all together at inference time
 
 If you'd like to plug both of the models together to experiment with in a simple script, this will get you started:

@@ -25,3 +25,7 @@ In `config.json`:
   ...
 }
 ```
+
+## Compatibility
+
+SageAttention is currently not compatible with CLIP score tracking. One or the other must be disabled.
