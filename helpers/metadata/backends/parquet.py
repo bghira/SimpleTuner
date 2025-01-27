@@ -39,6 +39,8 @@ class ParquetMetadataBackend(MetadataBackend):
         delete_unwanted_images: bool = False,
         metadata_update_interval: int = 3600,
         minimum_image_size: int = None,
+        minimum_aspect_ratio: int = None,
+        maximum_aspect_ratio: int = None,
         cache_file_suffix: str = None,
         repeats: int = 0,
     ):
@@ -60,6 +62,8 @@ class ParquetMetadataBackend(MetadataBackend):
             delete_unwanted_images=delete_unwanted_images,
             metadata_update_interval=metadata_update_interval,
             minimum_image_size=minimum_image_size,
+            minimum_aspect_ratio=minimum_aspect_ratio,
+            maximum_aspect_ratio=maximum_aspect_ratio,
             cache_file_suffix=cache_file_suffix,
             repeats=repeats,
         )
@@ -295,6 +299,9 @@ class ParquetMetadataBackend(MetadataBackend):
         # Prune any buckets that have fewer samples than batch_size
         if enforce_constraints:
             self._enforce_min_bucket_size()
+        self._enforce_min_aspect_ratio()
+        self._enforce_max_aspect_ratio()
+
         if self.read_only:
             logger.debug("Metadata backend is read-only, skipping cache save.")
             return

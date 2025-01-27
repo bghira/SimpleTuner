@@ -14,6 +14,8 @@ Here is the most basic example of a dataloader configuration file, as `multidata
     "resolution": 1024,
     "minimum_image_size": 768,
     "maximum_image_size": 2048,
+    "minimum_aspect_ratio": 0.50,
+    "maximum_aspect_ratio": 3.00,
     "target_downsample_size": 1024,
     "resolution_type": "pixel_area",
     "prepend_instance_prompt": false,
@@ -118,6 +120,20 @@ Both `textfile` and `parquet` support multi-captions:
 - When `resolution` is measured in megapixels (`resolution_type=area`), this should be in megapixels too (eg. `1.05` megapixels to exclude images under 1024x1024 **area**)
 - When `resolution` is measured in pixels, you should use the same unit here (eg. `1024` to exclude images under 1024px **shorter edge length**)
 - **Recommendation**: Keep `minimum_image_size` equal to `resolution` unless you want to risk training on poorly-upsized images.
+
+### `minimum_aspect_ratio`
+
+- **Description:** The minimum aspect ratio of the image. If the image's aspect ratio is less than this value, it will be excluded from training.
+- **Note**: If the number of images qualifying for exclusion is excessive, this might waste time at startup as the trainer will try to scan them and bucket if they are missing from the bucket lists.
+
+> **Note**: Once the aspect and metadata lists are built for your dataset, using `skip_file_discovery="vae aspect metadata"` will prevent the trainer from scanning the dataset on startup, saving a lot of time.
+
+### `maximum_aspect_ratio`
+
+- **Description:** The maximum aspect ratio of the image. If the image's aspect ratio is greater than this value, it will be excluded from training.
+- **Note**: If the number of images qualifying for exclusion is excessive, this might waste time at startup as the trainer will try to scan them and bucket if they are missing from the bucket lists.
+
+> **Note**: Once the aspect and metadata lists are built for your dataset, using `skip_file_discovery="vae aspect metadata"` will prevent the trainer from scanning the dataset on startup, saving a lot of time.
 
 #### Examples
 

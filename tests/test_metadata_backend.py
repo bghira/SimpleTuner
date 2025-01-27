@@ -101,6 +101,46 @@ class TestMetadataBackend(unittest.TestCase):
             self.metadata_backend.save_cache()
         mock_write.assert_called_once()
 
+    def test_minimum_aspect_size(self):
+        # when metadata_backend.minimum_aspect_ratio is not None and > 0.0 it will remove buckets from the list.
+        # this test ensures that the bucket is removed when the value is set correctly.
+        self.metadata_backend.aspect_ratio_bucket_indices = {
+            "1.0": ["image1", "image2"],
+            "1.5": ["image3"],
+        }
+        self.metadata_backend.minimum_aspect_ratio = 1.25
+        self.metadata_backend._enforce_min_aspect_ratio()
+        self.assertEqual(
+            self.metadata_backend.aspect_ratio_bucket_indices, {"1.5": ["image3"]}
+        )
+
+    def test_maximum_aspect_size(self):
+        # when metadata_backend.maximum_aspect_ratio is not None and > 0.0 it will remove buckets from the list.
+        # this test ensures that the bucket is removed when the value is set correctly.
+        self.metadata_backend.aspect_ratio_bucket_indices = {
+            "1.0": ["image1", "image2"],
+            "1.5": ["image3"],
+        }
+        self.metadata_backend.maximum_aspect_ratio = 1.25
+        self.metadata_backend._enforce_max_aspect_ratio()
+        self.assertEqual(
+            self.metadata_backend.aspect_ratio_bucket_indices, {"1.0": ["image1", "image2"]}
+        )
+
+    def test_unbound_aspect_list(self):
+        # when metadata_backend.maximum_aspect_ratio is None and metadata_backend.minimum_aspect_ratio is None
+        # the aspect_ratio_bucket_indices should not be modified.
+        self.metadata_backend.aspect_ratio_bucket_indices = {
+            "1.0": ["image1", "image2"],
+            "1.5": ["image3"],
+        }
+        self.metadata_backend._enforce_min_aspect_ratio()
+        self.metadata_backend._enforce_max_aspect_ratio()
+        self.assertEqual(
+            self.metadata_backend.aspect_ratio_bucket_indices,
+            {"1.0": ["image1", "image2"], "1.5": ["image3"]},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
