@@ -565,7 +565,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     self.metadata_backend.mark_batch_as_seen(
                         [instance["image_path"] for instance in final_yield]
                     )
-                    self.accelerator.wait_for_everyone()
                     # if applicable, we'll append TrainingSample(s) to the end for conditioning inputs.
                     final_yield = self.connect_conditioning_samples(final_yield)
                     yield tuple(final_yield)
