@@ -1810,6 +1810,12 @@ class Evaluation:
 
         return False
 
+    def total_eval_batches(self):
+        """
+        Return the total number of eval batches across all eval datasets.
+        """
+        return sum([len(x["sampler"]) for _, x in StateTracker.get_data_backends(_type="eval").items()])
+
     def execute_eval(
         self, prepare_batch, model_predict, calculate_loss, get_prediction_target
     ):
@@ -1818,6 +1824,14 @@ class Evaluation:
         accumulated_eval_losses = {}
         eval_batch = True
         evaluated_sample_count = 0
+        total_batches = self.total_eval_batches()
+        print(f"Working on {total_batches} evaluation batches.")
+        main_progress_bar = tqdm(
+            total=total_batches,
+            desc="Calculate validation loss",
+            position=2,
+            leave=True,
+        )
         while eval_batch is not False:
             try:
                 evaluated_sample_count += 1
@@ -1838,12 +1852,14 @@ class Evaluation:
                 prepared_eval_batch = prepare_batch(eval_batch)
                 if "latents" not in prepared_eval_batch:
                     raise ValueError(f"Error calculating eval batch.")
+                bsz = prepared_eval_batch["latents"].shape[0]
+                sample_text_str = "samples" if bsz > 1 else "sample"
                 with torch.no_grad():
                     eval_timestep_list = range(0, 1000, 25)
                     for eval_timestep in tqdm(
                         eval_timestep_list.__reversed__(),
                         total=len(eval_timestep_list),
-                        desc="Calculate eval loss",
+                        desc=f"Evaluating batch of {bsz} {sample_text_str}",
                         position=1,
                         leave=False,
                     ):
@@ -1869,6 +1885,7 @@ class Evaluation:
                             apply_conditioning_mask=False,
                         )
                         accumulated_eval_losses[eval_timestep].append(eval_loss)
+                    main_progress_bar.update(1)
                 torch.set_rng_state(training_random_states)
         return accumulated_eval_losses
 
