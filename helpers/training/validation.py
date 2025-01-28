@@ -1816,8 +1816,14 @@ class Evaluation:
         """
         return sum([len(x["sampler"]) for _, x in StateTracker.get_data_backends(_type="eval").items()])
 
+    def get_timestep_schedule(self, noise_scheduler, num_timesteps: int = 4):
+        noise_scheduler.set_timesteps(self.config.eval_timesteps)
+        timesteps = noise_scheduler.timesteps
+
+        return timesteps
+
     def execute_eval(
-        self, prepare_batch, model_predict, calculate_loss, get_prediction_target
+        self, prepare_batch, model_predict, calculate_loss, get_prediction_target, noise_scheduler
     ):
         if not self.accelerator.is_main_process:
             return
@@ -1836,6 +1842,9 @@ class Evaluation:
         cpu_rng_state = torch.get_rng_state()
         if torch.cuda.is_available():
             cuda_rng_state = torch.cuda.get_rng_state()
+        
+        eval_timestep_list = self.get_timestep_schedule(noise_scheduler)
+        logger.debug(f"Evaluation timesteps: {eval_timestep_list}")
         while eval_batch is not False and evaluated_sample_count < total_batches:
             try:
                 evaluated_sample_count += 1
@@ -1858,9 +1867,8 @@ class Evaluation:
                 bsz = prepared_eval_batch["latents"].shape[0]
                 sample_text_str = "samples" if bsz > 1 else "sample"
                 with torch.no_grad():
-                    eval_timestep_list = range(0, 1000, self.config.eval_timestep_interval)
                     for eval_timestep in tqdm(
-                        eval_timestep_list.__reversed__(),
+                        eval_timestep_list,
                         total=len(eval_timestep_list),
                         desc=f"Evaluating batch of {bsz} {sample_text_str}",
                         position=1,

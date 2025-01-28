@@ -297,6 +297,13 @@ class Trainer:
             initializer()
             self._exit_on_signal()
 
+    def _get_noise_scheduler(self):
+        _, _, noise_scheduler = load_scheduler_from_args(
+            self.config
+        )
+
+        return noise_scheduler
+
     def init_noise_schedule(self):
         self.config, _flow_matching, self.noise_scheduler = load_scheduler_from_args(
             self.config
@@ -3066,6 +3073,7 @@ class Trainer:
                             model_predict=self.model_predict,
                             calculate_loss=self._calculate_loss,
                             get_prediction_target=self.get_prediction_target,
+                            noise_scheduler=self._get_noise_scheduler(),
                         )
                         tracker_table = self.evaluation.generate_tracker_table(
                             accumulated_evaluation_losses=accumulated_evaluation_losses

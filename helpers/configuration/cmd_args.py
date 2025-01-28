@@ -1680,13 +1680,12 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
-        "--eval_timestep_interval",
+        "--eval_timesteps",
         type=int,
-        default=200,
+        default=28,
         help=(
-            "When evaluating batches, the entire 1000 timesteps may be sampled with a granularity of 1."
-            " To save time and reduce redundancy, a granularity of 200 is used by default."
-            " More granularity means more accurate charts, but it may not mean more interpretable results."
+            "Defines how many timesteps to sample during eval."
+            " You can emulate inference by setting this to the value of --validation_num_inference_steps."
         )
     )
     parser.add_argument(
