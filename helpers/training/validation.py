@@ -1796,6 +1796,8 @@ class Evaluation:
         self.accelerator = accelerator
 
     def would_evaluate(self, training_state: dict):
+        if not self.accelerator.is_main_process:
+            return
         if self.config.eval_steps_interval is None:
             return False
         if self.config.eval_steps_interval == 0:
