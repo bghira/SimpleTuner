@@ -1680,13 +1680,25 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--eval_timestep_interval",
+        type=int,
+        default=200,
+        help=(
+            "When evaluating batches, the entire 1000 timesteps may be sampled with a granularity of 1."
+            " To save time and reduce redundancy, a granularity of 200 is used by default."
+            " More granularity means more accurate charts, but it may not mean more interpretable results."
+        )
+    )
+    parser.add_argument(
         "--num_eval_images",
         type=int,
         default=4,
         help=(
             "If possible, this many eval images will be selected from each dataset."
             " This is used when training super-resolution models such as DeepFloyd Stage II,"
-            " which will upscale input images from the training set."
+            " which will upscale input images from the training set during validation."
+            " If using --eval_steps_interval, this will be the number of batches sampled"
+            " for loss calculations."
         ),
     )
     parser.add_argument(
@@ -1695,7 +1707,8 @@ def get_argument_parser():
         default=None,
         help=(
             "When provided, only this dataset's images will be used as the eval set, to keep"
-            " the training and eval images split."
+            " the training and eval images split. This option only applies for img2img validations,"
+            " not validation loss calculations."
         ),
     )
     parser.add_argument(

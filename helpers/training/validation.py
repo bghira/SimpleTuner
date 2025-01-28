@@ -1825,14 +1825,18 @@ class Evaluation:
         eval_batch = True
         evaluated_sample_count = 0
         total_batches = self.total_eval_batches()
-        print(f"Working on {total_batches} evaluation batches.")
+        if self.config.num_eval_images is not None:
+            total_batches = min(self.config.num_eval_images, total_batches)
         main_progress_bar = tqdm(
             total=total_batches,
             desc="Calculate validation loss",
-            position=2,
+            position=0,
             leave=True,
         )
-        while eval_batch is not False:
+        cpu_rng_state = torch.get_rng_state()
+        if torch.cuda.is_available():
+            cuda_rng_state = torch.cuda.get_rng_state()
+        while eval_batch is not False and evaluated_sample_count < total_batches:
             try:
                 evaluated_sample_count += 1
                 if evaluated_sample_count > self.config.num_eval_images:
@@ -1846,7 +1850,6 @@ class Evaluation:
                 eval_batch = False
 
             if eval_batch is not None and eval_batch is not False:
-                training_random_states = torch.get_rng_state()
                 # this seed is set for the prepare_batch to correctly set the eval noise seed.
                 torch.manual_seed(0)
                 prepared_eval_batch = prepare_batch(eval_batch)
@@ -1855,7 +1858,7 @@ class Evaluation:
                 bsz = prepared_eval_batch["latents"].shape[0]
                 sample_text_str = "samples" if bsz > 1 else "sample"
                 with torch.no_grad():
-                    eval_timestep_list = range(0, 1000, 25)
+                    eval_timestep_list = range(0, 1000, self.config.eval_timestep_interval)
                     for eval_timestep in tqdm(
                         eval_timestep_list.__reversed__(),
                         total=len(eval_timestep_list),
@@ -1886,7 +1889,13 @@ class Evaluation:
                         )
                         accumulated_eval_losses[eval_timestep].append(eval_loss)
                     main_progress_bar.update(1)
-                torch.set_rng_state(training_random_states)
+        try:
+            reset_eval_datasets()
+        except:
+            pass
+        torch.set_rng_state(cpu_rng_state)
+        if torch.cuda.is_available():
+            torch.cuda.set_rng_state(cuda_rng_state)
         return accumulated_eval_losses
 
     def generate_tracker_table(self, accumulated_evaluation_losses: dict):
