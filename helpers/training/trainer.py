@@ -2046,7 +2046,7 @@ class Trainer:
         noisy_latents = prepared_batch.get("noisy_latents")
         encoder_hidden_states = prepared_batch.get("encoder_hidden_states")
         added_cond_kwargs = prepared_batch.get("added_cond_kwargs")
-        add_text_embeds = prepared_batch.get("add_time_embeds")
+        add_text_embeds = added_cond_kwargs.get("text_embeds")
         if custom_timesteps is not None:
             timesteps = custom_timesteps
         if not self.config.disable_accelerator:
