@@ -1648,6 +1648,17 @@ class Trainer:
             )
         self.accelerator.wait_for_everyone()
 
+        if self.optimizer is not None and self.config.optimizer == "prodigy":
+            # fix the device assignment for the prodigy optimizer parameters
+            for group in (
+                self.optimizer.param_groups
+                if self.optimizer.optimizer.split_groups
+                else self.optimizer.param_groups[:1]
+            ):
+                p = group["params"][0]
+                group["running_d_numerator"] = group["running_d_numerator"].to(p.device)
+                group["running_d_denom"] = group["running_d_denom"].to(p.device)
+
         return lr_scheduler
 
     def init_trackers(self):
@@ -3068,7 +3079,7 @@ class Trainer:
                         self.state
                     ):
                         self.mark_optimizer_eval()
-                        accumulated_evaluation_losses = self.evaluation.execute_eval(
+                        all_accumulated_losses = self.evaluation.execute_eval(
                             prepare_batch=self.prepare_batch,
                             model_predict=self.model_predict,
                             calculate_loss=self._calculate_loss,
@@ -3076,11 +3087,10 @@ class Trainer:
                             noise_scheduler=self._get_noise_scheduler(),
                         )
                         tracker_table = self.evaluation.generate_tracker_table(
-                            accumulated_evaluation_losses=accumulated_evaluation_losses
+                            all_accumulated_losses=all_accumulated_losses
                         )
-                        if "plot" in tracker_table:
-                            wandb_logs["eval_loss_plot"] = tracker_table["plot"]
-                        wandb_logs["eval_loss"] = tracker_table["mean"]
+                        print(f"Tracking information: {tracker_table}")
+                        wandb_logs.update(tracker_table)
                         self.mark_optimizer_train()
 
                     self.accelerator.log(

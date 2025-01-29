@@ -1442,6 +1442,15 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--eval_dataset_pooling",
+        action="store_true",
+        default=False,
+        help=(
+            "When provided, only the pooled evaluation results will be returned in a single chart from all eval sets."
+            " Without this option, all eval sets will have separate charts."
+        ),
+    )
+    parser.add_argument(
         "--pretrained_evaluation_model_name_or_path",
         type=str,
         default="openai/clip-vit-large-patch14-336",
@@ -1686,7 +1695,7 @@ def get_argument_parser():
         help=(
             "Defines how many timesteps to sample during eval."
             " You can emulate inference by setting this to the value of --validation_num_inference_steps."
-        )
+        ),
     )
     parser.add_argument(
         "--num_eval_images",
