@@ -1823,22 +1823,6 @@ class Evaluation:
 
         return False
 
-<<<<<<< HEAD
-    def total_eval_batches(self):
-        """
-        Return the total number of eval batches across all eval datasets.
-        """
-        return sum([len(x["sampler"]) for _, x in StateTracker.get_data_backends(_type="eval").items()])
-
-    def get_timestep_schedule(self, noise_scheduler, num_timesteps: int = 4):
-        noise_scheduler.set_timesteps(self.config.eval_timesteps)
-        timesteps = noise_scheduler.timesteps
-
-        return timesteps
-
-    def execute_eval(
-        self, prepare_batch, model_predict, calculate_loss, get_prediction_target, noise_scheduler
-=======
     def total_eval_batches(self, dataset_name=None):
         """
         Return the total number of eval batches across:
@@ -1864,7 +1848,6 @@ class Evaluation:
         calculate_loss,
         get_prediction_target,
         noise_scheduler,
->>>>>>> f3301d64 (add --eval_dataset_pooling and split eval set into their own chart by default)
     ):
         """
         Evaluate on exactly one dataset (if dataset_name is not None),
@@ -1880,23 +1863,6 @@ class Evaluation:
         accumulated_eval_losses = {}
         eval_batch = True
         evaluated_sample_count = 0
-<<<<<<< HEAD
-        total_batches = self.total_eval_batches()
-        if self.config.num_eval_images is not None:
-            total_batches = min(self.config.num_eval_images, total_batches)
-        main_progress_bar = tqdm(
-            total=total_batches,
-            desc="Calculate validation loss",
-            position=0,
-            leave=True,
-        )
-        cpu_rng_state = torch.get_rng_state()
-        if torch.cuda.is_available():
-            cuda_rng_state = torch.cuda.get_rng_state()
-        
-        eval_timestep_list = self.get_timestep_schedule(noise_scheduler)
-        logger.debug(f"Evaluation timesteps: {eval_timestep_list}")
-=======
 
         # Figure out how many total batches for this pass
         total_batches = self.total_eval_batches(dataset_name=dataset_name)
@@ -1918,7 +1884,6 @@ class Evaluation:
         eval_timestep_list = self.get_timestep_schedule(noise_scheduler)
         logger.debug(f"Evaluation timesteps: {eval_timestep_list}")
 
->>>>>>> f3301d64 (add --eval_dataset_pooling and split eval set into their own chart by default)
         while eval_batch is not False and evaluated_sample_count < total_batches:
             try:
                 evaluated_sample_count += 1
@@ -1940,15 +1905,6 @@ class Evaluation:
                 eval_batch = False
 
             if eval_batch is not None and eval_batch is not False:
-<<<<<<< HEAD
-                # this seed is set for the prepare_batch to correctly set the eval noise seed.
-                torch.manual_seed(0)
-                prepared_eval_batch = prepare_batch(eval_batch)
-                if "latents" not in prepared_eval_batch:
-                    raise ValueError(f"Error calculating eval batch.")
-                bsz = prepared_eval_batch["latents"].shape[0]
-                sample_text_str = "samples" if bsz > 1 else "sample"
-=======
                 # Fix a known seed so noise is consistent across eval
                 torch.manual_seed(0)
                 prepared_eval_batch = prepare_batch(eval_batch)
@@ -1960,7 +1916,6 @@ class Evaluation:
                 bsz = prepared_eval_batch["latents"].shape[0]
                 sample_text_str = "samples" if bsz > 1 else "sample"
 
->>>>>>> f3301d64 (add --eval_dataset_pooling and split eval set into their own chart by default)
                 with torch.no_grad():
                     for eval_timestep in tqdm(
                         eval_timestep_list,
@@ -1992,7 +1947,9 @@ class Evaluation:
                             apply_conditioning_mask=False,
                         )
                         accumulated_eval_losses[eval_timestep].append(eval_loss)
+
                     main_progress_bar.update(1)
+
         try:
             reset_eval_datasets()
         except:
