@@ -93,6 +93,9 @@ class BaseDataBackend(ABC):
         """
         We've read the gzip from disk. Just decompress it.
         """
+        # bytes object might not have seek. workaround:
+        if not hasattr(gzip_data, "seek"):
+            gzip_data = BytesIO(gzip_data)
         gzip_data.seek(0)
         with gzip.GzipFile(fileobj=gzip_data, mode="rb") as file:
             decompressed_data = file.read()
