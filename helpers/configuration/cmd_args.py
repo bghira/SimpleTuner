@@ -1072,7 +1072,7 @@ def get_argument_parser():
         help=(
             "When provided, the max epoch counter will not determine the end of the training run."
             " Instead, it will end when it hits --max_train_steps."
-        )
+        ),
     )
     parser.add_argument(
         "--checkpointing_steps",
@@ -1442,6 +1442,15 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--eval_dataset_pooling",
+        action="store_true",
+        default=False,
+        help=(
+            "When provided, only the pooled evaluation results will be returned in a single chart from all eval sets."
+            " Without this option, all eval sets will have separate charts."
+        ),
+    )
+    parser.add_argument(
         "--pretrained_evaluation_model_name_or_path",
         type=str,
         default="openai/clip-vit-large-patch14-336",
@@ -1670,13 +1679,34 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--eval_steps_interval",
+        type=int,
+        default=None,
+        help=(
+            "When set, the model will be evaluated every X steps. This is useful for"
+            " monitoring the model's progress during training, but it requires an eval set"
+            " configured in your dataloader."
+        ),
+    )
+    parser.add_argument(
+        "--eval_timesteps",
+        type=int,
+        default=28,
+        help=(
+            "Defines how many timesteps to sample during eval."
+            " You can emulate inference by setting this to the value of --validation_num_inference_steps."
+        ),
+    )
+    parser.add_argument(
         "--num_eval_images",
         type=int,
         default=4,
         help=(
             "If possible, this many eval images will be selected from each dataset."
             " This is used when training super-resolution models such as DeepFloyd Stage II,"
-            " which will upscale input images from the training set."
+            " which will upscale input images from the training set during validation."
+            " If using --eval_steps_interval, this will be the number of batches sampled"
+            " for loss calculations."
         ),
     )
     parser.add_argument(
@@ -1685,7 +1715,8 @@ def get_argument_parser():
         default=None,
         help=(
             "When provided, only this dataset's images will be used as the eval set, to keep"
-            " the training and eval images split."
+            " the training and eval images split. This option only applies for img2img validations,"
+            " not validation loss calculations."
         ),
     )
     parser.add_argument(

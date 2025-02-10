@@ -157,6 +157,7 @@ class TestTrainer(unittest.TestCase):
             flux_schedule_shift=None,
             flux_schedule_auto_shift=None,
             flow_matching_sigmoid_scale=None,
+            eval_steps_interval=None,
         ),
     )
     def test_misc_init(

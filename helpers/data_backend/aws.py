@@ -356,7 +356,7 @@ class S3DataBackend(BaseDataBackend):
                     stored_tensor = self._decompress_torch(compressed_data)
                 elif file_format == "correct_compressed":
                     # Data is compressed but saved correctly
-                    stored_tensor = self._decompress_torch(stored_data)
+                    stored_tensor = self._decompress_torch(data)
                 else:
                     # Data is uncompressed and saved correctly
                     stored_tensor = stored_data

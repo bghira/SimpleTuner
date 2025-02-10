@@ -237,7 +237,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             return int(bucket_name)
         return self.buckets.index(str(bucket_name))
 
-    def _reset_buckets(self):
+    def _reset_buckets(self, raise_exhaustion_signal: bool = True):
         if (
             len(self.metadata_backend.seen_images) == 0
             and len(self._get_unseen_images()) == 0
@@ -258,7 +258,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.buckets = self.load_buckets()
         self.metadata_backend.reset_seen_images()
         self.change_bucket()
-        raise MultiDatasetExhausted()
+        if raise_exhaustion_signal:
+            raise MultiDatasetExhausted()
 
     def _get_unseen_images(self, bucket=None):
         """
@@ -564,7 +565,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     self.metadata_backend.mark_batch_as_seen(
                         [instance["image_path"] for instance in final_yield]
                     )
-                    self.accelerator.wait_for_everyone()
                     # if applicable, we'll append TrainingSample(s) to the end for conditioning inputs.
                     final_yield = self.connect_conditioning_samples(final_yield)
                     yield tuple(final_yield)

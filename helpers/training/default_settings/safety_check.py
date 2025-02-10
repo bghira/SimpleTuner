@@ -155,3 +155,12 @@ def safety_check(args, accelerator):
             raise ValueError(
                 "Gradient checkpointing interval must be greater than 0. Please set it to a positive integer."
             )
+
+    if (
+        args.report_to == "none"
+        and args.eval_steps_interval is not None
+        and args.eval_steps_interval > 0
+    ):
+        logger.warning(
+            "Evaluation steps interval is set, but no reporting is enabled. Evaluation will not be logged."
+        )
