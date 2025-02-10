@@ -339,9 +339,8 @@ class VAECache(WebhookMixin):
                 try:
                     future.result()
                 except Exception as e:
-                    logger.error(f"Error deleting file {filename}: {e}")
-                    self.debug_log(f"Error traceback: {traceback.format_exc()}")
-                    raise e
+                    logger.debug(f"Error deleting file {filename}", e)
+
         # Clear the StateTracker list of VAE objects:
         StateTracker.set_vae_cache_files([], data_backend_id=self.id)
 

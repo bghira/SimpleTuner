@@ -2787,7 +2787,9 @@ class Trainer:
                                 training_logger.debug(
                                     "Detaching LyCORIS adapter for parent prediction."
                                 )
-                                self.accelerator._lycoris_wrapped_network.restore()
+                                self.accelerator._lycoris_wrapped_network.set_multiplier(
+                                    0.0
+                                )
                             else:
                                 raise ValueError(
                                     f"Cannot train parent-student networks on {self.config.lora_type} model. Only LyCORIS is supported."
@@ -2799,7 +2801,9 @@ class Trainer:
                                 training_logger.debug(
                                     "Attaching LyCORIS adapter for student prediction."
                                 )
-                                self.accelerator._lycoris_wrapped_network.apply_to()
+                                self.accelerator._lycoris_wrapped_network.set_multiplier(
+                                    1.0
+                                )
 
                     training_logger.debug("Predicting noise residual.")
                     model_pred = self.model_predict(
