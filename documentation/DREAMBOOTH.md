@@ -232,6 +232,10 @@ Applying `use_ema=true` in your config file will enable this feature.
 
 If you wish to enable evaluations to score the model's performance, see [this document](/documentation/evaluation/CLIP_SCORES.md) for information on configuring and interpreting CLIP scores.
 
+# Stable evaluation loss
+
+If you wish to use stable MSE loss to score the model's performance, see [this document](/documentation/evaluation/EVAL_LOSS.md) for information on configuring and interpreting evaluation loss.
+
 # Refiner tuning
 
 If you're a fan of the SDXL refiner, you may find that it causes your generations to "ruin" the results of your Dreamboothed model.
