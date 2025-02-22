@@ -2362,9 +2362,7 @@ class Trainer:
                 **target_device_kwargs
             )
         if time_ids is not None and hasattr(time_ids, "to"):
-            batch["added_cond_kwargs"]["time_ids"] = (
-                time_ids.to(**target_device_kwargs),
-            )
+            batch["added_cond_kwargs"]["time_ids"] = time_ids.to(**target_device_kwargs)
 
         latents = batch.get("latent_batch")
         if not hasattr(latents, "to"):
