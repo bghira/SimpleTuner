@@ -1,6 +1,6 @@
 import os
 from accelerate.logging import get_logger
-
+from helpers.models import get_model_config_path
 
 logger = get_logger(__name__, log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
@@ -20,7 +20,9 @@ def load_scheduler_from_args(args):
         from diffusers import FlowMatchEulerDiscreteScheduler
 
         noise_scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
-            args.pretrained_model_name_or_path,
+            get_model_config_path(
+                args.model_family, args.pretrained_model_name_or_path
+            ),
             subfolder="scheduler",
             shift=1 if args.model_family == "sd3" else 3,
         )
@@ -32,7 +34,9 @@ def load_scheduler_from_args(args):
         from diffusers import DDPMScheduler
 
         noise_scheduler = DDPMScheduler.from_pretrained(
-            args.pretrained_model_name_or_path,
+            get_model_config_path(
+                args.model_family, args.pretrained_model_name_or_path
+            ),
             subfolder="scheduler",
             rescale_betas_zero_snr=args.rescale_betas_zero_snr,
             timestep_spacing=args.training_scheduler_timestep_spacing,
