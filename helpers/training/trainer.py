@@ -56,6 +56,7 @@ from helpers.training.peft_init import init_lokr_network_with_perturbed_normal
 from accelerate.logging import get_logger
 from diffusers.models.embeddings import get_2d_rotary_pos_embed
 from helpers.models.smoldit import get_resize_crop_region_for_grid
+from helpers.models import get_model_config_path
 
 logger = get_logger(
     "SimpleTuner", log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
@@ -298,9 +299,7 @@ class Trainer:
             self._exit_on_signal()
 
     def _get_noise_scheduler(self):
-        _, _, noise_scheduler = load_scheduler_from_args(
-            self.config
-        )
+        _, _, noise_scheduler = load_scheduler_from_args(self.config)
 
         return noise_scheduler
 
@@ -455,8 +454,12 @@ class Trainer:
             if self.config.pretrained_vae_model_name_or_path is None
             else self.config.pretrained_vae_model_name_or_path
         )
+
         self.config.text_encoder_path, self.config.text_encoder_subfolder = (
             determine_te_path_subfolder(self.config)
+        )
+        self.config.text_encoder_path = get_model_config_path(
+            self.config.model_family, self.config.text_encoder_path
         )
 
     def init_preprocessing_models(self, move_to_accelerator: bool = True):

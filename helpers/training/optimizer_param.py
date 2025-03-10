@@ -583,19 +583,20 @@ def is_lr_scheduler_disabled(optimizer: str):
             "override_lr_scheduler", False
         )
     return is_disabled
+
+
 def is_lr_schedulefree(optimizer: str):
     """
     Check if the optimizer has ScheduleFree logic.
-    
+
     This is separate from the disabling of LR schedulers, because some optimizers
     that contain ScheduleFree logic (Prodigy) can use an LR scheduler.
     """
     is_schedulefree = False
     if optimizer in optimizer_choices:
-        is_schedulefree = optimizer_choices.get(optimizer).get(
-            "is_schedulefree", False
-        )
+        is_schedulefree = optimizer_choices.get(optimizer).get("is_schedulefree", False)
     return is_schedulefree
+
 
 def show_optimizer_defaults(optimizer: str = None):
     """we'll print the defaults on a single line, eg. foo=bar, buz=baz"""

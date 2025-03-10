@@ -22,7 +22,10 @@ def load_diffusion_model(args, weight_dtype):
     }
     unet = None
     transformer = None
-
+    pretrained_transformer_path = (
+        args.pretrained_transformer_model_name_or_path
+        or args.pretrained_model_name_or_path
+    )
     if "nf4-bnb" == args.base_model_precision:
         import torch
         from diffusers import BitsAndBytesConfig
@@ -87,10 +90,12 @@ def load_diffusion_model(args, weight_dtype):
                         logger.warning(
                             "No flash_attn is available, using slower FlashAttention_2_0. Install flash_attn to make use of FA3 for Hopper or newer arch."
                         )
+        transformer_load_fn = FluxTransformer2DModel.from_pretrained
+        if pretrained_transformer_path.lower().endswith(".safetensors"):
+            transformer_load_fn = FluxTransformer2DModel.from_single_file
 
-        transformer = FluxTransformer2DModel.from_pretrained(
-            args.pretrained_transformer_model_name_or_path
-            or args.pretrained_model_name_or_path,
+        transformer = transformer_load_fn(
+            pretrained_transformer_path,
             subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
             **pretrained_load_args,
         )
@@ -99,9 +104,12 @@ def load_diffusion_model(args, weight_dtype):
             FluxTransformer2DModelWithMasking,
         )
 
-        transformer = FluxTransformer2DModelWithMasking.from_pretrained(
-            args.pretrained_transformer_model_name_or_path
-            or args.pretrained_model_name_or_path,
+        transformer_load_fn = FluxTransformer2DModelWithMasking.from_pretrained
+        if pretrained_transformer_path.lower().endswith(".safetensors"):
+            transformer_load_fn = FluxTransformer2DModelWithMasking.from_single_file
+
+        transformer = transformer_load_fn(
+            pretrained_transformer_path,
             subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
             **pretrained_load_args,
         )
@@ -112,9 +120,13 @@ def load_diffusion_model(args, weight_dtype):
     elif args.model_family == "pixart_sigma":
         from diffusers.models import PixArtTransformer2DModel
 
-        transformer = PixArtTransformer2DModel.from_pretrained(
-            args.pretrained_transformer_model_name_or_path
-            or args.pretrained_model_name_or_path,
+        transformer_load_fn = PixArtTransformer2DModel.from_pretrained
+        if pretrained_transformer_path.lower().endswith(".safetensors"):
+            # transformer_load_fn = PixArtTransformer2DModel.from_single_file
+            raise ValueError("PixArt does not support single file loading.")
+
+        transformer = transformer_load_fn(
+            pretrained_transformer_path,
             subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
             **pretrained_load_args,
         )
@@ -137,9 +149,13 @@ def load_diffusion_model(args, weight_dtype):
         from helpers.models.sana.transformer import SanaTransformer2DModel
 
         logger.info("Loading Sana flow-matching diffusion transformer..")
-        transformer = SanaTransformer2DModel.from_pretrained(
-            args.pretrained_transformer_model_name_or_path
-            or args.pretrained_model_name_or_path,
+        transformer_load_fn = SanaTransformer2DModel.from_pretrained
+        if pretrained_transformer_path.lower().endswith(".safetensors"):
+            # transformer_load_fn = SanaTransformer2DModel.from_single_file
+            raise ValueError("Sana does not support single file loading.")
+
+        transformer = transformer_load_fn(
+            pretrained_transformer_path,
             subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
             **pretrained_load_args,
         )
@@ -155,9 +171,15 @@ def load_diffusion_model(args, weight_dtype):
         ):
             unet_variant = "fp16"
         pretrained_load_args["variant"] = unet_variant
-        unet = UNet2DConditionModel.from_pretrained(
+        unet_load_fn = UNet2DConditionModel.from_pretrained
+        pretrained_unet_path = (
             args.pretrained_unet_model_name_or_path
-            or args.pretrained_model_name_or_path,
+            or args.pretrained_model_name_or_path
+        )
+        if pretrained_unet_path.lower().endswith(".safetensors"):
+            unet_load_fn = UNet2DConditionModel.from_single_file
+        unet = unet_load_fn(
+            pretrained_unet_path,
             subfolder=determine_subfolder(args.pretrained_unet_subfolder),
             **pretrained_load_args,
         )

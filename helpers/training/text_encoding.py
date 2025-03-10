@@ -1,6 +1,7 @@
 from transformers import PretrainedConfig
 import os
 from accelerate.logging import get_logger
+from helpers.models import get_model_config_path
 from .state_tracker import StateTracker
 
 logger = get_logger(__name__, log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -64,7 +65,9 @@ def get_tokenizers(args):
             return tokenizer_1, tokenizer_2, tokenizer_3
 
         tokenizer_kwargs = {
-            "pretrained_model_name_or_path": args.pretrained_model_name_or_path,
+            "pretrained_model_name_or_path": get_model_config_path(
+                args.model_family, args.pretrained_model_name_or_path
+            ),
             "subfolder": "tokenizer",
             "revision": args.revision,
         }
@@ -80,7 +83,9 @@ def get_tokenizers(args):
             tokenizer_cls = GemmaTokenizerFast
             is_t5_model = False
             tokenizer_1 = tokenizer_cls.from_pretrained(
-                args.pretrained_model_name_or_path,
+                get_model_config_path(
+                    args.model_family, args.pretrained_model_name_or_path
+                ),
                 subfolder="tokenizer",
                 revision=args.revision,
                 use_fast=False,
@@ -90,7 +95,9 @@ def get_tokenizers(args):
 
             tokenizer_cls = ChatGLMTokenizer
             tokenizer_1 = tokenizer_cls.from_pretrained(
-                args.pretrained_model_name_or_path,
+                get_model_config_path(
+                    args.model_family, args.pretrained_model_name_or_path
+                ),
                 subfolder="tokenizer",
                 revision=args.revision,
                 use_fast=False,
@@ -102,9 +109,13 @@ def get_tokenizers(args):
 
         if is_t5_model:
             text_encoder_path = (
-                args.pretrained_t5_model_name_or_path
-                if args.pretrained_t5_model_name_or_path is not None
-                else args.pretrained_model_name_or_path
+                (
+                    args.pretrained_t5_model_name_or_path
+                    if args.pretrained_t5_model_name_or_path is not None
+                    else get_model_config_path(
+                        args.model_family, args.pretrained_model_name_or_path
+                    )
+                ),
             )
             logger.info(
                 f"Tokenizer path: {text_encoder_path}, custom T5 model path: {args.pretrained_t5_model_name_or_path} revision: {args.revision}"
