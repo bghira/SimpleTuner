@@ -33,7 +33,7 @@ The script `configure.py` in the project root can be used via `python configure.
 ### `--pretrained_model_name_or_path`
 
 - **What**: Path to the pretrained model or its identifier from https://huggingface.co/models.
-- **Why**: To specify the base model you'll start training from. Use `--revision` and `--variant` to specify specific versions from a repository.
+- **Why**: To specify the base model you'll start training from. Use `--revision` and `--variant` to specify specific versions from a repository. This also supports single-file `.safetensors` paths for SDXL, Flux, and SD3.x.
 
 ### `--pretrained_t5_model_name_or_path`
 
