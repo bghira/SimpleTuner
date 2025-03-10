@@ -440,7 +440,14 @@ def get_argument_parser():
         type=str,
         default=None,
         required=True,
-        help="Path to pretrained model or model identifier from huggingface.co/models.",
+        help=(
+            "Path to pretrained model or model identifier from huggingface.co/models."
+            " Some model architectures support loading single-file .safetensors directly."
+            " Note that when using single-file safetensors, the tokeniser and noise schedule configs"
+            " will be used from the vanilla upstream Huggingface repository, which requires"
+            " network access. If you are training on a machine without network access, you should"
+            " pre-download the entire Huggingface model repository instead of using single-file loader."
+        ),
     )
     parser.add_argument(
         "--pretrained_transformer_model_name_or_path",

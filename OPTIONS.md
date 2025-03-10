@@ -33,7 +33,7 @@ The script `configure.py` in the project root can be used via `python configure.
 ### `--pretrained_model_name_or_path`
 
 - **What**: Path to the pretrained model or its identifier from https://huggingface.co/models.
-- **Why**: To specify the base model you'll start training from. Use `--revision` and `--variant` to specify specific versions from a repository.
+- **Why**: To specify the base model you'll start training from. Use `--revision` and `--variant` to specify specific versions from a repository. This also supports single-file `.safetensors` paths for SDXL, Flux, and SD3.x.
 
 ### `--pretrained_t5_model_name_or_path`
 
@@ -524,7 +524,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--model_card_note MODEL_CARD_NOTE]
                 [--model_card_safe_for_work] [--logging_dir LOGGING_DIR]
                 [--benchmark_base_model] [--disable_benchmark]
-                [--evaluation_type {clip,none}]
+                [--evaluation_type {clip,none}] [--eval_dataset_pooling]
                 [--pretrained_evaluation_model_name_or_path PRETRAINED_EVALUATION_MODEL_NAME_OR_PATH]
                 [--validation_on_startup] [--validation_seed_source {gpu,cpu}]
                 [--validation_lycoris_strength VALIDATION_LYCORIS_STRENGTH]
@@ -547,6 +547,8 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--validation_negative_prompt VALIDATION_NEGATIVE_PROMPT]
                 [--num_validation_images NUM_VALIDATION_IMAGES]
                 [--validation_steps VALIDATION_STEPS]
+                [--eval_steps_interval EVAL_STEPS_INTERVAL]
+                [--eval_timesteps EVAL_TIMESTEPS]
                 [--num_eval_images NUM_EVAL_IMAGES]
                 [--eval_dataset_id EVAL_DATASET_ID]
                 [--validation_num_inference_steps VALIDATION_NUM_INFERENCE_STEPS]
@@ -789,7 +791,15 @@ options:
                         hub.
   --pretrained_model_name_or_path PRETRAINED_MODEL_NAME_OR_PATH
                         Path to pretrained model or model identifier from
-                        huggingface.co/models.
+                        huggingface.co/models. Some model architectures
+                        support loading single-file .safetensors directly.
+                        Note that when using single-file safetensors, the
+                        tokeniser and noise schedule configs will be used from
+                        the vanilla upstream Huggingface repository, which
+                        requires network access. If you are training on a
+                        machine without network access, you should pre-
+                        download the entire Huggingface model repository
+                        instead of using single-file loader.
   --pretrained_transformer_model_name_or_path PRETRAINED_TRANSFORMER_MODEL_NAME_OR_PATH
                         Path to pretrained transformer model or model
                         identifier from huggingface.co/models.
@@ -1354,6 +1364,11 @@ options:
                         function. The default is to use no evaluator, and
                         'clip' will use a CLIP model to evaluate the resulting
                         model's performance during validations.
+  --eval_dataset_pooling
+                        When provided, only the pooled evaluation results will
+                        be returned in a single chart from all eval sets.
+                        Without this option, all eval sets will have separate
+                        charts.
   --pretrained_evaluation_model_name_or_path PRETRAINED_EVALUATION_MODEL_NAME_OR_PATH
                         Optionally provide a custom model to use for ViT
                         evaluations. The default is currently clip-vit-large-
@@ -1462,15 +1477,28 @@ options:
                         running the prompt `args.validation_prompt` multiple
                         times: `args.num_validation_images` and logging the
                         images.
+  --eval_steps_interval EVAL_STEPS_INTERVAL
+                        When set, the model will be evaluated every X steps.
+                        This is useful for monitoring the model's progress
+                        during training, but it requires an eval set
+                        configured in your dataloader.
+  --eval_timesteps EVAL_TIMESTEPS
+                        Defines how many timesteps to sample during eval. You
+                        can emulate inference by setting this to the value of
+                        --validation_num_inference_steps.
   --num_eval_images NUM_EVAL_IMAGES
                         If possible, this many eval images will be selected
                         from each dataset. This is used when training super-
                         resolution models such as DeepFloyd Stage II, which
-                        will upscale input images from the training set.
+                        will upscale input images from the training set during
+                        validation. If using --eval_steps_interval, this will
+                        be the number of batches sampled for loss
+                        calculations.
   --eval_dataset_id EVAL_DATASET_ID
                         When provided, only this dataset's images will be used
                         as the eval set, to keep the training and eval images
-                        split.
+                        split. This option only applies for img2img
+                        validations, not validation loss calculations.
   --validation_num_inference_steps VALIDATION_NUM_INFERENCE_STEPS
                         The default scheduler, DDIM, benefits from more steps.
                         UniPC can do well with just 10-15. For more speed
