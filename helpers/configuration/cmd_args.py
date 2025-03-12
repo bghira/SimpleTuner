@@ -1676,6 +1676,11 @@ def get_argument_parser():
         help="Number of images that should be generated during validation with `validation_prompt`.",
     )
     parser.add_argument(
+        "--disable_validation",
+        action="store_true",
+        help="Enable to completely disable the generation of validation images."
+    )
+    parser.add_argument(
         "--validation_steps",
         type=int,
         default=100,

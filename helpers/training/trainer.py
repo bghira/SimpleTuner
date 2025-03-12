@@ -725,7 +725,7 @@ class Trainer:
         ):
             logger.error("Cannot run validations with DeepSpeed ZeRO stage 3.")
             return
-        if self.accelerator.is_main_process:
+        if self.accelerator.is_main_process and not self.config.disable_validation:
             if self.config.model_family == "flux":
                 (
                     self.validation_prompts,
@@ -1468,6 +1468,8 @@ class Trainer:
             logger.error("Cannot run validations with DeepSpeed ZeRO stage 3.")
             return
         self.evaluation = None
+        if self.config.disable_validation:
+            return
         if (
             self.config.eval_steps_interval is not None
             and self.config.eval_steps_interval > 0
