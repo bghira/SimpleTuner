@@ -508,10 +508,11 @@ def save_model_card(
         optimizer_config = ""
     os.makedirs(assets_folder, exist_ok=True)
     datasets_str = ""
-    for dataset in StateTracker.get_data_backends().keys():
-        if "sampler" in StateTracker.get_data_backends()[dataset]:
+    datasettypes = ["image", "video"]
+    for dataset in StateTracker.get_data_backends(_types=datasettypes).keys():
+        if "sampler" in StateTracker.get_data_backends(_types=datasettypes)[dataset]:
             datasets_str += f"### {dataset}\n"
-            datasets_str += f"{StateTracker.get_data_backends()[dataset]['sampler'].log_state(show_rank=False, alt_stats=True)}"
+            datasets_str += f"{StateTracker.get_data_backends(_types=datasettypes)[dataset]['sampler'].log_state(show_rank=False, alt_stats=True)}"
     widget_str = ""
     idx = 0
     shortname_idx = 0
