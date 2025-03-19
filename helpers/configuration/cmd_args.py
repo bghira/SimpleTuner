@@ -94,6 +94,7 @@ def get_argument_parser():
             "flux",
             "smoldit",
             "sdxl",
+            "ltxvideo",
             "legacy",
         ],
         default=None,
@@ -294,6 +295,31 @@ def get_argument_parser():
             " unless finetuning a model which was already trained with it."
         ),
     )
+    parser.add_argument(
+        "--ltxvideo_vae_spatial_compression_ratio",
+        default=32,
+        type=int,
+    )
+    parser.add_argument(
+        "--ltxvideo_vae_temporal_compression_ratio",
+        default=8,
+        type=int,
+    )
+    parser.add_argument(
+        "--ltxvideo_noise_to_first_frame",
+        default=0.05,
+        type=float,
+    )
+    parser.add_argument(
+        "--ltxvideo_i2v",
+        default=False,
+        action="store_true",
+        help=(
+            "If you'd like to train LTX Video specifically for i2v task enhancement, enable this option."
+            " Otherwise, only images will be used for i2v enhancement."
+        ),
+    )
+
     parser.add_argument(
         "--t5_padding",
         choices=["zero", "unmodified"],
@@ -966,6 +992,14 @@ def get_argument_parser():
             " This is done deterministically, so that each GPU will receive the same seed across invocations."
             " If --seed_for_each_device=false is provided, then we will use the same seed across all GPUs,"
             " which will almost certainly result in the over-sampling of inputs on larger datasets."
+        ),
+    )
+    parser.add_argument(
+        "--framerate",
+        default=None,
+        help=(
+            "By default, SimpleTuner will use a framerate of 25 for training and inference on video models."
+            " You are on your own if you modify this value, but it is provided for your convenience."
         ),
     )
     parser.add_argument(
@@ -2358,7 +2392,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
 
     if (
         args.pretrained_vae_model_name_or_path is not None
-        and args.model_family in ["legacy", "flux", "sd3", "sana"]
+        and args.model_family in ["legacy", "flux", "sd3", "sana", "ltxvideo"]
         and "sdxl" in args.pretrained_vae_model_name_or_path
         and "deepfloyd" not in args.model_type
     ):
@@ -2661,6 +2695,10 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         except Exception as e:
             logger.error(f"Could not load skip layers: {e}")
             raise
+
+    if args.framerate is None:
+        if args.model_family == "ltxvideo":
+            args.framerate = 25
 
     if (
         args.sana_complex_human_instruction is not None
