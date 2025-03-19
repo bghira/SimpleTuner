@@ -134,7 +134,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
 
     # Image backend config
     output["dataset_type"] = backend.get("dataset_type", "image")
-    choices = ["image", "conditioning", "eval"]
+    choices = ["image", "conditioning", "eval", "video"]
     if (
         StateTracker.get_args().controlnet
         and output["dataset_type"] == "image"
@@ -295,13 +295,20 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             f"When a data backend is configured to use `'resolution_type':pixel`, `target_downsample_size` must be at least 512 pixels. You may have accidentally entered {target_downsample_size} megapixels, instead of pixels."
         )
 
+    if backend.get("dataset_type", None) == "video":
+        output["config"]["video"] = {}
+        if "video" in backend:
+            output["config"]["video"] = backend["video"]
+
     return output
 
 
-def print_bucket_info(metadata_backend):
+def print_bucket_info(metadata_backend, dataset_type: str = "image"):
     # Print table header
     if get_rank() == 0:
-        tqdm.write(f"{rank_info()} | {'Bucket':<10} | {'Image Count (per-GPU)':<12}")
+        tqdm.write(
+            f"{rank_info()} | {'bucket':<10} | {f'{dataset_type} count (per-GPU)':<12}"
+        )
 
         # Print separator
         tqdm.write("-" * 30)
@@ -623,6 +630,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             "image",
             "conditioning",
             "eval",
+            "video",
         ]:
             # image, conditioning, and eval sets are all included in this
             continue
@@ -917,16 +925,21 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
         info_log(f"Configured backend: {init_backend}")
 
-        print_bucket_info(init_backend["metadata_backend"])
         if len(init_backend["metadata_backend"]) == 0 and conditioning_type is None:
             raise Exception(
                 f"No images were discovered by the bucket manager in the dataset: {init_backend['id']}."
             )
+        print_bucket_info(
+            init_backend["metadata_backend"], init_backend.get("dataset_type")
+        )
 
         use_captions = True
         is_regularisation_data = backend.get(
             "is_regularisation_data", backend.get("is_regularization_data", False)
         )
+
+        is_i2v_data = backend.get("video", {}).get("is_i2v", args.ltxvideo_i2v)
+
         if "only_instance_prompt" in backend and backend["only_instance_prompt"]:
             use_captions = False
         elif args.only_instance_prompt:
@@ -935,6 +948,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             id=init_backend["id"],
             datasets=[init_backend["metadata_backend"]],
             is_regularisation_data=is_regularisation_data,
+            is_i2v_data=is_i2v_data,
         )
 
         if "deepfloyd" in args.model_type:
