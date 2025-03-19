@@ -583,6 +583,9 @@ class MetadataBackend:
                 logger.warning(f"Metadata not found for image {image_path}.")
                 return False
             width, height = metadata["original_size"]
+        elif isinstance(image, np.ndarray):
+            # we have a video
+            width, height = image.shape[2], image.shape[1]
         elif image is not None:
             width, height = image.size
         elif image_metadata is not None:
