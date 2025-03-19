@@ -56,6 +56,11 @@ from helpers.training.peft_init import init_lokr_network_with_perturbed_normal
 from accelerate.logging import get_logger
 from diffusers.models.embeddings import get_2d_rotary_pos_embed
 from helpers.models.smoldit import get_resize_crop_region_for_grid
+from helpers.models.ltxvideo import (
+    pack_ltx_latents,
+    unpack_ltx_latents,
+    generate_noise_from_first_unpacked_frame_latent as generate_ltx_i2v_noise,
+)
 from helpers.models import get_model_config_path
 
 logger = get_logger(
@@ -320,6 +325,8 @@ class Trainer:
             self.config.webhook_config,
             self.accelerator,
             f"{self.config.tracker_project_name} {self.config.tracker_run_name}",
+            send_video=True if self.config.model_family in ["ltxvideo"] else False,
+            args=self.config,
         )
         StateTracker.set_webhook_handler(self.webhook_handler)
         if send_startup_message:
@@ -373,43 +380,7 @@ class Trainer:
 
     def set_model_family(self, model_family: str = None):
         model_family = getattr(self.config, "model_family", model_family)
-        if not model_family:
-            logger.warning(
-                "Using --model_family (or MODEL_FAMILY) to specify which model you are training will be required in a future release."
-            )
-            if self.config.model_family == "sd3":
-                model_family = "sd3"
-                logger.warning(
-                    "Using --sd3 is deprecated. Please use --model_family=sd3."
-                )
-            if self.config.model_family == "flux":
-                model_family = "flux"
-                logger.warning(
-                    "Using --flux is deprecated. Please use --model_family=flux."
-                )
-            if self.config.model_family == "pixart_sigma":
-                model_family = "pixart_sigma"
-                logger.warning(
-                    "Using --pixart_sigma is deprecated. Please use --model_family=pixart_sigma."
-                )
-            if self.config.model_family == "legacy":
-                model_family = "legacy"
-                logger.warning(
-                    "Using --legacy is deprecated. Please use --model_family=legacy."
-                )
-            if self.config.model_family == "kolors":
-                model_family = "kolors"
-                logger.warning(
-                    "Using --kolors is deprecated. Please use --model_family=kolors."
-                )
-            if self.config.model_family == "smoldit":
-                model_family = "smoldit"
-            if model_family is None:
-                model_family = "sdxl"
-                logger.warning(
-                    "Training SDXL without specifying --model_family is deprecated. Please use --model_family=sdxl."
-                )
-        elif model_family not in model_classes["full"]:
+        if model_family not in model_classes["full"]:
             raise ValueError(f"Invalid model family specified: {model_family}")
 
         self._set_model_paths()
@@ -479,6 +450,8 @@ class Trainer:
         }
         if StateTracker.get_args().model_family == "sana":
             from diffusers import AutoencoderDC as AutoencoderClass
+        elif StateTracker.get_args().model_family == "ltxvideo":
+            from diffusers import AutoencoderKLLTXVideo as AutoencoderClass
         else:
             from diffusers import AutoencoderKL as AutoencoderClass
         self.vae_cls = AutoencoderClass
@@ -486,10 +459,11 @@ class Trainer:
         with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
             try:
                 self.vae = self.vae_cls.from_pretrained(**self.config.vae_kwargs)
-            except:
+            except Exception as e:
                 logger.warning(
                     "Couldn't load VAE with default path. Trying without a subfolder.."
                 )
+                logger.error(e)
                 self.config.vae_kwargs["subfolder"] = None
                 self.vae = self.vae_cls.from_pretrained(**self.config.vae_kwargs)
         if (
@@ -2260,6 +2234,75 @@ class Trainer:
                     return_dict=False,
                 )[0]
                 model_pred = model_pred.chunk(2, dim=1)[0]
+            elif self.config.model_family == "ltxvideo":
+                if noisy_latents.shape[1] != 128:
+                    raise ValueError(
+                        "LTX Video requires a latent size of 128 channels. Ensure you are using the correct VAE cache path."
+                        f" Shape received: {noisy_latents.shape}"
+                    )
+                scale_value = 1
+                height, width = (
+                    noisy_latents.shape[3] * scale_value,
+                    noisy_latents.shape[4] * scale_value,
+                )
+                training_logger.debug(
+                    f"Batch contents: {noisy_latents.shape} (h={height}, w={width})"
+                )
+                # permute to (B, T, C, H, W)
+                num_frames = noisy_latents.shape[2]
+
+                if "conditioning_mask" in prepared_batch:
+                    conditioning_mask = pack_ltx_latents(
+                        prepared_batch["conditioning_mask"]
+                    ).squeeze(-1)
+                packed_noisy_latents = pack_ltx_latents(noisy_latents, 1, 1).to(
+                    self.config.weight_dtype
+                )
+
+                training_logger.debug(
+                    f"Packed batch shape: {packed_noisy_latents.shape}"
+                )
+                training_logger.debug(
+                    "input dtypes:"
+                    f"\n -> noisy_latents: {noisy_latents.dtype}"
+                    f"\n -> encoder_hidden_states: {encoder_hidden_states.dtype}"
+                    f"\n -> timestep: {timesteps.dtype}"
+                )
+                # Copied from a-r-r-o-w's script.
+                latent_frame_rate = self.config.framerate / 8
+                spatial_compression_ratio = 32
+                # [0.32, 32, 32]
+                rope_interpolation_scale = [
+                    1 / latent_frame_rate,
+                    spatial_compression_ratio,
+                    spatial_compression_ratio,
+                ]
+                # rope_interpolation_scale = [1 / 25, 32, 32]
+
+                model_pred = self.transformer(
+                    packed_noisy_latents,
+                    encoder_hidden_states=encoder_hidden_states,
+                    encoder_attention_mask=prepared_batch["encoder_attention_mask"],
+                    timestep=timesteps,
+                    return_dict=False,
+                    num_frames=num_frames,
+                    rope_interpolation_scale=rope_interpolation_scale,
+                    height=height,
+                    width=width,
+                )[0]
+                training_logger.debug(
+                    f"Got to the end of prediction, {model_pred.shape}"
+                )
+                # we need to unpack LTX video latents i think
+                model_pred = unpack_ltx_latents(
+                    model_pred,
+                    num_frames=num_frames,
+                    patch_size=1,
+                    patch_size_t=1,
+                    height=height,
+                    width=width,
+                )
+
             elif self.config.model_family == "smoldit":
                 first_latent_shape = noisy_latents.shape
                 height = first_latent_shape[1] * 8
@@ -2493,6 +2536,37 @@ class Trainer:
                     weights, bsz, replacement=True
                 ).long()
         if self.config.flow_matching:
+            if len(batch["latents"].shape) == 5:
+                # ltxvideo and others with 5D tensors need expansion to match dims here i think
+                training_logger.debug(
+                    f"Latents shape vs sigmas, timesteps: {batch['latents'].shape}, {batch['sigmas'].shape}, {batch['timesteps'].shape}"
+                )
+                batch["sigmas"] = batch["sigmas"].reshape(bsz, 1, 1, 1, 1)
+                num_frame_latents = batch["latents"].shape[2]
+                if num_frame_latents > 1 and batch["is_i2v_data"] is True:
+                    # the theory is that if you have a single-frame latent, we expand it to num_frames and then do less destructive denoising.
+                    single_frame_latents = batch["latents"]
+                    if num_frame_latents > 1:
+                        # for an actual video though, we'll grab one frame using the worst syntax we can think of:
+                        single_frame_latents = batch["latents"][:, :, 0, :, :]
+                        training_logger.debug(
+                            f"Single frame latents shape: {single_frame_latents.shape}"
+                        )
+
+                    batch["noise"], batch["i2v_conditioning_mask"] = (
+                        generate_ltx_i2v_noise(
+                            single_frame_latents,
+                            num_frame_latents,
+                            vae_spatial_compression_ratio=self.config.ltxvideo_vae_spatial_compression_ratio,
+                            vae_temporal_compression_ratio=self.config.ltxvideo_vae_temporal_compression_ratio,
+                            noise_to_first_frame=self.config.ltxvideo_noise_to_first_frame,
+                        )
+                    )
+                    # do not denoise first frame
+                    batch["timesteps"] = batch["timesteps"].unsqueeze(-1) * (
+                        1 - batch["i2v_conditioning_mask"]
+                    )
+
             batch["noisy_latents"] = (1 - batch["sigmas"]) * batch["latents"] + batch[
                 "sigmas"
             ] * batch["noise"]
@@ -3235,6 +3309,14 @@ class Trainer:
                         transformer_lora_layers=transformer_lora_layers,
                         text_encoder_lora_layers=text_encoder_lora_layers,
                     )
+                elif self.config.model_family == "ltxvideo":
+                    from diffusers.pipelines import LTXPipeline
+
+                    LTXPipeline.save_lora_weights(
+                        save_directory=self.config.output_dir,
+                        transformer_lora_layers=transformer_lora_layers,
+                    )
+
                 elif self.config.model_family == "sd3":
                     StableDiffusion3Pipeline.save_lora_weights(
                         save_directory=self.config.output_dir,
@@ -3462,7 +3544,26 @@ class Trainer:
                         transformer=self.transformer,
                         scheduler=None,
                     )
+                elif self.config.model_family == "ltxvideo":
+                    from diffusers import LTXPipeline
 
+                    self.pipeline = LTXPipeline.from_pretrained(
+                        self.config.pretrained_model_name_or_path,
+                        text_encoder=self.text_encoder_1
+                        or (
+                            self.text_encoder_cls_1.from_pretrained(
+                                self.config.pretrained_model_name_or_path,
+                                subfolder="text_encoder",
+                                revision=self.config.revision,
+                                variant=self.config.variant,
+                            )
+                            if self.config.save_text_encoder
+                            else None
+                        ),
+                        tokenizer=self.tokenizer_1,
+                        vae=self.vae,
+                        transformer=self.transformer,
+                    )
                 elif self.config.model_family == "sana":
                     from diffusers import SanaPipeline
 
