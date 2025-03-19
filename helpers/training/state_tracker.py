@@ -426,10 +426,12 @@ class StateTracker:
         cls.data_backends = {}
 
     @classmethod
-    def get_data_backends(cls, _type="image"):
+    def get_data_backends(cls, _type="image", _types=["image", "video"]):
         output = {}
         for backend_id, backend in dict(cls.data_backends).items():
-            if backend.get("dataset_type", "image") == _type:
+            if backend.get("dataset_type", "image") == _type or (
+                type(_types) is list and backend.get("dataset_type", "image") in _types
+            ):
                 output[backend_id] = backend
         return output
 
@@ -507,7 +509,7 @@ class StateTracker:
 
     @classmethod
     def get_metadata_by_filepath(cls, filepath, data_backend_id: str):
-        for _, data_backend in cls.get_data_backends().items():
+        for _, data_backend in cls.get_data_backends(_types=["image", "video"]).items():
             if "metadata_backend" not in data_backend:
                 continue
             if data_backend_id != data_backend["metadata_backend"].id:
