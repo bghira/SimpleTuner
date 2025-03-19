@@ -1,15 +1,17 @@
 from PIL import Image
 from PIL.ImageOps import exif_transpose
 from helpers.multiaspect.image import MultiaspectImage, resize_helpers
+from helpers.multiaspect.video import resize_video_frames
 from helpers.image_manipulation.cropping import crop_handlers
 from helpers.training.state_tracker import StateTracker
 from helpers.training.multi_process import should_log
 import logging
-import os
+import os, cv2
 from tqdm import tqdm
 from math import sqrt
 import random
 import time
+import numpy as np
 
 logger = logging.getLogger(__name__)
 if should_log():
@@ -46,7 +48,13 @@ class TrainingSample:
             if image_metadata
             else StateTracker.get_metadata_by_filepath(image_path, data_backend_id)
         )
-        if hasattr(image, "size"):
+        if isinstance(image, np.ndarray):
+            self.original_size = (image.shape[2], image.shape[1])
+            logger.info(f"Checking on {type(image)}: {self.original_size}")
+            self.original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+                self.original_size
+            )
+        elif hasattr(image, "size"):
             self.original_size = self.image.size
             self.original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
                 self.original_size
@@ -98,8 +106,12 @@ class TrainingSample:
         self._validate_image_metadata()
 
     def save_debug_image(self, path: str):
-        if self.image and os.environ.get("SIMPLETUNER_DEBUG_IMAGE_PREP", "") == "true":
-            self.image.save(path)
+        if self.image is not None:
+            if os.environ.get("SIMPLETUNER_DEBUG_IMAGE_PREP", "") == "true":
+                if hasattr(self.image, "save"):
+                    self.image.save(path)
+                else:
+                    logger.info(f"Not saving debug video output: {path}")
         return self
 
     @staticmethod
@@ -150,7 +162,11 @@ class TrainingSample:
             self.original_size
         )
 
-        if not self.valid_metadata and hasattr(self.image, "size"):
+        if (
+            not self.valid_metadata
+            and hasattr(self.image, "size")
+            and isinstance(self.image, Image.Image)
+        ):
             self.original_size = self.image.size
 
         return self.valid_metadata
@@ -360,7 +376,7 @@ class TrainingSample:
         if webhook_handler:
             webhook_handler.send(
                 message=f"Debug info for prepared sample, {str(prepared_sample)}",
-                images=[self.image] if self.image else None,
+                images=[self.image],
                 message_level="debug",
             )
         return prepared_sample
@@ -537,7 +553,7 @@ class TrainingSample:
         Returns:
             TrainingSample: The current TrainingSample instance.
         """
-        if self.image:
+        if self.image is not None and hasattr(self.image, "convert"):
             # Convert image to RGB to remove any alpha channel and apply EXIF data transformations
             self.image = self.image.convert("RGB")
             self.image = exif_transpose(self.image)
@@ -593,9 +609,19 @@ class TrainingSample:
                 )
                 # Now we can resize the image to the intermediary size.
                 if self.image is not None:
-                    self.image = self.image.resize(
-                        self.intermediary_size, Image.Resampling.LANCZOS
-                    )
+                    if isinstance(self.image, Image.Image):
+                        self.image = self.image.resize(
+                            self.intermediary_size, Image.Resampling.LANCZOS
+                        )
+                    elif isinstance(self.image, np.ndarray):
+                        # we have a video to resize
+                        logger.info(
+                            f"Resizing {self.image.shape} to {self.intermediary_size}, "
+                        )
+                        self.image = resize_video_frames(
+                            self.image,
+                            (self.intermediary_size[1], self.intermediary_size[0]),
+                        )
                 self.current_size = self.intermediary_size
                 if self.image is not None and self.cropper:
                     self.cropper.set_image(self.image)
