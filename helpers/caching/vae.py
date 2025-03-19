@@ -75,8 +75,10 @@ class VAECache(WebhookMixin):
         max_workers: int = 32,
         vae_cache_ondemand: bool = False,
         hash_filenames: bool = False,
+        dataset_type: str = None,
     ):
         self.id = id
+        self.dataset_type = dataset_type
         if image_data_backend and image_data_backend.id != id:
             raise ValueError(
                 f"VAECache received incorrect image_data_backend: {image_data_backend}"
@@ -107,7 +109,7 @@ class VAECache(WebhookMixin):
         self.instance_data_dir = instance_data_dir
         self.transform_image = MultiaspectImage.get_image_transforms()
         self.transform_video = None
-        if StateTracker.get_model_family() in ["ltxvideo"]:
+        if self.dataset_type == "video":
             self.transform_video = MultiaspectImage.get_video_transforms()
         self.rank_info = rank_info()
         self.metadata_backend = metadata_backend
@@ -477,6 +479,11 @@ class VAECache(WebhookMixin):
             logger.info(
                 f"PROCESSING VIDEO to VIDEO LATENTS CONVERSION ({samples.shape})"
             )
+            # images are torch.Size([1, 3, 1, 640, 448]) (B, C, F, H, W) but videos are torch.Size([2, 600, 3, 384, 395])
+            # we have to permute the video latent samples to match the image latent samples
+            if samples.shape[2] == 3:
+                samples = samples.permute(0, 2, 1, 3, 4)
+            logger.info(f"Permute to: {samples.shape}")
 
         logger.info(f"Final samples shape: {samples.shape}")
         return samples
@@ -763,8 +770,8 @@ class VAECache(WebhookMixin):
                 filepath, _, aspect_bucket = initial_data[idx]
                 filepaths.append(filepath)
 
-                logger.info(f"Running transformations on {image.shape}")
                 if self.transform_video is not None:
+                    logger.info(f"Running video transformations on {image.shape}")
                     pixel_values = self.transform_video(image).to(
                         self.accelerator.device, dtype=self.vae.dtype
                     )
