@@ -72,7 +72,7 @@ def get_tokenizers(args):
             "revision": args.revision,
         }
         is_t5_model = False
-        if args.model_family.lower() == "pixart_sigma":
+        if args.model_family.lower() in ["ltxvideo", "pixart_sigma"]:
             from transformers import T5Tokenizer
 
             tokenizer_cls = T5Tokenizer
@@ -109,13 +109,11 @@ def get_tokenizers(args):
 
         if is_t5_model:
             text_encoder_path = (
-                (
-                    args.pretrained_t5_model_name_or_path
-                    if args.pretrained_t5_model_name_or_path is not None
-                    else get_model_config_path(
-                        args.model_family, args.pretrained_model_name_or_path
-                    )
-                ),
+                args.pretrained_t5_model_name_or_path
+                if args.pretrained_t5_model_name_or_path is not None
+                else get_model_config_path(
+                    args.model_family, args.pretrained_model_name_or_path
+                )
             )
             logger.info(
                 f"Tokenizer path: {text_encoder_path}, custom T5 model path: {args.pretrained_t5_model_name_or_path} revision: {args.revision}"
@@ -131,7 +129,7 @@ def get_tokenizers(args):
                 logger.warning(
                     f"Failed to load tokenizer 1: {e}, attempting no subfolder"
                 )
-                tokenizer_1 = T5Tokenizer.from_pretrained(
+                tokenizer_1 = tokenizer_cls.from_pretrained(
                     text_encoder_path,
                     subfolder=None,
                     revision=args.revision,
@@ -150,7 +148,7 @@ def get_tokenizers(args):
 
     from transformers import T5TokenizerFast
 
-    if args.model_family not in ["pixart_sigma", "kolors", "sana"]:
+    if args.model_family not in ["pixart_sigma", "kolors", "sana", "ltxvideo"]:
         try:
             tokenizer_2_cls = CLIPTokenizer
             if args.model_family.lower() == "flux":
@@ -198,7 +196,6 @@ def get_tokenizers(args):
 
 def determine_te_path_subfolder(args):
     if args.model_family.lower() == "kolors":
-        logger.info("Loading Kolors ChatGLM language model..")
         text_encoder_path = args.pretrained_model_name_or_path
         text_encoder_subfolder = "text_encoder"
     elif args.model_family.lower() == "smoldit":
@@ -207,7 +204,7 @@ def determine_te_path_subfolder(args):
     elif args.model_family.lower() == "flux":
         text_encoder_path = args.pretrained_model_name_or_path
         text_encoder_subfolder = "text_encoder"
-    elif args.model_family.lower() == "pixart_sigma":
+    elif args.model_family.lower() in ["ltxvideo", "pixart_sigma"]:
         text_encoder_path = (
             args.pretrained_t5_model_name_or_path
             if args.pretrained_t5_model_name_or_path is not None
@@ -239,7 +236,7 @@ def load_tes(
     text_encoder_variant = args.variant
 
     if tokenizer_1 is not None and not args.model_family == "smoldit":
-        if args.model_family.lower() == "pixart_sigma":
+        if args.model_family.lower() in ["pixart_sigma", "ltxvideo"]:
             logger.info(
                 f"Loading T5-XXL v1.1 text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
             )

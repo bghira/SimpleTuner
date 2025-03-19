@@ -115,6 +115,7 @@ class StateTracker:
     def set_model_family(cls, model_type: str):
         if model_type not in [
             "legacy",
+            "ltxvideo",
             "sdxl",
             "sd3",
             "pixart_sigma",
