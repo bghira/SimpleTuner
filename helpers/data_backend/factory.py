@@ -643,7 +643,8 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
         if (
             "id" not in backend
             or backend["id"] == ""
-            or backend["id"] in StateTracker.get_data_backends()
+            or backend["id"]
+            in StateTracker.get_data_backends(_types=["image", "video"])
         ):
             raise ValueError("Each dataset needs a unique 'id' field.")
         info_log(f"Configuring data backend: {backend['id']}")
@@ -1098,6 +1099,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                 )
             init_backend["vaecache"] = VAECache(
                 id=init_backend["id"],
+                dataset_type=init_backend["dataset_type"],
                 vae=StateTracker.get_vae(),
                 accelerator=accelerator,
                 metadata_backend=init_backend["metadata_backend"],
@@ -1210,7 +1212,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             "conditioning_data"
         ] not in StateTracker.get_data_backends(_type="conditioning"):
             raise ValueError(
-                f"Conditioning data backend {backend['conditioning_data']} not found in data backend list: {StateTracker.get_data_backends()}."
+                f"Conditioning data backend {backend['conditioning_data']} not found in data backend list: {StateTracker.get_data_backends(_type='conditionin')}."
             )
         if "conditioning_data" in backend:
             StateTracker.set_conditioning_dataset(
@@ -1220,11 +1222,11 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                 f"Successfully configured conditioning image dataset for {backend['id']}"
             )
 
-    if len(StateTracker.get_data_backends()) == 0:
+    if len(StateTracker.get_data_backends(_types=["image", "video"])) == 0:
         raise ValueError(
             "Must provide at least one data backend in the data backend config file."
         )
-    return StateTracker.get_data_backends()
+    return StateTracker.get_data_backends(_types=["image", "video"])
 
 
 def get_local_backend(
@@ -1370,7 +1372,8 @@ def get_backend_weight(backend_id, backend, step):
 
         # Calculate the weight based on dataset length
         length_factor = dataset_length / sum(
-            StateTracker.get_dataset_size(b) for b in StateTracker.get_data_backends()
+            StateTracker.get_dataset_size(b)
+            for b in StateTracker.get_data_backends(_types=["image", "video"])
         )
 
         # Adjust the probability by length factor
