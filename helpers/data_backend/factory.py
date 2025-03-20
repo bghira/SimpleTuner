@@ -1019,6 +1019,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             instance_prompt=backend.get("instance_prompt", args.instance_prompt),
             conditioning_type=conditioning_type,
             is_regularisation_data=is_regularisation_data,
+            dataset_type=backend.get("dataset_type"),
         )
         if init_backend["sampler"].caption_strategy == "parquet":
             configure_parquet_database(backend, args, init_backend["data_backend"])
