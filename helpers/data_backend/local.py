@@ -1,11 +1,12 @@
 from helpers.data_backend.base import BaseDataBackend
-from helpers.image_manipulation.load import load_image
+from helpers.image_manipulation.load import load_image, load_video
+from helpers.training import video_file_extensions, image_file_extensions
 from pathlib import Path
 from io import BytesIO
 import os
 import logging
 import torch
-from typing import Any, List, Tuple
+from typing import Any, List, Tuple, Union
 from atomicwrites import atomic_write
 
 logger = logging.getLogger("LocalDataBackend")
@@ -43,7 +44,7 @@ class LocalDataBackend(BaseDataBackend):
             with atomic_write(
                 filepath, mode=mode, overwrite=True, encoding=None
             ) as temp_file:
-                if isinstance(data, torch.Tensor):
+                if isinstance(data, Union[dict, torch.Tensor]):
                     self.torch_save(data, temp_file)
                 elif isinstance(data, str):
                     temp_file.write(data.encode("utf-8"))
@@ -156,8 +157,12 @@ class LocalDataBackend(BaseDataBackend):
     def read_image(self, filepath: str, delete_problematic_images: bool = False) -> Any:
         """Read an image from the specified filepath."""
         filepath = filepath.replace("\x00", "")
+        file_extension = os.path.splitext(filepath)[1].lower().strip(".")
+        file_loader = load_image
+        if file_extension in video_file_extensions:
+            file_loader = load_video
         try:
-            image = load_image(filepath)
+            image = file_loader(filepath)
             return image
         except Exception as e:
             logger.error(

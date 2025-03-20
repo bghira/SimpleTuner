@@ -22,9 +22,10 @@ model_classes = {
         "kolors",
         "sd3",
         "legacy",
+        "ltxvideo",
         "sana",
     ],
-    "lora": ["flux", "sdxl", "kolors", "sd3", "legacy"],
+    "lora": ["flux", "sdxl", "kolors", "sd3", "legacy", "ltxvideo"],
     "controlnet": ["sdxl", "legacy"],
 }
 
@@ -37,6 +38,7 @@ default_models = {
     "sd3": "stabilityai/stable-diffusion-3.5-large",
     "legacy": "stabilityai/stable-diffusion-2-1-base",
     "sana": "terminusresearch/sana-1.6b-1024px",
+    "ltxvideo": "Lightricks/LTX-Video",
 }
 
 default_cfg = {
@@ -46,6 +48,7 @@ default_cfg = {
     "kolors": 5.0,
     "terminus": 8.0,
     "sd3": 5.0,
+    "ltxvideo": 4.0,
     "sana": 3.8,
 }
 
@@ -57,6 +60,7 @@ model_labels = {
     "terminus": "Terminus",
     "sdxl": "Stable Diffusion XL",
     "legacy": "Stable Diffusion",
+    "ltxvideo": "LTX Video",
     "sana": "Sana",
 }
 

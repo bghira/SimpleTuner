@@ -387,6 +387,9 @@ def gather_conditional_sdxl_size_features(examples, latents, weight_dtype):
 def check_latent_shapes(latents, filepaths, data_backend_id, batch):
     # Validate shapes
     test_shape = latents[0].shape
+    # 5D tensors (B, F, C, H, W) are for LTX Video currently, and we'll just test the C, H, W shape
+    if len(test_shape) == 5:
+        test_shape = test_shape[1:]
     # Check all "aspect_ratio" values and raise error if any differ, with the two differing values:
     for example in batch:
         if example["aspect_ratio"] != batch[0]["aspect_ratio"]:
@@ -409,14 +412,19 @@ def check_latent_shapes(latents, filepaths, data_backend_id, batch):
             raise ValueError(
                 f"(id={data_backend_id}) Deleted cache file {filepaths[idx]}: contains NaN or Inf values: {latent}"
             )
-        if latent.shape != test_shape:
+        if len(latent.shape) == 5:
+            if latent.shape[1:] != test_shape:
+                raise ValueError(
+                    f"(id={data_backend_id}) File {filepaths[idx]} latent shape mismatch: {latent.shape[1:]} != {test_shape}"
+                )
+        elif latent.shape != test_shape:
             raise ValueError(
                 f"(id={data_backend_id}) File {filepaths[idx]} latent shape mismatch: {latent.shape} != {test_shape}"
             )
 
-    debug_log(f" -> stacking {len(latents)} latents")
+    debug_log(f" -> stacking {len(latents)} latents: {latents}")
     return torch.stack(
-        [latent.to(StateTracker.get_accelerator().device) for latent in latents]
+        [latent.to(StateTracker.get_accelerator().device) for latent in latents], dim=0
     )
 
 
@@ -433,6 +441,7 @@ def collate_fn(batch):
     examples = batch["training_samples"]
     conditioning_examples = batch["conditioning_samples"]
     is_regularisation_data = batch.get("is_regularisation_data", False)
+    is_i2v_data = batch.get("is_i2v_data", False)
     if StateTracker.get_args().controlnet and len(examples) != len(
         conditioning_examples
     ):
@@ -465,7 +474,11 @@ def collate_fn(batch):
     debug_log("Extract filepaths")
     filepaths = extract_filepaths(examples)
     debug_log("Compute latents")
-    latent_batch = compute_latents(filepaths, data_backend_id)
+    batch_data = compute_latents(filepaths, data_backend_id)
+    if isinstance(batch_data[0], dict):
+        latent_batch = [v["latents"] for v in batch_data]
+    else:
+        latent_batch = batch_data
     if "deepfloyd" not in StateTracker.get_args().model_type:
         debug_log("Check latents")
         latent_batch = check_latent_shapes(
@@ -565,5 +578,6 @@ def collate_fn(batch):
         "conditioning_pixel_values": conditioning_pixel_values,
         "encoder_attention_mask": attn_mask,
         "is_regularisation_data": is_regularisation_data,
+        "is_i2v_data": is_i2v_data,
         "conditioning_type": conditioning_type,
     }

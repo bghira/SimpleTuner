@@ -2,7 +2,7 @@ from helpers.training.state_tracker import StateTracker
 from helpers.data_backend.base import BaseDataBackend
 from helpers.metadata.backends.base import MetadataBackend
 from helpers.image_manipulation.training_sample import TrainingSample
-from helpers.image_manipulation.load import load_image
+from helpers.image_manipulation.load import load_image, load_video
 from helpers.training.multi_process import should_log
 import json
 import logging
@@ -10,7 +10,7 @@ import os
 import traceback
 from io import BytesIO
 from helpers.image_manipulation.brightness import calculate_luminance
-from helpers.training import image_file_extensions
+from helpers.training import image_file_extensions, video_file_extensions
 
 logger = logging.getLogger("DiscoveryMetadataBackend")
 if should_log():
@@ -38,6 +38,9 @@ class DiscoveryMetadataBackend(MetadataBackend):
         minimum_image_size: int = None,
         minimum_aspect_ratio: int = None,
         maximum_aspect_ratio: int = None,
+        num_frames: int = None,
+        minimum_num_frames: int = None,
+        maximum_num_frames: int = None,
         cache_file_suffix: str = None,
         repeats: int = 0,
     ):
@@ -57,6 +60,9 @@ class DiscoveryMetadataBackend(MetadataBackend):
             minimum_image_size=minimum_image_size,
             minimum_aspect_ratio=minimum_aspect_ratio,
             maximum_aspect_ratio=maximum_aspect_ratio,
+            maximum_num_frames=maximum_num_frames,
+            minimum_num_frames=minimum_num_frames,
+            num_frames=num_frames,
             cache_file_suffix=cache_file_suffix,
             repeats=repeats,
         )
@@ -218,41 +224,49 @@ class DiscoveryMetadataBackend(MetadataBackend):
                 statistics["skipped"]["not_found"] += 1
                 return aspect_ratio_bucket_indices
 
-            with load_image(BytesIO(image_data)) as image:
-                if not self.meets_resolution_requirements(image=image):
-                    if not self.delete_unwanted_images:
-                        logger.debug(
-                            f"Image {image_path_str} does not meet minimum size requirements. Skipping image."
-                        )
-                    else:
-                        logger.debug(
-                            f"Image {image_path_str} does not meet minimum size requirements. Deleting image."
-                        )
-                        self.data_backend.delete(image_path_str)
-                    statistics.setdefault("skipped", {}).setdefault("too_small", 0)
-                    statistics["skipped"]["too_small"] += 1
-                    return aspect_ratio_bucket_indices
+            file_extension = os.path.splitext(image_path_str)[1].lower()
+            file_loader = load_image
+            if file_extension.strip(".") in video_file_extensions:
+                file_loader = load_video
+            image = file_loader(BytesIO(image_data))
+            if not self.meets_resolution_requirements(image=image):
+                if not self.delete_unwanted_images:
+                    logger.debug(
+                        f"Image {image_path_str} does not meet minimum size requirements. Skipping image."
+                    )
+                else:
+                    logger.debug(
+                        f"Image {image_path_str} does not meet minimum size requirements. Deleting image."
+                    )
+                    self.data_backend.delete(image_path_str)
+                statistics.setdefault("skipped", {}).setdefault("too_small", 0)
+                statistics["skipped"]["too_small"] += 1
+                return aspect_ratio_bucket_indices
 
+            if hasattr(image, "shape"):
+                image_metadata["original_size"] = (image.shape[2], image.shape[1])
+                image_metadata["num_frames"] = image.shape[0]
+            elif hasattr(image, "resize"):
                 image_metadata["original_size"] = image.size
-                training_sample = TrainingSample(
-                    image=image,
-                    data_backend_id=self.id,
-                    image_metadata=image_metadata,
-                    image_path=image_path_str,
-                )
-                prepared_sample = training_sample.prepare()
-                image_metadata.update(
-                    {
-                        "crop_coordinates": prepared_sample.crop_coordinates,
-                        "target_size": prepared_sample.target_size,
-                        "intermediary_size": prepared_sample.intermediary_size,
-                        "aspect_ratio": prepared_sample.aspect_ratio,
-                        "luminance": calculate_luminance(image),
-                    }
-                )
-                logger.debug(
-                    f"Image {image_path_str} has aspect ratio {prepared_sample.aspect_ratio} and size {image.size}."
-                )
+            training_sample = TrainingSample(
+                image=image,
+                data_backend_id=self.id,
+                image_metadata=image_metadata,
+                image_path=image_path_str,
+            )
+            prepared_sample = training_sample.prepare()
+            image_metadata.update(
+                {
+                    "crop_coordinates": prepared_sample.crop_coordinates,
+                    "target_size": prepared_sample.target_size,
+                    "intermediary_size": prepared_sample.intermediary_size,
+                    "aspect_ratio": prepared_sample.aspect_ratio,
+                    "luminance": calculate_luminance(image),
+                }
+            )
+            logger.debug(
+                f"Image {image_path_str} has aspect ratio {prepared_sample.aspect_ratio} and size {image.size}."
+            )
 
             aspect_ratio_key = str(prepared_sample.aspect_ratio)
             if aspect_ratio_key not in aspect_ratio_bucket_indices:

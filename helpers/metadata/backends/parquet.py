@@ -1,5 +1,5 @@
 from helpers.training.state_tracker import StateTracker
-from helpers.training import image_file_extensions
+from helpers.training import image_file_extensions, video_file_extensions
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
 from helpers.image_manipulation.training_sample import TrainingSample
@@ -41,6 +41,9 @@ class ParquetMetadataBackend(MetadataBackend):
         minimum_image_size: int = None,
         minimum_aspect_ratio: int = None,
         maximum_aspect_ratio: int = None,
+        num_frames: int = None,
+        minimum_num_frames: int = None,
+        maximum_num_frames: int = None,
         cache_file_suffix: str = None,
         repeats: int = 0,
     ):
@@ -48,6 +51,10 @@ class ParquetMetadataBackend(MetadataBackend):
         self.parquet_path = parquet_config.get("path", None)
         self.is_json_lines = self.parquet_path.endswith(".jsonl")
         self.is_json_file = self.parquet_path.endswith(".json")
+
+        self.num_frames_column = parquet_config.get("num_frames_column", None)
+        self.fps_column = parquet_config.get("fps_column", None)
+
         super().__init__(
             id=id,
             instance_data_dir=instance_data_dir,
@@ -64,6 +71,9 @@ class ParquetMetadataBackend(MetadataBackend):
             minimum_image_size=minimum_image_size,
             minimum_aspect_ratio=minimum_aspect_ratio,
             maximum_aspect_ratio=maximum_aspect_ratio,
+            maximum_num_frames=maximum_num_frames,
+            minimum_num_frames=minimum_num_frames,
+            num_frames=num_frames,
             cache_file_suffix=cache_file_suffix,
             repeats=repeats,
         )
@@ -78,7 +88,7 @@ class ParquetMetadataBackend(MetadataBackend):
 
     def _remove_images_with_missing_captions(self):
         """
-        Remove images from the aspect ratio bucket indices that have missing captions.
+        Remove images/videos from the aspect ratio bucket indices that have missing captions.
         """
         for key in self.aspect_ratio_bucket_indices.keys():
             len_before = len(self.aspect_ratio_bucket_indices[key])
@@ -90,14 +100,14 @@ class ParquetMetadataBackend(MetadataBackend):
             len_after = len(self.aspect_ratio_bucket_indices[key])
             if len_before != len_after:
                 logger.warning(
-                    f"Removed {len_before - len_after} images from aspect ratio bucket {key} due to missing captions."
+                    f"Removed {len_before - len_after} items from aspect ratio bucket {key} due to missing captions."
                 )
         self.save_cache(enforce_constraints=True)
         self.missing_captions = []
 
     def load_parquet_database(self):
         """
-        Load the parquet database from file.
+        Load the parquet database from file, either as JSON/JSONL or Parquet.
         """
         if self.data_backend.exists(self.parquet_path):
             try:
@@ -107,36 +117,39 @@ class ParquetMetadataBackend(MetadataBackend):
                 pq = io.BytesIO(bytes_string)
             except Exception as e:
                 raise e
+
             if self.is_json_lines or self.is_json_file:
                 self.parquet_database = pd.read_json(pq, lines=self.is_json_lines)
             else:
                 self.parquet_database = pd.read_parquet(pq, engine="pyarrow")
+
             self.parquet_database.set_index(
                 self.parquet_config.get("filename_column"), inplace=True
             )
         else:
             raise FileNotFoundError(
-                f"Parquet could not be loaded from {self.parquet_path}: database file does not exist (path={self.parquet_path})."
+                f"Parquet could not be loaded from {self.parquet_path}: file does not exist."
             )
 
     def _locate_missing_caption_from_fast_list(self):
         """
-        Check the fast list keys vs the filenames in our aspect ratio bucket indices.
+        Compare the fast list keys vs the filenames in our aspect ratio bucket indices.
+        Return a list of items that have no caption present in the parquet.
         """
         missing_captions = []
         identifier_includes_extension = self.parquet_config.get(
             "identifier_includes_extension", False
         )
-        # currently we just don't do this.
+        # currently we do not do path-based identifiers
         identifier_includes_path = False
+
         for key in self.aspect_ratio_bucket_indices.keys():
             for filename in self.aspect_ratio_bucket_indices[key]:
+                # Chop extension if parquet expects no extension
                 if not identifier_includes_extension:
                     filename = os.path.splitext(filename)[0]
                 if not identifier_includes_path:
-                    # strip out self.instance_data_dir
                     filename = filename.replace(self.instance_data_dir, "")
-                    # any leading /
                     if filename.startswith("/"):
                         filename = filename[1:]
                 if filename not in self.caption_cache:
@@ -145,15 +158,13 @@ class ParquetMetadataBackend(MetadataBackend):
 
     def _extract_captions_to_fast_list(self):
         """
-        Pull the captions from the parquet table into a dict with the format {filename: caption}.
+        Pull the captions from the parquet table into a dict {filename: caption}.
 
-        This helps because parquet's columnar format sucks for searching.
-
-        Returns:
-            dict: A dictionary of captions.
+        This helps because parquet is columnar, so repeated lookups can be slow. We want a quick dict.
         """
         if self.parquet_database is None:
             raise ValueError("Parquet database is not loaded.")
+
         filename_column = self.parquet_config.get("filename_column")
         caption_column = self.parquet_config.get("caption_column")
         fallback_caption_column = self.parquet_config.get("fallback_caption_column")
@@ -161,52 +172,55 @@ class ParquetMetadataBackend(MetadataBackend):
             "identifier_includes_extension", False
         )
         captions = {}
+
         for index, row in self.parquet_database.iterrows():
             if filename_column in row:
-                filename = str(row[filename_column])
+                file_id = str(row[filename_column])
             else:
-                filename = str(index)
-            if not identifier_includes_extension:
-                filename = os.path.splitext(filename)[0]
+                file_id = str(index)
 
-            if type(caption_column) == list:
-                caption = None
+            if not identifier_includes_extension:
+                file_id = os.path.splitext(file_id)[0]
+
+            # Could be list or single str
+            if isinstance(caption_column, list):
                 if len(caption_column) > 0:
-                    caption = [row[c] for c in caption_column]
+                    # Gather all columns in a list
+                    cvals = [row.get(c, "") for c in caption_column]
+                    cvals = [c for c in cvals if c]  # remove empties
+                    caption = cvals if cvals else None
+                else:
+                    caption = None
             else:
-                caption = row.get(caption_column)
-                if isinstance(caption, (numpy.ndarray, pd.Series)):
-                    caption = [str(item) for item in caption if item is not None]
+                caption = row.get(caption_column, None)
 
             if caption is None and fallback_caption_column:
                 caption = row.get(fallback_caption_column, None)
-            if caption is None or caption == "" or caption == []:
-                raise ValueError(
-                    f"Could not locate caption for image {filename} in sampler_backend {self.id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(self.parquet_database)} entries."
-                )
-            if type(caption) == bytes:
+
+            if isinstance(caption, (numpy.ndarray, pd.Series)):
+                caption = [str(item) for item in caption if item is not None]
+            elif isinstance(caption, bytes):
                 caption = caption.decode("utf-8")
-            elif type(caption) == list:
-                caption = [c.strip() for c in caption if c.strip()]
-            elif type(caption) == str:
+            elif isinstance(caption, str):
                 caption = caption.strip()
-            captions[filename] = caption
+
+            # If it remains None or empty, we can't do anything
+            if not caption:
+                continue
+
+            captions[file_id] = caption
         return captions
 
     def caption_cache_entry(self, index: str):
         result = self.caption_cache.get(str(index), None)
-
-        logger.debug(f"Caption cache entry for idx {str(index)}: {result}")
+        logger.debug(f"Caption cache entry for {str(index)}: {result}")
         return result
 
     def _discover_new_files(
         self, for_metadata: bool = False, ignore_existing_cache: bool = False
     ):
         """
-        Discover new files that have not been processed yet.
-
-        Returns:
-            list: A list of new files.
+        Discover new files that have not been processed yet, from the state tracker or local data_backend.
         """
         all_image_files = StateTracker.get_image_files(
             data_backend_id=self.data_backend.id
@@ -217,23 +231,28 @@ class ParquetMetadataBackend(MetadataBackend):
                 instance_data_dir=self.instance_data_dir,
                 file_extensions=image_file_extensions,
             )
+            # Flatten nested lists
+            if any(isinstance(i, list) for i in all_image_files):
+                all_image_files = [
+                    item for sublist in all_image_files for item in sublist
+                ]
             all_image_files = StateTracker.set_image_files(
                 all_image_files, data_backend_id=self.data_backend.id
             )
         else:
             logger.debug("Using cached image file list")
+            # Flatten if necessary
+            if any(isinstance(i, list) for i in all_image_files):
+                all_image_files = [
+                    item for sublist in all_image_files for item in sublist
+                ]
+
         if ignore_existing_cache:
-            # Return all files and remove the existing buckets.
             logger.debug(
-                "Resetting the entire aspect bucket cache as we've received the signal to ignore existing cache."
+                "Resetting entire aspect ratio bucket cache due to ignore_existing_cache=True."
             )
             self.aspect_ratio_bucket_indices = {}
-            return list(all_image_files.keys())
-        # Flatten the list if it contains nested lists
-        if any(isinstance(i, list) for i in all_image_files):
-            all_image_files = [item for sublist in all_image_files for item in sublist]
-
-        # logger.debug(f"All image files: {json.dumps(all_image_files, indent=4)}")
+            return list(all_image_files)
 
         all_image_files_set = set(all_image_files)
 
@@ -243,10 +262,6 @@ class ParquetMetadataBackend(MetadataBackend):
                 for file in all_image_files
                 if self.get_metadata_by_filepath(file) is None
             ]
-        elif ignore_existing_cache:
-            # Remove existing aspect bucket indices and return all image files.
-            result = all_image_files
-            self.aspect_ratio_bucket_indices = {}
         else:
             processed_files = set(
                 path
@@ -261,22 +276,16 @@ class ParquetMetadataBackend(MetadataBackend):
 
     def reload_cache(self, set_config: bool = True):
         """
-        Load cache data from a parquet file.
-
-        Returns:
-            dict: The cache data.
+        Load cache data from a JSON file on the data_backend.
         """
-        # Query our DataBackend to see whether the cache file exists.
         if self.data_backend.exists(self.cache_file):
             try:
-                # Use our DataBackend to actually read the cache file.
-                logger.debug("Pulling cache file from storage.")
                 cache_data_raw = self.data_backend.read(self.cache_file)
                 cache_data = json.loads(cache_data_raw)
-                logger.debug("Completed loading cache data.")
+                logger.debug("Loaded existing aspect ratio cache.")
             except Exception as e:
                 logger.warning(
-                    f"Error loading aspect bucket cache, creating new one: {e}"
+                    f"Error loading aspect ratio bucket cache, creating new one: {e}"
                 )
                 cache_data = {}
             self.aspect_ratio_bucket_indices = cache_data.get(
@@ -286,73 +295,63 @@ class ParquetMetadataBackend(MetadataBackend):
                 self.config = cache_data.get("config", {})
                 if self.config != {}:
                     logger.debug(f"Setting config to {self.config}")
-                    logger.debug(f"Loaded previous data backend config: {self.config}")
                     StateTracker.set_data_backend_config(
                         data_backend_id=self.id,
                         config=self.config,
                     )
+        else:
+            logger.warning("No cache file found, starting a fresh one.")
 
     def save_cache(self, enforce_constraints: bool = False):
         """
-        Save cache data to file.
+        Save cache data as JSON to the data_backend.
         """
-        # Prune any buckets that have fewer samples than batch_size
         if enforce_constraints:
             self._enforce_min_bucket_size()
         self._enforce_min_aspect_ratio()
         self._enforce_max_aspect_ratio()
 
         if self.read_only:
-            logger.debug("Metadata backend is read-only, skipping cache save.")
+            logger.debug("Metadata backend is read-only. Skipping save.")
             return
-        # Convert any non-strings into strings as we save the index.
+
         aspect_ratio_bucket_indices_str = {
             key: [str(path) for path in value]
             for key, value in self.aspect_ratio_bucket_indices.items()
         }
-        # Encode the cache as JSON.
         cache_data = {
             "config": StateTracker.get_data_backend_config(
                 data_backend_id=self.data_backend.id
             ),
             "aspect_ratio_bucket_indices": aspect_ratio_bucket_indices_str,
         }
-        logger.debug(f"save_cache has config to write: {cache_data['config']}")
         cache_data_str = json.dumps(cache_data)
-        # Use our DataBackend to write the cache file.
         self.data_backend.write(self.cache_file, cache_data_str)
+        logger.debug("Aspect ratio cache saved.")
 
     def load_image_metadata(self):
-        """Load image metadata from a JSON file."""
-        logger.debug(f"Loading metadata: {self.metadata_file}")
+        logger.debug(f"Loading metadata from {self.metadata_file}")
         self.image_metadata = {}
         self.image_metadata_loaded = False
         if self.data_backend.exists(self.metadata_file):
-            cache_data_raw = self.data_backend.read(self.metadata_file)
-            self.image_metadata = json.loads(cache_data_raw)
+            raw = self.data_backend.read(self.metadata_file)
+            self.image_metadata = json.loads(raw)
             self.image_metadata_loaded = True
         logger.debug("Metadata loaded.")
 
     def save_image_metadata(self):
-        """Save image metadata to a JSON file."""
         self.data_backend.write(self.metadata_file, json.dumps(self.image_metadata))
+        logger.debug("Metadata file saved.")
 
     def compute_aspect_ratio_bucket_indices(self, ignore_existing_cache: bool = False):
         """
-        Compute the aspect ratio bucket indices without any threads or queues.
-
-        Parquet backend behaves very differently to JSON backend.
-
-        Returns:
-            dict: The aspect ratio bucket indices.
+        Build the aspect ratio buckets from the parquet data. We do not physically load images or videos.
         """
-        logger.info("Discovering new files...")
+        logger.info("Discovering new files for parquet-based metadata.")
         new_files = self._discover_new_files(
             ignore_existing_cache=ignore_existing_cache
         )
-
         existing_files_set = set().union(*self.aspect_ratio_bucket_indices.values())
-        # Initialize aggregated statistics
         statistics = {
             "total_processed": 0,
             "skipped": {
@@ -364,7 +363,7 @@ class ParquetMetadataBackend(MetadataBackend):
             },
         }
         if not new_files:
-            logger.debug("No new files discovered. Doing nothing.")
+            logger.debug("No new files discovered. Stopping.")
             return
 
         try:
@@ -372,32 +371,32 @@ class ParquetMetadataBackend(MetadataBackend):
         except Exception as e:
             if ignore_existing_cache:
                 logger.warning(
-                    f"Error loading image metadata, creating new metadata cache: {e}"
+                    f"Error loading image metadata, ignoring existing metadata: {e}"
                 )
                 self.image_metadata = {}
             else:
                 raise Exception(
-                    f"Error loading image metadata. You may have to remove the metadata json file '{self.metadata_file}' and VAE cache manually: {e}"
+                    f"Error loading image metadata. Consider removing the metadata file manually: {e}"
                 )
+
         last_write_time = time.time()
         aspect_ratio_bucket_updates = {}
-        # log a truncated set of the parquet table
-        logger.debug(f"Parquet table head: {self.parquet_database.head().to_string()}")
+
         for file in tqdm(
             new_files,
             desc="Generating aspect bucket cache",
             total=len(new_files),
             leave=False,
             ncols=100,
-            miniters=int(len(new_files) / 100),
+            miniters=max(1, len(new_files) // 100),
         ):
             current_time = time.time()
-            if str(file) not in existing_files_set:
-                logger.debug(f"Processing file {file}.")
+            if file not in existing_files_set:
                 metadata_updates = {}
                 if self.should_abort:
                     logger.info("Aborting aspect bucket update.")
                     return
+
                 aspect_ratio_bucket_updates = self._process_for_bucket(
                     file,
                     aspect_ratio_bucket_updates,
@@ -406,54 +405,50 @@ class ParquetMetadataBackend(MetadataBackend):
                     statistics=statistics,
                 )
                 statistics["total_processed"] += 1
-                logger.debug(f"Statistics: {statistics}")
-                logger.debug(f"Metadata updates: {metadata_updates}")
             else:
                 statistics["skipped"]["already_exists"] += 1
                 continue
 
-            # Now, pull metadata updates from the queue
-            if len(metadata_updates) > 0 and file in metadata_updates:
-                metadata_update = metadata_updates[file]
+            # If we have metadata updates, store them
+            if metadata_updates and file in metadata_updates:
                 self.set_metadata_by_filepath(
                     filepath=file, metadata=metadata_updates[file], update_json=False
                 )
 
-                continue
-            processing_duration = current_time - last_write_time
-            if processing_duration >= self.metadata_update_interval:
+            # Periodically write partial data
+            if (current_time - last_write_time) >= self.metadata_update_interval:
                 logger.debug(
-                    f"In-flight metadata update after {processing_duration} seconds. Saving {len(self.image_metadata)} metadata entries and {len(self.aspect_ratio_bucket_indices)} aspect bucket lists."
+                    f"In-flight metadata update after {current_time - last_write_time:.2f} sec. "
+                    f"Saving {len(self.image_metadata)} metadata entries & {len(self.aspect_ratio_bucket_indices)} buckets."
                 )
                 self.save_cache(enforce_constraints=False)
                 self.save_image_metadata()
                 last_write_time = current_time
 
+        # Extend final results
         for key, value in aspect_ratio_bucket_updates.items():
             self.aspect_ratio_bucket_indices.setdefault(key, []).extend(value)
 
-        logger.debug("Bucket worker completed processing. Returning to main thread.")
         logger.info(f"Image processing statistics: {statistics}")
         self.save_image_metadata()
         self.save_cache(enforce_constraints=True)
-        logger.info("Completed aspect bucket update.")
+        logger.info("Completed aspect bucket update (parquet).")
 
     def _get_first_value(self, series_or_scalar):
-        """Extract the first value if the input is a Series, else return the value itself."""
+        """
+        Extract the first value if the input is a Series, else return it.
+        """
+        import pandas as pd
+        import numpy as np
+
         if isinstance(series_or_scalar, pd.Series):
             return int(series_or_scalar.iloc[0])
         elif isinstance(series_or_scalar, str):
-            # Convert to int if the input is a string representing a number
             return int(series_or_scalar)
-        elif isinstance(series_or_scalar, (int, float)):
+        elif isinstance(series_or_scalar, (int, float, np.int64)):
             return series_or_scalar
-        elif isinstance(series_or_scalar, numpy.int64):
-            new_type = int(series_or_scalar)
-            if type(new_type) != int:
-                raise ValueError(f"Unsupported data type: {type(series_or_scalar)}.")
-            return new_type
         else:
-            raise ValueError(f"Unsupported data type: {type(series_or_scalar)}.")
+            raise ValueError(f"Unsupported data type: {type(series_or_scalar)}")
 
     def _process_for_bucket(
         self,
@@ -464,8 +459,12 @@ class ParquetMetadataBackend(MetadataBackend):
         delete_problematic_images: bool = False,
         statistics: dict = {},
     ):
+        """
+        For each file, we look up its row in the Parquet, get width/height (or frames).
+        We skip physically loading the data for videos. We only trust columns in parquet.
+        """
         try:
-            # Adjust image path if the identifier does not include extension
+            # 1. Identify the row in parquet
             image_path_filtered = image_path_str
             if not self.parquet_config.get("identifier_includes_extension", False):
                 image_path_filtered = os.path.splitext(
@@ -475,71 +474,102 @@ class ParquetMetadataBackend(MetadataBackend):
                 image_path_filtered = image_path_filtered.replace(
                     self.instance_data_dir, ""
                 )
-                # remove leading /
                 if image_path_filtered.startswith("/"):
                     image_path_filtered = image_path_filtered[1:]
-            if image_path_filtered.isdigit():
-                image_path_filtered = int(image_path_filtered)
-
-            logger.debug(
-                f"Reading image {image_path_str} metadata from parquet backend column {self.parquet_config.get('filename_column')} without instance root dir prefix {self.instance_data_dir}: {image_path_filtered}."
-            )
 
             try:
-                database_image_metadata = self.parquet_database.loc[image_path_filtered]
+                database_row = self.parquet_database.loc[image_path_filtered]
             except KeyError:
-                database_image_metadata = None
+                database_row = None
 
-            logger.debug(f"Found image metadata: {database_image_metadata}")
-            if database_image_metadata is None:
-                logger.debug(
-                    f"Image {image_path_str} was not found on the backend. Skipping image."
-                )
+            if database_row is None:
+                logger.debug(f"Metadata missing in parquet for {image_path_str}.")
                 statistics.setdefault("skipped", {}).setdefault("metadata_missing", 0)
                 statistics["skipped"]["metadata_missing"] += 1
                 return aspect_ratio_bucket_indices
 
+            # 2. Check if it's image or video by extension
+            extension = os.path.splitext(image_path_str)[1].lower().strip(".")
+            is_video = extension in video_file_extensions
+            # We'll store image/video metadata in the same place
+            image_metadata = {}
+
+            # 3. If it's an image, get width/height from parquet columns
             width_column = self.parquet_config.get("width_column", "width")
             height_column = self.parquet_config.get("height_column", "height")
-            if width_column is None or height_column is None:
-                raise ValueError(
-                    "ParquetMetadataBackend requires width and height columns to be defined."
-                )
-            w = self._get_first_value(database_image_metadata[width_column])
-            h = self._get_first_value(database_image_metadata[height_column])
-            logger.debug(
-                f"Image {image_path_str} has dimensions {w}x{h} types {type(w)}."
-            )
-            original_size = (w, h)
-            if (
-                original_size[0] < StateTracker.get_args().aspect_bucket_alignment
-                or original_size[1] < StateTracker.get_args().aspect_bucket_alignment
-            ):
-                logger.debug(
-                    f"Image {image_path_str} is smaller than the aspect bucket index. Skipping image."
-                )
-                return aspect_ratio_bucket_indices
 
-            training_sample = TrainingSample(
-                image=None,
-                data_backend_id=self.id,
-                image_metadata={"original_size": original_size},
-                image_path=image_path_str,
-            )
-            prepared_sample = training_sample.prepare()
-            image_metadata = {"original_size": training_sample.original_size}
+            if is_video:
+                if self.num_frames_column:
+                    num_frames_val = database_row.get(self.num_frames_column, None)
+                    if num_frames_val is not None:
+                        num_frames_val = self._get_first_value(num_frames_val)
+                        image_metadata["num_frames"] = num_frames_val
+                        # Check if it meets min/max frames
+                        if (
+                            self.minimum_num_frames
+                            and num_frames_val < self.minimum_num_frames
+                        ):
+                            logger.debug(
+                                f"Video {image_path_str} has {num_frames_val} frames, below min {self.minimum_num_frames}. Skipping."
+                            )
+                            statistics.setdefault("skipped", {}).setdefault(
+                                "too_small", 0
+                            )
+                            statistics["skipped"]["too_small"] += 1
+                            return aspect_ratio_bucket_indices
 
-            logger.debug("Prepared sample: %s", str(prepared_sample))
-
-            logger.debug("Checking minimum resolution size vs image size...")
-            if not self.meets_resolution_requirements(image_metadata=image_metadata):
-                if not self.delete_unwanted_images:
-                    logger.debug(
-                        f"Image {image_path_str} does not meet minimum image size requirements. Skipping image."
-                    )
+                        if (
+                            self.maximum_num_frames
+                            and num_frames_val > self.maximum_num_frames
+                        ):
+                            logger.debug(
+                                f"Video {image_path_str} has {num_frames_val} frames, above max {self.maximum_num_frames}. Deleting or skipping."
+                            )
+                            if self.delete_unwanted_images:
+                                try:
+                                    self.data_backend.delete(image_path_str)
+                                except:
+                                    pass
+                            statistics.setdefault("skipped", {}).setdefault(
+                                "too_small", 0
+                            )
+                            statistics["skipped"]["too_small"] += 1
+                            return aspect_ratio_bucket_indices
                 else:
+                    # if no num_frames_column is provided, do a fallback or skip
+                    logger.warning(
+                        f"Video {image_path_str} found but no num_frames_column in parquet_config. Skipping."
+                    )
+                    return aspect_ratio_bucket_indices
+
+                # For videos, also store fallback width/height if provided in parquet
+                w = database_row.get(width_column, None)
+                h = database_row.get(height_column, None)
+                if w is not None and h is not None:
+                    w = self._get_first_value(w)
+                    h = self._get_first_value(h)
+                    image_metadata["original_size"] = (w, h)
+                else:
+                    logger.warning(
+                        f"Video {image_path_str} found but no width/height columns in parquet_config. Skipping."
+                    )
+                    return aspect_ratio_bucket_indices
+
+            else:
+                # It's an image, use width/height for min size checks
+                if width_column is None or height_column is None:
+                    raise ValueError(
+                        "ParquetMetadataBackend requires width and height columns for images."
+                    )
+                w = self._get_first_value(database_row[width_column])
+                h = self._get_first_value(database_row[height_column])
+                image_metadata["original_size"] = (w, h)
+
+            # 4. Check if the item meets size constraints
+            if not self.meets_resolution_requirements(image_metadata=image_metadata):
+                if self.delete_unwanted_images:
                     logger.debug(
-                        f"Image {image_path_str} does not meet minimum image size requirements. Deleting image."
+                        f"{image_path_str} does not meet resolution requirements. Deleting."
                     )
                     try:
                         self.data_backend.delete(image_path_str)
@@ -547,75 +577,64 @@ class ParquetMetadataBackend(MetadataBackend):
                         pass
                 statistics.setdefault("skipped", {}).setdefault("too_small", 0)
                 statistics["skipped"]["too_small"] += 1
-
                 return aspect_ratio_bucket_indices
 
-            logger.debug("Collecting aspect ratio data...")
-            aspect_ratio_column = self.parquet_config.get("aspect_ratio_column")
-            aspect_ratio = (
-                database_image_metadata[aspect_ratio_column]
-                if aspect_ratio_column
-                else training_sample.aspect_ratio
+            # 5. Create a TrainingSample with minimal metadata
+            training_sample = TrainingSample(
+                image=None,  # no actual image data
+                data_backend_id=self.id,
+                image_metadata={"original_size": image_metadata.get("original_size")},
+                image_path=image_path_str,
             )
-            aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-                float(aspect_ratio)
-            )
+            prepared_sample = training_sample.prepare()
 
-            logger.debug("Image metadata has been generated and collected.")
+            # We'll store final aspect ratio from the TrainingSample or parquet
+            aspect_ratio_column = self.parquet_config.get("aspect_ratio_column")
+            if aspect_ratio_column and aspect_ratio_column in database_row:
+                raw_ar = database_row[aspect_ratio_column]
+                raw_ar = float(self._get_first_value(raw_ar))
+                aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(raw_ar)
+            else:
+                aspect_ratio = float(prepared_sample.aspect_ratio)
+
+            # Build the final metadata
             image_metadata.update(
                 {
                     "intermediary_size": prepared_sample.intermediary_size,
                     "crop_coordinates": prepared_sample.crop_coordinates,
                     "target_size": prepared_sample.target_size,
-                    "aspect_ratio": float(prepared_sample.aspect_ratio),
-                    "luminance": int(
-                        database_image_metadata.get(
-                            self.parquet_config.get("luminance_column"), 0
-                        )
-                    ),
+                    "aspect_ratio": aspect_ratio,
                 }
             )
-            # logger.debug(
-            #     f"Data types for metadata: {[type(v) for v in image_metadata.values()]}"
-            # )
-            # print the types of any iterable values
-            # for key, value in image_metadata.items():
-            # if hasattr(value, "__iter__"):
-            # logger.debug(f"Key {key} has type {type(value)}: {value}")
-            # for v in value:
-            # logger.debug(f"Value has type {type(v)}: {v}")
+            # if is_video and you want to store e.g. fps
+            if is_video and self.fps_column:
+                fps_val = database_row.get(self.fps_column, None)
+                if fps_val is not None:
+                    fps_val = self._get_first_value(fps_val)
+                    image_metadata["fps"] = fps_val
 
-            # logger.debug(
-            #     f"Image {image_path_str} has aspect ratio {prepared_sample.aspect_ratio}, intermediary size {image_metadata['intermediary_size']}, target size {image_metadata['target_size']}."
-            # )
-
-            # Create a new bucket if it doesn't exist
-            aspect_ratio_key = str(prepared_sample.aspect_ratio)
+            # Insert into bucket
+            aspect_ratio_key = str(aspect_ratio)
             if aspect_ratio_key not in aspect_ratio_bucket_indices:
                 aspect_ratio_bucket_indices[aspect_ratio_key] = []
-            logger.debug("Adding to list...")
             aspect_ratio_bucket_indices[aspect_ratio_key].append(image_path_str)
-            logger.debug("Added to list.")
 
-            # Instead of directly updating, just fill the provided dictionary
+            # If we are accumulating metadata updates
             if metadata_updates is not None:
-                logger.debug("Adding to metadata list...")
                 metadata_updates[image_path_str] = image_metadata
-                logger.debug("Added to metadata list.")
 
         except Exception as e:
-            logger.error(f"Error processing image: {e}")
-            logger.error(f"Error traceback: {traceback.format_exc()}")
+            logger.error(f"Error processing file {image_path_str}: {e}")
+            logger.error(traceback.format_exc())
             if delete_problematic_images:
-                logger.error(f"Deleting image {image_path_str}.")
+                logger.error(f"Deleting file {image_path_str} after error.")
                 self.data_backend.delete(image_path_str)
 
         return aspect_ratio_bucket_indices
 
     def __len__(self):
         """
-        Returns:
-            int: The number of batches in the dataset, accounting for images that can't form a complete batch and are discarded.
+        Count how many full batches we can form with the aspect_ratio_bucket_indices.
         """
 
         def repeat_len(bucket):

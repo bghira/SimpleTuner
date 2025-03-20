@@ -21,7 +21,7 @@ class HubManager:
             repo_id or self.config.hub_model_id or self.config.tracker_project_name
         )
         self.hub_token = self._load_hub_token()
-        self.data_backends = StateTracker.get_data_backends()
+        self.data_backends = StateTracker.get_data_backends(_types=["image", "video"])
         self._create_repo()
         self.validation_prompts = None
         self.validation_shortnames = None
