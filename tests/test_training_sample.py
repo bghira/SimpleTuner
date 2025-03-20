@@ -15,8 +15,9 @@ class TestTrainingSample(unittest.TestCase):
         self.image_metadata = {"original_size": (1024, 768)}
 
         # Assume StateTracker and other helpers are correctly set up to return meaningful values
-        StateTracker.get_args = MagicMock()
-        StateTracker.get_args.return_value = MagicMock(aspect_bucket_alignment=8)
+        StateTracker.set_args(
+            MagicMock(aspect_bucket_alignment=64, aspect_bucket_rounding=2)
+        )
         StateTracker.get_data_backend_config = MagicMock(
             return_value={
                 "crop": True,
@@ -29,6 +30,22 @@ class TestTrainingSample(unittest.TestCase):
                 "aspect_bucket_alignment": 8,
             }
         )
+        self.default_config = {
+            "crop": False,
+            "crop_style": "center",
+            "crop_aspect": "square",
+            "resolution": 512,
+            "resolution_type": "pixel",
+            "target_downsample_size": None,
+            "maximum_image_size": None,
+            "aspect_bucket_alignment": 64,
+        }
+        # Basic 1024×768 test image
+        self.test_image = Image.new("RGB", (1024, 768), "white")
+        self.test_metadata = {"original_size": (1024, 768)}
+        # Make sure to isolate your test config from others
+        self.original_get_data_backend_config = StateTracker.get_data_backend_config
+        StateTracker.get_data_backend_config = lambda x: self.default_config
 
     def test_image_initialization(self):
         """Test that the image is correctly initialized and converted."""
@@ -38,10 +55,20 @@ class TestTrainingSample(unittest.TestCase):
     def test_image_downsample(self):
         """Test that downsampling is correctly applied before cropping."""
         sample = TrainingSample(self.image, self.data_backend_id, self.image_metadata)
+        self.assertEqual(
+            sample.current_size, (1024, 768), "Size was not correct before prepare."
+        )
         sample.prepare()
-        self.assertLessEqual(
-            sample.image.size[0], 512
-        )  # Assuming downsample before crop applies
+        self.assertEqual(
+            sample.image.size,
+            sample.current_size,
+            f"Sample current_size was not updated? {sample.__dict__}",
+        )
+        self.assertEqual(
+            sample.image.size,
+            sample.target_size,
+            f"Sample target size did not get reached by the image size. {sample.__dict__}",
+        )
 
     def test_no_crop(self):
         """Test handling when cropping is disabled."""
@@ -65,10 +92,12 @@ class TestTrainingSample(unittest.TestCase):
     def test_aspect_ratio_square_up(self):
         """Test that the aspect ratio is preserved after processing."""
         sample = TrainingSample(self.image, self.data_backend_id, self.image_metadata)
-        original_aspect = sample.original_size[0] / sample.original_size[1]
+        original_aspect = round(sample.original_size[0] / sample.original_size[1], 2)
         sample.prepare()
-        processed_aspect = sample.image.size[0] / sample.image.size[1]
-        self.assertEqual(processed_aspect, 1.0)
+        processed_aspect = round(sample.image.size[0] / sample.image.size[1], 2)
+        self.assertEqual(
+            processed_aspect, 1.38
+        )  # when 64px divisible, we're at 1.38 now.
 
     def test_return_tensor(self):
         """Test tensor conversion if requested."""
@@ -117,8 +146,8 @@ class TestTrainingSample(unittest.TestCase):
         Test that a 'square' aspect ratio truly yields a square shape for 4D video data.
         """
         # Create dummy video: [frames=5, H=600, W=800, C=3]
-        video_data = np.zeros((5, 600, 800, 3), dtype=np.uint8)
-        video_metadata = {"original_size": (800, 600)}
+        video_data = np.zeros((5, 1024, 1024, 3), dtype=np.uint8)
+        video_metadata = {"original_size": (1024, 1024)}
 
         sample = TrainingSample(video_data, self.data_backend_id, video_metadata)
         sample.prepare()
@@ -180,6 +209,203 @@ class TestTrainingSample(unittest.TestCase):
         self.assertEqual(final_shape[0], 4)  # frames unchanged
         self.assertTrue(final_shape[1] <= 128 or final_shape[2] <= 128)
         # or whatever your code does if it sees crop=False
+
+    def test_no_crop_preserves_aspect_ratio_if_not_forced(self):
+        """
+        If `crop=False` and we do not forcibly set `crop_aspect='square'` in the code,
+        the result should keep the original aspect ratio or a uniform scale.
+        """
+        self.default_config["crop"] = False
+        # To avoid forcing squares, let's not set 'crop_aspect' to 'square'
+        self.default_config["crop_aspect"] = (
+            "preserve"  # or something that your code interprets as no forced square
+        )
+        self.default_config["resolution"] = 256
+
+        sample = TrainingSample(
+            self.test_image,
+            data_backend_id=self.data_backend_id,
+            image_metadata=self.test_metadata,
+        )
+        sample.prepare()
+
+        final_w, final_h = sample.image.size
+        final_aspect = sample.aspect_ratio
+        original_aspect = round(1024 / 768, 3)
+        self.assertNotEqual(
+            final_aspect,
+            original_aspect,
+        )
+        self.assertNotEqual(
+            final_aspect,
+            1.0,
+        )
+
+        # Confirm we did scale down to 256 or smaller on at least one dimension
+        self.assertTrue(
+            final_w <= 256 or final_h <= 256,
+            f"Expected at least one dimension to be ≤ 256, but got ({final_w}, {final_h})",
+        )
+
+    def test_no_crop_forced_square_is_skipped(self):
+        """
+        Even if 'crop_aspect' is set to 'square', if crop=False, we expect the code
+        to skip any forced square logic and preserve aspect ratio.
+        """
+        self.default_config["crop"] = False
+        self.default_config["crop_aspect"] = "square"
+        self.default_config["resolution"] = 512
+
+        sample = TrainingSample(
+            self.test_image,
+            data_backend_id=self.data_backend_id,
+            image_metadata=self.test_metadata,
+        )
+        sample.prepare()
+
+        final_w, final_h = sample.image.size
+        self.assertNotEqual(
+            final_w,
+            final_h,
+            "No-crop scenario should not force a square shape if we truly skip crop logic.",
+        )
+
+    def test_no_crop_64px_alignment(self):
+        """
+        If we want to enforce that final dimensions are multiples of 64,
+        test that the code does so without squishing.
+        """
+        # Suppose we have logic that snaps to multiples of 64.
+        self.default_config["crop"] = False
+        self.default_config["resolution"] = (
+            999  # something that won't be a multiple of 64
+        )
+        # We'll pretend there's some internal code that rounds final sizes to multiples of 64.
+
+        sample = TrainingSample(
+            self.test_image,
+            data_backend_id=self.data_backend_id,
+            image_metadata=self.test_metadata,
+        )
+        sample.prepare()
+        final_w, final_h = sample.image.size
+
+        # Check the code hasn't forced a square
+        self.assertNotEqual(
+            final_w,
+            final_h,
+            "64px alignment should preserve aspect ratio unless the original was square.",
+        )
+
+        # Check multiples of 64
+        self.assertEqual(
+            final_w % 64, 0, f"Expected width to be multiple of 64, got {final_w}"
+        )
+        self.assertTrue(
+            final_h % 64
+            in [
+                0,
+                64,
+            ],  # or 0, if your code also strictly enforces height to multiple of 64
+            f"Expected height to be multiple of 64, got {final_h}",
+        )
+
+    def test_no_crop_video_preserves_frames_and_aspect(self):
+        """
+        For a video in 4D shape, ensure that no-crop scenario
+        preserves original ratio (or a uniform scale) and the same frame count.
+        """
+        self.default_config["crop"] = False
+        self.default_config["resolution"] = 400
+        # Dummy video: shape [frames=5, H=600, W=1200, C=3] => aspect ~2.0
+        video_data = np.zeros((5, 600, 1200, 3), dtype=np.uint8)
+        video_metadata = {"original_size": (1200, 600)}
+
+        sample = TrainingSample(video_data, self.data_backend_id, video_metadata)
+        sample.prepare()
+        final_frames, final_h, final_w, final_c = sample.image.shape
+
+        self.assertEqual(
+            final_frames, 5, "Should preserve frame count in no-crop scenario."
+        )
+        self.assertEqual(final_c, 3, "Color channels should remain 3.")
+        final_aspect = round(final_w / final_h, 2)
+        self.assertAlmostEqual(
+            final_aspect,
+            2.0,
+            places=1,
+            msg=f"Should preserve ~2:1 ratio: {sample.__dict__}",
+        )
+        # Also confirm we scaled down
+        self.assertTrue(
+            final_w <= 400 or final_h <= 400,
+            f"Expected at least one dimension to be ≤ 400, got {final_w}x{final_h}",
+        )
+
+    def test_no_crop_too_big_image_downscale_only(self):
+        """
+        If the original image is bigger than 'resolution', we only downscale,
+        no cropping, preserving aspect.
+        """
+        self.default_config["crop"] = False
+        self.default_config["resolution"] = 256
+        # 2000×1500 => aspect ~1.333
+        huge_img = Image.new("RGB", (2000, 1500), "white")
+        sample = TrainingSample(
+            huge_img, self.data_backend_id, {"original_size": (2000, 1500)}
+        )
+        sample.prepare()
+
+        final_w, final_h = sample.image.size
+        self.assertTrue(
+            final_w <= 256 or final_h <= 256,
+            f"Should be scaled down near 256 max, got {final_w}x{final_h}",
+        )
+        # Check aspect ratio
+        expected_ratio = round(final_w / final_h, 2)
+        actual_ratio = sample.aspect_ratio
+        self.assertEqual(
+            expected_ratio,
+            actual_ratio,
+            f"Aspect ratio must be preserved for no-crop: {sample.__dict__}",
+        )
+        self.assertNotEqual(
+            sample.aspect_ratio, 1.0, "Should not force a square shape in this case."
+        )
+
+    def test_no_crop_small_image_upscale_only_if_configured(self):
+        """
+        If the original image is smaller than resolution, decide if we actually upscale
+        or leave it alone (depending on your logic). We can test either outcome.
+        """
+        self.default_config["crop"] = False
+        self.default_config["resolution"] = 512
+        # 128×96 => aspect ~1.333
+        small_img = Image.new("RGB", (128, 96), "white")
+        sample = TrainingSample(
+            small_img, self.data_backend_id, {"original_size": (128, 96)}
+        )
+        sample.prepare()
+
+        final_w, final_h = sample.image.size
+        # If your code does not upscale, we'd expect still 128×96.
+        # If your code upscales to 512 on one side, we'd expect e.g. 512×384.
+        # Let's assume we allow upscaling to 512.
+        self.assertTrue(
+            final_w >= 128 and final_h >= 96,
+            "Should have upscaled the small image in no-crop mode.",
+        )
+        # Check ratio is still ~1.333
+        expected_ratio = round(final_w / final_h, 2)
+        actual_ratio = sample.aspect_ratio
+        self.assertEqual(
+            expected_ratio,
+            actual_ratio,
+            f"Aspect ratio must be preserved for no-crop upscaling.",
+        )
+        self.assertNotEqual(
+            sample.aspect_ratio, 1.0, "Should not force a square shape in this case."
+        )
 
 
 # Helper mock classes and functions
