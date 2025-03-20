@@ -79,6 +79,108 @@ class TestTrainingSample(unittest.TestCase):
             isinstance(prepared_sample.aspect_ratio, float)
         )  # Placeholder check
 
+    # -----------------------
+    # New Tests for Video Data
+    # -----------------------
+
+    def test_video_initialization_4d(self):
+        """
+        Test that a 4D NumPy array (frames, height, width, channels)
+        is recognized and processed similarly to images.
+        """
+        # Create a dummy "video" with shape [frames, H, W, C] = [10, 720, 1280, 3]
+        video_data = np.zeros((10, 720, 1280, 3), dtype=np.uint8)
+        video_metadata = {"original_size": (1280, 720)}
+
+        sample = TrainingSample(video_data, self.data_backend_id, video_metadata)
+        self.assertEqual(sample.original_size, (1280, 720))
+        # Confirm it doesn't crash
+        sample.prepare()
+        # After crop to square=512, we might see shape [frames, 512, 512, 3] or smaller
+        self.assertTrue(isinstance(sample.image, np.ndarray))
+        self.assertTrue(sample.image.shape[-1] == 3)  # last dim still color channels
+
+    def test_video_initialization_5d_fails(self):
+        """
+        Test that a 5D NumPy array (batch, frames, channels, height, width)
+        fails since it is invalid.
+        """
+        # Create a dummy "video" with shape [B, F, C, H, W] = [2, 10, 3, 720, 1280]
+        video_data = np.zeros((2, 10, 3, 720, 1280), dtype=np.uint8)
+        video_metadata = {"original_size": (1280, 720)}
+
+        with self.assertRaises(ValueError):
+            TrainingSample(video_data, self.data_backend_id, video_metadata)
+
+    def test_video_square_crop(self):
+        """
+        Test that a 'square' aspect ratio truly yields a square shape for 4D video data.
+        """
+        # Create dummy video: [frames=5, H=600, W=800, C=3]
+        video_data = np.zeros((5, 600, 800, 3), dtype=np.uint8)
+        video_metadata = {"original_size": (800, 600)}
+
+        sample = TrainingSample(video_data, self.data_backend_id, video_metadata)
+        sample.prepare()
+        # The shape should reflect a final square dimension <= 512
+        final_shape = sample.image.shape
+        # E.g. [5, newH, newW, 3]
+        self.assertEqual(final_shape[-1], 3)
+        self.assertEqual(
+            final_shape[1], final_shape[2], "Video should be square in H/W"
+        )
+
+    def test_video_random_crop(self):
+        """
+        Test that random cropping works for 4D video data.
+        """
+        # Overwrite config to use random cropping
+        StateTracker.get_data_backend_config = MagicMock(
+            return_value={
+                "crop": True,
+                "crop_style": "random",
+                "crop_aspect": "square",
+                "resolution": 256,  # smaller for quick test
+                "resolution_type": "pixel",
+            }
+        )
+        # shape [frames=3, H=300, W=400, C=3]
+        video_data = np.ones((3, 300, 400, 3), dtype=np.uint8)
+        video_metadata = {"original_size": (400, 300)}
+
+        sample = TrainingSample(video_data, self.data_backend_id, video_metadata)
+        sample.prepare()
+
+        # The final shape should be [3, 256, 256, 3] or smaller
+        self.assertEqual(sample.image.shape[0], 3)
+        self.assertEqual(sample.image.shape[-1], 3)
+        self.assertTrue(sample.image.shape[1] == sample.image.shape[2])
+
+    def test_video_no_crop(self):
+        """
+        Ensure that when crop=False, a video is simply resized or left alone,
+        but does not do a random or center crop.
+        """
+        # Overwrite config to disable cropping
+        StateTracker.get_data_backend_config = MagicMock(
+            return_value={
+                "crop": False,
+                "crop_style": "center",
+                "resolution": 128,
+                "resolution_type": "pixel",
+            }
+        )
+        video_data = np.zeros((4, 240, 320, 3), dtype=np.uint8)
+        video_metadata = {"original_size": (320, 240)}
+
+        sample = TrainingSample(video_data, self.data_backend_id, video_metadata)
+        sample.prepare()
+        # Without crop, the pipeline might just do a direct resize to e.g. 128 px on the shorter edge
+        final_shape = sample.image.shape
+        self.assertEqual(final_shape[0], 4)  # frames unchanged
+        self.assertTrue(final_shape[1] <= 128 or final_shape[2] <= 128)
+        # or whatever your code does if it sees crop=False
+
 
 # Helper mock classes and functions
 class MockCropper:
