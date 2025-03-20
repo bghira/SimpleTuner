@@ -50,6 +50,11 @@ def info_log(message):
         logger.info(message)
 
 
+def warning_log(message):
+    if StateTracker.get_accelerator().is_main_process:
+        logger.warning(message)
+
+
 def check_column_values(
     column_data, column_name, parquet_path, fallback_caption_column=False
 ):
@@ -298,22 +303,49 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     if backend.get("dataset_type", None) == "video":
         output["config"]["video"] = {}
         if "video" in backend:
-            output["config"]["video"] = backend["video"]
-        if "num_frames" not in backend:
-            logger.warning(
+            output["config"]["video"].update(backend["video"])
+        if "num_frames" not in output["config"]["video"]:
+            warning_log(
                 f"No `num_frames` was provided for video backend. Defaulting to 125 (5 seconds @ 25fps) to avoid memory implosion/explosion. Reduce value further for lower memory use."
             )
             output["config"]["video"]["num_frames"] = 125
-        if "min_frames" not in backend:
-            logger.warning(
+        if "min_frames" not in output["config"]["video"]:
+            warning_log(
                 f"No `min_frames` was provided for video backend. Defaulting to {output['config']['video']['num_frames']} frames (num_frames). Reduce num_frames further for lower memory use."
             )
             output["config"]["video"]["min_frames"] = output["config"]["video"][
                 "num_frames"
             ]
-        if "max_frames" not in backend:
-            logger.warning(
+        if "max_frames" not in output["config"]["video"]:
+            warning_log(
                 f"No `max_frames` was provided for video backend. Set this value to avoid scanning huge video files."
+            )
+        if "is_i2v" not in output["config"]["video"]:
+            if args.model_family in ["ltxvideo"]:
+                warning_log(
+                    f"Setting is_i2v to True for model_family={args.model_family}. Set this manually to false to override."
+                )
+                output["config"]["video"]["is_i2v"] = True
+            else:
+                warning_log(
+                    f"No value for is_i2v was supplied for your dataset. Assuming it is disabled."
+                )
+                output["config"]["video"]["is_i2v"] = False
+
+        min_frames = output["config"]["video"]["min_frames"]
+        num_frames = output["config"]["video"]["num_frames"]
+        # both should be integers
+        if not any([isinstance(min_frames, int), isinstance(num_frames, int)]):
+            raise ValueError(
+                f"video->min_frames and video->num_frames must be integers. Received min_frames={min_frames} and num_frames={num_frames}."
+            )
+        if min_frames < 1 or num_frames < 1:
+            raise ValueError(
+                f"video->min_frames and video->num_frames must be greater than 0. Received min_frames={min_frames} and num_frames={num_frames}."
+            )
+        if min_frames < num_frames:
+            raise ValueError(
+                f"video->min_frames must be greater than or equal to video->num_frames. Received min_frames={min_frames} and num_frames={num_frames}."
             )
 
     return output
@@ -552,7 +584,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             accelerator.wait_for_everyone()
             logger.debug(f"rank {get_rank()} is continuing")
         if args.caption_dropout_probability == 0.0:
-            logger.warning(
+            warning_log(
                 "Not using caption dropout will potentially lead to overfitting on captions, eg. CFG will not work very well. Set --caption_dropout_probability=0.1 as a recommended value."
             )
 
@@ -571,7 +603,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             "\nSee this link for more information on how to configure a default text embed dataset: https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#configuration-options"
         )
     elif not default_text_embed_backend_id:
-        logger.warning(
+        warning_log(
             f"No default text embed was defined, using {list(text_embed_backends.keys())[0]} as the default."
             " See this page for information about the default text embed backend: https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#configuration-options"
         )
@@ -931,13 +963,13 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                                 f"\n{prev_config}"
                             )
                         else:
-                            logger.warning(
+                            warning_log(
                                 f"Overriding config value {key}={prev_config[key]} with {backend[key]}"
                             )
                             prev_config[key] = backend[key]
                     elif key not in backend:
                         if should_log():
-                            logger.warning(
+                            warning_log(
                                 f"Key {key} not found in the current backend config, using the existing value '{prev_config[key]}'."
                             )
                         init_backend["config"][key] = prev_config[key]
@@ -976,11 +1008,11 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
 
         if "deepfloyd" in args.model_type:
             if init_backend["metadata_backend"].resolution_type == "area":
-                logger.warning(
+                warning_log(
                     "Resolution type is 'area', but should be 'pixel' for DeepFloyd. Unexpected results may occur."
                 )
                 if init_backend["metadata_backend"].resolution > 0.25:
-                    logger.warning(
+                    warning_log(
                         "Resolution is greater than 0.25 megapixels. This may lead to unconstrained memory requirements."
                     )
             if init_backend["metadata_backend"].resolution_type == "pixel":
@@ -988,14 +1020,14 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                     "stage2" not in args.model_type
                     and init_backend["metadata_backend"].resolution > 64
                 ):
-                    logger.warning(
+                    warning_log(
                         "Resolution is greater than 64 pixels, which will possibly lead to poor quality results."
                     )
 
         if "deepfloyd-stage2" in args.model_type:
             # Resolution must be at least 256 for Stage II.
             if init_backend["metadata_backend"].resolution < 256:
-                logger.warning(
+                warning_log(
                     "Increasing resolution to 256, as is required for DF Stage II."
                 )
 
@@ -1309,7 +1341,7 @@ def check_csv_config(backend: dict, args) -> None:
                 f"Missing required key {key} in CSV backend config: {required_keys[key]}"
             )
     if not args.compress_disk_cache:
-        logger.warning(
+        warning_log(
             "You can save more disk space for cache objects by providing --compress_disk_cache and recreating its contents"
         )
     caption_strategy = backend.get("caption_strategy")
