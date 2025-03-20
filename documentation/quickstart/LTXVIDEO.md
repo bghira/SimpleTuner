@@ -263,7 +263,7 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
     "cache_dir_vae": "cache/vae/ltxvideo/disney-black-and-white",
     "instance_data_dir": "datasets/disney-black-and-white",
     "disabled": false,
-    "caption_strategy": "filename",
+    "caption_strategy": "textfile",
     "metadata_backend": "discovery",
     "repeats": 0
   },
