@@ -640,11 +640,13 @@ class TrainingSample:
                     f"we have to crop because target size {self.target_size} != intermediary size {self.intermediary_size}"
                 )
                 # Now we can resize the image to the intermediary size.
+                self.current_size = self.intermediary_size
                 if self.image is not None:
                     if isinstance(self.image, Image.Image):
                         self.image = self.image.resize(
                             self.intermediary_size, Image.Resampling.LANCZOS
                         )
+                        self.current_size = self.image.size
                     elif isinstance(self.image, np.ndarray):
                         # we have a video to resize
                         logger.debug(
@@ -652,9 +654,13 @@ class TrainingSample:
                         )
                         self.image = resize_video_frames(
                             self.image,
-                            (self.intermediary_size[1], self.intermediary_size[0]),
+                            (self.intermediary_size[0], self.intermediary_size[1]),
                         )
-                self.current_size = self.intermediary_size
+                        width, height = self.image.shape[2], self.image.shape[1]
+                        self.current_size = (width, height)
+                        logger.debug(
+                            f"Post resize: {self.current_size} / {self.image.shape}"
+                        )
                 if self.image is not None and self.cropper:
                     self.cropper.set_image(self.image)
                 self.cropper.set_intermediary_size(
@@ -663,6 +669,10 @@ class TrainingSample:
                 self.image, self.crop_coordinates = self.cropper.crop(
                     self.target_size[0], self.target_size[1]
                 )
+                logger.debug(
+                    f"Cropped to {self.target_size} via crop coordinates {self.crop_coordinates} (resulting in current_size of {self.current_size})"
+                )
+                self.current_size = self.target_size
                 logger.debug(f"crop coordinates: {self.crop_coordinates}")
                 return self
 
