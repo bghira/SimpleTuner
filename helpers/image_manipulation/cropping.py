@@ -25,6 +25,7 @@ class BaseCropping:
                 self.original_width, self.original_height = self.image.size
             elif isinstance(self.image, np.ndarray):
                 # Support both single image (3D) and video (4D)
+                logger.info(f"Image dimension: {self.image.ndim}")
                 if self.image.ndim == 4:  # video: (num_frames, height, width, channels)
                     _, h, w, _ = self.image.shape
                     self.original_width, self.original_height = w, h

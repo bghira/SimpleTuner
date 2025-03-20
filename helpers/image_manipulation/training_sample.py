@@ -5,6 +5,7 @@ from helpers.multiaspect.video import resize_video_frames
 from helpers.image_manipulation.cropping import crop_handlers
 from helpers.training.state_tracker import StateTracker
 from helpers.training.multi_process import should_log
+from diffusers.utils.export_utils import export_to_gif
 import logging
 import os, cv2
 from tqdm import tqdm
@@ -49,8 +50,17 @@ class TrainingSample:
             else StateTracker.get_metadata_by_filepath(image_path, data_backend_id)
         )
         if isinstance(image, np.ndarray):
-            self.original_size = (image.shape[2], image.shape[1])
-            logger.info(f"Checking on {type(image)}: {self.original_size}")
+            if len(image.shape) == 4:
+                logger.debug(f"Received 4D Shape: {image.shape}")
+                self.original_size = (image.shape[2], image.shape[1])
+            elif len(image.shape) == 5:
+                raise ValueError(
+                    f"Received invalid shape: {image.shape}, expected 4D item instead"
+                )
+
+            logger.debug(
+                f"Checking on {type(image)}: {self.original_size[0]}x{self.original_size[1]}"
+            )
             self.original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
                 self.original_size
             )
@@ -111,7 +121,27 @@ class TrainingSample:
                 if hasattr(self.image, "save"):
                     self.image.save(path)
                 else:
-                    logger.info(f"Not saving debug video output: {path}")
+                    # switch .png to .mp4
+                    if path.endswith(".png"):
+                        path = path.replace(".png", ".mp4")
+                    logger.debug(f"Not saving debug video output: {path}")
+                    # write to path
+                    import imageio
+                    from io import BytesIO
+
+                    video_byte_array = BytesIO()
+                    imageio.v3.imwrite(
+                        video_byte_array,
+                        self.image,  # a list of NumPy arrays
+                        plugin="pyav",  # or "ffmpeg"
+                        fps=StateTracker.get_args().framerate,
+                        extension=".mp4",
+                        codec="libx264",
+                    )
+                    video_byte_array.seek(0)
+                    with open(path, "wb") as f:
+                        f.write(video_byte_array.read())
+
         return self
 
     @staticmethod
@@ -468,7 +498,9 @@ class TrainingSample:
         """
         if self._should_resize_before_crop():
             target_downsample_size = self._calculate_target_downsample_size()
-            logger.debug(f"resizing to {target_downsample_size}")
+            logger.debug(
+                f"Calculated target_downsample_size, resizing to {target_downsample_size}"
+            )
             self.resize(target_downsample_size)
         return self
 
@@ -615,7 +647,7 @@ class TrainingSample:
                         )
                     elif isinstance(self.image, np.ndarray):
                         # we have a video to resize
-                        logger.info(
+                        logger.debug(
                             f"Resizing {self.image.shape} to {self.intermediary_size}, "
                         )
                         self.image = resize_video_frames(
@@ -634,11 +666,19 @@ class TrainingSample:
                 logger.debug(f"crop coordinates: {self.crop_coordinates}")
                 return self
 
-        if self.image and hasattr(self.image, "resize"):
-            self.image = self.image.resize(size, Image.Resampling.LANCZOS)
-            self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-                self.image.size
-            )
+        if self.image is not None and hasattr(self.image, "resize"):
+            logger.debug(f"Resize ({type(self.image)}) to {size}")
+            if isinstance(self.image, Image.Image):
+                self.image = self.image.resize(size, Image.Resampling.LANCZOS)
+                self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+                    self.image.size
+                )
+            elif isinstance(self.image, np.ndarray):
+                # we have a video to resize
+                logger.debug(f"Resizing {self.image.shape} to {size}, ")
+                self.image = resize_video_frames(self.image, (size[1], size[0]))
+                self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(size)
+                logger.debug(f"Now {self.image.shape} @ {self.aspect_ratio}")
         self.current_size = size
         logger.debug(
             f"Resized to {self.current_size} (aspect ratio: {self.aspect_ratio})"

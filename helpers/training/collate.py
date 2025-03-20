@@ -441,6 +441,7 @@ def collate_fn(batch):
     examples = batch["training_samples"]
     conditioning_examples = batch["conditioning_samples"]
     is_regularisation_data = batch.get("is_regularisation_data", False)
+    is_i2v_data = batch.get("is_i2v_data", False)
     if StateTracker.get_args().controlnet and len(examples) != len(
         conditioning_examples
     ):
@@ -577,5 +578,6 @@ def collate_fn(batch):
         "conditioning_pixel_values": conditioning_pixel_values,
         "encoder_attention_mask": attn_mask,
         "is_regularisation_data": is_regularisation_data,
+        "is_i2v_data": is_i2v_data,
         "conditioning_type": conditioning_type,
     }

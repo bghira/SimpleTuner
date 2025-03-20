@@ -1,6 +1,7 @@
 import torch
 import random
 from torch import randn as randn_tensor
+from typing import Tuple, Optional
 
 
 def normalize_ltx_latents(
@@ -69,47 +70,142 @@ def pack_ltx_latents(
     return latents
 
 
-def generate_noise_from_first_unpacked_frame_latent(
-    first_frame_latent,
-    latent_num_frames,
-    vae_spatial_compression_ratio: int = 32,
-    vae_temporal_compression_ratio: int = 8,
-    generator: torch.Generator = None,
-    noise_to_first_frame: float = 0.05,
-):
-    latent_height, latent_width = first_frame_latent.size(-2), first_frame_latent.size(
-        -1
-    )
-    num_channels_latents = first_frame_latent.size(1)
-    batch_size = first_frame_latent.size(0)
-    shape = (
-        batch_size,
-        num_channels_latents,
-        latent_num_frames,
-        latent_height,
-        latent_width,
-    )
-    mask_shape = (batch_size, 1, latent_num_frames, latent_height, latent_width)
-    first_frame_latent = first_frame_latent.repeat(1, 1, latent_num_frames, 1, 1)
-    conditioning_mask = torch.zeros(
-        mask_shape, device=first_frame_latent.device, dtype=first_frame_latent.dtype
-    )
-    conditioning_mask[:, :, 0] = 1.0
+def apply_first_frame_protection(
+    latents: torch.Tensor,
+    timesteps: torch.Tensor,
+    noise: torch.Tensor,
+    i2v_conditioning_mask: torch.Tensor,
+    protect_first_frame: bool = False,
+    first_frame_probability: float = 0.0,
+    partial_noise_fraction: float = 0.05,
+    return_sigmas: bool = True,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Optionally protect the first frame in a video-like latent tensor, either completely
+    or probabilistically.
 
-    rand_noise_ff = random.random() * noise_to_first_frame
+    Args:
+        latents (torch.Tensor):
+            The clean latents of shape [B, C, T, H, W].
+        timesteps (torch.Tensor):
+            The “time” or step-level for each frame, typically derived from sigmas
+            via: timesteps = (sigmas * 1000).long() or float.
+            Expected shape could be [B], [B, T], or broadcasted [B, 1, T, H, W].
+        noise (torch.Tensor):
+            The random noise tensor, same shape as latents ([B, C, T, H, W]).
+        i2v_conditioning_mask (torch.Tensor):
+            A 5D mask [B, 1, T, H, W] that indicates which frames/pixels to protect (1.0)
+            vs. not protect (0.0). Typically, i2v logic sets the first frame to 1.0 if
+            you want to “preserve” it.
+        protect_first_frame (bool):
+            If True, always protect the first frame (set timesteps=0 there).
+            If False, do not guarantee full protection (see probability).
+        first_frame_probability (float):
+            A probability in [0, 1] for applying partial protection.
+            If random.random() < first_frame_probability, we do a partial noise
+            mix on the first frame.
+        partial_noise_fraction (float):
+            The maximum fraction of noise to introduce in the first frame when
+            partial protection is applied. (e.g. 0.05 => up to 5% noise)
+        return_sigmas (bool):
+            If True, we also return the sigmas after converting timesteps / 1000.
+            Otherwise, return None for that slot.
 
-    first_frame_mask = conditioning_mask.clone()
-    first_frame_mask[:, :, 0] = 1.0 - rand_noise_ff
+    Returns:
+        updated_timesteps (torch.Tensor):
+            Possibly masked or partially zeroed timesteps. Same shape as input `timesteps` (after broadcasting).
+        updated_noise (torch.Tensor):
+            If partial protection is triggered, the first frame in `noise` might get scaled down.
+            (If complete protection, you could leave it as-is or zero it for the protected frame.)
+        sigmas (Optional[torch.Tensor]):
+            If `return_sigmas=True`, this is timesteps.float()/1000.0;
+            otherwise, None. Shape matches updated_timesteps.
 
-    noise = randn_tensor(
-        shape,
-        generator=generator,
-        device=first_frame_latent.device,
-        dtype=first_frame_latent.dtype,
+    Example:
+        updated_t, updated_n, s = apply_first_frame_protection(
+            latents=latents,
+            timesteps=timesteps,
+            noise=noise,
+            i2v_conditioning_mask=i2v_mask,
+            protect_first_frame=True,
+            first_frame_probability=0.1,
+            partial_noise_fraction=0.05,
+        )
+    """
+    # Make sure timesteps is at least 5D if we want to broadcast it with [B,1,T,H,W].
+    # For example, if timesteps is [B], reshape to [B, 1, 1, 1, 1].
+    # If timesteps is [B, T], reshape to [B, 1, T, 1, 1], etc.
+    # Below is an example if we assume [B] => [B,1,1,1,1].
+    if timesteps.ndim == 1:
+        bsz = timesteps.shape[0]
+        # shape: [B, 1, 1, 1, 1]
+        timesteps = timesteps.view(bsz, 1, 1, 1, 1)
+    # If you have [B, T], do a different reshape:
+    # elif timesteps.ndim == 2:
+    #     bsz, t = timesteps.shape
+    #     timesteps = timesteps.view(bsz, 1, t, 1, 1)
+    # etc.
+
+    # We'll copy noise so we can modify the first frame if partial protection is triggered
+    updated_noise = noise.clone()
+
+    # 1. Decide if partial protection triggers
+    do_partial = (not protect_first_frame) and (
+        random.random() < first_frame_probability
     )
 
-    latent_noise = first_frame_latent * first_frame_mask + noise * (
-        1 - first_frame_mask
-    )
+    if protect_first_frame:
+        # Completely zero out timesteps where i2v_conditioning_mask=1
+        updated_timesteps = timesteps * (1 - i2v_conditioning_mask)
+        # Optionally also zero out the noise in the protected frames:
+        # updated_noise = updated_noise * (1 - i2v_conditioning_mask)
+    elif do_partial:
+        # PARTIAL PROTECTION => only add partial_noise_fraction * random() to the first frame
+        # e.g., if i2v_mask for the first frame is 1.0, let's reduce timesteps or noise for that frame
+        # Usually, partial approach might be done at the noise level rather than timesteps,
+        # so that we don't disrupt the entire schedule.
+        # We'll do: noise_first_frame = alpha * noise + (1-alpha) * latents
+        # or timesteps_first_frame = timesteps * something.
+        # One approach:
+        rand_noise_ff = random.random() * partial_noise_fraction  # e.g. up to 5%
+        alpha_mask = 1.0 - (i2v_conditioning_mask * rand_noise_ff)
 
-    return latent_noise, conditioning_mask
+        # Multiply timesteps by alpha_mask => reduces timesteps in the protected region
+        updated_timesteps = timesteps * alpha_mask
+        # Or scale the noise in that region
+        updated_noise = updated_noise * alpha_mask
+    else:
+        # No protection at all => leave timesteps as is
+        updated_timesteps = timesteps
+
+    # Convert timesteps back to sigmas if requested
+    # If timesteps was an integer approximation, you lose decimal precision
+    sigmas = None
+    if return_sigmas:
+        sigmas = updated_timesteps.float() / 1000.0
+
+    return updated_timesteps, updated_noise, sigmas
+
+
+def make_i2v_conditioning_mask(
+    latents: torch.Tensor, protect_frame_index: int = 0
+) -> torch.Tensor:
+    """
+    Create a mask that is 1.0 at the given 'protect_frame_index' frame (e.g., the first frame),
+    and 0.0 elsewhere.
+
+    Args:
+        latents (torch.Tensor): The latents of shape [B, C, T, H, W].
+        protect_frame_index (int): Which frame to protect (default=0 => the very first frame).
+
+    Returns:
+        torch.Tensor: An i2v conditioning mask of shape [B, 1, T, H, W].
+                      The selected frame is set to 1.0, all others 0.0.
+    """
+    bsz, _, num_frames, height, width = latents.shape
+    mask = torch.zeros(
+        (bsz, 1, num_frames, height, width), dtype=latents.dtype, device=latents.device
+    )
+    if protect_frame_index < num_frames:
+        mask[:, :, protect_frame_index, :, :] = 1.0
+    return mask

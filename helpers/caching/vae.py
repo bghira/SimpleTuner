@@ -65,6 +65,7 @@ class VAECache(WebhookMixin):
         resolution: float = 1024,
         maximum_image_size: float = None,
         target_downsample_size: float = None,
+        num_video_frames: int = 125,
         delete_problematic_images: bool = False,
         write_batch_size: int = 25,
         read_batch_size: int = 25,
@@ -109,7 +110,9 @@ class VAECache(WebhookMixin):
         self.instance_data_dir = instance_data_dir
         self.transform_image = MultiaspectImage.get_image_transforms()
         self.transform_video = None
+        self.num_video_frames = None
         if self.dataset_type == "video":
+            self.num_video_frames = num_video_frames
             self.transform_video = MultiaspectImage.get_video_transforms()
         self.rank_info = rank_info()
         self.metadata_backend = metadata_backend
@@ -458,15 +461,17 @@ class VAECache(WebhookMixin):
             # latents_uncached = pack_ltx_latents(latents_uncached, patch_size, patch_size_t)
             # logger.info(f"Packed Latents shape: {latents_uncached.shape}")
 
-            latents_uncached = {
-                "latents": latents_uncached,
-                "num_frames": num_frames,
+            output_cache_entry = {
+                "latents": latents_uncached.shape,  # we'll log the shape first
+                "num_frames": self.num_video_frames,
                 "height": height,
                 "width": width,
             }
-            logger.info(f"Video latent processing results: {latents_uncached}")
+            logger.info(f"Video latent processing results: {output_cache_entry}")
+            # we'll now overwrite the latents after logging.
+            output_cache_entry["latents"] = latents_uncached
 
-        return latents_uncached
+        return output_cache_entry
 
     def prepare_video_latents(self, samples):
         if StateTracker.get_model_family() == "ltxvideo":
@@ -483,8 +488,17 @@ class VAECache(WebhookMixin):
             # we have to permute the video latent samples to match the image latent samples
             if samples.shape[2] == 3:
                 samples = samples.permute(0, 2, 1, 3, 4)
-            logger.info(f"Permute to: {samples.shape}")
 
+            num_frames = samples.shape[1]
+            if (
+                self.num_video_frames is not None
+                and self.num_video_frames != num_frames
+            ):
+                # we'll discard along dim2 after num_video_frames
+                samples = samples[:, :, :125, :, :]
+                logger.info(f"Sliced to {samples.shape}")
+
+        logger.info(f"Permute to: {samples.shape}")
         logger.info(f"Final samples shape: {samples.shape}")
         return samples
 

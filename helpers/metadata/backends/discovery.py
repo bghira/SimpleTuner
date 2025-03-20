@@ -38,6 +38,9 @@ class DiscoveryMetadataBackend(MetadataBackend):
         minimum_image_size: int = None,
         minimum_aspect_ratio: int = None,
         maximum_aspect_ratio: int = None,
+        num_frames: int = None,
+        minimum_num_frames: int = None,
+        maximum_num_frames: int = None,
         cache_file_suffix: str = None,
         repeats: int = 0,
     ):
@@ -57,6 +60,9 @@ class DiscoveryMetadataBackend(MetadataBackend):
             minimum_image_size=minimum_image_size,
             minimum_aspect_ratio=minimum_aspect_ratio,
             maximum_aspect_ratio=maximum_aspect_ratio,
+            maximum_num_frames=maximum_num_frames,
+            minimum_num_frames=minimum_num_frames,
+            num_frames=num_frames,
             cache_file_suffix=cache_file_suffix,
             repeats=repeats,
         )

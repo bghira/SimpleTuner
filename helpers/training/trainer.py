@@ -59,7 +59,8 @@ from helpers.models.smoldit import get_resize_crop_region_for_grid
 from helpers.models.ltxvideo import (
     pack_ltx_latents,
     unpack_ltx_latents,
-    generate_noise_from_first_unpacked_frame_latent as generate_ltx_i2v_noise,
+    apply_first_frame_protection,
+    make_i2v_conditioning_mask,
 )
 from helpers.models import get_model_config_path
 
@@ -2548,23 +2549,33 @@ class Trainer:
                     single_frame_latents = batch["latents"]
                     if num_frame_latents > 1:
                         # for an actual video though, we'll grab one frame using the worst syntax we can think of:
-                        single_frame_latents = batch["latents"][:, :, 0, :, :]
+                        single_frame_latents = batch["latents"][
+                            :, :, 0, :, :
+                        ].unsqueeze(dim=2)
+                        training_logger.debug(
+                            f"All latents shape: {batch['latents'].shape}"
+                        )
                         training_logger.debug(
                             f"Single frame latents shape: {single_frame_latents.shape}"
                         )
-
-                    batch["noise"], batch["i2v_conditioning_mask"] = (
-                        generate_ltx_i2v_noise(
-                            single_frame_latents,
-                            num_frame_latents,
-                            vae_spatial_compression_ratio=self.config.ltxvideo_vae_spatial_compression_ratio,
-                            vae_temporal_compression_ratio=self.config.ltxvideo_vae_temporal_compression_ratio,
-                            noise_to_first_frame=self.config.ltxvideo_noise_to_first_frame,
+                    batch["i2v_conditioning_mask"] = make_i2v_conditioning_mask(
+                        batch["latents"], protect_frame_index=0
+                    )
+                    batch["timesteps"], batch["noise"], new_sigmas = (
+                        apply_first_frame_protection(
+                            batch["latents"],
+                            batch["timesteps"],
+                            batch["noise"],
+                            batch["i2v_conditioning_mask"],
+                            protect_first_frame=self.config.ltx_protect_first_frame,
+                            first_frame_probability=self.config.ltx_i2v_prob,
+                            partial_noise_fraction=self.config.ltx_partial_noise_fraction,
                         )
                     )
-                    # do not denoise first frame
-                    batch["timesteps"] = batch["timesteps"].unsqueeze(-1) * (
-                        1 - batch["i2v_conditioning_mask"]
+                    if new_sigmas is not None:
+                        batch["sigmas"] = new_sigmas
+                    training_logger.debug(
+                        f"Applied mask {batch['i2v_conditioning_mask'].shape} to timestep {batch['timesteps'].shape}"
                     )
 
             batch["noisy_latents"] = (1 - batch["sigmas"]) * batch["latents"] + batch[

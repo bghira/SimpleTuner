@@ -156,7 +156,8 @@ def load_video(vid_data: Union[bytes, IO[Any], str]) -> np.ndarray:
         ret, frame = cap.read()
         if not ret:
             break
-        frames.append(frame)
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frames.append(frame_rgb)
 
     cap.release()
 

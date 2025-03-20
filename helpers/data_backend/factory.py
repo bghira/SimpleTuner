@@ -299,6 +299,22 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["video"] = {}
         if "video" in backend:
             output["config"]["video"] = backend["video"]
+        if "num_frames" not in backend:
+            logger.warning(
+                f"No `num_frames` was provided for video backend. Defaulting to 125 (5 seconds @ 25fps) to avoid memory implosion/explosion. Reduce value further for lower memory use."
+            )
+            output["config"]["video"]["num_frames"] = 125
+        if "min_frames" not in backend:
+            logger.warning(
+                f"No `min_frames` was provided for video backend. Defaulting to {output['config']['video']['num_frames']} frames (num_frames). Reduce num_frames further for lower memory use."
+            )
+            output["config"]["video"]["min_frames"] = output["config"]["video"][
+                "num_frames"
+            ]
+        if "max_frames" not in backend:
+            logger.warning(
+                f"No `max_frames` was provided for video backend. Set this value to avoid scanning huge video files."
+            )
 
     return output
 
@@ -793,11 +809,11 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
         if metadata_backend == "json" or metadata_backend == "discovery":
             from helpers.metadata.backends.discovery import DiscoveryMetadataBackend
 
-            BucketManager_cls = DiscoveryMetadataBackend
+            MetadataBackendCls = DiscoveryMetadataBackend
         elif metadata_backend == "parquet":
             from helpers.metadata.backends.parquet import ParquetMetadataBackend
 
-            BucketManager_cls = ParquetMetadataBackend
+            MetadataBackendCls = ParquetMetadataBackend
             metadata_backend_args["parquet_config"] = backend.get("parquet", None)
             if not metadata_backend_args["parquet_config"]:
                 raise ValueError(
@@ -806,7 +822,8 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
         else:
             raise ValueError(f"Unknown metadata backend type: {metadata_backend}")
 
-        init_backend["metadata_backend"] = BucketManager_cls(
+        video_config = init_backend["config"].get("video", {})
+        init_backend["metadata_backend"] = MetadataBackendCls(
             id=init_backend["id"],
             instance_data_dir=init_backend["instance_data_dir"],
             data_backend=init_backend["data_backend"],
@@ -817,6 +834,9 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             ),
             minimum_aspect_ratio=backend.get("minimum_aspect_ratio", None),
             maximum_aspect_ratio=backend.get("maximum_aspect_ratio", None),
+            minimum_num_frames=video_config.get("min_frames", None),
+            maximum_num_frames=video_config.get("max_frames", None),
+            num_frames=video_config.get("num_frames", None),
             resolution_type=backend.get("resolution_type", args.resolution_type),
             batch_size=args.train_batch_size,
             metadata_update_interval=backend.get(
@@ -939,7 +959,9 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             "is_regularisation_data", backend.get("is_regularization_data", False)
         )
 
-        is_i2v_data = backend.get("video", {}).get("is_i2v", args.ltxvideo_i2v)
+        is_i2v_data = backend.get("video", {}).get(
+            "is_i2v", True if args.ltx_train_mode == "i2v" else False
+        )
 
         if "only_instance_prompt" in backend and backend["only_instance_prompt"]:
             use_captions = False
@@ -1111,6 +1133,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                 ),
                 resolution=backend.get("resolution", args.resolution),
                 resolution_type=backend.get("resolution_type", args.resolution_type),
+                num_video_frames=video_config.get("num_frames", None),
                 maximum_image_size=backend.get(
                     "maximum_image_size",
                     args.maximum_image_size
