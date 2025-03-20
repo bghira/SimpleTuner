@@ -324,11 +324,7 @@ def prepare_validation_prompt_list(args, embed_cache):
                 validation_negative_prompt_embeds,
                 None,
             )
-        elif (
-            model_type == "pixart_sigma"
-            or model_type == "smoldit"
-            or model_type == "sana"
-        ):
+        elif model_type in ["pixart_sigma", "smoldit", "sana", "ltxvideo"]:
             # we use the legacy encoder but we return no pooled embeds.
             validation_negative_prompt_embeds = embed_cache.compute_embeddings_for_prompts(
                 [StateTracker.get_args().validation_negative_prompt],
@@ -700,6 +696,10 @@ class Validation:
             from diffusers import SanaPipeline
 
             return SanaPipeline
+        elif model_type == "ltxvideo":
+            from diffusers import LTXPipeline
+
+            return LTXPipeline
         else:
             raise NotImplementedError(
                 f"Model type {model_type} not implemented for validation."
@@ -765,13 +765,19 @@ class Validation:
             or StateTracker.get_model_family() == "pixart_sigma"
             or StateTracker.get_model_family() == "smoldit"
             or StateTracker.get_model_family() == "sana"
+            or StateTracker.get_model_family() == "ltxvideo"
         ):
             self.validation_negative_pooled_embeds = None
             current_validation_pooled_embeds = None
             current_validation_prompt_embeds = (
                 self.embed_cache.compute_embeddings_for_prompts([validation_prompt])
             )
-            if StateTracker.get_model_family() in ["pixart_sigma", "smoldit", "sana"]:
+            if StateTracker.get_model_family() in [
+                "pixart_sigma",
+                "smoldit",
+                "sana",
+                "ltxvideo",
+            ]:
                 current_validation_prompt_embeds, current_validation_prompt_mask = (
                     current_validation_prompt_embeds
                 )
@@ -816,14 +822,14 @@ class Validation:
         # the embeds are not zeroed out for any other model, including Stable Diffusion 3.
         prompt_embeds["prompt_embeds"] = current_validation_prompt_embeds
         prompt_embeds["negative_prompt_embeds"] = self.validation_negative_prompt_embeds
-        if (
-            StateTracker.get_model_family() == "pixart_sigma"
-            or StateTracker.get_model_family() == "smoldit"
-            or StateTracker.get_model_family() == "sana"
-            or (
-                StateTracker.get_model_family() == "flux"
-                and StateTracker.get_args().flux_attention_masked_training
-            )
+        if StateTracker.get_model_family() in [
+            "pixart_sigma",
+            "smoldit",
+            "sana",
+            "ltxvideo",
+        ] or (
+            StateTracker.get_model_family() == "flux"
+            and StateTracker.get_args().flux_attention_masked_training
         ):
             logger.debug(
                 f"mask: {current_validation_prompt_mask.shape if type(current_validation_prompt_mask) is torch.Tensor else None}"
@@ -967,12 +973,26 @@ class Validation:
             return
         for shortname, image_list in self.validation_images.items():
             for idx, image in enumerate(image_list):
-                width, height = image.size
-                image.save(
-                    os.path.join(
-                        base_model_benchmark, f"{shortname}_{width}x{height}.png"
+                if hasattr(image, "size"):
+                    width, height = image.size
+                    image.save(
+                        os.path.join(
+                            base_model_benchmark, f"{shortname}_{width}x{height}.png"
+                        )
                     )
-                )
+                elif type(image) is list:
+                    # maybe video
+                    print(f"video? {image}")
+                    if self.args.model_family in ["ltxvideo"]:
+                        from diffusers.utils.export_utils import export_to_video
+
+                        export_to_video(
+                            image,
+                            os.path.join(
+                                base_model_benchmark, f"{shortname}_{idx}.mp4"
+                            ),
+                            fps=self.args.framerate,
+                        )
 
     def _update_state(self):
         """Updates internal state with the latest from StateTracker."""
@@ -1298,7 +1318,10 @@ class Validation:
                 ema_validation_images,
             ) = self.validate_prompt(prompt, shortname, validation_input_image)
             validation_images.update(stitched_validation_images)
-            self._save_images(validation_images, shortname, prompt)
+            if self.args.model_family in ["ltxvideo"]:
+                self._save_videos(validation_images, shortname, prompt)
+            else:
+                self._save_images(validation_images, shortname, prompt)
             logger.debug(f"Completed generating image: {prompt}")
             self.validation_images = validation_images
             self.evaluation_result = self.evaluate_images(checkpoint_validation_images)
@@ -1396,6 +1419,7 @@ class Validation:
                 "flux",
                 "sd3",
                 "sana",
+                "ltxvideo",
             ]:
                 extra_validation_kwargs["guidance_rescale"] = (
                     self.args.validation_guidance_rescale
@@ -1466,16 +1490,19 @@ class Validation:
                 if StateTracker.get_model_family() == "flux":
                     if "negative_prompt" in pipeline_kwargs:
                         del pipeline_kwargs["negative_prompt"]
+                if StateTracker.get_model_family() in ["ltxvideo"]:
+                    del pipeline_kwargs["num_images_per_prompt"]
                 if self.args.model_family == "sana":
                     pipeline_kwargs["complex_human_instruction"] = (
                         self.args.sana_complex_human_instruction
                     )
 
-                if (
-                    StateTracker.get_model_family() == "pixart_sigma"
-                    or StateTracker.get_model_family() == "smoldit"
-                    or StateTracker.get_model_family() == "sana"
-                ):
+                if StateTracker.get_model_family() in [
+                    "pixart_sigma",
+                    "smoldit",
+                    "sana",
+                    "ltxvideo",
+                ]:
                     if pipeline_kwargs.get("negative_prompt") is not None:
                         del pipeline_kwargs["negative_prompt"]
                     if pipeline_kwargs.get("prompt") is not None:
@@ -1497,9 +1524,14 @@ class Validation:
                         )
                     if current_validation_type == "ema":
                         self.enable_ema_for_inference()
-                    all_validation_type_results[current_validation_type] = (
-                        self.pipeline(**pipeline_kwargs).images
-                    )
+                    if self.args.model_family in ["ltxvideo"]:
+                        all_validation_type_results[current_validation_type] = (
+                            self.pipeline(**pipeline_kwargs).frames
+                        )
+                    else:
+                        all_validation_type_results[current_validation_type] = (
+                            self.pipeline(**pipeline_kwargs).images
+                        )
                     if current_validation_type == "ema":
                         self.disable_ema_for_inference()
 
@@ -1574,6 +1606,23 @@ class Validation:
             ema_validation_images,
         )
 
+    def _save_videos(self, validation_images, validation_shortname, validation_prompt):
+        validation_img_idx = 0
+        from diffusers.utils.export_utils import export_to_video
+
+        for validation_image in validation_images[validation_shortname]:
+            size_x, size_y = validation_image[0].size
+            res_label = f"{size_x}x{size_y}"
+            export_to_video(
+                validation_image,
+                os.path.join(
+                    self.save_dir,
+                    f"step_{StateTracker.get_global_step()}_{validation_shortname}_{validation_img_idx}_{res_label}.mp4",
+                ),
+                fps=self.args.framerate,
+            )
+            validation_img_idx += 1
+
     def _save_images(self, validation_images, validation_shortname, validation_prompt):
         validation_img_idx = 0
         for validation_image in validation_images[validation_shortname]:
@@ -1598,7 +1647,7 @@ class Validation:
         if StateTracker.get_webhook_handler() is not None:
             StateTracker.get_webhook_handler().send(
                 (
-                    f"Validation image for `{validation_shortname if validation_shortname != '' else '(blank shortname)'}`"
+                    f"Validation {'image' if StateTracker.get_webhook_handler().send_video is False else 'video'} for `{validation_shortname if validation_shortname != '' else '(blank shortname)'}`"
                     f"\nValidation prompt: `{validation_prompt if validation_prompt != '' else '(blank prompt)'}`"
                     f"\nEvaluation score: {self.eval_scores.get(validation_shortname, 'N/A')}"
                 ),

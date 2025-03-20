@@ -94,6 +94,7 @@ def get_argument_parser():
             "flux",
             "smoldit",
             "sdxl",
+            "ltxvideo",
             "legacy",
         ],
         default=None,
@@ -294,6 +295,46 @@ def get_argument_parser():
             " unless finetuning a model which was already trained with it."
         ),
     )
+    parser.add_argument(
+        "--ltx_train_mode",
+        choices=["t2v", "i2v"],
+        default="i2v",
+        help=(
+            "This value will be the default for all video datasets that do not have their own i2v settings defined."
+            " By default, we enable i2v mode, but it can be switched to t2v for your convenience."
+        ),
+    )
+    parser.add_argument(
+        "--ltx_i2v_prob",
+        type=float,
+        default=0.1,
+        help=(
+            "Probability in [0,1] of applying i2v (image-to-video) style training. "
+            "If random.random() < i2v_prob during training, partial or complete first-frame protection "
+            "will be triggered (depending on --ltx_protect_first_frame). "
+            "If set to 0.0, no i2v logic is applied (pure t2v). Default: 0.1 (from finetuners project)"
+        ),
+    )
+    parser.add_argument(
+        "--ltx_protect_first_frame",
+        action="store_true",
+        help=(
+            "If specified, fully protect the first frame whenever i2v logic is triggered (see --ltx_i2v_prob). "
+            "This means the first frame is never noised or denoised, effectively pinned to the original content."
+        ),
+    )
+    parser.add_argument(
+        "--ltx_partial_noise_fraction",
+        type=float,
+        default=0.05,
+        help=(
+            "Maximum fraction of noise to introduce into the first frame when i2v is triggered and "
+            "the first frame is not fully protected. For instance, a value of 0.05 means the first frame "
+            "can have up to 5% random noise mixed in, preserving 95% of the original content. "
+            "Ignored if --ltx_protect_first_frame is set."
+        ),
+    )
+
     parser.add_argument(
         "--t5_padding",
         choices=["zero", "unmodified"],
@@ -966,6 +1007,14 @@ def get_argument_parser():
             " This is done deterministically, so that each GPU will receive the same seed across invocations."
             " If --seed_for_each_device=false is provided, then we will use the same seed across all GPUs,"
             " which will almost certainly result in the over-sampling of inputs on larger datasets."
+        ),
+    )
+    parser.add_argument(
+        "--framerate",
+        default=None,
+        help=(
+            "By default, SimpleTuner will use a framerate of 25 for training and inference on video models."
+            " You are on your own if you modify this value, but it is provided for your convenience."
         ),
     )
     parser.add_argument(
@@ -2358,7 +2407,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
 
     if (
         args.pretrained_vae_model_name_or_path is not None
-        and args.model_family in ["legacy", "flux", "sd3", "sana"]
+        and args.model_family in ["legacy", "flux", "sd3", "sana", "ltxvideo"]
         and "sdxl" in args.pretrained_vae_model_name_or_path
         and "deepfloyd" not in args.model_type
     ):
@@ -2661,6 +2710,10 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         except Exception as e:
             logger.error(f"Could not load skip layers: {e}")
             raise
+
+    if args.framerate is None:
+        if args.model_family == "ltxvideo":
+            args.framerate = 25
 
     if (
         args.sana_complex_human_instruction is not None

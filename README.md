@@ -10,6 +10,7 @@
 - [Tutorial](#tutorial)
 - [Features](#features)
   - [Flux](#flux1)
+  - [LTX Video](#ltx-video)
   - [PixArt Sigma](#pixart-sigma)
   - [NVLabs Sana](#nvlabs-sana)
   - [Stable Diffusion 2.0/2.1](#stable-diffusion-20--21)
@@ -73,6 +74,17 @@ Full training support for Flux.1 is included:
 - Quantise the base model using `--base_model_precision` to `int8-quanto` or `fp8-quanto` for major memory savings
 
 See [hardware requirements](#flux1-dev-schnell) or the [quickstart guide](/documentation/quickstart/FLUX.md).
+
+### LTX Video
+
+SimpleTuner has preliminary training integration for LTX Video, efficiently training on less than 16G.
+
+- Text encoder training is not supported.
+- VAE training is not supported.
+- LyCORIS, PEFT, and full tuning all work as expected
+- ControlNet training is not yet supported
+
+See the [LTX Video Quickstart](/documentation/quickstart/LTXVIDEO.md) guide to start training.
 
 ### PixArt Sigma
 

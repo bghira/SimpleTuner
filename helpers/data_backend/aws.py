@@ -14,8 +14,10 @@ import concurrent.futures
 from botocore.config import Config
 from helpers.data_backend.base import BaseDataBackend
 from helpers.training.multi_process import _get_rank as get_rank
-from helpers.image_manipulation.load import load_image
+from helpers.image_manipulation.load import load_image, load_video
+from helpers.training import video_file_extensions, image_file_extensions
 from io import BytesIO
+from typing import Union
 
 loggers_to_silence = [
     "botocore.hooks",
@@ -36,7 +38,6 @@ for logger_name in loggers_to_silence:
     logger = logging.getLogger(logger_name)
     logger.setLevel("ERROR")
 
-# Arguably, the most interesting one:
 boto_logger = logging.getLogger("botocore.endpoint")
 boto_logger.setLevel(os.environ.get("SIMPLETUNER_AWS_LOG_LEVEL", "ERROR"))
 
@@ -74,15 +75,12 @@ class S3DataBackend(BaseDataBackend):
         self.compress_cache = compress_cache
         self.max_pool_connections = max_pool_connections
         self.type = "aws"
-        # AWS buckets might use a region.
-        extra_args = {
-            "region_name": region_name,
-        }
-        # If using an endpoint_url, we do not use the region.
+
+        extra_args = {"region_name": region_name}
         if endpoint_url:
-            extra_args = {
-                "endpoint_url": endpoint_url,
-            }
+            # If using endpoint_url, we do not use region
+            extra_args = {"endpoint_url": endpoint_url}
+
         s3_config = Config(max_pool_connections=self.max_pool_connections)
         self.client = boto3.client(
             "s3",
@@ -113,17 +111,8 @@ class S3DataBackend(BaseDataBackend):
                     return False
                 logger.error(f'Error checking existence of S3 key "{s3_key}": {e}')
                 if i == self.read_retry_limit - 1:
-                    # We have reached our maximum retry count.
                     raise e
                 else:
-                    # Sleep for a bit before retrying.
-                    time.sleep(self.read_retry_interval)
-            except:
-                if i == self.read_retry_limit - 1:
-                    # We have reached our maximum retry count.
-                    raise
-                else:
-                    # Sleep for a bit before retrying.
                     time.sleep(self.read_retry_interval)
 
     def read(self, s3_key):
@@ -142,19 +131,10 @@ class S3DataBackend(BaseDataBackend):
             except (NoCredentialsError, PartialCredentialsError) as e:
                 raise e  # Raise credential errors to the caller
             except Exception as e:
-                logger.error(f'Error reading S3 bucket key "{s3_key}": {e}')
+                logger.error(f'Error reading S3 key "{s3_key}": {e}')
                 if i == self.read_retry_limit - 1:
-                    # We have reached our maximum retry count.
                     raise e
                 else:
-                    # Sleep for a bit before retrying.
-                    time.sleep(self.read_retry_interval)
-            except:
-                if i == self.read_retry_limit - 1:
-                    # We have reached our maximum retry count.
-                    raise
-                else:
-                    # Sleep for a bit before retrying.
                     time.sleep(self.read_retry_interval)
 
     def open_file(self, s3_key, mode):
@@ -162,25 +142,24 @@ class S3DataBackend(BaseDataBackend):
         return self.read(s3_key)
 
     def write(self, s3_key, data):
-        """Upload data to the specified S3 key."""
+        """
+        Upload data to the specified S3 key.
+
+        """
         real_key = str(s3_key)
         for i in range(self.write_retry_limit):
             try:
-                if type(data) == Tensor:
+                if isinstance(data, (dict, torch.Tensor)):
                     return self.torch_save(data, real_key)
                 response = self.client.put_object(
-                    Body=data,
-                    Bucket=self.bucket_name,
-                    Key=real_key,
+                    Body=data, Bucket=self.bucket_name, Key=real_key
                 )
                 return response
             except Exception as e:
-                logger.error(f'Error writing S3 bucket key "{real_key}": {e}')
+                logger.error(f'Error writing S3 key "{real_key}": {e}')
                 if i == self.write_retry_limit - 1:
-                    # We have reached our maximum retry count.
                     raise e
                 else:
-                    # Sleep for a bit before retrying.
                     time.sleep(self.write_retry_interval)
 
     def delete(self, s3_key):
@@ -193,12 +172,10 @@ class S3DataBackend(BaseDataBackend):
                 )
                 return response
             except Exception as e:
-                logger.error(f'Error deleting S3 bucket key "{s3_key}": {e}')
+                logger.error(f'Error deleting S3 key "{s3_key}": {e}')
                 if i == self.write_retry_limit - 1:
-                    # We have reached our maximum retry count.
                     raise e
                 else:
-                    # Sleep for a bit before retrying.
                     time.sleep(self.write_retry_interval)
 
     def list_by_prefix(self, prefix=""):
@@ -216,52 +193,38 @@ class S3DataBackend(BaseDataBackend):
         ]
 
     def list_files(self, file_extensions: list, instance_data_dir: str = None):
-        # Initialize the results list
         results = []
 
         def splitext_(path):
-            o = splitext(path)[1].lower()
-            # remove leading .
-            return o[1:] if o else o
+            ext = splitext(path)[1].lower()
+            return ext[1:] if ext else ext
 
-        # Grab a timestamp for our start time.
         start_time = time.time()
-
-        # Using paginator to handle potential large number of objects
         paginator = self.client.get_paginator("list_objects_v2")
-
-        # Using a dictionary to hold files based on their prefixes (subdirectories)
         prefix_dict = {}
-        # Log the first few items, alphabetically sorted:
+
         logger.debug(
             f"Listing files in S3 bucket {self.bucket_name} in prefix {instance_data_dir} with extensions: {file_extensions}"
         )
 
-        # Paginating over the entire bucket objects
         for page in paginator.paginate(Bucket=self.bucket_name, MaxKeys=1000):
-            # logger.debug(f"Page: {page}")
             for obj in page.get("Contents", []):
-                # Filter based on the provided pattern
                 ext = splitext_(obj["Key"])
                 if file_extensions and ext not in file_extensions:
                     continue
-                # Split the S3 key to determine the directory and file structure
                 parts = obj["Key"].split("/")
-                subdir = "/".join(parts[:-1])  # Get the directory excluding the file
-                filename = parts[-1]  # Get the file name
+                subdir = "/".join(parts[:-1])
+                filename = parts[-1]
 
-                # Storing filenames under their respective subdirectories
                 if subdir not in prefix_dict:
                     prefix_dict[subdir] = []
                 prefix_dict[subdir].append(obj["Key"])
 
-        # Transforming the prefix_dict into the desired results format
         for subdir, files in prefix_dict.items():
             results.append((subdir, [], files))
 
         end_time = time.time()
         total_time = end_time - start_time
-        # Log the output in n automatically human friendly manner, eg. "x minutes" or "x seconds"
         if total_time > 120:
             logger.debug(f"Completed file list in {total_time/60} minutes.")
         elif total_time < 60:
@@ -269,25 +232,43 @@ class S3DataBackend(BaseDataBackend):
         return results
 
     def read_image(self, s3_key):
-        return load_image(BytesIO(self.read(s3_key)))
+        """
+        Read an image OR a video from S3.
+        """
+        data = self.read(s3_key)
+        if data is None:
+            return None
+        buffer = BytesIO(data)
+
+        # Check extension
+        ext = s3_key.rsplit(".", 1)[-1].lower() if "." in s3_key else ""
+        if ext in video_file_extensions:
+            return load_video(buffer)
+        else:
+            return load_image(buffer)
 
     def read_image_batch(self, s3_keys: list, delete_problematic_images: bool = False):
         """
-        Return a list of Image objects, given a list of S3 keys.
-        This makes use of read_batch for efficiency.
-        Args:
-            s3_keys (list): List of S3 keys to read. May not be included in the output, if it does not exist, or had an error.
-            delete_problematic_images (bool, optional): Whether to delete problematic images. Defaults to False.
-
-        Returns:
-            tuple(list, list): (available_keys, output_images)
+        Return a list of Image (or video) objects, given a list of S3 keys.
+        This uses read_batch(...) for potential concurrency.
         """
         batch = self.read_batch(s3_keys)
         output_images = []
         available_keys = []
+
         for s3_key, data in zip(s3_keys, batch):
+            if data is None:
+                logger.warning(f"Unable to load image '{s3_key}', skipping (no data).")
+                continue
             try:
-                image_data = load_image(BytesIO(data))
+                # Check extension to decide loader
+                ext = s3_key.rsplit(".", 1)[-1].lower() if "." in s3_key else ""
+                buffer = BytesIO(data)
+                if ext in video_file_extensions:
+                    image_data = load_video(buffer)
+                else:
+                    image_data = load_image(buffer)
+
                 if image_data is None:
                     logger.warning(f"Unable to load image '{s3_key}', skipping.")
                     continue
@@ -295,19 +276,17 @@ class S3DataBackend(BaseDataBackend):
                 available_keys.append(s3_key)
             except Exception as e:
                 if delete_problematic_images:
-                    logger.warning(
-                        f"Deleting image '{s3_key}', because --delete_problematic_images is provided. Error: {e}"
-                    )
+                    logger.warning(f"Deleting image '{s3_key}' due to error: {e}")
                     self.delete(s3_key)
                 else:
-                    logger.warning(
-                        f"A problematic image {s3_key} is detected, but we are not allowed to remove it, because --delete_problematic_image is not provided."
-                        f" Please correct this manually. Error: {e}"
-                    )
+                    logger.warning(f"Problematic image/video {s3_key} encountered: {e}")
+
         return (available_keys, output_images)
 
     def create_directory(self, directory_path):
-        # Since S3 doesn't have a traditional directory structure, this is just a pass-through
+        """
+        S3 doesn't have a directory structure, so this is a no-op.
+        """
         pass
 
     def _detect_file_format(self, fileobj):
@@ -315,50 +294,41 @@ class S3DataBackend(BaseDataBackend):
         magic_number = fileobj.read(4)
         fileobj.seek(0)
         logger.debug(f"Magic number: {magic_number}")
+
         if magic_number[:2] == b"\x80\x04" or b"PK" in magic_number:
-            # This is likely a torch-saved object (Pickle protocol 4)
-            # Need to check whether it's the incorrectly saved compressed data
             try:
                 obj = torch.load(fileobj, map_location="cpu")
                 if isinstance(obj, bytes):
-                    # If obj is bytes, it means compressed data was saved incorrectly
                     return "incorrect"
                 else:
                     return "correct_uncompressed"
-            except Exception as e:
-                # If torch.load fails, it's possibly compressed correctly
+            except Exception:
                 return "correct_compressed"
         elif magic_number[:2] == b"\x1f\x8b":
-            # GZIP magic number, compressed data saved correctly
             return "correct_compressed"
         else:
-            # Unrecognized format
             return "unknown"
 
     def torch_load(self, s3_key):
         for i in range(self.read_retry_limit):
             try:
-                # Read data from S3
                 data = self.read(s3_key)
+                if data is None:
+                    return None
                 stored_data = BytesIO(data)
                 stored_data.seek(0)
 
-                # Determine if the file was saved incorrectly
                 file_format = self._detect_file_format(stored_data)
                 logger.debug(f"File format: {file_format}")
                 if file_format == "incorrect":
-                    # Load the compressed bytes object serialized by torch.save
                     stored_data.seek(0)
                     compressed_data = BytesIO(
                         torch.load(stored_data, map_location="cpu")
                     )
-                    # Decompress the data
                     stored_tensor = self._decompress_torch(compressed_data)
                 elif file_format == "correct_compressed":
-                    # Data is compressed but saved correctly
                     stored_tensor = self._decompress_torch(data)
                 else:
-                    # Data is uncompressed and saved correctly
                     stored_tensor = stored_data
 
                 if hasattr(stored_tensor, "seek"):
@@ -379,10 +349,12 @@ class S3DataBackend(BaseDataBackend):
                     logging.info(f"Retrying... ({i+1}/{self.read_retry_limit})")
 
     def torch_save(self, data, s3_key):
+        """
+        Save a torch object (tensor or dict) to S3 using possible compression.
+        """
         import torch
         from io import BytesIO
 
-        # Retry the torch save within the retry limit
         for i in range(self.write_retry_limit):
             try:
                 buffer = BytesIO()
@@ -391,7 +363,7 @@ class S3DataBackend(BaseDataBackend):
                     buffer.write(compressed_data)
                 else:
                     torch.save(data, buffer)
-                buffer.seek(0)  # Reset buffer position to the beginning
+                buffer.seek(0)
                 logger.debug(f"Writing torch file: {s3_key}")
                 result = self.write(s3_key, buffer.getvalue())
                 logger.debug(f"Write completed: {s3_key}")
@@ -399,31 +371,23 @@ class S3DataBackend(BaseDataBackend):
             except Exception as e:
                 logger.error(f"Could not torch save to backend: {e}")
                 if i == self.write_retry_limit - 1:
-                    # We have reached our maximum retry count.
                     raise e
                 else:
-                    # Sleep for a bit before retrying.
                     time.sleep(self.write_retry_interval)
 
     def write_batch(self, s3_keys, data_list):
         """Write a batch of files to the specified S3 keys concurrently."""
-        # Use ThreadPoolExecutor for concurrent uploads
         with concurrent.futures.ThreadPoolExecutor() as executor:
             executor.map(self.write, s3_keys, data_list)
 
     def read_batch(self, s3_keys):
         """Read a batch of files from the specified S3 keys concurrently."""
-
-        # Use ThreadPoolExecutor for concurrent reads
         with concurrent.futures.ThreadPoolExecutor() as executor:
             return list(executor.map(self.read, s3_keys))
 
     def bulk_exists(self, s3_keys, prefix=""):
         """Check the existence of a list of S3 keys in bulk."""
-
-        # List all objects with the given prefix
         objects = self.client.list_objects_v2(Bucket=self.bucket_name, Prefix=prefix)
         existing_keys = set(obj["Key"] for obj in objects.get("Contents", []))
 
-        # Check existence for each key
         return [key in existing_keys for key in s3_keys]

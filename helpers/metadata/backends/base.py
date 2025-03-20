@@ -44,6 +44,9 @@ class MetadataBackend:
         minimum_image_size: int = None,
         minimum_aspect_ratio: int = None,
         maximum_aspect_ratio: int = None,
+        num_frames: int = None,
+        minimum_num_frames: int = None,
+        maximum_num_frames: int = None,
         cache_file_suffix: str = None,
         repeats: int = 0,
     ):
@@ -82,6 +85,13 @@ class MetadataBackend:
         self.maximum_aspect_ratio = (
             float(maximum_aspect_ratio) if maximum_aspect_ratio else None
         )
+        self.maximum_num_frames = (
+            float(maximum_num_frames) if maximum_num_frames else None
+        )
+        self.minimum_num_frames = (
+            float(minimum_num_frames) if minimum_num_frames else None
+        )
+        self.num_frames = float(num_frames) if num_frames else None
         self.image_metadata_loaded = False
         self.vae_output_scaling_factor = 8
         self.metadata_semaphor = Semaphore()
@@ -583,6 +593,24 @@ class MetadataBackend:
                 logger.warning(f"Metadata not found for image {image_path}.")
                 return False
             width, height = metadata["original_size"]
+        elif isinstance(image, np.ndarray):
+            # we have a video
+            width, height = image.shape[2], image.shape[1]
+            logger.debug(f"Checking resolution: {width}x{height}")
+            if self.minimum_num_frames is not None:
+                num_frames = image.shape[0]
+                if num_frames < self.minimum_num_frames:
+                    logger.debug(
+                        f"Video has {num_frames} frames, which is less than the minimum required {self.minimum_num_frames}."
+                    )
+                    return False
+            if self.maximum_num_frames is not None:
+                num_frames = image.shape[0]
+                if num_frames > self.maximum_num_frames:
+                    logger.debug(
+                        f"Video has {num_frames} frames, which is more than the maximum configured {self.maximum_num_frames}."
+                    )
+                    return False
         elif image is not None:
             width, height = image.size
         elif image_metadata is not None:

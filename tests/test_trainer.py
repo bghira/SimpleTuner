@@ -158,6 +158,7 @@ class TestTrainer(unittest.TestCase):
             flux_schedule_auto_shift=None,
             flow_matching_sigmoid_scale=None,
             eval_steps_interval=None,
+            controlnet=False,
         ),
     )
     def test_misc_init(
@@ -226,7 +227,7 @@ class TestTrainer(unittest.TestCase):
         trainer.config.vae_path = None
         trainer.config.text_encoder_path = None
         trainer.config.text_encoder_subfolder = None
-        trainer.config.model_family = None
+        trainer.config.model_family = "sdxl"
 
         with patch.object(trainer, "_set_model_paths") as mock_set_model_paths:
             with patch(
@@ -235,7 +236,7 @@ class TestTrainer(unittest.TestCase):
             ):
                 trainer.set_model_family()
                 self.assertEqual(trainer.config.model_type_label, "SDXL")
-                mock_logger.warning.assert_called()
+                mock_logger.warning.assert_not_called()
                 mock_set_model_paths.assert_called()
 
     @patch("helpers.training.trainer.Trainer._misc_init", return_value=Mock())

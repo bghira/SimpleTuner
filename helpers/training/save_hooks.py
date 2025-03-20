@@ -169,6 +169,12 @@ class SaveHookManager:
 
                 self.denoiser_class = SanaTransformer2DModel
                 self.pipeline_class = SanaPipeline
+            elif args.model_family == "ltxvideo":
+                from diffusers import LTXPipeline, LTXVideoTransformer3DModel
+
+                self.denoiser_class = LTXVideoTransformer3DModel
+                self.pipeline_class = LTXPipeline
+
             self.denoiser_subdir = "transformer"
 
         if args.controlnet:
@@ -271,6 +277,11 @@ class SaveHookManager:
                 output_dir,
                 transformer_lora_layers=transformer_lora_layers_to_save,
                 text_encoder_lora_layers=text_encoder_1_lora_layers_to_save,
+            )
+        elif self.args.model_family == "ltxvideo":
+            self.pipeline_class.save_lora_weights(
+                output_dir,
+                transformer_lora_layers=transformer_lora_layers_to_save,
             )
         elif self.args.model_family == "sd3":
             self.pipeline_class.save_lora_weights(
@@ -455,12 +466,14 @@ class SaveHookManager:
                     f"\nunet: {unwrap_model(self.accelerator, self.unet).__class__}"
                 )
 
-        if self.args.model_family in ["sd3", "flux", "pixart_sigma"]:
+        if self.transformer is not None:
             key_to_replace = "transformer"
             lora_state_dict = self.pipeline_class.lora_state_dict(input_dir)
-        else:
+        elif self.unet is not None:
             key_to_replace = "unet"
             lora_state_dict, _ = self.pipeline_class.lora_state_dict(input_dir)
+        else:
+            raise Exception("No model to save LoRA for.")
 
         denoiser_state_dict = {
             f'{k.replace(f"{key_to_replace}.", "")}': v

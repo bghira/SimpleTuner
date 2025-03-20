@@ -5,8 +5,10 @@ import pandas as pd
 import requests
 
 from helpers.data_backend.base import BaseDataBackend
-from helpers.image_manipulation.load import load_image
+from helpers.image_manipulation.load import load_image, load_video
 from helpers.training.multi_process import should_log
+from helpers.training import video_file_extensions, image_file_extensions
+
 from pathlib import Path
 from io import BytesIO
 import os
@@ -79,9 +81,7 @@ class CSVDataBackend(BaseDataBackend):
             if self.image_cache_loc is not None:
                 # check for cache
                 cached_loc = html_to_file_loc(
-                    self.image_cache_loc,
-                    location,
-                    self.hash_filenames,
+                    self.image_cache_loc, location, self.hash_filenames
                 )
                 if os.path.exists(cached_loc):
                     # found cache
@@ -103,6 +103,8 @@ class CSVDataBackend(BaseDataBackend):
                 with open(hashed_location, "rb") as file:
                     data = file.read()
             except FileNotFoundError as e:
+                from tqdm import tqdm
+
                 tqdm.write(f"ask was for file {location} bound to {hashed_location}")
                 raise e
         if not as_byteIO:
@@ -110,23 +112,21 @@ class CSVDataBackend(BaseDataBackend):
         return BytesIO(data)
 
     def write(self, filepath: Union[str, Path], data: Any) -> None:
-        """Write the provided data to the specified filepath."""
+        """
+        Write the provided data to the specified filepath.
+        """
         if isinstance(filepath, str):
             assert not filepath.startswith(
                 "http"
             ), f"writing to {filepath} is not allowed as it has http in it"
             filepath = Path(filepath)
-        # Not a huge fan of auto-shortening filenames, as we hash things for that in other cases.
-        # However, this is copied in from the original Arcade-AI CSV backend implementation for compatibility.
+
         filepath = path_to_hashed_path(filepath, self.hash_filenames)
         filepath.parent.mkdir(parents=True, exist_ok=True)
         with open(filepath, "wb") as file:
-            # Check if data is a Tensor, and if so, save it appropriately
-            if isinstance(data, torch.Tensor):
-                # logger.debug(f"Writing a torch file to disk.")
+            if isinstance(data, (dict, torch.Tensor)):
                 return self.torch_save(data, file)
             if isinstance(data, str):
-                # logger.debug(f"Writing a string to disk as {filepath}: {data}")
                 data = data.encode("utf-8")
             else:
                 logger.debug(
@@ -138,12 +138,11 @@ class CSVDataBackend(BaseDataBackend):
         """Delete the specified file."""
         if filepath in self.df.index:
             self.df.drop(filepath, inplace=True)
-            # self.save_state()
+
         filepath = path_to_hashed_path(filepath, self.hash_filenames)
         if os.path.exists(filepath):
             logger.debug(f"Deleting file: {filepath}")
             os.remove(filepath)
-        # Validate that we deleted it correctly.
         if self.exists(filepath) or filepath in self.df.index:
             raise Exception(f"Failed to delete {filepath}")
 
@@ -190,7 +189,6 @@ class CSVDataBackend(BaseDataBackend):
                 filter(lambda id: "http" not in id and os.path.exists(id), filtered_ids)
             )
 
-        # Group files by their parent directory
         path_dict = {}
         for path in filtered_paths:
             if hasattr(path, "parent"):
@@ -209,12 +207,18 @@ class CSVDataBackend(BaseDataBackend):
         return results
 
     def read_image(self, filepath: str, delete_problematic_images: bool = False):
-        # Remove embedded null byte:
+        """
+        Read an image or video from the specified filepath.
+        """
         if isinstance(filepath, str):
             filepath = filepath.replace("\x00", "")
         try:
             image_data = self.read(filepath, as_byteIO=True)
-            image = load_image(image_data)
+            ext = os.path.splitext(filepath)[1].lower().strip(".")
+            if ext in video_file_extensions:
+                image = load_video(image_data)
+            else:
+                image = load_image(image_data)
             return image
         except Exception as e:
             import traceback
@@ -234,8 +238,8 @@ class CSVDataBackend(BaseDataBackend):
     def read_image_batch(
         self, filepaths: list, delete_problematic_images: bool = False
     ) -> list:
-        """Read a batch of images from the specified filepaths."""
-        if type(filepaths) != list:
+        """Read a batch of images (or videos) from the specified filepaths."""
+        if not isinstance(filepaths, list):
             raise ValueError(
                 f"read_image_batch must be given a list of image filepaths. we received: {filepaths}"
             )
@@ -256,8 +260,7 @@ class CSVDataBackend(BaseDataBackend):
                     )
                 else:
                     logger.warning(
-                        f"A problematic image {filepath} is detected, but we are not allowed to remove it, because --delete_problematic_image is not provided."
-                        f" Please correct this manually. Error: {e}"
+                        f"A problematic image {filepath} is detected, but we are not allowed to remove it. Error: {e}"
                     )
         return (available_keys, output_images)
 
@@ -271,9 +274,7 @@ class CSVDataBackend(BaseDataBackend):
         """
         Load a torch tensor from a file.
         """
-
         stored_tensor = self.read(filename, as_byteIO=True)
-
         if self.compress_cache:
             try:
                 stored_tensor = self._decompress_torch(stored_tensor)
@@ -294,10 +295,9 @@ class CSVDataBackend(BaseDataBackend):
 
     def torch_save(self, data, location: Union[str, Path, BytesIO]):
         """
-        Save a torch tensor to a file.
+        Save a torch object (tensor or dict) to a file or file-like object.
         """
-
-        if isinstance(location, str) or isinstance(location, Path):
+        if isinstance(location, (str, Path)):
             location = path_to_hashed_path(location, self.hash_filenames)
             location = self.open_file(location, "wb")
 

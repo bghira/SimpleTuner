@@ -1,12 +1,11 @@
 import logging
+import tempfile
+import os
+import numpy as np
 
 from io import BytesIO
 from typing import Union, IO, Any
-
-import numpy as np
-
 from PIL import Image, PngImagePlugin
-
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
@@ -103,3 +102,72 @@ def load_image(img_data: Union[bytes, IO[Any], str]) -> Image.Image:
     if img is None:
         img = decode_image_with_pil(img_data)
     return img
+
+
+def load_video(vid_data: Union[bytes, IO[Any], str]) -> np.ndarray:
+    """
+    Load a video using OpenCV's VideoCapture.
+
+    Accepts a file path (str), a file-like object, or raw bytes.
+    Reads all frames from the video and returns them as a NumPy array.
+
+    Raises:
+        ValueError: If the video cannot be opened or no frames are read.
+        TypeError: If the input type is not supported.
+    """
+    tmp_path = None
+
+    # If it's a file path, use it directly.
+    if isinstance(vid_data, str):
+        video_path = vid_data
+    # If it's a file-like object.
+    elif hasattr(vid_data, "read"):
+        data = vid_data.read()
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+        try:
+            tmp.write(data)
+            video_path = tmp.name
+            tmp_path = video_path
+        finally:
+            tmp.close()
+    # If it's raw bytes.
+    elif isinstance(vid_data, bytes):
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+        try:
+            tmp.write(vid_data)
+            video_path = tmp.name
+            tmp_path = video_path
+        finally:
+            tmp.close()
+    else:
+        raise TypeError(
+            "Unsupported type for vid_data. Expected str, bytes, or file-like object."
+        )
+
+    # Open the video using VideoCapture.
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        if tmp_path:
+            os.remove(tmp_path)
+        raise ValueError("Failed to open video.")
+
+    frames = []
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frames.append(frame_rgb)
+
+    cap.release()
+
+    # Clean up temporary file if one was used.
+    if tmp_path:
+        os.remove(tmp_path)
+
+    if not frames:
+        raise ValueError("No frames were read from the video.")
+
+    # Stack frames into a numpy array: shape (num_frames, height, width, channels)
+    video_array = np.stack(frames, axis=0)
+    return video_array

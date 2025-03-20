@@ -1,15 +1,18 @@
 from PIL import Image
 from PIL.ImageOps import exif_transpose
 from helpers.multiaspect.image import MultiaspectImage, resize_helpers
+from helpers.multiaspect.video import resize_video_frames
 from helpers.image_manipulation.cropping import crop_handlers
 from helpers.training.state_tracker import StateTracker
 from helpers.training.multi_process import should_log
+from diffusers.utils.export_utils import export_to_gif
 import logging
-import os
+import os, cv2
 from tqdm import tqdm
 from math import sqrt
 import random
 import time
+import numpy as np
 
 logger = logging.getLogger(__name__)
 if should_log():
@@ -46,7 +49,22 @@ class TrainingSample:
             if image_metadata
             else StateTracker.get_metadata_by_filepath(image_path, data_backend_id)
         )
-        if hasattr(image, "size"):
+        if isinstance(image, np.ndarray):
+            if len(image.shape) == 4:
+                logger.debug(f"Received 4D Shape: {image.shape}")
+                self.original_size = (image.shape[2], image.shape[1])
+            elif len(image.shape) == 5:
+                raise ValueError(
+                    f"Received invalid shape: {image.shape}, expected 4D item instead"
+                )
+
+            logger.debug(
+                f"Checking on {type(image)}: {self.original_size[0]}x{self.original_size[1]}"
+            )
+            self.original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+                self.original_size
+            )
+        elif hasattr(image, "size"):
             self.original_size = self.image.size
             self.original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
                 self.original_size
@@ -98,8 +116,32 @@ class TrainingSample:
         self._validate_image_metadata()
 
     def save_debug_image(self, path: str):
-        if self.image and os.environ.get("SIMPLETUNER_DEBUG_IMAGE_PREP", "") == "true":
-            self.image.save(path)
+        if self.image is not None:
+            if os.environ.get("SIMPLETUNER_DEBUG_IMAGE_PREP", "") == "true":
+                if hasattr(self.image, "save"):
+                    self.image.save(path)
+                else:
+                    # switch .png to .mp4
+                    if path.endswith(".png"):
+                        path = path.replace(".png", ".mp4")
+                    logger.debug(f"Not saving debug video output: {path}")
+                    # write to path
+                    import imageio
+                    from io import BytesIO
+
+                    video_byte_array = BytesIO()
+                    imageio.v3.imwrite(
+                        video_byte_array,
+                        self.image,  # a list of NumPy arrays
+                        plugin="pyav",  # or "ffmpeg"
+                        fps=StateTracker.get_args().framerate,
+                        extension=".mp4",
+                        codec="libx264",
+                    )
+                    video_byte_array.seek(0)
+                    with open(path, "wb") as f:
+                        f.write(video_byte_array.read())
+
         return self
 
     @staticmethod
@@ -150,7 +192,11 @@ class TrainingSample:
             self.original_size
         )
 
-        if not self.valid_metadata and hasattr(self.image, "size"):
+        if (
+            not self.valid_metadata
+            and hasattr(self.image, "size")
+            and isinstance(self.image, Image.Image)
+        ):
             self.original_size = self.image.size
 
         return self.valid_metadata
@@ -360,7 +406,7 @@ class TrainingSample:
         if webhook_handler:
             webhook_handler.send(
                 message=f"Debug info for prepared sample, {str(prepared_sample)}",
-                images=[self.image] if self.image else None,
+                images=[self.image],
                 message_level="debug",
             )
         return prepared_sample
@@ -452,7 +498,9 @@ class TrainingSample:
         """
         if self._should_resize_before_crop():
             target_downsample_size = self._calculate_target_downsample_size()
-            logger.debug(f"resizing to {target_downsample_size}")
+            logger.debug(
+                f"Calculated target_downsample_size, resizing to {target_downsample_size}"
+            )
             self.resize(target_downsample_size)
         return self
 
@@ -537,7 +585,7 @@ class TrainingSample:
         Returns:
             TrainingSample: The current TrainingSample instance.
         """
-        if self.image:
+        if self.image is not None and hasattr(self.image, "convert"):
             # Convert image to RGB to remove any alpha channel and apply EXIF data transformations
             self.image = self.image.convert("RGB")
             self.image = exif_transpose(self.image)
@@ -592,11 +640,27 @@ class TrainingSample:
                     f"we have to crop because target size {self.target_size} != intermediary size {self.intermediary_size}"
                 )
                 # Now we can resize the image to the intermediary size.
-                if self.image is not None:
-                    self.image = self.image.resize(
-                        self.intermediary_size, Image.Resampling.LANCZOS
-                    )
                 self.current_size = self.intermediary_size
+                if self.image is not None:
+                    if isinstance(self.image, Image.Image):
+                        self.image = self.image.resize(
+                            self.intermediary_size, Image.Resampling.LANCZOS
+                        )
+                        self.current_size = self.image.size
+                    elif isinstance(self.image, np.ndarray):
+                        # we have a video to resize
+                        logger.debug(
+                            f"Resizing {self.image.shape} to {self.intermediary_size}, "
+                        )
+                        self.image = resize_video_frames(
+                            self.image,
+                            (self.intermediary_size[0], self.intermediary_size[1]),
+                        )
+                        width, height = self.image.shape[2], self.image.shape[1]
+                        self.current_size = (width, height)
+                        logger.debug(
+                            f"Post resize: {self.current_size} / {self.image.shape}"
+                        )
                 if self.image is not None and self.cropper:
                     self.cropper.set_image(self.image)
                 self.cropper.set_intermediary_size(
@@ -605,14 +669,26 @@ class TrainingSample:
                 self.image, self.crop_coordinates = self.cropper.crop(
                     self.target_size[0], self.target_size[1]
                 )
+                logger.debug(
+                    f"Cropped to {self.target_size} via crop coordinates {self.crop_coordinates} (resulting in current_size of {self.current_size})"
+                )
+                self.current_size = self.target_size
                 logger.debug(f"crop coordinates: {self.crop_coordinates}")
                 return self
 
-        if self.image and hasattr(self.image, "resize"):
-            self.image = self.image.resize(size, Image.Resampling.LANCZOS)
-            self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-                self.image.size
-            )
+        if self.image is not None and hasattr(self.image, "resize"):
+            logger.debug(f"Resize ({type(self.image)}) to {size}")
+            if isinstance(self.image, Image.Image):
+                self.image = self.image.resize(size, Image.Resampling.LANCZOS)
+                self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+                    self.image.size
+                )
+            elif isinstance(self.image, np.ndarray):
+                # we have a video to resize
+                logger.debug(f"Resizing {self.image.shape} to {size}, ")
+                self.image = resize_video_frames(self.image, (size[1], size[0]))
+                self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(size)
+                logger.debug(f"Now {self.image.shape} @ {self.aspect_ratio}")
         self.current_size = size
         logger.debug(
             f"Resized to {self.current_size} (aspect ratio: {self.aspect_ratio})"

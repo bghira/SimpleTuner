@@ -40,6 +40,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         instance_prompt: str = None,
         conditioning_type: str = None,
         is_regularisation_data: bool = False,
+        dataset_type: str = "image",
     ):
         """
         Initializes the sampler with provided settings.
@@ -58,6 +59,12 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 f"Sampler ID ({self.id}) must match DataBackend ID ({data_backend.id}) and MetadataBackend ID ({metadata_backend.id})."
             )
         # Update the logger name with the id:
+        self.dataset_type = dataset_type
+        self.sample_type_str = "image"
+        self.sample_type_strs = "images"
+        if dataset_type == "video":
+            self.sample_type_str = "video"
+            self.sample_type_strs = "videos"
         self.logger = get_logger(
             f"MultiAspectSampler-{self.id}",
             os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"),
@@ -128,7 +135,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         # Merge seen_images into self.state_manager.seen_images Manager.dict:
         if "seen_images" in previous_state:
             self.logger.info(
-                f"Previous checkpoint had {len(previous_state['seen_images'])} seen images."
+                f"Previous checkpoint had {len(previous_state['seen_images'])} seen {self.sample_type_strs}."
             )
             self.metadata_backend.seen_images.update(previous_state["seen_images"])
 
@@ -244,12 +251,12 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         ):
             raise Exception(
                 f"No images found in the dataset: {self.metadata_backend.aspect_ratio_bucket_indices}"
-                f"\n-> Unseen images: {self._get_unseen_images()}"
-                f"\n-> Seen images: {self.metadata_backend.seen_images}"
+                f"\n-> Unseen {self.sample_type_strs}: {self._get_unseen_images()}"
+                f"\n-> Seen {self.sample_type_strs}: {self.metadata_backend.seen_images}"
             )
         if StateTracker.get_args().print_sampler_statistics:
             self.logger.info(
-                "Resetting seen image list and refreshing buckets. State before reset:"
+                f"Resetting seen {self.sample_type_str} list and refreshing buckets. State before reset:"
             )
             self.log_state()
         # All buckets are exhausted, so we will move onto the next epoch.
@@ -263,8 +270,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
     def _get_unseen_images(self, bucket=None):
         """
-        Get unseen images from the specified bucket.
-        If bucket is None, get unseen images from all buckets.
+        Get unseen {self.sample_type_strs} from the specified bucket.
+        If bucket is None, get unseen {self.sample_type_strs} from all buckets.
         """
         if bucket and bucket in self.metadata_backend.aspect_ratio_bucket_indices:
             return [
@@ -321,7 +328,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
     def _get_next_bucket(self):
         """
         Get the next bucket excluding the exhausted ones.
-        If all buckets are exhausted, first reset the seen images and exhausted buckets.
+        If all buckets are exhausted, first reset the seen {self.sample_type_strs} and exhausted buckets.
         """
         available_buckets = [
             bucket for bucket in self.buckets if bucket not in self.exhausted_buckets
@@ -348,7 +355,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
     def change_bucket(self):
         """
         Change the current bucket to a new one and exclude exhausted buckets from consideration.
-        During _get_next_bucket(), if all buckets are exhausted, reset the exhausted list and seen images.
+        During _get_next_bucket(), if all buckets are exhausted, reset the exhausted list and seen {self.sample_type_strs}.
         """
         next_bucket = self._get_next_bucket()
         self.current_bucket = self._bucket_name_to_id(next_bucket)
@@ -395,8 +402,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         else:
             # Return a snapshot of the current state during training.
             printed_state = (
-                f"\n{self.rank_info if show_rank else ''}    -> Number of seen images: {len(self.metadata_backend.seen_images)}"
-                f"\n{self.rank_info if show_rank else ''}    -> Number of unseen images: {len(self._get_unseen_images())}"
+                f"\n{self.rank_info if show_rank else ''}    -> Number of seen {self.sample_type_strs}: {len(self.metadata_backend.seen_images)}"
+                f"\n{self.rank_info if show_rank else ''}    -> Number of unseen {self.sample_type_strs}: {len(self._get_unseen_images())}"
                 f"\n{self.rank_info if show_rank else ''}    -> Current Bucket: {self.current_bucket}"
                 f"\n{self.rank_info if show_rank else ''}    -> {len(self.buckets)} Buckets: {self.buckets}"
                 f"\n{self.rank_info if show_rank else ''}    -> {len(self.exhausted_buckets)} Exhausted Buckets: {self.exhausted_buckets}"
@@ -560,7 +567,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 if len(self.batch_accumulator) >= self.batch_size:
                     final_yield = self.batch_accumulator[: self.batch_size]
                     self.debug_log(
-                        f"Yielding samples and marking {len(final_yield)} images as seen, we have {len(self.metadata_backend.seen_images.values())} seen images before adding."
+                        f"Yielding samples and marking {len(final_yield)} images as seen, we have {len(self.metadata_backend.seen_images.values())} seen {self.sample_type_strs} before adding."
                     )
                     self.metadata_backend.mark_batch_as_seen(
                         [instance["image_path"] for instance in final_yield]
@@ -591,7 +598,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
             # Check if all buckets are exhausted
             if all_buckets_exhausted:
-                # If all buckets are exhausted, reset the seen images and refresh buckets
+                # If all buckets are exhausted, reset the seen {self.sample_type_strs} and refresh buckets
                 self.logger.warning(
                     "All buckets exhausted - since this is happening now, most likely you have chronically-underfilled buckets."
                 )
