@@ -1,5 +1,6 @@
 import os
 from accelerate.logging import get_logger
+from helpers.models import get_model_config_path
 
 logger = get_logger(__name__, log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
@@ -232,5 +233,8 @@ def load_diffusion_model(args, weight_dtype):
             unet.set_gradient_checkpointing_interval(
                 int(args.gradient_checkpointing_interval)
             )
-
+    if args.pretrained_model_name_or_path.endswith(".safetensors"):
+        args.pretrained_model_name_or_path = get_model_config_path(
+            args.model_family, args.pretrained_model_name_or_path
+        )
     return unet, transformer
