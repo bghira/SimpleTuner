@@ -441,6 +441,7 @@ class VAECache(WebhookMixin):
         return relevant_files
 
     def process_video_latents(self, latents_uncached):
+        output_cache_entry = latents_uncached
         if StateTracker.get_model_family() in ["ltxvideo"]:
             logger.info(f"Processing LTX Video latents.")
             from helpers.models.ltxvideo import (
