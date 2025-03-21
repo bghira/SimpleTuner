@@ -1,6 +1,6 @@
 ## LTX Video Quickstart
 
-In this example, we'll be training an LTX-Video LoRA using Sayak Paul's [public domain Disney dataset](sayakpaul/video-dataset-disney-organized).
+In this example, we'll be training an LTX-Video LoRA using Sayak Paul's [public domain Disney dataset](https://hf.co/datasets/sayakpaul/video-dataset-disney-organized).
 
 ### Hardware requirements
 
