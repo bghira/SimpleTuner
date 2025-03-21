@@ -6,11 +6,10 @@ In this example, we'll be training an LTX-Video LoRA using Sayak Paul's [public 
 
 LTX does not require much system **or** GPU memory.
 
-When you're training every component of a rank-16 LoRA (MLP, projections, multimodal blocks), it ends up using a bit more than 12G on an M3 Mac.
+When you're training every component of a rank-16 LoRA (MLP, projections, multimodal blocks), it ends up using a bit more than 12G on an M3 Mac (batch size 4).
 
 You'll need: 
-- **the absolute minimum** is a single **3080 10G**
-- **a realistic minimum** is a single 3090 or V100 GPU
+- **a realistic minimum** is 16GB or, a single 3090 or V100 GPU
 - **ideally** multiple 4090, A6000, L40S, or better
 
 Apple silicon systems work great with LTX so far, albeit at a lower resolution due to limits inside the MPS backend used by Pytorch.
@@ -123,8 +122,8 @@ There, you will possibly need to modify the following variables:
 - `pretrained_vae_model_name_or_path` - Set this to `Lightricks/LTX-Video`.
 - `output_dir` - Set this to the directory where you want to store your checkpoints and validation images. It's recommended to use a full path here.
 - `train_batch_size` - this can be increased for more stability, but a value of 4 should work alright to start with
-- `validation_resolution` - This should be set to whatever you typically generate videos with when using LTX.
-  - Multiple resolutions may be specified using commas to separate them: `1280x768,800x400`
+- `validation_resolution` - This should be set to whatever you typically generate videos with when using LTX (`768x512`)
+  - Multiple resolutions may be specified using commas to separate them: `1280x768,768x512`
 - `validation_guidance` - Use whatever you are used to selecting at inference time for LTX.
 - `validation_num_inference_steps` - Use somewhere around 25 to save time while still seeing decent quality.
 - `--lora_rank=4` if you wish to substantially reduce the size of the LoRA being trained. This can help with VRAM use while reducing its capacity for learning.
@@ -259,7 +258,7 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
     "minimum_image_size": 480,
     "maximum_image_size": 480,
     "target_downsample_size": 480,
-    "resolution_type": "pixel",
+    "resolution_type": "pixel_area",
     "cache_dir_vae": "cache/vae/ltxvideo/disney-black-and-white",
     "instance_data_dir": "datasets/disney-black-and-white",
     "disabled": false,
