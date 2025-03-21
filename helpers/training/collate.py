@@ -106,7 +106,10 @@ def fetch_latent(fp, data_backend_id: str):
     # Move to CPU and pin memory if it's not on the GPU
     if not torch.backends.mps.is_available():
         debug_log(" -> push latents to GPU via pinned memory")
-        latent = latent.to("cpu").pin_memory()
+        if isinstance(latent, dict):
+            latent["latents"] = latent["latents"].to("cpu").pin_memory()
+        else:
+            latent = latent.to("cpu").pin_memory()
     return latent
 
 
