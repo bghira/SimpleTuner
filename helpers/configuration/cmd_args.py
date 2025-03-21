@@ -330,7 +330,7 @@ def get_argument_parser():
         help=(
             "Maximum fraction of noise to introduce into the first frame when i2v is triggered and "
             "the first frame is not fully protected. For instance, a value of 0.05 means the first frame "
-            "can have up to 5% random noise mixed in, preserving 95% of the original content. "
+            "can have up to 5 percent random noise mixed in, preserving 95 percent of the original content. "
             "Ignored if --ltx_protect_first_frame is set."
         ),
     )
