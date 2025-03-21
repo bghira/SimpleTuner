@@ -400,7 +400,7 @@ This is a basic overview meant to help you get started. For a complete list of o
 usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
                 --model_family
-                {pixart_sigma,sana,kolors,sd3,flux,smoldit,sdxl,legacy}
+                {pixart_sigma,sana,kolors,sd3,flux,smoldit,sdxl,ltxvideo,legacy}
                 [--model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}]
                 [--flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,nano}]
                 [--flow_matching_sigmoid_scale FLOW_MATCHING_SIGMOID_SCALE]
@@ -420,6 +420,9 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--flux_guidance_min FLUX_GUIDANCE_MIN]
                 [--flux_guidance_max FLUX_GUIDANCE_MAX]
                 [--flux_attention_masked_training]
+                [--ltx_train_mode {t2v,i2v}] [--ltx_i2v_prob LTX_I2V_PROB]
+                [--ltx_protect_first_frame]
+                [--ltx_partial_noise_fraction LTX_PARTIAL_NOISE_FRACTION]
                 [--t5_padding {zero,unmodified}] [--smoldit]
                 [--smoldit_config {smoldit-small,smoldit-swiglu,smoldit-base,smoldit-large,smoldit-huge}]
                 [--flow_matching_loss {diffusers,compatible,diffusion,sd35}]
@@ -479,7 +482,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--parquet_filename_column PARQUET_FILENAME_COLUMN]
                 [--instance_prompt INSTANCE_PROMPT] [--output_dir OUTPUT_DIR]
                 [--seed SEED] [--seed_for_each_device SEED_FOR_EACH_DEVICE]
-                [--resolution RESOLUTION]
+                [--framerate FRAMERATE] [--resolution RESOLUTION]
                 [--resolution_type {pixel,area,pixel_area}]
                 [--aspect_bucket_rounding {1,2,3,4,5,6,7,8,9}]
                 [--aspect_bucket_alignment {8,64}]
@@ -612,7 +615,7 @@ options:
                         The standard deviation of the data used in the soft
                         min weighting method. This is required when using the
                         soft min SNR calculation method.
-  --model_family {pixart_sigma,sana,kolors,sd3,flux,smoldit,sdxl,legacy}
+  --model_family {pixart_sigma,sana,kolors,sd3,flux,smoldit,sdxl,ltxvideo,legacy}
                         The model family to train. This option is required.
   --model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}
                         The training type to use. 'full' will train the full
@@ -719,6 +722,31 @@ options:
                         Use attention masking while training flux. This can be
                         a destructive operation, unless finetuning a model
                         which was already trained with it.
+  --ltx_train_mode {t2v,i2v}
+                        This value will be the default for all video datasets
+                        that do not have their own i2v settings defined. By
+                        default, we enable i2v mode, but it can be switched to
+                        t2v for your convenience.
+  --ltx_i2v_prob LTX_I2V_PROB
+                        Probability in [0,1] of applying i2v (image-to-video)
+                        style training. If random.random() < i2v_prob during
+                        training, partial or complete first-frame protection
+                        will be triggered (depending on
+                        --ltx_protect_first_frame). If set to 0.0, no i2v
+                        logic is applied (pure t2v). Default: 0.1 (from
+                        finetuners project)
+  --ltx_protect_first_frame
+                        If specified, fully protect the first frame whenever
+                        i2v logic is triggered (see --ltx_i2v_prob). This
+                        means the first frame is never noised or denoised,
+                        effectively pinned to the original content.
+  --ltx_partial_noise_fraction LTX_PARTIAL_NOISE_FRACTION
+                        Maximum fraction of noise to introduce into the first
+                        frame when i2v is triggered and the first frame is not
+                        fully protected. For instance, a value of 0.05 means
+                        the first frame can have up to 5 percent random noise
+                        mixed in, preserving 95 percent of the original
+                        content. Ignored if --ltx_protect_first_frame is set.
   --t5_padding {zero,unmodified}
                         The padding behaviour for Flux and SD3. 'zero' will
                         pad the input with zeros. The default is 'unmodified',
@@ -1102,6 +1130,11 @@ options:
                         use the same seed across all GPUs, which will almost
                         certainly result in the over-sampling of inputs on
                         larger datasets.
+  --framerate FRAMERATE
+                        By default, SimpleTuner will use a framerate of 25 for
+                        training and inference on video models. You are on
+                        your own if you modify this value, but it is provided
+                        for your convenience.
   --resolution RESOLUTION
                         The resolution for input images, all the images in the
                         train/validation dataset will be resized to this

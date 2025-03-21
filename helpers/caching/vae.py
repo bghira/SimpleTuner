@@ -441,8 +441,8 @@ class VAECache(WebhookMixin):
         return relevant_files
 
     def process_video_latents(self, latents_uncached):
+        output_cache_entry = latents_uncached
         if StateTracker.get_model_family() in ["ltxvideo"]:
-            logger.info(f"Processing LTX Video latents.")
             from helpers.models.ltxvideo import (
                 normalize_ltx_latents,
                 pack_ltx_latents,
@@ -450,16 +450,13 @@ class VAECache(WebhookMixin):
             )
 
             # hardcode patch size to 1 for LTX Video.
-            # patch_size, patch_size_t = self.vae.config.patch_size, self.vae.config.patch_size_t
+            # patch_size, patch_size_t = self.transformer.config.patch_size, self.transformer.config.patch_size_t
             patch_size, patch_size_t = 1, 1
             _, _, num_frames, height, width = latents_uncached.shape
-            logger.info(f"Latents shape: {latents_uncached.shape}")
+            logger.debug(f"Latents shape: {latents_uncached.shape}")
             latents_uncached = normalize_ltx_latents(
                 latents_uncached, self.vae.latents_mean, self.vae.latents_std
             )
-            logger.info(f"Normalised Latents shape: {latents_uncached.shape}")
-            # latents_uncached = pack_ltx_latents(latents_uncached, patch_size, patch_size_t)
-            # logger.info(f"Packed Latents shape: {latents_uncached.shape}")
 
             output_cache_entry = {
                 "latents": latents_uncached.shape,  # we'll log the shape first
@@ -467,7 +464,7 @@ class VAECache(WebhookMixin):
                 "height": height,
                 "width": width,
             }
-            logger.info(f"Video latent processing results: {output_cache_entry}")
+            logger.debug(f"Video latent processing results: {output_cache_entry}")
             # we'll now overwrite the latents after logging.
             output_cache_entry["latents"] = latents_uncached
 
@@ -476,12 +473,12 @@ class VAECache(WebhookMixin):
     def prepare_video_latents(self, samples):
         if StateTracker.get_model_family() == "ltxvideo":
             if samples.ndim == 4:
-                logger.info("PROCESSING IMAGE to VIDEO LATENTS CONVERSION")
-                logger.info(f"Unsqueeze from dim {samples.shape}")
+                logger.debug("PROCESSING IMAGE to VIDEO LATENTS CONVERSION")
+                logger.debug(f"Unsqueeze from dim {samples.shape}")
                 samples = samples.unsqueeze(2)
-                logger.info(f"New dim: {samples.shape}")
+                logger.debug(f"New dim: {samples.shape}")
             assert samples.ndim == 5, f"Expected 5D tensor, got {samples.ndim}D tensor"
-            logger.info(
+            logger.debug(
                 f"PROCESSING VIDEO to VIDEO LATENTS CONVERSION ({samples.shape})"
             )
             # images are torch.Size([1, 3, 1, 640, 448]) (B, C, F, H, W) but videos are torch.Size([2, 600, 3, 384, 395])
@@ -498,8 +495,8 @@ class VAECache(WebhookMixin):
                 samples = samples[:, :, :125, :, :]
                 logger.info(f"Sliced to {samples.shape}")
 
-        logger.info(f"Permute to: {samples.shape}")
-        logger.info(f"Final samples shape: {samples.shape}")
+        logger.debug(f"Permute to: {samples.shape}")
+        logger.debug(f"Final samples shape: {samples.shape}")
         return samples
 
     def encode_images(self, images, filepaths, load_from_cache=True):

@@ -49,9 +49,10 @@ Here is the most basic example of a dataloader configuration file, as `multidata
 
 ### `dataset_type`
 
-- **Values:** `image` | `text_embeds` | `image_embeds` | `conditioning`
-- **Description:** `image` datasets contain your training data. `text_embeds` contain the outputs of the text encoder cache, and `image_embeds` contain the VAE outputs, if the model uses one. When a dataset is marked as `conditioning`, it is possible to pair it to your `image` dataset via [the conditioning_data option](#conditioning_data)
+- **Values:** `image` | `video` | `text_embeds` | `image_embeds` | `conditioning`
+- **Description:** `image` and `video` datasets contain your training data. `text_embeds` contain the outputs of the text encoder cache, and `image_embeds` contain the VAE outputs, if the model uses one. When a dataset is marked as `conditioning`, it is possible to pair it to your `image` dataset via [the conditioning_data option](#conditioning_data)
 - **Note:** Text and image embed datasets are defined differently than image datasets are. A text embed dataset stores ONLY the text embed objects. An image dataset stores the training data.
+- **Note:** Don't combine images and video in a **single** dataset. Split them out.
 
 ### `default`
 
@@ -135,7 +136,57 @@ Both `textfile` and `parquet` support multi-captions:
 
 > **Note**: Once the aspect and metadata lists are built for your dataset, using `skip_file_discovery="vae aspect metadata"` will prevent the trainer from scanning the dataset on startup, saving a lot of time.
 
+
 #### Examples
+
+##### Video dataset
+
+A video dataset should be a folder of (eg. mp4) video files and the usual methods of storing captions.
+
+```json
+[
+  {
+    "id": "disney-black-and-white",
+    "type": "local",
+    "dataset_type": "video",
+    "crop": false,
+    "resolution": 480,
+    "minimum_image_size": 480,
+    "maximum_image_size": 480,
+    "target_downsample_size": 480,
+    "resolution_type": "pixel_area",
+    "cache_dir_vae": "cache/vae/ltxvideo/disney-black-and-white",
+    "instance_data_dir": "datasets/disney-black-and-white",
+    "disabled": false,
+    "caption_strategy": "textfile",
+    "metadata_backend": "discovery",
+    "repeats": 0,
+    "video": {
+        "num_frames": 125,
+        "min_frames": 125
+    }
+  },
+  {
+    "id": "text-embeds",
+    "type": "local",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "cache_dir": "cache/text/ltxvideo",
+    "disabled": false,
+    "write_batch_size": 128
+  }
+]
+```
+
+- In the `video` subsection, we have the following keys we can set:
+  - `num_frames` (optional, int) is how many seconds of data we'll train on.
+    - At 25 fps, 125 frames is 5 seconds of video, standard output. This should be your target.
+  - `min_frames` (optional, int) determines the minimum length of a video that will be considered for training.
+    - This should be at least equal to `num_frames`. Not setting it ensures it'll be equal.
+  - `max_frames` (optional, int) determines the maximum length of a video that will be considered for training.
+  - `is_i2v` (optional, bool) determines whether i2v training will be done on a dataset.
+    - This is set to True by default for LTX. You can disable it, however.
+
 
 ##### Configuration
 ```json
