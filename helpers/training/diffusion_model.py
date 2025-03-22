@@ -72,7 +72,7 @@ def load_diffusion_model(args, weight_dtype):
         # WanX uses a Diffusion transformer.
         logger.info("Loading WanX diffusion transformer..")
         try:
-            from diffusers import WanTransformer3DModel
+            from helpers.models.wan.transformer import WanTransformer3DModel
         except Exception as e:
             logger.error(
                 f"Can not load WanTransformer3DModel model class. This release requires the latest version of Diffusers: {e}"

@@ -175,7 +175,8 @@ class SaveHookManager:
                 self.denoiser_class = LTXVideoTransformer3DModel
                 self.pipeline_class = LTXPipeline
             elif args.model_family == "wan":
-                from diffusers import WanPipeline, WanTransformer3DModel
+                from diffusers import WanPipeline
+                from helpers.models.wan.transformer import WanTransformer3DModel
 
                 self.denoiser_class = WanTransformer3DModel
                 self.pipeline_class = WanPipeline
