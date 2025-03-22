@@ -324,7 +324,7 @@ def prepare_validation_prompt_list(args, embed_cache):
                 validation_negative_prompt_embeds,
                 None,
             )
-        elif model_type in ["pixart_sigma", "smoldit", "sana", "ltxvideo"]:
+        elif model_type in ["pixart_sigma", "smoldit", "sana", "ltxvideo", "wan"]:
             # we use the legacy encoder but we return no pooled embeds.
             validation_negative_prompt_embeds = embed_cache.compute_embeddings_for_prompts(
                 [StateTracker.get_args().validation_negative_prompt],
@@ -700,6 +700,10 @@ class Validation:
             from diffusers import LTXPipeline
 
             return LTXPipeline
+        elif model_type == "wan":
+            from diffusers import WanPipeline
+
+            return WanPipeline
         else:
             raise NotImplementedError(
                 f"Model type {model_type} not implemented for validation."
@@ -760,13 +764,14 @@ class Validation:
             )
             # if current_validation_time_ids is not None:
             #     prompt_embeds["time_ids"] = current_validation_time_ids
-        elif (
-            StateTracker.get_model_family() == "legacy"
-            or StateTracker.get_model_family() == "pixart_sigma"
-            or StateTracker.get_model_family() == "smoldit"
-            or StateTracker.get_model_family() == "sana"
-            or StateTracker.get_model_family() == "ltxvideo"
-        ):
+        elif StateTracker.get_model_family() in [
+            "legacy",
+            "pixart_sigma",
+            "smoldit",
+            "sana",
+            "ltxvideo",
+            "wan",
+        ]:
             self.validation_negative_pooled_embeds = None
             current_validation_pooled_embeds = None
             current_validation_prompt_embeds = (

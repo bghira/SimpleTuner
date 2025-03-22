@@ -6,7 +6,10 @@ upstream_config_sources = {
     "flux": "black-forest-labs/flux.1-dev",
     "legacy": "stable-diffusion-v1-5/stable-diffusion-v1-5",
     "ltxvideo": "Lightricks/LTX-Video",
+    "wan": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
 }
+
+flow_matching_model_families = ["flux", "sana", "ltxvideo", "wan", "sd3"]
 
 
 def get_model_config_path(model_family: str, model_path: str):

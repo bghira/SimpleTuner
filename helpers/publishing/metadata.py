@@ -202,7 +202,8 @@ def _negative_prompt(args, in_call: bool = False):
 
 
 def _guidance_rescale(args):
-    if args.model_family.lower() in ["sd3", "flux", "pixart_sigma", "ltxvideo", "sana"]:
+    # only these model families support zsnr sampling
+    if args.model_family.lower() not in ["sdxl", "legacy", "kolors"]:
         return ""
     return f"\n    guidance_rescale={args.validation_guidance_rescale},"
 
@@ -260,13 +261,13 @@ def _validation_resolution(args):
 
 
 def _output_attribute(args):
-    if args.model_family in ["ltxvideo"]:
+    if args.model_family in ["ltxvideo", "wan"]:
         return "frames[0]"
     return "images[0]"
 
 
 def _output_save_call(args):
-    if args.model_family in ["ltxvideo"]:
+    if args.model_family in ["ltxvideo", "wan"]:
         return f"""
 from diffusers.utils.export_utils import export_to_gif
 export_to_gif(model_output, "output.gif", fps={args.framerate})
@@ -474,6 +475,8 @@ def _model_card_family_tag(model_family: str):
     if model_family == "ltxvideo":
         # the hub has a hyphen.
         return "ltx-video"
+    if model_family == "wan":
+        return "WanPipeline"
     return model_family
 
 
@@ -566,7 +569,6 @@ tags:
   - {'not-for-all-audiences' if not args.model_card_safe_for_work else 'safe-for-work'}
   - {args.model_type}
 {'  - template:sd-lora' if 'lora' in args.model_type else ''}
-{'  - video-to-video' if args.model_family in ["ltxvideo"] else ''}
 {f'  - {args.lora_type}' if 'lora' in args.model_type else ''}
 pipeline_tag: {_pipeline_tag(args)}
 inference: true
@@ -589,7 +591,7 @@ This is a {model_type(args)} derived from [{base_model}](https://huggingface.co/
 - CFG: `{StateTracker.get_args().validation_guidance}`
 - CFG Rescale: `{StateTracker.get_args().validation_guidance_rescale}`
 - Steps: `{StateTracker.get_args().validation_num_inference_steps}`
-- Sampler: `{'FlowMatchEulerDiscreteScheduler' if args.model_family in ['sd3', 'flux', 'sana', 'ltxvideo'] else StateTracker.get_args().validation_noise_scheduler}`
+- Sampler: `{'FlowMatchEulerDiscreteScheduler' if args.model_family in ['sd3', 'flux', 'sana', 'ltxvideo', 'wan'] else StateTracker.get_args().validation_noise_scheduler}`
 - Seed: `{StateTracker.get_args().validation_seed}`
 - Resolution{'s' if ',' in StateTracker.get_args().validation_resolution else ''}: `{StateTracker.get_args().validation_resolution}`
 {f"- Skip-layer guidance: {_skip_layers(args)}" if args.model_family in ['sd3', 'flux'] else ''}
@@ -617,7 +619,7 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
   - Gradient accumulation steps: {StateTracker.get_args().gradient_accumulation_steps}
   - Number of GPUs: {StateTracker.get_accelerator().num_processes}
 - Gradient checkpointing: {StateTracker.get_args().gradient_checkpointing}
-- Prediction type: {'flow-matching' if (StateTracker.get_args().model_family in ["sd3", "flux", "sana", "ltxvideo"]) else StateTracker.get_args().prediction_type}{model_schedule_info(args=StateTracker.get_args())}
+- Prediction type: {'flow-matching' if (StateTracker.get_args().model_family in ["sd3", "flux", "sana", "ltxvideo", "wan"]) else StateTracker.get_args().prediction_type}{model_schedule_info(args=StateTracker.get_args())}
 - Optimizer: {StateTracker.get_args().optimizer}{optimizer_config if optimizer_config is not None else ''}
 - Trainable parameter precision: {'Pure BF16' if torch.backends.mps.is_available() or StateTracker.get_args().mixed_precision == "bf16" else 'FP32'}
 - Base model precision: `{args.base_model_precision}`

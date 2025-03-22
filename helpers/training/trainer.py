@@ -453,6 +453,8 @@ class Trainer:
             from diffusers import AutoencoderDC as AutoencoderClass
         elif StateTracker.get_args().model_family == "ltxvideo":
             from diffusers import AutoencoderKLLTXVideo as AutoencoderClass
+        elif StateTracker.get_args().model_family == "wan":
+            from diffusers import AutoencoderKLWan as AutoencoderClass
         else:
             from diffusers import AutoencoderKL as AutoencoderClass
         self.vae_cls = AutoencoderClass
@@ -473,8 +475,15 @@ class Trainer:
             and hasattr(self.vae, "enable_tiling")
         ):
             logger.warning(
-                "Enabling VAE tiling for greatly reduced memory consumption due to --vae_enable_tiling which may result in VAE tiling artifacts in encoded latents."
+                "Enabling VAE tiling for reduced memory consumption due to --vae_enable_tiling which may result in VAE tiling artifacts in encoded latents."
             )
+            self.vae.enable_tiling()
+        if (
+            self.vae is not None
+            and self.config.vae_enable_slicing
+            and hasattr(self.vae, "enable_tiling")
+        ):
+            logger.info("Enabling VAE tiling for greatly reduced memory consumption.")
             self.vae.enable_tiling()
         if not move_to_accelerator:
             logger.debug("Not moving VAE to accelerator.")
@@ -2221,6 +2230,18 @@ class Trainer:
                     timestep=timesteps,
                     return_dict=False,
                 )[0]
+            elif self.config.model_family == "wan":
+                # this just hacked together because it seems it doesn't work on MPS, and can't test it yet:
+                # TypeError: Trying to convert ComplexDouble to the MPS backend but it does not have support for that dtype.
+                model_pred = self.transformer(
+                    noisy_latents.to(self.config.weight_dtype),
+                    encoder_hidden_states=encoder_hidden_states.to(
+                        self.config.weight_dtype
+                    ),
+                    # encoder_attention_mask=prepared_batch["encoder_attention_mask"],
+                    timestep=timesteps,
+                    return_dict=False,
+                )[0]
             elif self.config.model_family == "pixart_sigma":
                 if noisy_latents.shape[1] != 4:
                     raise ValueError(
@@ -2626,8 +2647,8 @@ class Trainer:
             target = prepared_batch["latents"]
         else:
             raise ValueError(
-                f"Unknown prediction type {self.noise_scheduler.config.prediction_type}"
-                "Supported types are 'epsilon', `sample`, and 'v_prediction'."
+                f"Unknown prediction type {self.noise_scheduler.config.prediction_type}."
+                " Supported types are 'epsilon', `sample`, and 'v_prediction'."
             )
 
         return target
@@ -3327,6 +3348,13 @@ class Trainer:
                         save_directory=self.config.output_dir,
                         transformer_lora_layers=transformer_lora_layers,
                     )
+                elif self.config.model_family == "wan":
+                    from diffusers.pipelines import WanPipeline
+
+                    WanPipeline.save_lora_weights(
+                        save_directory=self.config.output_dir,
+                        transformer_lora_layers=transformer_lora_layers,
+                    )
 
                 elif self.config.model_family == "sd3":
                     StableDiffusion3Pipeline.save_lora_weights(
@@ -3555,6 +3583,27 @@ class Trainer:
                         transformer=self.transformer,
                         scheduler=None,
                     )
+                elif self.config.model_family == "wan":
+                    from diffusers import WanPipeline
+
+                    self.pipeline = WanPipeline.from_pretrained(
+                        self.config.pretrained_model_name_or_path,
+                        text_encoder=self.text_encoder_1
+                        or (
+                            self.text_encoder_cls_1.from_pretrained(
+                                self.config.pretrained_model_name_or_path,
+                                subfolder="text_encoder",
+                                revision=self.config.revision,
+                                variant=self.config.variant,
+                            )
+                            if self.config.save_text_encoder
+                            else None
+                        ),
+                        tokenizer=self.tokenizer_1,
+                        vae=self.vae,
+                        transformer=self.transformer,
+                    )
+
                 elif self.config.model_family == "ltxvideo":
                     from diffusers import LTXPipeline
 

@@ -50,7 +50,7 @@ class VideoToTensor:
 class MultiaspectImage:
     @staticmethod
     def get_video_transforms():
-        if not StateTracker.get_model_family() in ["ltxvideo"]:
+        if not StateTracker.get_model_family() in ["ltxvideo", "wan"]:
             raise ValueError(
                 f"Cannot transform videos for {StateTracker.get_model_family()}."
             )
@@ -64,7 +64,7 @@ class MultiaspectImage:
 
     @staticmethod
     def get_image_transforms():
-        if StateTracker.get_model_family() in ["ltxvideo"]:
+        if StateTracker.get_model_family() in ["ltxvideo", "wan"]:
             # LTX Video has its own normalisation, later on.
             return transforms.Compose(
                 [

@@ -9,6 +9,11 @@ logger = get_logger(__name__, log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", 
 target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
 logger.setLevel(target_level)
 
+t5_only_models = ["pixart_sigma", "ltxvideo", "wan"]
+# also with three text encoders
+models_with_two_text_encoders = ["sdxl", "sd3", "flux"]
+models_with_three_text_encoders = ["sd3"]
+
 
 def import_model_class_from_model_name_or_path(
     pretrained_model_name_or_path: str,
@@ -72,10 +77,11 @@ def get_tokenizers(args):
             "revision": args.revision,
         }
         is_t5_model = False
-        if args.model_family.lower() in ["ltxvideo", "pixart_sigma"]:
-            from transformers import T5Tokenizer
+        # T5-only models
+        if args.model_family.lower() in t5_only_models:
+            from transformers import T5TokenizerFast
 
-            tokenizer_cls = T5Tokenizer
+            tokenizer_cls = T5TokenizerFast
             is_t5_model = True
         elif args.model_family == "sana":
             from transformers import Gemma2Model, GemmaTokenizerFast
@@ -148,10 +154,10 @@ def get_tokenizers(args):
 
     from transformers import T5TokenizerFast
 
-    if args.model_family not in ["pixart_sigma", "kolors", "sana", "ltxvideo"]:
+    if args.model_family in models_with_two_text_encoders:
         try:
             tokenizer_2_cls = CLIPTokenizer
-            if args.model_family.lower() == "flux":
+            if args.model_family.lower() in ["flux"]:
                 tokenizer_2_cls = T5TokenizerFast
             tokenizer_2 = tokenizer_2_cls.from_pretrained(
                 args.pretrained_model_name_or_path,
@@ -236,7 +242,7 @@ def load_tes(
     text_encoder_variant = args.variant
 
     if tokenizer_1 is not None and not args.model_family == "smoldit":
-        if args.model_family.lower() in ["pixart_sigma", "ltxvideo"]:
+        if args.model_family.lower() in t5_only_models:
             logger.info(
                 f"Loading T5-XXL v1.1 text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
             )

@@ -95,6 +95,7 @@ def get_argument_parser():
             "smoldit",
             "sdxl",
             "ltxvideo",
+            "wan",
             "legacy",
         ],
         default=None,
@@ -696,6 +697,14 @@ def get_argument_parser():
         help=(
             "If set, will enable tiling for VAE caching. This is useful for very large images when VRAM is limited."
             " This may be required for 2048px VAE caching on 24G accelerators, in addition to reducing --vae_batch_size."
+        ),
+    )
+    parser.add_argument(
+        "--vae_enable_slicing",
+        action="store_true",
+        default=False,
+        help=(
+            "If set, will enable slicing for VAE caching. This is useful for video models."
         ),
     )
     parser.add_argument(
@@ -2407,7 +2416,8 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
 
     if (
         args.pretrained_vae_model_name_or_path is not None
-        and args.model_family in ["legacy", "flux", "sd3", "sana", "ltxvideo"]
+        # currently these are the only models we have using the SDXL VAE.
+        and args.model_family not in ["sdxl", "pixart_sigma", "kolors"]
         and "sdxl" in args.pretrained_vae_model_name_or_path
         and "deepfloyd" not in args.model_type
     ):
@@ -2714,6 +2724,10 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if args.framerate is None:
         if args.model_family == "ltxvideo":
             args.framerate = 25
+        if args.model_family == "wan":
+            args.framerate = 15
+            args.vae_enable_tiling = True
+            args.vae_enable_slicing = True
 
     if (
         args.sana_complex_human_instruction is not None
