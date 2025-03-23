@@ -3,6 +3,7 @@ import huggingface_hub
 from helpers.training.default_settings.safety_check import safety_check
 from helpers.publishing.huggingface import HubManager
 from configure import model_labels
+from typing import Optional
 import shutil
 import hashlib
 import json
@@ -265,7 +266,9 @@ class Trainer:
             self._exit_on_signal()
             self.init_validations()
             self._exit_on_signal()
+            self.enable_sageattention_inference()
             self.init_benchmark_base_model()
+            self.disable_sageattention_inference()
             self._exit_on_signal()
             self.resume_and_prepare()
             self._exit_on_signal()
@@ -1783,9 +1786,29 @@ class Trainer:
                     "scaled_dot_product_attention_sdpa",
                     torch.nn.functional.scaled_dot_product_attention,
                 )
-            torch.nn.functional.scaled_dot_product_attention = sageattn_functions.get(
-                self.config.attention_mechanism, "sageattention"
-            )
+            def sageattn_wrapper_for_torch_sdpa_with_fallback(
+                query: torch.Tensor,
+                key: torch.Tensor,
+                value: torch.Tensor,
+                mask: Optional[torch.Tensor] = None,
+                dropout_p: float = 0.0,
+            ) -> torch.Tensor:
+                try:
+                    return sageattn_functions[self.config.attention_mechanism](
+                        query=query,
+                        key=key,
+                        value=value,
+                        mask=mask,
+                        dropout_p=dropout_p,
+                    )
+                except:
+                    logger.error(
+                        f"Could not run SageAttention with {self.config.attention_mechanism}. Falling back to Pytorch SDPA."
+                    )
+                    return torch.nn.functional.scaled_dot_product_attention_sdpa(
+                        query=query, key=key, value=value, mask=mask, dropout_p=dropout_p
+                    )
+            torch.nn.functional.scaled_dot_product_attention = sageattn_wrapper_for_torch_sdpa_with_fallback
             if not hasattr(torch.nn.functional, "scaled_dot_product_attention_sage"):
                 setattr(
                     torch.nn.functional,
