@@ -2537,6 +2537,9 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         flux_version = "schnell"
         model_max_seq_length = 256
 
+    if args.model_family == "wan":
+        args.tokenizer_max_length = 226
+
     if args.model_family == "flux":
         if (
             args.tokenizer_max_length is None

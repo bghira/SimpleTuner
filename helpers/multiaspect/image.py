@@ -81,9 +81,9 @@ class MultiaspectImage:
         )
 
     @staticmethod
-    def _round_to_nearest_multiple(value):
+    def _round_to_nearest_multiple(value, override_value: int = None):
         """Round a value to the nearest multiple."""
-        multiple = StateTracker.get_args().aspect_bucket_alignment
+        multiple = override_value or StateTracker.get_args().aspect_bucket_alignment
         rounded = round(value / multiple) * multiple
         return max(rounded, multiple)  # Ensure it's at least the value of 'multiple'
 
@@ -333,6 +333,14 @@ class MultiaspectImage:
         aspect_ratio = round(width / height, to_round)
         return aspect_ratio
 
+    @staticmethod
+    def numpy_list_to_pil(numpy_list):
+        if isinstance(numpy_list[0], np.ndarray):
+            numpy_list = [
+                Image.fromarray(np.uint8(image)).convert("RGB")
+                for image in numpy_list
+            ]
+        return numpy_list
 
 resize_helpers = {
     "pixel": MultiaspectImage.calculate_new_size_by_pixel_edge,

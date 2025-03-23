@@ -326,7 +326,7 @@ class Trainer:
             self.config.webhook_config,
             self.accelerator,
             f"{self.config.tracker_project_name} {self.config.tracker_run_name}",
-            send_video=True if self.config.model_family in ["ltxvideo"] else False,
+            send_video=True if self.config.model_family in ["ltxvideo", "wan"] else False,
             args=self.config,
         )
         StateTracker.set_webhook_handler(self.webhook_handler)
@@ -2200,6 +2200,12 @@ class Trainer:
                         )
 
                 model_pred = self.transformer(**flux_transformer_kwargs)[0]
+                model_pred = unpack_latents(
+                    model_pred,
+                    height=prepared_batch["latents"].shape[2] * 8,
+                    width=prepared_batch["latents"].shape[3] * 8,
+                    vae_scale_factor=16,
+                )
 
             elif self.config.model_family == "sd3":
                 # Stable Diffusion 3 uses a MM-DiT model where the VAE-produced
@@ -2367,13 +2373,6 @@ class Trainer:
             else:
                 raise Exception("Unknown error occurred, no prediction could be made.")
 
-            if self.config.model_family == "flux":
-                model_pred = unpack_latents(
-                    model_pred,
-                    height=prepared_batch["latents"].shape[2] * 8,
-                    width=prepared_batch["latents"].shape[3] * 8,
-                    vae_scale_factor=16,
-                )
         else:
             # Dummy model prediction for debugging.
             model_pred = torch.randn_like(noisy_latents)
@@ -2524,6 +2523,8 @@ class Trainer:
                     device=self.accelerator.device,
                 )
             batch["timesteps"] = batch["sigmas"] * 1000.0
+            if self.config.model_family == "wan":
+                batch["timesteps"] = batch["timesteps"].view(-1)
             batch["sigmas"] = batch["sigmas"].view(-1, 1, 1, 1)
         else:
             if self.config.offset_noise:
@@ -2565,7 +2566,7 @@ class Trainer:
                 )
                 batch["sigmas"] = batch["sigmas"].reshape(bsz, 1, 1, 1, 1)
                 num_frame_latents = batch["latents"].shape[2]
-                if num_frame_latents > 1 and batch["is_i2v_data"] is True:
+                if self.config.model_family == "ltxvideo" and num_frame_latents > 1 and batch["is_i2v_data"] is True:
                     # the theory is that if you have a single-frame latent, we expand it to num_frames and then do less destructive denoising.
                     single_frame_latents = batch["latents"]
                     if num_frame_latents > 1:
