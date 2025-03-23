@@ -563,32 +563,34 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
                 # expand t to match the batch size
                 timestep = t.expand(latents.shape[0])
 
-                # 1) Unconditional pass
-                #    pass the negative_prompt_embeds if do_classifier_free_guidance
-                #    else just skip entirely if not using CFG
+                # Unconditional pass (possibly skip-layers)
                 if self.do_classifier_free_guidance:
+                    fraction = i / float(num_inference_steps)
+                    skip_layer_indices = skip_guidance_layers
+                    if self.do_classifier_free_guidance and (
+                        start_skip_frac <= fraction < end_skip_frac
+                    ):
+                        skip_layer_indices = None
                     noise_pred_uncond = self.transformer(
-                        hidden_states=latents.to(transformer_dtype),
+                        hidden_states=latents,
                         timestep=timestep,
-                        encoder_hidden_states=negative_prompt_embeds.to(
-                            transformer_dtype
-                        ),
-                        skip_layers=skip_guidance_layers,  # unlike SD3, for Wan's SLG implementation, we skip layers in uncond.
+                        encoder_hidden_states=negative_prompt_embeds,
+                        skip_layers=skip_layer_indices,
                         return_dict=False,
                     )[0]
                 else:
                     noise_pred_uncond = None
 
-                # 2) Text pass (no skip-layers)
+                # Positive pass (no skip-layers)
                 noise_pred_text = self.transformer(
-                    hidden_states=latents.to(transformer_dtype),
+                    hidden_states=latents,
                     timestep=timestep,
-                    encoder_hidden_states=negative_prompt_embeds.to(transformer_dtype),
-                    skip_layers=None,  # full pass
+                    encoder_hidden_states=prompt_embeds,
+                    skip_layers=None,
                     return_dict=False,
                 )[0]
 
-                # 4) Combine for CFG
+                # Combine for CFG
                 if self.do_classifier_free_guidance:
                     # noise_pred = uncond + w * (text - uncond)
                     noise_pred = noise_pred_uncond + self.guidance_scale * (
