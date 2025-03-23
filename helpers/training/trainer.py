@@ -938,17 +938,18 @@ class Trainer:
 
             with open(self.config.lycoris_config, "r") as f:
                 self.lycoris_config = json.load(f)
-            multiplier = int(self.lycoris_config["multiplier"])
-            linear_dim = int(self.lycoris_config["linear_dim"])
-            linear_alpha = int(self.lycoris_config["linear_alpha"])
+            multiplier = int(self.lycoris_config.get("multiplier", 1))
+            linear_dim = int(self.lycoris_config.get("linear_dim", 4))
+            linear_alpha = int(self.lycoris_config.get("linear_alpha", 1))
             apply_preset = self.lycoris_config.get("apply_preset", None)
             if apply_preset is not None and apply_preset != {}:
                 LycorisNetwork.apply_preset(apply_preset)
 
             # Remove the positional arguments we extracted.
-            del self.lycoris_config["multiplier"]
-            del self.lycoris_config["linear_dim"]
-            del self.lycoris_config["linear_alpha"]
+            keys_to_remove = ["multiplier", "linear_dim", "linear_alpha"]
+            for key in keys_to_remove:
+                if key in self.lycoris_config:
+                    del self.lycoris_config[key]
 
             logger.info("Using lycoris training mode")
             self._send_webhook_msg(message="Using lycoris training mode.")
