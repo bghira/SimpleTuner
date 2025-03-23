@@ -2548,6 +2548,8 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
 
     if args.model_family == "wan":
         args.tokenizer_max_length = 226
+        info_log("Disabling unconditional validation for Wan to save on time.")
+        args.validation_disable_unconditional = True
 
     if args.model_family == "flux":
         if (
