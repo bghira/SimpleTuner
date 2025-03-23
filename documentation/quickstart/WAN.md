@@ -2,6 +2,11 @@
 
 In this example, we'll be training a Wan 2.1 LoRA using Sayak Paul's [public domain Disney dataset](https://hf.co/datasets/sayakpaul/video-dataset-disney-organized).
 
+
+
+https://github.com/user-attachments/assets/51e6cbfd-5c46-407c-9398-5932fa5fa561
+
+
 ### Hardware requirements
 
 Wan 2.1 **1.3B** does not require much system **or** GPU memory. The **14B** model, also supported, is a lot more demanding.
