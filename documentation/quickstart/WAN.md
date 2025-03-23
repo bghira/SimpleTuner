@@ -138,6 +138,7 @@ There, you will possibly need to modify the following variables:
   - Multiple resolutions may be specified using commas to separate them: `480x480,768x512`
 - `validation_guidance` - Use whatever you are used to selecting at inference time for Wan 2.1.
 - `validation_num_inference_steps` - Use somewhere around 25 to save time while still seeing decent quality.
+- `validation_num_video_frames` - For Wan, the default is 81, or 5 seconds of video. But you can reduce this value to 1 for generating still images (buggy) or any value in between for just shorter videos.
 - `--lora_rank=4` if you wish to substantially reduce the size of the LoRA being trained. This can help with VRAM use while reducing its capacity for learning.
 
 - `gradient_accumulation_steps` - This option causes update steps to be accumulated over several steps.
