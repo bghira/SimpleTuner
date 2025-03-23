@@ -471,22 +471,22 @@ class Trainer:
                 logger.error(e)
                 self.config.vae_kwargs["subfolder"] = None
                 self.vae = self.vae_cls.from_pretrained(**self.config.vae_kwargs)
-        if (
-            self.vae is not None
-            and self.config.vae_enable_tiling
-            and hasattr(self.vae, "enable_tiling")
-        ):
-            logger.warning(
-                "Enabling VAE tiling for reduced memory consumption due to --vae_enable_tiling which may result in VAE tiling artifacts in encoded latents."
-            )
-            self.vae.enable_tiling()
-        if (
-            self.vae is not None
-            and self.config.vae_enable_slicing
-            and hasattr(self.vae, "enable_tiling")
-        ):
-            logger.info("Enabling VAE tiling for greatly reduced memory consumption.")
-            self.vae.enable_tiling()
+        if self.vae is not None and self.config.vae_enable_tiling:
+            if hasattr(self.vae, "enable_tiling"):
+                logger.warning("Enabling VAE tiling.")
+                self.vae.enable_tiling()
+            else:
+                logger.warning(
+                    f"VAE tiling is enabled, but not yet supported by {self.config.model_family}."
+                )
+        if self.vae is not None and self.config.vae_enable_slicing:
+            if hasattr(self.vae, "enable_slicing"):
+                logger.info("Enabling VAE slicing.")
+                self.vae.enable_slicing()
+            else:
+                logger.warning(
+                    f"VAE slicing is enabled, but not yet supported by {self.config.model_family}."
+                )
         if not move_to_accelerator:
             logger.debug("Not moving VAE to accelerator.")
             return
