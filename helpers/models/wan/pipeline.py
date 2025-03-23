@@ -398,6 +398,7 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
         skip_guidance_layers: List[int] = None,
         skip_layer_guidance_stop: float = 0.1,
         skip_layer_guidance_start: float = 0.3,
+        skip_layer_guidance_scale: float = 1.0,
         num_videos_per_prompt: Optional[int] = 1,
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         latents: Optional[torch.Tensor] = None,
