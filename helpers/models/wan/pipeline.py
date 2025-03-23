@@ -568,9 +568,11 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
                 #    else just skip entirely if not using CFG
                 if self.do_classifier_free_guidance:
                     noise_pred_uncond = self.transformer(
-                        hidden_states=latents,
+                        hidden_states=latents.to(transformer_dtype),
                         timestep=timestep,
-                        encoder_hidden_states=negative_prompt_embeds,
+                        encoder_hidden_states=negative_prompt_embeds.to(
+                            transformer_dtype
+                        ),
                         skip_layers=None,  # never skip for uncond pass
                         return_dict=False,
                     )[0]
@@ -579,9 +581,9 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
 
                 # 2) Text pass (no skip-layers)
                 noise_pred_text_full = self.transformer(
-                    hidden_states=latents,
+                    hidden_states=latents.to(transformer_dtype),
                     timestep=timestep,
-                    encoder_hidden_states=prompt_embeds,
+                    encoder_hidden_states=negative_prompt_embeds.to(transformer_dtype),
                     skip_layers=None,  # full pass
                     return_dict=False,
                 )[0]
