@@ -335,12 +335,12 @@ class MultiaspectImage:
 
     @staticmethod
     def numpy_list_to_pil(numpy_list):
-        if isinstance(numpy_list[0], np.ndarray):
+        if isinstance(numpy_list, list) and isinstance(numpy_list[0], np.ndarray):
             numpy_list = [
-                Image.fromarray(np.uint8(image)).convert("RGB")
-                for image in numpy_list
+                Image.fromarray(np.uint8(image)).convert("RGB") for image in numpy_list
             ]
         return numpy_list
+
 
 resize_helpers = {
     "pixel": MultiaspectImage.calculate_new_size_by_pixel_edge,

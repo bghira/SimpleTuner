@@ -4,17 +4,27 @@ In this example, we'll be training a Wan 2.1 LoRA using Sayak Paul's [public dom
 
 ### Hardware requirements
 
-Wan 2.1 1.3B does not require much system **or** GPU memory. The 14B model, also supported, is a lot more demanding.
+Wan 2.1 **1.3B** does not require much system **or** GPU memory. The **14B** model, also supported, is a lot more demanding.
 
+Currently, image-to-video training is not supported for Wan, but T2V LoRA and Lycoris will run on the I2V models.
+
+#### Text to Video
+1.3B - https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B
+- Resolution: 832x480
+- Rank-16 LoRA uses a bit more than 12G (batch size 4)
+14B - https://huggingface.co/Wan-AI/Wan2.1-T2V-14B-Diffusers
+- Resolution: 832x480
 <!--
-When you're training every component of a rank-16 LoRA (MLP, projections, multimodal blocks), it ends up using a bit more than 12G on an M3 Mac (batch size 4).
+#### Image to Video
+14B (720p) - https://huggingface.co/Wan-AI/Wan2.1-I2V-14B-720P-Diffusers
+- Resolution: 1280x720
 -->
 
 You'll need: 
-- **a realistic minimum** is <!-- 16GB or, a single 3090 or V100 GPU -->
-- **ideally** <!-- multiple 4090, A6000, L40S, or better -->
+- **a realistic minimum** is 16GB or, a single 3090 or V100 GPU
+- **ideally** multiple 4090, A6000, L40S, or better
 
-Apple silicon systems work great with Wan 2.1 so far, albeit at a lower resolution due to limits inside the MPS backend used by Pytorch.
+Apple silicon systems do not work super well with Wan 2.1 so far, something like 10 minutes for a single training step can be expected..
 
 ### Prerequisites
 
