@@ -996,7 +996,6 @@ class Validation:
                     )
                 elif type(image) is list:
                     # maybe video
-                    print(f"video? {image}")
                     if self.args.model_family in ["ltxvideo", "wan"]:
                         from diffusers.utils.export_utils import export_to_video
 
@@ -1088,17 +1087,32 @@ class Validation:
         )
 
     def setup_scheduler(self):
-        if self.flow_matching and not self.args.model_family == "sana":
+        scheduler_args = {
+            "prediction_type": self.args.prediction_type,
+        }
+        if self.flow_matching and not self.args.model_family not in ["wan", "sana"]:
             # NO TOUCHIE FOR FLOW-MATCHING.
             # Touchie for sana though. It needs a new scheduler on every inference.
             return
         elif self.args.model_family == "sana":
             self.args.validation_noise_scheduler = "sana"
+        elif self.args.model_family in ["ltxvideo", "wan"]:
+            if self.args.validation_noise_scheduler is None:
+                # Diffusers repo uses UniPC by default.
+                self.args.validation_noise_scheduler = "unipc"
+            if self.args.validation_noise_scheduler == "flow-match":
+                # The Beta schedule looks WAY better...
+                scheduler_args["use_beta_sigmas"] = True
+                scheduler_args["shift"] = self.args.flow_schedule_shift
+            if self.args.validation_noise_scheduler == "unipc":
+                scheduler_args["prediction_type"] = 'flow_prediction'
+                scheduler_args["use_flow_sigmas"] = True
+                scheduler_args["num_train_timesteps"] = 1000
+                scheduler_args["flow_shift"] = self.args.flow_schedule_shift
 
         if self.args.validation_noise_scheduler is None:
             return
 
-        scheduler_args = {}
         if (
             self.pipeline is not None
             and "variance_type" in self.pipeline.scheduler.config
@@ -1117,7 +1131,6 @@ class Validation:
             self.args.pretrained_model_name_or_path,
             subfolder="scheduler",
             revision=self.args.revision,
-            prediction_type=self.args.prediction_type,
             timestep_spacing=self.args.inference_scheduler_timestep_spacing,
             rescale_betas_zero_snr=self.args.rescale_betas_zero_snr,
             **scheduler_args,
