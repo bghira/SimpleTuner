@@ -86,6 +86,19 @@ poetry install
 # Linux with ROCM
 poetry install -C install/rocm
 ```
+#### SageAttention 2
+
+If you wish to use SageAttention 2, some steps should be followed.
+
+> Note: SageAttention provides minimal speed-up, not super effective; not sure why. Tested on 4090.
+
+Run the following while still inside your python venv:
+```bash
+git clone https://github.com/thu-ml/SageAttention
+pushd SageAttention
+  pip install . --no-build-isolation
+popd
+```
 
 #### AMD ROCm follow-up steps
 
