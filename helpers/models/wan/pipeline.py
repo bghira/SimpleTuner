@@ -395,10 +395,10 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
         num_frames: int = 81,
         num_inference_steps: int = 50,
         guidance_scale: float = 5.0,
-        skip_layer_indices=[9, 10],
-        skip_layer_scale: float = 2.8,
-        start_skip_frac: float = 0.1,
-        end_skip_frac: float = 0.3,
+        skip_guidance_layers: List[int] = None,
+        skip_layer_guidance_scale: float = 2.8,
+        skip_layer_guidance_stop: float = 0.1,
+        skip_layer_guidance_start: float = 0.3,
         num_videos_per_prompt: Optional[int] = 1,
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         latents: Optional[torch.Tensor] = None,
@@ -439,15 +439,15 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
                 Paper](https://arxiv.org/pdf/2205.11487.pdf). Guidance scale is enabled by setting `guidance_scale >
                 1`. Higher guidance scale encourages to generate images that are closely linked to the text `prompt`,
                 usually at the expense of lower image quality.
-            skip_layer_indices (`List[int]`, *optional*, defaults to `[9, 10]`):
+            skip_guidance_layers (`List[int]`, *optional*, defaults to `[9, 10]`):
                 The indices of the layers to skip in the transformer. The indices are 0-indexed.
-            skip_layer_scale (`float`, *optional*, defaults to `2.8`):
-                The scale of the skip connection. The skip connection is defined as `x + skip_layer_scale * y`, where
+            skip_layer_guidance_scale (`float`, *optional*, defaults to `2.8`):
+                The scale of the skip connection. The skip connection is defined as `x + skip_layer_guidance_scale * y`, where
                 `x` is the output of the current layer and `y` is the output of the layer at the index specified by
-                `skip_layer_indices`.
-            start_skip_frac (`float`, *optional*, defaults to `0.1`):
+                `skip_guidance_layers`.
+            skip_layer_guidance_stop (`float`, *optional*, defaults to `0.1`):
                 The fraction of the total number of inference steps at which to start the skip connection.
-            end_skip_frac (`float`, *optional*, defaults to `0.3`):
+            skip_layer_guidance_start (`float`, *optional*, defaults to `0.3`):
                 The fraction of the total number of inference steps at which to end the skip connection.
             num_videos_per_prompt (`int`, *optional*, defaults to 1):
                 The number of images to generate per prompt.
@@ -589,18 +589,20 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
                 # 3) Possibly do skip-layers text pass
                 fraction = i / float(num_inference_steps)
                 if self.do_classifier_free_guidance and (
-                    start_skip_frac < fraction < end_skip_frac
+                    skip_layer_guidance_stop < fraction < skip_layer_guidance_start
                 ):
                     noise_pred_text_skip = self.transformer(
                         hidden_states=latents,
                         timestep=timestep,
                         encoder_hidden_states=prompt_embeds,
-                        skip_layers=skip_layer_indices,
+                        skip_layers=skip_guidance_layers,
                         return_dict=False,
                     )[0]
                     # blend them
-                    noise_pred_text = noise_pred_text_full + skip_layer_scale * (
-                        noise_pred_text_full - noise_pred_text_skip
+                    noise_pred_text = (
+                        noise_pred_text_full
+                        + skip_layer_guidance_scale
+                        * (noise_pred_text_full - noise_pred_text_skip)
                     )
                 else:
                     # either not in the skip-layers fraction range,
