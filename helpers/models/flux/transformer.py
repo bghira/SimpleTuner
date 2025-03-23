@@ -489,10 +489,6 @@ class FluxTransformer2DModelWithMasking(
         # added for users to disable checkpointing every nth step
         self.gradient_checkpointing_interval = None
 
-    def _set_gradient_checkpointing(self, module, value=False):
-        if hasattr(module, "gradient_checkpointing"):
-            module.gradient_checkpointing = value
-
     def set_gradient_checkpointing_interval(self, value: int):
         self.gradient_checkpointing_interval = value
 
