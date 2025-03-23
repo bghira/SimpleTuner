@@ -9,11 +9,14 @@ Wan 2.1 **1.3B** does not require much system **or** GPU memory. The **14B** mod
 Currently, image-to-video training is not supported for Wan, but T2V LoRA and Lycoris will run on the I2V models.
 
 #### Text to Video
+
 1.3B - https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B
 - Resolution: 832x480
 - Rank-16 LoRA uses a bit more than 12G (batch size 4)
+
 14B - https://huggingface.co/Wan-AI/Wan2.1-T2V-14B-Diffusers
 - Resolution: 832x480
+
 <!--
 #### Image to Video
 14B (720p) - https://huggingface.co/Wan-AI/Wan2.1-I2V-14B-720P-Diffusers
