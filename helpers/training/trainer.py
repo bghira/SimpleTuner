@@ -3357,7 +3357,7 @@ class Trainer:
                         transformer_lora_layers=transformer_lora_layers,
                     )
                 elif self.config.model_family == "wan":
-                    from diffusers.pipelines import WanPipeline
+                    from helpers.models.wan.pipeline import WanPipeline
 
                     WanPipeline.save_lora_weights(
                         save_directory=self.config.output_dir,
@@ -3592,7 +3592,7 @@ class Trainer:
                         scheduler=None,
                     )
                 elif self.config.model_family == "wan":
-                    from diffusers import WanPipeline
+                    from helpers.models.wan.pipeline import WanPipeline
 
                     self.pipeline = WanPipeline.from_pretrained(
                         self.config.pretrained_model_name_or_path,

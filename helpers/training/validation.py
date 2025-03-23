@@ -709,7 +709,7 @@ class Validation:
 
             return LTXPipeline
         elif model_type == "wan":
-            from diffusers import WanPipeline
+            from helpers.models.wan.pipeline import WanPipeline
 
             return WanPipeline
         else:
