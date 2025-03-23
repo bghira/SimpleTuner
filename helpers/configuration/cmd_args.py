@@ -1727,7 +1727,7 @@ def get_argument_parser():
     parser.add_argument(
         "--validation_disable",
         action="store_true",
-        help="Enable to completely disable the generation of validation images."
+        help="Enable to completely disable the generation of validation images.",
     )
     parser.add_argument(
         "--validation_steps",
@@ -2656,9 +2656,13 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         assert (
             "multiplier" in lycoris_config
         ), "lycoris_config JSON must contain multiplier key"
-        assert (
-            "linear_dim" in lycoris_config
-        ), "lycoris_config JSON must contain linear_dim key"
+        if (
+            "full_matrix" not in lycoris_config
+            or lycoris_config.get("full_matrix") is not True
+        ):
+            assert (
+                "linear_dim" in lycoris_config
+            ), "lycoris_config JSON must contain linear_dim key if full_matrix is not set."
         assert (
             "linear_alpha" in lycoris_config
         ), "lycoris_config JSON must contain linear_alpha key"
@@ -2698,6 +2702,12 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         warning_log(
             f"No data backend config provided. Using default config at {args.data_backend_config}."
         )
+
+    if (
+        args.validation_num_video_frames is not None
+        and args.validation_num_video_frames < 1
+    ):
+        raise ValueError("validation_num_video_frames must be at least 1.")
 
     # Check if we have a valid gradient accumulation steps.
     if args.gradient_accumulation_steps < 1:
