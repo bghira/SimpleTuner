@@ -326,7 +326,9 @@ class Trainer:
             self.config.webhook_config,
             self.accelerator,
             f"{self.config.tracker_project_name} {self.config.tracker_run_name}",
-            send_video=True if self.config.model_family in ["ltxvideo", "wan"] else False,
+            send_video=(
+                True if self.config.model_family in ["ltxvideo", "wan"] else False
+            ),
             args=self.config,
         )
         StateTracker.set_webhook_handler(self.webhook_handler)
@@ -947,17 +949,18 @@ class Trainer:
 
             with open(self.config.lycoris_config, "r") as f:
                 self.lycoris_config = json.load(f)
-            multiplier = int(self.lycoris_config["multiplier"])
-            linear_dim = int(self.lycoris_config["linear_dim"])
-            linear_alpha = int(self.lycoris_config["linear_alpha"])
+            multiplier = int(self.lycoris_config.get("multiplier", 1))
+            linear_dim = int(self.lycoris_config.get("linear_dim", 4))
+            linear_alpha = int(self.lycoris_config.get("linear_alpha", 1))
             apply_preset = self.lycoris_config.get("apply_preset", None)
             if apply_preset is not None and apply_preset != {}:
                 LycorisNetwork.apply_preset(apply_preset)
 
             # Remove the positional arguments we extracted.
-            del self.lycoris_config["multiplier"]
-            del self.lycoris_config["linear_dim"]
-            del self.lycoris_config["linear_alpha"]
+            keys_to_remove = ["multiplier", "linear_dim", "linear_alpha"]
+            for key in keys_to_remove:
+                if key in self.lycoris_config:
+                    del self.lycoris_config[key]
 
             logger.info("Using lycoris training mode")
             self._send_webhook_msg(message="Using lycoris training mode.")
@@ -2566,7 +2569,11 @@ class Trainer:
                 )
                 batch["sigmas"] = batch["sigmas"].reshape(bsz, 1, 1, 1, 1)
                 num_frame_latents = batch["latents"].shape[2]
-                if self.config.model_family == "ltxvideo" and num_frame_latents > 1 and batch["is_i2v_data"] is True:
+                if (
+                    self.config.model_family == "ltxvideo"
+                    and num_frame_latents > 1
+                    and batch["is_i2v_data"] is True
+                ):
                     # the theory is that if you have a single-frame latent, we expand it to num_frames and then do less destructive denoising.
                     single_frame_latents = batch["latents"]
                     if num_frame_latents > 1:
