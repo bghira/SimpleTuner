@@ -1795,6 +1795,14 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--validation_num_video_frames",
+        type=int,
+        default=None,
+        help=(
+            "When this is set, you can reduce the number of frames from the default model value (but not go beyond that)."
+        ),
+    )
+    parser.add_argument(
         "--validation_resolution",
         type=str,
         default=256,

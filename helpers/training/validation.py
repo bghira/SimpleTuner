@@ -1516,7 +1516,7 @@ class Validation:
                 ]:
                     # del pipeline_kwargs["width"]
                     # del pipeline_kwargs["height"]
-                    pipeline_kwargs["num_frames"] = 1
+                    pipeline_kwargs["num_frames"] = max(81, self.args.validation_num_video_frames or 81)
                     pipeline_kwargs["output_type"] = "pil"
                     # replace embeds with prompt
 
