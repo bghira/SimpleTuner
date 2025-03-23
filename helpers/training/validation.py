@@ -1514,9 +1514,10 @@ class Validation:
                 if StateTracker.get_model_family() in [
                     "wan",
                 ]:
-                    # del pipeline_kwargs["width"]
-                    # del pipeline_kwargs["height"]
-                    pipeline_kwargs["num_frames"] = max(81, self.args.validation_num_video_frames or 81)
+                    # Wan video should max out around 81 frames for efficiency.
+                    pipeline_kwargs["num_frames"] = min(
+                        81, self.args.validation_num_video_frames or 81
+                    )
                     pipeline_kwargs["output_type"] = "pil"
                     # replace embeds with prompt
 

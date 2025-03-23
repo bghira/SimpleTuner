@@ -155,6 +155,7 @@ class TestTrainer(unittest.TestCase):
             flux_beta_schedule_beta=None,
             flux_use_beta_schedule=None,
             flux_use_uniform_schedule=None,
+            validation_num_video_frames=None,
             flux_schedule_shift=None,
             flux_schedule_auto_shift=None,
             flow_matching_sigmoid_scale=None,
