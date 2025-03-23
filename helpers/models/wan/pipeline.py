@@ -439,7 +439,7 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
                 Paper](https://arxiv.org/pdf/2205.11487.pdf). Guidance scale is enabled by setting `guidance_scale >
                 1`. Higher guidance scale encourages to generate images that are closely linked to the text `prompt`,
                 usually at the expense of lower image quality.
-            skip_guidance_layers (`List[int]`, *optional*, defaults to `[9, 10]`):
+            skip_guidance_layers (`List[int]`, *optional*, defaults to `None`):
                 The indices of the layers to skip in the transformer. The indices are 0-indexed.
             skip_layer_guidance_scale (`float`, *optional*, defaults to `2.8`):
                 The scale of the skip connection. The skip connection is defined as `x + skip_layer_guidance_scale * y`, where
@@ -573,43 +573,20 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
                         encoder_hidden_states=negative_prompt_embeds.to(
                             transformer_dtype
                         ),
-                        skip_layers=None,  # never skip for uncond pass
+                        skip_layers=skip_guidance_layers,  # unlike SD3, for Wan's SLG implementation, we skip layers in uncond.
                         return_dict=False,
                     )[0]
                 else:
                     noise_pred_uncond = None
 
                 # 2) Text pass (no skip-layers)
-                noise_pred_text_full = self.transformer(
+                noise_pred_text = self.transformer(
                     hidden_states=latents.to(transformer_dtype),
                     timestep=timestep,
                     encoder_hidden_states=negative_prompt_embeds.to(transformer_dtype),
                     skip_layers=None,  # full pass
                     return_dict=False,
                 )[0]
-
-                # 3) Possibly do skip-layers text pass
-                fraction = i / float(num_inference_steps)
-                if self.do_classifier_free_guidance and (
-                    skip_layer_guidance_stop < fraction < skip_layer_guidance_start
-                ):
-                    noise_pred_text_skip = self.transformer(
-                        hidden_states=latents,
-                        timestep=timestep,
-                        encoder_hidden_states=prompt_embeds,
-                        skip_layers=skip_guidance_layers,
-                        return_dict=False,
-                    )[0]
-                    # blend them
-                    noise_pred_text = (
-                        noise_pred_text_full
-                        + skip_layer_guidance_scale
-                        * (noise_pred_text_full - noise_pred_text_skip)
-                    )
-                else:
-                    # either not in the skip-layers fraction range,
-                    # or not using CFG
-                    noise_pred_text = noise_pred_text_full
 
                 # 4) Combine for CFG
                 if self.do_classifier_free_guidance:
