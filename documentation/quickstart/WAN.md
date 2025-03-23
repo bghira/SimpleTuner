@@ -354,7 +354,6 @@ For more information, see the [dataloader](/documentation/DATALOADER.md) and [tu
 
 Like other models, it is possible that the lowest VRAM utilisation can be attained with:
 
-<!--
 - OS: Ubuntu Linux 24
 - GPU: A single NVIDIA CUDA device (10G, 12G)
 - System memory: 11G of system memory approximately
@@ -365,11 +364,10 @@ Like other models, it is possible that the lowest VRAM utilisation can be attain
 - DeepSpeed: disabled / unconfigured
 - PyTorch: 2.6
 - Be sure to enable `--gradient_checkpointing` or nothing you do will stop it from OOMing
--->
 
 **NOTE**: Pre-caching of VAE embeds and text encoder outputs may use more memory and still OOM. If so, text encoder quantisation and VAE tiling can be enabled.
 
-Speed was approximately 665.8 iterations per second on an M3 Max Macbook Pro.
+Speed was approximately 665.8 iterations per second on an M3 Max Macbook Pro and 2 seconds per step on a NVIDIA 4090.
 
 ### SageAttention
 
@@ -403,6 +401,10 @@ Don't use this with Wan 2.1.
 - Quantisation is not needed to train this model
 
 ### Image artifacts
+Wan has some implementation issue in Diffusers that makes the outputs look totally broken, it's not clear what the underlying issue is.
+
+Expect that the validations in this toolkit look really bad for now, though this statement will be updated when that's no longer true.
+
 Like other DiT models, if you do these things (among others) some square grid artifacts **may** begin appearing in the samples:
 - Overtrain with low quality data
 - Use too high of a learning rate
