@@ -284,7 +284,8 @@ class SaveHookManager:
                 transformer_lora_layers=transformer_lora_layers_to_save,
                 text_encoder_lora_layers=text_encoder_1_lora_layers_to_save,
             )
-        elif self.args.model_family == "ltxvideo":
+        elif self.args.model_family in ["wan", "ltxvideo"]:
+            # DiT models with no TE layers to train.
             self.pipeline_class.save_lora_weights(
                 output_dir,
                 transformer_lora_layers=transformer_lora_layers_to_save,
@@ -302,7 +303,7 @@ class SaveHookManager:
                 unet_lora_layers=unet_lora_layers_to_save,
                 text_encoder_lora_layers=text_encoder_1_lora_layers_to_save,
             )
-        elif self.args.model_family == "sdxl" or self.args.model_family == "kolors":
+        elif self.args.model_family in ["sdxl", "kolors"]:
             self.pipeline_class.save_lora_weights(
                 output_dir,
                 unet_lora_layers=unet_lora_layers_to_save,
