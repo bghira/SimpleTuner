@@ -150,6 +150,77 @@ There, you will possibly need to modify the following variables:
 
 Multi-GPU users can reference [this document](/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
 
+Your config at the end will look like mine:
+
+```json
+{
+  "resume_from_checkpoint": "latest",
+  "quantize_via": "cpu",
+  "attention_mechanism": "sageattention",
+  "data_backend_config": "config/wan/multidatabackend.json",
+  "aspect_bucket_rounding": 2,
+  "seed": 42,
+  "minimum_image_size": 0,
+  "disable_benchmark": false,
+  "output_dir": "output/wan",
+  "lora_type": "standard",
+  "lycoris_config": "config/wan/lycoris_config.json",
+  "max_train_steps": 400000,
+  "num_train_epochs": 0,
+  "checkpointing_steps": 1000,
+  "checkpoints_total_limit": 5,
+  "hub_model_id": "wan-disney",
+  "push_to_hub": "true",
+  "push_checkpoints_to_hub": "true",
+  "tracker_project_name": "lora-training",
+  "tracker_run_name": "wan-adamW",
+  "report_to": "wandb",
+  "model_type": "lora",
+  "pretrained_model_name_or_path": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+  "pretrained_t5_model_name_or_path": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+  "model_family": "wan",
+  "train_batch_size": 2,
+  "gradient_checkpointing": true,
+  "gradient_accumulation_steps": 1,
+  "caption_dropout_probability": 0.1,
+  "resolution_type": "pixel_area",
+  "resolution": 480,
+  "validation_seed": 42,
+  "validation_steps": 100,
+  "validation_resolution": "832x480",
+  "validation_prompt": "两只拟人化的猫咪身穿舒适的拳击装备，戴着鲜艳的手套，在聚光灯照射的舞台上激烈对战",
+  "validation_negative_prompt": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
+  "validation_guidance": 5.2,
+  "validation_num_inference_steps": 40,
+  "validation_num_video_frames": 81,
+  "mixed_precision": "bf16",
+  "optimizer": "optimi-lion",
+  "learning_rate": 0.00005,
+  "max_grad_norm": 0.01,
+  "grad_clip_method": "value",
+  "lr_scheduler": "cosine",
+  "lr_warmup_steps": 400000,
+  "base_model_precision": "no_change",
+  "vae_batch_size": 1,
+  "webhook_config": "config/wan/webhook.json",
+  "compress_disk_cache": true,
+  "use_ema": true,
+  "ema_validation": "ema_only",
+  "ema_update_interval": 2,
+  "delete_problematic_images": "true",
+  "disable_bucket_pruning": true,
+  "validation_guidance_skip_layers": [9],
+  "validation_guidance_skip_layers_start": 0.0,
+  "validation_guidance_skip_layers_stop": 1.0,
+  "lora_rank": 16,
+  "flow_schedule_shift": 3,
+  "validation_prompt_library": false,
+  "ignore_final_epochs": true
+}
+```
+
+Of particular importance in this configuration are the validation settings. Without these, the outputs do not look super great.
+
 #### Validation prompts
 
 Inside `config/config.json` is the "primary validation prompt", which is typically the main instance_prompt you are training on for your single subject or style. Additionally, a JSON file may be created that contains extra prompts to run through during validations.
@@ -367,13 +438,13 @@ Like other models, it is possible that the lowest VRAM utilisation can be attain
 
 **NOTE**: Pre-caching of VAE embeds and text encoder outputs may use more memory and still OOM. If so, text encoder quantisation and VAE tiling can be enabled.
 
-Speed was approximately 665.8 iterations per second on an M3 Max Macbook Pro and 2 seconds per step on a NVIDIA 4090.
+Speed was approximately 665.8 iterations per second on an M3 Max Macbook Pro and 2 seconds per step on a NVIDIA 4090 at a batch size of 1.
 
 ### SageAttention
 
 When using `--attention_mechanism=sageattention`, inference can be sped-up at validation time.
 
-**Note**: This isn't compatible with _every_ model configuration, but it's worth trying.
+**Note**: This isn't compatible with the final VAE decode step, and will not speed that portion up.
 
 ### NF4-quantised training
 
@@ -401,9 +472,7 @@ Don't use this with Wan 2.1.
 - Quantisation is not needed to train this model
 
 ### Image artifacts
-Wan has some implementation issue in Diffusers that makes the outputs look totally broken, it's not clear what the underlying issue is.
-
-Expect that the validations in this toolkit look really bad for now, though this statement will be updated when that's no longer true.
+Wan requires the use of the Euler Betas flow-matching schedule or (by default) the UniPC multistep solver, a higher order scheduler which will make stronger predictions.
 
 Like other DiT models, if you do these things (among others) some square grid artifacts **may** begin appearing in the samples:
 - Overtrain with low quality data
