@@ -471,6 +471,7 @@ class WanTransformer3DModel(
         timestep: torch.LongTensor,
         encoder_hidden_states: torch.Tensor,
         encoder_hidden_states_image: Optional[torch.Tensor] = None,
+        skip_layers: Optional[List[int]] = None,
         return_dict: bool = True,
         attention_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
@@ -526,7 +527,9 @@ class WanTransformer3DModel(
                     rotary_emb,
                 )
         else:
-            for block in self.blocks:
+            for i, block in enumerate(self.blocks):
+                if skip_layers is not None and i in skip_layers:
+                    continue
                 hidden_states = block(
                     hidden_states, encoder_hidden_states, timestep_proj, rotary_emb
                 )
