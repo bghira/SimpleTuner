@@ -1579,6 +1579,7 @@ def get_argument_parser():
         default=None,
         help=(
             "StabilityAI recommends a value of [7, 8, 9] for Stable Diffusion 3.5 Medium."
+            " For Wan 2.1, a value of [9], [10], or, [9, 10] was found to work well."
         ),
     )
     parser.add_argument(
@@ -2732,6 +2733,12 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         )
 
     if args.validation_guidance_skip_layers is not None:
+        if args.model_family not in ["sd3", "wan"]:
+            raise ValueError(
+                "Currently, skip-layer guidance is not supported for {}".format(
+                    args.model_family
+                )
+            )
         try:
             import json
 
@@ -2739,7 +2746,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
                 args.validation_guidance_skip_layers
             )
         except Exception as e:
-            logger.error(f"Could not load skip layers: {e}")
+            logger.error(f"Could not load validation_guidance_skip_layers: {e}")
             raise
 
     if args.framerate is None:

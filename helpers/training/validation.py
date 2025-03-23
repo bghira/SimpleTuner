@@ -1409,10 +1409,7 @@ class Validation:
             else:
                 validation_resolution_width, validation_resolution_height = resolution
 
-            if (
-                self.args.model_family == "sd3"
-                and type(self.args.validation_guidance_skip_layers) is list
-            ):
+            if type(self.args.validation_guidance_skip_layers) is list:
                 extra_validation_kwargs["skip_layer_guidance_start"] = float(
                     self.args.validation_guidance_skip_layers_start
                 )

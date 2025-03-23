@@ -210,7 +210,7 @@ def _guidance_rescale(args):
 
 def _skip_layers(args):
     if (
-        args.model_family.lower() not in ["sd3"]
+        args.model_family.lower() not in ["sd3", "wan"]
         or args.validation_guidance_skip_layers is None
     ):
         return ""
