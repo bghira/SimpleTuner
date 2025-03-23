@@ -1795,6 +1795,14 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--validation_num_video_frames",
+        type=int,
+        default=None,
+        help=(
+            "When this is set, you can reduce the number of frames from the default model value (but not go beyond that)."
+        ),
+    )
+    parser.add_argument(
         "--validation_resolution",
         type=str,
         default=256,
@@ -2536,6 +2544,9 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             sys.exit(1)
         flux_version = "schnell"
         model_max_seq_length = 256
+
+    if args.model_family == "wan":
+        args.tokenizer_max_length = 226
 
     if args.model_family == "flux":
         if (

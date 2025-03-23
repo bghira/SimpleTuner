@@ -9,6 +9,7 @@ from tqdm import tqdm
 from helpers.training.wrappers import unwrap_model
 from PIL import Image
 from helpers.training.state_tracker import StateTracker
+from helpers.data_backend.factory import move_text_encoders
 from helpers.training.exceptions import MultiDatasetExhausted
 from helpers.models.sdxl.pipeline import (
     StableDiffusionXLPipeline,
@@ -278,9 +279,11 @@ def prepare_validation_prompt_list(args, embed_cache):
             ncols=100,
             desc="Precomputing user prompt library embeddings",
         ):
+            # move_text_encoders(embed_cache.text_encoders, embed_cache.accelerator.device)
             embed_cache.compute_embeddings_for_prompts(
                 [prompt], is_validation=True, load_from_cache=False
             )
+            # move_text_encoders(embed_cache.text_encoders, "cpu")
             validation_prompts.append(prompt)
             validation_shortnames.append(shortname)
     if args.validation_prompt is not None:
@@ -586,6 +589,10 @@ class Validation:
         )
         if self.args.model_family == "sana":
             from diffusers import AutoencoderDC as AutoencoderClass
+        elif self.args.model_family == "wan":
+            from diffusers import AutoencoderKLWan as AutoencoderClass
+        elif self.args.model_family == "ltxvideo":
+            from diffusers import AutoencoderKLLTXVideo as AutoencoderClass
         else:
             from diffusers import AutoencoderKL as AutoencoderClass
         self.vae = precached_vae
@@ -604,6 +611,7 @@ class Validation:
                 ).to(self.inference_device)
         StateTracker.set_vae(self.vae)
 
+        logger.info(f"VAE type: {type(self.vae)}")
         return self.vae
 
     def _discover_validation_input_samples(self):
@@ -782,6 +790,7 @@ class Validation:
                 "smoldit",
                 "sana",
                 "ltxvideo",
+                "wan",
             ]:
                 current_validation_prompt_embeds, current_validation_prompt_mask = (
                     current_validation_prompt_embeds
@@ -988,7 +997,7 @@ class Validation:
                 elif type(image) is list:
                     # maybe video
                     print(f"video? {image}")
-                    if self.args.model_family in ["ltxvideo"]:
+                    if self.args.model_family in ["ltxvideo", "wan"]:
                         from diffusers.utils.export_utils import export_to_video
 
                         export_to_video(
@@ -1323,7 +1332,7 @@ class Validation:
                 ema_validation_images,
             ) = self.validate_prompt(prompt, shortname, validation_input_image)
             validation_images.update(stitched_validation_images)
-            if self.args.model_family in ["ltxvideo"]:
+            if self.args.model_family in ["ltxvideo", "wan"]:
                 self._save_videos(validation_images, shortname, prompt)
             else:
                 self._save_images(validation_images, shortname, prompt)
@@ -1425,6 +1434,7 @@ class Validation:
                 "sd3",
                 "sana",
                 "ltxvideo",
+                "wan",
             ]:
                 extra_validation_kwargs["guidance_rescale"] = (
                     self.args.validation_guidance_rescale
@@ -1463,10 +1473,10 @@ class Validation:
                     "num_inference_steps": self.args.validation_num_inference_steps,
                     "guidance_scale": self.args.validation_guidance,
                     "height": MultiaspectImage._round_to_nearest_multiple(
-                        int(validation_resolution_height)
+                        int(validation_resolution_height), 8
                     ),
                     "width": MultiaspectImage._round_to_nearest_multiple(
-                        int(validation_resolution_width)
+                        int(validation_resolution_width), 8
                     ),
                     **extra_validation_kwargs,
                 }
@@ -1495,12 +1505,20 @@ class Validation:
                 if StateTracker.get_model_family() == "flux":
                     if "negative_prompt" in pipeline_kwargs:
                         del pipeline_kwargs["negative_prompt"]
-                if StateTracker.get_model_family() in ["ltxvideo"]:
+                if StateTracker.get_model_family() in ["ltxvideo", "wan"]:
                     del pipeline_kwargs["num_images_per_prompt"]
                 if self.args.model_family == "sana":
                     pipeline_kwargs["complex_human_instruction"] = (
                         self.args.sana_complex_human_instruction
                     )
+                if StateTracker.get_model_family() in [
+                    "wan",
+                ]:
+                    # del pipeline_kwargs["width"]
+                    # del pipeline_kwargs["height"]
+                    pipeline_kwargs["num_frames"] = max(81, self.args.validation_num_video_frames or 81)
+                    pipeline_kwargs["output_type"] = "pil"
+                    # replace embeds with prompt
 
                 if StateTracker.get_model_family() in [
                     "pixart_sigma",
@@ -1529,7 +1547,7 @@ class Validation:
                         )
                     if current_validation_type == "ema":
                         self.enable_ema_for_inference()
-                    if self.args.model_family in ["ltxvideo"]:
+                    if self.args.model_family in ["ltxvideo", "wan"]:
                         all_validation_type_results[current_validation_type] = (
                             self.pipeline(**pipeline_kwargs).frames
                         )
@@ -1616,6 +1634,8 @@ class Validation:
         from diffusers.utils.export_utils import export_to_video
 
         for validation_image in validation_images[validation_shortname]:
+            # convert array of numpy to array of pil:
+            validation_image = MultiaspectImage.numpy_list_to_pil(validation_image)
             size_x, size_y = validation_image[0].size
             res_label = f"{size_x}x{size_y}"
             export_to_video(

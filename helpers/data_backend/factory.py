@@ -598,7 +598,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             )
 
         # We don't compute the text embeds at this time, because we do not really have any captions available yet.
-        move_text_encoders(text_encoders, "cpu")
+        # move_text_encoders(text_encoders, "cpu")
         text_embed_backends[init_backend["id"]] = init_backend
 
     if not text_embed_backends:
@@ -1122,7 +1122,6 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             init_backend["text_embed_cache"].compute_embeddings_for_prompts(
                 captions, return_concat=False, load_from_cache=False
             )
-            move_text_encoders(text_encoders, "cpu")
             info_log(
                 f"(id={init_backend['id']}) Completed processing {len(captions)} captions."
             )
@@ -1164,6 +1163,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                 raise ValueError(
                     f"VAE image embed cache directory {backend.get('cache_dir_vae')} is not set. This is required for the VAE image embed cache."
                 )
+            move_text_encoders(text_encoders, "cpu")
             init_backend["vaecache"] = VAECache(
                 id=init_backend["id"],
                 dataset_type=init_backend["dataset_type"],
@@ -1204,6 +1204,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                 vae_cache_ondemand=args.vae_cache_ondemand,
                 hash_filenames=hash_filenames,
             )
+            move_text_encoders(text_encoders, accelerator.device)
             init_backend["vaecache"].set_webhook_handler(
                 StateTracker.get_webhook_handler()
             )

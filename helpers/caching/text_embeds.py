@@ -153,6 +153,16 @@ class TextEmbeddingCache(WebhookMixin):
                 transformer=None,
                 vae=None,
             )
+        if self.model_type == "wan":
+            from diffusers.pipelines.wan import WanPipeline
+
+            self.pipeline = WanPipeline.from_pretrained(
+                pretrained_model_name_or_path=StateTracker.get_args().pretrained_model_name_or_path,
+                text_encoder=text_encoders[0],
+                tokenizer=tokenizers[0],
+                transformer=None,
+                vae=None,
+            )
         self.prompt_handler = prompt_handler
         self.write_batch_size = write_batch_size
         self.read_batch_size = read_batch_size
@@ -286,6 +296,44 @@ class TextEmbeddingCache(WebhookMixin):
     def load_from_cache(self, filename):
         result = self.data_backend.torch_load(filename)
         return result
+
+    def encode_wan_prompt(
+        self,
+        text_encoders,
+        tokenizers,
+        prompt: str,
+        is_validation: bool = False,
+    ):
+        """
+        Encode a prompt for a Wan model.
+
+        Args:
+            text_encoders: List of text encoders.
+            tokenizers: List of tokenizers.
+            prompt: The prompt to encode.
+            num_images_per_prompt: The number of images to generate per prompt.
+            is_validation: Whether the prompt is for validation. No-op for SD3.
+
+        Returns:
+            Tuple of (prompt_embeds, pooled_prompt_embeds).
+        """
+        from diffusers import WanPipeline
+
+        pipe = WanPipeline(
+            scheduler=self.pipeline.scheduler,
+            vae=self.pipeline.vae,
+            text_encoder=self.pipeline.text_encoder,
+            tokenizer=self.pipeline.tokenizer,
+            transformer=self.pipeline.transformer,
+        )
+
+        prompt_embeds, masks = pipe.encode_prompt(
+            prompt=prompt,
+            device=self.accelerator.device,
+            # max_sequence_length=StateTracker.get_args().tokenizer_max_length,
+        )
+
+        return prompt_embeds, masks
 
     def encode_flux_prompt(
         self,
@@ -1549,8 +1597,8 @@ class TextEmbeddingCache(WebhookMixin):
                             logger.debug("Waiting for write thread to catch up.")
                             time.sleep(5)
                     # TODO: Batch this
-                    prompt_embeds, attention_mask = self.compute_t5_prompt(
-                        prompt=prompt
+                    prompt_embeds, attention_mask = self.encode_wan_prompt(
+                        prompt=prompt, text_encoders=self.text_encoders, tokenizers=self.tokenizers
                     )
                     prompt_embeds = (prompt_embeds, attention_mask)
                     if return_concat:
