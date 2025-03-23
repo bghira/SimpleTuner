@@ -328,6 +328,24 @@ For `config.json` users:
   "base_model_default_dtype": "bf16"
 ```
 
+#### Validation settings
+
+During initial exploration into adding Wan 2.1 into SimpleTuner, horrible nightmare fuel output was coming from Wan 2.1, and this boils down to a couple reasons:
+
+- Not enough steps for inference
+  - Unless you're using UniPC, you probably need at least 40 steps. UniPC can bring the number down a little, but you'll have to experiment.
+- Incorrect scheduler configuration
+  - It was using normal Euler flow matching schedule, but the Betas distribution seems to work best
+- Incorrect resolution
+  - Wan 2.1 only really works correctly on the resolutions it was trained on, you get lucky if it works, but it's common for it to be bad results
+- Bad CFG value
+  - Wan 2.1 1.3B in particular seems sensitive to CFG values, but a value around 4.0-5.0 seem safe
+- Bad prompting
+  - Of course, video models seem to require a team of mystics to spend months in the mountains on a zen retreat to learn the sacred art of prompting, because their datasets and caption style are guarded like the Holy Grail.
+  - tl;dr try different prompts.
+
+Despite all of this, unless your batch size is too low and / or your learning rate is too high, the model will run correctly in your favourite inference tool (assuming you already have one that you get good results from).
+
 #### Dataset considerations
 
 There are few limitations on the dataset size other than how much compute and time it will take to process and train.
