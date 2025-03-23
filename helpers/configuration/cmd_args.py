@@ -1591,8 +1591,8 @@ def get_argument_parser():
     parser.add_argument(
         "--validation_guidance_skip_layers_stop",
         type=float,
-        default=0.01,
-        help=("StabilityAI recommends a value of 0.2 for SLG start."),
+        default=0.2,
+        help=("StabilityAI recommends a value of 0.2 for SLG stop."),
     )
     parser.add_argument(
         "--validation_guidance_skip_scale",
