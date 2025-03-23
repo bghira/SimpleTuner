@@ -395,6 +395,10 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
         num_frames: int = 81,
         num_inference_steps: int = 50,
         guidance_scale: float = 5.0,
+        skip_layer_indices=[9, 10],
+        skip_layer_scale: float = 2.8,
+        start_skip_frac: float = 0.1,
+        end_skip_frac: float = 0.3,
         num_videos_per_prompt: Optional[int] = 1,
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         latents: Optional[torch.Tensor] = None,
@@ -435,6 +439,16 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
                 Paper](https://arxiv.org/pdf/2205.11487.pdf). Guidance scale is enabled by setting `guidance_scale >
                 1`. Higher guidance scale encourages to generate images that are closely linked to the text `prompt`,
                 usually at the expense of lower image quality.
+            skip_layer_indices (`List[int]`, *optional*, defaults to `[9, 10]`):
+                The indices of the layers to skip in the transformer. The indices are 0-indexed.
+            skip_layer_scale (`float`, *optional*, defaults to `2.8`):
+                The scale of the skip connection. The skip connection is defined as `x + skip_layer_scale * y`, where
+                `x` is the output of the current layer and `y` is the output of the layer at the index specified by
+                `skip_layer_indices`.
+            start_skip_frac (`float`, *optional*, defaults to `0.1`):
+                The fraction of the total number of inference steps at which to start the skip connection.
+            end_skip_frac (`float`, *optional*, defaults to `0.3`):
+                The fraction of the total number of inference steps at which to end the skip connection.
             num_videos_per_prompt (`int`, *optional*, defaults to 1):
                 The number of images to generate per prompt.
             generator (`torch.Generator` or `List[torch.Generator]`, *optional*):
@@ -546,32 +560,62 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
 
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
-                if self.interrupt:
-                    continue
-
-                self._current_timestep = t
-                latent_model_input = latents.to(transformer_dtype)
+                # expand t to match the batch size
                 timestep = t.expand(latents.shape[0])
 
-                noise_pred = self.transformer(
-                    hidden_states=latent_model_input,
+                # 1) Unconditional pass
+                #    pass the negative_prompt_embeds if do_classifier_free_guidance
+                #    else just skip entirely if not using CFG
+                if self.do_classifier_free_guidance:
+                    noise_pred_uncond = self.transformer(
+                        hidden_states=latents,
+                        timestep=timestep,
+                        encoder_hidden_states=negative_prompt_embeds,
+                        skip_layers=None,  # never skip for uncond pass
+                        return_dict=False,
+                    )[0]
+                else:
+                    noise_pred_uncond = None
+
+                # 2) Text pass (no skip-layers)
+                noise_pred_text_full = self.transformer(
+                    hidden_states=latents,
                     timestep=timestep,
                     encoder_hidden_states=prompt_embeds,
-                    attention_kwargs=attention_kwargs,
+                    skip_layers=None,  # full pass
                     return_dict=False,
                 )[0]
 
-                if self.do_classifier_free_guidance:
-                    noise_uncond = self.transformer(
-                        hidden_states=latent_model_input,
+                # 3) Possibly do skip-layers text pass
+                fraction = i / float(num_inference_steps)
+                if self.do_classifier_free_guidance and (
+                    start_skip_frac < fraction < end_skip_frac
+                ):
+                    noise_pred_text_skip = self.transformer(
+                        hidden_states=latents,
                         timestep=timestep,
-                        encoder_hidden_states=negative_prompt_embeds,
-                        attention_kwargs=attention_kwargs,
+                        encoder_hidden_states=prompt_embeds,
+                        skip_layers=skip_layer_indices,
                         return_dict=False,
                     )[0]
-                    noise_pred = noise_uncond + guidance_scale * (
-                        noise_pred - noise_uncond
+                    # blend them
+                    noise_pred_text = noise_pred_text_full + skip_layer_scale * (
+                        noise_pred_text_full - noise_pred_text_skip
                     )
+                else:
+                    # either not in the skip-layers fraction range,
+                    # or not using CFG
+                    noise_pred_text = noise_pred_text_full
+
+                # 4) Combine for CFG
+                if self.do_classifier_free_guidance:
+                    # noise_pred = uncond + w * (text - uncond)
+                    noise_pred = noise_pred_uncond + self.guidance_scale * (
+                        noise_pred_text - noise_pred_uncond
+                    )
+                else:
+                    # if no CFG, just use text pass
+                    noise_pred = noise_pred_text
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents = self.scheduler.step(
