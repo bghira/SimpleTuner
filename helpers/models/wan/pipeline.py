@@ -567,9 +567,11 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
                     ):
                         skip_layer_indices = None
                     noise_pred_uncond = self.transformer(
-                        hidden_states=latents,
+                        hidden_states=latents.to(transformer_dtype),
                         timestep=timestep,
-                        encoder_hidden_states=negative_prompt_embeds,
+                        encoder_hidden_states=negative_prompt_embeds.to(
+                            transformer_dtype
+                        ),
                         skip_layers=skip_layer_indices,
                         return_dict=False,
                     )[0]
@@ -578,9 +580,9 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
 
                 # Positive pass (no skip-layers)
                 noise_pred_text = self.transformer(
-                    hidden_states=latents,
+                    hidden_states=latents.to(transformer_dtype),
                     timestep=timestep,
-                    encoder_hidden_states=prompt_embeds,
+                    encoder_hidden_states=prompt_embeds.to(transformer_dtype),
                     skip_layers=None,
                     return_dict=False,
                 )[0]
