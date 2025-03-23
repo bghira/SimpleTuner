@@ -1473,10 +1473,10 @@ class Validation:
                     "num_inference_steps": self.args.validation_num_inference_steps,
                     "guidance_scale": self.args.validation_guidance,
                     "height": MultiaspectImage._round_to_nearest_multiple(
-                        int(validation_resolution_height), 8
+                        int(validation_resolution_height), 16
                     ),
                     "width": MultiaspectImage._round_to_nearest_multiple(
-                        int(validation_resolution_width), 8
+                        int(validation_resolution_width), 16
                     ),
                     **extra_validation_kwargs,
                 }
