@@ -396,7 +396,6 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
         num_inference_steps: int = 50,
         guidance_scale: float = 5.0,
         skip_guidance_layers: List[int] = None,
-        skip_layer_guidance_scale: float = 2.8,
         skip_layer_guidance_stop: float = 0.1,
         skip_layer_guidance_start: float = 0.3,
         num_videos_per_prompt: Optional[int] = 1,
@@ -441,10 +440,6 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
                 usually at the expense of lower image quality.
             skip_guidance_layers (`List[int]`, *optional*, defaults to `None`):
                 The indices of the layers to skip in the transformer. The indices are 0-indexed.
-            skip_layer_guidance_scale (`float`, *optional*, defaults to `2.8`):
-                The scale of the skip connection. The skip connection is defined as `x + skip_layer_guidance_scale * y`, where
-                `x` is the output of the current layer and `y` is the output of the layer at the index specified by
-                `skip_guidance_layers`.
             skip_layer_guidance_stop (`float`, *optional*, defaults to `0.1`):
                 The fraction of the total number of inference steps at which to start the skip connection.
             skip_layer_guidance_start (`float`, *optional*, defaults to `0.3`):
@@ -568,7 +563,7 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
                     fraction = i / float(num_inference_steps)
                     skip_layer_indices = skip_guidance_layers
                     if self.do_classifier_free_guidance and (
-                        start_skip_frac <= fraction < end_skip_frac
+                        skip_layer_guidance_start <= fraction < skip_layer_guidance_stop
                     ):
                         skip_layer_indices = None
                     noise_pred_uncond = self.transformer(
