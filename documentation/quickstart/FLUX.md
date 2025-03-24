@@ -413,7 +413,7 @@ Currently, the lowest VRAM utilisation (9090M) can be attained with:
 - OS: Ubuntu Linux 24
 - GPU: A single NVIDIA CUDA device (10G, 12G)
 - System memory: 50G of system memory approximately
-- Base model precision: `bnb-nf4`
+- Base model precision: `nf4-bnb`
 - Optimiser: Lion 8Bit Paged, `bnb-lion8bit-paged`
 - Resolution: 512px
   - 1024px requires >= 12G VRAM

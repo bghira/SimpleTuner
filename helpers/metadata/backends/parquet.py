@@ -435,20 +435,26 @@ class ParquetMetadataBackend(MetadataBackend):
         logger.info("Completed aspect bucket update (parquet).")
 
     def _get_first_value(self, series_or_scalar):
-        """
-        Extract the first value if the input is a Series, else return it.
-        """
         import pandas as pd
         import numpy as np
 
         if isinstance(series_or_scalar, pd.Series):
-            return int(series_or_scalar.iloc[0])
+            series_or_scalar = series_or_scalar.iloc[0]  # Just unwrap the first value
         elif isinstance(series_or_scalar, str):
+            series_or_scalar = float(series_or_scalar) if '.' in series_or_scalar else int(series_or_scalar)
+
+        # After unwrapping, if it's an np.int* or np.float*, cast to python int/float
+        if isinstance(series_or_scalar, np.integer):
             return int(series_or_scalar)
-        elif isinstance(series_or_scalar, (int, float, np.int64)):
+        elif isinstance(series_or_scalar, np.floating):
+            return float(series_or_scalar)
+        elif isinstance(series_or_scalar, (int, float)):
             return series_or_scalar
+        elif series_or_scalar is None:
+            return None
         else:
             raise ValueError(f"Unsupported data type: {type(series_or_scalar)}")
+
 
     def _process_for_bucket(
         self,

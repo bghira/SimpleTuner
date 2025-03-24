@@ -3,6 +3,7 @@ import huggingface_hub
 from helpers.training.default_settings.safety_check import safety_check
 from helpers.publishing.huggingface import HubManager
 from configure import model_labels
+from typing import Optional
 import shutil
 import hashlib
 import json
@@ -265,7 +266,9 @@ class Trainer:
             self._exit_on_signal()
             self.init_validations()
             self._exit_on_signal()
+            self.enable_sageattention_inference()
             self.init_benchmark_base_model()
+            self.disable_sageattention_inference()
             self._exit_on_signal()
             self.resume_and_prepare()
             self._exit_on_signal()
@@ -326,7 +329,9 @@ class Trainer:
             self.config.webhook_config,
             self.accelerator,
             f"{self.config.tracker_project_name} {self.config.tracker_run_name}",
-            send_video=True if self.config.model_family in ["ltxvideo"] else False,
+            send_video=(
+                True if self.config.model_family in ["ltxvideo", "wan"] else False
+            ),
             args=self.config,
         )
         StateTracker.set_webhook_handler(self.webhook_handler)
@@ -453,6 +458,8 @@ class Trainer:
             from diffusers import AutoencoderDC as AutoencoderClass
         elif StateTracker.get_args().model_family == "ltxvideo":
             from diffusers import AutoencoderKLLTXVideo as AutoencoderClass
+        elif StateTracker.get_args().model_family == "wan":
+            from diffusers import AutoencoderKLWan as AutoencoderClass
         else:
             from diffusers import AutoencoderKL as AutoencoderClass
         self.vae_cls = AutoencoderClass
@@ -467,15 +474,22 @@ class Trainer:
                 logger.error(e)
                 self.config.vae_kwargs["subfolder"] = None
                 self.vae = self.vae_cls.from_pretrained(**self.config.vae_kwargs)
-        if (
-            self.vae is not None
-            and self.config.vae_enable_tiling
-            and hasattr(self.vae, "enable_tiling")
-        ):
-            logger.warning(
-                "Enabling VAE tiling for greatly reduced memory consumption due to --vae_enable_tiling which may result in VAE tiling artifacts in encoded latents."
-            )
-            self.vae.enable_tiling()
+        if self.vae is not None and self.config.vae_enable_tiling:
+            if hasattr(self.vae, "enable_tiling"):
+                logger.warning("Enabling VAE tiling.")
+                self.vae.enable_tiling()
+            else:
+                logger.warning(
+                    f"VAE tiling is enabled, but not yet supported by {self.config.model_family}."
+                )
+        if self.vae is not None and self.config.vae_enable_slicing:
+            if hasattr(self.vae, "enable_slicing"):
+                logger.info("Enabling VAE slicing.")
+                self.vae.enable_slicing()
+            else:
+                logger.warning(
+                    f"VAE slicing is enabled, but not yet supported by {self.config.model_family}."
+                )
         if not move_to_accelerator:
             logger.debug("Not moving VAE to accelerator.")
             return
@@ -700,7 +714,7 @@ class Trainer:
         ):
             logger.error("Cannot run validations with DeepSpeed ZeRO stage 3.")
             return
-        if self.accelerator.is_main_process:
+        if self.accelerator.is_main_process and not self.config.validation_disable:
             if self.config.model_family == "flux":
                 (
                     self.validation_prompts,
@@ -765,10 +779,7 @@ class Trainer:
         reclaim_memory()
         memory_after_unload = self.stats_memory_used()
         memory_saved = memory_after_unload - memory_before_unload
-        logger.info(
-            f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
-            " The real memories were the friends we trained a model on along the way."
-        )
+        logger.info(f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM.")
 
     def init_precision(
         self, preprocessing_models_only: bool = False, ema_only: bool = False
@@ -938,17 +949,18 @@ class Trainer:
 
             with open(self.config.lycoris_config, "r") as f:
                 self.lycoris_config = json.load(f)
-            multiplier = int(self.lycoris_config["multiplier"])
-            linear_dim = int(self.lycoris_config["linear_dim"])
-            linear_alpha = int(self.lycoris_config["linear_alpha"])
+            multiplier = int(self.lycoris_config.get("multiplier", 1))
+            linear_dim = int(self.lycoris_config.get("linear_dim", 4))
+            linear_alpha = int(self.lycoris_config.get("linear_alpha", 1))
             apply_preset = self.lycoris_config.get("apply_preset", None)
             if apply_preset is not None and apply_preset != {}:
                 LycorisNetwork.apply_preset(apply_preset)
 
             # Remove the positional arguments we extracted.
-            del self.lycoris_config["multiplier"]
-            del self.lycoris_config["linear_dim"]
-            del self.lycoris_config["linear_alpha"]
+            keys_to_remove = ["multiplier", "linear_dim", "linear_alpha"]
+            for key in keys_to_remove:
+                if key in self.lycoris_config:
+                    del self.lycoris_config[key]
 
             logger.info("Using lycoris training mode")
             self._send_webhook_msg(message="Using lycoris training mode.")
@@ -1443,6 +1455,8 @@ class Trainer:
             logger.error("Cannot run validations with DeepSpeed ZeRO stage 3.")
             return
         self.evaluation = None
+        if self.config.validation_disable:
+            return
         if (
             self.config.eval_steps_interval is not None
             and self.config.eval_steps_interval > 0
@@ -1771,8 +1785,38 @@ class Trainer:
                     "scaled_dot_product_attention_sdpa",
                     torch.nn.functional.scaled_dot_product_attention,
                 )
-            torch.nn.functional.scaled_dot_product_attention = sageattn_functions.get(
-                self.config.attention_mechanism, "sageattention"
+
+            def sageattn_wrapper_for_torch_sdpa_with_fallback(
+                query,
+                key,
+                value,
+                attn_mask=None,
+                dropout_p=0.0,
+                is_causal=False,
+                scale=None,
+                enable_gqa=False,
+            ) -> torch.Tensor:
+                try:
+                    return sageattn_functions[self.config.attention_mechanism](
+                        query, key, value, is_causal=is_causal
+                    )
+                except:
+                    logger.error(
+                        f"Could not run SageAttention with {self.config.attention_mechanism}. Falling back to Pytorch SDPA."
+                    )
+                    return torch.nn.functional.scaled_dot_product_attention_sdpa(
+                        query,
+                        key,
+                        value,
+                        attn_mask,
+                        dropout_p,
+                        is_causal,
+                        scale,
+                        enable_gqa,
+                    )
+
+            torch.nn.functional.scaled_dot_product_attention = (
+                sageattn_wrapper_for_torch_sdpa_with_fallback
             )
             if not hasattr(torch.nn.functional, "scaled_dot_product_attention_sage"):
                 setattr(
@@ -2191,6 +2235,12 @@ class Trainer:
                         )
 
                 model_pred = self.transformer(**flux_transformer_kwargs)[0]
+                model_pred = unpack_latents(
+                    model_pred,
+                    height=prepared_batch["latents"].shape[2] * 8,
+                    width=prepared_batch["latents"].shape[3] * 8,
+                    vae_scale_factor=16,
+                )
 
             elif self.config.model_family == "sd3":
                 # Stable Diffusion 3 uses a MM-DiT model where the VAE-produced
@@ -2218,6 +2268,18 @@ class Trainer:
                         self.config.weight_dtype
                     ),
                     encoder_attention_mask=prepared_batch["encoder_attention_mask"],
+                    timestep=timesteps,
+                    return_dict=False,
+                )[0]
+            elif self.config.model_family == "wan":
+                # this just hacked together because it seems it doesn't work on MPS, and can't test it yet:
+                # TypeError: Trying to convert ComplexDouble to the MPS backend but it does not have support for that dtype.
+                model_pred = self.transformer(
+                    noisy_latents.to(self.config.weight_dtype),
+                    encoder_hidden_states=encoder_hidden_states.to(
+                        self.config.weight_dtype
+                    ),
+                    # encoder_attention_mask=prepared_batch["encoder_attention_mask"],
                     timestep=timesteps,
                     return_dict=False,
                 )[0]
@@ -2346,13 +2408,6 @@ class Trainer:
             else:
                 raise Exception("Unknown error occurred, no prediction could be made.")
 
-            if self.config.model_family == "flux":
-                model_pred = unpack_latents(
-                    model_pred,
-                    height=prepared_batch["latents"].shape[2] * 8,
-                    width=prepared_batch["latents"].shape[3] * 8,
-                    vae_scale_factor=16,
-                )
         else:
             # Dummy model prediction for debugging.
             model_pred = torch.randn_like(noisy_latents)
@@ -2503,6 +2558,8 @@ class Trainer:
                     device=self.accelerator.device,
                 )
             batch["timesteps"] = batch["sigmas"] * 1000.0
+            if self.config.model_family == "wan":
+                batch["timesteps"] = batch["timesteps"].view(-1)
             batch["sigmas"] = batch["sigmas"].view(-1, 1, 1, 1)
         else:
             if self.config.offset_noise:
@@ -2544,7 +2601,11 @@ class Trainer:
                 )
                 batch["sigmas"] = batch["sigmas"].reshape(bsz, 1, 1, 1, 1)
                 num_frame_latents = batch["latents"].shape[2]
-                if num_frame_latents > 1 and batch["is_i2v_data"] is True:
+                if (
+                    self.config.model_family == "ltxvideo"
+                    and num_frame_latents > 1
+                    and batch["is_i2v_data"] is True
+                ):
                     # the theory is that if you have a single-frame latent, we expand it to num_frames and then do less destructive denoising.
                     single_frame_latents = batch["latents"]
                     if num_frame_latents > 1:
@@ -2626,8 +2687,8 @@ class Trainer:
             target = prepared_batch["latents"]
         else:
             raise ValueError(
-                f"Unknown prediction type {self.noise_scheduler.config.prediction_type}"
-                "Supported types are 'epsilon', `sample`, and 'v_prediction'."
+                f"Unknown prediction type {self.noise_scheduler.config.prediction_type}."
+                " Supported types are 'epsilon', `sample`, and 'v_prediction'."
             )
 
         return target
@@ -3327,6 +3388,13 @@ class Trainer:
                         save_directory=self.config.output_dir,
                         transformer_lora_layers=transformer_lora_layers,
                     )
+                elif self.config.model_family == "wan":
+                    from helpers.models.wan.pipeline import WanPipeline
+
+                    WanPipeline.save_lora_weights(
+                        save_directory=self.config.output_dir,
+                        transformer_lora_layers=transformer_lora_layers,
+                    )
 
                 elif self.config.model_family == "sd3":
                     StableDiffusion3Pipeline.save_lora_weights(
@@ -3555,6 +3623,27 @@ class Trainer:
                         transformer=self.transformer,
                         scheduler=None,
                     )
+                elif self.config.model_family == "wan":
+                    from helpers.models.wan.pipeline import WanPipeline
+
+                    self.pipeline = WanPipeline.from_pretrained(
+                        self.config.pretrained_model_name_or_path,
+                        text_encoder=self.text_encoder_1
+                        or (
+                            self.text_encoder_cls_1.from_pretrained(
+                                self.config.pretrained_model_name_or_path,
+                                subfolder="text_encoder",
+                                revision=self.config.revision,
+                                variant=self.config.variant,
+                            )
+                            if self.config.save_text_encoder
+                            else None
+                        ),
+                        tokenizer=self.tokenizer_1,
+                        vae=self.vae,
+                        transformer=self.transformer,
+                    )
+
                 elif self.config.model_family == "ltxvideo":
                     from diffusers import LTXPipeline
 

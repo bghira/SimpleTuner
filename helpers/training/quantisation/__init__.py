@@ -73,20 +73,29 @@ def _quanto_model(
     logger.info(f"Quantising {model.__class__.__name__}. Using {model_precision}.")
     weight_quant = _quanto_type_map(model_precision)
     extra_quanto_args = {}
-    if StateTracker.get_args().model_family == "sd3":
+    if StateTracker.get_args().model_family in ["sd3", "ltxvideo", "wan"]:
         extra_quanto_args["exclude"] = [
-            "*.norm",
-            "*.norm1",
-            "*.norm1_context",
-            "*.norm_q",
-            "*.norm_k",
-            "*.norm_added_q",
-            "*.norm_added_k",
-            "proj_out",
-            "pos_embed",
-            "norm_out",
-            "context_embedder",
-            "time_text_embed",
+            # Norm layers of all types
+            "*norm*",  # catches *.norm, .norm1, .norm2, .norm_q, .norm_k, .norm_out, etc.
+            "*norm1_context*",  # in case any leftover context norm patterns exist
+            "*norm_added_q*",  # norm_added_q
+            "*norm_added_k*",  # norm_added_k
+            # Projection outputs often better left in higher precision
+            "proj_out*",
+            # Embeddings or positional embeddings
+            "*pos_embed*",
+            "*patch_embedding*",
+            # Feed forward networks
+            "*ffn*",
+            # Common shift or scale tables
+            "*scale_shift_table*",
+            # Blocks or final outputs that are tricky in low precision
+            "*norm_out*",
+            # Text / condition embedder layers
+            "*context_embedder*",  # if that appears anywhere
+            "*time_text_embed*",
+            "*time_proj*",  # time_proj layers
+            "*condition_embedder*",  # catches condition_embedder.image_embedder and text_embedder, etc.
         ]
     elif StateTracker.get_args().model_family == "flux":
         extra_quanto_args["exclude"] = [

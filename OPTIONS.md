@@ -1505,6 +1505,8 @@ options:
   --num_validation_images NUM_VALIDATION_IMAGES
                         Number of images that should be generated during
                         validation with `validation_prompt`.
+  --validation_disable
+                        Enable to completely disable all validation.
   --validation_steps VALIDATION_STEPS
                         Run validation every X steps. Validation consists of
                         running the prompt `args.validation_prompt` multiple

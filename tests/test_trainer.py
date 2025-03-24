@@ -147,6 +147,7 @@ class TestTrainer(unittest.TestCase):
             flow_schedule_auto_shift=False,
             validation_guidance_skip_layers=None,
             pretrained_model_name_or_path="some/path",
+            pretrained_vae_model_name_or_path="some/other/path",
             base_model_precision="no_change",
             gradient_checkpointing_interval=None,
             # deprecated options
@@ -154,6 +155,7 @@ class TestTrainer(unittest.TestCase):
             flux_beta_schedule_beta=None,
             flux_use_beta_schedule=None,
             flux_use_uniform_schedule=None,
+            validation_num_video_frames=None,
             flux_schedule_shift=None,
             flux_schedule_auto_shift=None,
             flow_matching_sigmoid_scale=None,

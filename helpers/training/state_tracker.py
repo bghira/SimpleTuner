@@ -116,6 +116,7 @@ class StateTracker:
         if model_type not in [
             "legacy",
             "ltxvideo",
+            "wan",
             "sdxl",
             "sd3",
             "pixart_sigma",

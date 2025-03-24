@@ -1,6 +1,6 @@
 import os
 from accelerate.logging import get_logger
-from helpers.models import get_model_config_path
+from helpers.models import get_model_config_path, flow_matching_model_families
 
 logger = get_logger(__name__, log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
@@ -12,7 +12,7 @@ def load_scheduler_from_args(args):
     flow_matching = False
     if (
         args.model_family == "sd3" and args.flow_matching_loss != "diffusion"
-    ) or args.model_family in ["flux", "sana", "ltxvideo"]:
+    ) or args.model_family in flow_matching_model_families:
         # Flow-matching models.
         flow_matching = True
         from diffusers import FlowMatchEulerDiscreteScheduler
@@ -22,7 +22,7 @@ def load_scheduler_from_args(args):
                 args.model_family, args.pretrained_model_name_or_path
             ),
             subfolder="scheduler",
-            shift=1 if args.model_family == "sd3" else 3,
+            shift=args.flow_schedule_shift,
         )
     else:
         if args.model_family == "legacy":

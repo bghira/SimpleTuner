@@ -18,7 +18,7 @@ if torch.cuda.is_available():
         ]
     )
     primary_device = torch.cuda.get_device_properties(0)
-    if primary_device.major >= 9:
+    if primary_device.major >= 8:
         # Hopper! Or blackwell+.
         quantised_precision_levels.append("fp8-torchao")
 

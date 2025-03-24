@@ -95,6 +95,7 @@ def get_argument_parser():
             "smoldit",
             "sdxl",
             "ltxvideo",
+            "wan",
             "legacy",
         ],
         default=None,
@@ -696,6 +697,14 @@ def get_argument_parser():
         help=(
             "If set, will enable tiling for VAE caching. This is useful for very large images when VRAM is limited."
             " This may be required for 2048px VAE caching on 24G accelerators, in addition to reducing --vae_batch_size."
+        ),
+    )
+    parser.add_argument(
+        "--vae_enable_slicing",
+        action="store_true",
+        default=False,
+        help=(
+            "If set, will enable slicing for VAE caching. This is useful for video models."
         ),
     )
     parser.add_argument(
@@ -1570,6 +1579,7 @@ def get_argument_parser():
         default=None,
         help=(
             "StabilityAI recommends a value of [7, 8, 9] for Stable Diffusion 3.5 Medium."
+            " For Wan 2.1, a value of [9], [10], or, [9, 10] was found to work well."
         ),
     )
     parser.add_argument(
@@ -1581,8 +1591,8 @@ def get_argument_parser():
     parser.add_argument(
         "--validation_guidance_skip_layers_stop",
         type=float,
-        default=0.01,
-        help=("StabilityAI recommends a value of 0.2 for SLG start."),
+        default=0.2,
+        help=("StabilityAI recommends a value of 0.2 for SLG stop."),
     )
     parser.add_argument(
         "--validation_guidance_skip_scale",
@@ -1725,6 +1735,11 @@ def get_argument_parser():
         help="Number of images that should be generated during validation with `validation_prompt`.",
     )
     parser.add_argument(
+        "--validation_disable",
+        action="store_true",
+        help="Enable to completely disable the generation of validation images.",
+    )
+    parser.add_argument(
         "--validation_steps",
         type=int,
         default=100,
@@ -1783,6 +1798,14 @@ def get_argument_parser():
             "The default scheduler, DDIM, benefits from more steps. UniPC can do well with just 10-15."
             " For more speed during validations, reduce this value. For better quality, increase it."
             " For model distilation, you will likely want to keep this low."
+        ),
+    )
+    parser.add_argument(
+        "--validation_num_video_frames",
+        type=int,
+        default=None,
+        help=(
+            "When this is set, you can reduce the number of frames from the default model value (but not go beyond that)."
         ),
     )
     parser.add_argument(
@@ -2407,7 +2430,8 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
 
     if (
         args.pretrained_vae_model_name_or_path is not None
-        and args.model_family in ["legacy", "flux", "sd3", "sana", "ltxvideo"]
+        # currently these are the only models we have using the SDXL VAE.
+        and args.model_family not in ["sdxl", "pixart_sigma", "kolors"]
         and "sdxl" in args.pretrained_vae_model_name_or_path
         and "deepfloyd" not in args.model_type
     ):
@@ -2526,6 +2550,12 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             sys.exit(1)
         flux_version = "schnell"
         model_max_seq_length = 256
+
+    if args.model_family == "wan":
+        args.tokenizer_max_length = 226
+    if args.model_family in ["wan", "ltxvideo"]:
+        info_log("Disabling unconditional validation to save on time.")
+        args.validation_disable_unconditional = True
 
     if args.model_family == "flux":
         if (
@@ -2651,9 +2681,13 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         assert (
             "multiplier" in lycoris_config
         ), "lycoris_config JSON must contain multiplier key"
-        assert (
-            "linear_dim" in lycoris_config
-        ), "lycoris_config JSON must contain linear_dim key"
+        if (
+            "full_matrix" not in lycoris_config
+            or lycoris_config.get("full_matrix") is not True
+        ):
+            assert (
+                "linear_dim" in lycoris_config
+            ), "lycoris_config JSON must contain linear_dim key if full_matrix is not set."
         assert (
             "linear_alpha" in lycoris_config
         ), "lycoris_config JSON must contain linear_alpha key"
@@ -2694,13 +2728,32 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             f"No data backend config provided. Using default config at {args.data_backend_config}."
         )
 
+    if (
+        args.validation_num_video_frames is not None
+        and args.validation_num_video_frames < 1
+    ):
+        raise ValueError("validation_num_video_frames must be at least 1.")
+
     # Check if we have a valid gradient accumulation steps.
     if args.gradient_accumulation_steps < 1:
         raise ValueError(
             f"Invalid gradient_accumulation_steps parameter: {args.gradient_accumulation_steps}, should be >= 1"
         )
 
+    if args.base_model_precision == 'fp8-quanto':
+        if args.model_family in ['wan', 'sd3']:
+            error_log(
+                "Quanto does not support WAN or SD3 models for FP8. Please use torchao for FP8, or int8 instead."
+            )
+            sys.exit(1)
+
     if args.validation_guidance_skip_layers is not None:
+        if args.model_family not in ["sd3", "wan"]:
+            raise ValueError(
+                "Currently, skip-layer guidance is not supported for {}".format(
+                    args.model_family
+                )
+            )
         try:
             import json
 
@@ -2708,12 +2761,16 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
                 args.validation_guidance_skip_layers
             )
         except Exception as e:
-            logger.error(f"Could not load skip layers: {e}")
+            logger.error(f"Could not load validation_guidance_skip_layers: {e}")
             raise
 
     if args.framerate is None:
         if args.model_family == "ltxvideo":
             args.framerate = 25
+        if args.model_family == "wan":
+            args.framerate = 15
+            args.vae_enable_tiling = True
+            args.vae_enable_slicing = True
 
     if (
         args.sana_complex_human_instruction is not None

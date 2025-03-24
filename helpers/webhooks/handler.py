@@ -1,4 +1,5 @@
 from helpers.webhooks.config import WebhookConfig
+from helpers.multiaspect.image import MultiaspectImage
 from pathlib import Path
 import requests
 import os
@@ -163,6 +164,7 @@ class WebhookHandler:
             raise ValueError(f"Images must be a list of PIL images. Received: {images}")
 
         for index, img in enumerate(images):
+            img = MultiaspectImage.numpy_list_to_pil(img)
             img_byte_array = BytesIO()
             img.save(img_byte_array, format="PNG")
             img_byte_array.seek(0)
@@ -204,11 +206,14 @@ class WebhookHandler:
         max_attachments = 10
         if images and len(images) > max_attachments:
             for i in range(0, len(images), max_attachments):
-                self._send_request(
-                    message,
-                    images[i : i + max_attachments],
-                    store_response=store_response,
-                )
+                try:
+                    self._send_request(
+                        message,
+                        images[i : i + max_attachments],
+                        store_response=store_response,
+                    )
+                except Exception as e:
+                    logger.error(f"Error sending webhook: {e}")
         else:
             self._send_request(message, images, store_response=store_response)
 

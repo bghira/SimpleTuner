@@ -20,6 +20,8 @@ from concurrent.futures import as_completed
 from hashlib import sha256
 from helpers.training import image_file_extensions
 from helpers.webhooks.mixin import WebhookMixin
+from helpers.models.ltxvideo import normalize_ltx_latents
+from helpers.models.wan import compute_wan_posterior
 
 logger = logging.getLogger("VAECache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -269,6 +271,10 @@ class VAECache(WebhookMixin):
     def init_vae(self):
         if StateTracker.get_args().model_family == "sana":
             from diffusers import AutoencoderDC as AutoencoderClass
+        elif StateTracker.get_args().model_family == "ltxvideo":
+            from diffusers import AutoencoderKLLTXVideo as AutoencoderClass
+        elif StateTracker.get_args().model_family == "wan":
+            from diffusers import AutoencoderKLWan as AutoencoderClass
         else:
             from diffusers import AutoencoderKL as AutoencoderClass
 
@@ -440,38 +446,8 @@ class VAECache(WebhookMixin):
         # )
         return relevant_files
 
-    def process_video_latents(self, latents_uncached):
-        output_cache_entry = latents_uncached
-        if StateTracker.get_model_family() in ["ltxvideo"]:
-            from helpers.models.ltxvideo import (
-                normalize_ltx_latents,
-                pack_ltx_latents,
-                unpack_ltx_latents,
-            )
-
-            # hardcode patch size to 1 for LTX Video.
-            # patch_size, patch_size_t = self.transformer.config.patch_size, self.transformer.config.patch_size_t
-            patch_size, patch_size_t = 1, 1
-            _, _, num_frames, height, width = latents_uncached.shape
-            logger.debug(f"Latents shape: {latents_uncached.shape}")
-            latents_uncached = normalize_ltx_latents(
-                latents_uncached, self.vae.latents_mean, self.vae.latents_std
-            )
-
-            output_cache_entry = {
-                "latents": latents_uncached.shape,  # we'll log the shape first
-                "num_frames": self.num_video_frames,
-                "height": height,
-                "width": width,
-            }
-            logger.debug(f"Video latent processing results: {output_cache_entry}")
-            # we'll now overwrite the latents after logging.
-            output_cache_entry["latents"] = latents_uncached
-
-        return output_cache_entry
-
     def prepare_video_latents(self, samples):
-        if StateTracker.get_model_family() == "ltxvideo":
+        if StateTracker.get_model_family() in ["ltxvideo", "wan"]:
             if samples.ndim == 4:
                 logger.debug("PROCESSING IMAGE to VIDEO LATENTS CONVERSION")
                 logger.debug(f"Unsqueeze from dim {samples.shape}")
@@ -492,12 +468,51 @@ class VAECache(WebhookMixin):
                 and self.num_video_frames != num_frames
             ):
                 # we'll discard along dim2 after num_video_frames
-                samples = samples[:, :, :125, :, :]
-                logger.info(f"Sliced to {samples.shape}")
+                samples = samples[:, :, : self.num_video_frames, :, :]
+                logger.debug(f"Sliced to {samples.shape}")
+        elif StateTracker.get_model_family() in ["hunyuan-video", "mochi"]:
+            raise Exception(
+                f"{StateTracker.get_model_family()} not supported for VAE Caching yet."
+            )
 
         logger.debug(f"Permute to: {samples.shape}")
         logger.debug(f"Final samples shape: {samples.shape}")
         return samples
+
+    def process_video_latents(self, latents_uncached):
+        output_cache_entry = latents_uncached
+        if StateTracker.get_model_family() in ["ltxvideo"]:
+            # hardcode patch size to 1 for LTX Video.
+            # patch_size, patch_size_t = self.transformer.config.patch_size, self.transformer.config.patch_size_t
+            patch_size, patch_size_t = 1, 1
+            _, _, num_frames, height, width = latents_uncached.shape
+            logger.debug(f"Latents shape: {latents_uncached.shape}")
+            latents_uncached = normalize_ltx_latents(
+                latents_uncached, self.vae.latents_mean, self.vae.latents_std
+            )
+
+            output_cache_entry = {
+                "latents": latents_uncached.shape,  # we'll log the shape first
+                "num_frames": self.num_video_frames,
+                "height": height,
+                "width": width,
+            }
+            logger.debug(f"Video latent processing results: {output_cache_entry}")
+            # we'll now overwrite the latents after logging.
+            output_cache_entry["latents"] = latents_uncached
+        elif StateTracker.get_model_family() in ["wan"]:
+            logger.debug(
+                f"Shape for Wan VAE encode: {latents_uncached.shape} with latents_mean: {self.vae.latents_mean} and latents_std: {self.vae.latents_std}"
+            )
+            latents_uncached = compute_wan_posterior(
+                latents_uncached, self.vae.latents_mean, self.vae.latents_std
+            )
+        elif StateTracker.get_model_family() in ["hunyuan-video", "mochi"]:
+            raise Exception(
+                f"{StateTracker.get_model_family()} not supported for VAE Caching yet."
+            )
+
+        return output_cache_entry
 
     def encode_images(self, images, filepaths, load_from_cache=True):
         """
@@ -593,7 +608,7 @@ class VAECache(WebhookMixin):
                     self.accelerator.device, dtype=StateTracker.get_vae_dtype()
                 )
                 processed_images = self.prepare_video_latents(processed_images)
-                logger.info(f"Encoding: {processed_images.shape}")
+                logger.debug(f"Encoding: {processed_images.shape}")
                 latents_uncached = self.vae.encode(processed_images)
 
                 if hasattr(latents_uncached, "latent_dist"):
@@ -607,7 +622,9 @@ class VAECache(WebhookMixin):
                     latents_uncached = (
                         latents_uncached - self.vae.config.shift_factor
                     ) * self.vae.config.scaling_factor
-                elif isinstance(latents_uncached, torch.Tensor):
+                elif isinstance(latents_uncached, torch.Tensor) and hasattr(
+                    self.vae.config, "scaling_factor"
+                ):
                     latents_uncached = (
                         getattr(latents_uncached, "latent", latents_uncached)
                         * self.vae.config.scaling_factor
@@ -782,7 +799,7 @@ class VAECache(WebhookMixin):
                 filepaths.append(filepath)
 
                 if self.transform_video is not None:
-                    logger.info(f"Running video transformations on {image.shape}")
+                    logger.debug(f"Running video transformations on {image.shape}")
                     pixel_values = self.transform_video(image).to(
                         self.accelerator.device, dtype=self.vae.dtype
                     )

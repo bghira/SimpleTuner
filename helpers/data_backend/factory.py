@@ -305,10 +305,12 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         if "video" in backend:
             output["config"]["video"].update(backend["video"])
         if "num_frames" not in output["config"]["video"]:
+            default_num_seconds = 5
+            video_duration_in_frames = args.framerate * default_num_seconds
             warning_log(
-                f"No `num_frames` was provided for video backend. Defaulting to 125 (5 seconds @ 25fps) to avoid memory implosion/explosion. Reduce value further for lower memory use."
+                f"No `num_frames` was provided for video backend. Defaulting to {video_duration_in_frames} ({default_num_seconds} seconds @ {args.framerate}fps) to avoid memory implosion/explosion. Reduce value further for lower memory use."
             )
-            output["config"]["video"]["num_frames"] = 125
+            output["config"]["video"]["num_frames"] = video_duration_in_frames
         if "min_frames" not in output["config"]["video"]:
             warning_log(
                 f"No `min_frames` was provided for video backend. Defaulting to {output['config']['video']['num_frames']} frames (num_frames). Reduce num_frames further for lower memory use."
@@ -446,6 +448,12 @@ def configure_parquet_database(backend: dict, args, data_backend: BaseDataBacken
     )
 
 
+def move_text_encoders(text_encoders: list, target_device: str):
+    """Move text encoders to the target device."""
+    logger.info(f"Moving text encoders to {target_device}")
+    return [encoder.to(target_device) for encoder in text_encoders]
+
+
 def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenizers):
     """
     Configure a multiple dataloaders based on the provided commandline args.
@@ -543,6 +551,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
 
         # Generate a TextEmbeddingCache object
         logger.debug(f"rank {get_rank()} is creating TextEmbeddingCache")
+        move_text_encoders(text_encoders, accelerator.device)
         init_backend["text_embed_cache"] = TextEmbeddingCache(
             id=init_backend["id"],
             data_backend=init_backend["data_backend"],
@@ -589,6 +598,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             )
 
         # We don't compute the text embeds at this time, because we do not really have any captions available yet.
+        # move_text_encoders(text_encoders, "cpu")
         text_embed_backends[init_backend["id"]] = init_backend
 
     if not text_embed_backends:
@@ -1108,6 +1118,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             info_log(
                 f"(id={init_backend['id']}) Initialise text embed pre-computation using the {caption_strategy} caption strategy. We have {len(captions)} captions to process."
             )
+            move_text_encoders(text_encoders, accelerator.device)
             init_backend["text_embed_cache"].compute_embeddings_for_prompts(
                 captions, return_concat=False, load_from_cache=False
             )
@@ -1152,6 +1163,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                 raise ValueError(
                     f"VAE image embed cache directory {backend.get('cache_dir_vae')} is not set. This is required for the VAE image embed cache."
                 )
+            move_text_encoders(text_encoders, "cpu")
             init_backend["vaecache"] = VAECache(
                 id=init_backend["id"],
                 dataset_type=init_backend["dataset_type"],
@@ -1192,6 +1204,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                 vae_cache_ondemand=args.vae_cache_ondemand,
                 hash_filenames=hash_filenames,
             )
+            move_text_encoders(text_encoders, accelerator.device)
             init_backend["vaecache"].set_webhook_handler(
                 StateTracker.get_webhook_handler()
             )
