@@ -79,9 +79,12 @@ def get_tokenizers(args):
         is_t5_model = False
         # T5-only models
         if args.model_family.lower() in t5_only_models:
-            from transformers import T5TokenizerFast
+            from transformers import T5TokenizerFast, T5Tokenizer
 
             tokenizer_cls = T5TokenizerFast
+            if args.model_family.lower() == "ltxvideo":
+                # this one specifically seems to need the non-fast tokeniser
+                tokenizer_cls = T5Tokenizer
             is_t5_model = True
         elif args.model_family == "sana":
             from transformers import Gemma2Model, GemmaTokenizerFast
