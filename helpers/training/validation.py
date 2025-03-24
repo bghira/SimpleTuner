@@ -100,7 +100,7 @@ def resize_validation_images(validation_images, edge_length):
 
 
 def reset_eval_datasets():
-    eval_datasets = StateTracker.get_data_backends(_type="eval")
+    eval_datasets = StateTracker.get_data_backends(_type="eval", _types=None)
     for dataset_name, dataset in eval_datasets.items():
         if "train_dataset" not in dataset:
             logger.debug(
@@ -120,7 +120,7 @@ def retrieve_eval_images(dataset_name=None):
     Returns:
         A collated batch from the eval dataset(s), or raises MultiDatasetExhausted.
     """
-    eval_datasets = StateTracker.get_data_backends(_type="eval")
+    eval_datasets = StateTracker.get_data_backends(_type="eval", _types=None)
     output = {}
     eval_samples = None
     from helpers.training.collate import collate_fn
@@ -1099,7 +1099,10 @@ class Validation:
         elif self.args.model_family in ["ltxvideo", "wan"]:
             if self.args.validation_noise_scheduler is None:
                 # Diffusers repo uses UniPC by default.
-                self.args.validation_noise_scheduler = "unipc"
+                if self.args.model_family == "ltxvideo":
+                    self.args.validation_noise_scheduler = "flow-match"
+                else:
+                    self.args.validation_noise_scheduler = "unipc"
             if self.args.validation_noise_scheduler == "flow-match":
                 # The Beta schedule looks WAY better...
                 scheduler_args["use_beta_sigmas"] = True
@@ -1914,7 +1917,7 @@ class Evaluation:
           - all eval datasets if dataset_name is None
           - the specific dataset if dataset_name is given
         """
-        eval_datasets = StateTracker.get_data_backends(_type="eval")
+        eval_datasets = StateTracker.get_data_backends(_type="eval", _types=None)
         if dataset_name is not None:
             ds = eval_datasets.get(dataset_name)
             return len(ds["sampler"]) if ds else 0
@@ -2065,7 +2068,7 @@ class Evaluation:
         # Decide if we pool or do separate passes
         pooling = getattr(self.config, "eval_dataset_pooling")
         eval_datasets = StateTracker.get_data_backends(
-            _type="eval"
+            _type="eval", _types=None
         )  # dict of {name: ...}
 
         if pooling:
