@@ -118,8 +118,8 @@ There, you will possibly need to modify the following variables:
 
 - `model_type` - Set this to `lora`.
 - `model_family` - Set this to `ltxvideo`.
-- `pretrained_model_name_or_path` - Set this to `Lightricks/LTX-Video`.
-- `pretrained_vae_model_name_or_path` - Set this to `Lightricks/LTX-Video`.
+- `pretrained_model_name_or_path` - Set this to `Lightricks/LTX-Video-0.9.5`.
+- `pretrained_vae_model_name_or_path` - Set this to `Lightricks/LTX-Video-0.9.5`.
 - `output_dir` - Set this to the directory where you want to store your checkpoints and validation images. It's recommended to use a full path here.
 - `train_batch_size` - this can be increased for more stability, but a value of 4 should work alright to start with
 - `validation_resolution` - This should be set to whatever you typically generate videos with when using LTX (`768x512`)
@@ -136,6 +136,69 @@ There, you will possibly need to modify the following variables:
 - `gradient_checkpointing_interval` - this is not yet supported on LTX Video, and should be removed from your config.
 
 Multi-GPU users can reference [this document](/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
+
+At the end, your config should resemble mine:
+
+```json
+{
+  "resume_from_checkpoint": "latest",
+  "quantize_via": "cpu",
+  "data_backend_config": "config/ltxvideo/multidatabackend.json",
+  "aspect_bucket_rounding": 2,
+  "seed": 42,
+  "minimum_image_size": 0,
+  "disable_benchmark": false,
+  "output_dir": "output/ltxvideo",
+  "lora_type": "lycoris",
+  "lycoris_config": "config/ltxvideo/lycoris_config.json",
+  "max_train_steps": 400000,
+  "num_train_epochs": 0,
+  "checkpointing_steps": 1000,
+  "checkpoints_total_limit": 5,
+  "hub_model_id": "ltxvideo-disney",
+  "push_to_hub": "true",
+  "push_checkpoints_to_hub": "true",
+  "tracker_project_name": "lora-training",
+  "tracker_run_name": "ltxvideo-adamW",
+  "report_to": "wandb",
+  "model_type": "lora",
+  "pretrained_model_name_or_path": "Lightricks/LTX-Video-0.9.5",
+  "model_family": "ltxvideo",
+  "train_batch_size": 8,
+  "gradient_checkpointing": true,
+  "gradient_accumulation_steps": 1,
+  "caption_dropout_probability": 0.1,
+  "resolution_type": "pixel_area",
+  "resolution": 800,
+  "validation_seed": 42,
+  "validation_steps": 100,
+  "validation_resolution": "768x512",
+  "validation_negative_prompt": "worst quality, inconsistent motion, blurry, jittery, distorted",
+  "validation_guidance": 3.0,
+  "validation_num_inference_steps": 40,
+  "validation_prompt": "The video depicts a long, straight highway stretching into the distance, flanked by metal guardrails. The road is divided into multiple lanes, with a few vehicles visible in the far distance. The surrounding landscape features dry, grassy fields on one side and rolling hills on the other. The sky is mostly clear with a few scattered clouds, suggesting a bright, sunny day. And then the camera switch to a inding mountain road covered in snow, with a single vehicle traveling along it. The road is flanked by steep, rocky cliffs and sparse vegetation. The landscape is characterized by rugged terrain and a river visible in the distance. The scene captures the solitude and beauty of a winter drive through a mountainous region.",
+  "mixed_precision": "bf16",
+  "optimizer": "adamw_bf16",
+  "learning_rate": 0.00005,
+  "max_grad_norm": 0.0,
+  "grad_clip_method": "value",
+  "lr_scheduler": "cosine",
+  "lr_warmup_steps": 400000,
+  "base_model_precision": "fp8-torchao",
+  "vae_batch_size": 1,
+  "webhook_config": "config/ltxvideo/webhook.json",
+  "compress_disk_cache": true,
+  "use_ema": true,
+  "ema_validation": "ema_only",
+  "ema_update_interval": 2,
+  "delete_problematic_images": "true",
+  "disable_bucket_pruning": true,
+  "lora_rank": 128,
+  "flow_schedule_shift": 1,
+  "validation_prompt_library": false,
+  "ignore_final_epochs": true
+}
+```
 
 #### Validation prompts
 
