@@ -2548,7 +2548,8 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
 
     if args.model_family == "wan":
         args.tokenizer_max_length = 226
-        info_log("Disabling unconditional validation for Wan to save on time.")
+    if args.model_family in ["wan", "ltxvideo"]:
+        info_log("Disabling unconditional validation to save on time.")
         args.validation_disable_unconditional = True
 
     if args.model_family == "flux":
@@ -2733,6 +2734,13 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         raise ValueError(
             f"Invalid gradient_accumulation_steps parameter: {args.gradient_accumulation_steps}, should be >= 1"
         )
+
+    if args.base_model_precision == 'fp8-quanto':
+        if args.model_family in ['wan', 'sd3']:
+            error_log(
+                "Quanto does not support WAN or SD3 models for FP8. Please use torchao for FP8, or int8 instead."
+            )
+            sys.exit(1)
 
     if args.validation_guidance_skip_layers is not None:
         if args.model_family not in ["sd3", "wan"]:
