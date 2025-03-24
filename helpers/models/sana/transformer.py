@@ -329,10 +329,6 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin):
         """
         self.gradient_checkpointing_interval = interval
 
-    def _set_gradient_checkpointing(self, module, value=False):
-        if hasattr(module, "gradient_checkpointing"):
-            module.gradient_checkpointing = value
-
     @property
     # Copied from diffusers.models.unets.unet_2d_condition.UNet2DConditionModel.attn_processors
     def attn_processors(self) -> Dict[str, AttentionProcessor]:

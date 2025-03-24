@@ -147,6 +147,7 @@ class TestTrainer(unittest.TestCase):
             flow_schedule_auto_shift=False,
             validation_guidance_skip_layers=None,
             pretrained_model_name_or_path="some/path",
+            pretrained_vae_model_name_or_path="some/other/path",
             base_model_precision="no_change",
             gradient_checkpointing_interval=None,
             # deprecated options

@@ -50,7 +50,7 @@ class VideoToTensor:
 class MultiaspectImage:
     @staticmethod
     def get_video_transforms():
-        if not StateTracker.get_model_family() in ["ltxvideo"]:
+        if not StateTracker.get_model_family() in ["ltxvideo", "wan"]:
             raise ValueError(
                 f"Cannot transform videos for {StateTracker.get_model_family()}."
             )
@@ -64,7 +64,7 @@ class MultiaspectImage:
 
     @staticmethod
     def get_image_transforms():
-        if StateTracker.get_model_family() in ["ltxvideo"]:
+        if StateTracker.get_model_family() in ["ltxvideo", "wan"]:
             # LTX Video has its own normalisation, later on.
             return transforms.Compose(
                 [
@@ -81,9 +81,9 @@ class MultiaspectImage:
         )
 
     @staticmethod
-    def _round_to_nearest_multiple(value):
+    def _round_to_nearest_multiple(value, override_value: int = None):
         """Round a value to the nearest multiple."""
-        multiple = StateTracker.get_args().aspect_bucket_alignment
+        multiple = override_value or StateTracker.get_args().aspect_bucket_alignment
         rounded = round(value / multiple) * multiple
         return max(rounded, multiple)  # Ensure it's at least the value of 'multiple'
 
@@ -332,6 +332,14 @@ class MultiaspectImage:
             width, height = image.size
         aspect_ratio = round(width / height, to_round)
         return aspect_ratio
+
+    @staticmethod
+    def numpy_list_to_pil(numpy_list):
+        if isinstance(numpy_list, list) and isinstance(numpy_list[0], np.ndarray):
+            numpy_list = [
+                Image.fromarray(np.uint8(image)).convert("RGB") for image in numpy_list
+            ]
+        return numpy_list
 
 
 resize_helpers = {

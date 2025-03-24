@@ -1,18 +1,39 @@
-## LTX Video Quickstart
+## Wan 2.1 Quickstart
 
-In this example, we'll be training an LTX-Video LoRA using Sayak Paul's [public domain Disney dataset](https://hf.co/datasets/sayakpaul/video-dataset-disney-organized).
+In this example, we'll be training a Wan 2.1 LoRA using Sayak Paul's [public domain Disney dataset](https://hf.co/datasets/sayakpaul/video-dataset-disney-organized).
+
+
+
+https://github.com/user-attachments/assets/51e6cbfd-5c46-407c-9398-5932fa5fa561
+
 
 ### Hardware requirements
 
-LTX does not require much system **or** GPU memory.
+Wan 2.1 **1.3B** does not require much system **or** GPU memory. The **14B** model, also supported, is a lot more demanding.
 
-When you're training every component of a rank-16 LoRA (MLP, projections, multimodal blocks), it ends up using a bit more than 12G on an M3 Mac (batch size 4).
+Currently, image-to-video training is not supported for Wan, but T2V LoRA and Lycoris will run on the I2V models.
+
+#### Text to Video
+
+1.3B - https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B
+- Resolution: 832x480
+- Rank-16 LoRA uses a bit more than 12G (batch size 4)
+
+14B - https://huggingface.co/Wan-AI/Wan2.1-T2V-14B-Diffusers
+- Resolution: 832x480
+- It'll fit in 24G, but you'll have to fiddle with the settings a bit.
+
+<!--
+#### Image to Video
+14B (720p) - https://huggingface.co/Wan-AI/Wan2.1-I2V-14B-720P-Diffusers
+- Resolution: 1280x720
+-->
 
 You'll need: 
 - **a realistic minimum** is 16GB or, a single 3090 or V100 GPU
 - **ideally** multiple 4090, A6000, L40S, or better
 
-Apple silicon systems work great with LTX so far, albeit at a lower resolution due to limits inside the MPS backend used by Pytorch.
+Apple silicon systems do not work super well with Wan 2.1 so far, something like 10 minutes for a single training step can be expected..
 
 ### Prerequisites
 
@@ -74,6 +95,19 @@ poetry install
 # Linux with ROCM
 poetry install -C install/rocm
 ```
+#### SageAttention 2
+
+If you wish to use SageAttention 2, some steps should be followed.
+
+> Note: SageAttention provides minimal speed-up, not super effective; not sure why. Tested on 4090.
+
+Run the following while still inside your python venv:
+```bash
+git clone https://github.com/thu-ml/SageAttention
+pushd SageAttention
+  pip install . --no-build-isolation
+popd
+```
 
 #### AMD ROCm follow-up steps
 
@@ -117,15 +151,16 @@ cp config/config.json.example config/config.json
 There, you will possibly need to modify the following variables:
 
 - `model_type` - Set this to `lora`.
-- `model_family` - Set this to `ltxvideo`.
-- `pretrained_model_name_or_path` - Set this to `Lightricks/LTX-Video-0.9.5`.
-- `pretrained_vae_model_name_or_path` - Set this to `Lightricks/LTX-Video-0.9.5`.
+- `model_family` - Set this to `wan`.
+- `pretrained_model_name_or_path` - Set this to `Wan-AI/Wan2.1-T2V-1.3B-Diffusers`.
+- `pretrained_vae_model_name_or_path` - Set this to `Wan-AI/Wan2.1-T2V-1.3B-Diffusers`.
 - `output_dir` - Set this to the directory where you want to store your checkpoints and validation images. It's recommended to use a full path here.
 - `train_batch_size` - this can be increased for more stability, but a value of 4 should work alright to start with
-- `validation_resolution` - This should be set to whatever you typically generate videos with when using LTX (`768x512`)
-  - Multiple resolutions may be specified using commas to separate them: `1280x768,768x512`
-- `validation_guidance` - Use whatever you are used to selecting at inference time for LTX.
+- `validation_resolution` - This should be set to whatever you typically generate videos with when using Wan 2.1 (`480x480` for the 480p model)
+  - Multiple resolutions may be specified using commas to separate them: `480x480,768x512`
+- `validation_guidance` - Use whatever you are used to selecting at inference time for Wan 2.1.
 - `validation_num_inference_steps` - Use somewhere around 25 to save time while still seeing decent quality.
+- `validation_num_video_frames` - For Wan, the default is 81, or 5 seconds of video. But you can reduce this value to 1 for generating still images (buggy) or any value in between for just shorter videos.
 - `--lora_rank=4` if you wish to substantially reduce the size of the LoRA being trained. This can help with VRAM use while reducing its capacity for learning.
 
 - `gradient_accumulation_steps` - This option causes update steps to be accumulated over several steps.
@@ -133,72 +168,80 @@ There, you will possibly need to modify the following variables:
 - `optimizer` - Beginners are recommended to stick with adamw_bf16, though optimi-lion and optimi-stableadamw are also good choices.
 - `mixed_precision` - Beginners should keep this in `bf16`
 - `gradient_checkpointing` - set this to true in practically every situation on every device
-- `gradient_checkpointing_interval` - this is not yet supported on LTX Video, and should be removed from your config.
+- `gradient_checkpointing_interval` - this is not yet supported on Wan 2.1, and should be removed from your config.
 
 Multi-GPU users can reference [this document](/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
 
-At the end, your config should resemble mine:
+Your config at the end will look like mine:
 
 ```json
 {
   "resume_from_checkpoint": "latest",
   "quantize_via": "cpu",
-  "data_backend_config": "config/ltxvideo/multidatabackend.json",
+  "attention_mechanism": "sageattention",
+  "data_backend_config": "config/wan/multidatabackend.json",
   "aspect_bucket_rounding": 2,
   "seed": 42,
   "minimum_image_size": 0,
   "disable_benchmark": false,
-  "output_dir": "output/ltxvideo",
-  "lora_type": "lycoris",
-  "lycoris_config": "config/ltxvideo/lycoris_config.json",
+  "output_dir": "output/wan",
+  "lora_type": "standard",
+  "lycoris_config": "config/wan/lycoris_config.json",
   "max_train_steps": 400000,
   "num_train_epochs": 0,
   "checkpointing_steps": 1000,
   "checkpoints_total_limit": 5,
-  "hub_model_id": "ltxvideo-disney",
+  "hub_model_id": "wan-disney",
   "push_to_hub": "true",
   "push_checkpoints_to_hub": "true",
   "tracker_project_name": "lora-training",
-  "tracker_run_name": "ltxvideo-adamW",
+  "tracker_run_name": "wan-adamW",
   "report_to": "wandb",
   "model_type": "lora",
-  "pretrained_model_name_or_path": "Lightricks/LTX-Video-0.9.5",
-  "model_family": "ltxvideo",
-  "train_batch_size": 8,
+  "pretrained_model_name_or_path": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+  "pretrained_t5_model_name_or_path": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+  "model_family": "wan",
+  "train_batch_size": 2,
   "gradient_checkpointing": true,
   "gradient_accumulation_steps": 1,
   "caption_dropout_probability": 0.1,
   "resolution_type": "pixel_area",
-  "resolution": 800,
+  "resolution": 480,
   "validation_seed": 42,
   "validation_steps": 100,
-  "validation_resolution": "768x512",
-  "validation_negative_prompt": "worst quality, inconsistent motion, blurry, jittery, distorted",
-  "validation_guidance": 3.0,
+  "validation_resolution": "832x480",
+  "validation_prompt": "两只拟人化的猫咪身穿舒适的拳击装备，戴着鲜艳的手套，在聚光灯照射的舞台上激烈对战",
+  "validation_negative_prompt": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
+  "validation_guidance": 5.2,
   "validation_num_inference_steps": 40,
-  "validation_prompt": "The video depicts a long, straight highway stretching into the distance, flanked by metal guardrails. The road is divided into multiple lanes, with a few vehicles visible in the far distance. The surrounding landscape features dry, grassy fields on one side and rolling hills on the other. The sky is mostly clear with a few scattered clouds, suggesting a bright, sunny day. And then the camera switch to a inding mountain road covered in snow, with a single vehicle traveling along it. The road is flanked by steep, rocky cliffs and sparse vegetation. The landscape is characterized by rugged terrain and a river visible in the distance. The scene captures the solitude and beauty of a winter drive through a mountainous region.",
+  "validation_num_video_frames": 81,
   "mixed_precision": "bf16",
-  "optimizer": "adamw_bf16",
+  "optimizer": "optimi-lion",
   "learning_rate": 0.00005,
-  "max_grad_norm": 0.0,
+  "max_grad_norm": 0.01,
   "grad_clip_method": "value",
   "lr_scheduler": "cosine",
   "lr_warmup_steps": 400000,
-  "base_model_precision": "fp8-torchao",
+  "base_model_precision": "no_change",
   "vae_batch_size": 1,
-  "webhook_config": "config/ltxvideo/webhook.json",
+  "webhook_config": "config/wan/webhook.json",
   "compress_disk_cache": true,
   "use_ema": true,
   "ema_validation": "ema_only",
   "ema_update_interval": 2,
   "delete_problematic_images": "true",
   "disable_bucket_pruning": true,
-  "lora_rank": 128,
-  "flow_schedule_shift": 1,
+  "validation_guidance_skip_layers": [9],
+  "validation_guidance_skip_layers_start": 0.0,
+  "validation_guidance_skip_layers_stop": 1.0,
+  "lora_rank": 16,
+  "flow_schedule_shift": 3,
   "validation_prompt_library": false,
   "ignore_final_epochs": true
 }
 ```
+
+Of particular importance in this configuration are the validation settings. Without these, the outputs do not look super great.
 
 #### Validation prompts
 
@@ -242,7 +285,7 @@ A set of diverse prompt will help determine whether the model is collapsing as i
 }
 ```
 
-> ℹ️ LTX Video is a flow-matching model based on T5 XXL; shorter prompts may not have enough information for the model to do a good job. Be sure to use longer, more descriptive prompts.
+> ℹ️ Wan 2.1 is a flow-matching model based on Pile T5; shorter prompts may not have enough information for the model to do a good job. Be sure to use longer, more descriptive prompts.
 
 #### CLIP score tracking
 
@@ -254,7 +297,7 @@ This should not be enabled for video model training, at the present time.
 
 #### Flow-matching schedule shift
 
-Flow-matching models such as Flux, Sana, SD3, and LTX Video have a property called `shift` that allows us to shift the trained portion of the timestep schedule using a simple decimal value.
+Flow-matching models such as Flux, Sana, SD3, LTX Video and Wan 2.1 have a property called `shift` that allows us to shift the trained portion of the timestep schedule using a simple decimal value.
 
 ##### Defaults
 By default, no schedule shift is applied, which results in a sigmoid bell-shape to the timestep sampling distribution, otherwise known as `logit_norm`.
@@ -265,7 +308,7 @@ A commonly-recommended approach is to follow several recent works and enable res
 ##### Manual specification
 _Thanks to General Awareness from Discord for the following examples_
 
-> ℹ️ These examples show how the value works using Flux Dev, though LTX Video should be very similar.
+> ℹ️ These examples show how the value works using Flux Dev, though Wan 2.1 should be very similar.
 
 When using a `--flow_schedule_shift` value of 0.1 (a very low value), only the finer details of the image are affected:
 ![image](https://github.com/user-attachments/assets/991ca0ad-e25a-4b13-a3d6-b4f2de1fe982)
@@ -293,6 +336,24 @@ For `config.json` users:
   "max_grad_norm": 1.0,
   "base_model_default_dtype": "bf16"
 ```
+
+#### Validation settings
+
+During initial exploration into adding Wan 2.1 into SimpleTuner, horrible nightmare fuel output was coming from Wan 2.1, and this boils down to a couple reasons:
+
+- Not enough steps for inference
+  - Unless you're using UniPC, you probably need at least 40 steps. UniPC can bring the number down a little, but you'll have to experiment.
+- Incorrect scheduler configuration
+  - It was using normal Euler flow matching schedule, but the Betas distribution seems to work best
+- Incorrect resolution
+  - Wan 2.1 only really works correctly on the resolutions it was trained on, you get lucky if it works, but it's common for it to be bad results
+- Bad CFG value
+  - Wan 2.1 1.3B in particular seems sensitive to CFG values, but a value around 4.0-5.0 seem safe
+- Bad prompting
+  - Of course, video models seem to require a team of mystics to spend months in the mountains on a zen retreat to learn the sacred art of prompting, because their datasets and caption style are guarded like the Holy Grail.
+  - tl;dr try different prompts.
+
+Despite all of this, unless your batch size is too low and / or your learning rate is too high, the model will run correctly in your favourite inference tool (assuming you already have one that you get good results from).
 
 #### Dataset considerations
 
@@ -322,15 +383,15 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
     "maximum_image_size": 480,
     "target_downsample_size": 480,
     "resolution_type": "pixel_area",
-    "cache_dir_vae": "cache/vae/ltxvideo/disney-black-and-white",
+    "cache_dir_vae": "cache/vae/wan/disney-black-and-white",
     "instance_data_dir": "datasets/disney-black-and-white",
     "disabled": false,
     "caption_strategy": "textfile",
     "metadata_backend": "discovery",
     "repeats": 0,
     "video": {
-        "num_frames": 125,
-        "min_frames": 125
+        "num_frames": 75,
+        "min_frames": 75
     }
   },
   {
@@ -338,7 +399,7 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
     "type": "local",
     "dataset_type": "text_embeds",
     "default": true,
-    "cache_dir": "cache/text/ltxvideo",
+    "cache_dir": "cache/text/wan",
     "disabled": false,
     "write_batch_size": 128
   }
@@ -347,12 +408,13 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
 
 - In the `video` subsection, we have the following keys we can set:
   - `num_frames` (optional, int) is how many seconds of data we'll train on.
-    - At 25 fps, 125 frames is 5 seconds of video, standard output. This should be your target.
+    - At 15 fps, 75 frames is 5 seconds of video, standard output. This should be your target.
   - `min_frames` (optional, int) determines the minimum length of a video that will be considered for training.
     - This should be at least equal to `num_frames`. Not setting it ensures it'll be equal.
   - `max_frames` (optional, int) determines the maximum length of a video that will be considered for training.
-  - `is_i2v` (optional, bool) determines whether i2v training will be done on a dataset.
-    - This is set to True by default for LTX. You can disable it, however.
+<!--  - `is_i2v` (optional, bool) determines whether i2v training will be done on a dataset.
+    - This is set to True by default for Wan 2.1. You can disable it, however.
+-->
 
 Then, create a `datasets` directory:
 
@@ -416,13 +478,13 @@ Like other models, it is possible that the lowest VRAM utilisation can be attain
 
 **NOTE**: Pre-caching of VAE embeds and text encoder outputs may use more memory and still OOM. If so, text encoder quantisation and VAE tiling can be enabled.
 
-Speed was approximately 0.8 iterations per second on an M3 Max Macbook Pro.
+Speed was approximately 665.8 iterations per second on an M3 Max Macbook Pro and 2 seconds per step on a NVIDIA 4090 at a batch size of 1.
 
 ### SageAttention
 
 When using `--attention_mechanism=sageattention`, inference can be sped-up at validation time.
 
-**Note**: This isn't compatible with _every_ model configuration, but it's worth trying.
+**Note**: This isn't compatible with the final VAE decode step, and will not speed that portion up.
 
 ### NF4-quantised training
 
@@ -444,13 +506,14 @@ If VRAM is not a concern then int8 with torch.compile is your best, fastest opti
 
 ### Masked loss
 
-Don't use this with LTX Video.
-
+Don't use this with Wan 2.1.
 
 ### Quantisation
 - Quantisation is not needed to train this model
 
 ### Image artifacts
+Wan requires the use of the Euler Betas flow-matching schedule or (by default) the UniPC multistep solver, a higher order scheduler which will make stronger predictions.
+
 Like other DiT models, if you do these things (among others) some square grid artifacts **may** begin appearing in the samples:
 - Overtrain with low quality data
 - Use too high of a learning rate
@@ -466,22 +529,16 @@ Like other DiT models, if you do these things (among others) some square grid ar
   - However, if you're looking to improve results equally across many aspect buckets, you might have to experiment with `crop_aspect=random` which comes with its own downsides.
 - Mixing dataset configurations by defining your image directory dataset multiple times has produced really good results and a nicely generalised model.
 
-### Training custom fine-tuned LTX models
+### Training custom fine-tuned Wan 2.1 models
 
 Some fine-tuned models on Hugging Face Hub lack the full directory structure, requiring specific options to be set.
 
 ```json
 {
-    "model_family": "ltxvideo",
-    "pretrained_model_name_or_path": "Lightricks/LTX-Video",
+    "model_family": "wan",
+    "pretrained_model_name_or_path": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
     "pretrained_transformer_model_name_or_path": "path/to-the-other-model",
-    "pretrained_vae_model_name_or_path": "Lightricks/LTX-Video",
+    "pretrained_vae_model_name_or_path": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
     "pretrained_transformer_subfolder": "none",
 }
 ```
-
-## Credits
-
-The [finetrainers](https://github.com/a-r-r-o-w/finetrainers) project and the Diffusers team.
-- Originally used some design concepts from SimpleTuner
-- Now contributes insight and code for making video training easily implemented

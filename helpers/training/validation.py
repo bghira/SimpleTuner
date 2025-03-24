@@ -9,6 +9,7 @@ from tqdm import tqdm
 from helpers.training.wrappers import unwrap_model
 from PIL import Image
 from helpers.training.state_tracker import StateTracker
+from helpers.data_backend.factory import move_text_encoders
 from helpers.training.exceptions import MultiDatasetExhausted
 from helpers.models.sdxl.pipeline import (
     StableDiffusionXLPipeline,
@@ -99,7 +100,7 @@ def resize_validation_images(validation_images, edge_length):
 
 
 def reset_eval_datasets():
-    eval_datasets = StateTracker.get_data_backends(_type="eval")
+    eval_datasets = StateTracker.get_data_backends(_type="eval", _types=None)
     for dataset_name, dataset in eval_datasets.items():
         if "train_dataset" not in dataset:
             logger.debug(
@@ -119,7 +120,7 @@ def retrieve_eval_images(dataset_name=None):
     Returns:
         A collated batch from the eval dataset(s), or raises MultiDatasetExhausted.
     """
-    eval_datasets = StateTracker.get_data_backends(_type="eval")
+    eval_datasets = StateTracker.get_data_backends(_type="eval", _types=None)
     output = {}
     eval_samples = None
     from helpers.training.collate import collate_fn
@@ -278,9 +279,11 @@ def prepare_validation_prompt_list(args, embed_cache):
             ncols=100,
             desc="Precomputing user prompt library embeddings",
         ):
+            # move_text_encoders(embed_cache.text_encoders, embed_cache.accelerator.device)
             embed_cache.compute_embeddings_for_prompts(
                 [prompt], is_validation=True, load_from_cache=False
             )
+            # move_text_encoders(embed_cache.text_encoders, "cpu")
             validation_prompts.append(prompt)
             validation_shortnames.append(shortname)
     if args.validation_prompt is not None:
@@ -324,7 +327,7 @@ def prepare_validation_prompt_list(args, embed_cache):
                 validation_negative_prompt_embeds,
                 None,
             )
-        elif model_type in ["pixart_sigma", "smoldit", "sana", "ltxvideo"]:
+        elif model_type in ["pixart_sigma", "smoldit", "sana", "ltxvideo", "wan"]:
             # we use the legacy encoder but we return no pooled embeds.
             validation_negative_prompt_embeds = embed_cache.compute_embeddings_for_prompts(
                 [StateTracker.get_args().validation_negative_prompt],
@@ -586,6 +589,10 @@ class Validation:
         )
         if self.args.model_family == "sana":
             from diffusers import AutoencoderDC as AutoencoderClass
+        elif self.args.model_family == "wan":
+            from diffusers import AutoencoderKLWan as AutoencoderClass
+        elif self.args.model_family == "ltxvideo":
+            from diffusers import AutoencoderKLLTXVideo as AutoencoderClass
         else:
             from diffusers import AutoencoderKL as AutoencoderClass
         self.vae = precached_vae
@@ -604,6 +611,7 @@ class Validation:
                 ).to(self.inference_device)
         StateTracker.set_vae(self.vae)
 
+        logger.info(f"VAE type: {type(self.vae)}")
         return self.vae
 
     def _discover_validation_input_samples(self):
@@ -700,6 +708,10 @@ class Validation:
             from diffusers import LTXPipeline
 
             return LTXPipeline
+        elif model_type == "wan":
+            from helpers.models.wan.pipeline import WanPipeline
+
+            return WanPipeline
         else:
             raise NotImplementedError(
                 f"Model type {model_type} not implemented for validation."
@@ -760,13 +772,14 @@ class Validation:
             )
             # if current_validation_time_ids is not None:
             #     prompt_embeds["time_ids"] = current_validation_time_ids
-        elif (
-            StateTracker.get_model_family() == "legacy"
-            or StateTracker.get_model_family() == "pixart_sigma"
-            or StateTracker.get_model_family() == "smoldit"
-            or StateTracker.get_model_family() == "sana"
-            or StateTracker.get_model_family() == "ltxvideo"
-        ):
+        elif StateTracker.get_model_family() in [
+            "legacy",
+            "pixart_sigma",
+            "smoldit",
+            "sana",
+            "ltxvideo",
+            "wan",
+        ]:
             self.validation_negative_pooled_embeds = None
             current_validation_pooled_embeds = None
             current_validation_prompt_embeds = (
@@ -777,6 +790,7 @@ class Validation:
                 "smoldit",
                 "sana",
                 "ltxvideo",
+                "wan",
             ]:
                 current_validation_prompt_embeds, current_validation_prompt_mask = (
                     current_validation_prompt_embeds
@@ -982,8 +996,7 @@ class Validation:
                     )
                 elif type(image) is list:
                     # maybe video
-                    print(f"video? {image}")
-                    if self.args.model_family in ["ltxvideo"]:
+                    if self.args.model_family in ["ltxvideo", "wan"]:
                         from diffusers.utils.export_utils import export_to_video
 
                         export_to_video(
@@ -1074,17 +1087,35 @@ class Validation:
         )
 
     def setup_scheduler(self):
-        if self.flow_matching and not self.args.model_family == "sana":
+        scheduler_args = {
+            "prediction_type": self.args.prediction_type,
+        }
+        if self.flow_matching and not self.args.model_family not in ["wan", "sana"]:
             # NO TOUCHIE FOR FLOW-MATCHING.
             # Touchie for sana though. It needs a new scheduler on every inference.
             return
         elif self.args.model_family == "sana":
             self.args.validation_noise_scheduler = "sana"
+        elif self.args.model_family in ["ltxvideo", "wan"]:
+            if self.args.validation_noise_scheduler is None:
+                # Diffusers repo uses UniPC by default.
+                if self.args.model_family == "ltxvideo":
+                    self.args.validation_noise_scheduler = "flow-match"
+                else:
+                    self.args.validation_noise_scheduler = "unipc"
+            if self.args.validation_noise_scheduler == "flow-match":
+                # The Beta schedule looks WAY better...
+                scheduler_args["use_beta_sigmas"] = True
+                scheduler_args["shift"] = self.args.flow_schedule_shift
+            if self.args.validation_noise_scheduler == "unipc":
+                scheduler_args["prediction_type"] = 'flow_prediction'
+                scheduler_args["use_flow_sigmas"] = True
+                scheduler_args["num_train_timesteps"] = 1000
+                scheduler_args["flow_shift"] = self.args.flow_schedule_shift
 
         if self.args.validation_noise_scheduler is None:
             return
 
-        scheduler_args = {}
         if (
             self.pipeline is not None
             and "variance_type" in self.pipeline.scheduler.config
@@ -1103,7 +1134,6 @@ class Validation:
             self.args.pretrained_model_name_or_path,
             subfolder="scheduler",
             revision=self.args.revision,
-            prediction_type=self.args.prediction_type,
             timestep_spacing=self.args.inference_scheduler_timestep_spacing,
             rescale_betas_zero_snr=self.args.rescale_betas_zero_snr,
             **scheduler_args,
@@ -1318,7 +1348,7 @@ class Validation:
                 ema_validation_images,
             ) = self.validate_prompt(prompt, shortname, validation_input_image)
             validation_images.update(stitched_validation_images)
-            if self.args.model_family in ["ltxvideo"]:
+            if self.args.model_family in ["ltxvideo", "wan"]:
                 self._save_videos(validation_images, shortname, prompt)
             else:
                 self._save_images(validation_images, shortname, prompt)
@@ -1395,10 +1425,7 @@ class Validation:
             else:
                 validation_resolution_width, validation_resolution_height = resolution
 
-            if (
-                self.args.model_family == "sd3"
-                and type(self.args.validation_guidance_skip_layers) is list
-            ):
+            if type(self.args.validation_guidance_skip_layers) is list:
                 extra_validation_kwargs["skip_layer_guidance_start"] = float(
                     self.args.validation_guidance_skip_layers_start
                 )
@@ -1420,6 +1447,7 @@ class Validation:
                 "sd3",
                 "sana",
                 "ltxvideo",
+                "wan",
             ]:
                 extra_validation_kwargs["guidance_rescale"] = (
                     self.args.validation_guidance_rescale
@@ -1458,10 +1486,10 @@ class Validation:
                     "num_inference_steps": self.args.validation_num_inference_steps,
                     "guidance_scale": self.args.validation_guidance,
                     "height": MultiaspectImage._round_to_nearest_multiple(
-                        int(validation_resolution_height)
+                        int(validation_resolution_height), 16
                     ),
                     "width": MultiaspectImage._round_to_nearest_multiple(
-                        int(validation_resolution_width)
+                        int(validation_resolution_width), 16
                     ),
                     **extra_validation_kwargs,
                 }
@@ -1490,12 +1518,21 @@ class Validation:
                 if StateTracker.get_model_family() == "flux":
                     if "negative_prompt" in pipeline_kwargs:
                         del pipeline_kwargs["negative_prompt"]
-                if StateTracker.get_model_family() in ["ltxvideo"]:
+                if StateTracker.get_model_family() in ["ltxvideo", "wan"]:
                     del pipeline_kwargs["num_images_per_prompt"]
                 if self.args.model_family == "sana":
                     pipeline_kwargs["complex_human_instruction"] = (
                         self.args.sana_complex_human_instruction
                     )
+                if StateTracker.get_model_family() in [
+                    "wan",
+                ]:
+                    # Wan video should max out around 81 frames for efficiency.
+                    pipeline_kwargs["num_frames"] = min(
+                        81, self.args.validation_num_video_frames or 81
+                    )
+                    pipeline_kwargs["output_type"] = "pil"
+                    # replace embeds with prompt
 
                 if StateTracker.get_model_family() in [
                     "pixart_sigma",
@@ -1524,7 +1561,7 @@ class Validation:
                         )
                     if current_validation_type == "ema":
                         self.enable_ema_for_inference()
-                    if self.args.model_family in ["ltxvideo"]:
+                    if self.args.model_family in ["ltxvideo", "wan"]:
                         all_validation_type_results[current_validation_type] = (
                             self.pipeline(**pipeline_kwargs).frames
                         )
@@ -1611,6 +1648,8 @@ class Validation:
         from diffusers.utils.export_utils import export_to_video
 
         for validation_image in validation_images[validation_shortname]:
+            # convert array of numpy to array of pil:
+            validation_image = MultiaspectImage.numpy_list_to_pil(validation_image)
             size_x, size_y = validation_image[0].size
             res_label = f"{size_x}x{size_y}"
             export_to_video(
@@ -1878,7 +1917,7 @@ class Evaluation:
           - all eval datasets if dataset_name is None
           - the specific dataset if dataset_name is given
         """
-        eval_datasets = StateTracker.get_data_backends(_type="eval")
+        eval_datasets = StateTracker.get_data_backends(_type="eval", _types=None)
         if dataset_name is not None:
             ds = eval_datasets.get(dataset_name)
             return len(ds["sampler"]) if ds else 0
@@ -2029,7 +2068,7 @@ class Evaluation:
         # Decide if we pool or do separate passes
         pooling = getattr(self.config, "eval_dataset_pooling")
         eval_datasets = StateTracker.get_data_backends(
-            _type="eval"
+            _type="eval", _types=None
         )  # dict of {name: ...}
 
         if pooling:

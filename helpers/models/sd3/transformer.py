@@ -307,10 +307,6 @@ class SD3Transformer2DModel(
         if self.original_attn_processors is not None:
             self.set_attn_processor(self.original_attn_processors)
 
-    def _set_gradient_checkpointing(self, module, value=False):
-        if hasattr(module, "gradient_checkpointing"):
-            module.gradient_checkpointing = value
-
     def forward(
         self,
         hidden_states: torch.FloatTensor,

@@ -15,7 +15,7 @@ def normalize_ltx_latents(
     latents_mean = latents_mean.view(1, -1, 1, 1, 1).to(latents.device, latents.dtype)
     latents_std = latents_std.view(1, -1, 1, 1, 1).to(latents.device, latents.dtype)
     if not reverse:
-        latents = (latents - latents_mean) * scaling_factor / latents_std
+        latents = (latents.float() - latents_mean) * scaling_factor / latents_std
     else:
         latents = latents * latents_std / scaling_factor + latents_mean
     return latents
