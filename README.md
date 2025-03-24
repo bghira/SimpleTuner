@@ -10,6 +10,7 @@
 - [Tutorial](#tutorial)
 - [Features](#features)
   - [Flux](#flux1)
+  - [Wan 2.1 Video](#wan-video)
   - [LTX Video](#ltx-video)
   - [PixArt Sigma](#pixart-sigma)
   - [NVLabs Sana](#nvlabs-sana)
@@ -46,8 +47,8 @@ For multi-node distributed training, [this guide](/documentation/DISTRIBUTED.md)
 ## Features
 
 - Multi-GPU training
-- Image and caption features (embeds) are cached to the hard drive in advance, so that training runs faster and with less memory consumption
-- Aspect bucketing: support for a variety of image sizes and aspect ratios, enabling widescreen and portrait training.
+- Image, video, and caption features (embeds) are cached to the hard drive in advance, so that training runs faster and with less memory consumption
+- Aspect bucketing: support for a variety of image/video sizes and aspect ratios, enabling widescreen and portrait training.
 - Refiner LoRA or full u-net training for SDXL
 - Most models are trainable on a 24G GPU, or even down to 16G at lower base resolutions.
   - LoRA/LyCORIS training for PixArt, SDXL, SD3, and SD 2.x that uses less than 16G VRAM
@@ -75,6 +76,19 @@ Full training support for Flux.1 is included:
 
 See [hardware requirements](#flux1-dev-schnell) or the [quickstart guide](/documentation/quickstart/FLUX.md).
 
+### Wan Video
+
+SimpleTuner has preliminary training integration for Wan 2.1 which has a 14B and 1.3B type, both of which work.
+
+- Text to Video training is supported.
+- Image to Video training is not yet supported.
+- Text encoder training is not supported.
+- VAE training is not supported.
+- LyCORIS, PEFT, and full tuning all work as expected
+- ControlNet training is not yet supported
+
+See the [Wan Video Quickstart](/documentation/quickstart/WAN.md) guide to start training.
+
 ### LTX Video
 
 SimpleTuner has preliminary training integration for LTX Video, efficiently training on less than 16G.
@@ -99,7 +113,7 @@ See the [PixArt Quickstart](/documentation/quickstart/SIGMA.md) guide to start t
 
 ### NVLabs Sana
 
-SimpleTuner has preliminary training integration with NVLabs Sana.
+SimpleTuner has extensive training integration with NVLabs Sana.
 
 This is a lightweight, fun, and fast model that makes getting into model training highly accessible to a wider audience.
 

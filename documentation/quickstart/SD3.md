@@ -332,7 +332,7 @@ These options have been known to keep SD3.5 in-tact for as long as possible:
 - OS: Ubuntu Linux 24
 - GPU: A single NVIDIA CUDA device (10G, 12G)
 - System memory: 50G of system memory approximately
-- Base model precision: `bnb-nf4`
+- Base model precision: `nf4-bnb`
 - Optimiser: Lion 8Bit Paged, `bnb-lion8bit-paged`
 - Resolution: 512px
 - Batch size: 1, zero gradient accumulation steps

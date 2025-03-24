@@ -148,28 +148,6 @@ Copy `config/config.json.example` to `config/config.json`:
 cp config/config.json.example config/config.json
 ```
 
-There, you will possibly need to modify the following variables:
-
-- `model_type` - Set this to `lora`.
-- `model_family` - Set this to `wan`.
-- `pretrained_model_name_or_path` - Set this to `Wan-AI/Wan2.1-T2V-1.3B-Diffusers`.
-- `pretrained_vae_model_name_or_path` - Set this to `Wan-AI/Wan2.1-T2V-1.3B-Diffusers`.
-- `output_dir` - Set this to the directory where you want to store your checkpoints and validation images. It's recommended to use a full path here.
-- `train_batch_size` - this can be increased for more stability, but a value of 4 should work alright to start with
-- `validation_resolution` - This should be set to whatever you typically generate videos with when using Wan 2.1 (`480x480` for the 480p model)
-  - Multiple resolutions may be specified using commas to separate them: `480x480,768x512`
-- `validation_guidance` - Use whatever you are used to selecting at inference time for Wan 2.1.
-- `validation_num_inference_steps` - Use somewhere around 25 to save time while still seeing decent quality.
-- `validation_num_video_frames` - For Wan, the default is 81, or 5 seconds of video. But you can reduce this value to 1 for generating still images (buggy) or any value in between for just shorter videos.
-- `--lora_rank=4` if you wish to substantially reduce the size of the LoRA being trained. This can help with VRAM use while reducing its capacity for learning.
-
-- `gradient_accumulation_steps` - This option causes update steps to be accumulated over several steps.
-  - This will increase the training runtime linearly, such that a value of 2 will make your training run half as quickly, and take twice as long.
-- `optimizer` - Beginners are recommended to stick with adamw_bf16, though optimi-lion and optimi-stableadamw are also good choices.
-- `mixed_precision` - Beginners should keep this in `bf16`
-- `gradient_checkpointing` - set this to true in practically every situation on every device
-- `gradient_checkpointing_interval` - this is not yet supported on Wan 2.1, and should be removed from your config.
-
 Multi-GPU users can reference [this document](/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
 
 Your config at the end will look like mine:
@@ -285,7 +263,7 @@ A set of diverse prompt will help determine whether the model is collapsing as i
 }
 ```
 
-> ℹ️ Wan 2.1 is a flow-matching model based on Pile T5; shorter prompts may not have enough information for the model to do a good job. Be sure to use longer, more descriptive prompts.
+> ℹ️ Wan 2.1 uses the UMT5 text encoder only, which has a lot of local information in its embeddings which means that shorter prompts may not have enough information for the model to do a good job. Be sure to use longer, more descriptive prompts.
 
 #### CLIP score tracking
 
@@ -345,6 +323,7 @@ During initial exploration into adding Wan 2.1 into SimpleTuner, horrible nightm
   - Unless you're using UniPC, you probably need at least 40 steps. UniPC can bring the number down a little, but you'll have to experiment.
 - Incorrect scheduler configuration
   - It was using normal Euler flow matching schedule, but the Betas distribution seems to work best
+  - If you haven't touched this setting, it should be fine now
 - Incorrect resolution
   - Wan 2.1 only really works correctly on the resolutions it was trained on, you get lucky if it works, but it's common for it to be bad results
 - Bad CFG value
@@ -463,22 +442,26 @@ For more information, see the [dataloader](/documentation/DATALOADER.md) and [tu
 
 ### Lowest VRAM config
 
-Like other models, it is possible that the lowest VRAM utilisation can be attained with:
+Wan 2.1 is sensitive to quantisation, and cannot be used with NF4 or INT4 currently.
 
 - OS: Ubuntu Linux 24
 - GPU: A single NVIDIA CUDA device (10G, 12G)
-- System memory: 11G of system memory approximately
-- Base model precision: `bnb-nf4`
+- System memory: 12G of system memory approximately
+- Base model precision: `int8-quanto`
 - Optimiser: Lion 8Bit Paged, `bnb-lion8bit-paged`
 - Resolution: 480px
 - Batch size: 1, zero gradient accumulation steps
 - DeepSpeed: disabled / unconfigured
 - PyTorch: 2.6
 - Be sure to enable `--gradient_checkpointing` or nothing you do will stop it from OOMing
+- Only train on images, or set `num_frames` to 1 for your video dataset
 
-**NOTE**: Pre-caching of VAE embeds and text encoder outputs may use more memory and still OOM. If so, text encoder quantisation and VAE tiling can be enabled.
+**NOTE**: Pre-caching of VAE embeds and text encoder outputs may use more memory and still OOM. If so, text encoder quantisation and VAE tiling can be enabled. (Wan does not currently support VAE tiling/slicing)
 
-Speed was approximately 665.8 iterations per second on an M3 Max Macbook Pro and 2 seconds per step on a NVIDIA 4090 at a batch size of 1.
+Speeds:
+- 665.8 sec/iter on an M3 Max Macbook Pro
+- 2 sec/iter on a NVIDIA 4090 at a batch size of 1
+- 11 sec/iter on NVIDIA 4090 with batch size of 4
 
 ### SageAttention
 
@@ -486,30 +469,12 @@ When using `--attention_mechanism=sageattention`, inference can be sped-up at va
 
 **Note**: This isn't compatible with the final VAE decode step, and will not speed that portion up.
 
-### NF4-quantised training
-
-In simplest terms, NF4 is a 4bit-_ish_ representation of the model, which means training has serious stability concerns to address.
-
-In early tests, the following holds true:
-- Lion optimiser causes model collapse but uses least VRAM; AdamW variants help to hold it together; bnb-adamw8bit, adamw_bf16 are great choices
-  - AdEMAMix didn't fare well, but settings were not explored
-- `--max_grad_norm=0.01` further helps reduce model breakage by preventing huge changes to the model in too short a time
-- NF4, AdamW8bit, and a higher batch size all help to overcome the stability issues, at the cost of more time spent training or VRAM used
-- Upping the resolution slows training down A LOT, and might harm the model
-- Increasing the length of videos consumes a lot more memory as well. Reduce `num_frames` to beat this one.
-- Anything that's difficult to train on int8 or bf16 becomes harder in NF4
-- It's less compatible with options like SageAttention
-
-NF4 does not work with torch.compile, so whatever you get for speed is what you get.
-
-If VRAM is not a concern then int8 with torch.compile is your best, fastest option.
-
 ### Masked loss
 
 Don't use this with Wan 2.1.
 
 ### Quantisation
-- Quantisation is not needed to train this model
+- Quantisation is not needed to train this model in 24G
 
 ### Image artifacts
 Wan requires the use of the Euler Betas flow-matching schedule or (by default) the UniPC multistep solver, a higher order scheduler which will make stronger predictions.
@@ -542,3 +507,5 @@ Some fine-tuned models on Hugging Face Hub lack the full directory structure, re
     "pretrained_transformer_subfolder": "none",
 }
 ```
+
+> Note: You can provide a path to a single-file `.safetensors` for the `pretrained_transformer_name_or_path`
