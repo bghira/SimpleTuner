@@ -85,6 +85,8 @@ def _quanto_model(
             # Embeddings or positional embeddings
             "*pos_embed*",
             "*patch_embedding*",
+            # Feed forward networks
+            "*ffn*",
             # Common shift or scale tables
             "*scale_shift_table*",
             # Blocks or final outputs that are tricky in low precision
