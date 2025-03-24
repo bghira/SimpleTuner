@@ -21,6 +21,7 @@ Currently, image-to-video training is not supported for Wan, but T2V LoRA and Ly
 
 14B - https://huggingface.co/Wan-AI/Wan2.1-T2V-14B-Diffusers
 - Resolution: 832x480
+- It'll fit in 24G, but you'll have to fiddle with the settings a bit.
 
 <!--
 #### Image to Video
