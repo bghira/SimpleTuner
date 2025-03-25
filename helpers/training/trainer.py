@@ -779,7 +779,9 @@ class Trainer:
         reclaim_memory()
         memory_after_unload = self.stats_memory_used()
         memory_saved = memory_after_unload - memory_before_unload
-        logger.info(f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM.")
+        logger.info(
+            f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
+        )
 
     def init_precision(
         self, preprocessing_models_only: bool = False, ema_only: bool = False
@@ -1650,6 +1652,8 @@ class Trainer:
                 p = group["params"][0]
                 group["running_d_numerator"] = group["running_d_numerator"].to(p.device)
                 group["running_d_denom"] = group["running_d_denom"].to(p.device)
+                if "use_focus" not in group:
+                    group["use_focus"] = False
 
         return lr_scheduler
 
