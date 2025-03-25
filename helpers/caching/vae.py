@@ -469,7 +469,7 @@ class VAECache(WebhookMixin):
             ):
                 # we'll discard along dim2 after num_video_frames
                 samples = samples[:, :, : self.num_video_frames, :, :]
-                logger.info(f"Sliced to {samples.shape}")
+                logger.debug(f"Sliced to {samples.shape}")
         elif StateTracker.get_model_family() in ["hunyuan-video", "mochi"]:
             raise Exception(
                 f"{StateTracker.get_model_family()} not supported for VAE Caching yet."
@@ -501,7 +501,7 @@ class VAECache(WebhookMixin):
             # we'll now overwrite the latents after logging.
             output_cache_entry["latents"] = latents_uncached
         elif StateTracker.get_model_family() in ["wan"]:
-            logger.info(
+            logger.debug(
                 f"Shape for Wan VAE encode: {latents_uncached.shape} with latents_mean: {self.vae.latents_mean} and latents_std: {self.vae.latents_std}"
             )
             latents_uncached = compute_wan_posterior(
@@ -608,7 +608,7 @@ class VAECache(WebhookMixin):
                     self.accelerator.device, dtype=StateTracker.get_vae_dtype()
                 )
                 processed_images = self.prepare_video_latents(processed_images)
-                logger.info(f"Encoding: {processed_images.shape}")
+                logger.debug(f"Encoding: {processed_images.shape}")
                 latents_uncached = self.vae.encode(processed_images)
 
                 if hasattr(latents_uncached, "latent_dist"):
@@ -799,7 +799,7 @@ class VAECache(WebhookMixin):
                 filepaths.append(filepath)
 
                 if self.transform_video is not None:
-                    logger.info(f"Running video transformations on {image.shape}")
+                    logger.debug(f"Running video transformations on {image.shape}")
                     pixel_values = self.transform_video(image).to(
                         self.accelerator.device, dtype=self.vae.dtype
                     )
