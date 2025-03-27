@@ -69,7 +69,32 @@ EXAMPLE_DOC_STRING = """
         >>> image.save("sd3.png")
         ```
 """
+@torch.cuda.amp.autocast(dtype=torch.float32)
+def optimized_scale(positive_flat, negative_flat):
 
+    # Calculate dot production
+    dot_product = torch.sum(positive_flat * negative_flat, dim=1, keepdim=True)
+
+    # Squared norm of uncondition
+    squared_norm = torch.sum(negative_flat ** 2, dim=1, keepdim=True) + 1e-8
+
+    # st_star = v_cond^T * v_uncond / ||v_uncond||^2
+    st_star = dot_product / squared_norm
+    
+    return st_star
+
+# Copied from diffusers.pipelines.flux.pipeline_flux.calculate_shift
+def calculate_shift(
+    image_seq_len,
+    base_seq_len: int = 256,
+    max_seq_len: int = 4096,
+    base_shift: float = 0.5,
+    max_shift: float = 1.16,
+):
+    m = (max_shift - base_shift) / (max_seq_len - base_seq_len)
+    b = base_shift - m * base_seq_len
+    mu = image_seq_len * m + b
+    return mu
 
 # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.retrieve_timesteps
 def retrieve_timesteps(
@@ -763,6 +788,7 @@ class StableDiffusion3Pipeline(
         width: Optional[int] = None,
         num_inference_steps: int = 28,
         timesteps: List[int] = None,
+        sigmas: Optional[List[float]] = None,
         guidance_scale: float = 7.0,
         negative_prompt: Optional[Union[str, List[str]]] = None,
         negative_prompt_2: Optional[Union[str, List[str]]] = None,
@@ -785,6 +811,11 @@ class StableDiffusion3Pipeline(
         skip_layer_guidance_scale: int = 2.8,
         skip_layer_guidance_stop: int = 0.2,
         skip_layer_guidance_start: int = 0.01,
+        mu: Optional[float] = None,
+        use_cfg_zero_star: Optional[bool] = True,
+        use_zero_init: Optional[bool] = True,
+        zero_steps: Optional[int] = 0,
+
     ):
         r"""
         Function invoked when calling the pipeline for generation.
@@ -970,16 +1001,7 @@ class StableDiffusion3Pipeline(
                 [negative_pooled_prompt_embeds, pooled_prompt_embeds], dim=0
             )
 
-        # 4. Prepare timesteps
-        timesteps, num_inference_steps = retrieve_timesteps(
-            self.scheduler, num_inference_steps, device, timesteps
-        )
-        num_warmup_steps = max(
-            len(timesteps) - num_inference_steps * self.scheduler.order, 0
-        )
-        self._num_timesteps = len(timesteps)
-
-        # 5. Prepare latent variables
+        # 4. Prepare latent variables
         num_channels_latents = self.transformer.config.in_channels
         latents = self.prepare_latents(
             batch_size * num_images_per_prompt,
@@ -991,6 +1013,35 @@ class StableDiffusion3Pipeline(
             generator,
             latents,
         )
+
+        # 5. Prepare timesteps
+        scheduler_kwargs = {}
+        if self.scheduler.config.get("use_dynamic_shifting", None) and mu is None:
+            _, _, height, width = latents.shape
+            image_seq_len = (height // self.transformer.config.patch_size) * (
+                width // self.transformer.config.patch_size
+            )
+            mu = calculate_shift(
+                image_seq_len,
+                self.scheduler.config.base_image_seq_len,
+                self.scheduler.config.max_image_seq_len,
+                self.scheduler.config.base_shift,
+                self.scheduler.config.max_shift,
+            )
+            scheduler_kwargs["mu"] = mu
+        elif mu is not None:
+            scheduler_kwargs["mu"] = mu
+        timesteps, num_inference_steps = retrieve_timesteps(
+            self.scheduler,
+            num_inference_steps,
+            device,
+            sigmas=sigmas,
+            **scheduler_kwargs,
+        )
+        num_warmup_steps = max(
+            len(timesteps) - num_inference_steps * self.scheduler.order, 0
+        )
+        self._num_timesteps = len(timesteps)
 
         # 6. Denoising loop
         with self.progress_bar(total=num_inference_steps) as progress_bar:
@@ -1026,9 +1077,21 @@ class StableDiffusion3Pipeline(
                 # perform guidance
                 if self.do_classifier_free_guidance:
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                    noise_pred = noise_pred_uncond + self.guidance_scale * (
-                        noise_pred_text - noise_pred_uncond
-                    )
+                    if use_cfg_zero_star:
+                        positive_flat = noise_pred_text.view(batch_size, -1)  
+                        negative_flat = noise_pred_uncond.view(batch_size, -1)  
+
+                        alpha = optimized_scale(positive_flat,negative_flat)
+                        alpha = alpha.view(batch_size, 1, 1, 1)
+                        alpha = alpha.to(positive_flat.dtype)
+
+                        if (i <= zero_steps) and use_zero_init:
+                            noise_pred = noise_pred_text*0.
+                        else:
+                            noise_pred = noise_pred_uncond * alpha + guidance_scale * (noise_pred_text - noise_pred_uncond * alpha)
+                    else:
+                        noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+
                     should_skip_layers = (
                         True
                         if i > num_inference_steps * skip_layer_guidance_start
@@ -1810,6 +1873,7 @@ class StableDiffusion3Img2ImgPipeline(
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 256,
+
     ):
         r"""
         Function invoked when calling the pipeline for generation.
