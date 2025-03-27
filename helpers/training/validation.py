@@ -611,7 +611,7 @@ class Validation:
                 ).to(self.inference_device)
         StateTracker.set_vae(self.vae)
 
-        logger.info(f"VAE type: {type(self.vae)}")
+        # logger.info(f"VAE type: {type(self.vae)}")
         return self.vae
 
     def _discover_validation_input_samples(self):
@@ -1108,7 +1108,7 @@ class Validation:
                 scheduler_args["use_beta_sigmas"] = True
                 scheduler_args["shift"] = self.args.flow_schedule_shift
             if self.args.validation_noise_scheduler == "unipc":
-                scheduler_args["prediction_type"] = 'flow_prediction'
+                scheduler_args["prediction_type"] = "flow_prediction"
                 scheduler_args["use_flow_sigmas"] = True
                 scheduler_args["num_train_timesteps"] = 1000
                 scheduler_args["flow_shift"] = self.args.flow_schedule_shift
