@@ -13,6 +13,7 @@ from helpers.caching.vae import VAECache
 from helpers.training.multi_process import should_log, rank_info, _get_rank as get_rank
 from helpers.training.collate import collate_fn
 from helpers.training.state_tracker import StateTracker
+from helpers.models.common import ModelFoundation
 
 import json
 import os
@@ -454,7 +455,7 @@ def move_text_encoders(text_encoders: list, target_device: str):
     return [encoder.to(target_device) for encoder in text_encoders]
 
 
-def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenizers):
+def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenizers, model: ModelFoundation):
     """
     Configure a multiple dataloaders based on the provided commandline args.
     """
@@ -561,6 +562,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             cache_dir=init_backend.get("cache_dir", args.cache_dir_text),
             model_type=StateTracker.get_model_family(),
             write_batch_size=backend.get("write_batch_size", args.write_batch_size),
+            model=model,
         )
         logger.debug(f"rank {get_rank()} completed creation of TextEmbeddingCache")
         init_backend["text_embed_cache"].set_webhook_handler(

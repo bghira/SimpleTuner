@@ -235,9 +235,10 @@ def compute_single_embedding(
             pooled_prompt_embeds[0],
         )  # Unpack the first (and only) element
     elif is_sd3:
-        prompt_embeds, pooled_prompt_embeds = (
-            text_embed_cache.compute_embeddings_for_sd3_prompts(prompts=[caption])
-        )
+        text_encoder_output = text_embed_cache.compute_prompt_embeddings_with_model(prompts=[caption])
+        logger.info(f"Keys: {text_encoder_output.keys()}")
+        prompt_embeds = text_encoder_output["prompt_embeds"]
+        pooled_prompt_embeds = text_encoder_output["pooled_prompt_embeds"]
         return prompt_embeds[0], pooled_prompt_embeds[0]
     elif is_flux:
         prompt_embeds, pooled_prompt_embeds, time_ids, masks = (

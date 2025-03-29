@@ -26,6 +26,7 @@ from helpers.training.schedulers import load_scheduler_from_args
 from helpers.training.custom_schedule import get_lr_scheduler
 from helpers.training.adapter import determine_adapter_target_modules, load_lora_weights
 from helpers.training.diffusion_model import load_diffusion_model
+from helpers.models.common import get_model_config_path
 from helpers.training.text_encoding import (
     load_tes,
     determine_te_path_subfolder,
@@ -63,7 +64,7 @@ from helpers.models.ltxvideo import (
     apply_first_frame_protection,
     make_i2v_conditioning_mask,
 )
-from helpers.models import get_model_config_path
+from helpers.models.all import model_families
 
 logger = get_logger(
     "SimpleTuner", log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
@@ -126,12 +127,12 @@ from diffusers.utils import (
 from diffusers.utils.import_utils import is_xformers_available
 from transformers.utils import ContextManagers
 
+from helpers.training.custom_schedule import apply_flow_schedule_shift
 from helpers.models.flux import (
     prepare_latent_image_ids,
     pack_latents,
     unpack_latents,
     get_mobius_guidance,
-    apply_flow_schedule_shift,
 )
 
 is_optimi_available = False
@@ -178,21 +179,21 @@ class Trainer:
             disable_accelerator=disable_accelerator,
             exit_on_error=exit_on_error,
         )
+        if self.config.model_family in model_families:
+            self.model = model_families[self.config.model_family](
+                self.config, self.accelerator
+            )
         self._misc_init()
         self.lycoris_wrapped_network = None
         self.lycoris_config = None
         self.lr_scheduler = None
         self.webhook_handler = None
         self.should_abort = False
-        self.unet = None
-        self.transformer = None
-        self.vae = None
-        self.text_encoder_1 = None
-        self.text_encoder_2 = None
-        self.text_encoder_3 = None
-        self.controlnet = None
         self.ema_model = None
         self.validation = None
+        logger.info(f"Initialised: {self.config.model_family}, {getattr(self, 'model', None)}")
+        # this updates self.config further, so we will run it here.
+        self.init_noise_schedule()
 
     def _config_to_obj(self, config):
         if not config:
@@ -233,8 +234,6 @@ class Trainer:
         StateTracker.set_args(self.config)
         StateTracker.set_weight_dtype(self.config.weight_dtype)
         self.set_model_family()
-        # this updates self.config further, so we will run it here.
-        self.init_noise_schedule()
 
     def run(self):
         try:
@@ -307,16 +306,15 @@ class Trainer:
             initializer()
             self._exit_on_signal()
 
-    def _get_noise_scheduler(self):
-        _, _, noise_scheduler = load_scheduler_from_args(self.config)
+    def _get_noise_schedule(self):
+        self.config, scheduler = self.model.setup_noise_schedule()
 
-        return noise_scheduler
+        return scheduler
 
     def init_noise_schedule(self):
-        self.config, _flow_matching, self.noise_scheduler = load_scheduler_from_args(
-            self.config
-        )
-        self.config.flow_matching = _flow_matching
+        from helpers.models.common import PredictionTypes
+        self.config.flow_matching = True if self.model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING else False
+        self.noise_scheduler = self._get_noise_schedule()
         self.lr = 0.0
 
     def configure_webhook(self, send_startup_message: bool = True):
@@ -447,175 +445,17 @@ class Trainer:
 
     def init_vae(self, move_to_accelerator: bool = True):
         logger.info(f"Load VAE: {self.config.vae_path}")
-        self.config.vae_kwargs = {
-            "pretrained_model_name_or_path": self.config.vae_path,
-            "subfolder": "vae",
-            "revision": self.config.revision,
-            "force_upcast": False,
-            "variant": self.config.variant,
-        }
-        if StateTracker.get_args().model_family == "sana":
-            from diffusers import AutoencoderDC as AutoencoderClass
-        elif StateTracker.get_args().model_family == "ltxvideo":
-            from diffusers import AutoencoderKLLTXVideo as AutoencoderClass
-        elif StateTracker.get_args().model_family == "wan":
-            from diffusers import AutoencoderKLWan as AutoencoderClass
-        else:
-            from diffusers import AutoencoderKL as AutoencoderClass
-        self.vae_cls = AutoencoderClass
-
-        with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
-            try:
-                self.vae = self.vae_cls.from_pretrained(**self.config.vae_kwargs)
-            except Exception as e:
-                logger.warning(
-                    "Couldn't load VAE with default path. Trying without a subfolder.."
-                )
-                logger.error(e)
-                self.config.vae_kwargs["subfolder"] = None
-                self.vae = self.vae_cls.from_pretrained(**self.config.vae_kwargs)
-        if self.vae is not None and self.config.vae_enable_tiling:
-            if hasattr(self.vae, "enable_tiling"):
-                logger.warning("Enabling VAE tiling.")
-                self.vae.enable_tiling()
-            else:
-                logger.warning(
-                    f"VAE tiling is enabled, but not yet supported by {self.config.model_family}."
-                )
-        if self.vae is not None and self.config.vae_enable_slicing:
-            if hasattr(self.vae, "enable_slicing"):
-                logger.info("Enabling VAE slicing.")
-                self.vae.enable_slicing()
-            else:
-                logger.warning(
-                    f"VAE slicing is enabled, but not yet supported by {self.config.model_family}."
-                )
-        if not move_to_accelerator:
-            logger.debug("Not moving VAE to accelerator.")
-            return
-        if self.vae is not None:
-            # The VAE is in bfloat16 to avoid NaN losses.
-            _vae_dtype = torch.bfloat16
-            if hasattr(self.config, "vae_dtype"):
-                # Let's use a case-switch for convenience: bf16, fp16, fp32, none/default
-                if self.config.vae_dtype == "bf16":
-                    _vae_dtype = torch.bfloat16
-                elif self.config.vae_dtype == "fp16":
-                    raise ValueError(
-                        "fp16 is not supported for SDXL's VAE. Please use bf16 or fp32."
-                    )
-                elif self.config.vae_dtype == "fp32":
-                    _vae_dtype = torch.float32
-                elif (
-                    self.config.vae_dtype == "none"
-                    or self.config.vae_dtype == "default"
-                ):
-                    _vae_dtype = torch.bfloat16
-            logger.info(
-                f"Loading VAE onto accelerator, converting from {self.vae.dtype} to {_vae_dtype}"
-            )
-            self.vae.to(self.accelerator.device, dtype=_vae_dtype)
-            StateTracker.set_vae_dtype(_vae_dtype)
-            StateTracker.set_vae(self.vae)
-
-    def init_text_tokenizer(self):
-        logger.info("Load tokenizers")
-        self.tokenizer_1, self.tokenizer_2, self.tokenizer_3 = get_tokenizers(
-            self.config
-        )
-        self.tokenizers = [self.tokenizer_1, self.tokenizer_2, self.tokenizer_3]
+        self.model.load_vae(move_to_device=move_to_accelerator)
+        StateTracker.set_vae_dtype(self.model.vae.dtype)
+        StateTracker.set_vae(self.model.vae)
 
     def init_text_encoder(self, move_to_accelerator: bool = True):
-        self.init_text_tokenizer()
-        self.text_encoder_1, self.text_encoder_2, self.text_encoder_3 = None, None, None
-        self.text_encoder_cls_1, self.text_encoder_cls_2, self.text_encoder_cls_3 = (
-            None,
-            None,
-            None,
+        self.model.load_text_encoder(
+            move_to_device=move_to_accelerator
         )
-        with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
-            if self.tokenizer_1 is not None:
-                self.text_encoder_cls_1 = import_model_class_from_model_name_or_path(
-                    self.config.text_encoder_path,
-                    self.config.revision,
-                    self.config,
-                    subfolder=self.config.text_encoder_subfolder,
-                )
-            if self.tokenizer_2 is not None:
-                self.text_encoder_cls_2 = import_model_class_from_model_name_or_path(
-                    self.config.pretrained_model_name_or_path,
-                    self.config.revision,
-                    self.config,
-                    subfolder="text_encoder_2",
-                )
-            if self.tokenizer_3 is not None and self.config.model_family == "sd3":
-                self.text_encoder_cls_3 = import_model_class_from_model_name_or_path(
-                    self.config.pretrained_model_name_or_path,
-                    self.config.revision,
-                    self.config,
-                    subfolder="text_encoder_3",
-                )
-            tokenizers = [self.tokenizer_1, self.tokenizer_2, self.tokenizer_3]
-            text_encoder_classes = [
-                self.text_encoder_cls_1,
-                self.text_encoder_cls_2,
-                self.text_encoder_cls_3,
-            ]
-            (
-                text_encoder_variant,
-                self.text_encoder_1,
-                self.text_encoder_2,
-                self.text_encoder_3,
-            ) = load_tes(
-                args=self.config,
-                text_encoder_classes=text_encoder_classes,
-                weight_dtype=self.config.weight_dtype,
-                tokenizers=tokenizers,
-                text_encoder_path=self.config.text_encoder_path,
-                text_encoder_subfolder=self.config.text_encoder_subfolder,
-            )
-        if not move_to_accelerator:
-            logger.debug("Not moving text encoders to accelerator.")
-            return
-        self.text_encoders = []
-        self.tokenizers = []
-        if self.tokenizer_1 is not None:
-            logger.info("Moving text encoder to GPU.")
-            self.text_encoder_1.to(
-                self.accelerator.device, dtype=self.config.weight_dtype
-            )
-            self.tokenizers.append(self.tokenizer_1)
-            self.text_encoders.append(self.text_encoder_1)
-        if self.tokenizer_2 is not None:
-            logger.info("Moving text encoder 2 to GPU.")
-            self.text_encoder_2.to(
-                self.accelerator.device, dtype=self.config.weight_dtype
-            )
-            self.tokenizers.append(self.tokenizer_2)
-            self.text_encoders.append(self.text_encoder_2)
-        if self.tokenizer_3 is not None:
-            logger.info("Moving text encoder 3 to GPU.")
-            self.text_encoder_3.to(
-                self.accelerator.device, dtype=self.config.weight_dtype
-            )
-            self.tokenizers.append(self.tokenizer_3)
-            self.text_encoders.append(self.text_encoder_3)
 
     def init_freeze_models(self):
-        # Freeze vae and text_encoders
-        if self.vae is not None:
-            self.vae.requires_grad_(False)
-        if self.text_encoder_1 is not None:
-            self.text_encoder_1.requires_grad_(False)
-        if self.text_encoder_2 is not None:
-            self.text_encoder_2.requires_grad_(False)
-        if self.text_encoder_3 is not None:
-            self.text_encoder_3.requires_grad_(False)
-        if "lora" in self.config.model_type or self.config.controlnet:
-            if self.transformer is not None:
-                self.transformer.requires_grad_(False)
-            if self.unet is not None:
-                self.unet.requires_grad_(False)
+        self.model.freeze_components()
         self.accelerator.wait_for_everyone()
 
     def init_load_base_model(self):
@@ -625,9 +465,7 @@ class Trainer:
             structured_data={"message": webhook_msg},
             message_type="init_load_base_model_begin",
         )
-        self.unet, self.transformer = load_diffusion_model(
-            self.config, self.config.weight_dtype
-        )
+        self.model.load_model(move_to_device=False)
         self.accelerator.wait_for_everyone()
         self._send_webhook_raw(
             structured_data={"message": "Base model has loaded."},
@@ -647,8 +485,9 @@ class Trainer:
             configure_multi_databackend(
                 self.config,
                 accelerator=self.accelerator,
-                text_encoders=self.text_encoders,
-                tokenizers=self.tokenizers,
+                text_encoders=self.model.text_encoders,
+                tokenizers=self.model.tokenizers,
+                model=self.model
             )
             self._send_webhook_raw(
                 structured_data={"message": "Completed configuring data backends."},
@@ -763,15 +602,7 @@ class Trainer:
         memory_before_unload = self.stats_memory_used()
         if self.accelerator.is_main_process:
             logger.info("Unloading text encoders, as they are not being trained.")
-        if self.text_encoder_1 is not None:
-            self.text_encoder_1 = self.text_encoder_1.to("cpu")
-        if self.text_encoder_2 is not None:
-            self.text_encoder_2 = self.text_encoder_2.to("cpu")
-        if self.text_encoder_3 is not None:
-            self.text_encoder_3 = self.text_encoder_3.to("cpu")
-        del self.text_encoder_1, self.text_encoder_2, self.text_encoder_3
-        self.text_encoder_1, self.text_encoder_2, self.text_encoder_3 = None, None, None
-        self.text_encoders = []
+        self.model.unload_text_encoder()
         for backend_id, backend in StateTracker.get_data_backends().items():
             if "text_embed_cache" in backend:
                 backend["text_embed_cache"].text_encoders = None
@@ -967,25 +798,19 @@ class Trainer:
             logger.info("Using lycoris training mode")
             self._send_webhook_msg(message="Using lycoris training mode.")
 
-            model_for_lycoris_wrap = None
-            if self.transformer is not None:
-                model_for_lycoris_wrap = self.transformer
-            if self.unet is not None:
-                model_for_lycoris_wrap = self.unet
-
             if self.config.init_lora is not None:
                 from lycoris import create_lycoris_from_weights
 
                 self.lycoris_wrapped_network = create_lycoris_from_weights(
                     multiplier,
                     self.config.init_lora,
-                    model_for_lycoris_wrap,
+                    self.model.get_trained_component(),
                     weights_sd=None,
                     **self.lycoris_config,
                 )[0]
             else:
                 self.lycoris_wrapped_network = create_lycoris(
-                    model_for_lycoris_wrap,
+                    self.model.get_trained_component(),
                     multiplier,
                     linear_dim,
                     linear_alpha,
@@ -1033,28 +858,21 @@ class Trainer:
     def enable_gradient_checkpointing(self):
         if self.config.gradient_checkpointing:
             logger.debug("Enabling gradient checkpointing.")
-            if self.unet is not None:
+            if hasattr(
+                self.model.get_trained_component(), "enable_gradient_checkpointing"
+            ):
                 unwrap_model(
-                    self.accelerator, self.unet
-                ).enable_gradient_checkpointing()
-            if self.transformer is not None and self.config.model_family != "smoldit":
-                unwrap_model(
-                    self.accelerator, self.transformer
-                ).enable_gradient_checkpointing()
-            if self.config.controlnet:
-                unwrap_model(
-                    self.accelerator, self.controlnet
+                    self.accelerator, self.model.get_trained_component()
                 ).enable_gradient_checkpointing()
             if (
                 hasattr(self.config, "train_text_encoder")
                 and self.config.train_text_encoder
             ):
-                unwrap_model(
-                    self.accelerator, self.text_encoder_1
-                ).gradient_checkpointing_enable()
-                unwrap_model(
-                    self.accelerator, self.text_encoder_2
-                ).gradient_checkpointing_enable()
+                for text_encoder in self.model.text_encoders:
+                    if text_encoder is not None:
+                        unwrap_model(
+                            self.accelerator, text_encoder
+                        ).gradient_checkpointing_enable()
 
     def disable_gradient_checkpointing(self):
         if self.config.gradient_checkpointing:
@@ -1182,11 +1000,7 @@ class Trainer:
 
         self.params_to_optimize = determine_params_to_optimize(
             args=self.config,
-            controlnet=self.controlnet,
-            unet=self.unet,
-            transformer=self.transformer,
-            text_encoder_1=self.text_encoder_1,
-            text_encoder_2=self.text_encoder_2,
+            model=self.model,
             model_type_label=self.config.model_type_label,
             lycoris_wrapped_network=self.lycoris_wrapped_network,
         )
@@ -1286,12 +1100,9 @@ class Trainer:
             if self.config.controlnet:
                 ema_model_cls = self.controlnet.__class__
                 ema_model_config = self.controlnet.config
-            elif self.unet is not None:
-                ema_model_cls = self.unet.__class__
-                ema_model_config = self.unet.config
-            elif self.transformer is not None:
-                ema_model_cls = self.transformer.__class__
-                ema_model_config = self.transformer.config
+            elif self.model.get_trained_component() is not None:
+                ema_model_cls = self.model.get_trained_component().__class__
+                ema_model_config = self.model.get_trained_component().config
             else:
                 raise ValueError(
                     f"Please open a bug report or disable EMA. Unknown EMA model family: {self.config.model_family}"
@@ -1317,12 +1128,9 @@ class Trainer:
 
         self.model_hooks = SaveHookManager(
             args=self.config,
-            unet=self.unet,
-            transformer=self.transformer,
+            model=self.model,
             ema_model=self.ema_model,
             accelerator=self.accelerator,
-            text_encoder_1=self.text_encoder_1,
-            text_encoder_2=self.text_encoder_2,
             use_deepspeed_optimizer=self.config.use_deepspeed_optimizer,
         )
         self.accelerator.register_save_state_pre_hook(self.model_hooks.save_model_hook)
@@ -1355,18 +1163,11 @@ class Trainer:
             structured_data={"message": "Moving weights to GPU"},
             message_type="init_prepare_models_begin",
         )
-        primary_model = self.unet if self.unet is not None else self.transformer
-        if self.config.controlnet:
-            primary_model = self.controlnet
+        primary_model = self.model.get_trained_component()
         results = self.accelerator.prepare(
             primary_model, lr_scheduler, self.optimizer, self.train_dataloaders[0]
         )
-        if self.config.controlnet:
-            self.controlnet = results[0]
-        elif self.unet is not None:
-            self.unet = results[0]
-        elif self.transformer is not None:
-            self.transformer = results[0]
+        self.model.set_prepared_model(results[0])
 
         if self.config.unet_attention_slice:
             if torch.backends.mps.is_available():
@@ -1432,9 +1233,7 @@ class Trainer:
         if self.config.keep_vae_loaded or self.config.vae_cache_ondemand:
             return
         memory_before_unload = self.stats_memory_used()
-        self.vae = self.vae.to("cpu")
-        del self.vae
-        self.vae = None
+        self.model.unload_vae()
         for _, backend in StateTracker.get_data_backends().items():
             if "vaecache" in backend:
                 backend["vaecache"].vae = None
@@ -1470,25 +1269,16 @@ class Trainer:
         self.validation = Validation(
             trainable_parameters=self._get_trainable_parameters,
             accelerator=self.accelerator,
-            unet=self.unet,
-            transformer=self.transformer,
+            model=self.model,
             args=self.config,
             validation_prompts=self.validation_prompts,
             validation_shortnames=self.validation_shortnames,
-            text_encoder_1=self.text_encoder_1,
-            tokenizer=self.tokenizer_1,
             vae_path=self.config.vae_path,
             weight_dtype=self.config.weight_dtype,
             embed_cache=StateTracker.get_default_text_embed_cache(),
             validation_negative_pooled_embeds=self.validation_negative_pooled_embeds,
             validation_negative_prompt_embeds=self.validation_negative_prompt_embeds,
-            text_encoder_2=self.text_encoder_2,
-            tokenizer_2=self.tokenizer_2,
-            text_encoder_3=self.text_encoder_3,
-            tokenizer_3=self.tokenizer_3,
             ema_model=self.ema_model,
-            vae=self.vae,
-            controlnet=self.controlnet if self.config.controlnet else None,
             model_evaluator=model_evaluator,
             is_deepspeed=self.config.use_deepspeed_optimizer,
         )
@@ -1845,18 +1635,13 @@ class Trainer:
         if destination == "accelerator":
             target_device = self.accelerator.device
         logger.info(
-            f"Moving the {'U-net' if self.unet is not None else 'diffusion transformer'} to GPU in {self.config.weight_dtype if not self.config.is_quantized else self.config.base_model_precision} precision."
+            f"Moving the {str(self.model.get_trained_component().__class__)} to GPU in {self.config.weight_dtype if not self.config.is_quantized else self.config.base_model_precision} precision."
         )
-        if self.unet is not None:
+        if self.model.get_trained_component() is not None:
             if self.config.is_quantized:
-                self.unet.to(target_device)
+                self.model.get_trained_component().to(target_device)
             else:
-                self.unet.to(target_device, dtype=self.config.weight_dtype)
-        if self.transformer is not None:
-            if self.config.is_quantized:
-                self.transformer.to(target_device)
-            else:
-                self.transformer.to(target_device, dtype=self.config.weight_dtype)
+                self.model.get_trained_component().to(target_device, dtype=self.config.weight_dtype)
         if getattr(self.accelerator, "_lycoris_wrapped_network", None) is not None:
             self.accelerator._lycoris_wrapped_network = (
                 self.accelerator._lycoris_wrapped_network.to(
@@ -1872,46 +1657,32 @@ class Trainer:
                 "Using SageAttention for training. This is an unsupported, experimental configuration."
             )
             self.enable_sageattention()
-        elif (
-            self.config.attention_mechanism == "xformers"
-            and self.config.model_family
-            not in [
-                "sd3",
-                "pixart_sigma",
-                "flux",
-                "smoldit",
-                "kolors",
-            ]
-        ):
-            logger.info("Enabling xformers memory-efficient attention.")
+        elif self.config.attention_mechanism == "xformers":
             if is_xformers_available():
                 import xformers  # type: ignore # noqa
 
-                if self.unet is not None:
-                    self.unet.enable_xformers_memory_efficient_attention()
-                if self.transformer is not None:
-                    self.transformer.enable_xformers_memory_efficient_attention()
-                if self.config.controlnet:
-                    self.controlnet.enable_xformers_memory_efficient_attention()
+                if hasattr(self.model.get_trained_component(), "enable_xformers_memory_efficient_attention"):
+                    logger.info("Enabling xformers memory-efficient attention.")
+                    self.model.get_trained_component().enable_xformers_memory_efficient_attention()
+                else:
+                    self.config.enable_xformers_memory_efficient_attention = False
+                    self.config.attention_mechanism = "diffusers"
+                    logger.warning(
+                        "xformers is not enabled, as it is incompatible with this model type."
+                        " Falling back to diffusers attention mechanism (Pytorch SDPA)."
+                        " Alternatively, provide --attention_mechanism=sageattention for a more efficient option on CUDA systems."
+                    )
             else:
                 raise ValueError(
                     "xformers is not available. Make sure it is installed correctly"
                 )
-        elif self.config.attention_mechanism == "xformers":
-            logger.warning(
-                "xformers is not enabled, as it is incompatible with this model type."
-                " Falling back to diffusers attention mechanism (Pytorch SDPA)."
-                " Alternatively, provide --attention_mechanism=sageattention for a more efficient option on CUDA systems."
-            )
-            self.config.enable_xformers_memory_efficient_attention = False
-            self.config.attention_mechanism = "diffusers"
 
         if self.config.controlnet:
-            self.controlnet.train()
+            self.model.get_trained_component().train()
             logger.info(
                 f"Moving ControlNet to {target_device} in {self.config.weight_dtype} precision."
             )
-            self.controlnet.to(device=target_device, dtype=self.config.weight_dtype)
+            self.model.get_trained_component().to(device=target_device, dtype=self.config.weight_dtype)
             if self.config.train_text_encoder:
                 logger.warning(
                     "Unknown results will occur when finetuning the text encoder alongside ControlNet."
@@ -2249,7 +2020,9 @@ class Trainer:
             elif self.config.model_family == "sd3":
                 # Stable Diffusion 3 uses a MM-DiT model where the VAE-produced
                 #  image embeds are passed in with the TE-produced text embeds.
-                model_pred = self.transformer(
+                # TODO: Replace with model_predict method on the model class.
+                # This is a hack to get it working for now.
+                model_pred = self.model.get_trained_component()(
                     hidden_states=noisy_latents.to(
                         device=self.accelerator.device,
                         dtype=self.config.base_weight_dtype,
@@ -2817,21 +2590,18 @@ class Trainer:
                 self.controlnet.train()
                 training_models = [self.controlnet]
             else:
-                if self.unet is not None:
-                    self.unet.train()
-                    training_models = [self.unet]
-                if self.transformer is not None:
-                    self.transformer.train()
-                    training_models = [self.transformer]
+                self.model.get_trained_component().train()
+                training_models = [self.model.get_trained_component()]
             if (
                 "lora" in self.config.model_type
                 and self.config.train_text_encoder
                 and "standard" in self.config.lora_type.lower()
             ):
-                self.text_encoder_1.train()
-                self.text_encoder_2.train()
-                training_models.append(self.text_encoder_1)
-                training_models.append(self.text_encoder_2)
+                for text_encoder in self.text_encoders:
+                    if 't5' in str(text_encoder.__class__):
+                        continue
+                    text_encoder.train()
+                    training_models.append(text_encoder)
 
             if current_epoch_step is not None:
                 # We are resetting to the next epoch, if it is not none.
@@ -3239,7 +3009,7 @@ class Trainer:
                             model_predict=self.model_predict,
                             calculate_loss=self._calculate_loss,
                             get_prediction_target=self.get_prediction_target,
-                            noise_scheduler=self._get_noise_scheduler(),
+                            noise_scheduler=self._get_noise_schedule(),
                         )
                         tracker_table = self.evaluation.generate_tracker_table(
                             all_accumulated_losses=all_accumulated_losses

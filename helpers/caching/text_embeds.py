@@ -15,6 +15,7 @@ from threading import Thread
 from concurrent.futures import ThreadPoolExecutor
 from helpers.training.multi_process import _get_rank as get_rank, should_log
 from helpers.webhooks.mixin import WebhookMixin
+from helpers.models.common import ModelFoundation
 
 logger = logging.getLogger("TextEmbeddingCache")
 if should_log():
@@ -117,6 +118,7 @@ class TextEmbeddingCache(WebhookMixin):
         process_queue_size: int = 16,
         text_encoder_batch_size: int = 4,
         max_workers: int = 32,
+        model: ModelFoundation = None,
     ):
         self.id = id
         if data_backend.id != id:
@@ -130,6 +132,7 @@ class TextEmbeddingCache(WebhookMixin):
         self.accelerator = accelerator
         self.cache_dir = cache_dir
         self.model_type = model_type
+        self.model = model
         self.pipeline = None
         if self.model_type == "sana":
             from diffusers.pipelines.sana import SanaPipeline
@@ -713,7 +716,14 @@ class TextEmbeddingCache(WebhookMixin):
         # Proceed with uncached prompts
         raw_prompts = uncached_prompts if uncached_prompts else all_prompts
         output = None
-        if self.model_type == "sdxl" or self.model_type == "kolors":
+        if self.model is not None:
+            output = self.compute_prompt_embeddings_with_model(
+                raw_prompts,
+                return_concat=return_concat,
+                is_validation=is_validation,
+                load_from_cache=load_from_cache,
+            )
+        elif self.model_type == "sdxl" or self.model_type == "kolors":
             output = self.compute_embeddings_for_sdxl_prompts(
                 raw_prompts,
                 return_concat=return_concat,
@@ -731,12 +741,12 @@ class TextEmbeddingCache(WebhookMixin):
                 return_concat=return_concat,
                 load_from_cache=load_from_cache,
             )
-        elif self.model_type == "sd3":
-            output = self.compute_embeddings_for_sd3_prompts(
-                raw_prompts,
-                return_concat=return_concat,
-                load_from_cache=load_from_cache,
-            )
+        # elif self.model_type == "sd3":
+        #     output = self.compute_embeddings_for_sd3_prompts(
+        #         raw_prompts,
+        #         return_concat=return_concat,
+        #         load_from_cache=load_from_cache,
+        #     )
         elif self.model_type == "flux":
             output = self.compute_embeddings_for_flux_prompts(
                 raw_prompts,
@@ -2049,6 +2059,172 @@ class TextEmbeddingCache(WebhookMixin):
             add_text_embeds_all = torch.cat(add_text_embeds_all, dim=0)
 
         return prompt_embeds_all, add_text_embeds_all
+
+    def compute_prompt_embeddings_with_model(
+        self,
+        prompts: list = None,
+        return_concat: bool = True,
+        is_validation: bool = False,
+        load_from_cache: bool = True,
+    ):
+        prompt_embeds_all = []
+        add_text_embeds_all = []
+        should_encode = not load_from_cache
+        args = StateTracker.get_args()
+        if should_encode:
+            local_caption_split = self.split_captions_between_processes(
+                prompts or self.prompts
+            )
+        else:
+            local_caption_split = prompts or self.prompts
+        if (
+            hasattr(args, "cache_clear_validation_prompts")
+            and args.cache_clear_validation_prompts
+            and is_validation
+        ):
+            # If --cache_clear_validation_prompts was provided, we will forcibly overwrite them.
+            load_from_cache = False
+            should_encode = True
+        # self.debug_log(
+        #     f"compute_embeddings_for_sdxl_prompts received list of prompts: {list(prompts)[:5]}"
+        # )
+
+        if self.webhook_handler is not None:
+            last_reported_index = 0
+            self.send_progress_update(
+                type="init_cache_text_embeds_started",
+                progress=int(0 // len(local_caption_split)),
+                total=len(local_caption_split),
+                current=0,
+            )
+
+        self.write_thread_bar = tqdm(
+            desc="Write embeds to disk",
+            leave=False,
+            ncols=125,
+            disable=return_concat,
+            total=len(local_caption_split),
+            position=get_rank(),
+        )
+        with torch.no_grad():
+            last_reported_index = 0
+            for prompt in tqdm(
+                local_caption_split,
+                desc="Processing prompts",
+                disable=return_concat,
+                miniters=50,
+                leave=False,
+                ncols=125,
+                position=get_rank() + self.accelerator.num_processes + 1,
+            ):
+                filename = os.path.join(self.cache_dir, self.hash_prompt(prompt))
+                debug_msg = f"Processing file: {filename}, prompt: {prompt}"
+                prompt = PromptHandler.filter_caption(self.data_backend, prompt)
+                debug_msg = f"{debug_msg}\n -> filtered prompt: {prompt}"
+                if prompt is None:
+                    logger.error(f"Filename {filename} does not have a caption.")
+                    continue
+                logger.debug(debug_msg)
+                if return_concat and load_from_cache:
+                    try:
+                        # We attempt to load.
+                        text_encoder_output = self.load_from_cache(filename)
+                        embed_shapes = {k: v.shape for k, v in text_encoder_output.items()}
+                        logger.debug(f"Cached text embeds: {embed_shapes}")
+                        logger.debug(f"Filename {filename} prompt embeds: {embed_shapes}, keys: {text_encoder_output.keys()}")
+                    except Exception as e:
+                        # We failed to load. Now encode the prompt.
+                        logger.error(
+                            f"Failed retrieving prompt from cache:"
+                            f"\n-> prompt: {prompt}"
+                            f"\n-> filename: {filename}"
+                            f"\n-> error: {e}"
+                            f"\n-> id: {self.id}, data_backend id: {self.data_backend.id}"
+                        )
+                        should_encode = True
+                        raise Exception(
+                            "Cache retrieval for text embed file failed. Ensure your dataloader config value for skip_file_discovery does not contain 'text', and that preserve_data_backend_cache is disabled or unset."
+                        )
+                if should_encode:
+                    # If load_from_cache is True, should_encode would be False unless we failed to load.
+                    self.debug_log(f"Encoding filename {filename} :: device {self.text_encoders[0].device} :: prompt {prompt}")
+                    text_encoder_output = self.model.encode_text_batch([prompt])
+                    embed_shapes = {k: v.shape for k, v in text_encoder_output.items()}
+                    logger.debug(f"Filename {filename} prompt embeds: {embed_shapes}, keys: {text_encoder_output.keys()}")
+                    # Get the current size of the queue.
+                    current_size = self.write_queue.qsize()
+                    if current_size >= 2048:
+                        log_msg = str(
+                            f"[WARNING] Write queue size is {current_size}. This is quite large."
+                            " Consider increasing the write batch size. Delaying encode so that writes can catch up."
+                        )
+                        self.write_thread_bar.write(log_msg)
+                        while self.write_queue.qsize() > 100:
+                            time.sleep(0.1)
+                    self.debug_log(f"Adding embed to write queue: {filename}")
+                    self.save_to_cache(filename, text_encoder_output)
+
+                    if (
+                        self.webhook_handler is not None
+                        and int(
+                            self.write_thread_bar.n % self.webhook_progress_interval
+                        )
+                        < 10
+                    ):
+                        last_reported_index = int(
+                            self.write_thread_bar.n % self.webhook_progress_interval
+                        )
+                        self.send_progress_update(
+                            type="init_cache_text_embeds_status_update",
+                            progress=int(
+                                self.write_thread_bar.n
+                                // len(local_caption_split)
+                                * 100
+                            ),
+                            total=len(local_caption_split),
+                            current=0,
+                        )
+
+                    if return_concat:
+                        # we're returning the embeds for training, so we'll prepare them
+                        text_encoder_output = {k: v.to(self.accelerator.device) for k, v in text_encoder_output.items()}
+                    else:
+                        # if we're not returning them, we'll just nuke them
+                        text_encoder_output = {k: v.to("meta") for k, v in text_encoder_output.items()}
+                        del text_encoder_output
+                        continue
+
+                if return_concat:
+                    prompt_embeds_all.append(text_encoder_output)
+
+            while self.write_queue.qsize() > 0:
+                time.sleep(0.1)  # Sleep briefly to avoid busy-waiting
+
+            if self.webhook_handler is not None:
+                self.send_progress_update(
+                    type="init_cache_text_embeds_status_complete",
+                    progress=100,
+                    total=len(local_caption_split),
+                    current=len(local_caption_split),
+                )
+
+            # Close the tqdm progress bar after the loop
+            self.write_thread_bar.close()
+            self.process_write_batches = False
+
+            if not return_concat:
+                del prompt_embeds_all
+                return
+
+            logger.debug(f"Returning all {(len(prompt_embeds_all))} prompt embeds")
+            if "prompt_embeds" in text_encoder_output:
+                all_prompt_embeds = tuple([v for v in text_encoder_output["prompt_embeds"]])
+                text_encoder_output["prompt_embeds"] = torch.cat(all_prompt_embeds, dim=0)
+            if "add_text_embeds" in text_encoder_output:
+                all_pooled_embeds = tuple([v for v in text_encoder_output["prompt_embeds"]])
+                text_encoder_output["add_text_embeds"] = torch.cat(all_pooled_embeds, dim=0)
+
+        return text_encoder_output
 
     def __del__(self):
         """Ensure that the batch write thread is properly closed."""

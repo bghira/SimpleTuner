@@ -9,6 +9,7 @@ from tqdm import tqdm
 from helpers.training.wrappers import unwrap_model
 from PIL import Image
 from helpers.training.state_tracker import StateTracker
+from helpers.models.common import PredictionTypes
 from helpers.data_backend.factory import move_text_encoders
 from helpers.training.exceptions import MultiDatasetExhausted
 from helpers.models.sdxl.pipeline import (
@@ -456,25 +457,16 @@ class Validation:
     def __init__(
         self,
         accelerator,
-        unet,
-        transformer,
+        model,
         args,
         validation_prompts,
         validation_shortnames,
-        text_encoder_1,
-        tokenizer,
         vae_path,
         weight_dtype,
         embed_cache,
         validation_negative_pooled_embeds,
         validation_negative_prompt_embeds,
-        text_encoder_2,
-        tokenizer_2,
         ema_model,
-        vae,
-        controlnet=None,
-        text_encoder_3=None,
-        tokenizer_3=None,
         is_deepspeed: bool = False,
         model_evaluator=None,
         trainable_parameters=None,
@@ -482,20 +474,20 @@ class Validation:
         self.trainable_parameters = trainable_parameters
         self.accelerator = accelerator
         self.prompt_handler = None
-        self.unet = unet
-        self.transformer = transformer
-        self.controlnet = controlnet
+        self.unet, self.transformer = None, None
+        self.model = model
+        if args.controlnet:
+            self.controlnet = model.get_trained_component()
+        elif 'unet' in str(self.model.get_trained_component().__class__).lower():
+            self.unet = self.model.get_trained_component()
+        elif 'transformer' in str(self.model.get_trained_component().__class__).lower():
+            self.transformer = self.model.get_trained_component()
         self.args = args
         self.save_dir = os.path.join(args.output_dir, "validation_images")
         if not os.path.exists(self.save_dir):
             os.makedirs(self.save_dir, exist_ok=True)
         self.global_step = None
         self.global_resume_step = None
-        self.text_encoder_1 = text_encoder_1
-        self.tokenizer_1 = tokenizer
-        self.text_encoder_2 = text_encoder_2
-        self.tokenizer_2 = tokenizer_2
-        self.vae_path = vae_path
         self.validation_prompts = validation_prompts
         self.validation_shortnames = validation_shortnames
         self.validation_images = None
@@ -513,7 +505,6 @@ class Validation:
         )
         self.ema_model = ema_model
         self.ema_enabled = False
-        self.vae = vae
         self.pipeline = None
         self.deepfloyd = True if "deepfloyd" in self.args.model_type else False
         self.deepfloyd_stage2 = (
@@ -523,12 +514,7 @@ class Validation:
         self.validation_resolutions = (
             get_validation_resolutions() if not self.deepfloyd_stage2 else ["base-256"]
         )
-        self.text_encoder_3 = text_encoder_3
-        self.tokenizer_3 = tokenizer_3
-        self.flow_matching = (
-            self.args.model_family == "sd3"
-            and self.args.flow_matching_loss != "diffusion"
-        ) or self.args.model_family == "flux"
+        self.flow_matching = True if self.model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING else False
         self.deepspeed = is_deepspeed
         if is_deepspeed:
             if args.use_ema:
@@ -571,48 +557,7 @@ class Validation:
         Returns:
             None
         """
-        self.text_encoder_1 = None
-        self.text_encoder_2 = None
-        self.text_encoder_3 = None
-
-    def init_vae(self):
-
-        args = StateTracker.get_args()
-        vae_path = (
-            args.pretrained_model_name_or_path
-            if args.pretrained_vae_model_name_or_path is None
-            else args.pretrained_vae_model_name_or_path
-        )
-        precached_vae = StateTracker.get_vae()
-        logger.debug(
-            f"Was the VAE loaded? {precached_vae if precached_vae is None else 'Yes'}"
-        )
-        if self.args.model_family == "sana":
-            from diffusers import AutoencoderDC as AutoencoderClass
-        elif self.args.model_family == "wan":
-            from diffusers import AutoencoderKLWan as AutoencoderClass
-        elif self.args.model_family == "ltxvideo":
-            from diffusers import AutoencoderKLLTXVideo as AutoencoderClass
-        else:
-            from diffusers import AutoencoderKL as AutoencoderClass
-        self.vae = precached_vae
-        if self.vae is None:
-            logger.info(f"Initialising {AutoencoderClass}")
-            with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
-                self.vae = AutoencoderClass.from_pretrained(
-                    vae_path,
-                    subfolder=(
-                        "vae"
-                        if args.pretrained_vae_model_name_or_path is None
-                        else None
-                    ),
-                    revision=args.revision,
-                    force_upcast=False,
-                ).to(self.inference_device)
-        StateTracker.set_vae(self.vae)
-
-        logger.info(f"VAE type: {type(self.vae)}")
-        return self.vae
+        self.model.unload_text_encoder()
 
     def _discover_validation_input_samples(self):
         """
@@ -1149,152 +1094,7 @@ class Validation:
             )
 
         if self.pipeline is None:
-            pipeline_cls = self._pipeline_cls()
-            extra_pipeline_kwargs = {
-                "text_encoder": self.text_encoder_1,
-                "tokenizer": self.tokenizer_1,
-                "vae": self.vae,
-            }
-            if self.args.model_family in ["legacy"]:
-                extra_pipeline_kwargs["safety_checker"] = None
-            if self.args.model_family in ["sd3", "sdxl", "flux"]:
-                extra_pipeline_kwargs["text_encoder_2"] = None
-            if self.args.model_family in ["sd3"]:
-                extra_pipeline_kwargs["text_encoder_3"] = None
-            if type(pipeline_cls) is StableDiffusionXLPipeline:
-                del extra_pipeline_kwargs["text_encoder"]
-                del extra_pipeline_kwargs["tokenizer"]
-                if validation_type == "final":
-                    if self.text_encoder_1 is not None:
-                        extra_pipeline_kwargs["text_encoder_1"] = unwrap_model(
-                            self.accelerator, self.text_encoder_1
-                        )
-                        extra_pipeline_kwargs["tokenizer_1"] = self.tokenizer_1
-                        if self.text_encoder_2 is not None:
-                            extra_pipeline_kwargs["text_encoder_2"] = unwrap_model(
-                                self.accelerator, self.text_encoder_2
-                            )
-                            extra_pipeline_kwargs["tokenizer_2"] = self.tokenizer_2
-                else:
-                    extra_pipeline_kwargs["text_encoder_1"] = None
-                    extra_pipeline_kwargs["tokenizer_1"] = None
-                    extra_pipeline_kwargs["text_encoder_2"] = None
-                    extra_pipeline_kwargs["tokenizer_2"] = None
-
-            if self.args.model_family == "smoldit":
-                extra_pipeline_kwargs["transformer"] = unwrap_model(
-                    self.accelerator, self.transformer
-                )
-                extra_pipeline_kwargs["tokenizer"] = self.tokenizer_1
-                extra_pipeline_kwargs["text_encoder"] = self.text_encoder_1
-                extra_pipeline_kwargs["scheduler"] = self.setup_scheduler()
-
-            if self.args.controlnet:
-                # ControlNet training has an additional adapter thingy.
-                extra_pipeline_kwargs["controlnet"] = unwrap_model(
-                    self.accelerator, self.controlnet
-                )
-            if self.unet is not None:
-                extra_pipeline_kwargs["unet"] = unwrap_model(
-                    self.accelerator, self.unet
-                )
-
-            if self.transformer is not None:
-                extra_pipeline_kwargs["transformer"] = unwrap_model(
-                    self.accelerator, self.transformer
-                )
-
-            if self.args.model_family == "sd3" and self.args.train_text_encoder:
-                if self.text_encoder_1 is not None:
-                    extra_pipeline_kwargs["text_encoder"] = unwrap_model(
-                        self.accelerator, self.text_encoder_1
-                    )
-                    extra_pipeline_kwargs["tokenizer"] = self.tokenizer_1
-                if self.text_encoder_2 is not None:
-                    extra_pipeline_kwargs["text_encoder_2"] = unwrap_model(
-                        self.accelerator, self.text_encoder_2
-                    )
-                    extra_pipeline_kwargs["tokenizer_2"] = self.tokenizer_2
-                if self.text_encoder_3 is not None:
-                    extra_pipeline_kwargs["text_encoder_3"] = unwrap_model(
-                        self.accelerator, self.text_encoder_3
-                    )
-                    extra_pipeline_kwargs["tokenizer_3"] = self.tokenizer_3
-
-            if self.vae is None or not hasattr(self.vae, "device"):
-                extra_pipeline_kwargs["vae"] = self.init_vae()
-            else:
-                logger.info(f"Found VAE: {self.vae.config}")
-            if (
-                "vae" in extra_pipeline_kwargs
-                and extra_pipeline_kwargs.get("vae") is not None
-                and extra_pipeline_kwargs["vae"].device != self.inference_device
-            ):
-                extra_pipeline_kwargs["vae"] = extra_pipeline_kwargs["vae"].to(
-                    self.inference_device
-                )
-
-            pipeline_kwargs = {
-                "pretrained_model_name_or_path": self.args.pretrained_model_name_or_path,
-                "revision": self.args.revision,
-                "variant": self.args.variant,
-                "torch_dtype": self.weight_dtype,
-                **extra_pipeline_kwargs,
-            }
-            logger.debug(f"Initialising pipeline with kwargs: {pipeline_kwargs}")
-            attempt = 0
-            while attempt < 3:
-                attempt += 1
-                try:
-                    if self.args.model_family == "smoldit":
-                        self.pipeline = pipeline_cls(
-                            vae=self.vae,
-                            transformer=unwrap_model(
-                                self.accelerator, self.transformer
-                            ),
-                            tokenizer=self.tokenizer_1,
-                            text_encoder=self.text_encoder_1,
-                            scheduler=self.setup_scheduler(),
-                        )
-                    else:
-                        self.pipeline = pipeline_cls.from_pretrained(**pipeline_kwargs)
-                except Exception as e:
-                    import traceback
-
-                    logger.error(e)
-                    logger.error(traceback.format_exc())
-                    continue
-                break
-            if self.args.validation_torch_compile:
-                if self.deepspeed:
-                    logger.warning(
-                        "DeepSpeed does not support torch compile. Disabling. Set --validation_torch_compile=False to suppress this warning."
-                    )
-                elif self.args.lora_type.lower() == "lycoris":
-                    logger.warning(
-                        "LyCORIS does not support torch compile for validation due to graph compile breaks. Disabling. Set --validation_torch_compile=False to suppress this warning."
-                    )
-                else:
-                    if self.unet is not None and not is_compiled_module(self.unet):
-                        logger.warning(
-                            f"Compiling the UNet for validation ({self.args.validation_torch_compile})"
-                        )
-                        self.pipeline.unet = torch.compile(
-                            self.pipeline.unet,
-                            mode=self.args.validation_torch_compile_mode,
-                            fullgraph=False,
-                        )
-                    if self.transformer is not None and not is_compiled_module(
-                        self.transformer
-                    ):
-                        logger.warning(
-                            f"Compiling the transformer for validation ({self.args.validation_torch_compile})"
-                        )
-                        self.pipeline.transformer = torch.compile(
-                            self.pipeline.transformer,
-                            mode=self.args.validation_torch_compile_mode,
-                            fullgraph=False,
-                        )
+            self.model.get_pipeline()
 
         self.pipeline = self.pipeline.to(self.inference_device)
         self.pipeline.set_progress_bar_config(disable=True)
@@ -1774,14 +1574,6 @@ class Validation:
                     # Log all images in one call to prevent the global step from ticking
                     tracker.log(gallery_images, step=StateTracker.get_global_step())
 
-    def _primary_model(self):
-        if self.args.controlnet:
-            return self.controlnet
-        if self.unet is not None:
-            return self.unet
-        if self.transformer is not None:
-            return self.transformer
-
     def enable_ema_for_inference(self, pipeline=None):
         if self.ema_enabled:
             logger.debug("EMA already enabled. Not enabling EMA.")
@@ -1805,21 +1597,21 @@ class Validation:
                     )
                 elif self.args.lora_type.lower() == "standard":
                     _trainable_parameters = [
-                        x for x in self._primary_model().parameters() if x.requires_grad
+                        x for x in self.model.get_trained_component().parameters() if x.requires_grad
                     ]
                     self.ema_model.store(_trainable_parameters)
                     self.ema_model.copy_to(_trainable_parameters)
             else:
                 # if self.args.ema_device != "accelerator":
                 #     logger.info("Moving checkpoint to CPU for storage.")
-                #     self._primary_model().to("cpu")
+                #     self.model.get_trained_component().to("cpu")
                 logger.debug("Storing EMA weights for later recovery.")
                 self.ema_model.store(self.trainable_parameters())
                 logger.debug("Storing the EMA weights into the model for inference.")
                 self.ema_model.copy_to(self.trainable_parameters())
             # if self.args.ema_device != "accelerator":
             #     logger.debug("Moving checkpoint to CPU for storage.")
-            #     self._primary_model().to("cpu")
+            #     self.model.get_trained_component().to("cpu")
             #     logger.debug("Moving EMA weights to GPU for inference.")
             #     self.ema_model.to(self.inference_device)
         else:
@@ -1850,7 +1642,7 @@ class Validation:
             if self.args.ema_device != "accelerator":
                 logger.debug("Moving EMA weights to CPU for storage.")
                 self.ema_model.to(self.args.ema_device)
-                self._primary_model().to(self.inference_device)
+                self.model.get_trained_component().to(self.inference_device)
 
         else:
             logger.debug(
@@ -1860,8 +1652,7 @@ class Validation:
     def finalize_validation(self, validation_type):
         """Cleans up and restores original state if necessary."""
         if not self.args.keep_vae_loaded and not self.args.vae_cache_ondemand:
-            self.vae = self.vae.to("cpu")
-            self.vae = None
+            self.model.unload_vae()
         self.pipeline = None
         if torch.cuda.is_available():
             torch.cuda.empty_cache()

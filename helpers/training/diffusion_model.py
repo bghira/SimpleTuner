@@ -1,6 +1,6 @@
 import os
 from accelerate.logging import get_logger
-from helpers.models import get_model_config_path
+from helpers.models.common import get_model_config_path
 
 logger = get_logger(__name__, log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
