@@ -11,12 +11,14 @@ from helpers.training.multi_process import _get_rank
 from helpers.training.custom_schedule import apply_flow_schedule_shift, generate_timestep_weights, segmented_timestep_selection
 from helpers.training.min_snr_gamma import compute_snr
 from transformers.utils import ContextManagers
+from helpers.training.adapter import load_lora_weights
 from helpers.training.deepspeed import (
     deepspeed_zero_init_disabled_context_manager,
     prepare_model_for_deepspeed,
 )
 from abc import ABC, abstractmethod
 from enum import Enum
+from peft import LoraConfig
 
 logger = logging.getLogger(__name__)
 is_primary_process = True
@@ -62,6 +64,12 @@ class PredictionTypes(Enum):
     V_PREDICTION = "v_prediction"
     FLOW_MATCHING = "flow_matching"
 
+class ModelTypes(Enum):
+    UNET = "unet"
+    TRANSFORMER = "transformer"
+    VAE = "vae"
+    TEXT_ENCODER = "text_encoder"
+
 class ModelFoundation(ABC):
     """
     Base class that contains all the universal logic:
@@ -91,6 +99,25 @@ class ModelFoundation(ABC):
         """
         raise NotImplementedError("_encode_prompts must be implemented in the child class.")
 
+    @abstractmethod
+    def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
+        """
+        Converts the text embedding to the format expected by the pipeline.
+        This is a stub and should be implemented in subclasses.
+        
+        Prompt may be useful to inspect if your pipeline requires eg. zeroing empty inputs.
+        """
+        raise NotImplementedError("convert_text_embed_for_pipeline must be implemented in the child class.")
+
+    @abstractmethod
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
+        """
+        Converts the text embedding to the format expected by the pipeline for negative prompt inputs.
+        This is a stub and should be implemented in subclasses.
+
+        Prompt may be useful to inspect if your pipeline requires eg. zeroing empty inputs.
+        """
+        raise NotImplementedError("convert_text_embed_for_pipeline must be implemented in the child class.")
 
     @abstractmethod
     def load_lora_weights(self, models, input_dir):
@@ -331,20 +358,25 @@ class ModelFoundation(ABC):
         if not hasattr(pipeline_class, "from_pretrained"):
             raise NotImplementedError(f"Pipeline class {pipeline_class} does not have from_pretrained method.")
         signature = inspect.signature(pipeline_class.from_pretrained)
-        if "transformer" in signature.parameters:
-            pipeline_kwargs["transformer"] = unwrap_model(self.model)
-        elif "unet" in signature.parameters:
-            pipeline_kwargs["unet"] = unwrap_model(self.model)
-        if "vae" in signature.parameters:
-            pipeline_kwargs["vae"] = unwrap_model(self.vae)
-        if "text_encoder" in signature.parameters:
-            pipeline_kwargs["text_encoder"] = unwrap_model(self.text_encoders[0])
-        if "text_encoder_2" in signature.parameters:
-            pipeline_kwargs["text_encoder_2"] = unwrap_model(self.text_encoders[1])
-        if "text_encoder_3" in signature.parameters:
-            pipeline_kwargs["text_encoder_3"] = unwrap_model(self.text_encoders[2])
-        if "controlnet" in signature.parameters and self.config.controlnet:
-            pipeline_kwargs["controlnet"] = self.controlnet
+        pipeline_kwargs[self.MODEL_TYPE.value] = unwrap_model(self.accelerator, self.model)
+        if getattr(self, "vae", None) is not None:
+            pipeline_kwargs["vae"] = unwrap_model(self.accelerator, self.vae)
+        elif getattr(self, 'AUTOENCODER_CLASS', None) is not None:
+            pipeline_kwargs["vae"] = self.get_vae()
+        if self.text_encoders is not None and len(self.text_encoders) > 0:
+            pipeline_kwargs["text_encoder"] = unwrap_model(self.accelerator, self.text_encoders[0])
+        elif len(self.TEXT_ENCODER_CONFIGURATION) > 0:
+            pipeline_kwargs["text_encoder"] = None
+        if self.text_encoders is not None and len(self.text_encoders) > 1:
+            pipeline_kwargs["text_encoder_2"] = unwrap_model(self.accelerator, self.text_encoders[1])
+        elif len(self.TEXT_ENCODER_CONFIGURATION) > 1:
+            pipeline_kwargs["text_encoder_2"] = None
+        if self.text_encoders is not None and len(self.text_encoders) > 2:
+            pipeline_kwargs["text_encoder_3"] = unwrap_model(self.accelerator, self.text_encoders[2])
+        elif len(self.TEXT_ENCODER_CONFIGURATION) > 2:
+            pipeline_kwargs["text_encoder_3"] = None
+        if self.config.controlnet:
+            pipeline_kwargs["controlnet"] = unwrap_model(self.accelerator, self.model)
 
         logger.info(f"Initialising pipeline with components: {pipeline_kwargs.keys()}")
         self.pipeline = pipeline_class.from_pretrained(
@@ -410,10 +442,10 @@ class ModelFoundation(ABC):
                 target = (prepared_batch["noisy_latents"] - prepared_batch["latents"]) / sigma_reshaped
             else:
                 target = prepared_batch["latents"]
-        elif self.noise_scheduler.config.prediction_type == self.PREDICTION_TYPE_EPSILON:
+        elif self.noise_schedule.config.prediction_type == self.PREDICTION_TYPE_EPSILON:
             target = prepared_batch["noise"]
-        elif self.noise_scheduler.config.prediction_type == self.PREDICTION_TYPE_V_PREDICTION:
-            target = self.noise_scheduler.get_velocity(
+        elif self.noise_schedule.config.prediction_type == self.PREDICTION_TYPE_V_PREDICTION:
+            target = self.noise_schedule.get_velocity(
                 prepared_batch["latents"],
                 prepared_batch["noise"],
                 prepared_batch["timesteps"]
@@ -423,6 +455,9 @@ class ModelFoundation(ABC):
         else:
             raise ValueError(f"Unknown prediction type {self.noise_schedule.config.prediction_type}.")
         return target
+
+    def prepare_batch_conditions(self, batch: dict) -> dict:
+        return batch
 
     def prepare_batch(self, batch: dict) -> dict:
         """
@@ -438,6 +473,7 @@ class ModelFoundation(ABC):
             "dtype": self.config.weight_dtype,
         }
 
+        logger.debug(f"Preparing batch: {batch.keys()}")
         # Ensure the encoder hidden states are on device
         batch["encoder_hidden_states"] = batch["prompt_embeds"].to(**target_device_kwargs)
 
@@ -474,23 +510,23 @@ class ModelFoundation(ABC):
             batch["noise"] = noise
 
         # Flow matching branch: set sigmas and timesteps.
-        if self.config.flow_matching:
+        if self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
             if not self.config.flux_fast_schedule and not any(
                 [self.config.flow_use_beta_schedule, self.config.flow_use_uniform_schedule]
             ):
                 batch["sigmas"] = torch.sigmoid(
                     self.config.flow_sigmoid_scale * torch.randn((bsz,), device=self.accelerator.device)
                 )
-                batch["sigmas"] = apply_flow_schedule_shift(self.config, self.noise_scheduler, batch["sigmas"], batch["noise"])
+                batch["sigmas"] = apply_flow_schedule_shift(self.config, self.noise_schedule, batch["sigmas"], batch["noise"])
             elif self.config.flow_use_uniform_schedule:
                 batch["sigmas"] = torch.rand((bsz,), device=self.accelerator.device)
-                batch["sigmas"] = apply_flow_schedule_shift(self.config, self.noise_scheduler, batch["sigmas"], batch["noise"])
+                batch["sigmas"] = apply_flow_schedule_shift(self.config, self.noise_schedule, batch["sigmas"], batch["noise"])
             elif self.config.flow_use_beta_schedule:
                 alpha = self.config.flow_beta_schedule_alpha
                 beta = self.config.flow_beta_schedule_beta
                 beta_dist = Beta(alpha, beta)
                 batch["sigmas"] = beta_dist.sample((bsz,)).to(device=self.accelerator.device)
-                batch["sigmas"] = apply_flow_schedule_shift(self.config, self.noise_scheduler, batch["sigmas"], noise)
+                batch["sigmas"] = apply_flow_schedule_shift(self.config, self.noise_schedule, batch["sigmas"], noise)
             else:
                 available_sigmas = [1.0] * 7 + [0.75, 0.5, 0.25]
                 batch["sigmas"] = torch.tensor(random.choices(available_sigmas, k=bsz),
@@ -498,6 +534,9 @@ class ModelFoundation(ABC):
             batch["timesteps"] = batch["sigmas"] * 1000.0
             # Ensure sigmas is reshaped appropriately (default is 4D, may be overriden in video subclass)
             batch["sigmas"] = batch["sigmas"].view(-1, 1, 1, 1)
+            batch["noisy_latents"] = (1 - batch["sigmas"]) * batch["latents"] + batch[
+                "sigmas"
+            ] * batch["noise"]
         else:
             # If not flow matching, possibly apply an offset to noise
             if self.config.offset_noise:
@@ -505,19 +544,23 @@ class ModelFoundation(ABC):
                     noise = noise + self.config.noise_offset * torch.randn(
                         batch["latents"].shape[0], batch["latents"].shape[1], 1, 1, device=batch["latents"].device
                     )
-            weights = generate_timestep_weights(self.config, self.noise_scheduler.config.num_train_timesteps).to(self.accelerator.device)
+            weights = generate_timestep_weights(self.config, self.noise_schedule.config.num_train_timesteps).to(self.accelerator.device)
             if bsz > 1 and not self.config.disable_segmented_timestep_sampling:
                 batch["timesteps"] = segmented_timestep_selection(
-                    actual_num_timesteps=self.noise_scheduler.config.num_train_timesteps,
+                    actual_num_timesteps=self.noise_schedule.config.num_train_timesteps,
                     bsz=bsz,
                     weights=weights,
                     use_refiner_range=False  # You can override in subclass if needed.
                 ).to(self.accelerator.device)
             else:
                 batch["timesteps"] = torch.multinomial(weights, bsz, replacement=True).long()
-            batch["noisy_latents"] = self.noise_scheduler.add_noise(
+            batch["noisy_latents"] = self.noise_schedule.add_noise(
                 batch["latents"].float(), batch["noise"].float(), batch["timesteps"]
             ).to(device=self.accelerator.device, dtype=self.config.weight_dtype)
+
+        # any model-specific augmentation can occur inside prepare_batch_conditions.
+        batch = self.prepare_batch_conditions(batch=batch)
+
         return batch
 
     def encode_text_batch(self, text_batch: list):
@@ -542,11 +585,15 @@ class ModelFoundation(ABC):
         """
         return text_embedding
 
-    def loss(self, prepared_batch: dict, model_pred, target, apply_conditioning_mask: bool = True):
+    def loss(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
         """
         Computes the loss between the model prediction and the target.
         Optionally applies SNR weighting and a conditioning mask.
         """
+        target = self.get_prediction_target(prepared_batch)
+        model_pred = model_output["model_prediction"]
+        if target is None:
+            raise ValueError("Target is None. Cannot compute loss.")
         if self.PREDICTION_TYPE == PredictionTypes.FLOW_MATCHING:
             loss = (model_pred.float() - target.float()) ** 2
         elif self.PREDICTION_TYPE in [PredictionTypes.EPSILON, PredictionTypes.V_PREDICTION]:
@@ -583,6 +630,11 @@ class ImageModelFoundation(ModelFoundation):
     Implements logic common to image-based diffusion models.
     Handles typical VAE, text encoder loading and a UNet forward pass.
     """
+    # The safe diffusers default value for LoRA training targets.
+    DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
+    # A bit more than the default, but some will need to override this to just Attention layers, like SD3.
+    DEFAULT_LYCORIS_TARGET = ["Attention", "FeedForward"]
+    VALIDATION_USES_NEGATIVE_PROMPT = True
 
     def __init__(self, config: dict, accelerator):
         super().__init__(config, accelerator)
@@ -593,6 +645,41 @@ class ImageModelFoundation(ModelFoundation):
         self.model = None
         self.text_encoders = None
         self.tokenizers = None
+
+    def get_lora_target_layers(self):
+        # Some models, eg. Flux should override this with more complex config-driven logic.
+        if self.config.lora_type.lower() == "standard":
+            return self.DEFAULT_LORA_TARGET
+        elif self.config.lora_type.lower() == "lycoris":
+            return self.DEFAULT_LYCORIS_TARGET
+        else:
+            raise NotImplementedError(f"Unknown LoRA target type {self.config.lora_type}.")
+
+    def add_lora_adapter(self):
+        target_modules = self.get_lora_target_layers()
+        addkeys, misskeys = [], []
+        lora_config = LoraConfig(
+            r=self.config.lora_rank,
+            lora_alpha=(
+                self.config.lora_alpha
+                if self.config.lora_alpha is not None
+                else self.config.lora_rank
+            ),
+            lora_dropout=self.config.lora_dropout,
+            init_lora_weights=self.config.lora_initialisation_style,
+            target_modules=target_modules,
+            use_dora=self.config.use_dora,
+        )
+        self.model.add_adapter(lora_config)
+        if self.config.init_lora:
+            addkeys, misskeys = load_lora_weights(
+                {self.MODEL_TYPE: self.model},
+                self.config.init_lora,
+                use_dora=self.config.use_dora,
+            )
+        
+        return addkeys, misskeys
+
 
 class VideoModelFoundation(ImageModelFoundation):
     """

@@ -115,7 +115,6 @@ from diffusers import (
     UniPCMultistepScheduler,
 )
 
-from peft import LoraConfig
 from peft.utils import get_peft_model_state_dict
 from helpers.training.ema import EMAModel
 from helpers.training.exceptions import MultiDatasetExhausted
@@ -524,9 +523,9 @@ class Trainer:
         if self.config.push_to_hub and self.accelerator.is_main_process:
             self.hub_manager.collected_data_backend_str = collected_data_backend_str
             self.hub_manager.set_validation_prompts(
-                self.validation_prompts, self.validation_shortnames
+                self.validation_prompt_metadata
             )
-            logger.debug(f"Collected validation prompts: {self.validation_prompts}")
+            logger.debug(f"Collected validation prompts: {self.validation_prompt_metadata}")
         self._recalculate_training_steps()
         logger.info(
             f"Collected the following data backends: {collected_data_backend_str}"
@@ -554,29 +553,13 @@ class Trainer:
             logger.error("Cannot run validations with DeepSpeed ZeRO stage 3.")
             return
         if self.accelerator.is_main_process and not self.config.validation_disable:
-            if self.config.model_family == "flux":
-                (
-                    self.validation_prompts,
-                    self.validation_shortnames,
-                    self.validation_negative_prompt_embeds,
-                    self.validation_negative_pooled_embeds,
-                    self.validation_negative_time_ids,
-                ) = prepare_validation_prompt_list(
-                    args=self.config,
-                    embed_cache=StateTracker.get_default_text_embed_cache(),
-                )
-            else:
-                (
-                    self.validation_prompts,
-                    self.validation_shortnames,
-                    self.validation_negative_prompt_embeds,
-                    self.validation_negative_pooled_embeds,
-                ) = prepare_validation_prompt_list(
-                    args=self.config,
-                    embed_cache=StateTracker.get_default_text_embed_cache(),
-                )
+            self.validation_prompt_metadata = prepare_validation_prompt_list(
+                args=self.config,
+                embed_cache=StateTracker.get_default_text_embed_cache(),
+                model=self.model,
+            )
         else:
-            self.validation_prompts = None
+            self.validation_prompt_metadata = None
             self.validation_shortnames = None
             self.validation_negative_prompt_embeds = None
             self.validation_negative_pooled_embeds = None
@@ -722,50 +705,7 @@ class Trainer:
             lora_info_msg = f"Using LoRA training mode (rank={self.config.lora_rank})"
             logger.info(lora_info_msg)
             self._send_webhook_msg(message=lora_info_msg)
-            target_modules = determine_adapter_target_modules(
-                self.config, self.unet, self.transformer
-            )
-            addkeys, misskeys = [], []
-            if self.unet is not None:
-                unet_lora_config = LoraConfig(
-                    r=self.config.lora_rank,
-                    lora_alpha=(
-                        self.config.lora_alpha
-                        if self.config.lora_alpha is not None
-                        else self.config.lora_rank
-                    ),
-                    lora_dropout=self.config.lora_dropout,
-                    init_lora_weights=self.config.lora_initialisation_style,
-                    target_modules=target_modules,
-                    use_dora=self.config.use_dora,
-                )
-                logger.info("Adding LoRA adapter to the unet model..")
-                self.unet.add_adapter(unet_lora_config)
-                if self.config.init_lora:
-                    addkeys, misskeys = load_lora_weights(
-                        {"unet": self.unet},
-                        self.config.init_lora,
-                        use_dora=self.config.use_dora,
-                    )
-            elif self.transformer is not None:
-                transformer_lora_config = LoraConfig(
-                    r=self.config.lora_rank,
-                    lora_alpha=(
-                        self.config.lora_alpha
-                        if self.config.lora_alpha is not None
-                        else self.config.lora_rank
-                    ),
-                    init_lora_weights=self.config.lora_initialisation_style,
-                    target_modules=target_modules,
-                    use_dora=self.config.use_dora,
-                )
-                self.transformer.add_adapter(transformer_lora_config)
-                if self.config.init_lora:
-                    addkeys, misskeys = load_lora_weights(
-                        {"transformer": self.transformer},
-                        self.config.init_lora,
-                        use_dora=self.config.use_dora,
-                    )
+            addkeys, misskeys = self.model.add_lora_adapter()
             if addkeys:
                 logger.warning(
                     "The following keys were found in %s, but are not part of the model and are ignored:\n %s.\nThis is most likely an error"
@@ -905,16 +845,9 @@ class Trainer:
         if self.config.model_type == "lora":
             if self.config.lora_type == "lycoris":
                 return self.lycoris_wrapped_network.parameters()
-        if self.config.controlnet:
-            return [
-                param for param in self.controlnet.parameters() if param.requires_grad
-            ]
-        if self.unet is not None:
-            return [param for param in self.unet.parameters() if param.requires_grad]
-        if self.transformer is not None:
-            return [
-                param for param in self.transformer.parameters() if param.requires_grad
-            ]
+        return [
+            param for param in self.model.get_trained_component().parameters() if param.requires_grad
+        ]
 
     def _recalculate_training_steps(self):
         # Scheduler and math around the number of training steps.
@@ -1271,13 +1204,10 @@ class Trainer:
             accelerator=self.accelerator,
             model=self.model,
             args=self.config,
-            validation_prompts=self.validation_prompts,
-            validation_shortnames=self.validation_shortnames,
+            validation_prompt_metadata=self.validation_prompt_metadata,
             vae_path=self.config.vae_path,
             weight_dtype=self.config.weight_dtype,
             embed_cache=StateTracker.get_default_text_embed_cache(),
-            validation_negative_pooled_embeds=self.validation_negative_pooled_embeds,
-            validation_negative_prompt_embeds=self.validation_negative_prompt_embeds,
             ema_model=self.ema_model,
             model_evaluator=model_evaluator,
             is_deepspeed=self.config.use_deepspeed_optimizer,
@@ -2022,22 +1952,9 @@ class Trainer:
                 #  image embeds are passed in with the TE-produced text embeds.
                 # TODO: Replace with model_predict method on the model class.
                 # This is a hack to get it working for now.
-                model_pred = self.model.get_trained_component()(
-                    hidden_states=noisy_latents.to(
-                        device=self.accelerator.device,
-                        dtype=self.config.base_weight_dtype,
-                    ),
-                    timestep=timesteps,
-                    encoder_hidden_states=encoder_hidden_states.to(
-                        device=self.accelerator.device,
-                        dtype=self.config.base_weight_dtype,
-                    ),
-                    pooled_projections=add_text_embeds.to(
-                        device=self.accelerator.device,
-                        dtype=self.config.weight_dtype,
-                    ),
-                    return_dict=False,
-                )[0]
+                model_pred = self.model.model_predict(
+                    prepared_batch=prepared_batch,
+                )
             elif self.config.model_family == "sana":
                 model_pred = self.transformer(
                     noisy_latents.to(self.config.weight_dtype),
@@ -2223,213 +2140,8 @@ class Trainer:
             )
             return batch
 
-        target_device_kwargs = {
-            "device": self.accelerator.device,
-            "dtype": self.config.weight_dtype,
-        }
+        return self.model.prepare_batch(batch)
 
-        batch["batch_luminance"] = batch.get("batch_luminance", -1.0)
-        batch["encoder_hidden_states"] = batch["prompt_embeds"].to(
-            **target_device_kwargs
-        )
-
-        pooled_embeds = batch.get("add_text_embeds")
-        time_ids = batch["batch_time_ids"]
-        batch["added_cond_kwargs"] = {}
-        if pooled_embeds is not None and hasattr(pooled_embeds, "to"):
-            batch["added_cond_kwargs"]["text_embeds"] = pooled_embeds.to(
-                **target_device_kwargs
-            )
-        if time_ids is not None and hasattr(time_ids, "to"):
-            batch["added_cond_kwargs"]["time_ids"] = time_ids.to(**target_device_kwargs)
-
-        latents = batch.get("latent_batch")
-        if not hasattr(latents, "to"):
-            logger.error("Batch received:")
-            logger.error(batch)
-            raise ValueError("Received invalid value for latents.")
-        batch["latents"] = latents.to(**target_device_kwargs)
-
-        encoder_attention_mask = batch.get("encoder_attention_mask")
-        if encoder_attention_mask is not None and hasattr(encoder_attention_mask, "to"):
-            batch["encoder_attention_mask"] = encoder_attention_mask.to(
-                **target_device_kwargs
-            )
-
-        if self.config.model_family in ["sdxl", "kolors"]:
-            batch["added_cond_kwargs"] = batch.get("added_cond_kwargs")
-        elif self.config.model_family in ["pixart_sigma", "smoldit"]:
-            batch["added_cond_kwargs"] = batch.get("batch_time_ids")
-        batch["is_regularisation_data"] = batch.get("is_regularisation_data", False)
-
-        # Sample noise that we'll add to the latents - self.config.noise_offset might need to be set to 0.1 by default.
-        noise = torch.randn_like(batch["latents"])
-        bsz = batch["latents"].shape[0]
-        if self.config.input_perturbation != 0 and (
-            not self.config.input_perturbation_steps
-            or self.state["global_step"] < self.config.input_perturbation_steps
-        ):
-            input_perturbation = self.config.input_perturbation
-            if self.config.input_perturbation_steps:
-                input_perturbation *= 1.0 - (
-                    self.state["global_step"] / self.config.input_perturbation_steps
-                )
-            batch["noise"] = noise + input_perturbation * torch.randn_like(
-                batch["latents"]
-            )
-        else:
-            batch["noise"] = noise
-        if self.config.flow_matching:
-            if not self.config.flux_fast_schedule and not any(
-                [
-                    self.config.flow_use_beta_schedule,
-                    self.config.flow_use_uniform_schedule,
-                ]
-            ):
-                # imported from cloneofsimo's minRF trainer: https://github.com/cloneofsimo/minRF
-                # also used by: https://github.com/XLabs-AI/x-flux/tree/main
-                # and: https://github.com/kohya-ss/sd-scripts/commit/8a0f12dde812994ec3facdcdb7c08b362dbceb0f
-                batch["sigmas"] = torch.sigmoid(
-                    self.config.flow_sigmoid_scale
-                    * torch.randn((bsz,), device=self.accelerator.device)
-                )
-                batch["sigmas"] = apply_flow_schedule_shift(
-                    self.config, self.noise_scheduler, batch["sigmas"], batch["noise"]
-                )
-            elif self.config.flow_use_uniform_schedule:
-                batch["sigmas"] = torch.rand((bsz,), device=self.accelerator.device)
-                batch["sigmas"] = apply_flow_schedule_shift(
-                    self.config, self.noise_scheduler, batch["sigmas"], batch["noise"]
-                )
-            elif self.config.flow_use_beta_schedule:
-                alpha = self.config.flow_beta_schedule_alpha
-                beta = self.config.flow_beta_schedule_beta
-
-                # Create a Beta distribution instance
-                beta_dist = Beta(alpha, beta)
-
-                # Sample from the Beta distribution
-                batch["sigmas"] = beta_dist.sample((bsz,)).to(
-                    device=self.accelerator.device
-                )
-
-                batch["sigmas"] = apply_flow_schedule_shift(
-                    self.config, self.noise_scheduler, batch["sigmas"], noise
-                )
-            else:
-                # fast schedule can only use these sigmas, and they can be sampled up to batch size times
-                available_sigmas = [
-                    1.0,
-                    1.0,
-                    1.0,
-                    1.0,
-                    1.0,
-                    1.0,
-                    1.0,
-                    0.75,
-                    0.5,
-                    0.25,
-                ]
-                batch["sigmas"] = torch.tensor(
-                    random.choices(available_sigmas, k=bsz),
-                    device=self.accelerator.device,
-                )
-            batch["timesteps"] = batch["sigmas"] * 1000.0
-            if self.config.model_family == "wan":
-                batch["timesteps"] = batch["timesteps"].view(-1)
-            batch["sigmas"] = batch["sigmas"].view(-1, 1, 1, 1)
-        else:
-            if self.config.offset_noise:
-                if (
-                    self.config.noise_offset_probability == 1.0
-                    or random.random() < self.config.noise_offset_probability
-                ):
-                    noise = noise + self.config.noise_offset * torch.randn(
-                        batch["latents"].shape[0],
-                        batch["latents"].shape[1],
-                        1,
-                        1,
-                        device=batch["latents"].device,
-                    )
-            # Sample a random timestep for each image, potentially biased by the timestep weights.
-            # Biasing the timestep weights allows us to spend less time training irrelevant timesteps.
-            weights = generate_timestep_weights(
-                self.config, self.noise_scheduler.config.num_train_timesteps
-            ).to(self.accelerator.device)
-            # Instead of uniformly sampling the timestep range, we'll split our weights and schedule into bsz number of segments.
-            # This enables more broad sampling and potentially more effective training.
-            if bsz > 1 and not self.config.disable_segmented_timestep_sampling:
-                batch["timesteps"] = segmented_timestep_selection(
-                    actual_num_timesteps=self.noise_scheduler.config.num_train_timesteps,
-                    bsz=bsz,
-                    weights=weights,
-                    use_refiner_range=StateTracker.is_sdxl_refiner()
-                    and not StateTracker.get_args().sdxl_refiner_uses_full_range,
-                ).to(self.accelerator.device)
-            else:
-                batch["timesteps"] = torch.multinomial(
-                    weights, bsz, replacement=True
-                ).long()
-        if self.config.flow_matching:
-            if len(batch["latents"].shape) == 5:
-                # ltxvideo and others with 5D tensors need expansion to match dims here i think
-                training_logger.debug(
-                    f"Latents shape vs sigmas, timesteps: {batch['latents'].shape}, {batch['sigmas'].shape}, {batch['timesteps'].shape}"
-                )
-                batch["sigmas"] = batch["sigmas"].reshape(bsz, 1, 1, 1, 1)
-                num_frame_latents = batch["latents"].shape[2]
-                if (
-                    self.config.model_family == "ltxvideo"
-                    and num_frame_latents > 1
-                    and batch["is_i2v_data"] is True
-                ):
-                    # the theory is that if you have a single-frame latent, we expand it to num_frames and then do less destructive denoising.
-                    single_frame_latents = batch["latents"]
-                    if num_frame_latents > 1:
-                        # for an actual video though, we'll grab one frame using the worst syntax we can think of:
-                        single_frame_latents = batch["latents"][
-                            :, :, 0, :, :
-                        ].unsqueeze(dim=2)
-                        training_logger.debug(
-                            f"All latents shape: {batch['latents'].shape}"
-                        )
-                        training_logger.debug(
-                            f"Single frame latents shape: {single_frame_latents.shape}"
-                        )
-                    batch["i2v_conditioning_mask"] = make_i2v_conditioning_mask(
-                        batch["latents"], protect_frame_index=0
-                    )
-                    batch["timesteps"], batch["noise"], new_sigmas = (
-                        apply_first_frame_protection(
-                            batch["latents"],
-                            batch["timesteps"],
-                            batch["noise"],
-                            batch["i2v_conditioning_mask"],
-                            protect_first_frame=self.config.ltx_protect_first_frame,
-                            first_frame_probability=self.config.ltx_i2v_prob,
-                            partial_noise_fraction=self.config.ltx_partial_noise_fraction,
-                        )
-                    )
-                    if new_sigmas is not None:
-                        batch["sigmas"] = new_sigmas
-                    training_logger.debug(
-                        f"Applied mask {batch['i2v_conditioning_mask'].shape} to timestep {batch['timesteps'].shape}"
-                    )
-
-            batch["noisy_latents"] = (1 - batch["sigmas"]) * batch["latents"] + batch[
-                "sigmas"
-            ] * batch["noise"]
-        else:
-            # Add noise to the latents according to the noise magnitude at each timestep
-            # (this is the forward diffusion process)
-            batch["noisy_latents"] = self.noise_scheduler.add_noise(
-                batch["latents"].float(), batch["noise"].float(), batch["timesteps"]
-            ).to(
-                device=self.accelerator.device,
-                dtype=self.config.weight_dtype,
-            )
-
-        return batch
 
     def get_prediction_target(self, prepared_batch: dict):
         if self.config.flow_matching:
@@ -2730,8 +2442,10 @@ class Trainer:
                     model_pred = self.model_predict(
                         prepared_batch=prepared_batch,
                     )
-                    loss = self._calculate_loss(
-                        prepared_batch, model_pred, target, apply_conditioning_mask=True
+                    loss = self.model.loss(
+                        prepared_batch=prepared_batch,
+                        model_output=model_pred,
+                        apply_conditioning_mask=True,
                     )
 
                     parent_loss = None
@@ -3011,11 +2725,12 @@ class Trainer:
                             get_prediction_target=self.get_prediction_target,
                             noise_scheduler=self._get_noise_schedule(),
                         )
-                        tracker_table = self.evaluation.generate_tracker_table(
-                            all_accumulated_losses=all_accumulated_losses
-                        )
-                        print(f"Tracking information: {tracker_table}")
-                        wandb_logs.update(tracker_table)
+                        if all_accumulated_losses:
+                            tracker_table = self.evaluation.generate_tracker_table(
+                                all_accumulated_losses=all_accumulated_losses
+                            )
+                            print(f"Tracking information: {tracker_table}")
+                            wandb_logs.update(tracker_table)
                         self.mark_optimizer_train()
 
                     self.accelerator.log(

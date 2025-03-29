@@ -1,11 +1,15 @@
-import torch, os
-from helpers.models.common import ImageModelFoundation, PredictionTypes, PipelineTypes
+import torch, os, logging
+from helpers.models.common import ImageModelFoundation, PredictionTypes, PipelineTypes, ModelTypes
 from transformers import T5TokenizerFast, T5EncoderModel, CLIPTokenizer, CLIPTextModelWithProjection
 from helpers.models.sd3.transformer import SD3Transformer2DModel
 from helpers.models.sd3.pipeline import StableDiffusion3Pipeline, StableDiffusion3Img2ImgPipeline
 from diffusers import AutoencoderKL
 from diffusers.utils import convert_state_dict_to_diffusers
 from peft.utils import get_peft_model_state_dict
+from helpers.training.multi_process import _get_rank
+
+logger = logging.getLogger(__name__)
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO") if _get_rank() == 0 else "ERROR")
 
 def _encode_sd3_prompt_with_t5(
     text_encoder,
@@ -82,8 +86,13 @@ def _encode_sd3_prompt_with_clip(
 
 class SD3(ImageModelFoundation):
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
+    MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 16
+    # The safe diffusers default value for LoRA training targets.
+    DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
+    # Only training the Attention blocks by default seems to help more with SD3.
+    DEFAULT_LYCORIS_TARGET = ["Attention"]
 
     MODEL_CLASS = SD3Transformer2DModel
     PIPELINE_CLASSES = {
@@ -91,6 +100,8 @@ class SD3(ImageModelFoundation):
         PipelineTypes.IMG2IMG: StableDiffusion3Img2ImgPipeline,
     }
     MODEL_SUBFOLDER = "transformer"
+    # The default model flavor to use when none is specified.
+    DEFAULT_MODEL_FLAVOR = "medium"
     HUGGINGFACE_PATHS = {
         "medium": "stabilityai/stable-diffusion-3.5-medium",
         "large": "stabilityai/stable-diffusion-3.5-large",
@@ -134,7 +145,21 @@ class SD3(ImageModelFoundation):
 
         return {
             "prompt_embeds": prompt_embeds,
-            "pooled_prompt_embeds": pooled_prompt_embeds,
+            "pooled_prompt_embeds": pooled_prompt_embeds.squeeze(0),
+        }
+
+    def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
+        # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
+        return {
+            "prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
+            "pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0),
+        }
+
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
+        # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
+        return {
+            "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
+            "negative_pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0),
         }
 
     def _encode_prompts(self, prompts: list):
@@ -193,25 +218,31 @@ class SD3(ImageModelFoundation):
         return prompt_embeds, pooled_prompt_embeds
 
     def model_predict(self, prepared_batch):
-        return self.transformer(
-            hidden_states=prepared_batch["noisy_latents"].to(
-                device=self.accelerator.device,
-                dtype=self.config.base_weight_dtype,
-            ),
-            timestep=prepared_batch["timesteps"],
-            encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(
-                device=self.accelerator.device,
-                dtype=self.config.base_weight_dtype,
-            ),
-            pooled_projections=prepared_batch["add_text_embeds"].to(
-                device=self.accelerator.device,
-                dtype=self.config.weight_dtype,
-            ),
-            return_dict=False,
-        )[0]
-    
-    def save_lora_weights(self, **kwargs):
-        self.PIPELINE_CLASS.save_lora_weights(**kwargs)
+        logger.debug(
+            "Input shapes:"
+            f"\n{prepared_batch['noisy_latents'].shape}"
+            f"\n{prepared_batch['timesteps'].shape}"
+            f"\n{prepared_batch['encoder_hidden_states'].shape}"
+            f"\n{prepared_batch['add_text_embeds'].shape}"
+        )
+        return {
+            "model_prediction": self.model(
+                hidden_states=prepared_batch["noisy_latents"].to(
+                    device=self.accelerator.device,
+                    dtype=self.config.base_weight_dtype,
+                ),
+                timestep=prepared_batch["timesteps"],
+                encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(
+                    device=self.accelerator.device,
+                    dtype=self.config.base_weight_dtype,
+                ),
+                pooled_projections=prepared_batch["add_text_embeds"].to(
+                    device=self.accelerator.device,
+                    dtype=self.config.weight_dtype,
+                ),
+                return_dict=False,
+            )[0]
+        }
     
     def load_lora_weights(self, models, input_dir):
         unet_ = None

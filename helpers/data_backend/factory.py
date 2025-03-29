@@ -56,6 +56,11 @@ def warning_log(message):
         logger.warning(message)
 
 
+def debug_log(message):
+    if StateTracker.get_accelerator().is_main_process:
+        logger.debug(message)
+
+
 def check_column_values(
     column_data, column_name, parquet_path, fallback_caption_column=False
 ):
@@ -451,7 +456,7 @@ def configure_parquet_database(backend: dict, args, data_backend: BaseDataBacken
 
 def move_text_encoders(text_encoders: list, target_device: str):
     """Move text encoders to the target device."""
-    logger.info(f"Moving text encoders to {target_device}")
+    logger.debug(f"Moving text encoders to {target_device}")
     return [encoder.to(target_device) for encoder in text_encoders]
 
 

@@ -59,9 +59,9 @@ class HubManager:
             f"No Hugging Face Hub token found ({token_path}). Please ensure you have logged in with 'huggingface-cli login'."
         )
 
-    def set_validation_prompts(self, validation_prompts, validation_shortnames):
-        self.validation_prompts = validation_prompts
-        self.validation_shortnames = validation_shortnames
+    def set_validation_prompts(self, validation_prompts):
+        self.validation_prompts = validation_prompts.values()
+        self.validation_shortnames = validation_prompts.keys()
 
     def upload_validation_folder(self, webhook_handler=None, override_path=None):
         try:

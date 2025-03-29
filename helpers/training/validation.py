@@ -217,9 +217,7 @@ def retrieve_validation_images():
     return validation_set
 
 
-def prepare_validation_prompt_list(args, embed_cache):
-    validation_negative_prompt_embeds = None
-    validation_negative_pooled_embeds = None
+def prepare_validation_prompt_list(args, embed_cache, model):
     validation_prompts = (
         [""] if not StateTracker.get_args().validation_disable_unconditional else []
     )
@@ -272,6 +270,7 @@ def prepare_validation_prompt_list(args, embed_cache):
             )
             validation_prompts.append(prompt)
             validation_shortnames.append(shortname)
+
     if args.user_prompt_library is not None:
         user_prompt_library = PromptHandler.load_user_prompts(args.user_prompt_library)
         for shortname, prompt in tqdm(
@@ -295,73 +294,20 @@ def prepare_validation_prompt_list(args, embed_cache):
         embed_cache.compute_embeddings_for_prompts(
             [args.validation_prompt], is_validation=True, load_from_cache=False
         )
-
-    # Compute negative embed for validation prompts, if any are set.
+    # Compute negative embed for validation prompts, if any are set, so that it's stored before we unload the text encoder.
     if validation_prompts:
         logger.info("Precomputing the negative prompt embed for validations.")
-        if model_type == "sdxl" or model_type == "sd3" or model_type == "kolors":
-            (
-                validation_negative_prompt_embeds,
-                validation_negative_pooled_embeds,
-            ) = embed_cache.compute_embeddings_for_prompts(
-                [StateTracker.get_args().validation_negative_prompt],
-                is_validation=True,
-                load_from_cache=False,
-            )
-            return (
-                validation_prompts,
-                validation_shortnames,
-                validation_negative_prompt_embeds,
-                validation_negative_pooled_embeds,
-            )
-        elif model_type == "legacy":
-            validation_negative_prompt_embeds = (
-                embed_cache.compute_embeddings_for_prompts(
-                    [StateTracker.get_args().validation_negative_prompt],
-                    load_from_cache=False,
-                )
-            )
+        validation_negative_prompt_text_encoder_output = embed_cache.compute_embeddings_for_prompts(
+            [StateTracker.get_args().validation_negative_prompt],
+            is_validation=True,
+            load_from_cache=False,
+        )
 
-            return (
-                validation_prompts,
-                validation_shortnames,
-                validation_negative_prompt_embeds,
-                None,
-            )
-        elif model_type in ["pixart_sigma", "smoldit", "sana", "ltxvideo", "wan"]:
-            # we use the legacy encoder but we return no pooled embeds.
-            validation_negative_prompt_embeds = embed_cache.compute_embeddings_for_prompts(
-                [StateTracker.get_args().validation_negative_prompt],
-                load_from_cache=False,
-                is_negative_prompt=True,  # sana needs this to disable Complex Human Instruction on negative embed generation
-            )
-
-            return (
-                validation_prompts,
-                validation_shortnames,
-                validation_negative_prompt_embeds,
-                None,
-            )
-        elif model_type == "flux":
-            (
-                validation_negative_prompt_embeds,
-                validation_negative_pooled_embeds,
-                validation_negative_time_ids,
-                _,
-            ) = embed_cache.compute_embeddings_for_prompts(
-                [StateTracker.get_args().validation_negative_prompt],
-                load_from_cache=False,
-            )
-            return (
-                validation_prompts,
-                validation_shortnames,
-                validation_negative_prompt_embeds,
-                validation_negative_pooled_embeds,
-                validation_negative_time_ids,
-            )
-        else:
-            raise ValueError(f"Unknown model type '{model_type}'")
-
+    return {
+        "validation_prompts": validation_prompts,
+        "validation_shortnames": validation_shortnames,
+        "validation_sample_images": validation_sample_images,
+    }
 
 def parse_validation_resolution(input_str: str) -> tuple:
     """
@@ -459,13 +405,10 @@ class Validation:
         accelerator,
         model,
         args,
-        validation_prompts,
-        validation_shortnames,
+        validation_prompt_metadata,
         vae_path,
         weight_dtype,
         embed_cache,
-        validation_negative_pooled_embeds,
-        validation_negative_prompt_embeds,
         ema_model,
         is_deepspeed: bool = False,
         model_evaluator=None,
@@ -482,33 +425,22 @@ class Validation:
             self.unet = self.model.get_trained_component()
         elif 'transformer' in str(self.model.get_trained_component().__class__).lower():
             self.transformer = self.model.get_trained_component()
-        self.args = args
+        self.config = args
         self.save_dir = os.path.join(args.output_dir, "validation_images")
         if not os.path.exists(self.save_dir):
             os.makedirs(self.save_dir, exist_ok=True)
         self.global_step = None
         self.global_resume_step = None
-        self.validation_prompts = validation_prompts
-        self.validation_shortnames = validation_shortnames
+        self.validation_prompt_metadata = validation_prompt_metadata
         self.validation_images = None
         self.weight_dtype = weight_dtype
         self.embed_cache = embed_cache
-        self.validation_negative_prompt_mask = None
-        self.validation_negative_pooled_embeds = validation_negative_pooled_embeds
-        self.validation_negative_prompt_embeds = (
-            validation_negative_prompt_embeds
-            if (
-                type(validation_negative_prompt_embeds) is not list
-                and type(validation_negative_prompt_embeds) is not tuple
-            )
-            else validation_negative_prompt_embeds[0]
-        )
         self.ema_model = ema_model
         self.ema_enabled = False
-        self.pipeline = None
-        self.deepfloyd = True if "deepfloyd" in self.args.model_type else False
+        self.model.pipeline = None
+        self.deepfloyd = True if "deepfloyd" in self.config.model_type else False
         self.deepfloyd_stage2 = (
-            True if "deepfloyd-stage2" in self.args.model_type else False
+            True if "deepfloyd-stage2" in self.config.model_type else False
         )
         self._discover_validation_input_samples()
         self.validation_resolutions = (
@@ -531,14 +463,14 @@ class Validation:
         )
         self.model_evaluator = model_evaluator
         if self.model_evaluator is not None:
-            logger.info(f"Using model evaluator: {self.model_evaluator}")
+            logger.debug(f"Using model evaluator: {self.model_evaluator}")
         self._update_state()
         self.eval_scores = {}
 
     def _validation_seed_source(self):
-        if self.args.validation_seed_source == "gpu":
+        if self.config.validation_seed_source == "gpu":
             return self.inference_device
-        elif self.args.validation_seed_source == "cpu":
+        elif self.config.validation_seed_source == "cpu":
             return "cpu"
         else:
             raise Exception("Unknown validation seed source. Options: cpu, gpu")
@@ -546,7 +478,7 @@ class Validation:
     def _get_generator(self):
         _validation_seed_source = self._validation_seed_source()
         _generator = torch.Generator(device=_validation_seed_source).manual_seed(
-            self.args.validation_seed or self.args.seed or 0
+            self.config.validation_seed or self.config.seed or 0
         )
         return _generator
 
@@ -569,8 +501,8 @@ class Validation:
         self.validation_image_inputs = None
         if (
             self.deepfloyd_stage2
-            or self.args.validation_using_datasets
-            or self.args.controlnet
+            or self.config.validation_using_datasets
+            or self.config.controlnet
         ):
             self.validation_image_inputs = retrieve_validation_images()
             # Validation inputs are in the format of a list of tuples:
@@ -582,27 +514,27 @@ class Validation:
     def _pipeline_cls(self):
         model_type = StateTracker.get_model_family()
         if model_type == "sdxl":
-            if self.args.controlnet:
+            if self.config.controlnet:
                 from diffusers.pipelines import StableDiffusionXLControlNetPipeline
 
                 return StableDiffusionXLControlNetPipeline
-            if self.args.validation_using_datasets:
+            if self.config.validation_using_datasets:
                 return StableDiffusionXLImg2ImgPipeline
             return StableDiffusionXLPipeline
         elif model_type == "flux":
             from helpers.models.flux import FluxPipeline
 
-            if self.args.controlnet:
+            if self.config.controlnet:
                 raise NotImplementedError("Flux ControlNet is not yet supported.")
-            if self.args.validation_using_datasets:
+            if self.config.validation_using_datasets:
                 raise NotImplementedError(
                     "Flux inference validation using img2img is not yet supported. Please remove --validation_using_datasets."
                 )
             return FluxPipeline
         elif model_type == "kolors":
-            if self.args.controlnet:
+            if self.config.controlnet:
                 raise NotImplementedError("Kolors ControlNet is not yet supported.")
-            if self.args.validation_using_datasets:
+            if self.config.validation_using_datasets:
                 try:
                     from helpers.kolors.pipeline import KolorsImg2ImgPipeline
                 except:
@@ -624,17 +556,17 @@ class Validation:
                 return IFSuperResolutionPipeline
             return StableDiffusionPipeline
         elif model_type == "sd3":
-            if self.args.controlnet:
+            if self.config.controlnet:
                 raise Exception("SD3 ControlNet is not yet supported.")
-            if self.args.validation_using_datasets:
+            if self.config.validation_using_datasets:
                 return StableDiffusion3Img2ImgPipeline
             return StableDiffusion3Pipeline
         elif model_type == "pixart_sigma":
-            if self.args.controlnet:
+            if self.config.controlnet:
                 raise Exception(
                     "PixArt Sigma ControlNet inference validation is not yet supported."
                 )
-            if self.args.validation_using_datasets:
+            if self.config.validation_using_datasets:
                 raise Exception(
                     "PixArt Sigma inference validation using img2img is not yet supported. Please remove --validation_using_datasets."
                 )
@@ -663,147 +595,18 @@ class Validation:
             )
 
     def _gather_prompt_embeds(self, validation_prompt: str):
-        prompt_embeds = {}
-        current_validation_prompt_mask = None
-        if (
-            StateTracker.get_model_family() == "sdxl"
-            or StateTracker.get_model_family() == "sd3"
-            or StateTracker.get_model_family() == "kolors"
-            or StateTracker.get_model_family() == "flux"
-        ):
-            _embed = self.embed_cache.compute_embeddings_for_prompts(
-                [validation_prompt]
-            )
-            current_validation_time_ids = None
-            if len(_embed) == 2:
-                (
-                    current_validation_prompt_embeds,
-                    current_validation_pooled_embeds,
-                ) = _embed
-            elif len(_embed) == 3:
-                (
-                    current_validation_prompt_embeds,
-                    current_validation_pooled_embeds,
-                    current_validation_time_ids,
-                ) = _embed
-            elif len(_embed) == 4:
-                (
-                    current_validation_prompt_embeds,
-                    current_validation_pooled_embeds,
-                    current_validation_time_ids,
-                    current_validation_prompt_mask,
-                ) = _embed
-            else:
-                raise ValueError(
-                    f"Unexpected number of embeddings returned from cache: {_embed}"
-                )
-            current_validation_pooled_embeds = current_validation_pooled_embeds.to(
-                device=self.inference_device, dtype=self.weight_dtype
-            )
-            if current_validation_time_ids is not None:
-                current_validation_time_ids = current_validation_time_ids.to(
-                    device=self.inference_device, dtype=self.weight_dtype
-                )
-            self.validation_negative_pooled_embeds = (
-                self.validation_negative_pooled_embeds.to(
-                    device=self.inference_device, dtype=self.weight_dtype
-                )
-            )
-            prompt_embeds["pooled_prompt_embeds"] = current_validation_pooled_embeds.to(
-                device=self.inference_device, dtype=self.weight_dtype
-            )
-            prompt_embeds["negative_pooled_prompt_embeds"] = (
-                self.validation_negative_pooled_embeds
-            )
-            # if current_validation_time_ids is not None:
-            #     prompt_embeds["time_ids"] = current_validation_time_ids
-        elif StateTracker.get_model_family() in [
-            "legacy",
-            "pixart_sigma",
-            "smoldit",
-            "sana",
-            "ltxvideo",
-            "wan",
-        ]:
-            self.validation_negative_pooled_embeds = None
-            current_validation_pooled_embeds = None
-            current_validation_prompt_embeds = (
-                self.embed_cache.compute_embeddings_for_prompts([validation_prompt])
-            )
-            if StateTracker.get_model_family() in [
-                "pixart_sigma",
-                "smoldit",
-                "sana",
-                "ltxvideo",
-                "wan",
-            ]:
-                current_validation_prompt_embeds, current_validation_prompt_mask = (
-                    current_validation_prompt_embeds
-                )
-                current_validation_prompt_embeds = current_validation_prompt_embeds[
-                    0
-                ].to(device=self.inference_device, dtype=self.weight_dtype)
-                if (
-                    type(self.validation_negative_prompt_embeds) is tuple
-                    or type(self.validation_negative_prompt_embeds) is list
-                ):
-                    (
-                        self.validation_negative_prompt_embeds,
-                        self.validation_negative_prompt_mask,
-                    ) = self.validation_negative_prompt_embeds[0]
-            else:
-                current_validation_prompt_embeds = current_validation_prompt_embeds[
-                    0
-                ].to(device=self.inference_device, dtype=self.weight_dtype)
-            # logger.debug(
-            #     f"Validations received the prompt embed: ({type(current_validation_prompt_embeds)}) positive={current_validation_prompt_embeds.shape if type(current_validation_prompt_embeds) is not list else current_validation_prompt_embeds[0].shape},"
-            #     f" ({type(self.validation_negative_prompt_embeds)}) negative={self.validation_negative_prompt_embeds.shape if type(self.validation_negative_prompt_embeds) is not list else self.validation_negative_prompt_embeds[0].shape}"
-            # )
-            # logger.debug(
-            #     f"Dtypes: {current_validation_prompt_embeds.dtype}, {self.validation_negative_prompt_embeds.dtype}"
-            # )
-        else:
-            raise NotImplementedError(
-                f"Model type {StateTracker.get_model_family()} not implemented for validation."
-            )
-
-        current_validation_prompt_embeds = current_validation_prompt_embeds.to(
-            device=self.inference_device, dtype=self.weight_dtype
+        prompt_embed = self.embed_cache.compute_embeddings_for_prompts(
+            [validation_prompt]
         )
-        self.validation_negative_prompt_embeds = (
-            self.validation_negative_prompt_embeds.to(
-                device=self.inference_device, dtype=self.weight_dtype
-            )
-        )
-        # when sampling unconditional guidance, you should only zero one or the other prompt, and not both.
-        # we'll assume that the user has a negative prompt, so that the unconditional sampling works.
-        # the positive prompt embed is zeroed out for SDXL at the time of it being placed into the cache.
-        # the embeds are not zeroed out for any other model, including Stable Diffusion 3.
-        prompt_embeds["prompt_embeds"] = current_validation_prompt_embeds
-        prompt_embeds["negative_prompt_embeds"] = self.validation_negative_prompt_embeds
-        if StateTracker.get_model_family() in [
-            "pixart_sigma",
-            "smoldit",
-            "sana",
-            "ltxvideo",
-        ] or (
-            StateTracker.get_model_family() == "flux"
-            and StateTracker.get_args().flux_attention_masked_training
-        ):
-            logger.debug(
-                f"mask: {current_validation_prompt_mask.shape if type(current_validation_prompt_mask) is torch.Tensor else None}"
-            )
-            assert current_validation_prompt_mask is not None
-            prompt_embeds["prompt_mask"] = current_validation_prompt_mask
-            prompt_embeds["negative_mask"] = self.validation_negative_prompt_mask
+        prompt_embed = {k: v.to(self.inference_device) if hasattr(v, 'to') else v for k, v in prompt_embed.items()}
 
-        return prompt_embeds
+        return self.model.convert_text_embed_for_pipeline(prompt_embed)
 
     def _benchmark_path(self, benchmark: str = "base_model"):
         # does the benchmark directory exist?
-        if not os.path.exists(os.path.join(self.args.output_dir, "benchmarks")):
-            os.makedirs(os.path.join(self.args.output_dir, "benchmarks"), exist_ok=True)
-        return os.path.join(self.args.output_dir, "benchmarks", benchmark)
+        if not os.path.exists(os.path.join(self.config.output_dir, "benchmarks")):
+            os.makedirs(os.path.join(self.config.output_dir, "benchmarks"), exist_ok=True)
+        return os.path.join(self.config.output_dir, "benchmarks", benchmark)
 
     def stitch_benchmark_image(
         self,
@@ -941,7 +744,7 @@ class Validation:
                     )
                 elif type(image) is list:
                     # maybe video
-                    if self.args.model_family in ["ltxvideo", "wan"]:
+                    if self.config.model_family in ["ltxvideo", "wan"]:
                         from diffusers.utils.export_utils import export_to_video
 
                         export_to_video(
@@ -949,7 +752,7 @@ class Validation:
                             os.path.join(
                                 base_model_benchmark, f"{shortname}_{idx}.mp4"
                             ),
-                            fps=self.args.framerate,
+                            fps=self.config.framerate,
                         )
 
     def _update_state(self):
@@ -966,7 +769,7 @@ class Validation:
         # a wrapper for should_perform_intermediary_validation that can run in the training loop
         self._update_state()
         return self.should_perform_intermediary_validation(
-            step, self.validation_prompts, validation_type
+            step, self.validation_prompt_metadata, validation_type
         ) or (step == 0 and validation_type == "base_model")
 
     def run_validations(
@@ -978,7 +781,7 @@ class Validation:
     ):
         self._update_state()
         would_do_intermediary_validation = self.should_perform_intermediary_validation(
-            step, self.validation_prompts, validation_type
+            step, self.validation_prompt_metadata, validation_type
         ) or (step == 0 and validation_type == "base_model")
         logger.debug(
             f"Should evaluate: {would_do_intermediary_validation}, force evaluation: {force_evaluation}, skip execution: {skip_execution}"
@@ -1002,7 +805,7 @@ class Validation:
             logger.debug("Starting validation process...")
             diffusers.utils.logging._tqdm_active = False
             self.setup_pipeline(validation_type)
-            if self.pipeline is None:
+            if self.model.pipeline is None:
                 logger.error(
                     "Not able to run validations, we did not obtain a valid pipeline."
                 )
@@ -1023,8 +826,8 @@ class Validation:
     ):
         should_do_intermediary_validation = (
             validation_prompts
-            and self.global_step % self.args.validation_steps == 0
-            and step % self.args.gradient_accumulation_steps == 0
+            and self.global_step % self.config.validation_steps == 0
+            and step % self.config.gradient_accumulation_steps == 0
             and self.global_step > self.global_resume_step
         )
         return should_do_intermediary_validation and (
@@ -1033,89 +836,89 @@ class Validation:
 
     def setup_scheduler(self):
         scheduler_args = {
-            "prediction_type": self.args.prediction_type,
+            "prediction_type": self.config.prediction_type,
         }
-        if self.flow_matching and not self.args.model_family not in ["wan", "sana"]:
+        if self.flow_matching and not self.config.model_family not in ["wan", "sana"]:
             # NO TOUCHIE FOR FLOW-MATCHING.
             # Touchie for sana though. It needs a new scheduler on every inference.
             return
-        elif self.args.model_family == "sana":
-            self.args.validation_noise_scheduler = "sana"
-        elif self.args.model_family in ["ltxvideo", "wan"]:
-            if self.args.validation_noise_scheduler is None:
+        elif self.config.model_family == "sana":
+            self.config.validation_noise_scheduler = "sana"
+        elif self.config.model_family in ["ltxvideo", "wan"]:
+            if self.config.validation_noise_scheduler is None:
                 # Diffusers repo uses UniPC by default.
-                if self.args.model_family == "ltxvideo":
-                    self.args.validation_noise_scheduler = "flow-match"
+                if self.config.model_family == "ltxvideo":
+                    self.config.validation_noise_scheduler = "flow-match"
                 else:
-                    self.args.validation_noise_scheduler = "unipc"
-            if self.args.validation_noise_scheduler == "flow-match":
+                    self.config.validation_noise_scheduler = "unipc"
+            if self.config.validation_noise_scheduler == "flow-match":
                 # The Beta schedule looks WAY better...
                 scheduler_args["use_beta_sigmas"] = True
-                scheduler_args["shift"] = self.args.flow_schedule_shift
-            if self.args.validation_noise_scheduler == "unipc":
+                scheduler_args["shift"] = self.config.flow_schedule_shift
+            if self.config.validation_noise_scheduler == "unipc":
                 scheduler_args["prediction_type"] = 'flow_prediction'
                 scheduler_args["use_flow_sigmas"] = True
                 scheduler_args["num_train_timesteps"] = 1000
-                scheduler_args["flow_shift"] = self.args.flow_schedule_shift
+                scheduler_args["flow_shift"] = self.config.flow_schedule_shift
 
-        if self.args.validation_noise_scheduler is None:
+        if self.config.validation_noise_scheduler is None:
             return
 
         if (
-            self.pipeline is not None
-            and "variance_type" in self.pipeline.scheduler.config
+            self.model.pipeline is not None
+            and "variance_type" in self.model.pipeline.scheduler.config
         ):
-            variance_type = self.pipeline.scheduler.config.variance_type
+            variance_type = self.model.pipeline.scheduler.config.variance_type
 
             if variance_type in ["learned", "learned_range"]:
                 variance_type = "fixed_small"
 
             scheduler_args["variance_type"] = variance_type
         if self.deepfloyd:
-            self.args.validation_noise_scheduler = "ddpm"
+            self.config.validation_noise_scheduler = "ddpm"
         scheduler = SCHEDULER_NAME_MAP[
-            self.args.validation_noise_scheduler
+            self.config.validation_noise_scheduler
         ].from_pretrained(
-            self.args.pretrained_model_name_or_path,
+            self.config.pretrained_model_name_or_path,
             subfolder="scheduler",
-            revision=self.args.revision,
-            timestep_spacing=self.args.inference_scheduler_timestep_spacing,
-            rescale_betas_zero_snr=self.args.rescale_betas_zero_snr,
+            revision=self.config.revision,
+            timestep_spacing=self.config.inference_scheduler_timestep_spacing,
+            rescale_betas_zero_snr=self.config.rescale_betas_zero_snr,
             **scheduler_args,
         )
-        if self.pipeline is not None:
-            self.pipeline.scheduler = scheduler
+        if self.model.pipeline is not None:
+            self.model.pipeline.scheduler = scheduler
         return scheduler
 
     def setup_pipeline(self, validation_type):
         if hasattr(self.accelerator, "_lycoris_wrapped_network"):
             self.accelerator._lycoris_wrapped_network.set_multiplier(
-                float(getattr(self.args, "validation_lycoris_strength", 1.0))
+                float(getattr(self.config, "validation_lycoris_strength", 1.0))
             )
 
-        if self.pipeline is None:
+        if getattr(self.model, 'pipeline', None) is None:
             self.model.get_pipeline()
 
-        self.pipeline = self.pipeline.to(self.inference_device)
-        self.pipeline.set_progress_bar_config(disable=True)
+        self.model.pipeline = self.model.pipeline.to(self.inference_device)
+        self.model.pipeline.set_progress_bar_config(disable=True)
 
     def clean_pipeline(self):
         """Remove the pipeline."""
         if hasattr(self.accelerator, "_lycoris_wrapped_network"):
             self.accelerator._lycoris_wrapped_network.set_multiplier(1.0)
-        if self.pipeline is not None:
-            del self.pipeline
-            self.pipeline = None
+        if self.model.pipeline is not None:
+            del self.model.pipeline
+            self.model.pipeline = None
 
     def process_prompts(self):
         """Processes each validation prompt and logs the result."""
         self.validation_prompt_dict = {}
         self.evaluation_result = None
         validation_images = {}
-        _content = zip(self.validation_shortnames, self.validation_prompts)
+        _content = self.validation_prompt_metadata['validation_prompts']
         total_samples = (
-            len(self.validation_shortnames)
-            if self.validation_shortnames is not None
+            len(_content)
+            if _content is not None
             else 0
         )
         self.eval_scores = {}
@@ -1123,7 +926,9 @@ class Validation:
             # Override the pipeline inputs to be entirely based upon the validation image inputs.
             _content = self.validation_image_inputs
             total_samples = len(_content) if _content is not None else 0
-        for content in tqdm(
+        logger.debug(f"Processing content: {_content}")
+        idx=0
+        for prompt in tqdm(
             _content if _content else [],
             desc="Processing validation prompts",
             total=total_samples,
@@ -1131,15 +936,8 @@ class Validation:
             position=1,
         ):
             validation_input_image = None
-            logger.debug(f"content: {content}")
-            if len(content) == 3:
-                shortname, prompt, validation_input_image = content
-            elif len(content) == 2:
-                shortname, prompt = content
-            else:
-                raise ValueError(
-                    f"Validation content is not in the correct format: {content}"
-                )
+            shortname = self.validation_prompt_metadata["validation_shortnames"][idx]
+            logger.debug(f"validation prompt (shortname={shortname}): '{prompt}'")
             self.validation_prompt_dict[shortname] = prompt
             logger.debug(f"Processing validation for prompt: {prompt}")
             (
@@ -1148,7 +946,7 @@ class Validation:
                 ema_validation_images,
             ) = self.validate_prompt(prompt, shortname, validation_input_image)
             validation_images.update(stitched_validation_images)
-            if self.args.model_family in ["ltxvideo", "wan"]:
+            if self.config.model_family in ["ltxvideo", "wan"]:
                 self._save_videos(validation_images, shortname, prompt)
             else:
                 self._save_images(validation_images, shortname, prompt)
@@ -1184,12 +982,12 @@ class Validation:
 
     def _validation_types(self):
         types = ["checkpoint"]
-        if self.args.use_ema:
+        if self.config.use_ema:
             # ema has different validations we can add or overwrite.
-            if self.args.ema_validation == "ema_only":
+            if self.config.ema_validation == "ema_only":
                 # then we do not sample the base ckpt being trained, only the EMA weights.
                 types = ["ema"]
-            if self.args.ema_validation == "comparison":
+            if self.config.ema_validation == "comparison":
                 # then we sample both.
                 types.append("ema")
 
@@ -1214,7 +1012,7 @@ class Validation:
                     validation_resolution_width, validation_resolution_height = (
                         val * 4 for val in extra_validation_kwargs["image"].size
                     )
-                elif self.args.controlnet or self.args.validation_using_datasets:
+                elif self.config.controlnet or self.config.validation_using_datasets:
                     validation_resolution_width, validation_resolution_height = (
                         extra_validation_kwargs["image"].size
                     )
@@ -1225,21 +1023,21 @@ class Validation:
             else:
                 validation_resolution_width, validation_resolution_height = resolution
 
-            if type(self.args.validation_guidance_skip_layers) is list:
+            if type(self.config.validation_guidance_skip_layers) is list:
                 extra_validation_kwargs["skip_layer_guidance_start"] = float(
-                    self.args.validation_guidance_skip_layers_start
+                    self.config.validation_guidance_skip_layers_start
                 )
                 extra_validation_kwargs["skip_layer_guidance_stop"] = float(
-                    self.args.validation_guidance_skip_layers_stop
+                    self.config.validation_guidance_skip_layers_stop
                 )
                 extra_validation_kwargs["skip_layer_guidance_scale"] = float(
-                    self.args.validation_guidance_skip_scale
+                    self.config.validation_guidance_skip_scale
                 )
                 extra_validation_kwargs["skip_guidance_layers"] = list(
-                    self.args.validation_guidance_skip_layers
+                    self.config.validation_guidance_skip_layers
                 )
 
-            if not self.flow_matching and self.args.model_family not in [
+            if not self.flow_matching and self.config.model_family not in [
                 "deepfloyd",
                 "pixart_sigma",
                 "kolors",
@@ -1250,12 +1048,12 @@ class Validation:
                 "wan",
             ]:
                 extra_validation_kwargs["guidance_rescale"] = (
-                    self.args.validation_guidance_rescale
+                    self.config.validation_guidance_rescale
                 )
 
             if StateTracker.get_args().validation_using_datasets:
                 extra_validation_kwargs["strength"] = getattr(
-                    self.args, "validation_strength", 0.2
+                    self.config, "validation_strength", 0.2
                 )
                 logger.debug(
                     f"Set validation image denoise strength to {extra_validation_kwargs['strength']}"
@@ -1282,9 +1080,9 @@ class Validation:
                 pipeline_kwargs = {
                     "prompt": None,
                     "negative_prompt": None,
-                    "num_images_per_prompt": self.args.num_validation_images,
-                    "num_inference_steps": self.args.validation_num_inference_steps,
-                    "guidance_scale": self.args.validation_guidance,
+                    "num_images_per_prompt": self.config.num_validation_images,
+                    "num_inference_steps": self.config.validation_num_inference_steps,
+                    "guidance_scale": self.config.validation_guidance,
                     "height": MultiaspectImage._round_to_nearest_multiple(
                         int(validation_resolution_height), 16
                     ),
@@ -1293,16 +1091,33 @@ class Validation:
                     ),
                     **extra_validation_kwargs,
                 }
-                if self.args.validation_guidance_real > 1.0:
+                if self.model.VALIDATION_USES_NEGATIVE_PROMPT:
+                    if StateTracker.get_args().validation_negative_prompt is None:
+                        StateTracker.get_args().validation_negative_prompt = ""
+                    negative_embed_data = {
+                        k: v.to(device=self.inference_device, dtype=self.config.weight_dtype) if hasattr(v, 'to') else v for k, v in self.embed_cache.compute_embeddings_for_prompts(
+                            [StateTracker.get_args().validation_negative_prompt],
+                            is_validation=True,
+                            load_from_cache=True,
+                        ).items()
+                    }
+                    pipeline_kwargs.update(
+                        self.model.convert_negative_text_embed_for_pipeline(
+                            prompt=StateTracker.get_args().validation_negative_prompt,
+                            text_embedding=negative_embed_data
+                        )
+                    )
+                # TODO: Refactor the rest so that it uses model class to update kwargs more generally.
+                if self.config.validation_guidance_real > 1.0:
                     pipeline_kwargs["guidance_scale_real"] = float(
-                        self.args.validation_guidance_real
+                        self.config.validation_guidance_real
                     )
                 if (
-                    isinstance(self.args.validation_no_cfg_until_timestep, int)
-                    and self.args.model_family == "flux"
+                    isinstance(self.config.validation_no_cfg_until_timestep, int)
+                    and self.config.model_family == "flux"
                 ):
                     pipeline_kwargs["no_cfg_until_timestep"] = (
-                        self.args.validation_no_cfg_until_timestep
+                        self.config.validation_no_cfg_until_timestep
                     )
 
                 logger.debug(
@@ -1312,7 +1127,7 @@ class Validation:
                 for key, value in pipeline_kwargs.items():
                     if hasattr(value, "device"):
                         logger.debug(f"Device for {key}: {value.device}")
-                for key, value in self.pipeline.components.items():
+                for key, value in self.model.pipeline.components.items():
                     if hasattr(value, "device"):
                         logger.debug(f"Device for {key}: {value.device}")
                 if StateTracker.get_model_family() == "flux":
@@ -1320,16 +1135,16 @@ class Validation:
                         del pipeline_kwargs["negative_prompt"]
                 if StateTracker.get_model_family() in ["ltxvideo", "wan"]:
                     del pipeline_kwargs["num_images_per_prompt"]
-                if self.args.model_family == "sana":
+                if self.config.model_family == "sana":
                     pipeline_kwargs["complex_human_instruction"] = (
-                        self.args.sana_complex_human_instruction
+                        self.config.sana_complex_human_instruction
                     )
                 if StateTracker.get_model_family() in [
                     "wan",
                 ]:
                     # Wan video should max out around 81 frames for efficiency.
                     pipeline_kwargs["num_frames"] = min(
-                        81, self.args.validation_num_video_frames or 81
+                        81, self.config.validation_num_video_frames or 81
                     )
                     pipeline_kwargs["output_type"] = "pil"
                     # replace embeds with prompt
@@ -1354,20 +1169,25 @@ class Validation:
                 validation_types = self._validation_types()
                 all_validation_type_results = {}
                 for current_validation_type in validation_types:
-                    if not self.args.validation_randomize:
+                    if not self.config.validation_randomize:
                         pipeline_kwargs["generator"] = self._get_generator()
                         logger.debug(
                             f"Using a generator? {pipeline_kwargs['generator']}"
                         )
                     if current_validation_type == "ema":
                         self.enable_ema_for_inference()
-                    if self.args.model_family in ["ltxvideo", "wan"]:
+                    pipeline_kwargs = {
+                        k: v.to(device=self.inference_device, dtype=self.config.weight_dtype) if hasattr(v, 'to') else v
+                        for k, v in pipeline_kwargs.items()
+                    }
+                    logger.debug(f"Running validations with negative prompt embeds: {pipeline_kwargs.keys()}, on model {self.model.pipeline.transformer.dtype}")
+                    if self.config.model_family in ["ltxvideo", "wan"]:
                         all_validation_type_results[current_validation_type] = (
-                            self.pipeline(**pipeline_kwargs).frames
+                            self.model.pipeline(**pipeline_kwargs).frames
                         )
                     else:
                         all_validation_type_results[current_validation_type] = (
-                            self.pipeline(**pipeline_kwargs).images
+                            self.model.pipeline(**pipeline_kwargs).images
                         )
                     if current_validation_type == "ema":
                         self.disable_ema_for_inference()
@@ -1379,12 +1199,12 @@ class Validation:
                 )
                 original_validation_image_results = validation_image_results
                 benchmark_image = None
-                if self.args.controlnet:
+                if self.config.controlnet:
                     validation_image_results = self.stitch_conditioning_images(
                         original_validation_image_results,
                         extra_validation_kwargs["image"],
                     )
-                elif not self.args.disable_benchmark and self.benchmark_exists(
+                elif not self.config.disable_benchmark and self.benchmark_exists(
                     "base_model"
                 ):
                     benchmark_image = self._benchmark_image(
@@ -1405,7 +1225,7 @@ class Validation:
                 stitched_validation_images[validation_shortname].extend(
                     validation_image_results
                 )
-                if self.args.use_ema:
+                if self.config.use_ema:
                     ema_validation_images[validation_shortname].extend(
                         ema_image_results
                     )
@@ -1418,8 +1238,8 @@ class Validation:
                 )
                 continue
         if (
-            self.args.use_ema
-            and self.args.ema_validation == "comparison"
+            self.config.use_ema
+            and self.config.ema_validation == "comparison"
             and benchmark_image is not None
         ):
             for idx, validation_image in enumerate(
@@ -1458,7 +1278,7 @@ class Validation:
                     self.save_dir,
                     f"step_{StateTracker.get_global_step()}_{validation_shortname}_{validation_img_idx}_{res_label}.mp4",
                 ),
-                fps=self.args.framerate,
+                fps=self.config.framerate,
             )
             validation_img_idx += 1
 
@@ -1522,7 +1342,7 @@ class Validation:
                     f"{res[0]}x{res[1]}" for res in get_validation_resolutions()
                 ]
 
-                if self.args.tracker_image_layout == "table":
+                if self.config.tracker_image_layout == "table":
                     columns = [
                         "Prompt",
                         *resolution_list,
@@ -1556,7 +1376,7 @@ class Validation:
                         step=StateTracker.get_global_step(),
                     )
 
-                elif self.args.tracker_image_layout == "gallery":
+                elif self.config.tracker_image_layout == "gallery":
                     gallery_images = {}
                     for prompt_shortname, image_list in validation_images.items():
                         logger.debug(
@@ -1578,11 +1398,11 @@ class Validation:
         if self.ema_enabled:
             logger.debug("EMA already enabled. Not enabling EMA.")
             return
-        if self.args.use_ema:
+        if self.config.use_ema:
             logger.debug("Enabling EMA.")
             self.ema_enabled = True
-            if self.args.model_type == "lora":
-                if self.args.lora_type.lower() == "lycoris":
+            if self.config.model_type == "lora":
+                if self.config.lora_type.lower() == "lycoris":
                     logger.debug("Setting Lycoris multiplier to 1.0")
                     self.accelerator._lycoris_wrapped_network.set_multiplier(1.0)
                     logger.debug("Storing Lycoris weights for later recovery.")
@@ -1595,21 +1415,21 @@ class Validation:
                     self.ema_model.copy_to(
                         self.accelerator._lycoris_wrapped_network.parameters()
                     )
-                elif self.args.lora_type.lower() == "standard":
+                elif self.config.lora_type.lower() == "standard":
                     _trainable_parameters = [
                         x for x in self.model.get_trained_component().parameters() if x.requires_grad
                     ]
                     self.ema_model.store(_trainable_parameters)
                     self.ema_model.copy_to(_trainable_parameters)
             else:
-                # if self.args.ema_device != "accelerator":
+                # if self.config.ema_device != "accelerator":
                 #     logger.info("Moving checkpoint to CPU for storage.")
                 #     self.model.get_trained_component().to("cpu")
                 logger.debug("Storing EMA weights for later recovery.")
                 self.ema_model.store(self.trainable_parameters())
                 logger.debug("Storing the EMA weights into the model for inference.")
                 self.ema_model.copy_to(self.trainable_parameters())
-            # if self.args.ema_device != "accelerator":
+            # if self.config.ema_device != "accelerator":
             #     logger.debug("Moving checkpoint to CPU for storage.")
             #     self.model.get_trained_component().to("cpu")
             #     logger.debug("Moving EMA weights to GPU for inference.")
@@ -1623,12 +1443,12 @@ class Validation:
         if not self.ema_enabled:
             logger.debug("EMA was not enabled. Not disabling EMA.")
             return
-        if self.args.use_ema:
+        if self.config.use_ema:
             logger.debug("Disabling EMA.")
             self.ema_enabled = False
             if (
-                self.args.model_type == "lora"
-                and self.args.lora_type.lower() == "lycoris"
+                self.config.model_type == "lora"
+                and self.config.lora_type.lower() == "lycoris"
             ):
                 logger.debug("Setting Lycoris network multiplier to 1.0.")
                 self.accelerator._lycoris_wrapped_network.set_multiplier(1.0)
@@ -1639,9 +1459,9 @@ class Validation:
             else:
                 logger.debug("Restoring trainable parameters.")
                 self.ema_model.restore(self.trainable_parameters())
-            if self.args.ema_device != "accelerator":
+            if self.config.ema_device != "accelerator":
                 logger.debug("Moving EMA weights to CPU for storage.")
-                self.ema_model.to(self.args.ema_device)
+                self.ema_model.to(self.config.ema_device)
                 self.model.get_trained_component().to(self.inference_device)
 
         else:
@@ -1651,9 +1471,9 @@ class Validation:
 
     def finalize_validation(self, validation_type):
         """Cleans up and restores original state if necessary."""
-        if not self.args.keep_vae_loaded and not self.args.vae_cache_ondemand:
+        if not self.config.keep_vae_loaded and not self.config.vae_cache_ondemand:
             self.model.unload_vae()
-        self.pipeline = None
+        self.model.pipeline = None
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
@@ -1861,6 +1681,8 @@ class Evaluation:
         eval_datasets = StateTracker.get_data_backends(
             _type="eval", _types=None
         )  # dict of {name: ...}
+        if len(eval_datasets) == 0:
+            return {}
 
         if pooling:
             # Single pass across ALL eval datasets
@@ -1919,6 +1741,8 @@ class Evaluation:
         """
         if not self.accelerator.is_main_process:
             return {}
+        if all_accumulated_losses == {} or all_accumulated_losses is None:
+            return {}
 
         results = {}
 
@@ -1929,6 +1753,7 @@ class Evaluation:
                 for loss_val in loss_list:
                     data_rows.append((ts, loss_val))
             return data_rows
+
 
         logger.info("Generating evaluation tracker tables...")
         for ds_name, timestep_dict in all_accumulated_losses.items():
