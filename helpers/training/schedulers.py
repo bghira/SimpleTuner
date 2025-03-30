@@ -10,9 +10,7 @@ logger.setLevel(target_level)
 
 def load_scheduler_from_args(args):
     flow_matching = False
-    if (
-        args.model_family == "sd3" and args.flow_matching_loss != "diffusion"
-    ) or args.model_family in flow_matching_model_families:
+    if args.model_family in flow_matching_model_families:
         # Flow-matching models.
         flow_matching = True
         from diffusers import FlowMatchEulerDiscreteScheduler
@@ -40,9 +38,5 @@ def load_scheduler_from_args(args):
             timestep_spacing=args.training_scheduler_timestep_spacing,
         )
         args.prediction_type = noise_scheduler.config.prediction_type
-        if flow_matching and args.flow_matching_loss == "diffusion":
-            logger.warning(
-                "Since --flow_matching_loss=diffusion, we will be reparameterising the model to v-prediction diffusion objective. This will break things for a while. Perhaps forever.."
-            )
 
     return args, flow_matching, noise_scheduler

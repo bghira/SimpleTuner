@@ -38,22 +38,7 @@ def load_diffusion_model(args, weight_dtype):
             bnb_4bit_compute_dtype=weight_dtype,
         )
 
-    if args.model_family == "sd3":
-        # Stable Diffusion 3 uses a Diffusion transformer.
-        logger.info("Loading Stable Diffusion 3 diffusion transformer..")
-        try:
-            from helpers.models.sd3.transformer import SD3Transformer2DModel
-        except Exception as e:
-            logger.error(
-                f"Can not load SD3 model class. This release requires the latest version of Diffusers: {e}"
-            )
-        transformer = SD3Transformer2DModel.from_pretrained(
-            args.pretrained_transformer_model_name_or_path
-            or args.pretrained_model_name_or_path,
-            subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
-            **pretrained_load_args,
-        )
-    elif args.model_family == "ltxvideo":
+    if args.model_family == "ltxvideo":
         # LTXVideo uses a Diffusion transformer.
         logger.info("Loading LTX Video diffusion transformer..")
         try:

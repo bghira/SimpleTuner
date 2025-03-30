@@ -7,6 +7,7 @@ from typing import Union
 import numpy as np
 from PIL import Image
 from diffusers.utils.export_utils import export_to_gif
+from helpers.models.common import ModelFoundation
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -368,7 +369,6 @@ def flux_schedule_info(args):
         output_args.append("flux_attention_masked_training")
     if args.t5_padding != "unmodified":
         output_args.append(f"t5_padding={args.t5_padding}")
-    output_args.append(f"flow_matching_loss={args.flow_matching_loss}")
     if (
         args.model_type == "lora"
         and args.lora_type == "standard"
@@ -382,31 +382,6 @@ def flux_schedule_info(args):
     )
 
     return output_str
-
-
-def sd3_schedule_info(args):
-    if args.model_family.lower() != "sd3":
-        return ""
-    output_args = []
-    if args.flow_schedule_auto_shift:
-        output_args.append("flow_schedule_auto_shift")
-    if args.flow_schedule_shift is not None:
-        output_args.append(f"shift={args.flow_schedule_shift}")
-    if args.flow_use_beta_schedule:
-        output_args.append(f"flow_beta_schedule_alpha={args.flow_beta_schedule_alpha}")
-        output_args.append(f"flow_beta_schedule_beta={args.flow_beta_schedule_beta}")
-    if args.flow_use_uniform_schedule:
-        output_args.append(f"flow_use_uniform_schedule")
-    # if args.model_type == "lora" and args.lora_type == "standard":
-    #     output_args.append(f"flux_lora_target={args.flux_lora_target}")
-    output_str = (
-        f" (extra parameters={output_args})"
-        if output_args
-        else " (no special parameters set)"
-    )
-
-    return output_str
-
 
 def ddpm_schedule_info(args):
     """Information about DDPM schedules, eg. rescaled betas or offset noise"""
@@ -443,8 +418,6 @@ def ddpm_schedule_info(args):
 def model_schedule_info(args):
     if args.model_family == "flux":
         return flux_schedule_info(args)
-    if args.model_family == "sd3":
-        return sd3_schedule_info(args)
     else:
         return ddpm_schedule_info(args)
 
@@ -485,6 +458,7 @@ def _pipeline_tag(args):
 
 
 def save_model_card(
+    model: ModelFoundation,
     repo_id: str,
     images=None,
     base_model: str = "",
@@ -496,10 +470,6 @@ def save_model_card(
 ):
     if repo_folder is None:
         raise ValueError("The repo_folder must be specified and not be None.")
-    if type(validation_prompts) is not list:
-        raise ValueError(
-            f"The validation_prompts must be a list. Received {validation_prompts}"
-        )
     # if we have more than one '/' in the base_model, we will turn it into unknown/model
     model_family = StateTracker.get_model_family()
     if base_model.count("/") > 1:
@@ -557,7 +527,7 @@ def save_model_card(
             shortname_idx += 1
     args = StateTracker.get_args()
     yaml_content = f"""---
-license: {licenses.get(model_family, "other")}
+license: {model.MODEL_LICENSE}
 base_model: "{base_model}"
 tags:
   - {_model_card_family_tag(model_family)}
@@ -580,7 +550,6 @@ inference: true
 
 This is a {model_type(args)} derived from [{base_model}](https://huggingface.co/{base_model}).
 
-{'This is a **diffusion** model trained using DDPM objective instead of Flow matching. **Be sure to set the appropriate scheduler configuration.**' if args.model_family == "sd3" and args.flow_matching_loss == "diffusion" else ''}
 {'The main validation prompt used during training was:' if prompt else 'Validation used ground-truth images as an input for partial denoising (img2img).' if args.validation_using_datasets else 'No validation prompt was used during training.'}
 {'```' if prompt else ''}
 {prompt}
@@ -591,7 +560,7 @@ This is a {model_type(args)} derived from [{base_model}](https://huggingface.co/
 - CFG: `{StateTracker.get_args().validation_guidance}`
 - CFG Rescale: `{StateTracker.get_args().validation_guidance_rescale}`
 - Steps: `{StateTracker.get_args().validation_num_inference_steps}`
-- Sampler: `{'FlowMatchEulerDiscreteScheduler' if args.model_family in ['sd3', 'flux', 'sana', 'ltxvideo', 'wan'] else StateTracker.get_args().validation_noise_scheduler}`
+- Sampler: `{'FlowMatchEulerDiscreteScheduler' if model.PREDICTION_TYPE.value == "flow_matching" else StateTracker.get_args().validation_noise_scheduler}`
 - Seed: `{StateTracker.get_args().validation_seed}`
 - Resolution{'s' if ',' in StateTracker.get_args().validation_resolution else ''}: `{StateTracker.get_args().validation_resolution}`
 {f"- Skip-layer guidance: {_skip_layers(args)}" if args.model_family in ['sd3', 'flux'] else ''}
@@ -619,7 +588,7 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
   - Gradient accumulation steps: {StateTracker.get_args().gradient_accumulation_steps}
   - Number of GPUs: {StateTracker.get_accelerator().num_processes}
 - Gradient checkpointing: {StateTracker.get_args().gradient_checkpointing}
-- Prediction type: {'flow-matching' if (StateTracker.get_args().model_family in ["sd3", "flux", "sana", "ltxvideo", "wan"]) else StateTracker.get_args().prediction_type}{model_schedule_info(args=StateTracker.get_args())}
+- Prediction type: {model.PREDICTION_TYPE.value}{model.custom_model_card_schedule_info()}
 - Optimizer: {StateTracker.get_args().optimizer}{optimizer_config if optimizer_config is not None else ''}
 - Trainable parameter precision: {'Pure BF16' if torch.backends.mps.is_available() or StateTracker.get_args().mixed_precision == "bf16" else 'FP32'}
 - Base model precision: `{args.base_model_precision}`

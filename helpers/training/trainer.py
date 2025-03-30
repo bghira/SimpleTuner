@@ -413,7 +413,7 @@ class Trainer:
             return
         if access_token:
             huggingface_hub.login(token=access_token)
-        self.hub_manager = HubManager(config=self.config)
+        self.hub_manager = HubManager(config=self.config, model=self.model)
         try:
             StateTracker.set_hf_user(huggingface_hub.whoami())
             logger.info(
@@ -2145,43 +2145,7 @@ class Trainer:
 
 
     def get_prediction_target(self, prepared_batch: dict):
-        if self.config.flow_matching:
-            # This is the flow-matching target for vanilla SD3.
-            # If self.config.flow_matching_loss == "diffusion", we will instead use v_prediction (see below)
-            if self.config.flow_matching_loss == "diffusers":
-                target = prepared_batch["latents"]
-            elif self.config.flow_matching_loss == "compatible":
-                target = prepared_batch["noise"] - prepared_batch["latents"]
-            elif self.config.flow_matching_loss == "sd35":
-                sigma_reshaped = prepared_batch["sigmas"].view(
-                    -1, 1, 1, 1
-                )  # Ensure sigma has the correct shape
-                target = (
-                    prepared_batch["noisy_latents"] - prepared_batch["latents"]
-                ) / sigma_reshaped
-
-        elif self.noise_scheduler.config.prediction_type == "epsilon":
-            target = prepared_batch["noise"]
-        elif self.noise_scheduler.config.prediction_type == "v_prediction" or (
-            self.config.flow_matching and self.config.flow_matching_loss == "diffusion"
-        ):
-            # When not using flow-matching, train on velocity prediction objective.
-            target = self.noise_scheduler.get_velocity(
-                prepared_batch["latents"],
-                prepared_batch["noise"],
-                prepared_batch["timesteps"],
-            )
-        elif self.noise_scheduler.config.prediction_type == "sample":
-            # We set the target to latents here, but the model_pred will return the noise sample prediction.
-            # We will have to subtract the noise residual from the prediction to get the target sample.
-            target = prepared_batch["latents"]
-        else:
-            raise ValueError(
-                f"Unknown prediction type {self.noise_scheduler.config.prediction_type}."
-                " Supported types are 'epsilon', `sample`, and 'v_prediction'."
-            )
-
-        return target
+        return self.model.get_prediction_target(prepared_batch)
 
     def _calculate_loss(
         self,
@@ -2208,10 +2172,7 @@ class Trainer:
             training_logger.debug("Using min-SNR loss")
             snr = compute_snr(prepared_batch["timesteps"], self.noise_scheduler)
             snr_divisor = snr
-            if self.noise_scheduler.config.prediction_type == "v_prediction" or (
-                self.config.flow_matching
-                and self.config.flow_matching_loss == "diffusion"
-            ):
+            if self.noise_scheduler.config.prediction_type == "v_prediction":
                 snr_divisor = snr + 1
 
             training_logger.debug("Calculating MSE loss weights using SNR as divisor")

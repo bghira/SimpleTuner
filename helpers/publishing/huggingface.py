@@ -15,8 +15,9 @@ EMA_SAFETENSORS_FILENAME = "ema_model.safetensors"
 
 
 class HubManager:
-    def __init__(self, config, repo_id: str = None):
+    def __init__(self, config, model, repo_id: str = None):
         self.config = config
+        self.model = model
         self.repo_id = (
             repo_id or self.config.hub_model_id or self.config.tracker_project_name
         )
@@ -82,6 +83,7 @@ class HubManager:
                 message=f"Uploading {'model' if override_path is None else 'intermediary checkpoint'} to Hugging Face Hub as `{self.repo_id}`."
             )
         save_model_card(
+            model=self.model,
             repo_id=self.repo_id,
             images=validation_images,
             base_model=self.config.pretrained_model_name_or_path,

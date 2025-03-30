@@ -77,6 +77,7 @@ class ModelFoundation(ABC):
       - Batch preparation (moving to device, sampling noise, etc.)
       - Loss calculation (including optional SNR weighting)
     """
+    MODEL_LICENSE = "other"
     def __init__(self, config: dict, accelerator):
         self.config = config
         self.accelerator = accelerator
@@ -128,7 +129,7 @@ class ModelFoundation(ABC):
         raise NotImplementedError("load_lora_weights must be implemented in the child class.")
 
     def save_lora_weights(self, *args, **kwargs):
-        self.PIPELINE_CLASS.save_lora_weights(*args, **kwargs)
+        self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG].save_lora_weights(*args, **kwargs)
 
     def check_user_config(self):
         """
@@ -438,28 +439,20 @@ class ModelFoundation(ABC):
         Depending on the noise schedule prediction type or flow-matching settings,
         the target is computed differently.
         """
-        if self.config.flow_matching:
-            if self.config.flow_matching_loss == "diffusers":
-                target = prepared_batch["latents"]
-            elif self.config.flow_matching_loss == "compatible":
-                target = prepared_batch["noise"] - prepared_batch["latents"]
-            elif self.config.flow_matching_loss == "sd35":
-                sigma_reshaped = prepared_batch["sigmas"].view(-1, 1, 1, 1)
-                target = (prepared_batch["noisy_latents"] - prepared_batch["latents"]) / sigma_reshaped
-            else:
-                target = prepared_batch["latents"]
-        elif self.noise_schedule.config.prediction_type == self.PREDICTION_TYPE_EPSILON:
+        if self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
+            target = prepared_batch["noise"] - prepared_batch["latents"]
+        elif self.PREDICTION_TYPE is PredictionTypes.EPSILON:
             target = prepared_batch["noise"]
-        elif self.noise_schedule.config.prediction_type == self.PREDICTION_TYPE_V_PREDICTION:
+        elif self.PREDICTION_TYPE is PredictionTypes.V_PREDICTION:
             target = self.noise_schedule.get_velocity(
                 prepared_batch["latents"],
                 prepared_batch["noise"],
                 prepared_batch["timesteps"]
             )
-        elif self.noise_schedule.config.prediction_type == self.PREDICTION_TYPE_SAMPLE:
+        elif self.PREDICTION_TYPE is PredictionTypes.SAMPLE:
             target = prepared_batch["latents"]
         else:
-            raise ValueError(f"Unknown prediction type {self.noise_schedule.config.prediction_type}.")
+            raise ValueError(f"Unknown prediction type {self.PREDICTION_TYPE}.")
         return target
 
     def prepare_batch_conditions(self, batch: dict) -> dict:
@@ -608,9 +601,7 @@ class ModelFoundation(ABC):
             else:
                 snr = compute_snr(prepared_batch["timesteps"], self.noise_schedule)
                 snr_divisor = snr
-                if self.noise_schedule.config.prediction_type == self.PREDICTION_TYPE_V_PREDICTION or (
-                    self.config.flow_matching and self.config.flow_matching_loss == "diffusion"
-                ):
+                if self.noise_schedule.config.prediction_type == self.PREDICTION_TYPE_V_PREDICTION:
                     snr_divisor = snr + 1
                 mse_loss_weights = torch.stack([snr, self.config.snr_gamma * torch.ones_like(prepared_batch["timesteps"])], dim=1).min(dim=1)[0] / snr_divisor
                 loss = F.mse_loss(model_pred.float(), target.float(), reduction="none")
@@ -686,6 +677,13 @@ class ImageModelFoundation(ModelFoundation):
         
         return addkeys, misskeys
 
+    def custom_model_card_schedule_info(self):
+        """
+        Override this in your subclass to add model-specific info.
+        
+        See SD3 or Flux classes for an example.
+        """
+        return []
 
 class VideoModelFoundation(ImageModelFoundation):
     """

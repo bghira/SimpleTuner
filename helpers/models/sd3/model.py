@@ -4,7 +4,8 @@ from transformers import T5TokenizerFast, T5EncoderModel, CLIPTokenizer, CLIPTex
 from helpers.models.sd3.transformer import SD3Transformer2DModel
 from helpers.models.sd3.pipeline import StableDiffusion3Pipeline, StableDiffusion3Img2ImgPipeline
 from diffusers import AutoencoderKL
-from diffusers.utils import convert_state_dict_to_diffusers
+from diffusers.utils import convert_state_dict_to_diffusers, convert_unet_state_dict_to_peft
+from peft import set_peft_model_state_dict
 from peft.utils import get_peft_model_state_dict
 from helpers.training.multi_process import _get_rank
 
@@ -106,6 +107,7 @@ class SD3(ImageModelFoundation):
         "medium": "stabilityai/stable-diffusion-3.5-medium",
         "large": "stabilityai/stable-diffusion-3.5-large",
     }
+    MODEL_LICENSE = "other"
 
     TEXT_ENCODER_CONFIGURATION = {
         "text_encoder": {
@@ -256,7 +258,7 @@ class SD3(ImageModelFoundation):
 
             if isinstance(
                 self.unwrap_model(model=model),
-                type(self.unwrap_model(model=self.transformer)),
+                type(self.unwrap_model(model=self.model)),
             ):
                 transformer_ = model
                 denoiser = transformer_
@@ -277,8 +279,8 @@ class SD3(ImageModelFoundation):
                     f"\nunet: {self.unwrap_model(model=self.get_trained_component()).__class__}"
                 )
 
-        key_to_replace = self.model.MODEL_SUBFOLDER
-        lora_state_dict = self.pipeline_class.lora_state_dict(input_dir)
+        key_to_replace = self.MODEL_TYPE.value
+        lora_state_dict = self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG].lora_state_dict(input_dir)
 
         denoiser_state_dict = {
             f'{k.replace(f"{key_to_replace}.", "")}': v
@@ -299,7 +301,7 @@ class SD3(ImageModelFoundation):
                     f" {unexpected_keys}. "
                 )
 
-        if self.args.train_text_encoder:
+        if self.config.train_text_encoder:
             # Do we need to call `scale_lora_layers()` here?
             from diffusers.training_utils import _set_state_dict_into_text_encoder
 
@@ -351,3 +353,24 @@ class SD3(ImageModelFoundation):
         logger.info(
             f"SD3 embeds for unconditional captions: t5={self.config.sd3_t5_uncond_behaviour}, clip={self.config.sd3_clip_uncond_behaviour}"
         )
+
+    def custom_model_card_schedule_info(self):
+        output_args = []
+        if self.config.flow_schedule_auto_shift:
+            output_args.append("flow_schedule_auto_shift")
+        if self.config.flow_schedule_shift is not None:
+            output_args.append(f"shift={self.config.flow_schedule_shift}")
+        if self.config.flow_use_beta_schedule:
+            output_args.append(f"flow_beta_schedule_alpha={self.config.flow_beta_schedule_alpha}")
+            output_args.append(f"flow_beta_schedule_beta={self.config.flow_beta_schedule_beta}")
+        if self.config.flow_use_uniform_schedule:
+            output_args.append(f"flow_use_uniform_schedule")
+        # if self.config.model_type == "lora" and args.lora_type == "standard":
+        #     output_args.append(f"flux_lora_target={self.config.flux_lora_target}")
+        output_str = (
+            f" (extra parameters={output_args})"
+            if output_args
+            else " (no special parameters set)"
+        )
+
+        return output_str

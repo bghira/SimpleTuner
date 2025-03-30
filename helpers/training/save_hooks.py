@@ -11,7 +11,6 @@ from helpers.models.common import PipelineTypes
 from helpers.models.sdxl.pipeline import StableDiffusionXLPipeline
 from helpers.training.state_tracker import StateTracker
 from helpers.models.smoldit import SmolDiT2DModel, SmolDiTPipeline
-from helpers.models.sd3.transformer import SD3Transformer2DModel
 import os
 import logging
 import shutil
@@ -28,7 +27,6 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
 try:
     from diffusers import (
         UNet2DConditionModel,
-        StableDiffusion3Pipeline,
         StableDiffusionPipeline,
         FluxPipeline,
         PixArtSigmaPipeline,
@@ -155,17 +153,16 @@ class SaveHookManager:
             self.ema_model.store(trainable_parameters)
             self.ema_model.copy_to(trainable_parameters)
             lora_save_parameters = {
-                "output_dir": os.path.join(output_dir, "ema"),
                 f"{self.model.MODEL_SUBFOLDER}_lora_layers": convert_state_dict_to_diffusers(
-                    get_peft_model_state_dict(self.model.get_trained_component())
+                    get_peft_model_state_dict(
+                        unwrap_model(self.accelerator, self.model.get_trained_component())
+                    )
                 ),
             }
-            self.model.save_lora_weights(**lora_save_parameters)
+            self.model.save_lora_weights(os.path.join(output_dir, "ema"), **lora_save_parameters)
             self.ema_model.restore(trainable_parameters)
 
-        lora_save_parameters = {
-            "output_dir": output_dir,
-        }
+        lora_save_parameters = {}
         # TODO: Make this less shitty.
         for model in models:
             if isinstance(model, type(unwrap_model(self.accelerator, self.model.get_trained_component()))):
@@ -192,7 +189,7 @@ class SaveHookManager:
             if weights:
                 weights.pop()
 
-        self.model.save_lora_weights(**lora_save_parameters)
+        self.model.save_lora_weights(output_dir, **lora_save_parameters)
 
     def _save_lycoris(self, models, weights, output_dir):
         """
