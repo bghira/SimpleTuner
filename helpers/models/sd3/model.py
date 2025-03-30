@@ -135,7 +135,7 @@ class SD3(ImageModelFoundation):
         Models can optionally format the stored text embedding, eg. in a dict, or
         filter certain outputs from appearing in the file cache.
 
-        Args:
+        self.config:
             text_embedding (torch.Tensor): The embed to adjust.
         
         Returns:
@@ -315,3 +315,39 @@ class SD3(ImageModelFoundation):
                 text_encoder=text_encoder_two_,
             )
 
+    def check_user_config(self):
+        """
+        Checks self.config values against important issues. Optionally implemented in child class.
+        """
+        if self.config.base_model_precision == "fp8-quanto":
+            raise ValueError(
+                "SD3 does not support fp8-quanto. Please use fp8-torchao or int8 precision level instead."
+            )
+        t5_max_length = 154
+        if self.config.tokenizer_max_length is None or int(self.config.tokenizer_max_length) > t5_max_length:
+            if not self.config.i_know_what_i_am_doing:
+                logger.warning(
+                    f"Updating T5 XXL tokeniser max length to {t5_max_length} for SD3."
+                )
+                self.config.tokenizer_max_length = t5_max_length
+            else:
+                logger.warning(
+                    f"-!- SD3 supports a max length of {t5_max_length} tokens, but you have supplied `--i_know_what_i_am_doing`, so this limit will not be enforced. -!-"
+                )
+                logger.warning(
+                    f"The model will begin to collapse after a short period of time, if the model you are continuing from has not been tuned beyond {t5_max_length} tokens."
+                )
+        # Disable custom VAEs for SD3.
+        self.config.pretrained_vae_model_name_or_path = None
+        # Disable Compel.
+        self.config.disable_compel = True
+        if self.config.aspect_bucket_alignment != 64:
+            logger.warning(
+                "MM-DiT requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
+            )
+            self.config.aspect_bucket_alignment = 64
+        if self.config.sd3_t5_uncond_behaviour is None:
+            self.config.sd3_t5_uncond_behaviour = self.config.sd3_clip_uncond_behaviour
+        logger.info(
+            f"SD3 embeds for unconditional captions: t5={self.config.sd3_t5_uncond_behaviour}, clip={self.config.sd3_clip_uncond_behaviour}"
+        )

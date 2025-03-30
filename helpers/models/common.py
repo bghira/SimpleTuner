@@ -130,6 +130,12 @@ class ModelFoundation(ABC):
     def save_lora_weights(self, *args, **kwargs):
         self.PIPELINE_CLASS.save_lora_weights(*args, **kwargs)
 
+    def check_user_config(self):
+        """
+        Checks self.config values against important issues. Optionally implemented in child class.
+        """
+        pass
+
     def _model_config_path(self):
         return get_model_config_path(
             model_family=self.config.model_family,

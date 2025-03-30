@@ -362,18 +362,6 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
-        "--flow_matching_loss",
-        type=str,
-        choices=["diffusers", "compatible", "diffusion", "sd35"],
-        default="compatible",
-        help=(
-            "A discrepancy exists between the Diffusers implementation of flow matching and the minimal implementation provided"
-            " by StabilityAI. This experimental option allows switching loss calculations to be compatible with those."
-            " Additionally, 'diffusion' is offered as an option to reparameterise a model to v_prediction loss."
-            " sd35 provides the ability to train on SD3.5's flow-matching target, which is the denoised sample."
-        ),
-    )
-    parser.add_argument(
         "--sd3_clip_uncond_behaviour",
         type=str,
         choices=["empty_string", "zero"],
@@ -2451,16 +2439,6 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         )
         info_log(f"Default VAE Cache location: {args.cache_dir_vae}")
         info_log(f"Text Cache location: {args.cache_dir_text}")
-    if args.model_family == "sd3":
-        warning_log(
-            "MM-DiT requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
-        )
-        args.aspect_bucket_alignment = 64
-        if args.sd3_t5_uncond_behaviour is None:
-            args.sd3_t5_uncond_behaviour = args.sd3_clip_uncond_behaviour
-        info_log(
-            f"SD3 embeds for unconditional captions: t5={args.sd3_t5_uncond_behaviour}, clip={args.sd3_clip_uncond_behaviour}"
-        )
 
     elif "deepfloyd" in args.model_type:
         deepfloyd_pixel_alignment = 8
@@ -2516,27 +2494,6 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if args.metadata_update_interval < 60:
         raise ValueError("Metadata update interval must be at least 60 seconds.")
 
-    if args.model_family == "sd3":
-        args.pretrained_vae_model_name_or_path = None
-        args.disable_compel = True
-
-    t5_max_length = 154
-    if args.model_family == "sd3" and (
-        args.tokenizer_max_length is None
-        or int(args.tokenizer_max_length) > t5_max_length
-    ):
-        if not args.i_know_what_i_am_doing:
-            warning_log(
-                f"Updating T5 XXL tokeniser max length to {t5_max_length} for SD3."
-            )
-            args.tokenizer_max_length = t5_max_length
-        else:
-            warning_log(
-                f"-!- SD3 supports a max length of {t5_max_length} tokens, but you have supplied `--i_know_what_i_am_doing`, so this limit will not be enforced. -!-"
-            )
-            warning_log(
-                f"The model will begin to collapse after a short period of time, if the model you are continuing from has not been tuned beyond {t5_max_length} tokens."
-            )
     flux_version = "dev"
     model_max_seq_length = 512
     if (
