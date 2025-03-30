@@ -650,8 +650,8 @@ class VAECache(WebhookMixin):
                         # if we are not doing video generation
                         chunk = {
                             "latents": single_latent,
-                            "height": single_latent.shape[2],
-                            "width": single_latent.shape[3],
+                            "height": single_latent.shape[1],
+                            "width": single_latent.shape[2],
                         }
                     latents.append(chunk)
             else:
