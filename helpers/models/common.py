@@ -428,7 +428,8 @@ class ModelFoundation(ABC):
                 self.text_encoders.append(text_encoder)
 
     def get_text_encoder(self, index: int):
-        return self.text_encoders[index] if self.text_encoders is not None else None
+        if self.text_encoders is not None:
+            return self.text_encoders[index] if index in self.text_encoders else None
 
     def unload_text_encoder(self):
         if self.text_encoders is not None:

@@ -647,13 +647,8 @@ class Trainer:
 
                     return
                 self.quantise_model(
-                    unet=self.unet if not preprocessing_models_only else None,
-                    transformer=(
-                        self.transformer if not preprocessing_models_only else None
-                    ),
-                    text_encoder_1=self.text_encoder_1,
-                    text_encoder_2=self.text_encoder_2,
-                    text_encoder_3=self.text_encoder_3,
+                    model=self.model.get_trained_component() if not preprocessing_models_only else None,
+                    text_encoders=self.model.text_encoders,
                     controlnet=None,
                     ema=self.ema_model,
                     args=self.config,
@@ -667,21 +662,13 @@ class Trainer:
 
                     return
                 (
-                    self.unet,
-                    self.transformer,
-                    self.text_encoder_1,
-                    self.text_encoder_2,
-                    self.text_encoder_3,
+                    self.model.model,
+                    self.model.text_encoders,
                     self.controlnet,
                     self.ema_model,
                 ) = self.quantise_model(
-                    unet=self.unet if not preprocessing_models_only else None,
-                    transformer=(
-                        self.transformer if not preprocessing_models_only else None
-                    ),
-                    text_encoder_1=self.text_encoder_1,
-                    text_encoder_2=self.text_encoder_2,
-                    text_encoder_3=self.text_encoder_3,
+                    model=self.model.get_trained_component() if not preprocessing_models_only else None,
+                    text_encoders=self.model.text_encoders,
                     controlnet=None,
                     ema=self.ema_model,
                     args=self.config,
