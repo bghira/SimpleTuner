@@ -633,17 +633,26 @@ class VAECache(WebhookMixin):
 
             # Prepare final latents list by combining cached and newly computed latents
             if isinstance(latents_uncached, dict):
-                raw_latents = latents_uncached["latents"]
+                raw_latents = latents_uncached["latent"]
                 num_samples = raw_latents.shape[0]
                 for i in range(num_samples):
                     # Each sub-dict is shape [1, 128, F, H, W]
                     single_latent = raw_latents[i : i + 1].squeeze(0)
-                    chunk = {
-                        "latents": single_latent,
-                        "num_frames": latents_uncached["num_frames"],
-                        "height": latents_uncached["height"],
-                        "width": latents_uncached["width"],
-                    }
+                    try:
+                        # for video generation models
+                        chunk = {
+                            "latents": single_latent,
+                            "num_frames": latents_uncached["num_frames"],
+                            "height": latents_uncached["height"],
+                            "width": latents_uncached["width"],
+                        }
+                    except:
+                        # if we are not doing video generation
+                        chunk = {
+                            "latents": single_latent,
+                            "height": single_latent.shape[2],
+                            "width": single_latent.shape[3],
+                        }
                     latents.append(chunk)
             else:
                 cached_idx, uncached_idx = 0, 0
