@@ -7,6 +7,7 @@ from diffusers.pipelines.flux.pipeline_flux import (
     calculate_shift as calculate_shift_flux,
 )
 
+
 def get_mobius_guidance(args, global_step, steps_per_epoch, batch_size, device):
     """
     state of the art

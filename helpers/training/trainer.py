@@ -191,7 +191,9 @@ class Trainer:
         self.should_abort = False
         self.ema_model = None
         self.validation = None
-        logger.info(f"Initialised: {self.config.model_family}, {getattr(self, 'model', None)}")
+        logger.info(
+            f"Initialised: {self.config.model_family}, {getattr(self, 'model', None)}"
+        )
         # this updates self.config further, so we will run it here.
         self.init_noise_schedule()
 
@@ -313,7 +315,12 @@ class Trainer:
 
     def init_noise_schedule(self):
         from helpers.models.common import PredictionTypes
-        self.config.flow_matching = True if self.model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING else False
+
+        self.config.flow_matching = (
+            True
+            if self.model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING
+            else False
+        )
         self.noise_scheduler = self._get_noise_schedule()
         self.lr = 0.0
 
@@ -450,9 +457,7 @@ class Trainer:
         StateTracker.set_vae(self.model.vae)
 
     def init_text_encoder(self, move_to_accelerator: bool = True):
-        self.model.load_text_encoder(
-            move_to_device=move_to_accelerator
-        )
+        self.model.load_text_encoder(move_to_device=move_to_accelerator)
 
     def init_freeze_models(self):
         self.model.freeze_components()
@@ -487,7 +492,7 @@ class Trainer:
                 accelerator=self.accelerator,
                 text_encoders=self.model.text_encoders,
                 tokenizers=self.model.tokenizers,
-                model=self.model
+                model=self.model,
             )
             self._send_webhook_raw(
                 structured_data={"message": "Completed configuring data backends."},
@@ -523,10 +528,10 @@ class Trainer:
         collected_data_backend_str = list(StateTracker.get_data_backends().keys())
         if self.config.push_to_hub and self.accelerator.is_main_process:
             self.hub_manager.collected_data_backend_str = collected_data_backend_str
-            self.hub_manager.set_validation_prompts(
-                self.validation_prompt_metadata
+            self.hub_manager.set_validation_prompts(self.validation_prompt_metadata)
+            logger.debug(
+                f"Collected validation prompts: {self.validation_prompt_metadata}"
             )
-            logger.debug(f"Collected validation prompts: {self.validation_prompt_metadata}")
         self._recalculate_training_steps()
         logger.info(
             f"Collected the following data backends: {collected_data_backend_str}"
@@ -847,7 +852,9 @@ class Trainer:
             if self.config.lora_type == "lycoris":
                 return self.lycoris_wrapped_network.parameters()
         return [
-            param for param in self.model.get_trained_component().parameters() if param.requires_grad
+            param
+            for param in self.model.get_trained_component().parameters()
+            if param.requires_grad
         ]
 
     def _recalculate_training_steps(self):
@@ -1572,7 +1579,9 @@ class Trainer:
             if self.config.is_quantized:
                 self.model.get_trained_component().to(target_device)
             else:
-                self.model.get_trained_component().to(target_device, dtype=self.config.weight_dtype)
+                self.model.get_trained_component().to(
+                    target_device, dtype=self.config.weight_dtype
+                )
         if getattr(self.accelerator, "_lycoris_wrapped_network", None) is not None:
             self.accelerator._lycoris_wrapped_network = (
                 self.accelerator._lycoris_wrapped_network.to(
@@ -1592,7 +1601,10 @@ class Trainer:
             if is_xformers_available():
                 import xformers  # type: ignore # noqa
 
-                if hasattr(self.model.get_trained_component(), "enable_xformers_memory_efficient_attention"):
+                if hasattr(
+                    self.model.get_trained_component(),
+                    "enable_xformers_memory_efficient_attention",
+                ):
                     logger.info("Enabling xformers memory-efficient attention.")
                     self.model.get_trained_component().enable_xformers_memory_efficient_attention()
                 else:
@@ -1613,7 +1625,9 @@ class Trainer:
             logger.info(
                 f"Moving ControlNet to {target_device} in {self.config.weight_dtype} precision."
             )
-            self.model.get_trained_component().to(device=target_device, dtype=self.config.weight_dtype)
+            self.model.get_trained_component().to(
+                device=target_device, dtype=self.config.weight_dtype
+            )
             if self.config.train_text_encoder:
                 logger.warning(
                     "Unknown results will occur when finetuning the text encoder alongside ControlNet."
@@ -2143,7 +2157,6 @@ class Trainer:
 
         return self.model.prepare_batch(batch)
 
-
     def get_prediction_target(self, prepared_batch: dict):
         return self.model.get_prediction_target(prepared_batch)
 
@@ -2272,7 +2285,7 @@ class Trainer:
                 and "standard" in self.config.lora_type.lower()
             ):
                 for text_encoder in self.text_encoders:
-                    if 't5' in str(text_encoder.__class__):
+                    if "t5" in str(text_encoder.__class__):
                         continue
                     text_encoder.train()
                     training_models.append(text_encoder)

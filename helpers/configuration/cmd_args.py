@@ -2697,8 +2697,8 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             f"Invalid gradient_accumulation_steps parameter: {args.gradient_accumulation_steps}, should be >= 1"
         )
 
-    if args.base_model_precision == 'fp8-quanto':
-        if args.model_family in ['wan', 'sd3']:
+    if args.base_model_precision == "fp8-quanto":
+        if args.model_family in ["wan", "sd3"]:
             error_log(
                 "Quanto does not support WAN or SD3 models for FP8. Please use torchao for FP8, or int8 instead."
             )

@@ -383,6 +383,7 @@ def flux_schedule_info(args):
 
     return output_str
 
+
 def ddpm_schedule_info(args):
     """Information about DDPM schedules, eg. rescaled betas or offset noise"""
     output_args = []

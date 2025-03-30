@@ -122,7 +122,11 @@ class SaveHookManager:
         self.denoiser_class = self.model.MODEL_CLASS
         self.denoiser_subdir = self.model.MODEL_SUBFOLDER
         self.pipeline_class = self.model.PIPELINE_CLASSES[
-            PipelineTypes.IMG2IMG if args.validation_using_datasets else PipelineTypes.TEXT2IMG
+            (
+                PipelineTypes.IMG2IMG
+                if args.validation_using_datasets
+                else PipelineTypes.TEXT2IMG
+            )
         ]
         logger.debug(f"Denoiser class set to: {self.denoiser_class.__name__}.")
         logger.debug(f"Pipeline class set to: {self.pipeline_class.__name__}.")
@@ -148,39 +152,52 @@ class SaveHookManager:
             # we'll temporarily overwrite teh LoRA parameters with the EMA parameters to save it.
             logger.info("Saving EMA model to disk.")
             trainable_parameters = [
-                p for p in self.model.get_trained_component().parameters() if p.requires_grad
+                p
+                for p in self.model.get_trained_component().parameters()
+                if p.requires_grad
             ]
             self.ema_model.store(trainable_parameters)
             self.ema_model.copy_to(trainable_parameters)
             lora_save_parameters = {
                 f"{self.model.MODEL_SUBFOLDER}_lora_layers": convert_state_dict_to_diffusers(
                     get_peft_model_state_dict(
-                        unwrap_model(self.accelerator, self.model.get_trained_component())
+                        unwrap_model(
+                            self.accelerator, self.model.get_trained_component()
+                        )
                     )
                 ),
             }
-            self.model.save_lora_weights(os.path.join(output_dir, "ema"), **lora_save_parameters)
+            self.model.save_lora_weights(
+                os.path.join(output_dir, "ema"), **lora_save_parameters
+            )
             self.ema_model.restore(trainable_parameters)
 
         lora_save_parameters = {}
         # TODO: Make this less shitty.
         for model in models:
-            if isinstance(model, type(unwrap_model(self.accelerator, self.model.get_trained_component()))):
+            if isinstance(
+                model,
+                type(
+                    unwrap_model(self.accelerator, self.model.get_trained_component())
+                ),
+            ):
                 # unet_lora_layers or transformer_lora_layers
-                lora_save_parameters[f"{self.model.MODEL_SUBFOLDER}_lora_layers"] = convert_state_dict_to_diffusers(
-                    get_peft_model_state_dict(model)
+                lora_save_parameters[f"{self.model.MODEL_SUBFOLDER}_lora_layers"] = (
+                    convert_state_dict_to_diffusers(get_peft_model_state_dict(model))
                 )
             elif isinstance(
-                model, type(unwrap_model(self.accelerator, self.model.get_text_encoder(0)))
+                model,
+                type(unwrap_model(self.accelerator, self.model.get_text_encoder(0))),
             ):
-                lora_save_parameters["text_encoder_lora_layers"] = convert_state_dict_to_diffusers(
-                    get_peft_model_state_dict(model)
+                lora_save_parameters["text_encoder_lora_layers"] = (
+                    convert_state_dict_to_diffusers(get_peft_model_state_dict(model))
                 )
             elif isinstance(
-                model, type(unwrap_model(self.accelerator, self.model.get_text_encoder(1)))
+                model,
+                type(unwrap_model(self.accelerator, self.model.get_text_encoder(1))),
             ):
-                lora_save_parameters["text_encoder_1_lora_layers"] = convert_state_dict_to_diffusers(
-                    get_peft_model_state_dict(model)
+                lora_save_parameters["text_encoder_1_lora_layers"] = (
+                    convert_state_dict_to_diffusers(get_peft_model_state_dict(model))
                 )
             elif not self.use_deepspeed_optimizer:
                 raise ValueError(f"unexpected save model: {model.__class__}")

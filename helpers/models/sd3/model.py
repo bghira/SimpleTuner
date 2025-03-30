@@ -1,16 +1,35 @@
 import torch, os, logging
-from helpers.models.common import ImageModelFoundation, PredictionTypes, PipelineTypes, ModelTypes
-from transformers import T5TokenizerFast, T5EncoderModel, CLIPTokenizer, CLIPTextModelWithProjection
+from helpers.models.common import (
+    ImageModelFoundation,
+    PredictionTypes,
+    PipelineTypes,
+    ModelTypes,
+)
+from transformers import (
+    T5TokenizerFast,
+    T5EncoderModel,
+    CLIPTokenizer,
+    CLIPTextModelWithProjection,
+)
 from helpers.models.sd3.transformer import SD3Transformer2DModel
-from helpers.models.sd3.pipeline import StableDiffusion3Pipeline, StableDiffusion3Img2ImgPipeline
+from helpers.models.sd3.pipeline import (
+    StableDiffusion3Pipeline,
+    StableDiffusion3Img2ImgPipeline,
+)
 from diffusers import AutoencoderKL
-from diffusers.utils import convert_state_dict_to_diffusers, convert_unet_state_dict_to_peft
+from diffusers.utils import (
+    convert_state_dict_to_diffusers,
+    convert_unet_state_dict_to_peft,
+)
 from peft import set_peft_model_state_dict
 from peft.utils import get_peft_model_state_dict
 from helpers.training.multi_process import _get_rank
 
 logger = logging.getLogger(__name__)
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO") if _get_rank() == 0 else "ERROR")
+logger.setLevel(
+    os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO") if _get_rank() == 0 else "ERROR"
+)
+
 
 def _encode_sd3_prompt_with_t5(
     text_encoder,
@@ -53,6 +72,7 @@ def _encode_sd3_prompt_with_t5(
     else:
         return prompt_embeds
 
+
 def _encode_sd3_prompt_with_clip(
     text_encoder,
     tokenizer,
@@ -84,6 +104,7 @@ def _encode_sd3_prompt_with_clip(
     prompt_embeds = prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
 
     return prompt_embeds, pooled_prompt_embeds
+
 
 class SD3(ImageModelFoundation):
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
@@ -139,7 +160,7 @@ class SD3(ImageModelFoundation):
 
         self.config:
             text_embedding (torch.Tensor): The embed to adjust.
-        
+
         Returns:
             torch.Tensor: The adjusted embed. By default, this method does nothing.
         """
@@ -157,11 +178,15 @@ class SD3(ImageModelFoundation):
             "pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0),
         }
 
-    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
+    def convert_negative_text_embed_for_pipeline(
+        self, text_embedding: torch.Tensor, prompt: str
+    ) -> dict:
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
         return {
             "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            "negative_pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0),
+            "negative_pooled_prompt_embeds": text_embedding[
+                "pooled_prompt_embeds"
+            ].unsqueeze(0),
         }
 
     def _encode_prompts(self, prompts: list):
@@ -198,9 +223,7 @@ class SD3(ImageModelFoundation):
 
         clip_prompt_embeds = torch.cat(clip_prompt_embeds_list, dim=-1)
         pooled_prompt_embeds = torch.cat(clip_pooled_prompt_embeds_list, dim=-1)
-        zero_padding_tokens=(
-            True if self.config.t5_padding == "zero" else False
-        )
+        zero_padding_tokens = True if self.config.t5_padding == "zero" else False
         t5_prompt_embed = _encode_sd3_prompt_with_t5(
             self.text_encoders[-1],
             self.tokenizers[-1],
@@ -245,77 +268,6 @@ class SD3(ImageModelFoundation):
                 return_dict=False,
             )[0]
         }
-    
-    def load_lora_weights(self, models, input_dir):
-        unet_ = None
-        transformer_ = None
-        denoiser = None
-        text_encoder_one_ = None
-        text_encoder_two_ = None
-
-        while len(models) > 0:
-            model = models.pop()
-
-            if isinstance(
-                self.unwrap_model(model=model),
-                type(self.unwrap_model(model=self.model)),
-            ):
-                transformer_ = model
-                denoiser = transformer_
-            elif isinstance(
-                self.unwrap_model(model=model),
-                type(self.unwrap_model(model=self.text_encoders[0])),
-            ):
-                text_encoder_one_ = model
-            elif isinstance(
-                self.unwrap_model(model=model),
-                type(self.unwrap_model(model=self.text_encoders[1])),
-            ):
-                text_encoder_two_ = model
-            else:
-                raise ValueError(
-                    f"unexpected save model: {model.__class__}"
-                    f"\nunwrapped: {self.unwrap_model(model=model).__class__}"
-                    f"\nunet: {self.unwrap_model(model=self.get_trained_component()).__class__}"
-                )
-
-        key_to_replace = self.MODEL_TYPE.value
-        lora_state_dict = self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG].lora_state_dict(input_dir)
-
-        denoiser_state_dict = {
-            f'{k.replace(f"{key_to_replace}.", "")}': v
-            for k, v in lora_state_dict.items()
-            if k.startswith(f"{key_to_replace}.")
-        }
-        denoiser_state_dict = convert_unet_state_dict_to_peft(denoiser_state_dict)
-        incompatible_keys = set_peft_model_state_dict(
-            denoiser, denoiser_state_dict, adapter_name="default"
-        )
-
-        if incompatible_keys is not None:
-            # check only for unexpected keys
-            unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
-            if unexpected_keys:
-                logger.warning(
-                    f"Loading adapter weights from state_dict led to unexpected keys not found in the model: "
-                    f" {unexpected_keys}. "
-                )
-
-        if self.config.train_text_encoder:
-            # Do we need to call `scale_lora_layers()` here?
-            from diffusers.training_utils import _set_state_dict_into_text_encoder
-
-            _set_state_dict_into_text_encoder(
-                lora_state_dict,
-                prefix="text_encoder.",
-                text_encoder=text_encoder_one_,
-            )
-
-            _set_state_dict_into_text_encoder(
-                lora_state_dict,
-                prefix="text_encoder_2.",
-                text_encoder=text_encoder_two_,
-            )
 
     def check_user_config(self):
         """
@@ -326,7 +278,10 @@ class SD3(ImageModelFoundation):
                 "SD3 does not support fp8-quanto. Please use fp8-torchao or int8 precision level instead."
             )
         t5_max_length = 154
-        if self.config.tokenizer_max_length is None or int(self.config.tokenizer_max_length) > t5_max_length:
+        if (
+            self.config.tokenizer_max_length is None
+            or int(self.config.tokenizer_max_length) > t5_max_length
+        ):
             if not self.config.i_know_what_i_am_doing:
                 logger.warning(
                     f"Updating T5 XXL tokeniser max length to {t5_max_length} for SD3."
@@ -361,8 +316,12 @@ class SD3(ImageModelFoundation):
         if self.config.flow_schedule_shift is not None:
             output_args.append(f"shift={self.config.flow_schedule_shift}")
         if self.config.flow_use_beta_schedule:
-            output_args.append(f"flow_beta_schedule_alpha={self.config.flow_beta_schedule_alpha}")
-            output_args.append(f"flow_beta_schedule_beta={self.config.flow_beta_schedule_beta}")
+            output_args.append(
+                f"flow_beta_schedule_alpha={self.config.flow_beta_schedule_alpha}"
+            )
+            output_args.append(
+                f"flow_beta_schedule_beta={self.config.flow_beta_schedule_beta}"
+            )
         if self.config.flow_use_uniform_schedule:
             output_args.append(f"flow_use_uniform_schedule")
         # if self.config.model_type == "lora" and args.lora_type == "standard":

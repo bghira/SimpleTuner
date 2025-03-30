@@ -23,6 +23,7 @@ if should_log():
 else:
     logger.setLevel("ERROR")
 
+
 class TextEmbeddingCache(WebhookMixin):
     prompts = {}
 
@@ -1454,7 +1455,9 @@ class TextEmbeddingCache(WebhookMixin):
                             time.sleep(5)
                     # TODO: Batch this
                     prompt_embeds, attention_mask = self.encode_wan_prompt(
-                        prompt=prompt, text_encoders=self.text_encoders, tokenizers=self.tokenizers
+                        prompt=prompt,
+                        text_encoders=self.text_encoders,
+                        tokenizers=self.tokenizers,
                     )
                     prompt_embeds = (prompt_embeds, attention_mask)
                     if return_concat:
@@ -1790,9 +1793,13 @@ class TextEmbeddingCache(WebhookMixin):
                     try:
                         # We attempt to load.
                         text_encoder_output = self.load_from_cache(filename)
-                        embed_shapes = {k: v.shape for k, v in text_encoder_output.items()}
+                        embed_shapes = {
+                            k: v.shape for k, v in text_encoder_output.items()
+                        }
                         logger.debug(f"Cached text embeds: {embed_shapes}")
-                        logger.debug(f"Filename {filename} prompt embeds: {embed_shapes}, keys: {text_encoder_output.keys()}")
+                        logger.debug(
+                            f"Filename {filename} prompt embeds: {embed_shapes}, keys: {text_encoder_output.keys()}"
+                        )
                     except Exception as e:
                         # We failed to load. Now encode the prompt.
                         logger.error(
@@ -1808,10 +1815,14 @@ class TextEmbeddingCache(WebhookMixin):
                         )
                 if should_encode:
                     # If load_from_cache is True, should_encode would be False unless we failed to load.
-                    self.debug_log(f"Encoding filename {filename} :: device {self.text_encoders[0].device} :: prompt {prompt}")
+                    self.debug_log(
+                        f"Encoding filename {filename} :: device {self.text_encoders[0].device} :: prompt {prompt}"
+                    )
                     text_encoder_output = self.model.encode_text_batch([prompt])
                     embed_shapes = {k: v.shape for k, v in text_encoder_output.items()}
-                    logger.debug(f"Filename {filename} prompt embeds: {embed_shapes}, keys: {text_encoder_output.keys()}")
+                    logger.debug(
+                        f"Filename {filename} prompt embeds: {embed_shapes}, keys: {text_encoder_output.keys()}"
+                    )
                     # Get the current size of the queue.
                     current_size = self.write_queue.qsize()
                     if current_size >= 2048:
@@ -1848,10 +1859,15 @@ class TextEmbeddingCache(WebhookMixin):
 
                     if return_concat:
                         # we're returning the embeds for training, so we'll prepare them
-                        text_encoder_output = {k: v.to(self.accelerator.device) for k, v in text_encoder_output.items()}
+                        text_encoder_output = {
+                            k: v.to(self.accelerator.device)
+                            for k, v in text_encoder_output.items()
+                        }
                     else:
                         # if we're not returning them, we'll just nuke them
-                        text_encoder_output = {k: v.to("meta") for k, v in text_encoder_output.items()}
+                        text_encoder_output = {
+                            k: v.to("meta") for k, v in text_encoder_output.items()
+                        }
                         del text_encoder_output
                         continue
 
@@ -1879,11 +1895,19 @@ class TextEmbeddingCache(WebhookMixin):
 
             logger.debug(f"Returning all {(len(prompt_embeds_all))} prompt embeds")
             if "prompt_embeds" in text_encoder_output:
-                all_prompt_embeds = tuple([v for v in text_encoder_output["prompt_embeds"]])
-                text_encoder_output["prompt_embeds"] = torch.cat(all_prompt_embeds, dim=0)
+                all_prompt_embeds = tuple(
+                    [v for v in text_encoder_output["prompt_embeds"]]
+                )
+                text_encoder_output["prompt_embeds"] = torch.cat(
+                    all_prompt_embeds, dim=0
+                )
             if "add_text_embeds" in text_encoder_output:
-                all_pooled_embeds = tuple([v for v in text_encoder_output["prompt_embeds"]])
-                text_encoder_output["add_text_embeds"] = torch.cat(all_pooled_embeds, dim=0)
+                all_pooled_embeds = tuple(
+                    [v for v in text_encoder_output["prompt_embeds"]]
+                )
+                text_encoder_output["add_text_embeds"] = torch.cat(
+                    all_pooled_embeds, dim=0
+                )
 
         return text_encoder_output
 

@@ -460,7 +460,9 @@ def move_text_encoders(text_encoders: list, target_device: str):
     return [encoder.to(target_device) for encoder in text_encoders]
 
 
-def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenizers, model: ModelFoundation):
+def configure_multi_databackend(
+    args: dict, accelerator, text_encoders, tokenizers, model: ModelFoundation
+):
     """
     Configure a multiple dataloaders based on the provided commandline args.
     """

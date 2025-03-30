@@ -60,6 +60,7 @@ def segmented_timestep_selection(
     # logger.debug(f"Selected timesteps: {selected_timesteps}")
     return torch.tensor(selected_timesteps)
 
+
 def generate_timestep_weights(args, num_timesteps):
     weights = torch.ones(num_timesteps)
 
@@ -469,6 +470,7 @@ class Sine(LRScheduler):
 
 from diffusers.optimization import get_scheduler
 
+
 def apply_flow_schedule_shift(args, noise_scheduler, sigmas, noise):
     # Resolution-dependent shifting of timestep schedules as per section 5.3.2 of SD3 paper
     shift = None
@@ -489,6 +491,7 @@ def apply_flow_schedule_shift(args, noise_scheduler, sigmas, noise):
     if shift is not None:
         sigmas = (sigmas * shift) / (1 + (shift - 1) * sigmas)
     return sigmas
+
 
 def get_lr_scheduler(
     args, optimizer, accelerator, logger, use_deepspeed_scheduler=False

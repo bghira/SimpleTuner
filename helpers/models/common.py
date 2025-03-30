@@ -8,7 +8,11 @@ import os
 from torch.distributions import Beta
 from helpers.training.wrappers import unwrap_model
 from helpers.training.multi_process import _get_rank
-from helpers.training.custom_schedule import apply_flow_schedule_shift, generate_timestep_weights, segmented_timestep_selection
+from helpers.training.custom_schedule import (
+    apply_flow_schedule_shift,
+    generate_timestep_weights,
+    segmented_timestep_selection,
+)
 from helpers.training.min_snr_gamma import compute_snr
 from transformers.utils import ContextManagers
 from helpers.training.adapter import load_lora_weights
@@ -41,6 +45,7 @@ upstream_config_sources = {
     "wan": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
 }
 
+
 def get_model_config_path(model_family: str, model_path: str):
     if model_path.endswith(".safetensors"):
         if model_family in upstream_config_sources:
@@ -54,9 +59,11 @@ def get_model_config_path(model_family: str, model_path: str):
 
     return model_path
 
+
 class PipelineTypes(Enum):
     IMG2IMG = "img2img"
     TEXT2IMG = "text2img"
+
 
 class PredictionTypes(Enum):
     EPSILON = "epsilon"
@@ -64,11 +71,13 @@ class PredictionTypes(Enum):
     V_PREDICTION = "v_prediction"
     FLOW_MATCHING = "flow_matching"
 
+
 class ModelTypes(Enum):
     UNET = "unet"
     TRANSFORMER = "transformer"
     VAE = "vae"
     TEXT_ENCODER = "text_encoder"
+
 
 class ModelFoundation(ABC):
     """
@@ -77,7 +86,9 @@ class ModelFoundation(ABC):
       - Batch preparation (moving to device, sampling noise, etc.)
       - Loss calculation (including optional SNR weighting)
     """
+
     MODEL_LICENSE = "other"
+
     def __init__(self, config: dict, accelerator):
         self.config = config
         self.accelerator = accelerator
@@ -90,7 +101,9 @@ class ModelFoundation(ABC):
         Run a forward pass on the model.
         Must be implemented by the subclass.
         """
-        raise NotImplementedError("model_predict must be implemented in the child class.")
+        raise NotImplementedError(
+            "model_predict must be implemented in the child class."
+        )
 
     @abstractmethod
     def _encode_prompts(self, text_batch: list):
@@ -98,35 +111,144 @@ class ModelFoundation(ABC):
         Encodes a batch of text using the text encoder.
         Must be implemented by the subclass.
         """
-        raise NotImplementedError("_encode_prompts must be implemented in the child class.")
+        raise NotImplementedError(
+            "_encode_prompts must be implemented in the child class."
+        )
 
     @abstractmethod
-    def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
+    def convert_text_embed_for_pipeline(
+        self, text_embedding: torch.Tensor, prompt: str
+    ) -> dict:
         """
         Converts the text embedding to the format expected by the pipeline.
         This is a stub and should be implemented in subclasses.
-        
+
         Prompt may be useful to inspect if your pipeline requires eg. zeroing empty inputs.
         """
-        raise NotImplementedError("convert_text_embed_for_pipeline must be implemented in the child class.")
+        raise NotImplementedError(
+            "convert_text_embed_for_pipeline must be implemented in the child class."
+        )
 
     @abstractmethod
-    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
+    def convert_negative_text_embed_for_pipeline(
+        self, text_embedding: torch.Tensor, prompt: str
+    ) -> dict:
         """
         Converts the text embedding to the format expected by the pipeline for negative prompt inputs.
         This is a stub and should be implemented in subclasses.
 
         Prompt may be useful to inspect if your pipeline requires eg. zeroing empty inputs.
         """
-        raise NotImplementedError("convert_text_embed_for_pipeline must be implemented in the child class.")
+        raise NotImplementedError(
+            "convert_text_embed_for_pipeline must be implemented in the child class."
+        )
 
-    @abstractmethod
     def load_lora_weights(self, models, input_dir):
         """
-        Loads the LoRA weights.
-        Must be implemented by the subclass.
+        Generalized LoRA loading method.
+        1) Pop models from the 'models' list, detect which is main (denoiser) vs. text encoders.
+        2) Pull the relevant LoRA keys out of the pipeline's lora_state_dict() output by prefix.
+        3) Convert & load them into the unwrapped PyTorch modules with set_peft_model_state_dict().
+        4) Optionally handle text_encoder_x using the diffusers _set_state_dict_into_text_encoder() helper.
         """
-        raise NotImplementedError("load_lora_weights must be implemented in the child class.")
+
+        # We'll track whichever sub-model is our 'denoiser' (UNet or Transformer).
+        denoiser = None
+        text_encoder_one_ = None
+        text_encoder_two_ = None
+
+        # 1. Identify models by type comparison
+        while len(models) > 0:
+            model = models.pop()
+            unwrapped_model = self.unwrap_model(model)
+
+            # Compare unwrapped type to main model's unwrapped type
+            if isinstance(unwrapped_model, type(self.unwrap_model(self.model))):
+                denoiser = model  # e.g., the "transformer" or "unet"
+            # If your text_encoders exist:
+            elif (
+                getattr(self, "text_encoders", None)
+                and len(self.text_encoders) > 0
+                and isinstance(
+                    unwrapped_model, type(self.unwrap_model(self.text_encoders[0]))
+                )
+            ):
+                text_encoder_one_ = model
+            elif (
+                getattr(self, "text_encoders", None)
+                and len(self.text_encoders) > 1
+                and isinstance(
+                    unwrapped_model, type(self.unwrap_model(self.text_encoders[1]))
+                )
+            ):
+                text_encoder_two_ = model
+            else:
+                raise ValueError(
+                    f"Unexpected model type in load_lora_weights: {model.__class__}\n"
+                    f"Unwrapped: {unwrapped_model.__class__}\n"
+                    f"Expected main model type {type(self.unwrap_model(self.model))}"
+                )
+
+        # 2. Get the LoRA state dict from the pipeline's directory
+        #    Usually you call something like self.PIPELINE_CLASSES[...] but
+        #    whichever pipeline is relevant. For example:
+        pipeline_cls = self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
+        lora_state_dict = pipeline_cls.lora_state_dict(input_dir)
+
+        # 3. Extract keys for the main model (which uses self.MODEL_TYPE.value as the prefix)
+        #    For example, "transformer." or "unet." is stripped out.
+        key_to_replace = self.MODEL_TYPE.value
+        denoiser_sd = {}
+        for k, v in lora_state_dict.items():
+            prefix = f"{key_to_replace}."
+            if k.startswith(prefix):
+                new_key = k.replace(prefix, "")
+                denoiser_sd[new_key] = v
+
+        # Convert them to "PEFT" format if needed.
+        # (Typically we call convert_unet_state_dict_to_peft on the denoiser's keys.)
+        from diffusers.utils import convert_unet_state_dict_to_peft
+
+        denoiser_sd = convert_unet_state_dict_to_peft(denoiser_sd)
+
+        # 4. Load them into the denoiser (the main model)
+        from peft.utils import set_peft_model_state_dict
+
+        incompatible_keys = set_peft_model_state_dict(
+            denoiser, denoiser_sd, adapter_name="default"
+        )
+
+        if incompatible_keys is not None:
+            # check only for unexpected keys
+            unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
+            if unexpected_keys:
+                logger.warning(
+                    f"LoRA loading found unexpected keys not in the denoiser model: {unexpected_keys}"
+                )
+
+        # 5. If we also train text encoders, apply them
+        if getattr(self.config, "train_text_encoder", False):
+            from diffusers.training_utils import _set_state_dict_into_text_encoder
+
+            # For text_encoder_1, the prefix in your pipeline's state dict is usually "text_encoder."
+            # For text_encoder_2, it might be "text_encoder_2."
+            # We'll do them in separate calls:
+
+            if text_encoder_one_ is not None:
+                _set_state_dict_into_text_encoder(
+                    lora_state_dict,
+                    prefix="text_encoder.",  # Must match how your pipeline outputs these
+                    text_encoder=text_encoder_one_,
+                )
+
+            if text_encoder_two_ is not None:
+                _set_state_dict_into_text_encoder(
+                    lora_state_dict,
+                    prefix="text_encoder_2.",  # Must match how your pipeline organizes these
+                    text_encoder=text_encoder_two_,
+                )
+
+        logger.info("Finished loading LoRA weights successfully.")
 
     def save_lora_weights(self, *args, **kwargs):
         self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG].save_lora_weights(*args, **kwargs)
@@ -143,27 +265,29 @@ class ModelFoundation(ABC):
             model_path=self.config.pretrained_model_name_or_path,
         )
 
-    def unwrap_model(self, model = None):
+    def unwrap_model(self, model=None):
         return unwrap_model(self.accelerator, model or self.model)
 
     def get_vae(self):
         """
         Returns the VAE model.
         """
-        if not getattr(self, 'AUTOENCODER_CLASS', None):
+        if not getattr(self, "AUTOENCODER_CLASS", None):
             return
         if not hasattr(self, "vae") or self.vae is None:
             self.load_vae()
         return self.vae
 
     def load_vae(self, move_to_device: bool = True):
-        if not getattr(self, 'AUTOENCODER_CLASS', None):
+        if not getattr(self, "AUTOENCODER_CLASS", None):
             return
 
         logger.info(f"Loading VAE from {self.config.vae_path}")
         self.vae = None
         self.config.vae_kwargs = {
-            "pretrained_model_name_or_path": get_model_config_path(self.config.model_family, self.config.vae_path),
+            "pretrained_model_name_or_path": get_model_config_path(
+                self.config.model_family, self.config.vae_path
+            ),
             "subfolder": "vae",
             "revision": self.config.revision,
             "force_upcast": False,
@@ -171,14 +295,18 @@ class ModelFoundation(ABC):
         }
         with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
             try:
-                self.vae = self.AUTOENCODER_CLASS.from_pretrained(**self.config.vae_kwargs)
+                self.vae = self.AUTOENCODER_CLASS.from_pretrained(
+                    **self.config.vae_kwargs
+                )
             except Exception as e:
                 logger.warning(
                     "Couldn't load VAE with default path. Trying without a subfolder.."
                 )
                 logger.error(e)
                 self.config.vae_kwargs["subfolder"] = None
-                self.vae = self.AUTOENCODER_CLASS.from_pretrained(**self.config.vae_kwargs)
+                self.vae = self.AUTOENCODER_CLASS.from_pretrained(
+                    **self.config.vae_kwargs
+                )
         if self.vae is None:
             raise ValueError(
                 "Could not load VAE. Please check the model path and ensure the VAE is compatible."
@@ -224,12 +352,15 @@ class ModelFoundation(ABC):
 
     def unload_vae(self):
         if self.vae is not None:
-            if hasattr(self.vae, 'to'):
-                self.vae.to('meta')
+            if hasattr(self.vae, "to"):
+                self.vae.to("meta")
             self.vae = None
 
     def load_text_tokenizer(self):
-        if self.TEXT_ENCODER_CONFIGURATION is None or len(self.TEXT_ENCODER_CONFIGURATION) == 0:
+        if (
+            self.TEXT_ENCODER_CONFIGURATION is None
+            or len(self.TEXT_ENCODER_CONFIGURATION) == 0
+        ):
             return
         self.tokenizers = []
         tokenizer_kwargs = {
@@ -244,32 +375,43 @@ class ModelFoundation(ABC):
         for attr_name, text_encoder_config in self.TEXT_ENCODER_CONFIGURATION.items():
             tokenizer_idx += 1
             tokenizer_cls = text_encoder_config.get("tokenizer")
-            tokenizer_kwargs["subfolder"] = text_encoder_config.get("tokenizer_subfolder", "tokenizer")
+            tokenizer_kwargs["subfolder"] = text_encoder_config.get(
+                "tokenizer_subfolder", "tokenizer"
+            )
             tokenizer_kwargs["use_fast"] = text_encoder_config.get("use_fast", False)
-            logger.info("Loading tokenizer %i: %s", tokenizer_idx, tokenizer_cls.__name__)
-            tokenizer = tokenizer_cls.from_pretrained(**tokenizer_kwargs)          
+            logger.info(
+                "Loading tokenizer %i: %s", tokenizer_idx, tokenizer_cls.__name__
+            )
+            tokenizer = tokenizer_cls.from_pretrained(**tokenizer_kwargs)
             self.tokenizers.append(tokenizer)
             setattr(self, f"tokenizer_{tokenizer_idx}", tokenizer)
 
     def load_text_encoder(self, move_to_device: bool = True):
         self.text_encoders = []
-        if self.TEXT_ENCODER_CONFIGURATION is None or len(self.TEXT_ENCODER_CONFIGURATION) == 0:
+        if (
+            self.TEXT_ENCODER_CONFIGURATION is None
+            or len(self.TEXT_ENCODER_CONFIGURATION) == 0
+        ):
             return
         self.load_text_tokenizer()
 
         text_encoder_idx = 0
         with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
-            for attr_name, text_encoder_config in self.TEXT_ENCODER_CONFIGURATION.items():
+            for (
+                attr_name,
+                text_encoder_config,
+            ) in self.TEXT_ENCODER_CONFIGURATION.items():
                 text_encoder_idx += 1
                 # load_tes returns a variant and three text encoders
                 signature = inspect.signature(text_encoder_config["model"])
                 extra_kwargs = {}
-                if 'torch_dtype' in signature.parameters:
+                if "torch_dtype" in signature.parameters:
                     extra_kwargs["torch_dtype"] = self.config.weight_dtype
                 logger.info(f"Loading {text_encoder_config.get('name')} text encoder")
                 text_encoder = text_encoder_config["model"].from_pretrained(
                     get_model_config_path(
-                        self.config.model_family, self.config.pretrained_model_name_or_path
+                        self.config.model_family,
+                        self.config.pretrained_model_name_or_path,
                     ),
                     variant=self.config.variant,
                     revision=self.config.revision,
@@ -291,14 +433,16 @@ class ModelFoundation(ABC):
     def unload_text_encoder(self):
         if self.text_encoders is not None:
             for text_encoder in self.text_encoders:
-                if hasattr(text_encoder, 'to'):
-                    text_encoder.to('meta')
+                if hasattr(text_encoder, "to"):
+                    text_encoder.to("meta")
             self.text_encoders = None
         if self.tokenizers is not None:
             self.tokenizers = None
 
     def load_model(self, move_to_device: bool = True):
-        logger.info(f"Loading diffusion model from {self.config.pretrained_model_name_or_path}")
+        logger.info(
+            f"Loading diffusion model from {self.config.pretrained_model_name_or_path}"
+        )
         # Stub: load your UNet (or transformer) model using your diffusion model loader.
         pretrained_load_args = {
             "revision": self.config.revision,
@@ -308,6 +452,7 @@ class ModelFoundation(ABC):
         }
         if "nf4-bnb" == self.config.base_model_precision:
             from diffusers import BitsAndBytesConfig
+
             pretrained_load_args["quantization_config"] = BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_use_double_quant=True,
@@ -319,7 +464,7 @@ class ModelFoundation(ABC):
             self.config.pretrained_transformer_model_name_or_path
             or self.config.pretrained_model_name_or_path
         )
-        if model_path.endswith('.safetensors'):
+        if model_path.endswith(".safetensors"):
             loader_fn = self.MODEL_CLASS.from_single_file
         self.model = loader_fn(
             model_path,
@@ -363,23 +508,33 @@ class ModelFoundation(ABC):
             )
         pipeline_class = self.PIPELINE_CLASSES[pipeline_type]
         if not hasattr(pipeline_class, "from_pretrained"):
-            raise NotImplementedError(f"Pipeline class {pipeline_class} does not have from_pretrained method.")
+            raise NotImplementedError(
+                f"Pipeline class {pipeline_class} does not have from_pretrained method."
+            )
         signature = inspect.signature(pipeline_class.from_pretrained)
-        pipeline_kwargs[self.MODEL_TYPE.value] = unwrap_model(self.accelerator, self.model)
+        pipeline_kwargs[self.MODEL_TYPE.value] = unwrap_model(
+            self.accelerator, self.model
+        )
         if getattr(self, "vae", None) is not None:
             pipeline_kwargs["vae"] = unwrap_model(self.accelerator, self.vae)
-        elif getattr(self, 'AUTOENCODER_CLASS', None) is not None:
+        elif getattr(self, "AUTOENCODER_CLASS", None) is not None:
             pipeline_kwargs["vae"] = self.get_vae()
         if self.text_encoders is not None and len(self.text_encoders) > 0:
-            pipeline_kwargs["text_encoder"] = unwrap_model(self.accelerator, self.text_encoders[0])
+            pipeline_kwargs["text_encoder"] = unwrap_model(
+                self.accelerator, self.text_encoders[0]
+            )
         elif len(self.TEXT_ENCODER_CONFIGURATION) > 0:
             pipeline_kwargs["text_encoder"] = None
         if self.text_encoders is not None and len(self.text_encoders) > 1:
-            pipeline_kwargs["text_encoder_2"] = unwrap_model(self.accelerator, self.text_encoders[1])
+            pipeline_kwargs["text_encoder_2"] = unwrap_model(
+                self.accelerator, self.text_encoders[1]
+            )
         elif len(self.TEXT_ENCODER_CONFIGURATION) > 1:
             pipeline_kwargs["text_encoder_2"] = None
         if self.text_encoders is not None and len(self.text_encoders) > 2:
-            pipeline_kwargs["text_encoder_3"] = unwrap_model(self.accelerator, self.text_encoders[2])
+            pipeline_kwargs["text_encoder_3"] = unwrap_model(
+                self.accelerator, self.text_encoders[2]
+            )
         elif len(self.TEXT_ENCODER_CONFIGURATION) > 2:
             pipeline_kwargs["text_encoder_3"] = None
         if self.config.controlnet:
@@ -391,7 +546,7 @@ class ModelFoundation(ABC):
         )
 
         return self.pipeline
-    
+
     def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG):
         if not hasattr(self, "pipeline") or self.pipeline is None:
             return self._load_pipeline(pipeline_type)
@@ -411,7 +566,11 @@ class ModelFoundation(ABC):
                 shift=self.config.flow_schedule_shift,
             )
             flow_matching = True
-        elif self.PREDICTION_TYPE in [PredictionTypes.EPSILON, PredictionTypes.V_PREDICTION, PredictionTypes.SAMPLE]:
+        elif self.PREDICTION_TYPE in [
+            PredictionTypes.EPSILON,
+            PredictionTypes.V_PREDICTION,
+            PredictionTypes.SAMPLE,
+        ]:
             if self.config.model_family == "legacy":
                 raise NotImplemented("Legacy models need ZSNR config moved out.")
                 self.config.rescale_betas_zero_snr = True
@@ -429,7 +588,9 @@ class ModelFoundation(ABC):
             )
             self.config.prediction_type = self.noise_schedule.config.prediction_type
         else:
-            raise NotImplementedError(f"Unknown prediction type {self.PREDICTION_TYPE}.")
+            raise NotImplementedError(
+                f"Unknown prediction type {self.PREDICTION_TYPE}."
+            )
 
         return self.config, self.noise_schedule
 
@@ -447,7 +608,7 @@ class ModelFoundation(ABC):
             target = self.noise_schedule.get_velocity(
                 prepared_batch["latents"],
                 prepared_batch["noise"],
-                prepared_batch["timesteps"]
+                prepared_batch["timesteps"],
             )
         elif self.PREDICTION_TYPE is PredictionTypes.SAMPLE:
             target = prepared_batch["latents"]
@@ -474,14 +635,18 @@ class ModelFoundation(ABC):
 
         logger.debug(f"Preparing batch: {batch.keys()}")
         # Ensure the encoder hidden states are on device
-        batch["encoder_hidden_states"] = batch["prompt_embeds"].to(**target_device_kwargs)
+        batch["encoder_hidden_states"] = batch["prompt_embeds"].to(
+            **target_device_kwargs
+        )
 
         # Process additional conditioning if provided
         pooled_embeds = batch.get("add_text_embeds")
         time_ids = batch.get("batch_time_ids")
         batch["added_cond_kwargs"] = {}
         if pooled_embeds is not None and hasattr(pooled_embeds, "to"):
-            batch["added_cond_kwargs"]["text_embeds"] = pooled_embeds.to(**target_device_kwargs)
+            batch["added_cond_kwargs"]["text_embeds"] = pooled_embeds.to(
+                **target_device_kwargs
+            )
         if time_ids is not None and hasattr(time_ids, "to"):
             batch["added_cond_kwargs"]["time_ids"] = time_ids.to(**target_device_kwargs)
 
@@ -493,43 +658,64 @@ class ModelFoundation(ABC):
 
         encoder_attention_mask = batch.get("encoder_attention_mask")
         if encoder_attention_mask is not None and hasattr(encoder_attention_mask, "to"):
-            batch["encoder_attention_mask"] = encoder_attention_mask.to(**target_device_kwargs)
+            batch["encoder_attention_mask"] = encoder_attention_mask.to(
+                **target_device_kwargs
+            )
 
         # Sample noise and add potential input perturbation.
         noise = torch.randn_like(batch["latents"])
         bsz = batch["latents"].shape[0]
         if self.config.input_perturbation != 0 and (
-            not getattr(self.config, "input_perturbation_steps", None) or global_step < self.config.input_perturbation_steps
+            not getattr(self.config, "input_perturbation_steps", None)
+            or global_step < self.config.input_perturbation_steps
         ):
             input_perturbation = self.config.input_perturbation
             if getattr(self.config, "input_perturbation_steps", None):
-                input_perturbation *= 1.0 - (global_step / self.config.input_perturbation_steps)
-            batch["noise"] = noise + input_perturbation * torch.randn_like(batch["latents"])
+                input_perturbation *= 1.0 - (
+                    global_step / self.config.input_perturbation_steps
+                )
+            batch["noise"] = noise + input_perturbation * torch.randn_like(
+                batch["latents"]
+            )
         else:
             batch["noise"] = noise
 
         # Flow matching branch: set sigmas and timesteps.
         if self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
             if not self.config.flux_fast_schedule and not any(
-                [self.config.flow_use_beta_schedule, self.config.flow_use_uniform_schedule]
+                [
+                    self.config.flow_use_beta_schedule,
+                    self.config.flow_use_uniform_schedule,
+                ]
             ):
                 batch["sigmas"] = torch.sigmoid(
-                    self.config.flow_sigmoid_scale * torch.randn((bsz,), device=self.accelerator.device)
+                    self.config.flow_sigmoid_scale
+                    * torch.randn((bsz,), device=self.accelerator.device)
                 )
-                batch["sigmas"] = apply_flow_schedule_shift(self.config, self.noise_schedule, batch["sigmas"], batch["noise"])
+                batch["sigmas"] = apply_flow_schedule_shift(
+                    self.config, self.noise_schedule, batch["sigmas"], batch["noise"]
+                )
             elif self.config.flow_use_uniform_schedule:
                 batch["sigmas"] = torch.rand((bsz,), device=self.accelerator.device)
-                batch["sigmas"] = apply_flow_schedule_shift(self.config, self.noise_schedule, batch["sigmas"], batch["noise"])
+                batch["sigmas"] = apply_flow_schedule_shift(
+                    self.config, self.noise_schedule, batch["sigmas"], batch["noise"]
+                )
             elif self.config.flow_use_beta_schedule:
                 alpha = self.config.flow_beta_schedule_alpha
                 beta = self.config.flow_beta_schedule_beta
                 beta_dist = Beta(alpha, beta)
-                batch["sigmas"] = beta_dist.sample((bsz,)).to(device=self.accelerator.device)
-                batch["sigmas"] = apply_flow_schedule_shift(self.config, self.noise_schedule, batch["sigmas"], noise)
+                batch["sigmas"] = beta_dist.sample((bsz,)).to(
+                    device=self.accelerator.device
+                )
+                batch["sigmas"] = apply_flow_schedule_shift(
+                    self.config, self.noise_schedule, batch["sigmas"], noise
+                )
             else:
                 available_sigmas = [1.0] * 7 + [0.75, 0.5, 0.25]
-                batch["sigmas"] = torch.tensor(random.choices(available_sigmas, k=bsz),
-                                               device=self.accelerator.device)
+                batch["sigmas"] = torch.tensor(
+                    random.choices(available_sigmas, k=bsz),
+                    device=self.accelerator.device,
+                )
             batch["timesteps"] = batch["sigmas"] * 1000.0
             # Ensure sigmas is reshaped appropriately (default is 4D, may be overriden in video subclass)
             batch["sigmas"] = batch["sigmas"].view(-1, 1, 1, 1)
@@ -539,20 +725,31 @@ class ModelFoundation(ABC):
         else:
             # If not flow matching, possibly apply an offset to noise
             if self.config.offset_noise:
-                if self.config.noise_offset_probability == 1.0 or random.random() < self.config.noise_offset_probability:
+                if (
+                    self.config.noise_offset_probability == 1.0
+                    or random.random() < self.config.noise_offset_probability
+                ):
                     noise = noise + self.config.noise_offset * torch.randn(
-                        batch["latents"].shape[0], batch["latents"].shape[1], 1, 1, device=batch["latents"].device
+                        batch["latents"].shape[0],
+                        batch["latents"].shape[1],
+                        1,
+                        1,
+                        device=batch["latents"].device,
                     )
-            weights = generate_timestep_weights(self.config, self.noise_schedule.config.num_train_timesteps).to(self.accelerator.device)
+            weights = generate_timestep_weights(
+                self.config, self.noise_schedule.config.num_train_timesteps
+            ).to(self.accelerator.device)
             if bsz > 1 and not self.config.disable_segmented_timestep_sampling:
                 batch["timesteps"] = segmented_timestep_selection(
                     actual_num_timesteps=self.noise_schedule.config.num_train_timesteps,
                     bsz=bsz,
                     weights=weights,
-                    use_refiner_range=False  # You can override in subclass if needed.
+                    use_refiner_range=False,  # You can override in subclass if needed.
                 ).to(self.accelerator.device)
             else:
-                batch["timesteps"] = torch.multinomial(weights, bsz, replacement=True).long()
+                batch["timesteps"] = torch.multinomial(
+                    weights, bsz, replacement=True
+                ).long()
             batch["noisy_latents"] = self.noise_schedule.add_noise(
                 batch["latents"].float(), batch["noise"].float(), batch["timesteps"]
             ).to(device=self.accelerator.device, dtype=self.config.weight_dtype)
@@ -578,13 +775,15 @@ class ModelFoundation(ABC):
 
         Args:
             text_embedding (torch.Tensor): The embed to adjust.
-        
+
         Returns:
             torch.Tensor: The adjusted embed. By default, this method does nothing.
         """
         return text_embedding
 
-    def loss(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
+    def loss(
+        self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True
+    ):
         """
         Computes the loss between the model prediction and the target.
         Optionally applies SNR weighting and a conditioning mask.
@@ -595,25 +794,51 @@ class ModelFoundation(ABC):
             raise ValueError("Target is None. Cannot compute loss.")
         if self.PREDICTION_TYPE == PredictionTypes.FLOW_MATCHING:
             loss = (model_pred.float() - target.float()) ** 2
-        elif self.PREDICTION_TYPE in [PredictionTypes.EPSILON, PredictionTypes.V_PREDICTION]:
+        elif self.PREDICTION_TYPE in [
+            PredictionTypes.EPSILON,
+            PredictionTypes.V_PREDICTION,
+        ]:
             if self.config.snr_gamma is None or self.config.snr_gamma == 0:
-                loss = self.config.snr_weight * F.mse_loss(model_pred.float(), target.float(), reduction="none")
+                loss = self.config.snr_weight * F.mse_loss(
+                    model_pred.float(), target.float(), reduction="none"
+                )
             else:
                 snr = compute_snr(prepared_batch["timesteps"], self.noise_schedule)
                 snr_divisor = snr
-                if self.noise_schedule.config.prediction_type == self.PREDICTION_TYPE_V_PREDICTION:
+                if (
+                    self.noise_schedule.config.prediction_type
+                    == self.PREDICTION_TYPE_V_PREDICTION
+                ):
                     snr_divisor = snr + 1
-                mse_loss_weights = torch.stack([snr, self.config.snr_gamma * torch.ones_like(prepared_batch["timesteps"])], dim=1).min(dim=1)[0] / snr_divisor
+                mse_loss_weights = (
+                    torch.stack(
+                        [
+                            snr,
+                            self.config.snr_gamma
+                            * torch.ones_like(prepared_batch["timesteps"]),
+                        ],
+                        dim=1,
+                    ).min(dim=1)[0]
+                    / snr_divisor
+                )
                 loss = F.mse_loss(model_pred.float(), target.float(), reduction="none")
                 mse_loss_weights = mse_loss_weights.view(-1, 1, 1, 1)
                 loss = loss * mse_loss_weights
         else:
-            raise NotImplementedError(f"Loss calculation not implemented for prediction type {self.PREDICTION_TYPE}.")
+            raise NotImplementedError(
+                f"Loss calculation not implemented for prediction type {self.PREDICTION_TYPE}."
+            )
 
         conditioning_type = prepared_batch.get("conditioning_type")
         if conditioning_type == "mask" and apply_conditioning_mask:
-            mask_image = prepared_batch["conditioning_pixel_values"].to(dtype=loss.dtype, device=loss.device)[:, 0].unsqueeze(1)
-            mask_image = torch.nn.functional.interpolate(mask_image, size=loss.shape[2:], mode="area")
+            mask_image = (
+                prepared_batch["conditioning_pixel_values"]
+                .to(dtype=loss.dtype, device=loss.device)[:, 0]
+                .unsqueeze(1)
+            )
+            mask_image = torch.nn.functional.interpolate(
+                mask_image, size=loss.shape[2:], mode="area"
+            )
             mask_image = mask_image / 2 + 0.5
             loss = loss * mask_image
 
@@ -627,6 +852,7 @@ class ImageModelFoundation(ModelFoundation):
     Implements logic common to image-based diffusion models.
     Handles typical VAE, text encoder loading and a UNet forward pass.
     """
+
     # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     # A bit more than the default, but some will need to override this to just Attention layers, like SD3.
@@ -650,7 +876,9 @@ class ImageModelFoundation(ModelFoundation):
         elif self.config.lora_type.lower() == "lycoris":
             return self.DEFAULT_LYCORIS_TARGET
         else:
-            raise NotImplementedError(f"Unknown LoRA target type {self.config.lora_type}.")
+            raise NotImplementedError(
+                f"Unknown LoRA target type {self.config.lora_type}."
+            )
 
     def add_lora_adapter(self):
         target_modules = self.get_lora_target_layers()
@@ -674,16 +902,17 @@ class ImageModelFoundation(ModelFoundation):
                 self.config.init_lora,
                 use_dora=self.config.use_dora,
             )
-        
+
         return addkeys, misskeys
 
     def custom_model_card_schedule_info(self):
         """
         Override this in your subclass to add model-specific info.
-        
+
         See SD3 or Flux classes for an example.
         """
         return []
+
 
 class VideoModelFoundation(ImageModelFoundation):
     """
@@ -714,7 +943,7 @@ class VideoModelFoundation(ImageModelFoundation):
         Example method to handle default 5D shape. The typical shape might be:
         (batch_size, frames, channels, height, width).
 
-        You can reshape or permute as needed for the underlying model. 
+        You can reshape or permute as needed for the underlying model.
         """
         # Pseudocode for typical flattening:
         # B, F, C, H, W = tensor.shape
@@ -723,7 +952,7 @@ class VideoModelFoundation(ImageModelFoundation):
 
     def get_pipeline_class(self):
         """
-        By default, return None or a placeholder. 
+        By default, return None or a placeholder.
         Child classes can override this if they have a specific pipeline to load.
         """
         return None
@@ -743,16 +972,16 @@ class VideoModelFoundation(ImageModelFoundation):
         #     setattr(self, attr_name, klass(self.config))
         pass
 
+
 class WanVideo(VideoModelFoundation):
     """
     Wan-specific video foundation class for training. Inherits from the general
     VideoModelFoundation and overrides pipeline/model retrieval as needed.
     """
+
     TRANSFORMER_PATH = "Wan-AI/Wan2.1-T2V-1.3B"
     VAE_PATH = "Wan-AI/Wan2.1-T2V-1.3B"
-    TEXT_ENCODER_CONFIGURATION = {
-        "text_encoder": "Wan-AI/Wan2.1-T2V-1.3B"
-    }
+    TEXT_ENCODER_CONFIGURATION = {"text_encoder": "Wan-AI/Wan2.1-T2V-1.3B"}
 
     def get_pipeline_class(self):
         """
@@ -783,10 +1012,8 @@ class WanVideo(VideoModelFoundation):
         # inputs_5d = self.prepare_5d_inputs(kwargs.get('video_tensor'))
         # outputs = self.model.forward(inputs_5d, ...)
         # return outputs
-        
+
         pass
-
-
 
 
 # pipeline_cls = self._pipeline_cls()
@@ -937,83 +1164,78 @@ class WanVideo(VideoModelFoundation):
 #             )
 
 
+# unet_ = None
+# transformer_ = None
+# denoiser = None
+# text_encoder_one_ = None
+# text_encoder_two_ = None
 
+# while len(models) > 0:
+#     model = models.pop()
 
+#     if isinstance(
+#         unwrap_model(self.accelerator, model),
+#         type(unwrap_model(self.accelerator, self.get_trained_component())),
+#     ):
+#         unet_ = model
+#         denoiser = unet_
+#     elif isinstance(
+#         unwrap_model(self.accelerator, model),
+#         type(unwrap_model(self.accelerator, self.transformer)),
+#     ):
+#         transformer_ = model
+#         denoiser = transformer_
+#     elif isinstance(
+#         unwrap_model(self.accelerator, model),
+#         type(unwrap_model(self.accelerator, self.text_encoder_1)),
+#     ):
+#         text_encoder_one_ = model
+#     elif isinstance(
+#         unwrap_model(self.accelerator, model),
+#         type(unwrap_model(self.accelerator, self.text_encoder_2)),
+#     ):
+#         text_encoder_two_ = model
+#     else:
+#         raise ValueError(
+#             f"unexpected save model: {model.__class__}"
+#             f"\nunwrapped: {unwrap_model(self.accelerator, model).__class__}"
+#             f"\nunet: {unwrap_model(self.accelerator, self.get_trained_component()).__class__}"
+#         )
 
+# key_to_replace = self.model.MODEL_SUBFOLDER
+# lora_state_dict = self.pipeline_class.lora_state_dict(input_dir)
 
-        # unet_ = None
-        # transformer_ = None
-        # denoiser = None
-        # text_encoder_one_ = None
-        # text_encoder_two_ = None
+# denoiser_state_dict = {
+#     f'{k.replace(f"{key_to_replace}.", "")}': v
+#     for k, v in lora_state_dict.items()
+#     if k.startswith(f"{key_to_replace}.")
+# }
+# denoiser_state_dict = convert_unet_state_dict_to_peft(denoiser_state_dict)
+# incompatible_keys = set_peft_model_state_dict(
+#     denoiser, denoiser_state_dict, adapter_name="default"
+# )
 
-        # while len(models) > 0:
-        #     model = models.pop()
+# if incompatible_keys is not None:
+#     # check only for unexpected keys
+#     unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
+#     if unexpected_keys:
+#         logger.warning(
+#             f"Loading adapter weights from state_dict led to unexpected keys not found in the model: "
+#             f" {unexpected_keys}. "
+#         )
 
-        #     if isinstance(
-        #         unwrap_model(self.accelerator, model),
-        #         type(unwrap_model(self.accelerator, self.get_trained_component())),
-        #     ):
-        #         unet_ = model
-        #         denoiser = unet_
-        #     elif isinstance(
-        #         unwrap_model(self.accelerator, model),
-        #         type(unwrap_model(self.accelerator, self.transformer)),
-        #     ):
-        #         transformer_ = model
-        #         denoiser = transformer_
-        #     elif isinstance(
-        #         unwrap_model(self.accelerator, model),
-        #         type(unwrap_model(self.accelerator, self.text_encoder_1)),
-        #     ):
-        #         text_encoder_one_ = model
-        #     elif isinstance(
-        #         unwrap_model(self.accelerator, model),
-        #         type(unwrap_model(self.accelerator, self.text_encoder_2)),
-        #     ):
-        #         text_encoder_two_ = model
-        #     else:
-        #         raise ValueError(
-        #             f"unexpected save model: {model.__class__}"
-        #             f"\nunwrapped: {unwrap_model(self.accelerator, model).__class__}"
-        #             f"\nunet: {unwrap_model(self.accelerator, self.get_trained_component()).__class__}"
-        #         )
+# if self.args.train_text_encoder:
+#     # Do we need to call `scale_lora_layers()` here?
+#     from diffusers.training_utils import _set_state_dict_into_text_encoder
 
-        # key_to_replace = self.model.MODEL_SUBFOLDER
-        # lora_state_dict = self.pipeline_class.lora_state_dict(input_dir)
+#     _set_state_dict_into_text_encoder(
+#         lora_state_dict,
+#         prefix="text_encoder.",
+#         text_encoder=text_encoder_one_,
+#     )
 
-        # denoiser_state_dict = {
-        #     f'{k.replace(f"{key_to_replace}.", "")}': v
-        #     for k, v in lora_state_dict.items()
-        #     if k.startswith(f"{key_to_replace}.")
-        # }
-        # denoiser_state_dict = convert_unet_state_dict_to_peft(denoiser_state_dict)
-        # incompatible_keys = set_peft_model_state_dict(
-        #     denoiser, denoiser_state_dict, adapter_name="default"
-        # )
-
-        # if incompatible_keys is not None:
-        #     # check only for unexpected keys
-        #     unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
-        #     if unexpected_keys:
-        #         logger.warning(
-        #             f"Loading adapter weights from state_dict led to unexpected keys not found in the model: "
-        #             f" {unexpected_keys}. "
-        #         )
-
-        # if self.args.train_text_encoder:
-        #     # Do we need to call `scale_lora_layers()` here?
-        #     from diffusers.training_utils import _set_state_dict_into_text_encoder
-
-        #     _set_state_dict_into_text_encoder(
-        #         lora_state_dict,
-        #         prefix="text_encoder.",
-        #         text_encoder=text_encoder_one_,
-        #     )
-
-        #     _set_state_dict_into_text_encoder(
-        #         lora_state_dict,
-        #         prefix="text_encoder_2.",
-        #         text_encoder=text_encoder_two_,
-        #     )
-
+#     _set_state_dict_into_text_encoder(
+#         lora_state_dict,
+#         prefix="text_encoder_2.",
+#         text_encoder=text_encoder_two_,
+#     )

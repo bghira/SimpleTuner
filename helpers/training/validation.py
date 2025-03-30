@@ -297,10 +297,12 @@ def prepare_validation_prompt_list(args, embed_cache, model):
     # Compute negative embed for validation prompts, if any are set, so that it's stored before we unload the text encoder.
     if validation_prompts:
         logger.info("Precomputing the negative prompt embed for validations.")
-        validation_negative_prompt_text_encoder_output = embed_cache.compute_embeddings_for_prompts(
-            [StateTracker.get_args().validation_negative_prompt],
-            is_validation=True,
-            load_from_cache=False,
+        validation_negative_prompt_text_encoder_output = (
+            embed_cache.compute_embeddings_for_prompts(
+                [StateTracker.get_args().validation_negative_prompt],
+                is_validation=True,
+                load_from_cache=False,
+            )
         )
 
     return {
@@ -308,6 +310,7 @@ def prepare_validation_prompt_list(args, embed_cache, model):
         "validation_shortnames": validation_shortnames,
         "validation_sample_images": validation_sample_images,
     }
+
 
 def parse_validation_resolution(input_str: str) -> tuple:
     """
@@ -421,9 +424,9 @@ class Validation:
         self.model = model
         if args.controlnet:
             self.controlnet = model.get_trained_component()
-        elif 'unet' in str(self.model.get_trained_component().__class__).lower():
+        elif "unet" in str(self.model.get_trained_component().__class__).lower():
             self.unet = self.model.get_trained_component()
-        elif 'transformer' in str(self.model.get_trained_component().__class__).lower():
+        elif "transformer" in str(self.model.get_trained_component().__class__).lower():
             self.transformer = self.model.get_trained_component()
         self.config = args
         self.save_dir = os.path.join(args.output_dir, "validation_images")
@@ -446,7 +449,11 @@ class Validation:
         self.validation_resolutions = (
             get_validation_resolutions() if not self.deepfloyd_stage2 else ["base-256"]
         )
-        self.flow_matching = True if self.model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING else False
+        self.flow_matching = (
+            True
+            if self.model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING
+            else False
+        )
         self.deepspeed = is_deepspeed
         if is_deepspeed:
             if args.use_ema:
@@ -598,14 +605,19 @@ class Validation:
         prompt_embed = self.embed_cache.compute_embeddings_for_prompts(
             [validation_prompt]
         )
-        prompt_embed = {k: v.to(self.inference_device) if hasattr(v, 'to') else v for k, v in prompt_embed.items()}
+        prompt_embed = {
+            k: v.to(self.inference_device) if hasattr(v, "to") else v
+            for k, v in prompt_embed.items()
+        }
 
         return self.model.convert_text_embed_for_pipeline(prompt_embed)
 
     def _benchmark_path(self, benchmark: str = "base_model"):
         # does the benchmark directory exist?
         if not os.path.exists(os.path.join(self.config.output_dir, "benchmarks")):
-            os.makedirs(os.path.join(self.config.output_dir, "benchmarks"), exist_ok=True)
+            os.makedirs(
+                os.path.join(self.config.output_dir, "benchmarks"), exist_ok=True
+            )
         return os.path.join(self.config.output_dir, "benchmarks", benchmark)
 
     def stitch_benchmark_image(
@@ -856,7 +868,7 @@ class Validation:
                 scheduler_args["use_beta_sigmas"] = True
                 scheduler_args["shift"] = self.config.flow_schedule_shift
             if self.config.validation_noise_scheduler == "unipc":
-                scheduler_args["prediction_type"] = 'flow_prediction'
+                scheduler_args["prediction_type"] = "flow_prediction"
                 scheduler_args["use_flow_sigmas"] = True
                 scheduler_args["num_train_timesteps"] = 1000
                 scheduler_args["flow_shift"] = self.config.flow_schedule_shift
@@ -896,7 +908,7 @@ class Validation:
                 float(getattr(self.config, "validation_lycoris_strength", 1.0))
             )
 
-        if getattr(self.model, 'pipeline', None) is None:
+        if getattr(self.model, "pipeline", None) is None:
             self.model.get_pipeline()
 
         self.model.pipeline = self.model.pipeline.to(self.inference_device)
@@ -915,19 +927,15 @@ class Validation:
         self.validation_prompt_dict = {}
         self.evaluation_result = None
         validation_images = {}
-        _content = self.validation_prompt_metadata['validation_prompts']
-        total_samples = (
-            len(_content)
-            if _content is not None
-            else 0
-        )
+        _content = self.validation_prompt_metadata["validation_prompts"]
+        total_samples = len(_content) if _content is not None else 0
         self.eval_scores = {}
         if self.validation_image_inputs:
             # Override the pipeline inputs to be entirely based upon the validation image inputs.
             _content = self.validation_image_inputs
             total_samples = len(_content) if _content is not None else 0
         logger.debug(f"Processing content: {_content}")
-        idx=0
+        idx = 0
         for prompt in tqdm(
             _content if _content else [],
             desc="Processing validation prompts",
@@ -1095,7 +1103,15 @@ class Validation:
                     if StateTracker.get_args().validation_negative_prompt is None:
                         StateTracker.get_args().validation_negative_prompt = ""
                     negative_embed_data = {
-                        k: v.to(device=self.inference_device, dtype=self.config.weight_dtype) if hasattr(v, 'to') else v for k, v in self.embed_cache.compute_embeddings_for_prompts(
+                        k: (
+                            v.to(
+                                device=self.inference_device,
+                                dtype=self.config.weight_dtype,
+                            )
+                            if hasattr(v, "to")
+                            else v
+                        )
+                        for k, v in self.embed_cache.compute_embeddings_for_prompts(
                             [StateTracker.get_args().validation_negative_prompt],
                             is_validation=True,
                             load_from_cache=True,
@@ -1104,7 +1120,7 @@ class Validation:
                     pipeline_kwargs.update(
                         self.model.convert_negative_text_embed_for_pipeline(
                             prompt=StateTracker.get_args().validation_negative_prompt,
-                            text_embedding=negative_embed_data
+                            text_embedding=negative_embed_data,
                         )
                     )
                 # TODO: Refactor the rest so that it uses model class to update kwargs more generally.
@@ -1177,10 +1193,19 @@ class Validation:
                     if current_validation_type == "ema":
                         self.enable_ema_for_inference()
                     pipeline_kwargs = {
-                        k: v.to(device=self.inference_device, dtype=self.config.weight_dtype) if hasattr(v, 'to') else v
+                        k: (
+                            v.to(
+                                device=self.inference_device,
+                                dtype=self.config.weight_dtype,
+                            )
+                            if hasattr(v, "to")
+                            else v
+                        )
                         for k, v in pipeline_kwargs.items()
                     }
-                    logger.debug(f"Running validations with negative prompt embeds: {pipeline_kwargs.keys()}, on model {self.model.pipeline.transformer.dtype}")
+                    logger.debug(
+                        f"Running validations with negative prompt embeds: {pipeline_kwargs.keys()}, on model {self.model.pipeline.transformer.dtype}"
+                    )
                     if self.config.model_family in ["ltxvideo", "wan"]:
                         all_validation_type_results[current_validation_type] = (
                             self.model.pipeline(**pipeline_kwargs).frames
@@ -1417,7 +1442,9 @@ class Validation:
                     )
                 elif self.config.lora_type.lower() == "standard":
                     _trainable_parameters = [
-                        x for x in self.model.get_trained_component().parameters() if x.requires_grad
+                        x
+                        for x in self.model.get_trained_component().parameters()
+                        if x.requires_grad
                     ]
                     self.ema_model.store(_trainable_parameters)
                     self.ema_model.copy_to(_trainable_parameters)
@@ -1753,7 +1780,6 @@ class Evaluation:
                 for loss_val in loss_list:
                     data_rows.append((ts, loss_val))
             return data_rows
-
 
         logger.info("Generating evaluation tracker tables...")
         for ds_name, timestep_dict in all_accumulated_losses.items():

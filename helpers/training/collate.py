@@ -9,7 +9,11 @@ from helpers.image_manipulation.training_sample import TrainingSample
 from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger("collate_fn")
-logger.setLevel(environ.get("SIMPLETUNER_COLLATE_LOG_LEVEL", "INFO") if _get_rank() == 0 else "ERROR")
+logger.setLevel(
+    environ.get("SIMPLETUNER_COLLATE_LOG_LEVEL", "INFO")
+    if _get_rank() == 0
+    else "ERROR"
+)
 rank_text = rank_info()
 from torchvision.transforms import ToTensor
 
@@ -223,7 +227,9 @@ def compute_single_embedding(caption, text_embed_cache):
         debug_log(
             f"Hashing caption '{caption}' on text embed cache: {text_embed_cache.id} using data backend {text_embed_cache.data_backend.id}"
         )
-    text_encoder_output = text_embed_cache.compute_prompt_embeddings_with_model(prompts=[caption])
+    text_encoder_output = text_embed_cache.compute_prompt_embeddings_with_model(
+        prompts=[caption]
+    )
     logger.debug(f"Keys: {text_encoder_output.keys()}")
     for key, val in text_encoder_output.items():
         if isinstance(val, torch.Tensor):
@@ -231,6 +237,7 @@ def compute_single_embedding(caption, text_embed_cache):
         else:
             logger.debug(f"Value type: {type(val)}")
     return text_encoder_output
+
 
 def compute_prompt_embeddings(captions, text_embed_cache):
     """
@@ -257,18 +264,28 @@ def compute_prompt_embeddings(captions, text_embed_cache):
     transformed_encoder_output = {}
     # Is there a better way to do this?
     if "prompt_embeds" in text_encoder_output[0]:
-        transformed_encoder_output["prompt_embeds"] = torch.stack([t["prompt_embeds"] for t in text_encoder_output])
+        transformed_encoder_output["prompt_embeds"] = torch.stack(
+            [t["prompt_embeds"] for t in text_encoder_output]
+        )
     if "pooled_prompt_embeds" in text_encoder_output[0]:
-        transformed_encoder_output["pooled_prompt_embeds"] = torch.stack([t["pooled_prompt_embeds"] for t in text_encoder_output])
+        transformed_encoder_output["pooled_prompt_embeds"] = torch.stack(
+            [t["pooled_prompt_embeds"] for t in text_encoder_output]
+        )
     if "attention_mask" in text_encoder_output[0]:
-        transformed_encoder_output["attention_masks"] = torch.stack([t["attention_mask"] for t in text_encoder_output])
+        transformed_encoder_output["attention_masks"] = torch.stack(
+            [t["attention_mask"] for t in text_encoder_output]
+        )
     if "time_ids" in text_encoder_output[0]:
-        transformed_encoder_output["time_ids"] = torch.stack([t["time_ids"] for t in text_encoder_output])
+        transformed_encoder_output["time_ids"] = torch.stack(
+            [t["time_ids"] for t in text_encoder_output]
+        )
 
     if transformed_encoder_output == {}:
         raise Exception(f"Could not compute text encoder output: {text_encoder_output}")
-    
-    logger.debug(f"Transformed text encoder output: {transformed_encoder_output.keys()}")
+
+    logger.debug(
+        f"Transformed text encoder output: {transformed_encoder_output.keys()}"
+    )
     return transformed_encoder_output
 
 
@@ -478,14 +495,20 @@ def collate_fn(batch):
     # TODO: Remove model-specific logic from collate.
     if StateTracker.get_model_family() in ["sdxl", "kolors"]:
         debug_log("Compute and stack SDXL time ids")
-        all_text_encoder_outputs["batch_time_ids"] = gather_conditional_sdxl_size_features(
-            examples, latent_batch, StateTracker.get_weight_dtype()
+        all_text_encoder_outputs["batch_time_ids"] = (
+            gather_conditional_sdxl_size_features(
+                examples, latent_batch, StateTracker.get_weight_dtype()
+            )
         )
-        debug_log(f"Time ids stacked to {all_text_encoder_outputs['batch_time_ids'].shape}: {all_text_encoder_outputs["batch_time_ids"]}")
+        debug_log(
+            f"Time ids stacked to {all_text_encoder_outputs['batch_time_ids'].shape}: {all_text_encoder_outputs["batch_time_ids"]}"
+        )
     elif StateTracker.get_model_family() == "pixart_sigma":
         debug_log("Compute and stack PixArt time ids")
-        all_text_encoder_outputs["batch_time_ids"] = gather_conditional_pixart_size_features(
-            examples, latent_batch, StateTracker.get_weight_dtype()
+        all_text_encoder_outputs["batch_time_ids"] = (
+            gather_conditional_pixart_size_features(
+                examples, latent_batch, StateTracker.get_weight_dtype()
+            )
         )
 
     return {
