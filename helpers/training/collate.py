@@ -197,7 +197,7 @@ def conditioning_pixels(
 def compute_latents(filepaths, data_backend_id: str):
     # Use a thread pool to fetch latents concurrently
     try:
-        if "deepfloyd" in StateTracker.get_args().model_type:
+        if "deepfloyd" in StateTracker.get_args().model_family:
             latents = deepfloyd_pixels(filepaths, data_backend_id)
 
             return latents
@@ -431,7 +431,7 @@ def collate_fn(batch):
         latent_batch = [v["latents"] for v in batch_data]
     else:
         latent_batch = batch_data
-    if "deepfloyd" not in StateTracker.get_args().model_type:
+    if "deepfloyd" not in StateTracker.get_args().model_family:
         debug_log("Check latents")
         latent_batch = check_latent_shapes(
             latent_batch, filepaths, data_backend_id, examples
