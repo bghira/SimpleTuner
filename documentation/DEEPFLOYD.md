@@ -1,7 +1,5 @@
 # DeepFloyd IF
 
-> ⚠️ Support for tuning DeepFloyd-IF is deprecated, and may not work. Open an issue report if any problems are encountered.
-
 > 🤷🏽‍♂️ Training DeepFloyd requires at least 24G VRAM for a LoRA. This guide focuses on the 400M parameter base model, though the 4.3B XL flavour can be trained using the same guidelines.
 
 ## Background
@@ -74,72 +72,33 @@ However, DeepFloyd really has its upsides that often go overlooked:
 
 > ⚠️ Due to the compute requirements of full u-net backpropagation in even DeepFloyd's smallest 400M model, it has not been tested. LoRA will be used for this document, though full u-net tuning should also work.
 
-Training DeepFloyd makes use of the "legacy" SD 1.x/2.x trainer in SimpleTuner to reduce code duplication by keeping similar models together.
+These instructions assume basic familiarity with SimpleTuner. For newcomers, it's recommended to start with a more well-supported model like [Kwai Kolors](/documentation/quickstart/KOLORS.md).
 
-As such, we'll be making use of the `sd2x-env.sh` configuration file for tuning DeepFloyd:
+As such, we'll be making use of the `config.json` configuration file for tuning DeepFloyd:
 
-### sd2x-env.sh
+### config.json
 
 ```bash
+"model_family": "deepfloyd",
+
 # Possible values:
-# - deepfloyd-full
-# - deepfloyd-lora
-# - deepfloyd-stage2
-# - deepfloyd-stage2-lora
-export MODEL_TYPE="deepfloyd-lora"
+# - i-medium-400m
+# - i-large-900m
+# - i-xlarge-4.3b
+# - ii-medium-450m
+# - ii-large-1.2b
+"model_flavour": "i-medium-400m",
 
 # DoRA isn't tested a whole lot yet. It's still new and experimental.
-export USE_DORA=false
+"use_dora": false,
 # Bitfit hasn't been tested for efficacy on DeepFloyd.
 # It will probably work, but no idea what the outcome is.
-export USE_BITFIT=false
+"use_bitfit": false,
 
 # Highest learning rate to use.
-export LEARNING_RATE=4e-5 #@param {type:"number"}
+"learning_rate": 4e-5,
 # For schedules that decay or oscillate, this will be the end LR or the bottom of the valley.
-export LEARNING_RATE_END=4e-6 #@param {type:"number"}
-
-## Using a Huggingface Hub model for Stage 1 tuning:
-#export MODEL_NAME="DeepFloyd/IF-I-M-v1.0"
-## Using a Huggingface Hub model for Stage 2 tuning:
-#export MODEL_NAME="DeepFloyd/IF-II-M-v1.0"
-# Using a local path to a huggingface hub model or saved checkpoint:
-#export MODEL_NAME="/notebooks/datasets/models/pipeline"
-
-# Where to store your results.
-export BASE_DIR="/training"
-export OUTPUT_DIR="${BASE_DIR}/models/deepfloyd"
-export DATALOADER_CONFIG="multidatabackend_deepfloyd.json"
-
-# Max number of steps OR epochs can be used. But we default to Epochs.
-export MAX_NUM_STEPS=50000
-export NUM_EPOCHS=0
-
-# Adjust this for your GPU memory size.
-export TRAIN_BATCH_SIZE=1
-
-# "pixel" is using pixel edge length on the smaller or square side of the image.
-# this is how DeepFloyd was originally trained.
-export RESOLUTION_TYPE="pixel"
-export RESOLUTION=64          # 1.0 Megapixel training sizes
-
-# Validation is when the model is used during training to make test outputs.
-export VALIDATION_RESOLUTION=96x64                                                  # The resolution of the validation images. Default: 64x64
-export VALIDATION_STEPS=250                                                         # How long between each validation run. Default: 250
-export VALIDATION_NUM_INFERENCE_STEPS=25                                            # How many inference steps to do. Default: 25
-export VALIDATION_PROMPT="an ethnographic photograph of a teddy bear at a picnic"   # What to make for the first/only test image.
-export VALIDATION_NEGATIVE_PROMPT="blurry, ugly, cropped, amputated"                # What to avoid in the first/only test image.
-
-# These can be left alone.
-export VALIDATION_GUIDANCE=7.5
-export VALIDATION_GUIDANCE_RESCALE=0.0
-export VALIDATION_SEED=42
-
-export GRADIENT_ACCUMULATION_STEPS=1         # Accumulate over many steps. Default: 1
-export MIXED_PRECISION="bf16"                # SimpleTuner requires bf16.
-export PURE_BF16=true                        # Will not use mixed precision, but rather pure bf16 (bf16 requires pytorch 2.3 on MPS.)
-export OPTIMIZER="adamw_bf16"
-export USE_XFORMERS=true
+"lr_end": 4e-6,
 ```
 
 A keen eye will have observed the following:

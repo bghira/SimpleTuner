@@ -113,7 +113,7 @@ def get_argument_parser():
         help=(
             "Certain models require designating a given flavour to reference configurations from."
             " The value for this depends on the model that is selected."
-            f" Currently supported values:\n{get_model_flavour_choices()}"
+            f" Currently supported values:{get_model_flavour_choices()}"
         ),
     )
     parser.add_argument(
@@ -122,10 +122,6 @@ def get_argument_parser():
         choices=[
             "full",
             "lora",
-            "deepfloyd-full",
-            "deepfloyd-lora",
-            "deepfloyd-stage2",
-            "deepfloyd-stage2-lora",
         ],
         default="full",
         help=(

@@ -183,7 +183,7 @@ class ModelFoundation(ABC):
         """
         Returns the available model flavours for this model.
         """
-        return cls.HUGGINGFACE_PATHS.keys()
+        return list(cls.HUGGINGFACE_PATHS.keys())
 
     def load_lora_weights(self, models, input_dir):
         """
