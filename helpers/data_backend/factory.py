@@ -590,6 +590,7 @@ def configure_multi_databackend(
             info_log("Pre-computing null embedding")
             logger.debug(f"rank {get_rank()} may skip computing the embedding..")
             with accelerator.main_process_first():
+                model.get_pipeline()
                 logger.debug(f"rank {get_rank()} is computing the null embed")
                 init_backend["text_embed_cache"].compute_embeddings_for_prompts(
                     [""], return_concat=False, load_from_cache=False
@@ -1128,6 +1129,7 @@ def configure_multi_databackend(
                 f"(id={init_backend['id']}) Initialise text embed pre-computation using the {caption_strategy} caption strategy. We have {len(captions)} captions to process."
             )
             move_text_encoders(text_encoders, accelerator.device)
+            model.get_pipeline()
             init_backend["text_embed_cache"].compute_embeddings_for_prompts(
                 captions, return_concat=False, load_from_cache=False
             )
@@ -1146,10 +1148,9 @@ def configure_multi_databackend(
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
         logger.debug(f"Hashing filenames: {hash_filenames}")
 
-        if (
-            "deepfloyd" not in StateTracker.get_args().model_type
-            and conditioning_type not in ["mask", "controlnet"]
-        ):
+        if getattr(
+            model, "AUTOENCODER_CLASS", None
+        ) is not None and conditioning_type not in ["mask", "controlnet"]:
             info_log(f"(id={init_backend['id']}) Creating VAE latent cache.")
             vae_cache_dir = backend.get("cache_dir_vae", None)
             if vae_cache_dir in vae_cache_dir_paths:
