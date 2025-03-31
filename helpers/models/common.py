@@ -5,6 +5,7 @@ import random
 import logging
 import inspect
 import os
+from diffusers import DiffusionPipeline
 from torch.distributions import Beta
 from helpers.training.wrappers import unwrap_model
 from helpers.training.multi_process import _get_rank
@@ -63,6 +64,7 @@ def get_model_config_path(model_family: str, model_path: str):
 class PipelineTypes(Enum):
     IMG2IMG = "img2img"
     TEXT2IMG = "text2img"
+    CONTROLNET = "controlnet"
 
 
 class PredictionTypes(Enum):
@@ -93,7 +95,40 @@ class ModelFoundation(ABC):
         self.config = config
         self.accelerator = accelerator
         self.noise_schedule = None
+        self.setup_model_flavour()
         self.setup_noise_schedule()
+
+    def setup_model_flavour(self):
+        """
+        Sets up the model flavour based on the config.
+        This is used to determine the model path if none was provided.
+        """
+        if getattr(self, "REQUIRES_FLAVOUR", False):
+            if getattr(self.config, "model_flavour", None) is None:
+                raise ValueError(
+                    f"{str(self.__class__)} models require model_flavour to be provided."
+                    f" Possible values: {self.HUGGINGFACE_PATHS.keys()}"
+                )
+        if (
+            self.config.pretrained_model_name_or_path is None
+            and self.config.model_flavour is None
+        ):
+            default_flavour = getattr(self, "DEFAULT_MODEL_FLAVOUR", None)
+            if default_flavour is None and len(self.HUGGINGFACE_PATHS) > 0:
+                raise ValueError(
+                    f"The current model family {self.config.model_family} requires a model_flavour to be provided. Options: {self.HUGGINGFACE_PATHS.keys()}"
+                )
+            elif default_flavour is not None:
+                self.config.model_flavour = default_flavour
+        if self.config.pretrained_model_name_or_path is None:
+            if self.config.model_flavour is not None:
+                self.config.pretrained_model_name_or_path = self.HUGGINGFACE_PATHS.get(
+                    self.config.model_flavour
+                )
+            else:
+                raise ValueError(
+                    f"Model flavour {self.config.model_flavour} not found in {self.HUGGINGFACE_PATHS.keys()}"
+                )
 
     @abstractmethod
     def model_predict(self, prepared_batch, custom_timesteps: list = None):
@@ -142,6 +177,13 @@ class ModelFoundation(ABC):
         raise NotImplementedError(
             "convert_text_embed_for_pipeline must be implemented in the child class."
         )
+
+    @classmethod
+    def get_flavour_choices(cls):
+        """
+        Returns the available model flavours for this model.
+        """
+        return cls.HUGGINGFACE_PATHS.keys()
 
     def load_lora_weights(self, models, input_dir):
         """
@@ -380,7 +422,7 @@ class ModelFoundation(ABC):
             )
             tokenizer_kwargs["use_fast"] = text_encoder_config.get("use_fast", False)
             logger.info(
-                "Loading tokenizer %i: %s", tokenizer_idx, tokenizer_cls.__name__
+                f"Loading tokenizer {tokenizer_idx}: {tokenizer_cls.__name__} with args: {tokenizer_kwargs}"
             )
             tokenizer = tokenizer_cls.from_pretrained(**tokenizer_kwargs)
             self.tokenizers.append(tokenizer)
@@ -493,7 +535,9 @@ class ModelFoundation(ABC):
     def get_trained_component(self):
         return self.model
 
-    def _load_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG):
+    def _load_pipeline(
+        self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True
+    ):
         """
         Loads the pipeline class for the model.
         This is a stub and should be implemented in subclasses.
@@ -513,9 +557,16 @@ class ModelFoundation(ABC):
                 f"Pipeline class {pipeline_class} does not have from_pretrained method."
             )
         signature = inspect.signature(pipeline_class.from_pretrained)
-        pipeline_kwargs[self.MODEL_TYPE.value] = unwrap_model(
-            self.accelerator, self.model
-        )
+        if "watermarker" in signature.parameters:
+            pipeline_kwargs["watermarker"] = None
+        if "watermark" in signature.parameters:
+            pipeline_kwargs["watermark"] = None
+        if load_base_model:
+            pipeline_kwargs[self.MODEL_TYPE.value] = unwrap_model(
+                self.accelerator, self.model
+            )
+        else:
+            pipeline_kwargs[self.MODEL_TYPE.value] = None
         if getattr(self, "vae", None) is not None:
             pipeline_kwargs["vae"] = unwrap_model(self.accelerator, self.vae)
         elif getattr(self, "AUTOENCODER_CLASS", None) is not None:
@@ -541,17 +592,19 @@ class ModelFoundation(ABC):
         if self.config.controlnet:
             pipeline_kwargs["controlnet"] = unwrap_model(self.accelerator, self.model)
 
-        logger.info(f"Initialising pipeline with components: {pipeline_kwargs.keys()}")
+        logger.info(
+            f"Initialising {pipeline_class.__name__} with components: {pipeline_kwargs.keys()}"
+        )
         self.pipeline = pipeline_class.from_pretrained(
             **pipeline_kwargs,
         )
 
         return self.pipeline
 
-    def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG):
-        if not hasattr(self, "pipeline") or self.pipeline is None:
-            return self._load_pipeline(pipeline_type)
-        return self.pipeline
+    def get_pipeline(
+        self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True
+    ) -> DiffusionPipeline:
+        return self._load_pipeline(pipeline_type, load_base_model)
 
     def setup_noise_schedule(self):
         """Loads the noise schedule from the config."""
@@ -745,6 +798,7 @@ class ModelFoundation(ABC):
                     actual_num_timesteps=self.noise_schedule.config.num_train_timesteps,
                     bsz=bsz,
                     weights=weights,
+                    config=self.config,
                     use_refiner_range=False,  # You can override in subclass if needed.
                 ).to(self.accelerator.device)
             else:
@@ -858,6 +912,7 @@ class ImageModelFoundation(ModelFoundation):
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     # A bit more than the default, but some will need to override this to just Attention layers, like SD3.
     DEFAULT_LYCORIS_TARGET = ["Attention", "FeedForward"]
+    DEFAULT_PIPELINE_TYPE = PipelineTypes.TEXT2IMG
     VALIDATION_USES_NEGATIVE_PROMPT = True
 
     def __init__(self, config: dict, accelerator):
