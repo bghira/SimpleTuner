@@ -107,6 +107,7 @@ def _encode_sd3_prompt_with_clip(
 
 
 class SD3(ImageModelFoundation):
+    NAME = "Stable Diffusion 3.x"
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKL
@@ -123,7 +124,7 @@ class SD3(ImageModelFoundation):
     }
     MODEL_SUBFOLDER = "transformer"
     # The default model flavor to use when none is specified.
-    DEFAULT_MODEL_FLAVOR = "medium"
+    DEFAULT_MODEL_FLAVOUR = "medium"
     HUGGINGFACE_PATHS = {
         "medium": "stabilityai/stable-diffusion-3.5-medium",
         "large": "stabilityai/stable-diffusion-3.5-large",
@@ -194,14 +195,10 @@ class SD3(ImageModelFoundation):
         Encode a prompt for an SD3 model.
 
         Args:
-            text_encoders: List of text encoders.
-            tokenizers: List of tokenizers.
-            prompt: The prompt to encode.
-            num_images_per_prompt: The number of images to generate per prompt.
-            is_validation: Whether the prompt is for validation. No-op for SD3.
+            prompts: The list of prompts to encode.
 
         Returns:
-            Tuple of (prompt_embeds, pooled_prompt_embeds).
+            Text encoder output (raw)
         """
         num_images_per_prompt = 1
 
