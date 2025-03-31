@@ -18,6 +18,21 @@ from helpers.training.optimizer_param import (
     map_deprecated_optimizer_parameter,
     optimizer_choices,
 )
+from helpers.models.all import model_families, get_model_flavour_choices
+
+model_family_choices = list(model_families.keys())
+model_families_to_refactor = [
+    "pixart_sigma",
+    "sana",
+    "kolors",
+    "flux",
+    "smoldit",
+    "sdxl",
+    "ltxvideo",
+    "wan",
+    "legacy",
+]
+model_family_choices += model_families_to_refactor
 
 logger = logging.getLogger("ArgsParser")
 # Are we the primary process?
@@ -86,21 +101,20 @@ def get_argument_parser():
     )
     parser.add_argument(
         "--model_family",
-        choices=[
-            "pixart_sigma",
-            "sana",
-            "kolors",
-            "sd3",
-            "flux",
-            "smoldit",
-            "sdxl",
-            "ltxvideo",
-            "wan",
-            "legacy",
-        ],
+        choices=model_family_choices,
         default=None,
         required=True,
         help=("The model family to train. This option is required."),
+    )
+    parser.add_argument(
+        "--model_flavour",
+        default=None,
+        type=str,
+        help=(
+            "Certain models require designating a given flavour to reference configurations from."
+            " The value for this depends on the model that is selected."
+            f" Currently supported values:\n{get_model_flavour_choices()}"
+        ),
     )
     parser.add_argument(
         "--model_type",
@@ -469,7 +483,6 @@ def get_argument_parser():
         "--pretrained_model_name_or_path",
         type=str,
         default=None,
-        required=True,
         help=(
             "Path to pretrained model or model identifier from huggingface.co/models."
             " Some model architectures support loading single-file .safetensors directly."
@@ -2494,9 +2507,15 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if args.metadata_update_interval < 60:
         raise ValueError("Metadata update interval must be at least 60 seconds.")
 
+    args.vae_path = (
+        args.pretrained_model_name_or_path
+        if args.pretrained_vae_model_name_or_path is None
+        else args.pretrained_vae_model_name_or_path
+    )
+
     flux_version = "dev"
     model_max_seq_length = 512
-    if (
+    if args.pretrained_model_name_or_path is not None and (
         "schnell" in args.pretrained_model_name_or_path.lower()
         or args.flux_fast_schedule
     ):
