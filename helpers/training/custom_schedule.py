@@ -5,30 +5,28 @@ import accelerate
 import os
 import logging
 from torch.optim.lr_scheduler import LRScheduler
-from helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 def segmented_timestep_selection(
-    actual_num_timesteps, bsz, weights, use_refiner_range: bool = False
+    actual_num_timesteps, bsz, weights, config, use_refiner_range: bool = False
 ):
-    args = StateTracker.get_args()
     # Determine the range of timesteps to use
     num_timesteps = actual_num_timesteps
-    if use_refiner_range or args.refiner_training:
-        if args.refiner_training_invert_schedule:
+    if use_refiner_range or config.refiner_training:
+        if config.refiner_training_invert_schedule:
             # Inverted schedule calculation: we start from the last timestep and move downwards
             start_timestep = (
                 actual_num_timesteps - 1
             )  # Start from the last timestep, e.g., 999
             # Calculate the end of the range based on the inverse of the training strength
-            end_timestep = int(args.refiner_training_strength * actual_num_timesteps)
+            end_timestep = int(config.refiner_training_strength * actual_num_timesteps)
         else:
             # Normal refiner training schedule
             start_timestep = (
-                int(actual_num_timesteps * args.refiner_training_strength) - 1
+                int(actual_num_timesteps * config.refiner_training_strength) - 1
             )
             end_timestep = 0
         num_timesteps = start_timestep - end_timestep + 1
@@ -37,7 +35,7 @@ def segmented_timestep_selection(
         end_timestep = 0
 
     # logger.debug(
-    #     f"{'Using SDXL refiner' if StateTracker.is_sdxl_refiner() else 'Training base model '} with {num_timesteps} timesteps from a full schedule of {actual_num_timesteps} and a segment size of {num_timesteps // bsz} timesteps."
+    #     f"{'Using SDXL refiner' if config.refiner_training else 'Training base model '} with {num_timesteps} timesteps from a full schedule of {actual_num_timesteps} and a segment size of {num_timesteps // bsz} timesteps."
     # )
     segment_size = max(num_timesteps // bsz, 1)
     selected_timesteps = []
@@ -494,7 +492,12 @@ def apply_flow_schedule_shift(args, noise_scheduler, sigmas, noise):
 
 
 def get_lr_scheduler(
-    args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
+    args,
+    optimizer,
+    accelerator,
+    logger,
+    global_step: int,
+    use_deepspeed_scheduler=False,
 ):
     if use_deepspeed_scheduler:
         logger.info("Using DeepSpeed learning rate scheduler")
@@ -547,7 +550,7 @@ def get_lr_scheduler(
         )
     elif args.lr_scheduler == "polynomial":
         logger.info(
-            f"Using Polynomial learning rate scheduler with last epoch {StateTracker.get_global_step() - 2}."
+            f"Using Polynomial learning rate scheduler with last epoch {global_step - 2}."
         )
         lr_scheduler = get_polynomial_decay_schedule_with_warmup(
             optimizer=optimizer,
@@ -555,7 +558,7 @@ def get_lr_scheduler(
             num_training_steps=args.max_train_steps * accelerator.num_processes,
             lr_end=args.lr_end,
             power=args.lr_power,
-            last_epoch=StateTracker.get_global_step() - 1,
+            last_epoch=global_step - 1,
         )
     else:
         logger.info(f"Using generic '{args.lr_scheduler}' learning rate scheduler.")
