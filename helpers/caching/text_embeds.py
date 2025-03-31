@@ -908,18 +908,16 @@ class TextEmbeddingCache(WebhookMixin):
                             logger.debug("Waiting for write thread to catch up.")
                             time.sleep(5)
                     if (
-                        "deepfloyd" in StateTracker.get_args().model_type
-                        or self.model_type == "pixart_sigma"
+                        self.model_type == "pixart_sigma"
                         or self.model_type == "smoldit"
                     ):
                         # TODO: Batch this
                         prompt_embeds, attention_mask = self.compute_t5_prompt(
                             prompt=prompt,
                         )
-                        if "deepfloyd" not in StateTracker.get_args().model_type:
-                            # we have to store the attn mask with the embed for pixart.
-                            # smoldit requires the attn mask at inference time 💪🏽
-                            prompt_embeds = (prompt_embeds, attention_mask)
+                        # we have to store the attn mask with the embed for pixart.
+                        # smoldit requires the attn mask at inference time 💪🏽
+                        prompt_embeds = (prompt_embeds, attention_mask)
                     else:
                         prompt_embeds = self.encode_legacy_prompt(
                             self.text_encoders[0], self.tokenizers[0], [prompt]
@@ -1100,10 +1098,9 @@ class TextEmbeddingCache(WebhookMixin):
                     prompt_embeds, attention_mask = self.compute_gemma_prompt(
                         prompt=prompt, is_negative_prompt=is_negative_prompt
                     )
-                    if "deepfloyd" not in StateTracker.get_args().model_type:
-                        # we have to store the attn mask with the embed for pixart.
-                        # smoldit requires the attn mask at inference time 💪🏽
-                        prompt_embeds = (prompt_embeds, attention_mask)
+                    # we have to store the attn mask with the embed for pixart.
+                    # smoldit requires the attn mask at inference time 💪🏽
+                    prompt_embeds = (prompt_embeds, attention_mask)
                     if return_concat:
                         if type(prompt_embeds) is tuple:
                             prompt_embeds = (
