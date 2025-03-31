@@ -107,9 +107,6 @@ from diffusers import (
     ControlNetModel,
     DDIMScheduler,
     DDPMScheduler,
-    UNet2DConditionModel,
-    FluxTransformer2DModel,
-    PixArtTransformer2DModel,
     EulerDiscreteScheduler,
     EulerAncestralDiscreteScheduler,
     UniPCMultistepScheduler,
@@ -625,20 +622,12 @@ class Trainer:
                 self.config.base_weight_dtype = torch.bfloat16
                 self.config.enable_adamw_bf16 = True
             if not preprocessing_models_only:
-                if self.unet is not None:
-                    logger.info(
-                        f"Moving U-net to dtype={self.config.base_weight_dtype}, device={quantization_device}"
-                    )
-                    self.unet.to(
-                        quantization_device, dtype=self.config.base_weight_dtype
-                    )
-                elif self.transformer is not None:
-                    logger.info(
-                        f"Moving transformer to dtype={self.config.base_weight_dtype}, device={quantization_device}"
-                    )
-                    self.transformer.to(
-                        quantization_device, dtype=self.config.base_weight_dtype
-                    )
+                logger.info(
+                    f"Moving {self.model.MODEL_TYPE.value} to dtype={self.config.base_weight_dtype}, device={quantization_device}"
+                )
+                self.model.model.to(
+                    quantization_device, dtype=self.config.base_weight_dtype
+                )
 
         if self.config.is_quanto:
             with self.accelerator.local_main_process_first():
@@ -684,8 +673,8 @@ class Trainer:
                 self.config.controlnet_model_name_or_path
             )
         else:
-            logger.info("Initializing controlnet weights from unet")
-            self.controlnet = ControlNetModel.from_unet(self.unet)
+            logger.info("Initializing controlnet weights from base model")
+            self.controlnet = ControlNetModel.from_unet(self.model.get_trained_component())
 
         self.accelerator.wait_for_everyone()
 
@@ -774,17 +763,10 @@ class Trainer:
         if self.config.layer_freeze_strategy == "bitfit":
             from helpers.training.model_freeze import apply_bitfit_freezing
 
-            if self.unet is not None:
-                logger.info("Applying BitFit freezing strategy to the U-net.")
-                self.unet = apply_bitfit_freezing(
-                    unwrap_model(self.accelerator, self.unet), self.config
-                )
-            if self.transformer is not None:
-                logger.warning(
-                    "Training DiT models with BitFit is not yet tested, and unexpected results may occur."
-                )
-                self.transformer = apply_bitfit_freezing(
-                    unwrap_model(self.accelerator, self.transformer), self.config
+            if self.model.get_trained_component() is not None:
+                logger.info(f"Applying BitFit freezing strategy to the {self.model.MODEL_TYPE.value}.")
+                self.model.model = apply_bitfit_freezing(
+                    unwrap_model(self.accelerator, self.model.model), self.config
                 )
         self.enable_gradient_checkpointing()
 
@@ -810,13 +792,9 @@ class Trainer:
     def disable_gradient_checkpointing(self):
         if self.config.gradient_checkpointing:
             logger.debug("Disabling gradient checkpointing.")
-            if self.unet is not None:
+            if hasattr(self.model.get_trained_component(), 'disable_gradient_checkpointing'):
                 unwrap_model(
-                    self.accelerator, self.unet
-                ).disable_gradient_checkpointing()
-            if self.transformer is not None and self.config.model_family != "smoldit":
-                unwrap_model(
-                    self.accelerator, self.transformer
+                    self.accelerator, self.model.get_trained_component()
                 ).disable_gradient_checkpointing()
             if self.config.controlnet:
                 unwrap_model(
@@ -964,14 +942,7 @@ class Trainer:
             logger.warning(
                 "Marking model for gradient release. This feature is experimental, and may use more VRAM or not work."
             )
-            prepare_for_gradient_release(
-                (
-                    self.controlnet
-                    if self.config.controlnet
-                    else self.transformer if self.transformer is not None else self.unet
-                ),
-                self.optimizer,
-            )
+            prepare_for_gradient_release(self.model.get_trained_component(), self.optimizer)
 
     def init_lr_scheduler(self):
         self.config.is_schedulefree = is_lr_schedulefree(self.config.optimizer)
@@ -1016,7 +987,7 @@ class Trainer:
         return lr_scheduler
 
     def init_ema_model(self):
-        # Create EMA for the unet.
+        # Create EMA for the model.
         self.ema_model = None
         if not self.config.use_ema:
             return
@@ -1102,10 +1073,8 @@ class Trainer:
                 logger.warning(
                     "Using attention slicing when training SDXL on MPS can result in NaN errors on the first backward pass. If you run into issues, disable this option and reduce your batch size instead to reduce memory consumption."
                 )
-            if self.unet is not None:
-                self.unet.set_attention_slice("auto")
-            if self.transformer is not None:
-                self.transformer.set_attention_slice("auto")
+            if self.model.get_trained_component() is not None:
+                self.model.get_trained_component().set_attention_slice("auto")
         self.lr_scheduler = results[1]
         self.optimizer = results[2]
         # The rest of the entries are dataloaders:
@@ -1811,9 +1780,13 @@ class Trainer:
                     controlnet_cond=controlnet_image,
                     return_dict=False,
                 )
+                if self.model.MODEL_TYPE.value == "transformer":
+                    raise Exception(
+                        "ControlNet predictions for transformer models are not yet implemented."
+                    )
                 # Predict the noise residual
-                if self.unet is not None:
-                    model_pred = self.unet(
+                if self.model.get_trained_component() is not None:
+                    model_pred = self.model.get_trained_component()(
                         noisy_latents,
                         timesteps,
                         encoder_hidden_states=encoder_hidden_states,
@@ -1827,10 +1800,6 @@ class Trainer:
                         ),
                         return_dict=False,
                     )[0]
-                if self.transformer is not None:
-                    raise Exception(
-                        "ControlNet predictions for transformer models are not yet implemented."
-                    )
             elif self.config.model_family == "flux":
                 # handle guidance
                 packed_noisy_latents = pack_latents(
@@ -2781,89 +2750,47 @@ class Trainer:
                 ).validation_images
                 # we don't have to do this but we will anyway.
                 self.disable_sageattention_inference()
-            if self.unet is not None:
-                self.unet = unwrap_model(self.accelerator, self.unet)
-            if self.transformer is not None:
-                self.transformer = unwrap_model(self.accelerator, self.transformer)
+            if self.model.get_trained_component() is not None:
+                self.model.model = unwrap_model(self.accelerator, self.model.model)
             if (
                 "lora" in self.config.model_type
                 and "standard" == self.config.lora_type.lower()
             ):
-                if self.transformer is not None:
-                    transformer_lora_layers = get_peft_model_state_dict(
-                        self.transformer
+                lora_save_kwargs = {
+                    "save_directory": self.config.output_dir,
+                    f"{self.model.MODEL_TYPE.value}_lora_layers": get_peft_model_state_dict(
+                        self.model.get_trained_component()
                     )
-                elif self.unet is not None:
-                    unet_lora_layers = convert_state_dict_to_diffusers(
-                        get_peft_model_state_dict(self.unet)
-                    )
-                else:
-                    raise Exception(
-                        "Couldn't locate the unet or transformer model for export."
-                    )
+                }
 
                 if self.config.train_text_encoder:
-                    self.text_encoder_1 = self.accelerator.unwrap_model(
-                        self.text_encoder_1
-                    )
-                    self.text_encoder_lora_layers = convert_state_dict_to_diffusers(
-                        get_peft_model_state_dict(self.text_encoder_1)
-                    )
-                    if self.text_encoder_2 is not None:
-                        self.text_encoder_2 = self.accelerator.unwrap_model(
-                            self.text_encoder_2
+                    if self.model.get_text_encoder(0) is not None:
+                        self.text_encoder_1 = self.accelerator.unwrap_model(
+                            self.model.get_text_encoder(0)
                         )
-                        text_encoder_2_lora_layers = convert_state_dict_to_diffusers(
+                        lora_save_kwargs["text_encoder_lora_layers"] = convert_state_dict_to_diffusers(
+                            get_peft_model_state_dict(self.text_encoder_1)
+                        )
+                    if self.model.get_text_encoder(1) is not None:
+                        self.text_encoder_2 = self.accelerator.unwrap_model(
+                            self.model.get_text_encoder(1)
+                        )
+                        lora_save_kwargs["text_encoder_2_lora_layers"] = convert_state_dict_to_diffusers(
                             get_peft_model_state_dict(self.text_encoder_2)
                         )
-                        if self.text_encoder_3 is not None:
-                            text_encoder_3 = self.accelerator.unwrap_model(
-                                self.text_encoder_3
+                        if self.model.get_text_encoder(2) is not None:
+                            self.text_encoder_3 = self.accelerator.unwrap_model(
+                                self.model.get_text_encoder(2)
                             )
                 else:
                     text_encoder_lora_layers = None
                     text_encoder_2_lora_layers = None
 
-                if self.config.model_family == "flux":
-                    from diffusers.pipelines import FluxPipeline
-
-                    FluxPipeline.save_lora_weights(
-                        save_directory=self.config.output_dir,
-                        transformer_lora_layers=transformer_lora_layers,
-                        text_encoder_lora_layers=text_encoder_lora_layers,
-                    )
-                elif self.config.model_family == "ltxvideo":
-                    from diffusers.pipelines import LTXPipeline
-
-                    LTXPipeline.save_lora_weights(
-                        save_directory=self.config.output_dir,
-                        transformer_lora_layers=transformer_lora_layers,
-                    )
-                elif self.config.model_family == "wan":
-                    from helpers.models.wan.pipeline import WanPipeline
-
-                    WanPipeline.save_lora_weights(
-                        save_directory=self.config.output_dir,
-                        transformer_lora_layers=transformer_lora_layers,
-                    )
-
-                elif self.config.model_family == "sd3":
-                    StableDiffusion3Pipeline.save_lora_weights(
-                        save_directory=self.config.output_dir,
-                        transformer_lora_layers=transformer_lora_layers,
-                        text_encoder_lora_layers=text_encoder_lora_layers,
-                        text_encoder_2_lora_layers=text_encoder_2_lora_layers,
-                    )
-                else:
-                    StableDiffusionXLPipeline.save_lora_weights(
-                        save_directory=self.config.output_dir,
-                        unet_lora_layers=unet_lora_layers,
-                        text_encoder_lora_layers=text_encoder_lora_layers,
-                        text_encoder_2_lora_layers=text_encoder_2_lora_layers,
-                    )
-
-                del self.unet
-                del self.transformer
+                from helpers.models.common import PipelineTypes
+                self.model.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG].save_lora_weights(
+                    save_directory=self.config.output_dir,
+                    **lora_save_kwargs,
+                )
                 del text_encoder_lora_layers
                 del text_encoder_2_lora_layers
                 reclaim_memory()
@@ -2904,303 +2831,19 @@ class Trainer:
                         )
 
             elif self.config.use_ema:
-                if self.unet is not None:
-                    self.ema_model.copy_to(self.unet.parameters())
-                if self.transformer is not None:
-                    self.ema_model.copy_to(self.transformer.parameters())
+                if self.model.get_trained_component() is not None:
+                    self.ema_model.copy_to(self.model.get_trained_component().parameters())
 
             if self.config.model_type == "full":
-                # Now we build a full SDXL Pipeline to export the model with.
-                if self.config.model_family == "sd3":
-                    self.pipeline = StableDiffusion3Pipeline.from_pretrained(
-                        self.config.pretrained_model_name_or_path,
-                        text_encoder=self.text_encoder_1
-                        or (
-                            self.text_encoder_cls_1.from_pretrained(
-                                self.config.pretrained_model_name_or_path,
-                                subfolder="text_encoder",
-                                revision=self.config.revision,
-                                variant=self.config.variant,
-                            )
-                            if self.config.save_text_encoder
-                            else None
-                        ),
-                        tokenizer=self.tokenizer_1,
-                        text_encoder_2=self.text_encoder_2
-                        or (
-                            self.text_encoder_cls_2.from_pretrained(
-                                self.config.pretrained_model_name_or_path,
-                                subfolder="text_encoder_2",
-                                revision=self.config.revision,
-                                variant=self.config.variant,
-                            )
-                            if self.config.save_text_encoder
-                            else None
-                        ),
-                        tokenizer_2=self.tokenizer_2,
-                        text_encoder_3=self.text_encoder_3
-                        or (
-                            self.text_encoder_cls_3.from_pretrained(
-                                self.config.pretrained_model_name_or_path,
-                                subfolder="text_encoder_3",
-                                revision=self.config.revision,
-                                variant=self.config.variant,
-                            )
-                            if self.config.save_text_encoder
-                            else None
-                        ),
-                        tokenizer_3=self.tokenizer_3,
-                        vae=self.vae
-                        or (
-                            self.vae_cls.from_pretrained(
-                                self.config.vae_path,
-                                subfolder=(
-                                    "vae"
-                                    if self.config.pretrained_vae_model_name_or_path
-                                    is None
-                                    else None
-                                ),
-                                revision=self.config.revision,
-                                variant=self.config.variant,
-                                force_upcast=False,
-                            )
-                        ),
-                        transformer=self.transformer,
-                    )
-                    if (
-                        self.config.flow_matching
-                        and self.config.flow_matching_loss == "diffusion"
-                    ):
-                        # Diffusion-based SD3 is currently fixed to a Euler v-prediction schedule.
-                        self.pipeline.scheduler = SCHEDULER_NAME_MAP[
-                            "euler"
-                        ].from_pretrained(
-                            self.config.pretrained_model_name_or_path,
-                            revision=self.config.revision,
-                            subfolder="scheduler",
-                            prediction_type="v_prediction",
-                            timestep_spacing=self.config.training_scheduler_timestep_spacing,
-                            rescale_betas_zero_snr=self.config.rescale_betas_zero_snr,
-                        )
-                        logger.debug(
-                            f"Setting scheduler to Euler for SD3. Config: {self.pipeline.scheduler.config}"
-                        )
-                elif self.config.model_family == "flux":
-                    from diffusers.pipelines import FluxPipeline
-
-                    self.pipeline = FluxPipeline.from_pretrained(
-                        self.config.pretrained_model_name_or_path,
-                        transformer=self.transformer,
-                        text_encoder=self.text_encoder_1
-                        or (
-                            self.text_encoder_cls_1.from_pretrained(
-                                self.config.pretrained_model_name_or_path,
-                                subfolder="text_encoder",
-                                revision=self.config.revision,
-                                variant=self.config.variant,
-                            )
-                            if self.config.save_text_encoder
-                            else None
-                        ),
-                        tokenizer=self.tokenizer_1,
-                        vae=self.vae,
-                    )
-                elif self.config.model_family == "legacy":
-                    from diffusers import StableDiffusionPipeline
-
-                    self.pipeline = StableDiffusionPipeline.from_pretrained(
-                        self.config.pretrained_model_name_or_path,
-                        text_encoder=self.text_encoder_1
-                        or (
-                            self.text_encoder_cls_1.from_pretrained(
-                                self.config.pretrained_model_name_or_path,
-                                subfolder="text_encoder",
-                                revision=self.config.revision,
-                                variant=self.config.variant,
-                            )
-                            if self.config.save_text_encoder
-                            else None
-                        ),
-                        tokenizer=self.tokenizer_1,
-                        vae=self.vae
-                        or (
-                            self.vae_cls.from_pretrained(
-                                self.config.vae_path,
-                                subfolder=(
-                                    "vae"
-                                    if self.config.pretrained_vae_model_name_or_path
-                                    is None
-                                    else None
-                                ),
-                                revision=self.config.revision,
-                                variant=self.config.variant,
-                                force_upcast=False,
-                            )
-                        ),
-                        unet=self.unet,
-                        torch_dtype=self.config.weight_dtype,
-                    )
-                elif self.config.model_family == "smoldit":
-                    from helpers.models.smoldit import SmolDiTPipeline
-
-                    self.pipeline = SmolDiTPipeline(
-                        text_encoder=self.text_encoder_1
-                        or (
-                            self.text_encoder_cls_1.from_pretrained(
-                                self.config.pretrained_model_name_or_path,
-                                subfolder="text_encoder",
-                                revision=self.config.revision,
-                                variant=self.config.variant,
-                            )
-                            if self.config.save_text_encoder
-                            else None
-                        ),
-                        tokenizer=self.tokenizer_1,
-                        vae=self.vae
-                        or (
-                            self.vae_cls.from_pretrained(
-                                self.config.vae_path,
-                                subfolder=(
-                                    "vae"
-                                    if self.config.pretrained_vae_model_name_or_path
-                                    is None
-                                    else None
-                                ),
-                                revision=self.config.revision,
-                                variant=self.config.variant,
-                                force_upcast=False,
-                            )
-                        ),
-                        transformer=self.transformer,
-                        scheduler=None,
-                    )
-                elif self.config.model_family == "wan":
-                    from helpers.models.wan.pipeline import WanPipeline
-
-                    self.pipeline = WanPipeline.from_pretrained(
-                        self.config.pretrained_model_name_or_path,
-                        text_encoder=self.text_encoder_1
-                        or (
-                            self.text_encoder_cls_1.from_pretrained(
-                                self.config.pretrained_model_name_or_path,
-                                subfolder="text_encoder",
-                                revision=self.config.revision,
-                                variant=self.config.variant,
-                            )
-                            if self.config.save_text_encoder
-                            else None
-                        ),
-                        tokenizer=self.tokenizer_1,
-                        vae=self.vae,
-                        transformer=self.transformer,
-                    )
-
-                elif self.config.model_family == "ltxvideo":
-                    from diffusers import LTXPipeline
-
-                    self.pipeline = LTXPipeline.from_pretrained(
-                        self.config.pretrained_model_name_or_path,
-                        text_encoder=self.text_encoder_1
-                        or (
-                            self.text_encoder_cls_1.from_pretrained(
-                                self.config.pretrained_model_name_or_path,
-                                subfolder="text_encoder",
-                                revision=self.config.revision,
-                                variant=self.config.variant,
-                            )
-                            if self.config.save_text_encoder
-                            else None
-                        ),
-                        tokenizer=self.tokenizer_1,
-                        vae=self.vae,
-                        transformer=self.transformer,
-                    )
-                elif self.config.model_family == "sana":
-                    from diffusers import SanaPipeline
-
-                    self.pipeline = SanaPipeline.from_pretrained(
-                        self.config.pretrained_model_name_or_path,
-                        text_encoder=self.text_encoder_1
-                        or (
-                            self.text_encoder_cls_1.from_pretrained(
-                                self.config.pretrained_model_name_or_path,
-                                subfolder="text_encoder",
-                                revision=self.config.revision,
-                                variant=self.config.variant,
-                            )
-                            if self.config.save_text_encoder
-                            else None
-                        ),
-                        tokenizer=self.tokenizer_1,
-                        vae=self.vae,
-                        transformer=self.transformer,
-                    )
-
-                else:
-                    sdxl_pipeline_cls = StableDiffusionXLPipeline
-                    if self.config.model_family == "kolors":
-                        from helpers.kolors.pipeline import KolorsPipeline
-
-                        sdxl_pipeline_cls = KolorsPipeline
-                    self.pipeline = sdxl_pipeline_cls.from_pretrained(
-                        self.config.pretrained_model_name_or_path,
-                        text_encoder=(
-                            self.text_encoder_cls_1.from_pretrained(
-                                self.config.pretrained_model_name_or_path,
-                                subfolder="text_encoder",
-                                revision=self.config.revision,
-                                variant=self.config.variant,
-                            )
-                            if self.config.save_text_encoder
-                            else None
-                        ),
-                        text_encoder_2=(
-                            self.text_encoder_cls_2.from_pretrained(
-                                self.config.pretrained_model_name_or_path,
-                                subfolder="text_encoder_2",
-                                revision=self.config.revision,
-                                variant=self.config.variant,
-                            )
-                            if self.config.save_text_encoder
-                            else None
-                        ),
-                        tokenizer=self.tokenizer_1,
-                        tokenizer_2=self.tokenizer_2,
-                        vae=StateTracker.get_vae()
-                        or self.vae_cls.from_pretrained(
-                            self.config.vae_path,
-                            subfolder=(
-                                "vae"
-                                if self.config.pretrained_vae_model_name_or_path is None
-                                else None
-                            ),
-                            revision=self.config.revision,
-                            variant=self.config.variant,
-                            force_upcast=False,
-                        ),
-                        unet=self.unet,
-                        revision=self.config.revision,
-                        add_watermarker=self.config.enable_watermark,
-                        torch_dtype=self.config.weight_dtype,
-                    )
-                if (
-                    not self.config.flow_matching
-                    and self.config.validation_noise_scheduler is not None
-                ):
-                    self.pipeline.scheduler = SCHEDULER_NAME_MAP[
-                        self.config.validation_noise_scheduler
-                    ].from_pretrained(
-                        self.config.pretrained_model_name_or_path,
-                        revision=self.config.revision,
-                        subfolder="scheduler",
-                        prediction_type=self.config.prediction_type,
-                        timestep_spacing=self.config.training_scheduler_timestep_spacing,
-                        rescale_betas_zero_snr=self.config.rescale_betas_zero_snr,
-                    )
-                self.pipeline.save_pretrained(
+                if self.config.save_text_encoder:
+                    self.model.load_text_encoder()
+                self.model.load_vae()
+                pipeline = self.model.get_pipeline()
+                pipeline.save_pretrained(
                     os.path.join(self.config.output_dir, "pipeline"),
                     safe_serialization=True,
                 )
+                logger.info(f"Wrote pipeline to disk: {self.config.output_dir}/pipeline")
 
             if self.config.push_to_hub and self.accelerator.is_main_process:
                 self.hub_manager.upload_model(validation_images, self.webhook_handler)
