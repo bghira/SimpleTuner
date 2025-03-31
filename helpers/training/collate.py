@@ -501,7 +501,7 @@ def collate_fn(batch):
             )
         )
         debug_log(
-            f"Time ids stacked to {all_text_encoder_outputs['batch_time_ids'].shape}: {all_text_encoder_outputs["batch_time_ids"]}"
+            f"Time ids stacked to {all_text_encoder_outputs['batch_time_ids'].shape}: {all_text_encoder_outputs['batch_time_ids']}"
         )
     elif StateTracker.get_model_family() == "pixart_sigma":
         debug_log("Compute and stack PixArt time ids")
