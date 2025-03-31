@@ -7,6 +7,7 @@ import sys
 import numpy as np
 from tqdm import tqdm
 from helpers.training.wrappers import unwrap_model
+from helpers.models.common import ModelFoundation
 from PIL import Image
 from helpers.training.state_tracker import StateTracker
 from helpers.models.common import PredictionTypes
@@ -214,6 +215,7 @@ def retrieve_validation_images():
             logger.warning(
                 f"Data backend {data_backend['id']} does not have a sampler. Skipping."
             )
+    logger.info(f"Collected {len(validation_set)} validation image inputs.")
     return validation_set
 
 
@@ -233,7 +235,8 @@ def prepare_validation_prompt_list(args, embed_cache, model):
     model_type = embed_cache.model_type
     validation_sample_images = None
     if (
-        "deepfloyd-stage2" in args.model_type
+        "deepfloyd" in args.model_family
+        and str(args.model_flavour).startswith("ii-")
         or args.controlnet
         or args.validation_using_datasets
     ):
@@ -321,7 +324,7 @@ def parse_validation_resolution(input_str: str) -> tuple:
     """
     if isinstance(input_str, int) or input_str.isdigit():
         if (
-            "deepfloyd-stage2" in StateTracker.get_args().model_type
+            str(StateTracker.get_args().model_flavour).startswith("ii-")
             and int(input_str) < 256
         ):
             raise ValueError(
@@ -330,7 +333,7 @@ def parse_validation_resolution(input_str: str) -> tuple:
         return (input_str, input_str)
     if "x" in input_str:
         pieces = input_str.split("x")
-        if "deepfloyd-stage2" in StateTracker.get_args().model_type and (
+        if str(StateTracker.get_args().model_flavour).startswith("ii-") and (
             int(pieces[0]) < 256 or int(pieces[1]) < 256
         ):
             raise ValueError(
@@ -385,7 +388,7 @@ def parse_validation_resolution(input_str: str) -> tuple:
      - if it has comma, we will split and treat each value as above
     """
     is_df_ii = (
-        True if "deepfloyd-stage2" in StateTracker.get_args().model_type else False
+        True if str(StateTracker.get_args().model_flavour).startswith("ii-") else False
     )
     if isinstance(input_str, int) or input_str.isdigit():
         if is_df_ii and int(input_str) < 256:
@@ -406,7 +409,7 @@ class Validation:
     def __init__(
         self,
         accelerator,
-        model,
+        model: ModelFoundation,
         args,
         validation_prompt_metadata,
         vae_path,
@@ -441,13 +444,13 @@ class Validation:
         self.ema_model = ema_model
         self.ema_enabled = False
         self.model.pipeline = None
-        self.deepfloyd = True if "deepfloyd" in self.config.model_type else False
+        self.deepfloyd = True if "deepfloyd" in self.config.model_family else False
         self.deepfloyd_stage2 = (
-            True if "deepfloyd-stage2" in self.config.model_type else False
+            True if str(self.config.model_flavour).startswith("ii-") else False
         )
         self._discover_validation_input_samples()
         self.validation_resolutions = (
-            get_validation_resolutions() if not self.deepfloyd_stage2 else ["base-256"]
+            get_validation_resolutions() if not self.deepfloyd_stage2 else [(256, 256)]
         )
         self.flow_matching = (
             True
@@ -519,87 +522,100 @@ class Validation:
             )
 
     def _pipeline_cls(self):
-        model_type = StateTracker.get_model_family()
-        if model_type == "sdxl":
-            if self.config.controlnet:
-                from diffusers.pipelines import StableDiffusionXLControlNetPipeline
-
-                return StableDiffusionXLControlNetPipeline
+        if self.model is not None:
             if self.config.validation_using_datasets:
-                return StableDiffusionXLImg2ImgPipeline
-            return StableDiffusionXLPipeline
-        elif model_type == "flux":
-            from helpers.models.flux import FluxPipeline
-
-            if self.config.controlnet:
-                raise NotImplementedError("Flux ControlNet is not yet supported.")
-            if self.config.validation_using_datasets:
-                raise NotImplementedError(
-                    "Flux inference validation using img2img is not yet supported. Please remove --validation_using_datasets."
-                )
-            return FluxPipeline
-        elif model_type == "kolors":
-            if self.config.controlnet:
-                raise NotImplementedError("Kolors ControlNet is not yet supported.")
-            if self.config.validation_using_datasets:
-                try:
-                    from helpers.kolors.pipeline import KolorsImg2ImgPipeline
-                except:
-                    logger.error(
-                        "Kolors pipeline requires the latest version of Diffusers."
+                if PipelineTypes.IMG2IMG not in self.model.PIPELINE_CLASSES:
+                    raise ValueError(
+                        f"Cannot run {self.model.MODEL_CLASS} in Img2Img mode."
                     )
-                return KolorsImg2ImgPipeline
-            try:
-                from helpers.kolors.pipeline import KolorsPipeline
-            except Exception:
-                logger.error(
-                    "Kolors pipeline requires the latest version of Diffusers."
-                )
-            return KolorsPipeline
-        elif model_type == "legacy":
-            if self.deepfloyd_stage2:
-                from diffusers.pipelines import IFSuperResolutionPipeline
-
-                return IFSuperResolutionPipeline
-            return StableDiffusionPipeline
-        elif model_type == "sd3":
             if self.config.controlnet:
-                raise Exception("SD3 ControlNet is not yet supported.")
-            if self.config.validation_using_datasets:
-                return StableDiffusion3Img2ImgPipeline
-            return StableDiffusion3Pipeline
-        elif model_type == "pixart_sigma":
-            if self.config.controlnet:
-                raise Exception(
-                    "PixArt Sigma ControlNet inference validation is not yet supported."
-                )
-            if self.config.validation_using_datasets:
-                raise Exception(
-                    "PixArt Sigma inference validation using img2img is not yet supported. Please remove --validation_using_datasets."
-                )
-            from helpers.models.pixart.pipeline import PixArtSigmaPipeline
+                if PipelineTypes.CONTROLNET not in self.model.PIPELINE_CLASSES:
+                    raise ValueError(
+                        f"Cannot run {self.model.MODEL_CLASS} in ControlNet mode."
+                    )
 
-            return PixArtSigmaPipeline
-        elif model_type == "smoldit":
-            from helpers.models.smoldit import SmolDiTPipeline
+        if self.config.validation_using_datasets:
+            return self.model.PIPELINE_CLASSES[PipelineTypes.IMG2IMG]
+        if self.config.controlnet:
+            return self.model.PIPELINE_CLASSES[PipelineTypes.CONTROLNET]
+        return self.model.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
+        # model_type = StateTracker.get_model_family()
+        # if model_type == "sdxl":
+        #     if self.config.controlnet:
+        #         from diffusers.pipelines import StableDiffusionXLControlNetPipeline
 
-            return SmolDiTPipeline
-        elif model_type == "sana":
-            from diffusers import SanaPipeline
+        #         return StableDiffusionXLControlNetPipeline
+        #     if self.config.validation_using_datasets:
+        #         return StableDiffusionXLImg2ImgPipeline
+        #     return StableDiffusionXLPipeline
+        # elif model_type == "flux":
+        #     from helpers.models.flux import FluxPipeline
 
-            return SanaPipeline
-        elif model_type == "ltxvideo":
-            from diffusers import LTXPipeline
+        #     if self.config.controlnet:
+        #         raise NotImplementedError("Flux ControlNet is not yet supported.")
+        #     if self.config.validation_using_datasets:
+        #         raise NotImplementedError(
+        #             "Flux inference validation using img2img is not yet supported. Please remove --validation_using_datasets."
+        #         )
+        #     return FluxPipeline
+        # elif model_type == "kolors":
+        #     if self.config.controlnet:
+        #         raise NotImplementedError("Kolors ControlNet is not yet supported.")
+        #     if self.config.validation_using_datasets:
+        #         try:
+        #             from helpers.models.kolors.pipeline import KolorsImg2ImgPipeline
+        #         except:
+        #             logger.error(
+        #                 "Kolors pipeline requires the latest version of Diffusers."
+        #             )
+        #         return KolorsImg2ImgPipeline
+        #     try:
+        #         from helpers.models.kolors.pipeline import KolorsPipeline
+        #     except Exception:
+        #         logger.error(
+        #             "Kolors pipeline requires the latest version of Diffusers."
+        #         )
+        #     return KolorsPipeline
+        # elif model_type == "legacy":
+        #     return StableDiffusionPipeline
+        # elif model_type == "sd3":
+        #     if self.config.controlnet:
+        #         raise Exception("SD3 ControlNet is not yet supported.")
+        #     if self.config.validation_using_datasets:
+        #         return StableDiffusion3Img2ImgPipeline
+        #     return StableDiffusion3Pipeline
+        # elif model_type == "pixart_sigma":
+        #     if self.config.controlnet:
+        #         raise Exception(
+        #             "PixArt Sigma ControlNet inference validation is not yet supported."
+        #         )
+        #     if self.config.validation_using_datasets:
+        #         raise Exception(
+        #             "PixArt Sigma inference validation using img2img is not yet supported. Please remove --validation_using_datasets."
+        #         )
+        #     from helpers.models.pixart.pipeline import PixArtSigmaPipeline
 
-            return LTXPipeline
-        elif model_type == "wan":
-            from helpers.models.wan.pipeline import WanPipeline
+        #     return PixArtSigmaPipeline
+        # elif model_type == "smoldit":
+        #     from helpers.models.smoldit import SmolDiTPipeline
 
-            return WanPipeline
-        else:
-            raise NotImplementedError(
-                f"Model type {model_type} not implemented for validation."
-            )
+        #     return SmolDiTPipeline
+        # elif model_type == "sana":
+        #     from diffusers import SanaPipeline
+
+        #     return SanaPipeline
+        # elif model_type == "ltxvideo":
+        #     from diffusers import LTXPipeline
+
+        #     return LTXPipeline
+        # elif model_type == "wan":
+        #     from helpers.models.wan.pipeline import WanPipeline
+
+        #     return WanPipeline
+        # else:
+        #     raise NotImplementedError(
+        #         f"Model type {model_type} not implemented for validation."
+        #     )
 
     def _gather_prompt_embeds(self, validation_prompt: str):
         prompt_embed = self.embed_cache.compute_embeddings_for_prompts(
@@ -909,7 +925,7 @@ class Validation:
             )
 
         if getattr(self.model, "pipeline", None) is None:
-            self.model.get_pipeline()
+            self.model.get_pipeline(pipeline_type=self.model.DEFAULT_PIPELINE_TYPE)
 
         self.model.pipeline = self.model.pipeline.to(self.inference_device)
         self.model.pipeline.set_progress_bar_config(disable=True)
@@ -933,7 +949,10 @@ class Validation:
         if self.validation_image_inputs:
             # Override the pipeline inputs to be entirely based upon the validation image inputs.
             _content = self.validation_image_inputs
+            # Resize validation input to 64px area
+            _content = resize_validation_images(_content, 64)
             total_samples = len(_content) if _content is not None else 0
+
         logger.debug(f"Processing content: {_content}")
         idx = 0
         for prompt in tqdm(
@@ -944,7 +963,13 @@ class Validation:
             position=1,
         ):
             validation_input_image = None
-            shortname = self.validation_prompt_metadata["validation_shortnames"][idx]
+            if len(prompt) == 3 and isinstance(prompt[2], Image.Image):
+                # DeepFloyd stage II inputs.
+                shortname, prompt, validation_input_image = prompt
+            else:
+                shortname = self.validation_prompt_metadata["validation_shortnames"][
+                    idx
+                ]
             logger.debug(f"validation prompt (shortname={shortname}): '{prompt}'")
             self.validation_prompt_dict[shortname] = prompt
             logger.debug(f"Processing validation for prompt: {prompt}")
@@ -1204,7 +1229,7 @@ class Validation:
                         for k, v in pipeline_kwargs.items()
                     }
                     logger.debug(
-                        f"Running validations with negative prompt embeds: {pipeline_kwargs.keys()}, on model {self.model.pipeline.transformer.dtype}"
+                        f"Running validations with negative prompt embeds: {pipeline_kwargs.keys()}"
                     )
                     if self.config.model_family in ["ltxvideo", "wan"]:
                         all_validation_type_results[current_validation_type] = (
