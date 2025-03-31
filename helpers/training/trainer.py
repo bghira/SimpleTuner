@@ -49,10 +49,6 @@ from helpers.training.wrappers import unwrap_model
 from helpers.data_backend.factory import configure_multi_databackend
 from helpers.data_backend.factory import random_dataloader_iterator
 from helpers.training import steps_remaining_in_epoch
-from helpers.training.custom_schedule import (
-    generate_timestep_weights,
-    segmented_timestep_selection,
-)
 from helpers.training.min_snr_gamma import compute_snr
 from helpers.training.peft_init import init_lokr_network_with_perturbed_normal
 from accelerate.logging import get_logger
@@ -391,9 +387,14 @@ class Trainer:
         if model_family not in model_classes["full"]:
             raise ValueError(f"Invalid model family specified: {model_family}")
 
-        self._set_model_paths()
+        from helpers.models.all import model_families
+
+        model_implementation = model_families.get(model_family)
         StateTracker.set_model_family(model_family)
-        self.config.model_type_label = model_labels[model_family.lower()]
+        self.config.model_type_label = (
+            getattr(model_implementation, "NAME", None)
+            or model_labels[model_family.lower()]
+        )
         if StateTracker.is_sdxl_refiner():
             self.config.model_type_label = "SDXL Refiner"
 
@@ -428,12 +429,6 @@ class Trainer:
             raise e
 
     def _set_model_paths(self):
-        self.config.vae_path = (
-            self.config.pretrained_model_name_or_path
-            if self.config.pretrained_vae_model_name_or_path is None
-            else self.config.pretrained_vae_model_name_or_path
-        )
-
         self.config.text_encoder_path, self.config.text_encoder_subfolder = (
             determine_te_path_subfolder(self.config)
         )
@@ -448,6 +443,9 @@ class Trainer:
         self.init_text_encoder(move_to_accelerator=move_to_accelerator)
 
     def init_vae(self, move_to_accelerator: bool = True):
+        if getattr(self.model, "AUTOENCODER_CLASS", None) is None:
+            logger.debug(f"Model {self.model.NAME} does not have a VAE.")
+            return
         logger.info(f"Load VAE: {self.config.vae_path}")
         self.model.load_vae(move_to_device=move_to_accelerator)
         StateTracker.set_vae_dtype(self.model.vae.dtype)
@@ -467,6 +465,7 @@ class Trainer:
             structured_data={"message": webhook_msg},
             message_type="init_load_base_model_begin",
         )
+        self._set_model_paths()
         self.model.load_model(move_to_device=False)
         self.accelerator.wait_for_everyone()
         self._send_webhook_raw(
@@ -636,7 +635,11 @@ class Trainer:
 
                     return
                 self.quantise_model(
-                    model=self.model.get_trained_component() if not preprocessing_models_only else None,
+                    model=(
+                        self.model.get_trained_component()
+                        if not preprocessing_models_only
+                        else None
+                    ),
                     text_encoders=self.model.text_encoders,
                     controlnet=None,
                     ema=self.ema_model,
@@ -656,7 +659,11 @@ class Trainer:
                     self.controlnet,
                     self.ema_model,
                 ) = self.quantise_model(
-                    model=self.model.get_trained_component() if not preprocessing_models_only else None,
+                    model=(
+                        self.model.get_trained_component()
+                        if not preprocessing_models_only
+                        else None
+                    ),
                     text_encoders=self.model.text_encoders,
                     controlnet=None,
                     ema=self.ema_model,
@@ -674,7 +681,9 @@ class Trainer:
             )
         else:
             logger.info("Initializing controlnet weights from base model")
-            self.controlnet = ControlNetModel.from_unet(self.model.get_trained_component())
+            self.controlnet = ControlNetModel.from_unet(
+                self.model.get_trained_component()
+            )
 
         self.accelerator.wait_for_everyone()
 
@@ -764,7 +773,9 @@ class Trainer:
             from helpers.training.model_freeze import apply_bitfit_freezing
 
             if self.model.get_trained_component() is not None:
-                logger.info(f"Applying BitFit freezing strategy to the {self.model.MODEL_TYPE.value}.")
+                logger.info(
+                    f"Applying BitFit freezing strategy to the {self.model.MODEL_TYPE.value}."
+                )
                 self.model.model = apply_bitfit_freezing(
                     unwrap_model(self.accelerator, self.model.model), self.config
                 )
@@ -792,7 +803,9 @@ class Trainer:
     def disable_gradient_checkpointing(self):
         if self.config.gradient_checkpointing:
             logger.debug("Disabling gradient checkpointing.")
-            if hasattr(self.model.get_trained_component(), 'disable_gradient_checkpointing'):
+            if hasattr(
+                self.model.get_trained_component(), "disable_gradient_checkpointing"
+            ):
                 unwrap_model(
                     self.accelerator, self.model.get_trained_component()
                 ).disable_gradient_checkpointing()
@@ -942,7 +955,9 @@ class Trainer:
             logger.warning(
                 "Marking model for gradient release. This feature is experimental, and may use more VRAM or not work."
             )
-            prepare_for_gradient_release(self.model.get_trained_component(), self.optimizer)
+            prepare_for_gradient_release(
+                self.model.get_trained_component(), self.optimizer
+            )
 
     def init_lr_scheduler(self):
         self.config.is_schedulefree = is_lr_schedulefree(self.config.optimizer)
@@ -975,6 +990,7 @@ class Trainer:
             self.optimizer,
             self.accelerator,
             logger,
+            global_step=self.state["global_step"],
             use_deepspeed_scheduler=False,
         )
         if hasattr(lr_scheduler, "num_update_steps_per_epoch"):
@@ -1352,8 +1368,10 @@ class Trainer:
             delattr(public_args, "process_group_kwargs")
             delattr(public_args, "weight_dtype")
             delattr(public_args, "base_weight_dtype")
-            delattr(public_args, "vae_kwargs")
-            delattr(public_args, "sana_complex_human_instruction")
+            if hasattr(public_args, "vae_kwargs"):
+                delattr(public_args, "vae_kwargs")
+            if hasattr(public_args, "sana_complex_human_instruction"):
+                delattr(public_args, "sana_complex_human_instruction")
 
             # Hash the contents of public_args to reflect a deterministic ID for a single set of params:
             public_args_hash = hashlib.md5(
@@ -2054,22 +2072,25 @@ class Trainer:
                     ),
                 }
                 model_pred = self.transformer(**inputs).sample
-            elif self.unet is not None:
-                if self.config.model_family == "legacy":
-                    # SD 1.5 or 2.x
-                    model_pred = self.unet(
-                        noisy_latents,
-                        timesteps,
-                        encoder_hidden_states,
-                    ).sample
-                else:
-                    # SDXL, Kolors, other default unet prediction.
-                    model_pred = self.unet(
-                        noisy_latents,
-                        timesteps,
-                        encoder_hidden_states,
-                        added_cond_kwargs=added_cond_kwargs,
-                    ).sample
+            elif self.model.get_trained_component() is not None:
+                model_pred = self.model.model_predict(
+                    prepared_batch=prepared_batch,
+                )
+                # if self.config.model_family == "legacy":
+                #     # SD 1.5 or 2.x
+                #     model_pred = self.unet(
+                #         noisy_latents,
+                #         timesteps,
+                #         encoder_hidden_states,
+                #     ).sample
+                # else:
+                #     # SDXL, Kolors, other default unet prediction.
+                #     model_pred = self.unet(
+                #         noisy_latents,
+                #         timesteps,
+                #         encoder_hidden_states,
+                #         added_cond_kwargs=added_cond_kwargs,
+                #     ).sample
             else:
                 raise Exception("Unknown error occurred, no prediction could be made.")
 
@@ -2760,7 +2781,7 @@ class Trainer:
                     "save_directory": self.config.output_dir,
                     f"{self.model.MODEL_TYPE.value}_lora_layers": get_peft_model_state_dict(
                         self.model.get_trained_component()
-                    )
+                    ),
                 }
 
                 if self.config.train_text_encoder:
@@ -2768,15 +2789,19 @@ class Trainer:
                         self.text_encoder_1 = self.accelerator.unwrap_model(
                             self.model.get_text_encoder(0)
                         )
-                        lora_save_kwargs["text_encoder_lora_layers"] = convert_state_dict_to_diffusers(
-                            get_peft_model_state_dict(self.text_encoder_1)
+                        lora_save_kwargs["text_encoder_lora_layers"] = (
+                            convert_state_dict_to_diffusers(
+                                get_peft_model_state_dict(self.text_encoder_1)
+                            )
                         )
                     if self.model.get_text_encoder(1) is not None:
                         self.text_encoder_2 = self.accelerator.unwrap_model(
                             self.model.get_text_encoder(1)
                         )
-                        lora_save_kwargs["text_encoder_2_lora_layers"] = convert_state_dict_to_diffusers(
-                            get_peft_model_state_dict(self.text_encoder_2)
+                        lora_save_kwargs["text_encoder_2_lora_layers"] = (
+                            convert_state_dict_to_diffusers(
+                                get_peft_model_state_dict(self.text_encoder_2)
+                            )
                         )
                         if self.model.get_text_encoder(2) is not None:
                             self.text_encoder_3 = self.accelerator.unwrap_model(
@@ -2787,8 +2812,8 @@ class Trainer:
                     text_encoder_2_lora_layers = None
 
                 from helpers.models.common import PipelineTypes
+
                 self.model.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG].save_lora_weights(
-                    save_directory=self.config.output_dir,
                     **lora_save_kwargs,
                 )
                 del text_encoder_lora_layers
@@ -2832,7 +2857,9 @@ class Trainer:
 
             elif self.config.use_ema:
                 if self.model.get_trained_component() is not None:
-                    self.ema_model.copy_to(self.model.get_trained_component().parameters())
+                    self.ema_model.copy_to(
+                        self.model.get_trained_component().parameters()
+                    )
 
             if self.config.model_type == "full":
                 if self.config.save_text_encoder:
@@ -2843,7 +2870,9 @@ class Trainer:
                     os.path.join(self.config.output_dir, "pipeline"),
                     safe_serialization=True,
                 )
-                logger.info(f"Wrote pipeline to disk: {self.config.output_dir}/pipeline")
+                logger.info(
+                    f"Wrote pipeline to disk: {self.config.output_dir}/pipeline"
+                )
 
             if self.config.push_to_hub and self.accelerator.is_main_process:
                 self.hub_manager.upload_model(validation_images, self.webhook_handler)
