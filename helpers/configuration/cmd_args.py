@@ -1205,6 +1205,12 @@ def get_argument_parser():
         help="Scale the learning rate by the number of GPUs, gradient accumulation steps, and batch size.",
     )
     parser.add_argument(
+        "--lr_scale_sqrt",
+        action="store_true",
+        default=False,
+        help="If using --lr-scale, use the square root of (number of GPUs * gradient accumulation steps * batch size).",
+    )
+    parser.add_argument(
         "--lr_scheduler",
         type=str,
         default="sine",

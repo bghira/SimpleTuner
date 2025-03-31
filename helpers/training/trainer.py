@@ -215,16 +215,21 @@ class Trainer:
                 kwargs_handlers=[self.config.process_group_kwargs],
             )
         safety_check(args=self.config, accelerator=self.accelerator)
+
         if self.config.lr_scale:
+            lr_cur = self.config.learning_rate
+            lr_scale_bsz = self.config.train_batch_size
+            lr_scale_ga = self.config.gradient_accumulation_steps
+            lr_scale_np = getattr(self.accelerator, "num_processes", 1)
+            lr_scale_mul = lr_scale_ga * lr_scale_bsz * lr_scale_np
+            lr_new = lr_cur * (math.sqrt(lr_scale_mul) if self.config.lr_scale_sqrt else lr_scale_mul)
             logger.info(
-                f"Scaling learning rate ({self.config.learning_rate}), due to --lr_scale"
+                f"Scaling learning rate from {lr_cur:.1e} to {lr_new:.1e}"
+                f" due to {'--lr-scale and --lr-scale-sqrt' if self.config.lr_scale_sqrt else '--lr-scale'}"
+                f" (bsz: {lr_scale_bsz}, ga: {lr_scale_ga}, nprocs: {lr_scale_np})"
             )
-            self.config.learning_rate = (
-                self.config.learning_rate
-                * self.config.gradient_accumulation_steps
-                * self.config.train_batch_size
-                * getattr(self.accelerator, "num_processes", 1)
-            )
+            self.config.learning_rate = lr_new
+
         StateTracker.set_accelerator(self.accelerator)
         StateTracker.set_args(self.config)
         StateTracker.set_weight_dtype(self.config.weight_dtype)
