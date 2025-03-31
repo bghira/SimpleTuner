@@ -2,6 +2,7 @@ from os import environ
 from pathlib import Path
 import json
 import logging
+from helpers.models.all import model_families
 
 logger = logging.getLogger("StateTracker")
 logger.setLevel(environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -113,18 +114,7 @@ class StateTracker:
 
     @classmethod
     def set_model_family(cls, model_type: str):
-        if model_type not in [
-            "legacy",
-            "ltxvideo",
-            "wan",
-            "sdxl",
-            "sd3",
-            "pixart_sigma",
-            "kolors",
-            "smoldit",
-            "flux",
-            "sana",
-        ]:
+        if model_type not in model_families.keys():
             raise ValueError(f"Unknown model type: {model_type}")
         cls.model_type = model_type
 
@@ -494,7 +484,7 @@ class StateTracker:
 
     @classmethod
     def get_vaecache(cls, id: str):
-        return cls.data_backends[id]["vaecache"]
+        return cls.data_backends[id].get("vaecache", None)
 
     @classmethod
     def set_default_text_embed_cache(cls, default_text_embed_cache):
