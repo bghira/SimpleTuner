@@ -18,6 +18,7 @@ import torch
 from torch import nn
 
 from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.loaders import PeftAdapterMixin
 from diffusers.utils import (
     USE_PEFT_BACKEND,
     is_torch_version,
@@ -201,7 +202,7 @@ class SanaTransformerBlock(nn.Module):
         return hidden_states
 
 
-class SanaTransformer2DModel(ModelMixin, ConfigMixin):
+class SanaTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
     r"""
     A 2D Transformer model introduced in [Sana](https://huggingface.co/papers/2410.10629) family of models.
 
@@ -242,6 +243,7 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin):
 
     _supports_gradient_checkpointing = True
     _no_split_modules = ["SanaTransformerBlock", "PatchEmbed"]
+    _skip_layerwise_casting_patterns = ["patch_embed", "norm"]
 
     @register_to_config
     def __init__(
