@@ -1,8 +1,18 @@
 from helpers.models.sd3.model import SD3
 from helpers.models.deepfloyd.model import DeepFloydIF
+from helpers.models.sana.model import Sana
+
+model_families = {"sd3": SD3, "deepfloyd": DeepFloydIF, "sana": Sana}
 
 
-model_families = {"sd3": SD3, "deepfloyd": DeepFloydIF}
+def get_all_model_flavours() -> list:
+    """
+    Returns a list of all model flavours available in the model families.
+    """
+    flavours = []
+    for model_family, model_implementation in model_families.items():
+        flavours.extend(list(model_implementation.get_flavour_choices()))
+    return flavours
 
 
 def get_model_flavour_choices(key_to_find: str = None):
