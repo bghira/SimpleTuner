@@ -17,12 +17,6 @@ from helpers.models.sd3.pipeline import (
     StableDiffusion3Img2ImgPipeline,
 )
 from diffusers import AutoencoderKL
-from diffusers.utils import (
-    convert_state_dict_to_diffusers,
-    convert_unet_state_dict_to_peft,
-)
-from peft import set_peft_model_state_dict
-from peft.utils import get_peft_model_state_dict
 from helpers.training.multi_process import _get_rank
 
 logger = logging.getLogger(__name__)
@@ -190,7 +184,7 @@ class SD3(ImageModelFoundation):
             ].unsqueeze(0),
         }
 
-    def _encode_prompts(self, prompts: list):
+    def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
         """
         Encode a prompt for an SD3 model.
 
