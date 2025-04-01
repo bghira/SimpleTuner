@@ -39,7 +39,7 @@ class DeepFloydIF(ImageModelFoundation):
 
     # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
-    # Only training the Attention blocks by default seems to help more with SD3.
+    # Only training the Attention blocks by default seems to be the most stable..
     DEFAULT_LYCORIS_TARGET = ["Attention"]
 
     MODEL_CLASS = UNet2DConditionModel
@@ -97,7 +97,7 @@ class DeepFloydIF(ImageModelFoundation):
             "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
         }
 
-    def _encode_prompts(self, prompts: list):
+    def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
         """
         Encode a prompt for a DeepFloyd model.
 
