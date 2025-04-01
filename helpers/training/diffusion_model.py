@@ -165,20 +165,6 @@ def load_diffusion_model(args, weight_dtype):
         transformer = SmolDiT2DModel(**SmolDiTConfigurations[args.smoldit_config])
         if "lora" in args.model_type:
             raise ValueError("SmolDiT does not yet support LoRA training.")
-    elif args.model_family == "sana":
-        from helpers.models.sana.transformer import SanaTransformer2DModel
-
-        logger.info("Loading Sana flow-matching diffusion transformer..")
-        transformer_load_fn = SanaTransformer2DModel.from_pretrained
-        if pretrained_transformer_path.lower().endswith(".safetensors"):
-            # transformer_load_fn = SanaTransformer2DModel.from_single_file
-            raise ValueError("Sana does not support single file loading.")
-
-        transformer = transformer_load_fn(
-            pretrained_transformer_path,
-            subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
-            **pretrained_load_args,
-        )
     else:
         from diffusers import UNet2DConditionModel
 
