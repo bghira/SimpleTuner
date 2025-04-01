@@ -18,7 +18,11 @@ from helpers.training.optimizer_param import (
     map_deprecated_optimizer_parameter,
     optimizer_choices,
 )
-from helpers.models.all import model_families, get_model_flavour_choices
+from helpers.models.all import (
+    model_families,
+    get_model_flavour_choices,
+    get_all_model_flavours,
+)
 
 model_family_choices = list(model_families.keys())
 model_families_to_refactor = [
@@ -109,6 +113,8 @@ def get_argument_parser():
     parser.add_argument(
         "--model_flavour",
         default=None,
+        required=False,
+        choices=get_all_model_flavours(),
         type=str,
         help=(
             "Certain models require designating a given flavour to reference configurations from."
@@ -1064,7 +1070,7 @@ def get_argument_parser():
             "When training diffusion models, the image sizes generally must align to a 64 pixel interval."
             " This is an exception when training models like DeepFloyd that use a base resolution of 64 pixels,"
             " as aligning to 64 pixels would result in a 1:1 or 2:1 aspect ratio, overly distorting images."
-            " For DeepFloyd, this value is set to 8, but all other training defaults to 64. You may experiment"
+            " For DeepFloyd, this value is set to 32, but all other training defaults to 64. You may experiment"
             " with this value, but it is not recommended."
         ),
     )
@@ -1105,15 +1111,18 @@ def get_argument_parser():
         action="store_true",
         help="(SD 2.x only) Whether to train the text encoder. If set, the text encoder should be float32 precision.",
     )
-    # DeepFloyd
     parser.add_argument(
         "--tokenizer_max_length",
         type=int,
         default=None,
         required=False,
-        help="The maximum length of the tokenizer. If not set, will default to the tokenizer's max length.",
+        help=(
+            "The maximum sequence length of the tokenizer output, which defines the sequence length of text embed outputs."
+            " If not set, will default to the tokenizer's max length. Unfortunately, this option only applies to T5 models, and"
+            " due to the biases inducted by sequence length, changing it will result in potentially catastrophic model collapse."
+            " This option causes poor training results. This is normal, and can be expected from changing this value."
+        ),
     )
-    # End DeepFloyd-specific settings
     parser.add_argument(
         "--train_batch_size",
         type=int,

@@ -74,7 +74,7 @@ However, DeepFloyd really has its upsides that often go overlooked:
 
 These instructions assume basic familiarity with SimpleTuner. For newcomers, it's recommended to start with a more well-supported model like [Kwai Kolors](/documentation/quickstart/KOLORS.md).
 
-As such, we'll be making use of the `config.json` configuration file for tuning DeepFloyd:
+However, if you do wish to train DeepFloyd, it requires the use of the `model_flavour` configuration option to indicate which model you're training.
 
 ### config.json
 
@@ -101,19 +101,17 @@ As such, we'll be making use of the `config.json` configuration file for tuning 
 "lr_end": 4e-6,
 ```
 
-A keen eye will have observed the following:
+- The `model_family` is deepfloyd
+- The `model_flavour` is pointing to Stage I or II
+- `resolution` is now `64` and `resolution_type` is `pixel`
+- `use_xformers_memory_efficient_attention` can be set to `true`, but AMD and Apple users won't be able to set this, requiring more VRAM.
+  - **Note** ~~Apple MPS currently has a bug preventing DeepFloyd tuning from working at all.~~ As of Pytorch 2.6 or sometime earlier, stage I and II both train on Apple MPS.
 
-- The `MODEL_TYPE` is specified as deepfloyd-compatible
-- The `MODEL_NAME` is pointing to Stage I or II
-- `RESOLUTION` is now `64` and `RESOLUTION_TYPE` is `pixel`
-- `USE_XFORMERS` is set to `true`, but AMD and Apple users won't be able to set this, requiring more VRAM.
-  - **Note** Apple MPS currently has a bug preventing DeepFloyd tuning from working at all.
+For more thorough validations, the value for `validation_resolution` can be set as:
 
-For more thorough validations, the value for `VALIDATION_RESOLUTION` can be set as:
-
-- `VALIDATION_RESOLUTION=64` will result in a 64x64 square image.
-- `VALIDATION_RESOLUTION=96x64` will result in a 3:2 widescreen image.
-- `VALIDATION_RESOLUTION=64,96,64x96,96x64` will result in four images being generated for each validation:
+- `validation_resolution=64` will result in a 64x64 square image.
+- `validation_resolution=96x64` will result in a 3:2 widescreen image.
+- `validation_resolution=64,96,64x96,96x64` will result in four images being generated for each validation:
   - 64x64
   - 96x96
   - 64x96
@@ -178,7 +176,7 @@ pipe.scheduler = pipe.scheduler.__class__.from_config(pipe.scheduler.config, var
 
 > ⚠️ Note that the first value for `DiffusionPipeline.from_pretrained(...)` is set to `IF-I-M-v1.0`, but you must update this to use the base model path that you trained your LoRA on.
 
-> ⚠️ Note that not all of the recommendations from Hugging Face apply to SimpleTuner. For example, we can tune DeepFloyd stage I LoRA in just 22G of VRAM vs 28G for Diffusers' example dreambooth scripts thanks to efficient pre-caching and pure-bf16 optimiser states. 8Bit AdamW isn't currently supported by SimpleTuner.
+> ⚠️ Note that not all of the recommendations from Hugging Face apply to SimpleTuner. For example, we can tune DeepFloyd stage I LoRA in just 22G of VRAM vs 28G for Diffusers' example dreambooth scripts thanks to efficient pre-caching and pure-bf16 optimiser states.
 
 ## Fine-tuning the super-resolution stage II model
 
