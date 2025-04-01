@@ -48,7 +48,7 @@ upstream_config_sources = {
 
 
 def get_model_config_path(model_family: str, model_path: str):
-    if model_path.endswith(".safetensors"):
+    if model_path is not None and model_path.endswith(".safetensors"):
         if model_family in upstream_config_sources:
             return upstream_config_sources[model_family]
         else:
@@ -98,6 +98,20 @@ class ModelFoundation(ABC):
         self.setup_model_flavour()
         self.setup_noise_schedule()
 
+    def log_model_devices(self):
+        """
+        Log the devices of the model components.
+        """
+        if hasattr(self, "model") and self.model is not None:
+            logger.info(f"Model device: {self.model.device}")
+        if hasattr(self, "vae") and self.vae is not None:
+            logger.info(f"VAE device: {self.vae.device}")
+        if hasattr(self, "text_encoders"):
+            for i, text_encoder in enumerate(self.text_encoders):
+                if text_encoder is None:
+                    continue
+                logger.info(f"Text encoder {i} device: {text_encoder.device}")
+
     def setup_model_flavour(self):
         """
         Sets up the model flavour based on the config.
@@ -129,6 +143,12 @@ class ModelFoundation(ABC):
                 raise ValueError(
                     f"Model flavour {self.config.model_flavour} not found in {self.HUGGINGFACE_PATHS.keys()}"
                 )
+        if self.config.pretrained_vae_model_name_or_path is None:
+            self.config.pretrained_vae_model_name_or_path = (
+                self.config.pretrained_model_name_or_path
+            )
+        if self.config.vae_path is None:
+            self.config.vae_path = self.config.pretrained_model_name_or_path
 
     @abstractmethod
     def model_predict(self, prepared_batch, custom_timesteps: list = None):
@@ -141,7 +161,7 @@ class ModelFoundation(ABC):
         )
 
     @abstractmethod
-    def _encode_prompts(self, text_batch: list):
+    def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
         """
         Encodes a batch of text using the text encoder.
         Must be implemented by the subclass.
@@ -324,7 +344,9 @@ class ModelFoundation(ABC):
         if not getattr(self, "AUTOENCODER_CLASS", None):
             return
 
-        logger.info(f"Loading VAE from {self.config.vae_path}")
+        logger.info(
+            f"Loading {self.AUTOENCODER_CLASS.__name__} from {self.config.vae_path}"
+        )
         self.vae = None
         self.config.vae_kwargs = {
             "pretrained_model_name_or_path": get_model_config_path(
@@ -388,7 +410,7 @@ class ModelFoundation(ABC):
                 ):
                     _vae_dtype = torch.bfloat16
             logger.info(
-                f"Loading VAE onto accelerator, converting from {self.vae.dtype} to {_vae_dtype}"
+                f"Moving {self.AUTOENCODER_CLASS.__name__} to accelerator, converting from {self.vae.dtype} to {_vae_dtype}"
             )
             self.vae.to(self.accelerator.device, dtype=_vae_dtype)
 
@@ -593,7 +615,7 @@ class ModelFoundation(ABC):
             pipeline_kwargs["controlnet"] = unwrap_model(self.accelerator, self.model)
 
         logger.info(
-            f"Initialising {pipeline_class.__name__} with components: {pipeline_kwargs.keys()}"
+            f"Initialising {pipeline_class.__name__} with components: {list(pipeline_kwargs.keys())}"
         )
         self.pipeline = pipeline_class.from_pretrained(
             **pipeline_kwargs,
@@ -814,13 +836,13 @@ class ModelFoundation(ABC):
 
         return batch
 
-    def encode_text_batch(self, text_batch: list):
+    def encode_text_batch(self, text_batch: list, is_negative_prompt: bool = False):
         """
         Encodes a batch of text using the text encoder.
         """
         if not self.TEXT_ENCODER_CONFIGURATION:
             raise ValueError("No text encoder configuration found.")
-        encoded_text = self._encode_prompts(text_batch)
+        encoded_text = self._encode_prompts(text_batch, is_negative_prompt)
         return self._format_text_embedding(encoded_text)
 
     def _format_text_embedding(self, text_embedding: torch.Tensor):
