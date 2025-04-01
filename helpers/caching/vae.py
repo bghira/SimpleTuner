@@ -613,6 +613,8 @@ class VAECache(WebhookMixin):
 
                 if hasattr(latents_uncached, "latent_dist"):
                     latents_uncached = latents_uncached.latent_dist.sample()
+                elif hasattr(latents_uncached, "sample"):
+                    latents_uncached = latents_uncached.sample()
                 latents_uncached = self.process_video_latents(latents_uncached)
                 if (
                     hasattr(self.vae, "config")
@@ -632,7 +634,7 @@ class VAECache(WebhookMixin):
                     logger.debug(f"Latents shape: {latents_uncached.shape}")
 
             # Prepare final latents list by combining cached and newly computed latents
-            if isinstance(latents_uncached, dict):
+            if isinstance(latents_uncached, dict) and "latents" in latents_uncached:
                 raw_latents = latents_uncached["latents"]
                 num_samples = raw_latents.shape[0]
                 for i in range(num_samples):
@@ -645,10 +647,22 @@ class VAECache(WebhookMixin):
                         "width": latents_uncached["width"],
                     }
                     latents.append(chunk)
+            elif hasattr(latents_uncached, "latent"):
+                raw_latents = latents_uncached["latent"]
+                num_samples = raw_latents.shape[0]
+                for i in range(num_samples):
+                    # Each sub-dict is shape [b, c, H, W], we want just 1 b at a time
+                    single_latent = raw_latents[i : i + 1].squeeze(0)
+                    logger.info(f"Adding shape: {single_latent.shape}")
+                    latents.append(single_latent)
             else:
+                logger.info(f"Received {type(latents_uncached)} latents")
                 cached_idx, uncached_idx = 0, 0
                 for i in range(batch_size):
                     if i in uncached_image_indices:
+                        logger.info(
+                            f"Adding latent {uncached_idx} of ({len(latents_uncached)}: {latents_uncached})"
+                        )
                         latents.append(latents_uncached[uncached_idx])
                         uncached_idx += 1
                     else:
