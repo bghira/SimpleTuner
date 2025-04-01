@@ -446,7 +446,7 @@ class Trainer:
         if getattr(self.model, "AUTOENCODER_CLASS", None) is None:
             logger.debug(f"Model {self.model.NAME} does not have a VAE.")
             return
-        logger.info(f"Load VAE: {self.config.vae_path}")
+        logger.info(f"Load VAE: {self.config.pretrained_vae_model_name_or_path}")
         self.model.load_vae(move_to_device=move_to_accelerator)
         StateTracker.set_vae_dtype(self.model.vae.dtype)
         StateTracker.set_vae(self.model.vae)
@@ -1944,16 +1944,6 @@ class Trainer:
                 model_pred = self.model.model_predict(
                     prepared_batch=prepared_batch,
                 )
-            elif self.config.model_family == "sana":
-                model_pred = self.transformer(
-                    noisy_latents.to(self.config.weight_dtype),
-                    encoder_hidden_states=encoder_hidden_states.to(
-                        self.config.weight_dtype
-                    ),
-                    encoder_attention_mask=prepared_batch["encoder_attention_mask"],
-                    timestep=timesteps,
-                    return_dict=False,
-                )[0]
             elif self.config.model_family == "wan":
                 # this just hacked together because it seems it doesn't work on MPS, and can't test it yet:
                 # TypeError: Trying to convert ComplexDouble to the MPS backend but it does not have support for that dtype.
