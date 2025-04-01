@@ -135,11 +135,6 @@ def safety_check(args, accelerator):
                 f"{args.base_model_precision} is not supported with SageAttention. Please select from int8 or fp8, or, disable quantisation to use SageAttention."
             )
             sys.exit(1)
-        if args.model_family == "sana":
-            logger.error(
-                f"{args.model_family} is not supported with SageAttention at this point. Disabling SageAttention."
-            )
-            args.attention_mechanism = "diffusers"
 
     gradient_checkpointing_interval_supported_models = ["flux", "sana", "sdxl", "sd3"]
     if args.gradient_checkpointing_interval is not None:
