@@ -30,7 +30,6 @@ from diffusers.utils.torch_utils import is_compiled_module
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.image_manipulation.brightness import calculate_luminance
 from PIL import Image, ImageDraw, ImageFont
-from diffusers import SanaPipeline
 from helpers.training.deepspeed import (
     deepspeed_zero_init_disabled_context_manager,
     prepare_model_for_deepspeed,
@@ -300,6 +299,7 @@ def prepare_validation_prompt_list(args, embed_cache, model):
     # Compute negative embed for validation prompts, if any are set, so that it's stored before we unload the text encoder.
     if validation_prompts:
         logger.info("Precomputing the negative prompt embed for validations.")
+        model.log_model_devices()
         validation_negative_prompt_text_encoder_output = (
             embed_cache.compute_embeddings_for_prompts(
                 [StateTracker.get_args().validation_negative_prompt],
@@ -308,6 +308,7 @@ def prepare_validation_prompt_list(args, embed_cache, model):
             )
         )
 
+    logger.info("Completed validation prompt gathering.")
     return {
         "validation_prompts": validation_prompts,
         "validation_shortnames": validation_shortnames,
@@ -600,10 +601,6 @@ class Validation:
         #     from helpers.models.smoldit import SmolDiTPipeline
 
         #     return SmolDiTPipeline
-        # elif model_type == "sana":
-        #     from diffusers import SanaPipeline
-
-        #     return SanaPipeline
         # elif model_type == "ltxvideo":
         #     from diffusers import LTXPipeline
 
@@ -1193,7 +1190,6 @@ class Validation:
                 if StateTracker.get_model_family() in [
                     "pixart_sigma",
                     "smoldit",
-                    "sana",
                     "ltxvideo",
                 ]:
                     if pipeline_kwargs.get("negative_prompt") is not None:
