@@ -103,14 +103,14 @@ class ModelFoundation(ABC):
         Log the devices of the model components.
         """
         if hasattr(self, "model") and self.model is not None:
-            logger.info(f"Model device: {self.model.device}")
+            logger.debug(f"Model device: {self.model.device}")
         if hasattr(self, "vae") and self.vae is not None:
-            logger.info(f"VAE device: {self.vae.device}")
+            logger.debug(f"VAE device: {self.vae.device}")
         if hasattr(self, "text_encoders"):
             for i, text_encoder in enumerate(self.text_encoders):
                 if text_encoder is None:
                     continue
-                logger.info(f"Text encoder {i} device: {text_encoder.device}")
+                logger.debug(f"Text encoder {i} device: {text_encoder.device}")
 
     def setup_model_flavour(self):
         """
