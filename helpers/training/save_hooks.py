@@ -344,7 +344,7 @@ class SaveHookManager:
             logging.error(f"LyCORIS failed to load: {state}")
             raise RuntimeError("Loading of LyCORIS model failed")
         weight_dtype = StateTracker.get_weight_dtype()
-        if self.get_trained_component() is not None:
+        if self.model.get_trained_component() is not None:
             self.accelerator._lycoris_wrapped_network.to(
                 device=self.accelerator.device, dtype=weight_dtype
             )
