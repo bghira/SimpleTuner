@@ -2668,7 +2668,7 @@ class Trainer:
                         all_accumulated_losses = self.evaluation.execute_eval(
                             prepare_batch=self.prepare_batch,
                             model_predict=self.model_predict,
-                            calculate_loss=self._calculate_loss,
+                            calculate_loss=self.model.loss,
                             get_prediction_target=self.get_prediction_target,
                             noise_scheduler=self._get_noise_schedule(),
                         )

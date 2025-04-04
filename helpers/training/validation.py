@@ -1689,8 +1689,7 @@ class Evaluation:
                         )
                         eval_loss = calculate_loss(
                             prepared_batch=prepared_eval_batch,
-                            model_pred=eval_prediction,
-                            target=get_prediction_target(prepared_eval_batch),
+                            model_output=eval_prediction,
                             apply_conditioning_mask=False,
                         )
                         accumulated_eval_losses[eval_timestep].append(eval_loss)
