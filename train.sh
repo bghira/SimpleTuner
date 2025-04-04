@@ -91,7 +91,12 @@ if [ -z "${DISABLE_UPDATES}" ]; then
 fi
 # Run the training script.
 if [[ -z "${ACCELERATE_CONFIG_PATH}" ]]; then
-    ACCELERATE_CONFIG_PATH="${HOME}/.cache/huggingface/accelerate/default_config.yaml"
+    # Look for accelerate config in HF_HOME first, otherwise fallback to $HOME
+    if [[ -f "${HF_HOME}/accelerate/default_config.yaml" ]]; then
+        ACCELERATE_CONFIG_PATH="${HF_HOME}/accelerate/default_config.yaml"
+    else
+        ACCELERATE_CONFIG_PATH="${HOME}/.cache/huggingface/accelerate/default_config.yaml"
+    fi
 fi
 if [ -f "${ACCELERATE_CONFIG_PATH}" ]; then
     echo "Using Accelerate config file: ${ACCELERATE_CONFIG_PATH}"
