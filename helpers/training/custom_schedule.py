@@ -239,7 +239,7 @@ class Cosine(LRScheduler):
         self.T_mult = T_mult
         self.eta_min = eta_min
         self.T_cur = last_step
-        super().__init__(optimizer, last_step, verbose)
+        super().__init__(optimizer=optimizer, last_epoch=last_step)
 
     def get_lr(self):
         lrs = [
