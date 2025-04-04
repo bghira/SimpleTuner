@@ -51,7 +51,7 @@ try:
     is_bitsandbytes_available = True
 except:
     if torch.cuda.is_available():
-        logger.warning(
+        print(
             "Could not load bitsandbytes library. BnB-specific optimisers and other functionality will be unavailable."
         )
 
@@ -68,9 +68,7 @@ try:
     is_prodigy_available = True
 except:
     if torch.cuda.is_available():
-        logger.warning(
-            "Could not load prodigyplus library. Prodigy will not be available."
-        )
+        print("Could not load prodigyplus library. Prodigy will not be available.")
 
 
 optimizer_choices = {
