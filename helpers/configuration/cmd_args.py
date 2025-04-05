@@ -27,11 +27,7 @@ from helpers.models.all import (
 model_family_choices = list(model_families.keys())
 model_families_to_refactor = [
     "pixart_sigma",
-    "sana",
-    "kolors",
-    "flux",
     "smoldit",
-    "sdxl",
     "ltxvideo",
     "wan",
     "legacy",
