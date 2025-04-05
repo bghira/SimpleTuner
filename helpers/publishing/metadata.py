@@ -209,10 +209,7 @@ def _guidance_rescale(args):
 
 
 def _skip_layers(args):
-    if (
-        args.model_family.lower() not in ["sd3", "wan"]
-        or args.validation_guidance_skip_layers is None
-    ):
+    if args.validation_guidance_skip_layers is None:
         return ""
     return f"\n    skip_guidance_layers={args.validation_guidance_skip_layers},"
 
@@ -260,8 +257,8 @@ def _validation_resolution(args):
         return f"width={resolution},\n" f"    height={resolution},"
 
 
-def _output_attribute(args):
-    if args.model_family in ["ltxvideo", "wan"]:
+def _output_attribute(args, model):
+    if 'Video' in str(type(model)):
         return "frames[0]"
     return "images[0]"
 
@@ -277,7 +274,7 @@ model_output.save("output.png", format="PNG")
 """
 
 
-def code_example(args, repo_id: str = None):
+def code_example(args, repo_id: str = None, model = None):
     """Return a string with the code example."""
     code_example = f"""
 ```python
@@ -295,7 +292,7 @@ model_output = pipeline(
     generator=torch.Generator(device={_torch_device()}).manual_seed({args.validation_seed or args.seed or 42}),
     {_validation_resolution(args)}
     guidance_scale={args.validation_guidance},{_guidance_rescale(args)}{_skip_layers(args)}
-).{_output_attribute(args)}
+).{_output_attribute(args, model)}
 {_output_save_call(args)}
 ```
 """
@@ -524,7 +521,7 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 
 ## Inference
 
-{code_example(args=StateTracker.get_args(), repo_id=repo_id)}
+{code_example(args=StateTracker.get_args(), repo_id=repo_id, model=model)}
 
 {ema_info(args=StateTracker.get_args())}
 """

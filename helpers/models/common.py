@@ -136,19 +136,20 @@ class ModelFoundation(ABC):
                     f"{str(self.__class__)} models require model_flavour to be provided."
                     f" Possible values: {self.HUGGINGFACE_PATHS.keys()}"
                 )
-        if (
-            self.config.pretrained_model_name_or_path is None
-            and self.config.model_flavour is None
-        ):
-            default_flavour = getattr(self, "DEFAULT_MODEL_FLAVOUR", None)
-            if default_flavour is None and len(self.HUGGINGFACE_PATHS) > 0:
-                raise ValueError(
-                    f"The current model family {self.config.model_family} requires a model_flavour to be provided. Options: {self.HUGGINGFACE_PATHS.keys()}"
-                )
-            elif default_flavour is not None:
-                self.config.model_flavour = default_flavour
         if self.config.pretrained_model_name_or_path is None:
+            if self.config.model_flavour is None:
+                default_flavour = getattr(self, "DEFAULT_MODEL_FLAVOUR", None)
+                if default_flavour is None and len(self.HUGGINGFACE_PATHS) > 0:
+                    raise ValueError(
+                        f"The current model family {self.config.model_family} requires a model_flavour to be provided. Options: {self.HUGGINGFACE_PATHS.keys()}"
+                    )
+                elif default_flavour is not None:
+                    self.config.model_flavour = default_flavour
             if self.config.model_flavour is not None:
+                if self.config.model_flavour not in self.HUGGINGFACE_PATHS:
+                    raise ValueError(
+                        f"Model flavour {self.config.model_flavour} not found in {self.HUGGINGFACE_PATHS.keys()}"
+                    )
                 self.config.pretrained_model_name_or_path = self.HUGGINGFACE_PATHS.get(
                     self.config.model_flavour
                 )

@@ -27,7 +27,6 @@ model_family_choices = list(model_families.keys())
 model_families_to_refactor = [
     "pixart_sigma",
     "ltxvideo",
-    "wan",
     "legacy",
 ]
 model_family_choices += model_families_to_refactor
@@ -2440,12 +2439,6 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         else args.pretrained_vae_model_name_or_path
     )
 
-    if args.model_family == "wan":
-        args.tokenizer_max_length = 226
-    if args.model_family in ["wan", "ltxvideo"]:
-        info_log("Disabling unconditional validation to save on time.")
-        args.validation_disable_unconditional = True
-
     if args.use_ema and args.ema_cpu_only:
         args.ema_device = "cpu"
 
@@ -2588,13 +2581,6 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             f"Invalid gradient_accumulation_steps parameter: {args.gradient_accumulation_steps}, should be >= 1"
         )
 
-    if args.base_model_precision == "fp8-quanto":
-        if args.model_family in ["wan", "sd3"]:
-            error_log(
-                "Quanto does not support WAN or SD3 models for FP8. Please use torchao for FP8, or int8 instead."
-            )
-            sys.exit(1)
-
     if args.validation_guidance_skip_layers is not None:
         if args.model_family not in ["sd3", "wan"]:
             raise ValueError(
@@ -2615,10 +2601,6 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if args.framerate is None:
         if args.model_family == "ltxvideo":
             args.framerate = 25
-        if args.model_family == "wan":
-            args.framerate = 15
-            args.vae_enable_tiling = True
-            args.vae_enable_slicing = True
 
     if (
         args.sana_complex_human_instruction is not None

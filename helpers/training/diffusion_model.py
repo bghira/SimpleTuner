@@ -53,25 +53,6 @@ def load_diffusion_model(args, weight_dtype):
             subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
             **pretrained_load_args,
         )
-    elif args.model_family == "wan":
-        # WanX uses a Diffusion transformer.
-        logger.info("Loading WanX diffusion transformer..")
-        try:
-            from helpers.models.wan.transformer import WanTransformer3DModel
-        except Exception as e:
-            logger.error(
-                f"Can not load WanTransformer3DModel model class. This release requires the latest version of Diffusers: {e}"
-            )
-        transformer_load_fn = WanTransformer3DModel.from_pretrained
-        if pretrained_transformer_path.lower().endswith(".safetensors"):
-            transformer_load_fn = WanTransformer3DModel.from_single_file
-
-        transformer = transformer_load_fn(
-            args.pretrained_transformer_model_name_or_path
-            or args.pretrained_model_name_or_path,
-            subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
-            **pretrained_load_args,
-        )
     elif args.model_family == "pixart_sigma":
         from diffusers.models import PixArtTransformer2DModel
 

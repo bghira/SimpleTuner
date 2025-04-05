@@ -4,6 +4,7 @@ from helpers.models.sana.model import Sana
 from helpers.models.sdxl.model import SDXL
 from helpers.models.kolors.model import Kolors
 from helpers.models.flux.model import Flux
+from helpers.models.wan.model import Wan
 
 model_families = {
     "sd3": SD3,
@@ -12,6 +13,7 @@ model_families = {
     "sdxl": SDXL,
     "kolors": Kolors,
     "flux": Flux,
+    "wan": Wan,
 }
 
 

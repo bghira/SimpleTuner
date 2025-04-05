@@ -42,7 +42,7 @@ class Wan(VideoModelFoundation):
     }
 
     # The default model flavor to use when none is specified.
-    DEFAULT_MODEL_FLAVOUR = "t2v-480p-1.3b"
+    DEFAULT_MODEL_FLAVOUR = "t2v-480p-1.3b-2.1"
     HUGGINGFACE_PATHS = {
         "t2v-480p-1.3b-2.1": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
         "t2v-480p-14b-2.1": "Wan-AI/Wan2.1-T2V-14B-Diffusers",
@@ -96,35 +96,24 @@ class Wan(VideoModelFoundation):
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
         return {
             "prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            "attention_mask": (
-                text_embedding["attention_masks"].unsqueeze(0)
-                if self.config.flux_attention_masked_training
-                else None
-            ),
+            # "attention_mask": (
+            #     text_embedding["attention_masks"].unsqueeze(0)
+            #     if self.config.flux_attention_masked_training
+            #     else None
+            # ),
         }
 
     def convert_negative_text_embed_for_pipeline(
         self, text_embedding: torch.Tensor, prompt: str
     ) -> dict:
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
-        if (
-            self.config.validation_guidance_real is None
-            or self.config.validation_guidance_real <= 1.0
-        ):
-            # CFG is disabled, no negative prompts.
-            return {}
         return {
             "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            "negative_pooled_prompt_embeds": text_embedding[
-                "pooled_prompt_embeds"
-            ].unsqueeze(0),
-            "negative_mask": (
-                text_embedding["attention_masks"].unsqueeze(0)
-                if self.config.flux_attention_masked_training
-                else None
-            ),
-            "guidance_scale_real": float(self.config.validation_guidance_real),
-            "no_cfg_until_timestep": int(self.config.validation_no_cfg_until_timestep),
+            # "negative_mask": (
+            #     text_embedding["attention_masks"].unsqueeze(0)
+            #     if self.config.flux_attention_masked_training
+            #     else None
+            # ),
         }
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
@@ -137,12 +126,10 @@ class Wan(VideoModelFoundation):
         Returns:
             Text encoder output (raw)
         """
-        prompt_embeds, pooled_prompt_embeds, time_ids, masks = (
+        prompt_embeds, masks = (
             self.pipeline.encode_prompt(
                 prompt=prompts,
-                prompt_2=prompts,
                 device=self.accelerator.device,
-                max_sequence_length=int(self.config.tokenizer_max_length),
             )
         )
         if self.config.t5_padding == "zero":
@@ -151,27 +138,31 @@ class Wan(VideoModelFoundation):
                 device=prompt_embeds.device
             ).unsqueeze(-1).expand(prompt_embeds.shape)
 
-        return prompt_embeds, pooled_prompt_embeds, time_ids, masks
+        return prompt_embeds, masks
 
     def model_predict(self, prepared_batch):
+        model_pred = self.model(
+            prepared_batch["noisy_latents"].to(self.config.weight_dtype),
+            encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(
+                self.config.weight_dtype
+            ),
+            # encoder_attention_mask=prepared_batch["encoder_attention_mask"],
+            timestep=prepared_batch["timesteps"],
+            return_dict=False,
+        )[0]
 
         return {
-            "model_prediction": unpack_latents(
-                model_pred,
-                height=prepared_batch["latents"].shape[2] * 8,
-                width=prepared_batch["latents"].shape[3] * 8,
-                vae_scale_factor=16,
-            )
+            "model_prediction": model_pred,
         }
 
     def check_user_config(self):
         """
         Checks self.config values against important issues.
         """
-        # if self.config.base_model_precision == "fp8-quanto":
-        #     raise ValueError(
-        #         f"{self.NAME} does not support fp8-quanto. Please use fp8-torchao or int8 precision level instead."
-        #     )
+        if self.config.base_model_precision == "fp8-quanto":
+            raise ValueError(
+                f"{self.NAME} does not support fp8-quanto. Please use fp8-torchao or int8 precision level instead."
+            )
         # Disable Compel.
         self.config.disable_compel = True
         if self.config.aspect_bucket_alignment != 64:
@@ -187,38 +178,26 @@ class Wan(VideoModelFoundation):
 
         if self.config.tokenizer_max_length is not None:
             logger.warning(
-                f"-!- {self.NAME} supports a max length of 512 tokens, --tokenizer_max_length is ignored -!-"
+                f"-!- {self.NAME} supports a max length of 226 tokens, --tokenizer_max_length is ignored -!-"
             )
-        self.config.tokenizer_max_length = 512
-        if self.config.model_flavour == "schnell":
-            if (
-                not self.config.flux_fast_schedule
-                and not self.config.i_know_what_i_am_doing
-            ):
-                logger.error(
-                    "Schnell requires --flux_fast_schedule (or --i_know_what_i_am_doing)."
-                )
-                import sys
-
-                sys.exit(1)
-            self.config.tokenizer_max_length = 256
-
-        if self.config.model_flavour == "dev":
-            if self.config.validation_num_inference_steps > 28:
-                logger.warning(
-                    f"{self.NAME} {self.config.model_flavour} expects around 28 or fewer inference steps. Consider limiting --validation_num_inference_steps to 28."
-                )
-            if self.config.validation_num_inference_steps < 15:
-                logger.warning(
-                    f"{self.NAME} {self.config.model_flavour} expects around 15 or more inference steps. Consider increasing --validation_num_inference_steps to 15."
-                )
-        if (
-            self.config.model_flavour == "schnell"
-            and self.config.validation_num_inference_steps > 4
-        ):
+        self.config.tokenizer_max_length = 226
+        if self.config.validation_num_inference_steps > 50:
             logger.warning(
-                "Flux Schnell requires fewer inference steps. Consider reducing --validation_num_inference_steps to 4."
+                f"{self.NAME} {self.config.model_flavour} may be wasting compute with more than 50 steps. Consider reducing the value to save time."
             )
+        if self.config.validation_num_inference_steps < 40:
+            logger.warning(
+                f"{self.NAME} {self.config.model_flavour} expects around 40 or more inference steps. Consider increasing --validation_num_inference_steps to 40."
+            )
+        if not self.config.validation_disable_unconditional:
+            logger.info("Disabling unconditional validation to save on time.")
+            self.config.validation_disable_unconditional = True
+
+        if self.config.framerate is None:
+            self.config.framerate = 15
+
+        self.config.vae_enable_tiling = True
+        self.config.vae_enable_slicing = True
 
     def custom_model_card_schedule_info(self):
         output_args = []
