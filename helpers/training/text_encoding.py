@@ -211,7 +211,6 @@ def determine_te_path_subfolder(args):
     else:
         # sdxl and sd3 use the sd 1.5 clip-L/14 as number one.
         # sd2.x uses openclip vit-H/14
-        logger.info("Load CLIP text encoder..")
         text_encoder_path = args.pretrained_model_name_or_path
         text_encoder_subfolder = "text_encoder"
 
