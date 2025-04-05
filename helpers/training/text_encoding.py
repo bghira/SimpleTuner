@@ -243,7 +243,6 @@ def load_tes(
             logger.info(
                 f"Loading ChatGLM language model from {text_encoder_path}/{text_encoder_subfolder}.."
             )
-            text_encoder_variant = "fp16"
         else:
             logger.info(
                 f"Loading CLIP text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
