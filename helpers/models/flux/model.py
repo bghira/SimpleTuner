@@ -52,6 +52,7 @@ class Flux(ImageModelFoundation):
     DEFAULT_MODEL_FLAVOUR = "dev"
     HUGGINGFACE_PATHS = {
         "dev": "black-forest-labs/flux.1-dev",
+        "schnell": "black-forest-labs/flux.1-schnell",
     }
     MODEL_LICENSE = "other"
 
@@ -277,11 +278,6 @@ class Flux(ImageModelFoundation):
         #     raise ValueError(
         #         f"{self.NAME} does not support fp8-quanto. Please use fp8-torchao or int8 precision level instead."
         #     )
-        if self.config.tokenizer_max_length is not None:
-            self.config.tokenizer_max_length = 512
-            logger.warning(
-                f"-!- {self.NAME} supports a max length of 512 tokens, --tokenizer_max_length is ignored -!-"
-            )
         # Disable Compel.
         self.config.disable_compel = True
         if self.config.aspect_bucket_alignment != 64:
@@ -294,6 +290,36 @@ class Flux(ImageModelFoundation):
             logger.warning(
                 f"{self.NAME} does not support prediction type {self.config.prediction_type}."
             )
+
+        if self.config.tokenizer_max_length is not None:
+            logger.warning(
+                f"-!- {self.NAME} supports a max length of 512 tokens, --tokenizer_max_length is ignored -!-"
+            )
+        self.config.tokenizer_max_length = 512
+        if self.config.model_flavour == "schnell":
+            if not self.config.flux_fast_schedule and not self.config.i_know_what_i_am_doing:
+                logger.error(
+                    "Schnell requires --flux_fast_schedule (or --i_know_what_i_am_doing)."
+                )
+                import sys
+
+                sys.exit(1)
+            self.config.tokenizer_max_length = 256
+
+        if self.config.model_flavour == "dev":
+            if self.config.validation_num_inference_steps > 28:
+                logger.warning(
+                    f"{self.NAME} {self.config.model_flavour} expects around 28 or fewer inference steps. Consider limiting --validation_num_inference_steps to 28."
+                )
+            if self.config.validation_num_inference_steps < 15:
+                logger.warning(
+                    f"{self.NAME} {self.config.model_flavour} expects around 15 or more inference steps. Consider increasing --validation_num_inference_steps to 15."
+                )
+        if self.config.model_flavour == "schnell" and self.config.validation_num_inference_steps > 4:
+            logger.warning(
+                "Flux Schnell requires fewer inference steps. Consider reducing --validation_num_inference_steps to 4."
+            )
+
 
     def custom_model_card_schedule_info(self):
         output_args = []
@@ -319,9 +345,9 @@ class Flux(ImageModelFoundation):
         if self.config.t5_padding != "unmodified":
             output_args.append(f"t5_padding={self.config.t5_padding}")
         if (
-            args.model_type == "lora"
-            and args.lora_type == "standard"
-            and args.flux_lora_target is not None
+            self.config.model_type == "lora"
+            and self.config.lora_type == "standard"
+            and self.config.flux_lora_target is not None
         ):
             output_args.append(f"flux_lora_target={self.config.flux_lora_target}")
         output_str = (
