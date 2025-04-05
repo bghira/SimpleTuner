@@ -537,12 +537,11 @@ def get_argument_parser():
     parser.add_argument(
         "--prediction_type",
         type=str,
-        default="epsilon",
-        choices=["epsilon", "v_prediction", "sample"],
+        default=None,
+        choices=["epsilon", "v_prediction", "sample", "flow_matching"],
         help=(
-            "The type of prediction to use for the u-net. Choose between ['epsilon', 'v_prediction', 'sample']."
-            " For SD 2.1-v, this is v_prediction. For 2.1-base, it is epsilon. SDXL is generally epsilon."
-            " SD 1.5 is epsilon."
+            "For models which support it, you can supply this value to override the prediction type. Choose between ['epsilon', 'v_prediction', 'sample', 'flow_matching']."
+            " This may be needed for some SDXL derivatives that are trained using v_prediction or flow_matching."
         ),
     )
     parser.add_argument(
@@ -1978,11 +1977,6 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
-        "--enable_xformers_memory_efficient_attention",
-        action="store_true",
-        help="Whether or not to use xformers. Deprecated and slated for future removal. Use --attention_mechanism.",
-    )
-    parser.add_argument(
         "--set_grads_to_none",
         action="store_true",
         help=(
@@ -2777,13 +2771,6 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             raise
     elif args.sana_complex_human_instruction == "None":
         args.sana_complex_human_instruction = None
-
-    if args.enable_xformers_memory_efficient_attention:
-        if args.attention_mechanism != "xformers":
-            warning_log(
-                "The option --enable_xformers_memory_efficient_attention is deprecated. Please use --attention_mechanism=xformers instead."
-            )
-            args.attention_mechanism = "xformers"
 
     if args.attention_mechanism != "diffusers" and not torch.cuda.is_available():
         warning_log(
