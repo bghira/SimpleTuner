@@ -18,6 +18,25 @@ from helpers.training.optimizer_param import (
     map_deprecated_optimizer_parameter,
     optimizer_choices,
 )
+from helpers.models.all import (
+    model_families,
+    get_model_flavour_choices,
+    get_all_model_flavours,
+)
+
+model_family_choices = list(model_families.keys())
+model_families_to_refactor = [
+    "pixart_sigma",
+    "sana",
+    "kolors",
+    "flux",
+    "smoldit",
+    "sdxl",
+    "ltxvideo",
+    "wan",
+    "legacy",
+]
+model_family_choices += model_families_to_refactor
 
 logger = logging.getLogger("ArgsParser")
 # Are we the primary process?
@@ -86,21 +105,22 @@ def get_argument_parser():
     )
     parser.add_argument(
         "--model_family",
-        choices=[
-            "pixart_sigma",
-            "sana",
-            "kolors",
-            "sd3",
-            "flux",
-            "smoldit",
-            "sdxl",
-            "ltxvideo",
-            "wan",
-            "legacy",
-        ],
+        choices=model_family_choices,
         default=None,
         required=True,
         help=("The model family to train. This option is required."),
+    )
+    parser.add_argument(
+        "--model_flavour",
+        default=None,
+        required=False,
+        choices=get_all_model_flavours(),
+        type=str,
+        help=(
+            "Certain models require designating a given flavour to reference configurations from."
+            " The value for this depends on the model that is selected."
+            f" Currently supported values:{get_model_flavour_choices()}"
+        ),
     )
     parser.add_argument(
         "--model_type",
@@ -108,10 +128,6 @@ def get_argument_parser():
         choices=[
             "full",
             "lora",
-            "deepfloyd-full",
-            "deepfloyd-lora",
-            "deepfloyd-stage2",
-            "deepfloyd-stage2-lora",
         ],
         default="full",
         help=(
@@ -362,18 +378,6 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
-        "--flow_matching_loss",
-        type=str,
-        choices=["diffusers", "compatible", "diffusion", "sd35"],
-        default="compatible",
-        help=(
-            "A discrepancy exists between the Diffusers implementation of flow matching and the minimal implementation provided"
-            " by StabilityAI. This experimental option allows switching loss calculations to be compatible with those."
-            " Additionally, 'diffusion' is offered as an option to reparameterise a model to v_prediction loss."
-            " sd35 provides the ability to train on SD3.5's flow-matching target, which is the denoised sample."
-        ),
-    )
-    parser.add_argument(
         "--sd3_clip_uncond_behaviour",
         type=str,
         choices=["empty_string", "zero"],
@@ -481,7 +485,6 @@ def get_argument_parser():
         "--pretrained_model_name_or_path",
         type=str,
         default=None,
-        required=True,
         help=(
             "Path to pretrained model or model identifier from huggingface.co/models."
             " Some model architectures support loading single-file .safetensors directly."
@@ -534,12 +537,11 @@ def get_argument_parser():
     parser.add_argument(
         "--prediction_type",
         type=str,
-        default="epsilon",
-        choices=["epsilon", "v_prediction", "sample"],
+        default=None,
+        choices=["epsilon", "v_prediction", "sample", "flow_matching"],
         help=(
-            "The type of prediction to use for the u-net. Choose between ['epsilon', 'v_prediction', 'sample']."
-            " For SD 2.1-v, this is v_prediction. For 2.1-base, it is epsilon. SDXL is generally epsilon."
-            " SD 1.5 is epsilon."
+            "For models which support it, you can supply this value to override the prediction type. Choose between ['epsilon', 'v_prediction', 'sample', 'flow_matching']."
+            " This may be needed for some SDXL derivatives that are trained using v_prediction or flow_matching."
         ),
     )
     parser.add_argument(
@@ -640,6 +642,7 @@ def get_argument_parser():
         help=(
             "When using `--timestep_bias_strategy=range`, the final timestep to bias."
             " Defaults to 1000, which is the number of timesteps that SDXL Base and SD 2.x were trained on."
+            " Just to throw a wrench into the works, Kolors was trained on 1100 timesteps."
         ),
     )
     parser.add_argument(
@@ -1067,7 +1070,7 @@ def get_argument_parser():
             "When training diffusion models, the image sizes generally must align to a 64 pixel interval."
             " This is an exception when training models like DeepFloyd that use a base resolution of 64 pixels,"
             " as aligning to 64 pixels would result in a 1:1 or 2:1 aspect ratio, overly distorting images."
-            " For DeepFloyd, this value is set to 8, but all other training defaults to 64. You may experiment"
+            " For DeepFloyd, this value is set to 32, but all other training defaults to 64. You may experiment"
             " with this value, but it is not recommended."
         ),
     )
@@ -1108,15 +1111,18 @@ def get_argument_parser():
         action="store_true",
         help="(SD 2.x only) Whether to train the text encoder. If set, the text encoder should be float32 precision.",
     )
-    # DeepFloyd
     parser.add_argument(
         "--tokenizer_max_length",
         type=int,
         default=None,
         required=False,
-        help="The maximum length of the tokenizer. If not set, will default to the tokenizer's max length.",
+        help=(
+            "The maximum sequence length of the tokenizer output, which defines the sequence length of text embed outputs."
+            " If not set, will default to the tokenizer's max length. Unfortunately, this option only applies to T5 models, and"
+            " due to the biases inducted by sequence length, changing it will result in potentially catastrophic model collapse."
+            " This option causes poor training results. This is normal, and can be expected from changing this value."
+        ),
     )
-    # End DeepFloyd-specific settings
     parser.add_argument(
         "--train_batch_size",
         type=int,
@@ -1206,6 +1212,12 @@ def get_argument_parser():
         action="store_true",
         default=False,
         help="Scale the learning rate by the number of GPUs, gradient accumulation steps, and batch size.",
+    )
+    parser.add_argument(
+        "--lr_scale_sqrt",
+        action="store_true",
+        default=False,
+        help="If using --lr-scale, use the square root of (number of GPUs * gradient accumulation steps * batch size).",
     )
     parser.add_argument(
         "--lr_scheduler",
@@ -1966,11 +1978,6 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
-        "--enable_xformers_memory_efficient_attention",
-        action="store_true",
-        help="Whether or not to use xformers. Deprecated and slated for future removal. Use --attention_mechanism.",
-    )
-    parser.add_argument(
         "--set_grads_to_none",
         action="store_true",
         help=(
@@ -2004,7 +2011,7 @@ def get_argument_parser():
         "--validation_guidance_real",
         type=float,
         default=1.0,
-        help="Use real CFG sampling for Flux validation images. Default: 1.0 (no CFG)",
+        help="Use real CFG sampling for distilled models. Default: 1.0 (no CFG)",
     )
     parser.add_argument(
         "--validation_no_cfg_until_timestep",
@@ -2451,16 +2458,6 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         )
         info_log(f"Default VAE Cache location: {args.cache_dir_vae}")
         info_log(f"Text Cache location: {args.cache_dir_text}")
-    if args.model_family == "sd3":
-        warning_log(
-            "MM-DiT requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
-        )
-        args.aspect_bucket_alignment = 64
-        if args.sd3_t5_uncond_behaviour is None:
-            args.sd3_t5_uncond_behaviour = args.sd3_clip_uncond_behaviour
-        info_log(
-            f"SD3 embeds for unconditional captions: t5={args.sd3_t5_uncond_behaviour}, clip={args.sd3_clip_uncond_behaviour}"
-        )
 
     elif "deepfloyd" in args.model_type:
         deepfloyd_pixel_alignment = 8
@@ -2516,30 +2513,15 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if args.metadata_update_interval < 60:
         raise ValueError("Metadata update interval must be at least 60 seconds.")
 
-    if args.model_family == "sd3":
-        args.pretrained_vae_model_name_or_path = None
-        args.disable_compel = True
+    args.vae_path = (
+        args.pretrained_model_name_or_path
+        if args.pretrained_vae_model_name_or_path is None
+        else args.pretrained_vae_model_name_or_path
+    )
 
-    t5_max_length = 154
-    if args.model_family == "sd3" and (
-        args.tokenizer_max_length is None
-        or int(args.tokenizer_max_length) > t5_max_length
-    ):
-        if not args.i_know_what_i_am_doing:
-            warning_log(
-                f"Updating T5 XXL tokeniser max length to {t5_max_length} for SD3."
-            )
-            args.tokenizer_max_length = t5_max_length
-        else:
-            warning_log(
-                f"-!- SD3 supports a max length of {t5_max_length} tokens, but you have supplied `--i_know_what_i_am_doing`, so this limit will not be enforced. -!-"
-            )
-            warning_log(
-                f"The model will begin to collapse after a short period of time, if the model you are continuing from has not been tuned beyond {t5_max_length} tokens."
-            )
     flux_version = "dev"
     model_max_seq_length = 512
-    if (
+    if args.pretrained_model_name_or_path is not None and (
         "schnell" in args.pretrained_model_name_or_path.lower()
         or args.flux_fast_schedule
     ):
@@ -2587,16 +2569,6 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             warning_log(
                 "Flux Schnell requires fewer inference steps. Consider reducing --validation_num_inference_steps to 4."
             )
-
-        if args.flux_guidance_mode == "mobius":
-            warning_log(
-                "Mobius training is only for the most elite. Pardon my English, but this is not for those who don't like to destroy something beautiful every now and then. If you feel perhaps this is not for you, please consider using a different guidance mode."
-            )
-            if args.flux_guidance_min < 1.0:
-                warning_log(
-                    "Flux minimum guidance value for Mobius training is 1.0. Updating value.."
-                )
-                args.flux_guidance_min = 1.0
 
     if args.use_ema and args.ema_cpu_only:
         args.ema_device = "cpu"
@@ -2740,8 +2712,8 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             f"Invalid gradient_accumulation_steps parameter: {args.gradient_accumulation_steps}, should be >= 1"
         )
 
-    if args.base_model_precision == 'fp8-quanto':
-        if args.model_family in ['wan', 'sd3']:
+    if args.base_model_precision == "fp8-quanto":
+        if args.model_family in ["wan", "sd3"]:
             error_log(
                 "Quanto does not support WAN or SD3 models for FP8. Please use torchao for FP8, or int8 instead."
             )
@@ -2790,13 +2762,6 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             raise
     elif args.sana_complex_human_instruction == "None":
         args.sana_complex_human_instruction = None
-
-    if args.enable_xformers_memory_efficient_attention:
-        if args.attention_mechanism != "xformers":
-            warning_log(
-                "The option --enable_xformers_memory_efficient_attention is deprecated. Please use --attention_mechanism=xformers instead."
-            )
-            args.attention_mechanism = "xformers"
 
     if args.attention_mechanism != "diffusers" and not torch.cuda.is_available():
         warning_log(

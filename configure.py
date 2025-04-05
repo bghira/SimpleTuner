@@ -25,8 +25,9 @@ model_classes = {
         "ltxvideo",
         "wan",
         "sana",
+        "deepfloyd",
     ],
-    "lora": ["flux", "sdxl", "kolors", "sd3", "legacy", "ltxvideo", "wan"],
+    "lora": ["flux", "sdxl", "kolors", "sd3", "legacy", "ltxvideo", "wan", "deepfloyd"],
     "controlnet": ["sdxl", "legacy"],
 }
 

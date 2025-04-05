@@ -15,7 +15,6 @@
 import inspect
 import PIL
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
-from helpers.training.state_tracker import StateTracker
 from diffusers.callbacks import PipelineCallback, MultiPipelineCallbacks
 import torch
 from transformers import (
@@ -275,6 +274,7 @@ class StableDiffusionXLPipeline(
         feature_extractor: CLIPImageProcessor = None,
         force_zeros_for_empty_prompt: bool = True,
         add_watermarker: Optional[bool] = None,
+        validation_refiner_aesthetic_score: Optional[int] = 5,
     ):
         super().__init__()
 
@@ -292,10 +292,14 @@ class StableDiffusionXLPipeline(
         self.register_to_config(
             force_zeros_for_empty_prompt=force_zeros_for_empty_prompt
         )
+        self.validation_refiner_aesthetic_score = validation_refiner_aesthetic_score
         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
         self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor)
 
-        self.default_sample_size = self.unet.config.sample_size
+        if self.unet is not None:
+            self.default_sample_size = self.unet.config.sample_size
+        else:
+            self.default_sample_size = 128
 
         add_watermarker = (
             add_watermarker
@@ -872,11 +876,11 @@ class StableDiffusionXLPipeline(
         dtype,
         text_encoder_projection_dim=None,
     ):
-        if StateTracker.is_sdxl_refiner():
+        if self.unet.config.cross_attention_dim == 1280:
             add_time_ids = list(
                 original_size
                 + crops_coords_top_left
-                + (StateTracker.get_args().data_aesthetic_score,)
+                + (self.validation_refiner_aesthetic_score,)
             )
         else:
             add_time_ids = list(original_size + crops_coords_top_left + target_size)

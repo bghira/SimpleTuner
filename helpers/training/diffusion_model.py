@@ -1,6 +1,6 @@
 import os
 from accelerate.logging import get_logger
-from helpers.models import get_model_config_path
+from helpers.models.common import get_model_config_path
 
 logger = get_logger(__name__, log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
@@ -38,22 +38,7 @@ def load_diffusion_model(args, weight_dtype):
             bnb_4bit_compute_dtype=weight_dtype,
         )
 
-    if args.model_family == "sd3":
-        # Stable Diffusion 3 uses a Diffusion transformer.
-        logger.info("Loading Stable Diffusion 3 diffusion transformer..")
-        try:
-            from helpers.models.sd3.transformer import SD3Transformer2DModel
-        except Exception as e:
-            logger.error(
-                f"Can not load SD3 model class. This release requires the latest version of Diffusers: {e}"
-            )
-        transformer = SD3Transformer2DModel.from_pretrained(
-            args.pretrained_transformer_model_name_or_path
-            or args.pretrained_model_name_or_path,
-            subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
-            **pretrained_load_args,
-        )
-    elif args.model_family == "ltxvideo":
+    if args.model_family == "ltxvideo":
         # LTXVideo uses a Diffusion transformer.
         logger.info("Loading LTX Video diffusion transformer..")
         try:
@@ -180,31 +165,11 @@ def load_diffusion_model(args, weight_dtype):
         transformer = SmolDiT2DModel(**SmolDiTConfigurations[args.smoldit_config])
         if "lora" in args.model_type:
             raise ValueError("SmolDiT does not yet support LoRA training.")
-    elif args.model_family == "sana":
-        from helpers.models.sana.transformer import SanaTransformer2DModel
-
-        logger.info("Loading Sana flow-matching diffusion transformer..")
-        transformer_load_fn = SanaTransformer2DModel.from_pretrained
-        if pretrained_transformer_path.lower().endswith(".safetensors"):
-            # transformer_load_fn = SanaTransformer2DModel.from_single_file
-            raise ValueError("Sana does not support single file loading.")
-
-        transformer = transformer_load_fn(
-            pretrained_transformer_path,
-            subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
-            **pretrained_load_args,
-        )
     else:
         from diffusers import UNet2DConditionModel
 
         logger.info("Loading U-net..")
         unet_variant = args.variant
-        if (
-            args.model_family == "kolors"
-            and args.pretrained_model_name_or_path.lower()
-            == "kwai-kolors/kolors-diffusers"
-        ):
-            unet_variant = "fp16"
         pretrained_load_args["variant"] = unet_variant
         unet_load_fn = UNet2DConditionModel.from_pretrained
         pretrained_unet_path = (

@@ -1,5 +1,5 @@
 """
-Different versions appeared, 
+Different versions appeared,
 they have identical interface, but sutiable for different scenarios.
 """
 

@@ -273,7 +273,7 @@ class MetadataBackend:
             desc="Generating aspect bucket cache",
             total=len(new_files),
             leave=False,
-            ncols=100,
+            ncols=125,
             miniters=int(len(new_files) / 100),
         ) as pbar:
             if self.should_abort:
@@ -850,7 +850,7 @@ class MetadataBackend:
             desc="Scanning image metadata",
             total=len(new_files),
             leave=False,
-            ncols=100,
+            ncols=125,
         ) as pbar:
             while any(worker.is_alive() for worker in workers):
                 while not tqdm_queue.empty():

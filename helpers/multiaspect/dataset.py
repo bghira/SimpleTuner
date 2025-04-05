@@ -59,7 +59,7 @@ class MultiAspectDataset(Dataset):
                         raise ValueError(
                             f"Aspect ratios must be the same for all images in a batch. Expected: {first_aspect_ratio}, got: {calculated_aspect_ratio}"
                         )
-                if "deepfloyd" not in StateTracker.get_args().model_type and (
+                if "deepfloyd" not in StateTracker.get_args().model_family and (
                     image_metadata["original_size"] is None
                     or image_metadata["target_size"] is None
                 ):

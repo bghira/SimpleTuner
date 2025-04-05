@@ -1,7 +1,7 @@
 from transformers import PretrainedConfig
 import os
 from accelerate.logging import get_logger
-from helpers.models import get_model_config_path
+from helpers.models.common import get_model_config_path
 from .state_tracker import StateTracker
 
 logger = get_logger(__name__, log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -86,19 +86,6 @@ def get_tokenizers(args):
                 # this one specifically seems to need the non-fast tokeniser
                 tokenizer_cls = T5Tokenizer
             is_t5_model = True
-        elif args.model_family == "sana":
-            from transformers import Gemma2Model, GemmaTokenizerFast
-
-            tokenizer_cls = GemmaTokenizerFast
-            is_t5_model = False
-            tokenizer_1 = tokenizer_cls.from_pretrained(
-                get_model_config_path(
-                    args.model_family, args.pretrained_model_name_or_path
-                ),
-                subfolder="tokenizer",
-                revision=args.revision,
-                use_fast=False,
-            )
         elif args.model_family.lower() == "kolors":
             from diffusers.pipelines.kolors.tokenizer import ChatGLMTokenizer
 
@@ -224,7 +211,6 @@ def determine_te_path_subfolder(args):
     else:
         # sdxl and sd3 use the sd 1.5 clip-L/14 as number one.
         # sd2.x uses openclip vit-H/14
-        logger.info("Load CLIP text encoder..")
         text_encoder_path = args.pretrained_model_name_or_path
         text_encoder_subfolder = "text_encoder"
 
@@ -256,11 +242,6 @@ def load_tes(
         elif args.model_family.lower() == "kolors":
             logger.info(
                 f"Loading ChatGLM language model from {text_encoder_path}/{text_encoder_subfolder}.."
-            )
-            text_encoder_variant = "fp16"
-        elif args.model_family.lower() == "sana":
-            logger.info(
-                f"Loading Gemma2 language model from {text_encoder_path}/{text_encoder_subfolder}.."
             )
         else:
             logger.info(

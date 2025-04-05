@@ -1352,7 +1352,10 @@ class KolorsPipeline(
         )
         self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor)
 
-        self.default_sample_size = self.unet.config.sample_size
+        if self.unet is None:
+            self.default_sample_size = 128
+        else:
+            self.default_sample_size = self.unet.config.sample_size
 
     def encode_prompt(
         self,
