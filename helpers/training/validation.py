@@ -247,7 +247,7 @@ def prepare_validation_prompt_list(args, embed_cache, model):
             # Collect the prompts for the validation images.
             for _validation_sample in tqdm(
                 validation_sample_images,
-                ncols=100,
+                ncols=125,
                 desc="Precomputing validation image embeds",
             ):
                 _, validation_prompt, _ = _validation_sample
@@ -264,7 +264,7 @@ def prepare_validation_prompt_list(args, embed_cache, model):
         for shortname, prompt in tqdm(
             prompt_library.items(),
             leave=False,
-            ncols=100,
+            ncols=125,
             desc="Precomputing validation prompt embeddings",
         ):
             embed_cache.compute_embeddings_for_prompts(
@@ -278,7 +278,7 @@ def prepare_validation_prompt_list(args, embed_cache, model):
         for shortname, prompt in tqdm(
             user_prompt_library.items(),
             leave=False,
-            ncols=100,
+            ncols=125,
             desc="Precomputing user prompt library embeddings",
         ):
             # move_text_encoders(embed_cache.text_encoders, embed_cache.accelerator.device)
@@ -888,6 +888,9 @@ class Validation:
 
         if self.config.validation_noise_scheduler is None:
             return
+
+        if self.config.prediction_type is not None:
+            scheduler_args["prediction_type"] = self.config.prediction_type
 
         if (
             self.model.pipeline is not None
@@ -1734,7 +1737,7 @@ class Evaluation:
 
         if pooling:
             # Single pass across ALL eval datasets
-            logger.info("Running a single pooled eval pass across all datasets.")
+            logger.debug("Running a single pooled eval pass across all datasets.")
             pooled_losses = self._evaluate_dataset_pass(
                 dataset_name=None,
                 prepare_batch=prepare_batch,
@@ -1748,7 +1751,7 @@ class Evaluation:
 
         else:
             # Multiple passes: one per dataset
-            logger.info(
+            logger.debug(
                 "Running separate eval passes for each dataset + pooled results."
             )
             accumulated = {}
@@ -1802,7 +1805,7 @@ class Evaluation:
                     data_rows.append((ts, loss_val))
             return data_rows
 
-        logger.info("Generating evaluation tracker tables...")
+        logger.debug("Generating evaluation tracker tables...")
         for ds_name, timestep_dict in all_accumulated_losses.items():
             data_rows = flatten_timestep_losses(timestep_dict)
             if not data_rows:
