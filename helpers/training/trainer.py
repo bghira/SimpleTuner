@@ -27,12 +27,6 @@ from helpers.training.custom_schedule import get_lr_scheduler
 from helpers.training.adapter import determine_adapter_target_modules, load_lora_weights
 from helpers.training.diffusion_model import load_diffusion_model
 from helpers.models.common import get_model_config_path
-from helpers.training.text_encoding import (
-    load_tes,
-    determine_te_path_subfolder,
-    import_model_class_from_model_name_or_path,
-    get_tokenizers,
-)
 from helpers.training.optimizer_param import (
     determine_optimizer_class_with_config,
     determine_params_to_optimize,
@@ -418,14 +412,6 @@ class Trainer:
             logger.error(f"Failed to log into Hugging Face Hub: {e}")
             raise e
 
-    def _set_model_paths(self):
-        self.config.text_encoder_path, self.config.text_encoder_subfolder = (
-            determine_te_path_subfolder(self.config)
-        )
-        self.config.text_encoder_path = get_model_config_path(
-            self.config.model_family, self.config.text_encoder_path
-        )
-
     def init_preprocessing_models(self, move_to_accelerator: bool = True):
         # image embeddings
         self.init_vae(move_to_accelerator=move_to_accelerator)
@@ -455,7 +441,6 @@ class Trainer:
             structured_data={"message": webhook_msg},
             message_type="init_load_base_model_begin",
         )
-        self._set_model_paths()
         self.model.load_model(move_to_device=False)
         self.accelerator.wait_for_everyone()
         self._send_webhook_raw(
