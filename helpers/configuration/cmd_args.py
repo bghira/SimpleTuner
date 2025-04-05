@@ -2462,56 +2462,11 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         else args.pretrained_vae_model_name_or_path
     )
 
-    flux_version = "dev"
-    model_max_seq_length = 512
-    if args.pretrained_model_name_or_path is not None and (
-        "schnell" in args.pretrained_model_name_or_path.lower()
-        or args.flux_fast_schedule
-    ):
-        if not args.flux_fast_schedule and not args.i_know_what_i_am_doing:
-            error_log(
-                "Schnell requires --flux_fast_schedule (or --i_know_what_i_am_doing)."
-            )
-            sys.exit(1)
-        flux_version = "schnell"
-        model_max_seq_length = 256
-
     if args.model_family == "wan":
         args.tokenizer_max_length = 226
     if args.model_family in ["wan", "ltxvideo"]:
         info_log("Disabling unconditional validation to save on time.")
         args.validation_disable_unconditional = True
-
-    if args.model_family == "flux":
-        if (
-            args.tokenizer_max_length is None
-            or int(args.tokenizer_max_length) > model_max_seq_length
-        ):
-            if not args.i_know_what_i_am_doing:
-                warning_log(
-                    f"Updating T5 XXL tokeniser max length to {model_max_seq_length} for Flux."
-                )
-                args.tokenizer_max_length = model_max_seq_length
-            else:
-                warning_log(
-                    f"-!- Flux supports a max length of {model_max_seq_length} tokens, but you have supplied `--i_know_what_i_am_doing`, so this limit will not be enforced. -!-"
-                )
-                warning_log(
-                    f"The model will begin to collapse after a short period of time, if the model you are continuing from has not been tuned beyond 256 tokens."
-                )
-        if flux_version == "dev":
-            if args.validation_num_inference_steps > 28:
-                warning_log(
-                    "Flux Dev expects around 28 or fewer inference steps. Consider limiting --validation_num_inference_steps to 28."
-                )
-            if args.validation_num_inference_steps < 15:
-                warning_log(
-                    "Flux Dev expects around 15 or more inference steps. Consider increasing --validation_num_inference_steps to 15."
-                )
-        if flux_version == "schnell" and args.validation_num_inference_steps > 4:
-            warning_log(
-                "Flux Schnell requires fewer inference steps. Consider reducing --validation_num_inference_steps to 4."
-            )
 
     if args.use_ema and args.ema_cpu_only:
         args.ema_device = "cpu"
