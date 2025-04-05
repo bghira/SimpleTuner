@@ -36,7 +36,7 @@ class TextEmbeddingCache(WebhookMixin):
         accelerator,
         webhook_progress_interval: int = 100,
         cache_dir: str = "cache",
-        model_type: str = "sdxl",
+        model_type: str = None,
         prompt_handler: PromptHandler = None,
         write_batch_size: int = 128,
         read_batch_size: int = 25,
