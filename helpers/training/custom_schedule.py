@@ -350,7 +350,7 @@ class CosineAnnealingHardRestarts(LRScheduler):
         self.eta_min = eta_min
         self.T_cur = last_step
         self.last_step = last_step
-        super().__init__(optimizer, last_step, verbose)
+        super().__init__(optimizer=optimizer, last_epoch=last_step)
 
     def get_lr(self):
         lrs = [
@@ -432,7 +432,7 @@ class Sine(LRScheduler):
         self.verbose = verbose
         self._last_lr = self.base_lrs
         self.total_steps = 0  # Track total steps for a continuous wave
-        super().__init__(optimizer, last_step, verbose)
+        super().__init__(optimizer=optimizer, last_epoch=last_step)
 
     def get_lr(self):
         # Calculate learning rates using a continuous sine function based on total steps
@@ -467,7 +467,7 @@ class Sine(LRScheduler):
 
 
 from diffusers.optimization import get_scheduler
-
+from helpers.models.flux import calculate_shift_flux
 
 def apply_flow_schedule_shift(args, noise_scheduler, sigmas, noise):
     # Resolution-dependent shifting of timestep schedules as per section 5.3.2 of SD3 paper
