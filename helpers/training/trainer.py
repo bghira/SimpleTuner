@@ -84,7 +84,6 @@ import diffusers
 import accelerate
 import transformers
 import torch.nn.functional as F
-import torch.utils.checkpoint
 from accelerate import Accelerator
 from accelerate.utils import set_seed
 from configure import model_classes
@@ -95,9 +94,6 @@ try:
 except:
     print("[ERROR] Lycoris not available. Please install ")
 from tqdm.auto import tqdm
-from transformers import PretrainedConfig, CLIPTokenizer
-from helpers.models.sdxl.pipeline import StableDiffusionXLPipeline
-from diffusers import StableDiffusion3Pipeline
 
 from diffusers import (
     ControlNetModel,
@@ -110,16 +106,12 @@ from diffusers import (
 
 from peft.utils import get_peft_model_state_dict
 from helpers.training.ema import EMAModel
-from helpers.training.exceptions import MultiDatasetExhausted
 from diffusers.utils import (
     check_min_version,
     convert_state_dict_to_diffusers,
-    is_wandb_available,
 )
 from diffusers.utils.import_utils import is_xformers_available
-from transformers.utils import ContextManagers
 
-from helpers.training.custom_schedule import apply_flow_schedule_shift
 from helpers.models.flux import (
     prepare_latent_image_ids,
     pack_latents,
@@ -1089,13 +1081,6 @@ class Trainer:
         )
         self.model.set_prepared_model(results[0])
 
-        if self.config.unet_attention_slice:
-            if torch.backends.mps.is_available():
-                logger.warning(
-                    "Using attention slicing when training SDXL on MPS can result in NaN errors on the first backward pass. If you run into issues, disable this option and reduce your batch size instead to reduce memory consumption."
-                )
-            if self.model.get_trained_component() is not None:
-                self.model.get_trained_component().set_attention_slice("auto")
         self.lr_scheduler = results[1]
         self.optimizer = results[2]
         # The rest of the entries are dataloaders:
@@ -2079,7 +2064,7 @@ class Trainer:
                 #         encoder_hidden_states,
                 #     ).sample
                 # else:
-                #     # SDXL, Kolors, other default unet prediction.
+                #     # Kolors, other default unet prediction.
                 #     model_pred = self.unet(
                 #         noisy_latents,
                 #         timesteps,
