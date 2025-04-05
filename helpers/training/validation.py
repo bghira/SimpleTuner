@@ -541,14 +541,6 @@ class Validation:
             return self.model.PIPELINE_CLASSES[PipelineTypes.CONTROLNET]
         return self.model.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
         # model_type = StateTracker.get_model_family()
-        # if model_type == "sdxl":
-        #     if self.config.controlnet:
-        #         from diffusers.pipelines import StableDiffusionXLControlNetPipeline
-
-        #         return StableDiffusionXLControlNetPipeline
-        #     if self.config.validation_using_datasets:
-        #         return StableDiffusionXLImg2ImgPipeline
-        #     return StableDiffusionXLPipeline
         # elif model_type == "flux":
         #     from helpers.models.flux import FluxPipeline
 
@@ -559,24 +551,6 @@ class Validation:
         #             "Flux inference validation using img2img is not yet supported. Please remove --validation_using_datasets."
         #         )
         #     return FluxPipeline
-        # elif model_type == "kolors":
-        #     if self.config.controlnet:
-        #         raise NotImplementedError("Kolors ControlNet is not yet supported.")
-        #     if self.config.validation_using_datasets:
-        #         try:
-        #             from helpers.models.kolors.pipeline import KolorsImg2ImgPipeline
-        #         except:
-        #             logger.error(
-        #                 "Kolors pipeline requires the latest version of Diffusers."
-        #             )
-        #         return KolorsImg2ImgPipeline
-        #     try:
-        #         from helpers.models.kolors.pipeline import KolorsPipeline
-        #     except Exception:
-        #         logger.error(
-        #             "Kolors pipeline requires the latest version of Diffusers."
-        #         )
-        #     return KolorsPipeline
         # elif model_type == "legacy":
         #     return StableDiffusionPipeline
         # elif model_type == "sd3":

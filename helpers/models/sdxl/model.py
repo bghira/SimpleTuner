@@ -13,6 +13,7 @@ from transformers import (
 from helpers.models.sdxl.pipeline import StableDiffusionXLImg2ImgPipeline, StableDiffusionXLPipeline
 from diffusers import AutoencoderKL, UNet2DConditionModel
 from helpers.training.multi_process import _get_rank
+from diffusers.pipelines import StableDiffusionXLControlNetPipeline
 
 logger = logging.getLogger(__name__)
 logger.setLevel(
@@ -36,6 +37,7 @@ class SDXL(ImageModelFoundation):
     PIPELINE_CLASSES = {
         PipelineTypes.TEXT2IMG: StableDiffusionXLPipeline,
         PipelineTypes.IMG2IMG: StableDiffusionXLImg2ImgPipeline,
+        PipelineTypes.CONTROLNET: StableDiffusionXLControlNetPipeline,
     }
 
     # The default model flavor to use when none is specified.
