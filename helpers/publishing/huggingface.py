@@ -45,7 +45,7 @@ class HubManager:
             f"Trained for {StateTracker.get_epoch() - 1} epochs and {StateTracker.get_global_step()} steps."
             f"\nTrained with datasets {self.collected_data_backend_str}"
             f"\nLearning rate {self.config.learning_rate}, batch size {self.config.train_batch_size}, and {self.config.gradient_accumulation_steps} gradient accumulation steps."
-            f"\nUsed DDPM noise scheduler for training with {self.config.prediction_type} prediction type and rescaled_betas_zero_snr={self.config.rescale_betas_zero_snr}"
+            f"\nTrained with {self.config.prediction_type} prediction type and rescaled_betas_zero_snr={self.config.rescale_betas_zero_snr}"
             f"\nUsing '{self.config.training_scheduler_timestep_spacing}' timestep spacing."
             f"\nBase model: {self.config.pretrained_model_name_or_path}"
             f"{self._vae_string()}"
