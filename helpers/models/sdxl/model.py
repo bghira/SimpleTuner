@@ -255,7 +255,26 @@ class SDXL(ImageModelFoundation):
 
     def custom_model_card_schedule_info(self):
         output_args = []
-
+        if self.config.snr_gamma:
+            output_args.append(f"snr_gamma={self.config.snr_gamma}")
+        if self.config.use_soft_min_snr:
+            output_args.append(f"use_soft_min_snr")
+            if self.config.soft_min_snr_sigma_data:
+                output_args.append(
+                    f"soft_min_snr_sigma_data={self.config.soft_min_snr_sigma_data}"
+                )
+        if self.config.rescale_betas_zero_snr:
+            output_args.append(f"rescale_betas_zero_snr")
+        if self.config.offset_noise:
+            output_args.append(f"offset_noise")
+            output_args.append(f"noise_offset={self.config.noise_offset}")
+            output_args.append(f"noise_offset_probability={self.config.noise_offset_probability}")
+        output_args.append(
+            f"training_scheduler_timestep_spacing={self.config.training_scheduler_timestep_spacing}"
+        )
+        output_args.append(
+            f"inference_scheduler_timestep_spacing={self.config.inference_scheduler_timestep_spacing}"
+        )
         output_str = (
             f" (extra parameters={output_args})"
             if output_args
