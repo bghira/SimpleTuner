@@ -657,9 +657,8 @@ class VAECache(WebhookMixin):
                     single_latent = raw_latents[i : i + 1].squeeze(0)
                     logger.info(f"Adding shape: {single_latent.shape}")
                     latents.append(single_latent)
-            else:
+            elif isinstance(latents_uncached, torch.Tensor):
                 # it seems like sdxl and some others end up here
-                logger.info(f"Received {type(latents_uncached)} latents")
                 cached_idx, uncached_idx = 0, 0
                 for i in range(batch_size):
                     if i in uncached_image_indices:
@@ -671,6 +670,10 @@ class VAECache(WebhookMixin):
                     else:
                         latents.append(self._read_from_storage(full_filenames[i]))
                         cached_idx += 1
+            else:
+                raise ValueError(
+                    f"Unknown handler for latent encoding type: {type(latents_uncached)}"
+                )
         return latents
 
     def _write_latents_in_batch(self, input_latents: list = None):
