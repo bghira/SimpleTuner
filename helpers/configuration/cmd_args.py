@@ -642,6 +642,7 @@ def get_argument_parser():
         help=(
             "When using `--timestep_bias_strategy=range`, the final timestep to bias."
             " Defaults to 1000, which is the number of timesteps that SDXL Base and SD 2.x were trained on."
+            " Just to throw a wrench into the works, Kolors was trained on 1100 timesteps."
         ),
     )
     parser.add_argument(
