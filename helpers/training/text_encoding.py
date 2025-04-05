@@ -60,133 +60,14 @@ def import_model_class_from_model_name_or_path(
 
 def get_tokenizers(args):
     tokenizer_1, tokenizer_2, tokenizer_3 = None, None, None
-    try:
-        if args.model_family.lower() == "smoldit":
-            from transformers import AutoTokenizer
+    if args.model_family.lower() == "smoldit":
+        from transformers import AutoTokenizer
 
-            tokenizer_1 = AutoTokenizer.from_pretrained(
-                "EleutherAI/pile-t5-base", pad_token="[PAD]"
-            )
-            return tokenizer_1, tokenizer_2, tokenizer_3
-
-        tokenizer_kwargs = {
-            "pretrained_model_name_or_path": get_model_config_path(
-                args.model_family, args.pretrained_model_name_or_path
-            ),
-            "subfolder": "tokenizer",
-            "revision": args.revision,
-        }
-        is_t5_model = False
-        # T5-only models
-        if args.model_family.lower() in t5_only_models:
-            from transformers import T5TokenizerFast, T5Tokenizer
-
-            tokenizer_cls = T5TokenizerFast
-            if args.model_family.lower() == "ltxvideo":
-                # this one specifically seems to need the non-fast tokeniser
-                tokenizer_cls = T5Tokenizer
-            is_t5_model = True
-        elif args.model_family.lower() == "kolors":
-            from diffusers.pipelines.kolors.tokenizer import ChatGLMTokenizer
-
-            tokenizer_cls = ChatGLMTokenizer
-            tokenizer_1 = tokenizer_cls.from_pretrained(
-                get_model_config_path(
-                    args.model_family, args.pretrained_model_name_or_path
-                ),
-                subfolder="tokenizer",
-                revision=args.revision,
-                use_fast=False,
-            )
-        else:
-            from transformers import CLIPTokenizer
-
-            tokenizer_1 = CLIPTokenizer.from_pretrained(**tokenizer_kwargs)
-
-        if is_t5_model:
-            text_encoder_path = (
-                args.pretrained_t5_model_name_or_path
-                if args.pretrained_t5_model_name_or_path is not None
-                else get_model_config_path(
-                    args.model_family, args.pretrained_model_name_or_path
-                )
-            )
-            logger.info(
-                f"Tokenizer path: {text_encoder_path}, custom T5 model path: {args.pretrained_t5_model_name_or_path} revision: {args.revision}"
-            )
-            try:
-                tokenizer_1 = tokenizer_cls.from_pretrained(
-                    text_encoder_path,
-                    subfolder="tokenizer",
-                    revision=args.revision,
-                    use_fast=False,
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Failed to load tokenizer 1: {e}, attempting no subfolder"
-                )
-                tokenizer_1 = tokenizer_cls.from_pretrained(
-                    text_encoder_path,
-                    subfolder=None,
-                    revision=args.revision,
-                    use_fast=False,
-                )
-    except Exception as e:
-        import traceback
-
-        logger.warning(
-            "Primary tokenizer (CLIP-L/14) failed to load. Continuing to test whether we have just the secondary tokenizer.."
-            f"\nError: -> {e}"
-            f"\nTraceback: {traceback.format_exc()}"
+        tokenizer_1 = AutoTokenizer.from_pretrained(
+            "EleutherAI/pile-t5-base", pad_token="[PAD]"
         )
-        if args.model_family in ["sd3"]:
-            raise e
+        return tokenizer_1, tokenizer_2, tokenizer_3
 
-    from transformers import T5TokenizerFast
-
-    if args.model_family in models_with_two_text_encoders:
-        try:
-            tokenizer_2_cls = CLIPTokenizer
-            if args.model_family.lower() in ["flux"]:
-                tokenizer_2_cls = T5TokenizerFast
-            tokenizer_2 = tokenizer_2_cls.from_pretrained(
-                args.pretrained_model_name_or_path,
-                subfolder="tokenizer_2",
-                revision=args.revision,
-                use_fast=False,
-            )
-            if tokenizer_1 is None:
-                logger.info("Seems that we are training an SDXL refiner model.")
-                StateTracker.is_sdxl_refiner(True)
-                if args.validation_using_datasets is None:
-                    logger.warning(
-                        "Since we are training the SDXL refiner and --validation_using_datasets was not specified, it is now being enabled."
-                    )
-                    args.validation_using_datasets = True
-        except Exception as e:
-            logger.warning(
-                f"Could not load secondary tokenizer ({'OpenCLIP-G/14' if args.model_family != 'flux' else 'T5 XXL'}). Cannot continue: {e}"
-            )
-            if args.model_family in ["flux", "sd3"]:
-                raise e
-        if not tokenizer_1 and not tokenizer_2:
-            raise Exception("Failed to load tokenizer")
-    else:
-        if not tokenizer_1:
-            raise Exception("Failed to load tokenizer")
-
-    if args.model_family == "sd3":
-        try:
-            tokenizer_3 = T5TokenizerFast.from_pretrained(
-                args.pretrained_model_name_or_path,
-                subfolder="tokenizer_3",
-                revision=args.revision,
-                use_fast=True,
-            )
-        except:
-            raise ValueError(
-                "Could not load tertiary tokenizer (T5-XXL v1.1). Cannot continue."
-            )
     return tokenizer_1, tokenizer_2, tokenizer_3
 
 
