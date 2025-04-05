@@ -3,8 +3,9 @@ from helpers.models.deepfloyd.model import DeepFloydIF
 from helpers.models.sana.model import Sana
 from helpers.models.sdxl.model import SDXL
 from helpers.models.kolors.model import Kolors
+from helpers.models.flux.model import Flux
 
-model_families = {"sd3": SD3, "deepfloyd": DeepFloydIF, "sana": Sana, "sdxl": SDXL, "kolors": Kolors}
+model_families = {"sd3": SD3, "deepfloyd": DeepFloydIF, "sana": Sana, "sdxl": SDXL, "kolors": Kolors, "flux": Flux}
 
 
 def get_all_model_flavours() -> list:
