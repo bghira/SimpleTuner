@@ -104,7 +104,7 @@ However, if you do wish to train DeepFloyd, it requires the use of the `model_fl
 - The `model_family` is deepfloyd
 - The `model_flavour` is pointing to Stage I or II
 - `resolution` is now `64` and `resolution_type` is `pixel`
-- `use_xformers_memory_efficient_attention` can be set to `true`, but AMD and Apple users won't be able to set this, requiring more VRAM.
+- `attention_mechanism` can be set to `xformers`, but AMD and Apple users won't be able to set this, requiring more VRAM.
   - **Note** ~~Apple MPS currently has a bug preventing DeepFloyd tuning from working at all.~~ As of Pytorch 2.6 or sometime earlier, stage I and II both train on Apple MPS.
 
 For more thorough validations, the value for `validation_resolution` can be set as:
