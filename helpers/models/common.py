@@ -73,6 +73,18 @@ class PredictionTypes(Enum):
     V_PREDICTION = "v_prediction"
     FLOW_MATCHING = "flow_matching"
 
+    @staticmethod
+    def from_str(label):
+        if label in ('eps', 'epsilon'):
+            return PredictionTypes.EPSILON
+        elif label in ('vpred', 'v_prediction', 'v-prediction'):
+            return PredictionTypes.V_PREDICTION
+        elif label in ('sample', 'x_prediction', 'x-prediction'):
+            return PredictionTypes.SAMPLE
+        elif label in ('flow', 'flow_matching', 'flow-matching'):
+            return PredictionTypes.FLOW_MATCHING
+        else:
+            raise NotImplementedError
 
 class ModelTypes(Enum):
     UNET = "unet"
@@ -538,6 +550,17 @@ class ModelFoundation(ABC):
         )
         if move_to_device and self.model is not None:
             self.model.to(self.accelerator.device, dtype=self.config.weight_dtype)
+        self.post_model_load_setup()
+
+    def post_model_load_setup(self):
+        """
+        Post model load setup.
+
+        This is a stub and can be optionally implemented in subclasses for eg. updating configuration settings
+        based on the loaded model weights. SDXL uses this to update the user config to reflect refiner training.
+
+        """
+        pass
 
     def set_prepared_model(self, model):
         # after accelerate prepare, we'll set the model again.
@@ -614,7 +637,7 @@ class ModelFoundation(ABC):
         if self.config.controlnet:
             pipeline_kwargs["controlnet"] = unwrap_model(self.accelerator, self.model)
 
-        logger.info(
+        logger.debug(
             f"Initialising {pipeline_class.__name__} with components: {list(pipeline_kwargs.keys())}"
         )
         self.pipeline = pipeline_class.from_pretrained(
@@ -662,7 +685,8 @@ class ModelFoundation(ABC):
                 rescale_betas_zero_snr=self.config.rescale_betas_zero_snr,
                 timestep_spacing=self.config.training_scheduler_timestep_spacing,
             )
-            self.config.prediction_type = self.noise_schedule.config.prediction_type
+            if self.config.prediction_type is None:
+                self.config.prediction_type = self.noise_schedule.config.prediction_type
         else:
             raise NotImplementedError(
                 f"Unknown prediction type {self.PREDICTION_TYPE}."
