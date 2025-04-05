@@ -170,12 +170,6 @@ def load_diffusion_model(args, weight_dtype):
 
         logger.info("Loading U-net..")
         unet_variant = args.variant
-        if (
-            args.model_family == "kolors"
-            and args.pretrained_model_name_or_path.lower()
-            == "kwai-kolors/kolors-diffusers"
-        ):
-            unet_variant = "fp16"
         pretrained_load_args["variant"] = unet_variant
         unet_load_fn = UNet2DConditionModel.from_pretrained
         pretrained_unet_path = (

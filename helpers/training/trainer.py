@@ -1869,7 +1869,7 @@ class Trainer:
                     torch.tensor(timesteps)
                     .expand(noisy_latents.shape[0])
                     .to(device=self.accelerator.device)
-                    / 1000
+                    / self.model.get_trained_component().scheduler.config.num_train_timesteps
                 )
 
                 text_ids = torch.zeros(
