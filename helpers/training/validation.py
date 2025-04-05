@@ -984,6 +984,7 @@ class Validation:
             self.validation_images = validation_images
             self.evaluation_result = self.evaluate_images(checkpoint_validation_images)
             self._log_validations_to_webhook(validation_images, shortname, prompt)
+            idx += 1
         try:
             self._log_validations_to_trackers(validation_images)
         except Exception as e:
