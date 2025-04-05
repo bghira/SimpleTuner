@@ -655,7 +655,7 @@ class VAECache(WebhookMixin):
                 for i in range(num_samples):
                     # Each sub-dict is shape [b, c, H, W], we want just 1 b at a time
                     single_latent = raw_latents[i : i + 1].squeeze(0)
-                    logger.info(f"Adding shape: {single_latent.shape}")
+                    logger.debug(f"Adding shape: {single_latent.shape}")
                     latents.append(single_latent)
             elif isinstance(latents_uncached, torch.Tensor):
                 # it seems like sdxl and some others end up here
