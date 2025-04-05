@@ -18,7 +18,6 @@ licenses = {
     "legacy": "openrail++",
     "pixart_sigma": "openrail++",
     "kolors": "apache-2.0",
-    "smoldit": "apache-2.0",
     "sd3": "stabilityai-ai-community",
 }
 allowed_licenses = [

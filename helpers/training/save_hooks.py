@@ -9,7 +9,6 @@ from peft import set_peft_model_state_dict
 from peft.utils import get_peft_model_state_dict
 from helpers.models.common import PipelineTypes
 from helpers.training.state_tracker import StateTracker
-from helpers.models.smoldit import SmolDiT2DModel, SmolDiTPipeline
 import os
 import logging
 import shutil
@@ -22,31 +21,6 @@ from tqdm import tqdm
 
 logger = logging.getLogger("SaveHookManager")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
-
-try:
-    from diffusers.models import PixArtTransformer2DModel
-except Exception as e:
-    logger.error(
-        f"Can not load Pixart Sigma model class. This release requires the latest version of Diffusers: {e}"
-    )
-    raise e
-
-try:
-    from diffusers.models import FluxTransformer2DModel
-except Exception as e:
-    logger.error(
-        f"Can not load FluxTransformer2DModel model class. This release requires the latest version of Diffusers: {e}"
-    )
-    raise e
-
-try:
-    from diffusers.models import HunyuanDiT2DModel
-except Exception as e:
-    logger.error(
-        f"Can not load Hunyuan DiT model class. This release requires the latest version of Diffusers: {e}"
-    )
-    raise e
-
 
 def merge_safetensors_files(directory):
     json_file_name = "diffusion_pytorch_model.safetensors.index.json"

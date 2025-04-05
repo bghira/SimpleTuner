@@ -551,10 +551,6 @@ class Validation:
         #     from helpers.models.pixart.pipeline import PixArtSigmaPipeline
 
         #     return PixArtSigmaPipeline
-        # elif model_type == "smoldit":
-        #     from helpers.models.smoldit import SmolDiTPipeline
-
-        #     return SmolDiTPipeline
         # elif model_type == "ltxvideo":
         #     from diffusers import LTXPipeline
 
@@ -1132,7 +1128,6 @@ class Validation:
 
                 if StateTracker.get_model_family() in [
                     "pixart_sigma",
-                    "smoldit",
                     "ltxvideo",
                 ]:
                     if pipeline_kwargs.get("negative_prompt") is not None:

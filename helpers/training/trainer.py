@@ -47,7 +47,6 @@ from helpers.training.min_snr_gamma import compute_snr
 from helpers.training.peft_init import init_lokr_network_with_perturbed_normal
 from accelerate.logging import get_logger
 from diffusers.models.embeddings import get_2d_rotary_pos_embed
-from helpers.models.smoldit import get_resize_crop_region_for_grid
 from helpers.models.ltxvideo import (
     pack_ltx_latents,
     unpack_ltx_latents,
@@ -1747,50 +1746,44 @@ class Trainer:
         if custom_timesteps is not None:
             timesteps = custom_timesteps
         if not self.config.disable_accelerator:
-            if self.config.controlnet:
-                # ControlNet conditioning.
-                controlnet_image = prepared_batch["conditioning_pixel_values"].to(
-                    dtype=self.config.weight_dtype
-                )
-                training_logger.debug(f"Image shape: {controlnet_image.shape}")
-                down_block_res_samples, mid_block_res_sample = self.controlnet(
-                    noisy_latents,
-                    timesteps,
-                    encoder_hidden_states=encoder_hidden_states,
-                    added_cond_kwargs=added_cond_kwargs,
-                    controlnet_cond=controlnet_image,
-                    return_dict=False,
-                )
-                if self.model.MODEL_TYPE.value == "transformer":
-                    raise Exception(
-                        "ControlNet predictions for transformer models are not yet implemented."
-                    )
-                # Predict the noise residual
-                if self.model.get_trained_component() is not None:
-                    model_pred = self.model.get_trained_component()(
-                        noisy_latents,
-                        timesteps,
-                        encoder_hidden_states=encoder_hidden_states,
-                        added_cond_kwargs=added_cond_kwargs,
-                        down_block_additional_residuals=[
-                            sample.to(dtype=self.config.weight_dtype)
-                            for sample in down_block_res_samples
-                        ],
-                        mid_block_additional_residual=mid_block_res_sample.to(
-                            dtype=self.config.weight_dtype
-                        ),
-                        return_dict=False,
-                    )[0]
-            elif self.config.model_family == "flux":
+            if self.model is not None:
                 model_pred = self.model.model_predict(
                     prepared_batch=prepared_batch,
                 )
-            elif self.config.model_family == "sd3":
-                # Stable Diffusion 3 uses a MM-DiT model where the VAE-produced
-                #  image embeds are passed in with the TE-produced text embeds.
-                model_pred = self.model.model_predict(
-                    prepared_batch=prepared_batch,
-                )
+            # if self.config.controlnet:
+            #     # ControlNet conditioning.
+            #     controlnet_image = prepared_batch["conditioning_pixel_values"].to(
+            #         dtype=self.config.weight_dtype
+            #     )
+            #     training_logger.debug(f"Image shape: {controlnet_image.shape}")
+            #     down_block_res_samples, mid_block_res_sample = self.controlnet(
+            #         noisy_latents,
+            #         timesteps,
+            #         encoder_hidden_states=encoder_hidden_states,
+            #         added_cond_kwargs=added_cond_kwargs,
+            #         controlnet_cond=controlnet_image,
+            #         return_dict=False,
+            #     )
+            #     if self.model.MODEL_TYPE.value == "transformer":
+            #         raise Exception(
+            #             "ControlNet predictions for transformer models are not yet implemented."
+            #         )
+            #     # Predict the noise residual
+            #     if self.model.get_trained_component() is not None:
+            #         model_pred = self.model.get_trained_component()(
+            #             noisy_latents,
+            #             timesteps,
+            #             encoder_hidden_states=encoder_hidden_states,
+            #             added_cond_kwargs=added_cond_kwargs,
+            #             down_block_additional_residuals=[
+            #                 sample.to(dtype=self.config.weight_dtype)
+            #                 for sample in down_block_res_samples
+            #             ],
+            #             mid_block_additional_residual=mid_block_res_sample.to(
+            #                 dtype=self.config.weight_dtype
+            #             ),
+            #             return_dict=False,
+            #         )[0]
             elif self.config.model_family == "wan":
                 # this just hacked together because it seems it doesn't work on MPS, and can't test it yet:
                 # TypeError: Trying to convert ComplexDouble to the MPS backend but it does not have support for that dtype.
@@ -1885,30 +1878,6 @@ class Trainer:
                     height=height,
                     width=width,
                 )
-
-            elif self.config.model_family == "smoldit":
-                first_latent_shape = noisy_latents.shape
-                height = first_latent_shape[1] * 8
-                width = first_latent_shape[2] * 8
-                grid_height = height // 8 // self.transformer.config.patch_size
-                grid_width = width // 8 // self.transformer.config.patch_size
-                base_size = 512 // 8 // self.transformer.config.patch_size
-                grid_crops_coords = get_resize_crop_region_for_grid(
-                    (grid_height, grid_width), base_size
-                )
-                inputs = {
-                    "hidden_states": noisy_latents,
-                    "timestep": timesteps,
-                    "encoder_hidden_states": encoder_hidden_states,
-                    "encoder_attention_mask": prepared_batch["encoder_attention_mask"],
-                    "image_rotary_emb": get_2d_rotary_pos_embed(
-                        self.transformer.inner_dim
-                        // self.transformer.config.num_attention_heads,
-                        grid_crops_coords,
-                        (grid_height, grid_width),
-                    ),
-                }
-                model_pred = self.transformer(**inputs).sample
             elif self.model.get_trained_component() is not None:
                 model_pred = self.model.model_predict(
                     prepared_batch=prepared_batch,

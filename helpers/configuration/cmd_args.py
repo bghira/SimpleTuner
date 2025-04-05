@@ -10,7 +10,6 @@ import json
 import logging
 import sys
 import torch
-from helpers.models.smoldit import SmolDiTConfigurationNames
 from helpers.training import quantised_precision_levels
 from helpers.training.optimizer_param import (
     is_optimizer_deprecated,
@@ -27,7 +26,6 @@ from helpers.models.all import (
 model_family_choices = list(model_families.keys())
 model_families_to_refactor = [
     "pixart_sigma",
-    "smoldit",
     "ltxvideo",
     "wan",
     "legacy",
@@ -313,22 +311,6 @@ def get_argument_parser():
         help=(
             "The padding behaviour for Flux and SD3. 'zero' will pad the input with zeros."
             " The default is 'unmodified', which will not pad the input."
-        ),
-    )
-    parser.add_argument(
-        "--smoldit",
-        action="store_true",
-        default=False,
-        help=("Use the experimental SmolDiT model architecture."),
-    )
-    parser.add_argument(
-        "--smoldit_config",
-        type=str,
-        choices=SmolDiTConfigurationNames,
-        default="smoldit-base",
-        help=(
-            "The SmolDiT configuration to use. This is a list of pre-configured models."
-            " The default is 'smoldit-base'."
         ),
     )
     parser.add_argument(
@@ -2350,7 +2332,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             warning_log(
                 "MPS may benefit from the use of --unet_attention_slice for memory savings at the cost of speed."
             )
-        if args.model_family != "smoldit" and args.train_batch_size > 16:
+        if args.train_batch_size > 16:
             error_log(
                 "An M3 Max 128G will use 12 seconds per step at a batch size of 1 and 65 seconds per step at a batch size of 12."
                 " Any higher values will result in NDArray size errors or other unstable training results and crashes."

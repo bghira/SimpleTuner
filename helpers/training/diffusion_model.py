@@ -85,21 +85,6 @@ def load_diffusion_model(args, weight_dtype):
             subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
             **pretrained_load_args,
         )
-    elif args.model_family == "smoldit":
-        logger.info("Loading SmolDiT model..")
-        if args.validation_noise_scheduler is None:
-            args.validation_noise_scheduler = "ddpm"
-        transformer_variant = None
-        from helpers.models.smoldit import SmolDiT2DModel, SmolDiTConfigurations
-
-        if args.smoldit_config not in SmolDiTConfigurations:
-            raise ValueError(
-                f"Invalid SmolDiT size configuration: {args.smoldit_config}"
-            )
-
-        transformer = SmolDiT2DModel(**SmolDiTConfigurations[args.smoldit_config])
-        if "lora" in args.model_type:
-            raise ValueError("SmolDiT does not yet support LoRA training.")
     else:
         from diffusers import UNet2DConditionModel
 

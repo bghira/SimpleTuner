@@ -372,7 +372,6 @@ class TextEmbeddingCache(WebhookMixin):
         elif (
             self.model_type == "legacy"
             or self.model_type == "pixart_sigma"
-            or self.model_type == "smoldit"
         ):
             # both sd1.x/2.x and t5 style models like pixart use this flow.
             output = self.compute_embeddings_for_legacy_prompts(
@@ -514,14 +513,12 @@ class TextEmbeddingCache(WebhookMixin):
                             time.sleep(5)
                     if (
                         self.model_type == "pixart_sigma"
-                        or self.model_type == "smoldit"
                     ):
                         # TODO: Batch this
                         prompt_embeds, attention_mask = self.compute_t5_prompt(
                             prompt=prompt,
                         )
                         # we have to store the attn mask with the embed for pixart.
-                        # smoldit requires the attn mask at inference time 💪🏽
                         prompt_embeds = (prompt_embeds, attention_mask)
                     else:
                         prompt_embeds = self.encode_legacy_prompt(
