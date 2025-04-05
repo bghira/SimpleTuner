@@ -200,7 +200,9 @@ class Trainer:
             lr_scale_ga = self.config.gradient_accumulation_steps
             lr_scale_np = getattr(self.accelerator, "num_processes", 1)
             lr_scale_mul = lr_scale_ga * lr_scale_bsz * lr_scale_np
-            lr_new = lr_cur * (math.sqrt(lr_scale_mul) if self.config.lr_scale_sqrt else lr_scale_mul)
+            lr_new = lr_cur * (
+                math.sqrt(lr_scale_mul) if self.config.lr_scale_sqrt else lr_scale_mul
+            )
             logger.info(
                 f"Scaling learning rate from {lr_cur:.1e} to {lr_new:.1e}"
                 f" due to {'--lr-scale and --lr-scale-sqrt' if self.config.lr_scale_sqrt else '--lr-scale'}"

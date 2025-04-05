@@ -22,6 +22,7 @@ from tqdm import tqdm
 logger = logging.getLogger("SaveHookManager")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
 
+
 def merge_safetensors_files(directory):
     json_file_name = "diffusion_pytorch_model.safetensors.index.json"
     json_file_path = os.path.join(directory, json_file_name)

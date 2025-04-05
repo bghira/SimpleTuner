@@ -215,11 +215,11 @@ def get_quant_fn(base_model_precision):
 
 
 def quantise_model(
-    model = None,
+    model=None,
     text_encoders: list = None,
-    controlnet = None,
-    ema = None,
-    args = None,
+    controlnet=None,
+    ema=None,
+    args=None,
     return_dict: bool = False,
 ):
     """

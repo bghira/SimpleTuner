@@ -75,16 +75,17 @@ class PredictionTypes(Enum):
 
     @staticmethod
     def from_str(label):
-        if label in ('eps', 'epsilon'):
+        if label in ("eps", "epsilon"):
             return PredictionTypes.EPSILON
-        elif label in ('vpred', 'v_prediction', 'v-prediction'):
+        elif label in ("vpred", "v_prediction", "v-prediction"):
             return PredictionTypes.V_PREDICTION
-        elif label in ('sample', 'x_prediction', 'x-prediction'):
+        elif label in ("sample", "x_prediction", "x-prediction"):
             return PredictionTypes.SAMPLE
-        elif label in ('flow', 'flow_matching', 'flow-matching'):
+        elif label in ("flow", "flow_matching", "flow-matching"):
             return PredictionTypes.FLOW_MATCHING
         else:
             raise NotImplementedError
+
 
 class ModelTypes(Enum):
     UNET = "unet"
@@ -686,6 +687,13 @@ class ModelFoundation(ABC):
     ) -> DiffusionPipeline:
         return self._load_pipeline(pipeline_type, load_base_model)
 
+    def update_pipeline_call_kwargs(self, pipeline_kwargs):
+        """
+        When we're running the pipeline, we'll update the kwargs specifically for this model here.
+        """
+
+        return pipeline_kwargs
+
     def setup_noise_schedule(self):
         """Loads the noise schedule from the config."""
         flow_matching = False
@@ -1086,6 +1094,7 @@ class VideoModelFoundation(ImageModelFoundation):
         # B, F, C, H, W = tensor.shape
         # return tensor.view(B * F, C, H, W)
         return tensor
+
 
 # if self.args.controlnet:
 #     # ControlNet training has an additional adapter thingy.

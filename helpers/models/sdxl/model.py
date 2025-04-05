@@ -5,12 +5,11 @@ from helpers.models.common import (
     PipelineTypes,
     ModelTypes,
 )
-from transformers import (
-    CLIPTokenizer,
-    CLIPTextModelWithProjection,
-    CLIPTextModel
+from transformers import CLIPTokenizer, CLIPTextModelWithProjection, CLIPTextModel
+from helpers.models.sdxl.pipeline import (
+    StableDiffusionXLImg2ImgPipeline,
+    StableDiffusionXLPipeline,
 )
-from helpers.models.sdxl.pipeline import StableDiffusionXLImg2ImgPipeline, StableDiffusionXLPipeline
 from diffusers import AutoencoderKL, UNet2DConditionModel
 from helpers.training.multi_process import _get_rank
 from diffusers.pipelines import StableDiffusionXLControlNetPipeline
@@ -19,6 +18,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(
     os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO") if _get_rank() == 0 else "ERROR"
 )
+
 
 class SDXL(ImageModelFoundation):
     NAME = "Stable Diffusion XL"
@@ -215,9 +215,10 @@ class SDXL(ImageModelFoundation):
         We'll check the current model config to ensure we're loading a base or refiner model.
         """
         if self.model.config.cross_attention_dim == 1280:
-            logger.info(f"{self.NAME} Refiner model is detected, enabling refiner training configuration settings.")
+            logger.info(
+                f"{self.NAME} Refiner model is detected, enabling refiner training configuration settings."
+            )
             self.config.refiner_training = True
-
 
     def check_user_config(self):
         """
@@ -248,7 +249,9 @@ class SDXL(ImageModelFoundation):
             self.config.aspect_bucket_alignment = 64
 
         if self.config.prediction_type is not None:
-            logger.info(f"Setting {self.NAME} prediction type: {self.config.prediction_type}")
+            logger.info(
+                f"Setting {self.NAME} prediction type: {self.config.prediction_type}"
+            )
             self.PREDICTION_TYPE = PredictionTypes.from_str(self.config.prediction_type)
             if self.config.validation_noise_scheduler is None:
                 self.config.validation_noise_scheduler = self.DEFAULT_NOISE_SCHEDULER
@@ -268,7 +271,9 @@ class SDXL(ImageModelFoundation):
         if self.config.offset_noise:
             output_args.append(f"offset_noise")
             output_args.append(f"noise_offset={self.config.noise_offset}")
-            output_args.append(f"noise_offset_probability={self.config.noise_offset_probability}")
+            output_args.append(
+                f"noise_offset_probability={self.config.noise_offset_probability}"
+            )
         output_args.append(
             f"training_scheduler_timestep_spacing={self.config.training_scheduler_timestep_spacing}"
         )

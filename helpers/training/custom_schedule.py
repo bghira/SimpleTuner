@@ -469,6 +469,7 @@ class Sine(LRScheduler):
 from diffusers.optimization import get_scheduler
 from helpers.models.flux import calculate_shift_flux
 
+
 def apply_flow_schedule_shift(args, noise_scheduler, sigmas, noise):
     # Resolution-dependent shifting of timestep schedules as per section 5.3.2 of SD3 paper
     shift = None

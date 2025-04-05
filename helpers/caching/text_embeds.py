@@ -369,10 +369,7 @@ class TextEmbeddingCache(WebhookMixin):
                 load_from_cache=load_from_cache,
                 is_negative_prompt=is_negative_prompt,
             )
-        elif (
-            self.model_type == "legacy"
-            or self.model_type == "pixart_sigma"
-        ):
+        elif self.model_type == "legacy" or self.model_type == "pixart_sigma":
             # both sd1.x/2.x and t5 style models like pixart use this flow.
             output = self.compute_embeddings_for_legacy_prompts(
                 raw_prompts,
@@ -511,9 +508,7 @@ class TextEmbeddingCache(WebhookMixin):
                         while self.write_queue.qsize() > 100:
                             logger.debug("Waiting for write thread to catch up.")
                             time.sleep(5)
-                    if (
-                        self.model_type == "pixart_sigma"
-                    ):
+                    if self.model_type == "pixart_sigma":
                         # TODO: Batch this
                         prompt_embeds, attention_mask = self.compute_t5_prompt(
                             prompt=prompt,

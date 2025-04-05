@@ -16,6 +16,7 @@ logger.setLevel(
     os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO") if _get_rank() == 0 else "ERROR"
 )
 
+
 class Kolors(ImageModelFoundation):
     NAME = "Kwai Kolors"
     PREDICTION_TYPE = PredictionTypes.EPSILON
@@ -207,9 +208,10 @@ class Kolors(ImageModelFoundation):
         We'll check the current model config to ensure we're loading a base or refiner model.
         """
         if self.model.config.cross_attention_dim == 1280:
-            logger.info(f"{self.NAME} Refiner model is detected, enabling refiner training configuration settings.")
+            logger.info(
+                f"{self.NAME} Refiner model is detected, enabling refiner training configuration settings."
+            )
             self.config.refiner_training = True
-
 
     def check_user_config(self):
         """
@@ -240,7 +242,9 @@ class Kolors(ImageModelFoundation):
             self.config.aspect_bucket_alignment = 64
 
         if self.config.prediction_type is not None:
-            logger.info(f"Setting {self.NAME} prediction type: {self.config.prediction_type}")
+            logger.info(
+                f"Setting {self.NAME} prediction type: {self.config.prediction_type}"
+            )
             self.PREDICTION_TYPE = PredictionTypes.from_str(self.config.prediction_type)
             if self.config.validation_noise_scheduler is None:
                 self.config.validation_noise_scheduler = self.DEFAULT_NOISE_SCHEDULER

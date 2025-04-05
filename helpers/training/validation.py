@@ -7,6 +7,7 @@ import sys
 import numpy as np
 from tqdm import tqdm
 from helpers.training.wrappers import unwrap_model
+from helpers.models.common import VideoModelFoundation, ImageModelFoundation
 from helpers.models.common import ModelFoundation
 from PIL import Image
 from helpers.training.state_tracker import StateTracker
@@ -49,7 +50,7 @@ except ImportError:
 SCHEDULER_NAME_MAP = {
     "euler": EulerDiscreteScheduler,
     "euler-a": EulerAncestralDiscreteScheduler,
-    "flow-match": FlowMatchEulerDiscreteScheduler,
+    "flow_matching": FlowMatchEulerDiscreteScheduler,
     "unipc": UniPCMultistepScheduler,
     "ddim": DDIMScheduler,
     "ddpm": DDPMScheduler,
@@ -555,10 +556,6 @@ class Validation:
         #     from diffusers import LTXPipeline
 
         #     return LTXPipeline
-        # elif model_type == "wan":
-        #     from helpers.models.wan.pipeline import WanPipeline
-
-        #     return WanPipeline
         # else:
         #     raise NotImplementedError(
         #         f"Model type {model_type} not implemented for validation."
@@ -718,17 +715,13 @@ class Validation:
                         )
                     )
                 elif type(image) is list:
-                    # maybe video
-                    if self.config.model_family in ["ltxvideo", "wan"]:
-                        from diffusers.utils.export_utils import export_to_video
+                    from diffusers.utils.export_utils import export_to_video
 
-                        export_to_video(
-                            image,
-                            os.path.join(
-                                base_model_benchmark, f"{shortname}_{idx}.mp4"
-                            ),
-                            fps=self.config.framerate,
-                        )
+                    export_to_video(
+                        image,
+                        os.path.join(base_model_benchmark, f"{shortname}_{idx}.mp4"),
+                        fps=self.config.framerate,
+                    )
 
     def _update_state(self):
         """Updates internal state with the latest from StateTracker."""
@@ -813,20 +806,17 @@ class Validation:
         scheduler_args = {
             "prediction_type": self.config.prediction_type,
         }
-        if self.flow_matching and not self.config.model_family not in ["wan", "sana"]:
-            # NO TOUCHIE FOR FLOW-MATCHING.
-            # Touchie for sana though. It needs a new scheduler on every inference.
-            return
-        elif self.config.model_family == "sana":
+        if self.config.model_family == "sana":
             self.config.validation_noise_scheduler = "sana"
-        elif self.config.model_family in ["ltxvideo", "wan"]:
-            if self.config.validation_noise_scheduler is None:
-                # Diffusers repo uses UniPC by default.
-                if self.config.model_family == "ltxvideo":
-                    self.config.validation_noise_scheduler = "flow-match"
-                else:
-                    self.config.validation_noise_scheduler = "unipc"
-            if self.config.validation_noise_scheduler == "flow-match":
+        elif (
+            getattr(self.model, "DEFAULT_NOISE_SCHEDULER", None) is not None
+            and self.config.validation_noise_scheduler is None
+        ):
+            # set the default
+            self.config.validation_noise_scheduler = self.model.DEFAULT_NOISE_SCHEDULER
+        if self.model.PREDICTION_TYPE.value == "flow_matching":
+            # some flow-matching adjustments should be made for euler and unipc video model generations.
+            if self.config.validation_noise_scheduler in ["flow_matching", "euler"]:
                 # The Beta schedule looks WAY better...
                 scheduler_args["use_beta_sigmas"] = True
                 scheduler_args["shift"] = self.config.flow_schedule_shift
@@ -837,6 +827,7 @@ class Validation:
                 scheduler_args["flow_shift"] = self.config.flow_schedule_shift
 
         if self.config.validation_noise_scheduler is None:
+            # if the user or model config has not supplied one, we just allow pipeline to do defaults.
             return
 
         if self.config.prediction_type is not None:
@@ -852,8 +843,7 @@ class Validation:
                 variance_type = "fixed_small"
 
             scheduler_args["variance_type"] = variance_type
-        if self.deepfloyd:
-            self.config.validation_noise_scheduler = "ddpm"
+
         scheduler = SCHEDULER_NAME_MAP[
             self.config.validation_noise_scheduler
         ].from_pretrained(
@@ -929,7 +919,9 @@ class Validation:
                 ema_validation_images,
             ) = self.validate_prompt(prompt, shortname, validation_input_image)
             validation_images.update(stitched_validation_images)
-            if self.config.model_family in ["ltxvideo", "wan"]:
+            if self.config.model_family in ["ltxvideo"] or isinstance(
+                self.model, VideoModelFoundation
+            ):
                 self._save_videos(validation_images, shortname, prompt)
             else:
                 self._save_images(validation_images, shortname, prompt)
@@ -1102,6 +1094,9 @@ class Validation:
                         self.config.validation_no_cfg_until_timestep
                     )
 
+                pipeline_kwargs = self.model.update_pipeline_call_kwargs(
+                    pipeline_kwargs
+                )
                 logger.debug(
                     f"Image being generated with parameters: {pipeline_kwargs}"
                 )
@@ -1116,15 +1111,6 @@ class Validation:
                     pipeline_kwargs["complex_human_instruction"] = (
                         self.config.sana_complex_human_instruction
                     )
-                if StateTracker.get_model_family() in [
-                    "wan",
-                ]:
-                    # Wan video should max out around 81 frames for efficiency.
-                    pipeline_kwargs["num_frames"] = min(
-                        81, self.config.validation_num_video_frames or 81
-                    )
-                    pipeline_kwargs["output_type"] = "pil"
-                    # replace embeds with prompt
 
                 if StateTracker.get_model_family() in [
                     "pixart_sigma",
@@ -1163,6 +1149,7 @@ class Validation:
                         for k, v in pipeline_kwargs.items()
                     }
                     import inspect
+
                     call_kwargs = inspect.getfullargspec(
                         self.model.pipeline.__call__
                     ).args
@@ -1180,11 +1167,11 @@ class Validation:
                         logger.warning(
                             f"Removed the following kwargs from validation pipeline: {removed_kwargs}"
                         )
-                    if self.config.model_family in ["ltxvideo", "wan"]:
+                    if isinstance(self.model, VideoModelFoundation):
                         all_validation_type_results[current_validation_type] = (
                             self.model.pipeline(**pipeline_kwargs).frames
                         )
-                    else:
+                    elif isinstance(self.model, ImageModelFoundation):
                         all_validation_type_results[current_validation_type] = (
                             self.model.pipeline(**pipeline_kwargs).images
                         )

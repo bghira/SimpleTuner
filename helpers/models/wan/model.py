@@ -1,26 +1,19 @@
 import torch, os, logging
 import random
 from helpers.models.common import (
-    ImageModelFoundation,
+    VideoModelFoundation,
     PredictionTypes,
     PipelineTypes,
     ModelTypes,
 )
 from transformers import (
-    CLIPTokenizer,
-    CLIPTextModel,
     T5TokenizerFast,
-    T5EncoderModel,
+    UMT5EncoderModel,
 )
-from diffusers import AutoencoderKL
-from helpers.models.flux.transformer import FluxTransformer2DModelWithMasking
-from helpers.models.flux.pipeline import FluxPipeline
+from diffusers import AutoencoderKLWan
+from helpers.models.wan.transformer import WanTransformer3DModel
+from helpers.models.wan.pipeline import WanPipeline
 from helpers.training.multi_process import _get_rank
-from helpers.models.flux import (
-    prepare_latent_image_ids,
-    pack_latents,
-    unpack_latents,
-)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(
@@ -28,48 +21,58 @@ logger.setLevel(
 )
 
 
-class Flux(ImageModelFoundation):
-    NAME = "Flux.1"
+class Wan(VideoModelFoundation):
+    NAME = "Wan"
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
-    AUTOENCODER_CLASS = AutoencoderKL
+    AUTOENCODER_CLASS = AutoencoderKLWan
     LATENT_CHANNEL_COUNT = 16
+    DEFAULT_NOISE_SCHEDULER = "unipc"
     # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     # Only training the Attention blocks by default.
     DEFAULT_LYCORIS_TARGET = ["Attention"]
 
-    MODEL_CLASS = FluxTransformer2DModelWithMasking
+    MODEL_CLASS = WanTransformer3DModel
     MODEL_SUBFOLDER = "transformer"
     PIPELINE_CLASSES = {
-        PipelineTypes.TEXT2IMG: FluxPipeline,
+        PipelineTypes.TEXT2IMG: WanPipeline,
         # PipelineTypes.IMG2IMG: None,
         # PipelineTypes.CONTROLNET: None,
     }
 
     # The default model flavor to use when none is specified.
-    DEFAULT_MODEL_FLAVOUR = "dev"
+    DEFAULT_MODEL_FLAVOUR = "t2v-480p-1.3b"
     HUGGINGFACE_PATHS = {
-        "dev": "black-forest-labs/flux.1-dev",
-        "schnell": "black-forest-labs/flux.1-schnell",
+        "t2v-480p-1.3b-2.1": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+        "t2v-480p-14b-2.1": "Wan-AI/Wan2.1-T2V-14B-Diffusers",
+        # "i2v-480p-14b-2.1": "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
+        # "i2v-720p-14b-2.1": "Wan-AI/Wan2.1-I2V-14B-720P-Diffusers",
     }
-    MODEL_LICENSE = "other"
+    MODEL_LICENSE = "apache-2.0"
 
     TEXT_ENCODER_CONFIGURATION = {
         "text_encoder": {
-            "name": "CLIP-L/14",
-            "tokenizer": CLIPTokenizer,
-            "tokenizer_subfolder": "tokenizer",
-            "model": CLIPTextModel,
-        },
-        "text_encoder_2": {
-            "name": "T5 XXL v1.1",
+            "name": "UMT5",
             "tokenizer": T5TokenizerFast,
-            "subfolder": "text_encoder_2",
-            "tokenizer_subfolder": "tokenizer_2",
-            "model": T5EncoderModel,
+            "subfolder": "text_encoder",
+            "tokenizer_subfolder": "tokenizer",
+            "model": UMT5EncoderModel,
         },
     }
+
+    def update_pipeline_call_kwargs(self, pipeline_kwargs):
+        """
+        When we're running the pipeline, we'll update the kwargs specifically for this model here.
+        """
+        # Wan video should max out around 81 frames for efficiency.
+        pipeline_kwargs["num_frames"] = min(
+            81, self.config.validation_num_video_frames or 81
+        )
+        pipeline_kwargs["output_type"] = "pil"
+        # replace embeds with prompt
+
+        return pipeline_kwargs
 
     def _format_text_embedding(self, text_embedding: torch.Tensor):
         """
@@ -82,12 +85,10 @@ class Flux(ImageModelFoundation):
         Returns:
             torch.Tensor: The adjusted embed. By default, this method does nothing.
         """
-        prompt_embeds, pooled_prompt_embeds, time_ids, masks = text_embedding
+        prompt_embeds, masks = text_embedding
 
         return {
             "prompt_embeds": prompt_embeds,
-            "pooled_prompt_embeds": pooled_prompt_embeds.squeeze(0),
-            "time_ids": time_ids,
             "attention_masks": masks,
         }
 
@@ -95,8 +96,7 @@ class Flux(ImageModelFoundation):
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
         return {
             "prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            "pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0),
-            "prompt_mask": (
+            "attention_mask": (
                 text_embedding["attention_masks"].unsqueeze(0)
                 if self.config.flux_attention_masked_training
                 else None
@@ -154,105 +154,6 @@ class Flux(ImageModelFoundation):
         return prompt_embeds, pooled_prompt_embeds, time_ids, masks
 
     def model_predict(self, prepared_batch):
-        # handle guidance
-        packed_noisy_latents = pack_latents(
-            prepared_batch["noisy_latents"],
-            batch_size=prepared_batch["latents"].shape[0],
-            num_channels_latents=prepared_batch["latents"].shape[1],
-            height=prepared_batch["latents"].shape[2],
-            width=prepared_batch["latents"].shape[3],
-        ).to(
-            dtype=self.config.base_weight_dtype,
-            device=self.accelerator.device,
-        )
-        if self.config.flux_guidance_mode == "constant":
-            guidance_scales = [float(self.config.flux_guidance_value)] * prepared_batch[
-                "latents"
-            ].shape[0]
-
-        elif self.config.flux_guidance_mode == "random-range":
-            # Generate a list of random values within the specified range for each latent
-            guidance_scales = [
-                random.uniform(
-                    self.config.flux_guidance_min,
-                    self.config.flux_guidance_max,
-                )
-                for _ in range(prepared_batch["latents"].shape[0])
-            ]
-
-        # Now `guidance` will have different values for each latent in `latents`.
-        transformer_config = None
-        if hasattr(self.get_trained_component(), "module"):
-            transformer_config = self.get_trained_component().module.config
-        elif hasattr(self.get_trained_component(), "config"):
-            transformer_config = self.get_trained_component().config
-        if transformer_config is not None and getattr(
-            transformer_config, "guidance_embeds", False
-        ):
-            guidance = torch.tensor(guidance_scales, device=self.accelerator.device)
-        else:
-            guidance = None
-        img_ids = prepare_latent_image_ids(
-            prepared_batch["latents"].shape[0],
-            prepared_batch["latents"].shape[2],
-            prepared_batch["latents"].shape[3],
-            self.accelerator.device,
-            self.config.weight_dtype,
-        )
-        prepared_batch["timesteps"] = (
-            torch.tensor(prepared_batch["timesteps"])
-            .expand(prepared_batch["noisy_latents"].shape[0])
-            .to(device=self.accelerator.device)
-            / self.noise_schedule.config.num_train_timesteps
-        )
-
-        text_ids = torch.zeros(
-            prepared_batch["prompt_embeds"].shape[1],
-            3,
-        ).to(
-            device=self.accelerator.device,
-            dtype=self.config.base_weight_dtype,
-        )
-        logger.debug(
-            "DTypes:"
-            f"\n-> Text IDs shape: {text_ids.shape if hasattr(text_ids, 'shape') else None}, dtype: {text_ids.dtype if hasattr(text_ids, 'dtype') else None}"
-            f"\n-> Image IDs shape: {img_ids.shape if hasattr(img_ids, 'shape') else None}, dtype: {img_ids.dtype if hasattr(img_ids, 'dtype') else None}"
-            f"\n-> Timesteps shape: {prepared_batch['timesteps'].shape if hasattr(prepared_batch['timesteps'], 'shape') else None}, dtype: {prepared_batch['timesteps'].dtype if hasattr(prepared_batch['timesteps'], 'dtype') else None}"
-            f"\n-> Guidance: {guidance}"
-            f"\n-> Packed Noisy Latents shape: {packed_noisy_latents.shape if hasattr(packed_noisy_latents, 'shape') else None}, dtype: {packed_noisy_latents.dtype if hasattr(packed_noisy_latents, 'dtype') else None}"
-        )
-
-        flux_transformer_kwargs = {
-            "hidden_states": packed_noisy_latents,
-            # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
-            "timestep": prepared_batch["timesteps"],
-            "guidance": guidance,
-            "pooled_projections": prepared_batch["add_text_embeds"].to(
-                device=self.accelerator.device,
-                dtype=self.config.base_weight_dtype,
-            ),
-            "encoder_hidden_states": prepared_batch["prompt_embeds"].to(
-                device=self.accelerator.device,
-                dtype=self.config.base_weight_dtype,
-            ),
-            "txt_ids": text_ids.to(
-                device=self.accelerator.device,
-                dtype=self.config.base_weight_dtype,
-            ),
-            "img_ids": img_ids,
-            "joint_attention_kwargs": None,
-            "return_dict": False,
-        }
-        if self.config.flux_attention_masked_training:
-            flux_transformer_kwargs["attention_mask"] = prepared_batch[
-                "encoder_attention_mask"
-            ]
-            if flux_transformer_kwargs["attention_mask"] is None:
-                raise ValueError(
-                    "No attention mask was discovered when attempting validation - this means you need to recreate your text embed cache."
-                )
-
-        model_pred = self.get_trained_component()(**flux_transformer_kwargs)[0]
 
         return {
             "model_prediction": unpack_latents(
@@ -265,16 +166,8 @@ class Flux(ImageModelFoundation):
 
     def check_user_config(self):
         """
-        Checks self.config values against important issues. Optionally implemented in child class.
+        Checks self.config values against important issues.
         """
-        if self.config.unet_attention_slice:
-            if torch.backends.mps.is_available():
-                logger.warning(
-                    "Using attention slicing when training {self.NAME} on MPS can result in NaN errors on the first backward pass. If you run into issues, disable this option and reduce your batch size instead to reduce memory consumption."
-                )
-            if self.get_trained_component() is not None:
-                self.get_trained_component().set_attention_slice("auto")
-
         # if self.config.base_model_precision == "fp8-quanto":
         #     raise ValueError(
         #         f"{self.NAME} does not support fp8-quanto. Please use fp8-torchao or int8 precision level instead."

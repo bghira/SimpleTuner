@@ -36,7 +36,7 @@ class DeepFloydIF(ImageModelFoundation):
     # DeepFloyd-IF is a pixel space model.
     AUTOENCODER_CLASS = None
     LATENT_CHANNEL_COUNT = None
-
+    DEFAULT_NOISE_SCHEDULER = "ddpm"
     # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     # Only training the Attention blocks by default seems to be the most stable..
