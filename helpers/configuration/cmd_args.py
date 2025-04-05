@@ -2011,7 +2011,7 @@ def get_argument_parser():
         "--validation_guidance_real",
         type=float,
         default=1.0,
-        help="Use real CFG sampling for Flux validation images. Default: 1.0 (no CFG)",
+        help="Use real CFG sampling for distilled models. Default: 1.0 (no CFG)",
     )
     parser.add_argument(
         "--validation_no_cfg_until_timestep",
@@ -2569,16 +2569,6 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             warning_log(
                 "Flux Schnell requires fewer inference steps. Consider reducing --validation_num_inference_steps to 4."
             )
-
-        if args.flux_guidance_mode == "mobius":
-            warning_log(
-                "Mobius training is only for the most elite. Pardon my English, but this is not for those who don't like to destroy something beautiful every now and then. If you feel perhaps this is not for you, please consider using a different guidance mode."
-            )
-            if args.flux_guidance_min < 1.0:
-                warning_log(
-                    "Flux minimum guidance value for Mobius training is 1.0. Updating value.."
-                )
-                args.flux_guidance_min = 1.0
 
     if args.use_ema and args.ema_cpu_only:
         args.ema_device = "cpu"
