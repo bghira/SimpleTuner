@@ -2661,7 +2661,7 @@ class Trainer:
                             tracker_table = self.evaluation.generate_tracker_table(
                                 all_accumulated_losses=all_accumulated_losses
                             )
-                            print(f"Tracking information: {tracker_table}")
+                            logger.debug(f"Tracking information: {tracker_table}")
                             wandb_logs.update(tracker_table)
                         self.mark_optimizer_train()
 
