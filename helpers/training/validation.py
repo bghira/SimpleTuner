@@ -537,24 +537,8 @@ class Validation:
             return self.model.PIPELINE_CLASSES[PipelineTypes.CONTROLNET]
         return self.model.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
         # model_type = StateTracker.get_model_family()
-        # elif model_type == "flux":
-        #     from helpers.models.flux import FluxPipeline
-
-        #     if self.config.controlnet:
-        #         raise NotImplementedError("Flux ControlNet is not yet supported.")
-        #     if self.config.validation_using_datasets:
-        #         raise NotImplementedError(
-        #             "Flux inference validation using img2img is not yet supported. Please remove --validation_using_datasets."
-        #         )
-        #     return FluxPipeline
         # elif model_type == "legacy":
         #     return StableDiffusionPipeline
-        # elif model_type == "sd3":
-        #     if self.config.controlnet:
-        #         raise Exception("SD3 ControlNet is not yet supported.")
-        #     if self.config.validation_using_datasets:
-        #         return StableDiffusion3Img2ImgPipeline
-        #     return StableDiffusion3Pipeline
         # elif model_type == "pixart_sigma":
         #     if self.config.controlnet:
         #         raise Exception(
@@ -1041,19 +1025,9 @@ class Validation:
                     self.config.validation_guidance_skip_layers
                 )
 
-            if not self.flow_matching and self.config.model_family not in [
-                "deepfloyd",
-                "pixart_sigma",
-                "kolors",
-                "flux",
-                "sd3",
-                "sana",
-                "ltxvideo",
-                "wan",
-            ]:
-                extra_validation_kwargs["guidance_rescale"] = (
-                    self.config.validation_guidance_rescale
-                )
+            extra_validation_kwargs["guidance_rescale"] = (
+                self.config.validation_guidance_rescale
+            )
 
             if StateTracker.get_args().validation_using_datasets:
                 extra_validation_kwargs["strength"] = getattr(
@@ -1136,17 +1110,12 @@ class Validation:
                     f"Image being generated with parameters: {pipeline_kwargs}"
                 )
                 # Print the device attr of any parameters that have one
-                for key, value in pipeline_kwargs.items():
-                    if hasattr(value, "device"):
-                        logger.debug(f"Device for {key}: {value.device}")
-                for key, value in self.model.pipeline.components.items():
-                    if hasattr(value, "device"):
-                        logger.debug(f"Device for {key}: {value.device}")
-                if StateTracker.get_model_family() == "flux":
-                    if "negative_prompt" in pipeline_kwargs:
-                        del pipeline_kwargs["negative_prompt"]
-                if StateTracker.get_model_family() in ["ltxvideo", "wan"]:
-                    del pipeline_kwargs["num_images_per_prompt"]
+                # for key, value in pipeline_kwargs.items():
+                #     if hasattr(value, "device"):
+                #         logger.debug(f"Device for {key}: {value.device}")
+                # for key, value in self.model.pipeline.components.items():
+                #     if hasattr(value, "device"):
+                #         logger.debug(f"Device for {key}: {value.device}")
                 if self.config.model_family == "sana":
                     pipeline_kwargs["complex_human_instruction"] = (
                         self.config.sana_complex_human_instruction
@@ -1198,9 +1167,24 @@ class Validation:
                         )
                         for k, v in pipeline_kwargs.items()
                     }
+                    import inspect
+                    call_kwargs = inspect.getfullargspec(
+                        self.model.pipeline.__call__
+                    ).args
+                    # remove any kwargs that are not in the pipeline call
+                    pipeline_kwargs = {
+                        k: v for k, v in pipeline_kwargs.items() if k in call_kwargs
+                    }
+                    removed_kwargs = [
+                        k for k in pipeline_kwargs.keys() if k not in call_kwargs
+                    ]
                     logger.debug(
-                        f"Running validations with negative prompt embeds: {pipeline_kwargs.keys()}"
+                        f"Running validations with inputs: {pipeline_kwargs.keys()}"
                     )
+                    if removed_kwargs:
+                        logger.warning(
+                            f"Removed the following kwargs from validation pipeline: {removed_kwargs}"
+                        )
                     if self.config.model_family in ["ltxvideo", "wan"]:
                         all_validation_type_results[current_validation_type] = (
                             self.model.pipeline(**pipeline_kwargs).frames
