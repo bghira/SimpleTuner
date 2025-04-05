@@ -635,6 +635,7 @@ class VAECache(WebhookMixin):
 
             # Prepare final latents list by combining cached and newly computed latents
             if isinstance(latents_uncached, dict) and "latents" in latents_uncached:
+                # video models tend to return a dict with latents.
                 raw_latents = latents_uncached["latents"]
                 num_samples = raw_latents.shape[0]
                 for i in range(num_samples):
@@ -648,6 +649,7 @@ class VAECache(WebhookMixin):
                     }
                     latents.append(chunk)
             elif hasattr(latents_uncached, "latent"):
+                # this one happens with sana really, so far.
                 raw_latents = latents_uncached["latent"]
                 num_samples = raw_latents.shape[0]
                 for i in range(num_samples):
@@ -656,13 +658,14 @@ class VAECache(WebhookMixin):
                     logger.info(f"Adding shape: {single_latent.shape}")
                     latents.append(single_latent)
             else:
+                # it seems like sdxl and some others end up here
                 logger.info(f"Received {type(latents_uncached)} latents")
                 cached_idx, uncached_idx = 0, 0
                 for i in range(batch_size):
                     if i in uncached_image_indices:
-                        logger.info(
-                            f"Adding latent {uncached_idx} of ({len(latents_uncached)}: {latents_uncached})"
-                        )
+                        # logger.info(
+                        #     f"Adding latent {uncached_idx} of ({len(latents_uncached)}: {latents_uncached})"
+                        # )
                         latents.append(latents_uncached[uncached_idx])
                         uncached_idx += 1
                     else:
