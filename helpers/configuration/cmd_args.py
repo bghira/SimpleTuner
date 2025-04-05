@@ -163,12 +163,6 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
-        "--flow_matching_sigmoid_scale",
-        type=float,
-        default=None,
-        help="Deprecated option. Replaced with --flow_sigmoid_scale.",
-    )
-    parser.add_argument(
         "--flow_sigmoid_scale",
         type=float,
         default=1.0,
@@ -183,12 +177,6 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
-        "--flux_use_uniform_schedule",
-        default=None,
-        action="store_true",
-        help="Deprecated option. Replaced with --flow_use_uniform_schedule.",
-    )
-    parser.add_argument(
         "--flow_use_uniform_schedule",
         default=False,
         action="store_true",
@@ -196,12 +184,6 @@ def get_argument_parser():
             "Whether or not to use a uniform schedule instead of sigmoid for flow-matching noise schedule."
             " Using uniform sampling may cause a bias toward dark images, and should be used with caution."
         ),
-    )
-    parser.add_argument(
-        "--flux_use_beta_schedule",
-        action="store_true",
-        default=None,
-        help="Deprecated option. Replaced with --flow_use_beta_schedule.",
     )
     parser.add_argument(
         "--flow_use_beta_schedule",
@@ -213,34 +195,16 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
-        "--flux_beta_schedule_alpha",
-        type=float,
-        default=None,
-        help=("Deprecated option. Replaced with --flux_beta_schedule_alpha."),
-    )
-    parser.add_argument(
         "--flow_beta_schedule_alpha",
         type=float,
         default=2.0,
         help=("The alpha value of the flow-matching beta schedule. Default is 2.0"),
     )
     parser.add_argument(
-        "--flux_beta_schedule_beta",
-        type=float,
-        default=None,
-        help=("Deprecated option. Replaced with --flow_beta_schedule_beta."),
-    )
-    parser.add_argument(
         "--flow_beta_schedule_beta",
         type=float,
         default=2.0,
         help=("The beta value of the flow-matching beta schedule. Default is 2.0"),
-    )
-    parser.add_argument(
-        "--flux_schedule_shift",
-        type=float,
-        default=None,
-        help=("Deprecated option. Replaced with --flow_schedule_shift."),
     )
     parser.add_argument(
         "--flow_schedule_shift",
@@ -253,12 +217,6 @@ def get_argument_parser():
             " details are ignored or accentuated. A higher value will focus more on large compositional features,"
             " and a lower value will focus on the high frequency fine details."
         ),
-    )
-    parser.add_argument(
-        "--flux_schedule_auto_shift",
-        action="store_true",
-        default=None,
-        help="Deprecated option. Replaced with --flow_schedule_auto_shift.",
     )
     parser.add_argument(
         "--flow_schedule_auto_shift",
@@ -1492,14 +1450,6 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
-        "--benchmark_base_model",
-        action="store_true",
-        default=False,
-        help=(
-            "Deprecated option, benchmarks are now enabled by default. Use --disable_benchmark to disable."
-        ),
-    )
-    parser.add_argument(
         "--disable_benchmark",
         action="store_true",
         default=False,
@@ -1638,13 +1588,6 @@ def get_argument_parser():
         help=(
             "When generating embeds for Sana, a complex human instruction will be attached to your prompt by default."
             " This is required for the Gemma model to produce meaningful image caption embeds."
-        ),
-    )
-    parser.add_argument(
-        "--allow_tf32",
-        action="store_true",
-        help=(
-            "Deprecated option. TF32 is now enabled by default. Use --disable_tf32 to disable."
         ),
     )
     parser.add_argument(
@@ -2769,13 +2712,8 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         )
 
     deprecated_options = {
-        "flux_beta_schedule_alpha": "flow_beta_schedule_alpha",
-        "flux_beta_schedule_beta": "flow_beta_schedule_beta",
-        "flux_use_beta_schedule": "flow_use_beta_schedule",
-        "flux_use_uniform_schedule": "flow_use_uniform_schedule",
-        "flux_schedule_shift": "flow_schedule_shift",
-        "flux_schedule_auto_shift": "flow_schedule_auto_shift",
-        "flow_matching_sigmoid_scale": "flow_sigmoid_scale",
+        # how to deprecate options:
+        # "flux_beta_schedule_alpha": "flow_beta_schedule_alpha",
     }
 
     for deprecated_option, replacement_option in deprecated_options.items():
