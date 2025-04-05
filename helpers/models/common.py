@@ -37,7 +37,7 @@ logger.setLevel(
 flow_matching_model_families = ["flux", "sana", "ltxvideo", "wan", "sd3"]
 upstream_config_sources = {
     "sdxl": "stabilityai/stable-diffusion-xl-base-1.0",
-    "kolors": "stabilityai/stable-diffusion-xl-base-1.0",
+    "kolors": "terminusresearch/kwai-kolors-1.0",
     "sd3": "stabilityai/stable-diffusion-3-large",
     "sana": "terminusresearch/sana-1.6b-1024px",
     "flux": "black-forest-labs/flux.1-dev",
@@ -541,6 +541,10 @@ class ModelFoundation(ABC):
             self.config.pretrained_transformer_model_name_or_path
             or self.config.pretrained_model_name_or_path
         )
+        if self.config.pretrained_model_name_or_path.endswith(".safetensors"):
+            self.config.pretrained_model_name_or_path = get_model_config_path(
+                self.config.model_family, model_path
+            )
         if model_path.endswith(".safetensors"):
             loader_fn = self.MODEL_CLASS.from_single_file
         self.model = loader_fn(
@@ -550,6 +554,37 @@ class ModelFoundation(ABC):
         )
         if move_to_device and self.model is not None:
             self.model.to(self.accelerator.device, dtype=self.config.weight_dtype)
+        if (
+            self.config.gradient_checkpointing_interval is not None
+            and self.config.gradient_checkpointing_interval > 0
+            and self.MODEL_TYPE is ModelTypes.UNET
+        ):
+            logger.warning(
+                "Using experimental gradient checkpointing monkeypatch for a checkpoint interval of {}".format(
+                    self.config.gradient_checkpointing_interval
+                )
+            )
+            # monkey-patch the gradient checkpointing function for pytorch to run every nth call only.
+            # definitely one of the more awful things I've ever done while programming, but it's easier than
+            # modifying every one of the unet blocks' forward calls in Diffusers to make it work properly.
+            from helpers.training.gradient_checkpointing_interval import (
+                set_checkpoint_interval,
+            )
+
+            set_checkpoint_interval(int(self.config.gradient_checkpointing_interval))
+
+        if (
+            self.config.gradient_checkpointing_interval is not None
+            and self.config.gradient_checkpointing_interval > 1
+        ):
+            if self.model is not None and hasattr(
+                self.model, "set_gradient_checkpointing_interval"
+            ):
+                logger.info("Setting gradient checkpointing interval..")
+                self.model.set_gradient_checkpointing_interval(
+                    int(self.config.gradient_checkpointing_interval)
+                )
+
         self.post_model_load_setup()
 
     def post_model_load_setup(self):
