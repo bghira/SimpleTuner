@@ -112,13 +112,6 @@ from diffusers.utils import (
 )
 from diffusers.utils.import_utils import is_xformers_available
 
-from helpers.models.flux import (
-    prepare_latent_image_ids,
-    pack_latents,
-    unpack_latents,
-    get_mobius_guidance,
-)
-
 is_optimi_available = False
 try:
     from optimi import prepare_for_gradient_release
@@ -1766,11 +1759,6 @@ class Trainer:
             training_logger.debug(
                 f"Extra conditioning dtype: {prepared_batch['conditioning_pixel_values'].dtype}"
             )
-        timesteps = prepared_batch.get("timesteps")
-        noisy_latents = prepared_batch.get("noisy_latents")
-        encoder_hidden_states = prepared_batch.get("encoder_hidden_states")
-        added_cond_kwargs = prepared_batch.get("added_cond_kwargs")
-        add_text_embeds = added_cond_kwargs.get("text_embeds")
         if custom_timesteps is not None:
             timesteps = custom_timesteps
         if not self.config.disable_accelerator:
@@ -1809,128 +1797,12 @@ class Trainer:
                         return_dict=False,
                     )[0]
             elif self.config.model_family == "flux":
-                # handle guidance
-                packed_noisy_latents = pack_latents(
-                    noisy_latents,
-                    batch_size=prepared_batch["latents"].shape[0],
-                    num_channels_latents=prepared_batch["latents"].shape[1],
-                    height=prepared_batch["latents"].shape[2],
-                    width=prepared_batch["latents"].shape[3],
-                ).to(
-                    dtype=self.config.base_weight_dtype,
-                    device=self.accelerator.device,
+                model_pred = self.model.model_predict(
+                    prepared_batch=prepared_batch,
                 )
-                if self.config.flux_guidance_mode == "mobius":
-                    guidance_scales = get_mobius_guidance(
-                        self.config,
-                        self.state["global_step"],
-                        self.config.num_update_steps_per_epoch,
-                        prepared_batch["latents"].shape[0],
-                        self.accelerator.device,
-                    )
-                elif self.config.flux_guidance_mode == "constant":
-                    guidance_scales = [
-                        float(self.config.flux_guidance_value)
-                    ] * prepared_batch["latents"].shape[0]
-
-                elif self.config.flux_guidance_mode == "random-range":
-                    # Generate a list of random values within the specified range for each latent
-                    guidance_scales = [
-                        random.uniform(
-                            self.config.flux_guidance_min,
-                            self.config.flux_guidance_max,
-                        )
-                        for _ in range(prepared_batch["latents"].shape[0])
-                    ]
-                self.guidance_values_list.append(guidance_scales)
-
-                # Now `guidance` will have different values for each latent in `latents`.
-                transformer_config = None
-                if hasattr(self.transformer, "module"):
-                    transformer_config = self.transformer.module.config
-                elif hasattr(self.transformer, "config"):
-                    transformer_config = self.transformer.config
-                if transformer_config is not None and getattr(
-                    transformer_config, "guidance_embeds", False
-                ):
-                    guidance = torch.tensor(
-                        guidance_scales, device=self.accelerator.device
-                    )
-                else:
-                    guidance = None
-                img_ids = prepare_latent_image_ids(
-                    prepared_batch["latents"].shape[0],
-                    prepared_batch["latents"].shape[2],
-                    prepared_batch["latents"].shape[3],
-                    self.accelerator.device,
-                    self.config.weight_dtype,
-                )
-                timesteps = (
-                    torch.tensor(timesteps)
-                    .expand(noisy_latents.shape[0])
-                    .to(device=self.accelerator.device)
-                    / self.model.get_trained_component().scheduler.config.num_train_timesteps
-                )
-
-                text_ids = torch.zeros(
-                    prepared_batch["prompt_embeds"].shape[1],
-                    3,
-                ).to(
-                    device=self.accelerator.device,
-                    dtype=self.config.base_weight_dtype,
-                )
-                training_logger.debug(
-                    "DTypes:"
-                    f"\n-> Text IDs shape: {text_ids.shape if hasattr(text_ids, 'shape') else None}, dtype: {text_ids.dtype if hasattr(text_ids, 'dtype') else None}"
-                    f"\n-> Image IDs shape: {img_ids.shape if hasattr(img_ids, 'shape') else None}, dtype: {img_ids.dtype if hasattr(img_ids, 'dtype') else None}"
-                    f"\n-> Timesteps shape: {timesteps.shape if hasattr(timesteps, 'shape') else None}, dtype: {timesteps.dtype if hasattr(timesteps, 'dtype') else None}"
-                    f"\n-> Guidance: {guidance}"
-                    f"\n-> Packed Noisy Latents shape: {packed_noisy_latents.shape if hasattr(packed_noisy_latents, 'shape') else None}, dtype: {packed_noisy_latents.dtype if hasattr(packed_noisy_latents, 'dtype') else None}"
-                )
-
-                flux_transformer_kwargs = {
-                    "hidden_states": packed_noisy_latents,
-                    # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
-                    "timestep": timesteps,
-                    "guidance": guidance,
-                    "pooled_projections": prepared_batch["add_text_embeds"].to(
-                        device=self.accelerator.device,
-                        dtype=self.config.base_weight_dtype,
-                    ),
-                    "encoder_hidden_states": prepared_batch["prompt_embeds"].to(
-                        device=self.accelerator.device,
-                        dtype=self.config.base_weight_dtype,
-                    ),
-                    "txt_ids": text_ids.to(
-                        device=self.accelerator.device,
-                        dtype=self.config.base_weight_dtype,
-                    ),
-                    "img_ids": img_ids,
-                    "joint_attention_kwargs": None,
-                    "return_dict": False,
-                }
-                if self.config.flux_attention_masked_training:
-                    flux_transformer_kwargs["attention_mask"] = prepared_batch[
-                        "encoder_attention_mask"
-                    ]
-                    if flux_transformer_kwargs["attention_mask"] is None:
-                        raise ValueError(
-                            "No attention mask was discovered when attempting validation - this means you need to recreate your text embed cache."
-                        )
-
-                model_pred = self.transformer(**flux_transformer_kwargs)[0]
-                model_pred = unpack_latents(
-                    model_pred,
-                    height=prepared_batch["latents"].shape[2] * 8,
-                    width=prepared_batch["latents"].shape[3] * 8,
-                    vae_scale_factor=16,
-                )
-
             elif self.config.model_family == "sd3":
                 # Stable Diffusion 3 uses a MM-DiT model where the VAE-produced
                 #  image embeds are passed in with the TE-produced text embeds.
-                # TODO: Replace with model_predict method on the model class.
-                # This is a hack to get it working for now.
                 model_pred = self.model.model_predict(
                     prepared_batch=prepared_batch,
                 )
@@ -2476,11 +2348,6 @@ class Trainer:
                     )
                     if parent_loss is not None:
                         wandb_logs["regularisation_loss"] = parent_loss
-                    if self.config.model_family == "flux" and self.guidance_values_list:
-                        # avg the values
-                        guidance_values = torch.tensor(self.guidance_values_list).mean()
-                        wandb_logs["mean_cfg"] = guidance_values.item()
-                        self.guidance_values_list = []
                     if self.grad_norm is not None:
                         if self.config.grad_clip_method == "norm":
                             wandb_logs["grad_norm"] = self.grad_norm
