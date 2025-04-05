@@ -201,20 +201,10 @@ class Wan(VideoModelFoundation):
 
     def custom_model_card_schedule_info(self):
         output_args = []
-        if self.config.flux_fast_schedule:
-            output_args.append("flux_fast_schedule")
         if self.config.flow_schedule_auto_shift:
             output_args.append("flow_schedule_auto_shift")
         if self.config.flow_schedule_shift is not None:
             output_args.append(f"shift={self.config.flow_schedule_shift}")
-        output_args.append(f"flux_guidance_mode={self.config.flux_guidance_mode}")
-        if self.config.flux_guidance_value:
-            output_args.append(f"flux_guidance_value={self.config.flux_guidance_value}")
-        if self.config.flux_guidance_min:
-            output_args.append(f"flux_guidance_min={self.config.flux_guidance_min}")
-        if self.config.flux_guidance_mode == "random-range":
-            output_args.append(f"flux_guidance_max={self.config.flux_guidance_max}")
-            output_args.append(f"flux_guidance_min={self.config.flux_guidance_min}")
         if self.config.flow_use_beta_schedule:
             output_args.append(
                 f"flow_beta_schedule_alpha={self.config.flow_beta_schedule_alpha}"
@@ -222,16 +212,8 @@ class Wan(VideoModelFoundation):
             output_args.append(
                 f"flow_beta_schedule_beta={self.config.flow_beta_schedule_beta}"
             )
-        if self.config.flux_attention_masked_training:
-            output_args.append("flux_attention_masked_training")
         if self.config.t5_padding != "unmodified":
             output_args.append(f"t5_padding={self.config.t5_padding}")
-        if (
-            self.config.model_type == "lora"
-            and self.config.lora_type == "standard"
-            and self.config.flux_lora_target is not None
-        ):
-            output_args.append(f"flux_lora_target={self.config.flux_lora_target}")
         output_str = (
             f" (extra parameters={output_args})"
             if output_args
