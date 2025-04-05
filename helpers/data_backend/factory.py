@@ -27,6 +27,7 @@ import queue
 from math import sqrt
 import pandas as pd
 import numpy as np
+from typing import Union
 
 logger = logging.getLogger("DataBackendFactory")
 if should_log():
@@ -996,7 +997,9 @@ def configure_multi_databackend(
 
         init_backend["config"]["config_version"] = current_config_version
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
-        info_log(f"Configured backend: {init_backend}")
+
+        init_backend_debug_info = {k: v for k, v in init_backend.items() if isinstance(v, Union[list, int, float, str, dict, tuple])}
+        info_log(f"Configured backend: {init_backend_debug_info}")
 
         if len(init_backend["metadata_backend"]) == 0 and conditioning_type is None:
             raise Exception(
@@ -1271,7 +1274,8 @@ def configure_multi_databackend(
             logger.debug(f"Encoding images during training: {args.vae_cache_ondemand}")
             accelerator.wait_for_everyone()
 
-        info_log(f"Configured backend: {init_backend}")
+        init_backend_debug_info = {k: v for k, v in init_backend.items() if isinstance(v, Union[list, int, float, str, dict, tuple])}
+        info_log(f"Configured backend: {init_backend_debug_info}")
 
         StateTracker.register_data_backend(init_backend)
         init_backend["metadata_backend"].save_cache()
