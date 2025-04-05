@@ -20,6 +20,13 @@ if [ -z "${DISABLE_LD_OVERRIDE}" ]; then
     fi
 fi
 
+if [ -z "${TQDM_NCOLS}" ]; then
+    export TQDM_NCOLS=125
+fi
+if [ -z "${TQDM_LEAVE}" ]; then
+    export TQDM_LEAVE=false
+fi
+
 export TOKENIZERS_PARALLELISM=false
 export PLATFORM
 PLATFORM=$(uname -s)
