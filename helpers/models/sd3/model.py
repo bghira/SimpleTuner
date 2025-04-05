@@ -315,8 +315,6 @@ class SD3(ImageModelFoundation):
             )
         if self.config.flow_use_uniform_schedule:
             output_args.append(f"flow_use_uniform_schedule")
-        # if self.config.model_type == "lora" and args.lora_type == "standard":
-        #     output_args.append(f"flux_lora_target={self.config.flux_lora_target}")
         output_str = (
             f" (extra parameters={output_args})"
             if output_args
