@@ -13,10 +13,6 @@ from helpers.training.state_tracker import StateTracker
 from helpers.models.common import PredictionTypes
 from helpers.data_backend.factory import move_text_encoders
 from helpers.training.exceptions import MultiDatasetExhausted
-from helpers.models.sdxl.pipeline import (
-    StableDiffusionXLPipeline,
-    StableDiffusionXLImg2ImgPipeline,
-)
 from helpers.legacy.pipeline import StableDiffusionPipeline
 from diffusers.schedulers import (
     EulerDiscreteScheduler,

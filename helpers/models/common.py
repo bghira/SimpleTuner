@@ -1165,25 +1165,6 @@ class WanVideo(VideoModelFoundation):
 #     extra_pipeline_kwargs["text_encoder_2"] = None
 # if self.args.model_family in ["sd3"]:
 #     extra_pipeline_kwargs["text_encoder_3"] = None
-# if type(pipeline_cls) is StableDiffusionXLPipeline:
-#     del extra_pipeline_kwargs["text_encoder"]
-#     del extra_pipeline_kwargs["tokenizer"]
-#     if validation_type == "final":
-#         if self.text_encoder_1 is not None:
-#             extra_pipeline_kwargs["text_encoder_1"] = unwrap_model(
-#                 self.accelerator, self.text_encoder_1
-#             )
-#             extra_pipeline_kwargs["tokenizer_1"] = self.tokenizer_1
-#             if self.text_encoder_2 is not None:
-#                 extra_pipeline_kwargs["text_encoder_2"] = unwrap_model(
-#                     self.accelerator, self.text_encoder_2
-#                 )
-#                 extra_pipeline_kwargs["tokenizer_2"] = self.tokenizer_2
-#     else:
-#         extra_pipeline_kwargs["text_encoder_1"] = None
-#         extra_pipeline_kwargs["tokenizer_1"] = None
-#         extra_pipeline_kwargs["text_encoder_2"] = None
-#         extra_pipeline_kwargs["tokenizer_2"] = None
 
 # if self.args.model_family == "smoldit":
 #     extra_pipeline_kwargs["transformer"] = unwrap_model(

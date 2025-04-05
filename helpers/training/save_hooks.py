@@ -8,7 +8,6 @@ from diffusers.utils import (
 from peft import set_peft_model_state_dict
 from peft.utils import get_peft_model_state_dict
 from helpers.models.common import PipelineTypes
-from helpers.models.sdxl.pipeline import StableDiffusionXLPipeline
 from helpers.training.state_tracker import StateTracker
 from helpers.models.smoldit import SmolDiT2DModel, SmolDiTPipeline
 import os
@@ -23,18 +22,6 @@ from tqdm import tqdm
 
 logger = logging.getLogger("SaveHookManager")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
-
-try:
-    from diffusers import (
-        UNet2DConditionModel,
-        StableDiffusionPipeline,
-        FluxPipeline,
-        PixArtSigmaPipeline,
-        ControlNetModel,
-        HunyuanDiTPipeline,
-    )
-except ImportError:
-    logger.error("This release requires the latest version of Diffusers.")
 
 try:
     from diffusers.models import PixArtTransformer2DModel
