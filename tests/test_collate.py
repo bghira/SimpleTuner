@@ -45,10 +45,10 @@ class TestCollateFn(unittest.TestCase):
         mock_compute_latents.return_value = torch.randn(
             2, 512
         )  # Adjust dimensions as needed
-        mock_compute_embeds.return_value = (
-            torch.randn(2, 768),
-            torch.randn(2, 768),
-        )  # Example embeddings
+        mock_compute_embeds.return_value = {
+            "prompt_embeds": torch.randn(2, 768),
+            "pooled_prompt_embeds": torch.randn(2, 768),
+        }  # Example embeddings
         mock_gather.return_value = torch.tensor(
             [[1, 2, 3, 4, 5, 6], [1, 2, 3, 4, 5, 6]]
         )

@@ -103,6 +103,7 @@ class TestPromptHandler(unittest.TestCase):
             text_encoders=["LameTest"],
             tokenizers=["LameTest"],
             accelerator=MagicMock(),
+            model_type="sdxl",
         )
         result_caption = handler.magic_prompt(
             "path/to/image.png",
@@ -128,6 +129,7 @@ class TestPromptHandler(unittest.TestCase):
             text_encoders=["LameTest"],
             tokenizers=["LameTest"],
             accelerator=MagicMock(),
+            model_type="sdxl",
         )
         result_caption = handler.magic_prompt(
             f"path/to/{image_filename}.png",
