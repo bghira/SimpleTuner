@@ -90,11 +90,11 @@ class LTXVideo(VideoModelFoundation):
         Returns:
             torch.Tensor: The adjusted embed. By default, this method does nothing.
         """
-        prompt_embeds, masks = text_embedding
+        prompt_embeds, prompt_attention_mask, _, _ = text_embedding
 
         return {
             "prompt_embeds": prompt_embeds,
-            "attention_masks": masks,
+            "attention_masks": prompt_attention_mask,
         }
 
     def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
@@ -125,17 +125,12 @@ class LTXVideo(VideoModelFoundation):
         Returns:
             Text encoder output (raw)
         """
-        prompt_embeds, masks = self.pipeline.encode_prompt(
+        prompt_embeds, prompt_attention_mask, negative_prompt_embeds, negative_prompt_attention_mask = self.pipeline.encode_prompt(
             prompt=prompts,
             device=self.accelerator.device,
         )
-        if self.config.t5_padding == "zero":
-            # we can zero the padding tokens if we're just going to mask them later anyway.
-            prompt_embeds = prompt_embeds * masks.to(
-                device=prompt_embeds.device
-            ).unsqueeze(-1).expand(prompt_embeds.shape)
 
-        return prompt_embeds, masks
+        return prompt_embeds, prompt_attention_mask, negative_prompt_embeds, negative_prompt_attention_mask
 
     def model_predict(self, prepared_batch):
         if prepared_batch["noisy_latents"].shape[1] != 128:
