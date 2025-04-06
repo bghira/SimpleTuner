@@ -9,7 +9,6 @@ from helpers.prompts import (
 class TestPromptHandler(unittest.TestCase):
     def setUp(self):
         self.args = MagicMock()
-        self.args.disable_compel = False
         self.text_encoders = [MagicMock(), MagicMock()]
         self.tokenizers = [MagicMock(), MagicMock()]
         self.accelerator = MagicMock()
