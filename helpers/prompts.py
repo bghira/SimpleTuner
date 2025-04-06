@@ -112,13 +112,6 @@ class PromptHandler:
         accelerator,
         model_type: str,
     ):
-        if args.disable_compel:
-            raise Exception(
-                "--disable_compel was provided, but the Compel engine was still attempted to be initialised."
-            )
-
-        from compel import Compel, ReturnedEmbeddingsType
-
         self.accelerator = accelerator
         self.encoder_style = model_type
         self.compel = None

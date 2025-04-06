@@ -187,8 +187,6 @@ class DeepFloydIF(ImageModelFoundation):
         self.config.pretrained_vae_model_name_or_path = None
         self.config.vae_path = None
 
-        # Disable Compel.
-        self.config.disable_compel = True
         if self.config.aspect_bucket_alignment != 32:
             logger.warning(
                 "DeepFloyd requires an alignment value of 32px. Overriding the value of --aspect_bucket_alignment."

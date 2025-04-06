@@ -26,7 +26,6 @@ from helpers.models.all import (
 model_family_choices = list(model_families.keys())
 model_families_to_refactor = [
     "pixart_sigma",
-    "ltxvideo",
     "legacy",
 ]
 model_family_choices += model_families_to_refactor
@@ -896,8 +895,7 @@ def get_argument_parser():
         action="store_true",
         help=(
             "When provided, any validation prompt entries in the text embed cache will be recreated."
-            " This is useful if you've modified any of the existing prompts, or, disabled/enabled Compel,"
-            " via `--disable_compel`"
+            " This is useful if you've modified any of the existing prompts."
         ),
     )
     parser.add_argument(
@@ -2597,10 +2595,6 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         except Exception as e:
             logger.error(f"Could not load validation_guidance_skip_layers: {e}")
             raise
-
-    if args.framerate is None:
-        if args.model_family == "ltxvideo":
-            args.framerate = 25
 
     if (
         args.sana_complex_human_instruction is not None

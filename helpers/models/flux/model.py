@@ -279,8 +279,6 @@ class Flux(ImageModelFoundation):
         #     raise ValueError(
         #         f"{self.NAME} does not support fp8-quanto. Please use fp8-torchao or int8 precision level instead."
         #     )
-        # Disable Compel.
-        self.config.disable_compel = True
         if self.config.aspect_bucket_alignment != 64:
             logger.warning(
                 "{self.NAME} requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."

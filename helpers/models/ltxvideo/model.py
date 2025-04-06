@@ -8,12 +8,18 @@ from helpers.models.common import (
 )
 from transformers import (
     T5TokenizerFast,
-    UMT5EncoderModel,
+    T5EncoderModel,
 )
-from diffusers import AutoencoderKLWan
-from helpers.models.wan.transformer import WanTransformer3DModel
-from helpers.models.wan.pipeline import WanPipeline
+from diffusers import AutoencoderKLLTXVideo
+from diffusers import LTXVideoTransformer3DModel
+from diffusers.pipelines import LTXPipeline
 from helpers.training.multi_process import _get_rank
+from helpers.models.ltxvideo import (
+    pack_ltx_latents,
+    unpack_ltx_latents,
+    apply_first_frame_protection,
+    make_i2v_conditioning_mask,
+)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(
@@ -21,43 +27,42 @@ logger.setLevel(
 )
 
 
-class Wan(VideoModelFoundation):
-    NAME = "Wan"
+class LTXVideo(VideoModelFoundation):
+    NAME = "LTXVideo"
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
-    AUTOENCODER_CLASS = AutoencoderKLWan
-    LATENT_CHANNEL_COUNT = 16
-    DEFAULT_NOISE_SCHEDULER = "unipc"
+    AUTOENCODER_CLASS = AutoencoderKLLTXVideo
+    LATENT_CHANNEL_COUNT = 128
+    DEFAULT_NOISE_SCHEDULER = "flow_matching"
     # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     # Only training the Attention blocks by default.
     DEFAULT_LYCORIS_TARGET = ["Attention"]
 
-    MODEL_CLASS = WanTransformer3DModel
+    MODEL_CLASS = LTXVideoTransformer3DModel
     MODEL_SUBFOLDER = "transformer"
     PIPELINE_CLASSES = {
-        PipelineTypes.TEXT2IMG: WanPipeline,
+        PipelineTypes.TEXT2IMG: LTXPipeline,
         # PipelineTypes.IMG2IMG: None,
         # PipelineTypes.CONTROLNET: None,
     }
 
     # The default model flavor to use when none is specified.
-    DEFAULT_MODEL_FLAVOUR = "t2v-480p-1.3b-2.1"
+    DEFAULT_MODEL_FLAVOUR = "0.9.5"
     HUGGINGFACE_PATHS = {
-        "t2v-480p-1.3b-2.1": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
-        "t2v-480p-14b-2.1": "Wan-AI/Wan2.1-T2V-14B-Diffusers",
-        # "i2v-480p-14b-2.1": "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
-        # "i2v-720p-14b-2.1": "Wan-AI/Wan2.1-I2V-14B-720P-Diffusers",
+        "0.9.5": "Lightricks/LTX-Video-0.9.5",
+        "0.9.1": "Lightricks/LTX-Video-0.9.1",
+        "0.9.0": "Lightricks/LTX-Video",
     }
     MODEL_LICENSE = "apache-2.0"
 
     TEXT_ENCODER_CONFIGURATION = {
         "text_encoder": {
-            "name": "UMT5",
+            "name": "T5 XXL v1.1",
             "tokenizer": T5TokenizerFast,
             "subfolder": "text_encoder",
             "tokenizer_subfolder": "tokenizer",
-            "model": UMT5EncoderModel,
+            "model": T5EncoderModel,
         },
     }
 
@@ -67,9 +72,9 @@ class Wan(VideoModelFoundation):
         """
         # Wan video should max out around 81 frames for efficiency.
         pipeline_kwargs["num_frames"] = min(
-            81, self.config.validation_num_video_frames or 81
+            125, self.config.validation_num_video_frames or 125
         )
-        pipeline_kwargs["output_type"] = "pil"
+        # pipeline_kwargs["output_type"] = "pil"
         # replace embeds with prompt
 
         return pipeline_kwargs
@@ -96,11 +101,7 @@ class Wan(VideoModelFoundation):
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
         return {
             "prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            # "attention_mask": (
-            #     text_embedding["attention_masks"].unsqueeze(0)
-            #     if self.config.flux_attention_masked_training
-            #     else None
-            # ),
+            "prompt_attention_mask": text_embedding["attention_masks"].unsqueeze(0),
         }
 
     def convert_negative_text_embed_for_pipeline(
@@ -109,11 +110,9 @@ class Wan(VideoModelFoundation):
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
         return {
             "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            # "negative_mask": (
-            #     text_embedding["attention_masks"].unsqueeze(0)
-            #     if self.config.flux_attention_masked_training
-            #     else None
-            # ),
+            "negative_prompt_attention_mask": text_embedding[
+                "attention_masks"
+            ].unsqueeze(0),
         }
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
@@ -139,15 +138,69 @@ class Wan(VideoModelFoundation):
         return prompt_embeds, masks
 
     def model_predict(self, prepared_batch):
-        model_pred = self.model(
-            prepared_batch["noisy_latents"].to(self.config.weight_dtype),
-            encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(
-                self.config.weight_dtype
-            ),
-            # encoder_attention_mask=prepared_batch["encoder_attention_mask"],
+        if prepared_batch["noisy_latents"].shape[1] != 128:
+            raise ValueError(
+                "LTX Video requires a latent size of 128 channels. Ensure you are using the correct VAE cache path."
+                f" Shape received: {prepared_batch['noisy_latents'].shape}"
+            )
+        scale_value = 1
+        height, width = (
+            prepared_batch["noisy_latents"].shape[3] * scale_value,
+            prepared_batch["noisy_latents"].shape[4] * scale_value,
+        )
+        logger.debug(
+            f"Batch contents: {prepared_batch['noisy_latents'].shape} (h={height}, w={width})"
+        )
+        # permute to (B, T, C, H, W)
+        num_frames = prepared_batch["noisy_latents"].shape[2]
+
+        if "conditioning_mask" in prepared_batch:
+            conditioning_mask = pack_ltx_latents(
+                prepared_batch["conditioning_mask"]
+            ).squeeze(-1)
+        packed_noisy_latents = pack_ltx_latents(
+            prepared_batch["noisy_latents"], 1, 1
+        ).to(self.config.weight_dtype)
+
+        logger.debug(f"Packed batch shape: {packed_noisy_latents.shape}")
+        logger.debug(
+            "input dtypes:"
+            f"\n -> noisy_latents: {prepared_batch['noisy_latents'].dtype}"
+            f"\n -> encoder_hidden_states: {prepared_batch['encoder_hidden_states'].dtype}"
+            f"\n -> timestep: {prepared_batch['timesteps'].dtype}"
+        )
+        # Copied from a-r-r-o-w's script.
+        latent_frame_rate = self.config.framerate / 8
+        spatial_compression_ratio = 32
+        # [0.32, 32, 32]
+        rope_interpolation_scale = [
+            1 / latent_frame_rate,
+            spatial_compression_ratio,
+            spatial_compression_ratio,
+        ]
+        # rope_interpolation_scale = [1 / 25, 32, 32]
+
+        model_pred = self.transformer(
+            packed_noisy_latents,
+            encoder_hidden_states=prepared_batch["encoder_hidden_states"],
+            encoder_attention_mask=prepared_batch["encoder_attention_mask"],
             timestep=prepared_batch["timesteps"],
             return_dict=False,
+            num_frames=num_frames,
+            rope_interpolation_scale=rope_interpolation_scale,
+            height=height,
+            width=width,
         )[0]
+        logger.debug(f"Got to the end of prediction, {model_pred.shape}")
+        # we need to unpack LTX video latents i think
+        model_pred = unpack_ltx_latents(
+            model_pred,
+            num_frames=num_frames,
+            patch_size=1,
+            patch_size_t=1,
+            height=height,
+            width=width,
+        )
 
         return {
             "model_prediction": model_pred,
@@ -190,7 +243,7 @@ class Wan(VideoModelFoundation):
             self.config.validation_disable_unconditional = True
 
         if self.config.framerate is None:
-            self.config.framerate = 15
+            self.config.framerate = 25
 
         self.config.vae_enable_tiling = True
         self.config.vae_enable_slicing = True

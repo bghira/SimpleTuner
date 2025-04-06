@@ -258,7 +258,7 @@ def _validation_resolution(args):
 
 
 def _output_attribute(args, model):
-    if 'Video' in str(type(model)):
+    if "Video" in str(type(model)):
         return "frames[0]"
     return "images[0]"
 
@@ -274,7 +274,7 @@ model_output.save("output.png", format="PNG")
 """
 
 
-def code_example(args, repo_id: str = None, model = None):
+def code_example(args, repo_id: str = None, model=None):
     """Return a string with the code example."""
     code_example = f"""
 ```python

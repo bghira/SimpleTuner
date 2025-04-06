@@ -155,8 +155,6 @@ class Sana(ImageModelFoundation):
             )
         # Disable custom VAEs for Sana.
         self.config.pretrained_vae_model_name_or_path = None
-        # Disable Compel.
-        self.config.disable_compel = True
         if self.config.aspect_bucket_alignment != 64:
             logger.warning(
                 "MM-DiT requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."

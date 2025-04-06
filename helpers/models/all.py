@@ -5,6 +5,7 @@ from helpers.models.sdxl.model import SDXL
 from helpers.models.kolors.model import Kolors
 from helpers.models.flux.model import Flux
 from helpers.models.wan.model import Wan
+from helpers.models.ltxvideo.model import LTXVideo
 
 model_families = {
     "sd3": SD3,
@@ -14,6 +15,7 @@ model_families = {
     "kolors": Kolors,
     "flux": Flux,
     "wan": Wan,
+    "ltxvideo": LTXVideo,
 }
 
 

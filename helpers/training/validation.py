@@ -11,7 +11,7 @@ from helpers.models.common import VideoModelFoundation, ImageModelFoundation
 from helpers.models.common import ModelFoundation
 from PIL import Image
 from helpers.training.state_tracker import StateTracker
-from helpers.models.common import PredictionTypes
+from helpers.models.common import PredictionTypes, PipelineTypes
 from helpers.data_backend.factory import move_text_encoders
 from helpers.training.exceptions import MultiDatasetExhausted
 from helpers.legacy.pipeline import StableDiffusionPipeline
@@ -552,10 +552,6 @@ class Validation:
         #     from helpers.models.pixart.pipeline import PixArtSigmaPipeline
 
         #     return PixArtSigmaPipeline
-        # elif model_type == "ltxvideo":
-        #     from diffusers import LTXPipeline
-
-        #     return LTXPipeline
         # else:
         #     raise NotImplementedError(
         #         f"Model type {model_type} not implemented for validation."
@@ -919,9 +915,7 @@ class Validation:
                 ema_validation_images,
             ) = self.validate_prompt(prompt, shortname, validation_input_image)
             validation_images.update(stitched_validation_images)
-            if self.config.model_family in ["ltxvideo"] or isinstance(
-                self.model, VideoModelFoundation
-            ):
+            if isinstance(self.model, VideoModelFoundation):
                 self._save_videos(validation_images, shortname, prompt)
             else:
                 self._save_images(validation_images, shortname, prompt)
@@ -1114,7 +1108,6 @@ class Validation:
 
                 if StateTracker.get_model_family() in [
                     "pixart_sigma",
-                    "ltxvideo",
                 ]:
                     if pipeline_kwargs.get("negative_prompt") is not None:
                         del pipeline_kwargs["negative_prompt"]
@@ -1153,9 +1146,7 @@ class Validation:
                     call_kwargs = inspect.signature(
                         self.model.pipeline.__call__
                     ).parameters
-                    logger.debug(
-                        f"Possible parameters: {call_kwargs}"
-                    )
+                    logger.debug(f"Possible parameters: {call_kwargs}")
                     # remove any kwargs that are not in the pipeline call
                     pipeline_kwargs = {
                         k: v for k, v in pipeline_kwargs.items() if k in call_kwargs

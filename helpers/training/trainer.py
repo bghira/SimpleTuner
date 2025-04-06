@@ -47,12 +47,6 @@ from helpers.training.min_snr_gamma import compute_snr
 from helpers.training.peft_init import init_lokr_network_with_perturbed_normal
 from accelerate.logging import get_logger
 from diffusers.models.embeddings import get_2d_rotary_pos_embed
-from helpers.models.ltxvideo import (
-    pack_ltx_latents,
-    unpack_ltx_latents,
-    apply_first_frame_protection,
-    make_i2v_conditioning_mask,
-)
 from helpers.models.all import model_families
 
 logger = get_logger(
@@ -1801,74 +1795,6 @@ class Trainer:
                     return_dict=False,
                 )[0]
                 model_pred = model_pred.chunk(2, dim=1)[0]
-            elif self.config.model_family == "ltxvideo":
-                if noisy_latents.shape[1] != 128:
-                    raise ValueError(
-                        "LTX Video requires a latent size of 128 channels. Ensure you are using the correct VAE cache path."
-                        f" Shape received: {noisy_latents.shape}"
-                    )
-                scale_value = 1
-                height, width = (
-                    noisy_latents.shape[3] * scale_value,
-                    noisy_latents.shape[4] * scale_value,
-                )
-                training_logger.debug(
-                    f"Batch contents: {noisy_latents.shape} (h={height}, w={width})"
-                )
-                # permute to (B, T, C, H, W)
-                num_frames = noisy_latents.shape[2]
-
-                if "conditioning_mask" in prepared_batch:
-                    conditioning_mask = pack_ltx_latents(
-                        prepared_batch["conditioning_mask"]
-                    ).squeeze(-1)
-                packed_noisy_latents = pack_ltx_latents(noisy_latents, 1, 1).to(
-                    self.config.weight_dtype
-                )
-
-                training_logger.debug(
-                    f"Packed batch shape: {packed_noisy_latents.shape}"
-                )
-                training_logger.debug(
-                    "input dtypes:"
-                    f"\n -> noisy_latents: {noisy_latents.dtype}"
-                    f"\n -> encoder_hidden_states: {encoder_hidden_states.dtype}"
-                    f"\n -> timestep: {timesteps.dtype}"
-                )
-                # Copied from a-r-r-o-w's script.
-                latent_frame_rate = self.config.framerate / 8
-                spatial_compression_ratio = 32
-                # [0.32, 32, 32]
-                rope_interpolation_scale = [
-                    1 / latent_frame_rate,
-                    spatial_compression_ratio,
-                    spatial_compression_ratio,
-                ]
-                # rope_interpolation_scale = [1 / 25, 32, 32]
-
-                model_pred = self.transformer(
-                    packed_noisy_latents,
-                    encoder_hidden_states=encoder_hidden_states,
-                    encoder_attention_mask=prepared_batch["encoder_attention_mask"],
-                    timestep=timesteps,
-                    return_dict=False,
-                    num_frames=num_frames,
-                    rope_interpolation_scale=rope_interpolation_scale,
-                    height=height,
-                    width=width,
-                )[0]
-                training_logger.debug(
-                    f"Got to the end of prediction, {model_pred.shape}"
-                )
-                # we need to unpack LTX video latents i think
-                model_pred = unpack_ltx_latents(
-                    model_pred,
-                    num_frames=num_frames,
-                    patch_size=1,
-                    patch_size_t=1,
-                    height=height,
-                    width=width,
-                )
             elif self.model.get_trained_component() is not None:
                 model_pred = self.model.model_predict(
                     prepared_batch=prepared_batch,
@@ -1913,15 +1839,15 @@ class Trainer:
 
         return max_grad_value
 
-    def prepare_batch(self, batch: list):
+    def prepare_batch(self, batch: dict):
         """
         Prepare a batch for the model prediction.
 
         Args:
-            batch (list): Batch from iterator_fn.
+            batch (dict): Batch from iterator_fn.
 
         Returns:
-            batch (list): Prepared batch.
+            batch (dict): Prepared batch.
         """
         if not batch:
             training_logger.debug(
@@ -1929,7 +1855,7 @@ class Trainer:
             )
             return batch
 
-        return self.model.prepare_batch(batch)
+        return self.model.prepare_batch(batch, state=self.state)
 
     def get_prediction_target(self, prepared_batch: dict):
         return self.model.get_prediction_target(prepared_batch)

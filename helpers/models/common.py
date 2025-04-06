@@ -760,14 +760,20 @@ class ModelFoundation(ABC):
             raise ValueError(f"Unknown prediction type {self.PREDICTION_TYPE}.")
         return target
 
-    def prepare_batch_conditions(self, batch: dict) -> dict:
+    def prepare_batch_conditions(self, batch: dict, state: dict) -> dict:
         return batch
 
-    def prepare_batch(self, batch: dict) -> dict:
+    def prepare_batch(self, batch: dict, state: dict) -> dict:
         """
         Moves the batch to the proper device/dtype,
         samples noise, timesteps and, if applicable, flow-matching sigmas.
-        This code is mostly common across models.
+        This code is mostly common across models, but if you'd like to override certain pieces, use prepare_batch_conditions.
+
+        Args:
+            batch (dict): The batch to prepare.
+            state (dict): The training state.
+        Returns:
+            dict: The prepared batch.
         """
         if not batch:
             return batch
@@ -811,12 +817,12 @@ class ModelFoundation(ABC):
         bsz = batch["latents"].shape[0]
         if self.config.input_perturbation != 0 and (
             not getattr(self.config, "input_perturbation_steps", None)
-            or global_step < self.config.input_perturbation_steps
+            or state["global_step"] < self.config.input_perturbation_steps
         ):
             input_perturbation = self.config.input_perturbation
             if getattr(self.config, "input_perturbation_steps", None):
                 input_perturbation *= 1.0 - (
-                    global_step / self.config.input_perturbation_steps
+                    state["global_step"] / self.config.input_perturbation_steps
                 )
             batch["noise"] = noise + input_perturbation * torch.randn_like(
                 batch["latents"]
@@ -900,7 +906,7 @@ class ModelFoundation(ABC):
             ).to(device=self.accelerator.device, dtype=self.config.weight_dtype)
 
         # any model-specific augmentation can occur inside prepare_batch_conditions.
-        batch = self.prepare_batch_conditions(batch=batch)
+        batch = self.prepare_batch_conditions(batch=batch, state=state)
 
         return batch
 

@@ -5,6 +5,7 @@ import os
 import numpy as np
 from math import sqrt
 from helpers.training.state_tracker import StateTracker
+from helpers.models.common import VideoModelFoundation, ImageModelFoundation
 
 logger = logging.getLogger("MultiaspectImage")
 logger.setLevel(os.environ.get("SIMPLETUNER_IMAGE_PREP_LOG_LEVEL", "INFO"))
@@ -49,11 +50,9 @@ class VideoToTensor:
 
 class MultiaspectImage:
     @staticmethod
-    def get_video_transforms():
-        if not StateTracker.get_model_family() in ["ltxvideo", "wan"]:
-            raise ValueError(
-                f"Cannot transform videos for {StateTracker.get_model_family()}."
-            )
+    def get_video_transforms(model: VideoModelFoundation = None):
+        if not isinstance(model, VideoModelFoundation):
+            raise ValueError(f"Cannot transform videos for {model.__class__.__name__}.")
         # For videos, use the custom VideoToTensor transform.
         # Note: LTX Video applies its own normalisation later on.
         return transforms.Compose(
@@ -63,8 +62,8 @@ class MultiaspectImage:
         )
 
     @staticmethod
-    def get_image_transforms():
-        if StateTracker.get_model_family() in ["ltxvideo", "wan"]:
+    def get_image_transforms(model: ImageModelFoundation = None):
+        if not isinstance(model, ImageModelFoundation):
             # LTX Video has its own normalisation, later on.
             return transforms.Compose(
                 [

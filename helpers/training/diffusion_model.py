@@ -38,22 +38,7 @@ def load_diffusion_model(args, weight_dtype):
             bnb_4bit_compute_dtype=weight_dtype,
         )
 
-    if args.model_family == "ltxvideo":
-        # LTXVideo uses a Diffusion transformer.
-        logger.info("Loading LTX Video diffusion transformer..")
-        try:
-            from diffusers import LTXVideoTransformer3DModel
-        except Exception as e:
-            logger.error(
-                f"Can not load LTXVideoTransformer3DModel model class. This release requires the latest version of Diffusers: {e}"
-            )
-        transformer = LTXVideoTransformer3DModel.from_pretrained(
-            args.pretrained_transformer_model_name_or_path
-            or args.pretrained_model_name_or_path,
-            subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
-            **pretrained_load_args,
-        )
-    elif args.model_family == "pixart_sigma":
+    if args.model_family == "pixart_sigma":
         from diffusers.models import PixArtTransformer2DModel
 
         transformer_load_fn = PixArtTransformer2DModel.from_pretrained
