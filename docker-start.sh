@@ -4,7 +4,7 @@
 # This file can then later be sourced in a login shell
 echo "Exporting environment variables..."
 printenv |
-	grep -E '^RUNPOD_|^PATH=|^HF_HOME=|^HUGGING_FACE_HUB_TOKEN=|^_=' |
+	grep -E '^RUNPOD_|^PATH=|^HF_HOME=|^HF_TOKEN=|^HUGGING_FACE_HUB_TOKEN=|^WANDB_API_KEY=|^WANDB_TOKEN=|^_=' |
 	sed 's/^\(.*\)=\(.*\)$/export \1="\2"/' >>/etc/rp_environment
 
 # Add it to Bash login script
@@ -26,9 +26,19 @@ fi
 # Start SSH server
 service ssh start
 
-# Load HF, WanDB tokens
-if [ -n "$HUGGING_FACE_HUB_TOKEN" ]; then huggingface-cli login --token "$HUGGING_FACE_HUB_TOKEN" --add-to-git-credential; else echo "HUGGING_FACE_HUB_TOKEN not set; skipping login"; fi
-if [ -n "$WANDB_TOKEN" ]; then wandb login "$WANDB_TOKEN"; else echo "WANDB_TOKEN not set; skipping login"; fi
+# Login to HF
+if [[ -n "${HF_TOKEN:-$HUGGING_FACE_HUB_TOKEN}" ]]; then
+	huggingface-cli login --token "${HF_TOKEN:-$HUGGING_FACE_HUB_TOKEN}" --add-to-git-credential
+else
+	echo "HF_TOKEN or HUGGING_FACE_HUB_TOKEN not set; skipping login"
+fi
+
+# Login to WanDB
+if [[ -n "${WANDB_API_KEY:-$WANDB_TOKEN}" ]]; then
+	wandb login "${WANDB_API_KEY:-$WANDB_TOKEN}"
+else
+	echo "WANDB_API_KEY or WANDB_TOKEN not set; skipping login"
+fi
 
 # 🫡
 sleep infinity

@@ -39,7 +39,7 @@ This command sets up the container with GPU access and maps the SSH port for ext
 To facilitate integration with external tools, the container supports environment variables for Huggingface and WandB tokens. Pass these at runtime as follows:
 
 ```bash
-docker run --gpus all -e HUGGING_FACE_HUB_TOKEN='your_token' -e WANDB_TOKEN='your_token' -it -p 22:22 simpletuner
+docker run --gpus all -e HF_TOKEN='your_token' -e WANDB_API_KEY='your_token' -it -p 22:22 simpletuner
 ```
 
 ### 4. Data Volumes
@@ -98,8 +98,8 @@ services:
       - "[path to your datasets]:/datasets"
       - "[path to your configs]:/workspace/SimpleTuner/config"
     environment:
-      HUGGING_FACE_HUB_TOKEN: [your hugging face token]
-      WANDB_TOKEN: [your wanddb token]
+      HF_TOKEN: [your hugging face token]
+      WANDB_API_KEY: [your wanddb token]
     command: ["tail", "-f", "/dev/null"]
     deploy:
       resources:
