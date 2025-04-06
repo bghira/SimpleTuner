@@ -41,7 +41,8 @@ upstream_config_sources = {
     "sd3": "stabilityai/stable-diffusion-3-large",
     "sana": "terminusresearch/sana-1.6b-1024px",
     "flux": "black-forest-labs/flux.1-dev",
-    "legacy": "stable-diffusion-v1-5/stable-diffusion-v1-5",
+    "sd1x": "stable-diffusion-v1-5/stable-diffusion-v1-5",
+    "sd2x": "stabilityai/stable-diffusion-v2-1",
     "ltxvideo": "Lightricks/LTX-Video",
     "wan": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
 }
@@ -695,8 +696,12 @@ class ModelFoundation(ABC):
 
         return pipeline_kwargs
 
-    def setup_noise_schedule(self):
-        """Loads the noise schedule from the config."""
+    def setup_training_noise_schedule(self):
+        """
+        Loads the noise schedule from the config.
+
+        It's important to note, this is the *training* schedule, not inference.
+        """
         flow_matching = False
         if self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
             from diffusers import FlowMatchEulerDiscreteScheduler
@@ -714,11 +719,6 @@ class ModelFoundation(ABC):
             PredictionTypes.V_PREDICTION,
             PredictionTypes.SAMPLE,
         ]:
-            if self.config.model_family == "legacy":
-                raise NotImplemented("Legacy models need ZSNR config moved out.")
-                self.config.rescale_betas_zero_snr = True
-                self.config.training_scheduler_timestep_spacing = "trailing"
-
             from diffusers import DDPMScheduler
 
             self.noise_schedule = DDPMScheduler.from_pretrained(

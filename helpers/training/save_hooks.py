@@ -90,8 +90,6 @@ class SaveHookManager:
                 else PipelineTypes.TEXT2IMG
             )
         ]
-        logger.debug(f"Denoiser class set to: {self.denoiser_class.__name__}.")
-        logger.debug(f"Pipeline class set to: {self.pipeline_class.__name__}.")
 
         self.ema_model_cls = self.model.get_trained_component().__class__
         self.ema_model_subdir = f"{self.model.MODEL_SUBFOLDER}_ema"

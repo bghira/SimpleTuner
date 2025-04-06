@@ -24,11 +24,6 @@ from helpers.models.all import (
 )
 
 model_family_choices = list(model_families.keys())
-model_families_to_refactor = [
-    "pixart_sigma",
-    "legacy",
-]
-model_family_choices += model_families_to_refactor
 
 logger = logging.getLogger("ArgsParser")
 # Are we the primary process?
@@ -1747,12 +1742,12 @@ def get_argument_parser():
     parser.add_argument(
         "--validation_noise_scheduler",
         type=str,
-        choices=["ddim", "ddpm", "euler", "euler-a", "unipc"],
+        choices=["ddim", "ddpm", "euler", "euler-a", "unipc", "dpm++"],
         default=None,
         help=(
             "When validating the model at inference time, a different scheduler may be chosen."
             " UniPC can offer better speed, and Euler A can put up with instabilities a bit better."
-            " For zero-terminal SNR models, DDIM is the best choice. Choices: ['ddim', 'ddpm', 'euler', 'euler-a', 'unipc'],"
+            " For zero-terminal SNR models, DDIM is the best choice. Choices: ['ddim', 'ddpm', 'euler', 'euler-a', 'unipc', 'dpm++'],"
             " Default: None (use the model default)"
         ),
     )
@@ -2446,13 +2441,6 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         error_log("Both --optimizer_beta1 and --optimizer_beta2 should be provided.")
         sys.exit(1)
 
-    if not args.i_know_what_i_am_doing:
-        if args.model_family == "pixart_sigma":
-            if args.max_grad_norm is None or float(args.max_grad_norm) > 0.01:
-                warning_log(
-                    f"PixArt Sigma requires --max_grad_norm=0.01 to prevent model collapse. Overriding value. Set this value manually to disable this warning."
-                )
-                args.max_grad_norm = 0.01
     if args.gradient_checkpointing:
         # enable torch compile w/ activation checkpointing :[ slows us down.
         torch._dynamo.config.optimize_ddp = False

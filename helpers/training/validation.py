@@ -12,14 +12,13 @@ from helpers.models.common import ModelFoundation
 from PIL import Image
 from helpers.training.state_tracker import StateTracker
 from helpers.models.common import PredictionTypes, PipelineTypes
-from helpers.data_backend.factory import move_text_encoders
 from helpers.training.exceptions import MultiDatasetExhausted
-from helpers.legacy.pipeline import StableDiffusionPipeline
 from diffusers.schedulers import (
     EulerDiscreteScheduler,
     EulerAncestralDiscreteScheduler,
     FlowMatchEulerDiscreteScheduler,
     UniPCMultistepScheduler,
+    DPMSolverMultistepScheduler,
     DDIMScheduler,
     DDPMScheduler,
 )
@@ -36,16 +35,6 @@ from transformers.utils import ContextManagers
 logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
-try:
-    from helpers.models.sd3.pipeline import (
-        StableDiffusion3Pipeline,
-        StableDiffusion3Img2ImgPipeline,
-    )
-except ImportError:
-    logger.error(
-        "Stable Diffusion 3 not available in this release of Diffusers. Please upgrade."
-    )
-    raise ImportError()
 
 SCHEDULER_NAME_MAP = {
     "euler": EulerDiscreteScheduler,
@@ -54,6 +43,7 @@ SCHEDULER_NAME_MAP = {
     "unipc": UniPCMultistepScheduler,
     "ddim": DDIMScheduler,
     "ddpm": DDPMScheduler,
+    "dpm++": DPMSolverMultistepScheduler,
     "sana": FlowMatchEulerDiscreteScheduler,
 }
 
@@ -537,25 +527,6 @@ class Validation:
         if self.config.controlnet:
             return self.model.PIPELINE_CLASSES[PipelineTypes.CONTROLNET]
         return self.model.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
-        # model_type = StateTracker.get_model_family()
-        # elif model_type == "legacy":
-        #     return StableDiffusionPipeline
-        # elif model_type == "pixart_sigma":
-        #     if self.config.controlnet:
-        #         raise Exception(
-        #             "PixArt Sigma ControlNet inference validation is not yet supported."
-        #         )
-        #     if self.config.validation_using_datasets:
-        #         raise Exception(
-        #             "PixArt Sigma inference validation using img2img is not yet supported. Please remove --validation_using_datasets."
-        #         )
-        #     from helpers.models.pixart.pipeline import PixArtSigmaPipeline
-
-        #     return PixArtSigmaPipeline
-        # else:
-        #     raise NotImplementedError(
-        #         f"Model type {model_type} not implemented for validation."
-        #     )
 
     def _gather_prompt_embeds(self, validation_prompt: str):
         prompt_embed = self.embed_cache.compute_embeddings_for_prompts(
@@ -1105,20 +1076,6 @@ class Validation:
                     pipeline_kwargs["complex_human_instruction"] = (
                         self.config.sana_complex_human_instruction
                     )
-
-                if StateTracker.get_model_family() in [
-                    "pixart_sigma",
-                ]:
-                    if pipeline_kwargs.get("negative_prompt") is not None:
-                        del pipeline_kwargs["negative_prompt"]
-                    if pipeline_kwargs.get("prompt") is not None:
-                        del pipeline_kwargs["prompt"]
-                    pipeline_kwargs["prompt_attention_mask"] = pipeline_kwargs.pop(
-                        "prompt_mask"
-                    )[0].to(device=self.inference_device, dtype=self.weight_dtype)
-                    pipeline_kwargs["negative_prompt_attention_mask"] = torch.unsqueeze(
-                        pipeline_kwargs.pop("negative_mask")[0], dim=0
-                    ).to(device=self.inference_device, dtype=self.weight_dtype)
 
                 validation_types = self._validation_types()
                 all_validation_type_results = {}

@@ -50,7 +50,7 @@ def safety_check(args, accelerator):
     ):
         validate_deepspeed_compat_from_args(accelerator, args)
     if args.controlnet:
-        if args.model_family not in ["legacy" "sdxl"]:
+        if args.model_family not in ["sd1x", "sd2x", "sdxl"]:
             raise ValueError(
                 f"ControlNet is not yet supported with {args.model_family} models. Please disable --controlnet, or switch model types."
             )

@@ -6,8 +6,12 @@ from helpers.models.kolors.model import Kolors
 from helpers.models.flux.model import Flux
 from helpers.models.wan.model import Wan
 from helpers.models.ltxvideo.model import LTXVideo
+from helpers.models.sd1x.model import StableDiffusion1, StableDiffusion2
+from helpers.models.pixart.model import PixartSigma
 
 model_families = {
+    "sd1x": StableDiffusion1,
+    "sd2x": StableDiffusion2,
     "sd3": SD3,
     "deepfloyd": DeepFloydIF,
     "sana": Sana,
@@ -16,6 +20,7 @@ model_families = {
     "flux": Flux,
     "wan": Wan,
     "ltxvideo": LTXVideo,
+    "pixart_sigma": PixartSigma,
 }
 
 

@@ -424,7 +424,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             if (
                 StateTracker.get_args().model_family
                 not in [
-                    "legacy",
+                    "sd1x",
+                    "sd2x",
                     "deepfloyd",
                 ]
                 and "crop_coordinates" not in image_metadata

@@ -22,11 +22,7 @@ from helpers.training.multi_process import _get_rank as get_rank
 from helpers.training.validation import Validation, prepare_validation_prompt_list
 from helpers.training.evaluation import ModelEvaluator
 from helpers.training.state_tracker import StateTracker
-from helpers.training.schedulers import load_scheduler_from_args
 from helpers.training.custom_schedule import get_lr_scheduler
-from helpers.training.adapter import determine_adapter_target_modules, load_lora_weights
-from helpers.training.diffusion_model import load_diffusion_model
-from helpers.models.common import get_model_config_path
 from helpers.training.optimizer_param import (
     determine_optimizer_class_with_config,
     determine_params_to_optimize,
@@ -36,17 +32,14 @@ from helpers.training.optimizer_param import (
 )
 from helpers.data_backend.factory import BatchFetcher
 from helpers.training.deepspeed import (
-    deepspeed_zero_init_disabled_context_manager,
     prepare_model_for_deepspeed,
 )
 from helpers.training.wrappers import unwrap_model
 from helpers.data_backend.factory import configure_multi_databackend
 from helpers.data_backend.factory import random_dataloader_iterator
-from helpers.training import steps_remaining_in_epoch
 from helpers.training.min_snr_gamma import compute_snr
 from helpers.training.peft_init import init_lokr_network_with_perturbed_normal
 from accelerate.logging import get_logger
-from diffusers.models.embeddings import get_2d_rotary_pos_embed
 from helpers.models.all import model_families
 
 logger = get_logger(
@@ -137,6 +130,7 @@ class Trainer:
         exit_on_error: bool = False,
     ):
         self.accelerator = None
+        self.model = None
         self.job_id = job_id
         StateTracker.set_job_id(job_id)
         self.parse_arguments(
@@ -144,7 +138,10 @@ class Trainer:
             disable_accelerator=disable_accelerator,
             exit_on_error=exit_on_error,
         )
-        if self.config.model_family in model_families:
+        if (
+            getattr(self, "config", None) is not None
+            and self.config.model_family in model_families
+        ):
             self.model = model_families[self.config.model_family](
                 self.config, self.accelerator
             )
@@ -157,9 +154,6 @@ class Trainer:
         self.should_abort = False
         self.ema_model = None
         self.validation = None
-        logger.info(
-            f"Initialised: {self.config.model_family}, {getattr(self, 'model', None)}"
-        )
         # this updates self.config further, so we will run it here.
         self.init_noise_schedule()
 
@@ -282,11 +276,13 @@ class Trainer:
             self._exit_on_signal()
 
     def _get_noise_schedule(self):
-        self.config, scheduler = self.model.setup_noise_schedule()
+        self.config, scheduler = self.model.setup_training_noise_schedule()
 
         return scheduler
 
     def init_noise_schedule(self):
+        if self.model is None:
+            return
         from helpers.models.common import PredictionTypes
 
         self.config.flow_matching = (
@@ -1747,40 +1743,6 @@ class Trainer:
                 model_pred = self.model.model_predict(
                     prepared_batch=prepared_batch,
                 )
-            # if self.config.controlnet:
-            #     # ControlNet conditioning.
-            #     controlnet_image = prepared_batch["conditioning_pixel_values"].to(
-            #         dtype=self.config.weight_dtype
-            #     )
-            #     training_logger.debug(f"Image shape: {controlnet_image.shape}")
-            #     down_block_res_samples, mid_block_res_sample = self.controlnet(
-            #         noisy_latents,
-            #         timesteps,
-            #         encoder_hidden_states=encoder_hidden_states,
-            #         added_cond_kwargs=added_cond_kwargs,
-            #         controlnet_cond=controlnet_image,
-            #         return_dict=False,
-            #     )
-            #     if self.model.MODEL_TYPE.value == "transformer":
-            #         raise Exception(
-            #             "ControlNet predictions for transformer models are not yet implemented."
-            #         )
-            #     # Predict the noise residual
-            #     if self.model.get_trained_component() is not None:
-            #         model_pred = self.model.get_trained_component()(
-            #             noisy_latents,
-            #             timesteps,
-            #             encoder_hidden_states=encoder_hidden_states,
-            #             added_cond_kwargs=added_cond_kwargs,
-            #             down_block_additional_residuals=[
-            #                 sample.to(dtype=self.config.weight_dtype)
-            #                 for sample in down_block_res_samples
-            #             ],
-            #             mid_block_additional_residual=mid_block_res_sample.to(
-            #                 dtype=self.config.weight_dtype
-            #             ),
-            #             return_dict=False,
-            #         )[0]
             elif self.config.model_family == "pixart_sigma":
                 if noisy_latents.shape[1] != 4:
                     raise ValueError(
@@ -1799,27 +1761,12 @@ class Trainer:
                 model_pred = self.model.model_predict(
                     prepared_batch=prepared_batch,
                 )
-                # if self.config.model_family == "legacy":
-                #     # SD 1.5 or 2.x
-                #     model_pred = self.unet(
-                #         noisy_latents,
-                #         timesteps,
-                #         encoder_hidden_states,
-                #     ).sample
-                # else:
-                #     # Kolors, other default unet prediction.
-                #     model_pred = self.unet(
-                #         noisy_latents,
-                #         timesteps,
-                #         encoder_hidden_states,
-                #         added_cond_kwargs=added_cond_kwargs,
-                #     ).sample
             else:
                 raise Exception("Unknown error occurred, no prediction could be made.")
 
         else:
             # Dummy model prediction for debugging.
-            model_pred = torch.randn_like(noisy_latents)
+            model_pred = torch.randn_like(prepared_batch["noisy_latents"])
 
         # x-prediction requires that we now subtract the noise residual from the prediction to get the target sample.
         if (

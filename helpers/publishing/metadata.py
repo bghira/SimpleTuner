@@ -13,12 +13,13 @@ logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 licenses = {
-    "flux": "flux-1-dev-non-commercial-license",
+    "sd1x": "openrail++",
+    "sd2x": "openrail++",
+    "sd3": "stabilityai-ai-community",
     "sdxl": "creativeml-openrail-m",
-    "legacy": "openrail++",
+    "flux": "flux-1-dev-non-commercial-license",
     "pixart_sigma": "openrail++",
     "kolors": "apache-2.0",
-    "sd3": "stabilityai-ai-community",
 }
 allowed_licenses = [
     "apache-2.0",
@@ -146,16 +147,14 @@ def download_adapter(repo_id: str):
     return output_fn
 
 
-def _model_component_name(args):
-    model_component_name = "pipeline.transformer"
-    if args.model_family in ["sdxl", "kolors", "legacy", "deepfloyd"]:
-        model_component_name = "pipeline.unet"
+def _model_component_name(model):
+    model_component_name = f"pipeline.{model.MODEL_TYPE.value}"
 
     return model_component_name
 
 
-def _model_load(args, repo_id: str = None):
-    model_component_name = _model_component_name(args)
+def _model_load(args, repo_id: str = None, model=None):
+    model_component_name = _model_component_name(model)
     hf_user_name = StateTracker.get_hf_username()
     if hf_user_name is not None:
         repo_id = f"{hf_user_name}/{repo_id}" if hf_user_name else repo_id
@@ -201,11 +200,11 @@ def _negative_prompt(args, in_call: bool = False):
     return "\n    negative_prompt=negative_prompt,"
 
 
-def _guidance_rescale(args):
+def _guidance_rescale(model):
     # only these model families support zsnr sampling
-    if args.model_family.lower() not in ["sdxl", "legacy", "kolors"]:
+    if model.MODEL_TYPE.value != "unet":
         return ""
-    return f"\n    guidance_rescale={args.validation_guidance_rescale},"
+    return f"\n    guidance_rescale={model.config.validation_guidance_rescale},"
 
 
 def _skip_layers(args):
@@ -220,11 +219,11 @@ def _pipeline_move_to(args):
     return output
 
 
-def _pipeline_quanto(args):
+def _pipeline_quanto(args, model):
     # return some optional lines to run Quanto on the model pipeline
     if args.model_type == "full":
         return ""
-    model_component_name = _model_component_name(args)
+    model_component_name = _model_component_name(model)
     comment_character = ""
     was_quantised = "The model was quantised during training, and so it is recommended to do the same during inference time."
     if args.base_model_precision == "no_change":
@@ -280,18 +279,18 @@ def code_example(args, repo_id: str = None, model=None):
 ```python
 {_model_imports(args)}
 
-{_model_load(args, repo_id)}
+{_model_load(args, repo_id, model=model)}
 
 prompt = "{args.validation_prompt if args.validation_prompt else 'An astronaut is riding a horse through the jungles of Thailand.'}"
 {_negative_prompt(args)}
-{_pipeline_quanto(args)}
+{_pipeline_quanto(args, model)}
 {_pipeline_move_to(args)}
 model_output = pipeline(
     prompt=prompt,{_negative_prompt(args, in_call=True) if args.model_family.lower() != 'flux' else ''}
     num_inference_steps={args.validation_num_inference_steps},
     generator=torch.Generator(device={_torch_device()}).manual_seed({args.validation_seed or args.seed or 42}),
     {_validation_resolution(args)}
-    guidance_scale={args.validation_guidance},{_guidance_rescale(args)}{_skip_layers(args)}
+    guidance_scale={args.validation_guidance},{_guidance_rescale(model)}{_skip_layers(args)}
 ).{_output_attribute(args, model)}
 {_output_save_call(args)}
 ```
