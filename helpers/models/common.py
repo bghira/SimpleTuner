@@ -110,7 +110,7 @@ class ModelFoundation(ABC):
         self.accelerator = accelerator
         self.noise_schedule = None
         self.setup_model_flavour()
-        self.setup_noise_schedule()
+        self.setup_training_noise_schedule()
 
     def log_model_devices(self):
         """
@@ -120,7 +120,7 @@ class ModelFoundation(ABC):
             logger.debug(f"Model device: {self.model.device}")
         if hasattr(self, "vae") and self.vae is not None:
             logger.debug(f"VAE device: {self.vae.device}")
-        if hasattr(self, "text_encoders"):
+        if hasattr(self, "text_encoders") and self.text_encoders is not None:
             for i, text_encoder in enumerate(self.text_encoders):
                 if text_encoder is None:
                     continue
@@ -219,6 +219,19 @@ class ModelFoundation(ABC):
         Returns the available model flavours for this model.
         """
         return list(cls.HUGGINGFACE_PATHS.keys())
+
+    def get_transforms(self):
+        """
+        Returns nothing, but subclasses can implement different torchvision transforms as needed.
+        """
+        from torchvision import transforms
+
+        transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Normalize([0.5], [0.5]),
+            ]
+        )
 
     def load_lora_weights(self, models, input_dir):
         """
@@ -428,6 +441,20 @@ class ModelFoundation(ABC):
                 f"Moving {self.AUTOENCODER_CLASS.__name__} to accelerator, converting from {self.vae.dtype} to {_vae_dtype}"
             )
             self.vae.to(self.accelerator.device, dtype=_vae_dtype)
+        self.AUTOENCODER_SCALING_FACTOR = getattr(
+            self.vae.config, "scaling_factor", 1.0
+        )
+        self.post_vae_load_setup()
+
+    def post_vae_load_setup(self):
+        """
+        Post VAE load setup.
+
+        This is a stub and can be optionally implemented in subclasses for eg. updating configuration settings
+        based on the loaded VAE weights. SDXL uses this to update the user config to reflect refiner training.
+
+        """
+        pass
 
     def unload_vae(self):
         if self.vae is not None:
@@ -785,9 +812,10 @@ class ModelFoundation(ABC):
 
         logger.debug(f"Preparing batch: {batch.keys()}")
         # Ensure the encoder hidden states are on device
-        batch["encoder_hidden_states"] = batch["prompt_embeds"].to(
-            **target_device_kwargs
-        )
+        if batch["prompt_embeds"] is not None and hasattr(batch["prompt_embeds"], "to"):
+            batch["encoder_hidden_states"] = batch["prompt_embeds"].to(
+                **target_device_kwargs
+            )
 
         # Process additional conditioning if provided
         pooled_embeds = batch.get("add_text_embeds")
@@ -1089,6 +1117,15 @@ class VideoModelFoundation(ImageModelFoundation):
         #     "encoder2": {"class": AnotherTextEncoder, "attr_name": "text_encoder_2"},
         # }
         # The trainer or child class might call self._init_text_encoders() at the right time.
+
+    def get_transforms(self):
+        from torchvision import transforms
+
+        return transforms.Compose(
+            [
+                transforms.ToTensor(),
+            ]
+        )
 
     def prepare_5d_inputs(self, tensor):
         """

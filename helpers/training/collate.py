@@ -86,7 +86,7 @@ def extract_filepaths(examples):
     return filepaths
 
 
-def fetch_pixel_values(fp, data_backend_id: str):
+def fetch_pixel_values(fp, data_backend_id: str, model):
     """Worker method to fetch pixel values for a single image."""
     debug_log(
         f" -> pull pixels for fp {fp} from cache via data backend {data_backend_id}"
@@ -94,8 +94,7 @@ def fetch_pixel_values(fp, data_backend_id: str):
     data_backend = StateTracker.get_data_backend(data_backend_id)
     image = data_backend["data_backend"].read_image(fp)
     training_sample = TrainingSample(
-        image=image,
-        data_backend_id=data_backend_id,
+        image=image, data_backend_id=data_backend_id, model=model
     )
     return training_sample.prepare(return_tensor=True).image
 
@@ -117,14 +116,17 @@ def fetch_latent(fp, data_backend_id: str):
     return latent
 
 
-def deepfloyd_pixels(filepaths, data_backend_id: str):
+def deepfloyd_pixels(filepaths, data_backend_id: str, model):
     """DeepFloyd doesn't use the VAE. We retrieve, normalise, and stack the pixel tensors directly."""
     # Use a thread pool to fetch latents concurrently
     try:
         with concurrent.futures.ThreadPoolExecutor() as executor:
             pixels = list(
                 executor.map(
-                    fetch_pixel_values, filepaths, [data_backend_id] * len(filepaths)
+                    fetch_pixel_values,
+                    filepaths,
+                    [data_backend_id] * len(filepaths),
+                    [model] * len(filepaths),
                 )
             )
     except Exception as e:
@@ -194,11 +196,11 @@ def conditioning_pixels(
     return pixels
 
 
-def compute_latents(filepaths, data_backend_id: str):
+def compute_latents(filepaths, data_backend_id: str, model):
     # Use a thread pool to fetch latents concurrently
     try:
         if "deepfloyd" in StateTracker.get_args().model_family:
-            latents = deepfloyd_pixels(filepaths, data_backend_id)
+            latents = deepfloyd_pixels(filepaths, data_backend_id, model)
 
             return latents
         if StateTracker.get_args().vae_cache_ondemand:
@@ -426,7 +428,7 @@ def collate_fn(batch):
     debug_log("Extract filepaths")
     filepaths = extract_filepaths(examples)
     debug_log("Compute latents")
-    batch_data = compute_latents(filepaths, data_backend_id)
+    batch_data = compute_latents(filepaths, data_backend_id, StateTracker.get_model())
     if isinstance(batch_data[0], dict):
         latent_batch = [v["latents"] for v in batch_data]
     else:
@@ -491,7 +493,10 @@ def collate_fn(batch):
         "text_embed_cache"
     ]
 
-    all_text_encoder_outputs = compute_prompt_embeddings(captions, text_embed_cache)
+    if not text_embed_cache.disabled:
+        all_text_encoder_outputs = compute_prompt_embeddings(captions, text_embed_cache)
+    else:
+        all_text_encoder_outputs = {}
     # TODO: Remove model-specific logic from collate.
     if StateTracker.get_model_family() in ["sdxl", "kolors"]:
         debug_log("Compute and stack SDXL time ids")
@@ -513,6 +518,7 @@ def collate_fn(batch):
 
     return {
         "latent_batch": latent_batch,
+        "prompts": captions,
         "prompt_embeds": all_text_encoder_outputs.get("prompt_embeds"),
         "add_text_embeds": all_text_encoder_outputs.get("pooled_prompt_embeds"),
         "batch_time_ids": all_text_encoder_outputs.get("batch_time_ids"),

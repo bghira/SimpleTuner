@@ -253,6 +253,7 @@ class DiscoveryMetadataBackend(MetadataBackend):
                 data_backend_id=self.id,
                 image_metadata=image_metadata,
                 image_path=image_path_str,
+                model=StateTracker.get_model(),
             )
             prepared_sample = training_sample.prepare()
             image_metadata.update(

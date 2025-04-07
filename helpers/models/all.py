@@ -8,6 +8,7 @@ from helpers.models.wan.model import Wan
 from helpers.models.ltxvideo.model import LTXVideo
 from helpers.models.sd1x.model import StableDiffusion1, StableDiffusion2
 from helpers.models.pixart.model import PixartSigma
+from helpers.models.omnigen.model import OmniGen
 
 model_families = {
     "sd1x": StableDiffusion1,
@@ -21,6 +22,7 @@ model_families = {
     "wan": Wan,
     "ltxvideo": LTXVideo,
     "pixart_sigma": PixartSigma,
+    "omnigen": OmniGen,
 }
 
 

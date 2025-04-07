@@ -146,6 +146,7 @@ class Trainer:
                 self.config, self.accelerator
             )
             self.model.check_user_config()
+            StateTracker.set_model(self.model)
         self._misc_init()
         self.lycoris_wrapped_network = None
         self.lycoris_config = None
@@ -2017,19 +2018,17 @@ class Trainer:
                             (self.state["global_step"], timestep)
                         )
 
-                    encoder_hidden_states = prepared_batch["encoder_hidden_states"]
-                    training_logger.debug(
-                        f"Encoder hidden states: {encoder_hidden_states.shape}"
-                    )
+                    if "encoder_hidden_states" in prepared_batch:
+                        encoder_hidden_states = prepared_batch["encoder_hidden_states"]
+                        training_logger.debug(
+                            f"Encoder hidden states: {encoder_hidden_states.shape}"
+                        )
 
-                    add_text_embeds = prepared_batch["add_text_embeds"]
-                    training_logger.debug(
-                        f"Pooled embeds: {add_text_embeds.shape if add_text_embeds is not None else None}"
-                    )
-                    # Get the target for loss depending on the prediction type
-                    target = self.get_prediction_target(prepared_batch)
-
-                    added_cond_kwargs = prepared_batch.get("added_cond_kwargs")
+                    if "add_text_embeds" in prepared_batch:
+                        add_text_embeds = prepared_batch["add_text_embeds"]
+                        training_logger.debug(
+                            f"Pooled embeds: {add_text_embeds.shape if add_text_embeds is not None else None}"
+                        )
 
                     # Predict the noise residual and compute loss
                     is_regularisation_data = prepared_batch.get(

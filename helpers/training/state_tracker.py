@@ -18,6 +18,7 @@ class StateTracker:
     config_path = None
     # Class variables
     model_type = ""
+    model = None
     # Job ID for FastAPI. None if local.
     job_id = None
 
@@ -121,6 +122,14 @@ class StateTracker:
     @classmethod
     def get_model_family(cls):
         return cls.model_type
+
+    @classmethod
+    def set_model(cls, model):
+        cls.model = model
+
+    @classmethod
+    def get_model(cls):
+        return cls.model
 
     @classmethod
     def get_hf_user(cls):

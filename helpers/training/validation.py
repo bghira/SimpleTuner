@@ -532,6 +532,9 @@ class Validation:
         prompt_embed = self.embed_cache.compute_embeddings_for_prompts(
             [validation_prompt]
         )
+        if prompt_embed is None:
+            return
+
         prompt_embed = {
             k: v.to(self.inference_device) if hasattr(v, "to") else v
             for k, v in prompt_embed.items()
@@ -998,7 +1001,11 @@ class Validation:
                 checkpoint_validation_images[validation_shortname] = []
                 ema_validation_images[validation_shortname] = []
             try:
-                extra_validation_kwargs.update(self._gather_prompt_embeds(prompt))
+                _embed = self._gather_prompt_embeds(prompt)
+                if _embed is not None:
+                    extra_validation_kwargs.update(_embed)
+                else:
+                    extra_validation_kwargs["prompt"] = prompt
             except Exception as e:
                 import traceback
 
@@ -1025,27 +1032,33 @@ class Validation:
                 if self.model.VALIDATION_USES_NEGATIVE_PROMPT:
                     if StateTracker.get_args().validation_negative_prompt is None:
                         StateTracker.get_args().validation_negative_prompt = ""
-                    negative_embed_data = {
-                        k: (
-                            v.to(
-                                device=self.inference_device,
-                                dtype=self.config.weight_dtype,
-                            )
-                            if hasattr(v, "to")
-                            else v
-                        )
-                        for k, v in self.embed_cache.compute_embeddings_for_prompts(
-                            [StateTracker.get_args().validation_negative_prompt],
-                            is_validation=True,
-                            load_from_cache=True,
-                        ).items()
-                    }
-                    pipeline_kwargs.update(
-                        self.model.convert_negative_text_embed_for_pipeline(
-                            prompt=StateTracker.get_args().validation_negative_prompt,
-                            text_embedding=negative_embed_data,
-                        )
+                    _negative_embed = self.embed_cache.compute_embeddings_for_prompts(
+                        [StateTracker.get_args().validation_negative_prompt],
+                        is_validation=True,
+                        load_from_cache=True,
                     )
+                    if _negative_embed is not None:
+                        negative_embed_data = {
+                            k: (
+                                v.to(
+                                    device=self.inference_device,
+                                    dtype=self.config.weight_dtype,
+                                )
+                                if hasattr(v, "to")
+                                else v
+                            )
+                            for k, v in _negative_embed.items()
+                        }
+                        pipeline_kwargs.update(
+                            self.model.convert_negative_text_embed_for_pipeline(
+                                prompt=StateTracker.get_args().validation_negative_prompt,
+                                text_embedding=negative_embed_data,
+                            )
+                        )
+                    else:
+                        pipeline_kwargs["negative_prompt"] = (
+                            StateTracker.get_args().validation_negative_prompt
+                        )
                 # TODO: Refactor the rest so that it uses model class to update kwargs more generally.
                 if self.config.validation_guidance_real > 1.0:
                     pipeline_kwargs["guidance_scale_real"] = float(

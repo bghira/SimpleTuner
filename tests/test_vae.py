@@ -68,6 +68,7 @@ class TestVaeCache(unittest.TestCase):
                 hash_filenames=should_hash,
                 instance_data_dir=instance_dir,
                 cache_dir=cache_dir,
+                model=MagicMock(),
             )
             generated = vae_cache.generate_vae_cache_filename(filepath)[0]
             self.assertEqual(

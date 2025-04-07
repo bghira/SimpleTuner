@@ -455,6 +455,8 @@ def configure_parquet_database(backend: dict, args, data_backend: BaseDataBacken
 
 def move_text_encoders(text_encoders: list, target_device: str):
     """Move text encoders to the target device."""
+    if text_encoders is None:
+        return
     logger.debug(f"Moving text encoders to {target_device}")
     return [encoder.to(target_device) for encoder in text_encoders]
 
@@ -1060,6 +1062,7 @@ def configure_multi_databackend(
             id=init_backend["id"],
             metadata_backend=init_backend["metadata_backend"],
             data_backend=init_backend["data_backend"],
+            model=model,
             accelerator=accelerator,
             batch_size=args.train_batch_size,
             debug_aspect_buckets=args.debug_aspect_buckets,
@@ -1182,6 +1185,7 @@ def configure_multi_databackend(
             init_backend["vaecache"] = VAECache(
                 id=init_backend["id"],
                 dataset_type=init_backend["dataset_type"],
+                model=model,
                 vae=StateTracker.get_vae(),
                 accelerator=accelerator,
                 metadata_backend=init_backend["metadata_backend"],

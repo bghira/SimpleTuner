@@ -28,7 +28,10 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 def prepare_sample(
-    image: Image.Image = None, data_backend_id: str = None, filepath: str = None
+    image: Image.Image = None,
+    data_backend_id: str = None,
+    filepath: str = None,
+    model=None,
 ):
     metadata = StateTracker.get_metadata_by_filepath(
         filepath, data_backend_id=data_backend_id
@@ -43,6 +46,7 @@ def prepare_sample(
         data_backend_id=data_backend_id,
         image_metadata=metadata,
         image_path=filepath,
+        model=model,
     )
     prepared_sample = training_sample.prepare()
     return (
@@ -56,6 +60,7 @@ class VAECache(WebhookMixin):
     def __init__(
         self,
         id: str,
+        model,
         vae,
         accelerator,
         metadata_backend: MetadataBackend,
@@ -110,12 +115,11 @@ class VAECache(WebhookMixin):
         self.process_queue_size = process_queue_size
         self.vae_batch_size = vae_batch_size
         self.instance_data_dir = instance_data_dir
-        self.transform_image = MultiaspectImage.get_image_transforms()
-        self.transform_video = None
+        self.model = model
+        self.transform_sample = model.get_transforms()
         self.num_video_frames = None
         if self.dataset_type == "video":
             self.num_video_frames = num_video_frames
-            self.transform_video = MultiaspectImage.get_video_transforms()
         self.rank_info = rank_info()
         self.metadata_backend = metadata_backend
         if self.metadata_backend and not self.metadata_backend.image_metadata_loaded:
@@ -623,13 +627,20 @@ class VAECache(WebhookMixin):
                 ):
                     latents_uncached = (
                         latents_uncached - self.vae.config.shift_factor
-                    ) * self.vae.config.scaling_factor
+                    ) * getattr(
+                        self.model,
+                        "AUTOENCODER_SCALING_FACTOR",
+                        self.vae.config.scaling_factor,
+                    )
                 elif isinstance(latents_uncached, torch.Tensor) and hasattr(
                     self.vae.config, "scaling_factor"
                 ):
-                    latents_uncached = (
-                        getattr(latents_uncached, "latent", latents_uncached)
-                        * self.vae.config.scaling_factor
+                    latents_uncached = getattr(
+                        latents_uncached, "latent", latents_uncached
+                    ) * getattr(
+                        self.model,
+                        "AUTOENCODER_SCALING_FACTOR",
+                        self.vae.config.scaling_factor,
                     )
                     logger.debug(f"Latents shape: {latents_uncached.shape}")
 
@@ -764,6 +775,7 @@ class VAECache(WebhookMixin):
                         prepare_sample,
                         data_backend_id=self.id,
                         filepath=data[0],
+                        model=self.model,
                     )
                     for data in initial_data
                 ]
@@ -818,15 +830,9 @@ class VAECache(WebhookMixin):
                 filepath, _, aspect_bucket = initial_data[idx]
                 filepaths.append(filepath)
 
-                if self.transform_video is not None:
-                    logger.debug(f"Running video transformations on {image.shape}")
-                    pixel_values = self.transform_video(image).to(
-                        self.accelerator.device, dtype=self.vae.dtype
-                    )
-                else:
-                    pixel_values = self.transform_image(image).to(
-                        self.accelerator.device, dtype=self.vae.dtype
-                    )
+                pixel_values = self.transform_sample(image).to(
+                    self.accelerator.device, dtype=self.vae.dtype
+                )
                 output_value = (pixel_values, filepath, aspect_bucket, is_final_sample)
                 output_values.append(output_value)
                 if not disable_queue:

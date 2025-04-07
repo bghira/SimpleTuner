@@ -27,6 +27,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         id: str,
         metadata_backend: MetadataBackend,
         data_backend: BaseDataBackend,
+        model,
         accelerator,
         batch_size: int,
         debug_aspect_buckets: bool = False,
@@ -58,6 +59,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             raise ValueError(
                 f"Sampler ID ({self.id}) must match DataBackend ID ({data_backend.id}) and MetadataBackend ID ({metadata_backend.id})."
             )
+        self.model = model
         # Update the logger name with the id:
         self.dataset_type = dataset_type
         self.sample_type_str = "image"
@@ -165,6 +167,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 data_backend_id=self.id,
                 image_metadata=image_metadata,
                 image_path=image_path,
+                model=self.model,
             )
             training_sample.prepare()
             validation_shortname = f"{self.id}_{img_idx}"
@@ -482,6 +485,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             image_metadata=self.metadata_backend.get_metadata_by_filepath(full_path),
             image_path=full_path,
             conditioning_type=self.conditioning_type,
+            model=self.model,
         )
         return conditioning_sample
 

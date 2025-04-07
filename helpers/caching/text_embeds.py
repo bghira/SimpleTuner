@@ -79,6 +79,7 @@ class TextEmbeddingCache(WebhookMixin):
         )
         self.batch_write_thread.start()
         self.webhook_progress_interval = webhook_progress_interval
+        self.disabled = False  # whether to skip or not at training time.
 
     def debug_log(self, msg: str):
         logger.debug(f"{self.rank_info}(id={self.id}) {msg}")
@@ -239,6 +240,10 @@ class TextEmbeddingCache(WebhookMixin):
         load_from_cache: bool = True,
         is_negative_prompt: bool = False,
     ):
+        if self.model.TEXT_ENCODER_CONFIGURATION == {}:
+            # This is a model that doesn't use text encoders.
+            self.disabled = True
+            return None
         logger.debug("Initialising text embed calculator...")
         if not self.batch_write_thread.is_alive():
             logger.debug("Restarting background write thread.")

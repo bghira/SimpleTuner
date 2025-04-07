@@ -1,29 +1,20 @@
-## NVLabs Sana Quickstart
+## OmniGen Quickstart
 
-In this example, we'll be full-rank training the NVLabs Sana model.
+In this example, we'll be training a Lycoris LoKr for OmniGen, focused on general T2I performance improvements (not edit/instruct training at this point).
 
 ### Hardware requirements
 
-Sana is very lightweight and might not even need full gradient checkpointing enabled on a 24G card, which means it trains very quickly!
+OmniGen is a pretty modestly sized model around 3.8B parameters; it makes use of the SDXL VAE but does not use a text encoder. Instead, OmniGen uses native token IDs as inputs, and behaves as a multi-modal model.
 
-- **the absolute minimum** is about 12G VRAM, though this guide might not help you get there fully
-- **a realistic minimum** is a single 3090 or V100 GPU
-- **ideally** multiple 4090, A6000, L40S, or better
+The memory use during training is not yet known, but can be expected to easily fit on a 24G card with a batch size of 2 or 3. The model can be quantised, saving more VRAM.
 
-Sana is a strange architecture relative to other models that are trainable by SimpleTuner;
+OmniGen is a strange architecture relative to other models that are trainable by SimpleTuner;
 
-- Initially, unlike other models, Sana required fp16 training and would crash out with bf16
-  - Model authors at NVIDIA were gracious enough to follow-up with bf16-compatible weights for fine-tuning
-- Quantisation might be more sensitive on this model family due to the issues with bf16/fp16
-- SageAttention does not work with Sana (yet) due to its head_dim shape that is currently unsupported
-- The loss value when training Sana is very high, and it might need a much lower learning rate than other models (eg. `1e-5` or thereabouts)
-- Training might hit NaN values, and it's not clear why this happens
+- Currently, only t2i (text-to-image) training is supported, where the model output is aligned with training prompts and input images.
+- An image-to-image training mode is not yet supported, but may be in the future.
+  - This mode allows providing a 2nd image as input, and the model will use this as conditioning/reference data for the output.
+- The loss value when training OmniGen is very high, and it's not known why this is the case.
 
-Gradient checkpointing can free VRAM, but slows down training. A chart of test results from a 4090 with 5800X3D:
-
-![image](https://github.com/user-attachments/assets/310bf099-a077-4378-acf4-f60b4b82fdc4)
-
-SimpleTuner's Sana modeling code allows the specification of `--gradient_checkpointing_interval` to checkpoint every _n_ blocks and attain the results seen in the above chart.
 
 ### Prerequisites
 
@@ -60,8 +51,8 @@ git clone --branch=release https://github.com/bghira/SimpleTuner.git
 
 cd SimpleTuner
 
-# if python --version shows 3.11 you can just also use the 'python' command here.
-python3.11 -m venv .venv
+# if python --version shows 3.12 you can just also use the 'python' command here.
+python3.12 -m venv .venv
 
 source .venv/bin/activate
 
@@ -110,21 +101,19 @@ cp config/config.json.example config/config.json
 There, you will possibly need to modify the following variables:
 
 - `model_type` - Set this to `full`.
-- `model_family` - Set this to `sana`.
-- `pretrained_model_name_or_path` - Set this to `terminusresearch/sana-1.6b-1024px`
+- `model_family` - Set this to `omnigen`.
+- `model_flavour` - Set this to `v1`
 - `output_dir` - Set this to the directory where you want to store your checkpoints and validation images. It's recommended to use a full path here.
 - `train_batch_size` - for a 24G card with full gradient checkpointing, this can be as high as 6.
-- `validation_resolution` - This checkpoint for Sana is a 1024px model, you should set this to `1024x1024` or one of Sana's other supported resolutions.
+- `validation_resolution` - This checkpoint for OmniGen is a 1024px model, you should set this to `1024x1024` or one of OmniGen's other supported resolutions.
   - Other resolutions may be specified using commas to separate them: `1024x1024,1280x768,2048x2048`
-- `validation_guidance` - Use whatever you are used to selecting at inference time for Sana.
-- `validation_num_inference_steps` - Use somewhere around 50 for the best quality, though you can accept less if you're happy with the results.
+- `validation_guidance` - Use whatever you are used to selecting at inference time for OmniGen; a lower value around 2.5-3.0 makes more realistic results
+- `validation_num_inference_steps` - Use somewhere around 30
 - `use_ema` - setting this to `true` will greatly help obtain a more smoothed result alongside your main trained checkpoint.
 
-- `optimizer` - You can use any optimiser you are comfortable and familiar with, but we will use `optimi-adamw` for this example.
+- `optimizer` - You can use any optimiser you are comfortable and familiar with, but we will use `adamw_bf16` for this example.
 - `mixed_precision` - It's recommended to set this to `bf16` for the most efficient training configuration, or `no` (but will consume more memory and be slower).
-  - A value of `fp16` is not recommended here but may be required for certain Sana finetunes (and introduces other new issues to enable this)
 - `gradient_checkpointing` - Disabling this will go the fastest, but limits your batch sizes. It is required to enable this to get the lowest VRAM usage.
-- `gradient_checkpointing_interval` - If `gradient_checkpointing` feels like overkill on your GPU, you could set this to a value of 2 or higher to only checkpoint every _n_ blocks. A value of 2 would checkpoint half of the blocks, and 3 would be one-third.
 
 Multi-GPU users can reference [this document](/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
 
@@ -170,7 +159,7 @@ A set of diverse prompt will help determine whether the model is collapsing as i
 }
 ```
 
-> ℹ️ Sana uses an odd text encoder configuration that means shorter prompts will possibly look very bad.
+> ℹ️ OmniGen seems to cap out around 122 tokens of understanding. It's not known if it can understand more than this.
 
 #### CLIP score tracking
 
@@ -180,9 +169,12 @@ If you wish to enable evaluations to score the model's performance, see [this do
 
 If you wish to use stable MSE loss to score the model's performance, see [this document](/documentation/evaluation/EVAL_LOSS.md) for information on configuring and interpreting evaluation loss.
 
-#### Sana time schedule shifting
+#### Flow schedule shifting
 
-Flow-matching models such as Sana, Flux, and SD3 have a property called "shift" that allows us to shift the trained portion of the timestep schedule using a simple decimal value.
+Currently, OmniGen is hard-coded to use its own special flow-matching formulation, and schedule shift will not apply to it.
+
+<!--
+Flow-matching models such as OmniGen, Sana, Flux, and SD3 have a property called "shift" that allows us to shift the trained portion of the timestep schedule using a simple decimal value.
 
 ##### Auto-shift
 A commonly-recommended approach is to follow several recent works and enable resolution-dependent timestep shift, `--flow_schedule_auto_shift` which uses higher shift values for larger images, and lower shift values for smaller images. This results in stable but potentially mediocre training results.
@@ -195,10 +187,9 @@ When using a `--flow_schedule_shift` value of 0.1 (a very low value), only the f
 
 When using a `--flow_schedule_shift` value of 4.0 (a very high value), the large compositional features and potentially colour space of the model becomes impacted:
 ![image](https://github.com/user-attachments/assets/857a1f8a-07ab-4b75-8e6a-eecff616a28d)
+-->
 
 #### Dataset considerations
-
-> ⚠️ Image quality for training is more important for Sana than for most other models, as it will absorb the artifacts in your images *first*, and then learn the concept/subject.
 
 It's crucial to have a substantial dataset to train your model on. There are limitations on the dataset size, and you will need to ensure that your dataset is large enough to train your model effectively. Note that the bare minimum dataset size is `train_batch_size * gradient_accumulation_steps` as well as more than `vae_batch_size`. The dataset will not be useable if it is too small.
 
@@ -211,7 +202,7 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
 ```json
 [
   {
-    "id": "pseudo-camera-10k-sana",
+    "id": "pseudo-camera-10k-omnigen",
     "type": "local",
     "crop": true,
     "crop_aspect": "square",
@@ -221,7 +212,7 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
     "maximum_image_size": 512,
     "target_downsample_size": 512,
     "resolution_type": "pixel_area",
-    "cache_dir_vae": "cache/vae/sana/pseudo-camera-10k",
+    "cache_dir_vae": "cache/vae/omnigen/pseudo-camera-10k",
     "instance_data_dir": "datasets/pseudo-camera-10k",
     "disabled": false,
     "skip_file_discovery": "",
@@ -239,7 +230,7 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
     "maximum_image_size": 1024,
     "target_downsample_size": 1024,
     "resolution_type": "pixel_area",
-    "cache_dir_vae": "cache/vae/sana/dreambooth-subject",
+    "cache_dir_vae": "cache/vae/omnigen/dreambooth-subject",
     "instance_data_dir": "datasets/dreambooth-subject",
     "caption_strategy": "instanceprompt",
     "instance_prompt": "the name of your subject goes here",
@@ -255,7 +246,7 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
     "maximum_image_size": 512,
     "target_downsample_size": 512,
     "resolution_type": "pixel_area",
-    "cache_dir_vae": "cache/vae/sana/dreambooth-subject-512",
+    "cache_dir_vae": "cache/vae/omnigen/dreambooth-subject-512",
     "instance_data_dir": "datasets/dreambooth-subject",
     "caption_strategy": "instanceprompt",
     "instance_prompt": "the name of your subject goes here",
@@ -267,14 +258,16 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
     "type": "local",
     "dataset_type": "text_embeds",
     "default": true,
-    "cache_dir": "cache/text/sana",
+    "cache_dir": "cache/text/omnigen",
     "disabled": false,
     "write_batch_size": 128
   }
 ]
 ```
 
-> ℹ️ Running 512px and 1024px datasets concurrently is supported, and could result in better convergence for Sana.
+> ℹ️ Running 512px and 1024px datasets concurrently is supported, and could result in better convergence.
+
+> ℹ️ Text encoder embeds are not generated by OmniGen, but one is still required to be defined (for now).
 
 Then, create a `datasets` directory:
 
@@ -327,23 +320,24 @@ For more information, see the [dataloader](/documentation/DATALOADER.md) and [tu
 
 ### Lowest VRAM config
 
-Currently, the lowest VRAM utilisation can be attained with:
+The lowest VRAM OmniGen configuration is not yet known, but it is expected to be similar to the following:
 
 - OS: Ubuntu Linux 24
 - GPU: A single NVIDIA CUDA device (10G, 12G)
 - System memory: 50G of system memory approximately
-- Base model precision: `nf4-bnb`
+- Base model precision: `int8-quanto` (or `fp8-torchao`, `int8-torchao` all follow similar memory use profiles)
 - Optimiser: Lion 8Bit Paged, `bnb-lion8bit-paged`
 - Resolution: 1024px
 - Batch size: 1, zero gradient accumulation steps
 - DeepSpeed: disabled / unconfigured
-- PyTorch: 2.5.1
+- PyTorch: 2.7+
 - Using `--quantize_via=cpu` to avoid outOfMemory error during startup on <=16G cards.
 - Enable `--gradient_checkpointing`
+- Use a tiny LoRA or Lycoris configuration (eg. LoRA rank 1 or Lokr factor 25)
 
-**NOTE**: Pre-caching of VAE embeds and text encoder outputs may use more memory and still OOM. If so, text encoder quantisation can be enabled. VAE tiling may not work for Sana at this time.
+**NOTE**: Pre-caching of VAE embeds and text encoder outputs may use more memory and still OOM. If so, VAE tiling and slicing can be optionally enabled.
 
-Speed was approximately 1.4 iterations per second on a 4090.
+Speed was approximately 3.4 iterations per second on an AMD 7900XTX using Pytorch 2.7 and ROCm 6.3.
 
 ### Masked loss
 
@@ -362,16 +356,18 @@ Not tested thoroughly (yet).
 #### LoKr (--lora_type=lycoris)
 - Mild learning rates are better for LoKr (`1e-4` with AdamW, `2e-5` with Lion)
 - Other algo need more exploration.
-- Setting `is_regularisation_data` has unknown impact/effect with Sana (not tested)
+- Setting `is_regularisation_data` has unknown impact/effect with OmniGen (not tested)
 
 ### Image artifacts
 
-Sana has an unknown response to image artifacts.
-
-It's not currently known whether any common training artifacts will be produced or what the cause of these might be.
+OmniGen has an unknown response to image artifacts, though it uses the SDXL VAE, and has identical fine-details limitations.
 
 If any image quality issues arise, please open an issue on Github.
 
 ### Aspect bucketing
 
 This model has an unknown response to aspect bucketed data. Experimentation will be helpful.
+
+### High loss values
+
+OmniGen has a very high loss value, and it is not known why this is the case. It is recommended to ignore the loss value and focus on the visual quality of the generated images.

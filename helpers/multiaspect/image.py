@@ -50,34 +50,12 @@ class VideoToTensor:
 
 class MultiaspectImage:
     @staticmethod
-    def get_video_transforms(model: VideoModelFoundation = None):
-        if not isinstance(model, VideoModelFoundation):
-            raise ValueError(f"Cannot transform videos for {model.__class__.__name__}.")
-        # For videos, use the custom VideoToTensor transform.
-        # Note: LTX Video applies its own normalisation later on.
-        return transforms.Compose(
-            [
-                VideoToTensor(),
-            ]
-        )
+    def get_video_transforms(model: VideoModelFoundation):
+        return model.get_transforms()
 
     @staticmethod
-    def get_image_transforms(model: ImageModelFoundation = None):
-        if not isinstance(model, ImageModelFoundation):
-            # LTX Video has its own normalisation, later on.
-            return transforms.Compose(
-                [
-                    transforms.ToTensor(),
-                ]
-            )
-
-        # default stable diffusion style latent normalisation.
-        return transforms.Compose(
-            [
-                transforms.ToTensor(),
-                transforms.Normalize([0.5], [0.5]),
-            ]
-        )
+    def get_image_transforms(model: ImageModelFoundation):
+        return model.get_transforms()
 
     @staticmethod
     def _round_to_nearest_multiple(value, override_value: int = None):
