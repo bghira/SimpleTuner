@@ -30,7 +30,6 @@ prompts = {
     "fairy_garden": "Whimsical garden filled with fairies, magical plants, sparkling lights, serene atmosphere, high detail",
     "fantasy_dragon": "Majestic dragon soaring through the sky, detailed scales, dynamic pose, fantasy art, high resolution",
     "floating_islands": "Fantasy world, floating islands in the sky, waterfalls, lush vegetation, detailed landscape, high resolution",
-    "futuristic_cityscape": "Futuristic city skyline at night, neon lights, cyberpunk style, high contrast, sharp focus",
     "galactic_battle": "Space battle scene, starships fighting, laser beams, explosions, cosmic background",
     "haunted_fairground": "Abandoned fairground at night, eerie rides, ghostly figures, fog, dark atmosphere, high detail",
     "haunted_mansion": "Spooky haunted mansion on a hill, dark and eerie, glowing windows, ghostly atmosphere, high detail",
