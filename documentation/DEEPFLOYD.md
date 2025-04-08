@@ -1,7 +1,5 @@
 # DeepFloyd IF
 
-> ⚠️ Support for tuning DeepFloyd-IF is deprecated, and may not work. Open an issue report if any problems are encountered.
-
 > 🤷🏽‍♂️ Training DeepFloyd requires at least 24G VRAM for a LoRA. This guide focuses on the 400M parameter base model, though the 4.3B XL flavour can be trained using the same guidelines.
 
 ## Background
@@ -74,87 +72,46 @@ However, DeepFloyd really has its upsides that often go overlooked:
 
 > ⚠️ Due to the compute requirements of full u-net backpropagation in even DeepFloyd's smallest 400M model, it has not been tested. LoRA will be used for this document, though full u-net tuning should also work.
 
-Training DeepFloyd makes use of the "legacy" SD 1.x/2.x trainer in SimpleTuner to reduce code duplication by keeping similar models together.
+These instructions assume basic familiarity with SimpleTuner. For newcomers, it's recommended to start with a more well-supported model like [Kwai Kolors](/documentation/quickstart/KOLORS.md).
 
-As such, we'll be making use of the `sd2x-env.sh` configuration file for tuning DeepFloyd:
+However, if you do wish to train DeepFloyd, it requires the use of the `model_flavour` configuration option to indicate which model you're training.
 
-### sd2x-env.sh
+### config.json
 
 ```bash
+"model_family": "deepfloyd",
+
 # Possible values:
-# - deepfloyd-full
-# - deepfloyd-lora
-# - deepfloyd-stage2
-# - deepfloyd-stage2-lora
-export MODEL_TYPE="deepfloyd-lora"
+# - i-medium-400m
+# - i-large-900m
+# - i-xlarge-4.3b
+# - ii-medium-450m
+# - ii-large-1.2b
+"model_flavour": "i-medium-400m",
 
 # DoRA isn't tested a whole lot yet. It's still new and experimental.
-export USE_DORA=false
+"use_dora": false,
 # Bitfit hasn't been tested for efficacy on DeepFloyd.
 # It will probably work, but no idea what the outcome is.
-export USE_BITFIT=false
+"use_bitfit": false,
 
 # Highest learning rate to use.
-export LEARNING_RATE=4e-5 #@param {type:"number"}
+"learning_rate": 4e-5,
 # For schedules that decay or oscillate, this will be the end LR or the bottom of the valley.
-export LEARNING_RATE_END=4e-6 #@param {type:"number"}
-
-## Using a Huggingface Hub model for Stage 1 tuning:
-#export MODEL_NAME="DeepFloyd/IF-I-M-v1.0"
-## Using a Huggingface Hub model for Stage 2 tuning:
-#export MODEL_NAME="DeepFloyd/IF-II-M-v1.0"
-# Using a local path to a huggingface hub model or saved checkpoint:
-#export MODEL_NAME="/notebooks/datasets/models/pipeline"
-
-# Where to store your results.
-export BASE_DIR="/training"
-export OUTPUT_DIR="${BASE_DIR}/models/deepfloyd"
-export DATALOADER_CONFIG="multidatabackend_deepfloyd.json"
-
-# Max number of steps OR epochs can be used. But we default to Epochs.
-export MAX_NUM_STEPS=50000
-export NUM_EPOCHS=0
-
-# Adjust this for your GPU memory size.
-export TRAIN_BATCH_SIZE=1
-
-# "pixel" is using pixel edge length on the smaller or square side of the image.
-# this is how DeepFloyd was originally trained.
-export RESOLUTION_TYPE="pixel"
-export RESOLUTION=64          # 1.0 Megapixel training sizes
-
-# Validation is when the model is used during training to make test outputs.
-export VALIDATION_RESOLUTION=96x64                                                  # The resolution of the validation images. Default: 64x64
-export VALIDATION_STEPS=250                                                         # How long between each validation run. Default: 250
-export VALIDATION_NUM_INFERENCE_STEPS=25                                            # How many inference steps to do. Default: 25
-export VALIDATION_PROMPT="an ethnographic photograph of a teddy bear at a picnic"   # What to make for the first/only test image.
-export VALIDATION_NEGATIVE_PROMPT="blurry, ugly, cropped, amputated"                # What to avoid in the first/only test image.
-
-# These can be left alone.
-export VALIDATION_GUIDANCE=7.5
-export VALIDATION_GUIDANCE_RESCALE=0.0
-export VALIDATION_SEED=42
-
-export GRADIENT_ACCUMULATION_STEPS=1         # Accumulate over many steps. Default: 1
-export MIXED_PRECISION="bf16"                # SimpleTuner requires bf16.
-export PURE_BF16=true                        # Will not use mixed precision, but rather pure bf16 (bf16 requires pytorch 2.3 on MPS.)
-export OPTIMIZER="adamw_bf16"
-export USE_XFORMERS=true
+"lr_end": 4e-6,
 ```
 
-A keen eye will have observed the following:
+- The `model_family` is deepfloyd
+- The `model_flavour` is pointing to Stage I or II
+- `resolution` is now `64` and `resolution_type` is `pixel`
+- `attention_mechanism` can be set to `xformers`, but AMD and Apple users won't be able to set this, requiring more VRAM.
+  - **Note** ~~Apple MPS currently has a bug preventing DeepFloyd tuning from working at all.~~ As of Pytorch 2.6 or sometime earlier, stage I and II both train on Apple MPS.
 
-- The `MODEL_TYPE` is specified as deepfloyd-compatible
-- The `MODEL_NAME` is pointing to Stage I or II
-- `RESOLUTION` is now `64` and `RESOLUTION_TYPE` is `pixel`
-- `USE_XFORMERS` is set to `true`, but AMD and Apple users won't be able to set this, requiring more VRAM.
-  - **Note** Apple MPS currently has a bug preventing DeepFloyd tuning from working at all.
+For more thorough validations, the value for `validation_resolution` can be set as:
 
-For more thorough validations, the value for `VALIDATION_RESOLUTION` can be set as:
-
-- `VALIDATION_RESOLUTION=64` will result in a 64x64 square image.
-- `VALIDATION_RESOLUTION=96x64` will result in a 3:2 widescreen image.
-- `VALIDATION_RESOLUTION=64,96,64x96,96x64` will result in four images being generated for each validation:
+- `validation_resolution=64` will result in a 64x64 square image.
+- `validation_resolution=96x64` will result in a 3:2 widescreen image.
+- `validation_resolution=64,96,64x96,96x64` will result in four images being generated for each validation:
   - 64x64
   - 96x96
   - 64x96
@@ -219,7 +176,7 @@ pipe.scheduler = pipe.scheduler.__class__.from_config(pipe.scheduler.config, var
 
 > ⚠️ Note that the first value for `DiffusionPipeline.from_pretrained(...)` is set to `IF-I-M-v1.0`, but you must update this to use the base model path that you trained your LoRA on.
 
-> ⚠️ Note that not all of the recommendations from Hugging Face apply to SimpleTuner. For example, we can tune DeepFloyd stage I LoRA in just 22G of VRAM vs 28G for Diffusers' example dreambooth scripts thanks to efficient pre-caching and pure-bf16 optimiser states. 8Bit AdamW isn't currently supported by SimpleTuner.
+> ⚠️ Note that not all of the recommendations from Hugging Face apply to SimpleTuner. For example, we can tune DeepFloyd stage I LoRA in just 22G of VRAM vs 28G for Diffusers' example dreambooth scripts thanks to efficient pre-caching and pure-bf16 optimiser states.
 
 ## Fine-tuning the super-resolution stage II model
 

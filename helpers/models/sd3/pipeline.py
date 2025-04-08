@@ -69,6 +69,8 @@ EXAMPLE_DOC_STRING = """
         >>> image.save("sd3.png")
         ```
 """
+
+
 @torch.cuda.amp.autocast(dtype=torch.float32)
 def optimized_scale(positive_flat, negative_flat):
 
@@ -76,12 +78,13 @@ def optimized_scale(positive_flat, negative_flat):
     dot_product = torch.sum(positive_flat * negative_flat, dim=1, keepdim=True)
 
     # Squared norm of uncondition
-    squared_norm = torch.sum(negative_flat ** 2, dim=1, keepdim=True) + 1e-8
+    squared_norm = torch.sum(negative_flat**2, dim=1, keepdim=True) + 1e-8
 
     # st_star = v_cond^T * v_uncond / ||v_uncond||^2
     st_star = dot_product / squared_norm
-    
+
     return st_star
+
 
 # Copied from diffusers.pipelines.flux.pipeline_flux.calculate_shift
 def calculate_shift(
@@ -95,6 +98,7 @@ def calculate_shift(
     b = base_shift - m * base_seq_len
     mu = image_seq_len * m + b
     return mu
+
 
 # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.retrieve_timesteps
 def retrieve_timesteps(
@@ -815,7 +819,6 @@ class StableDiffusion3Pipeline(
         use_cfg_zero_star: Optional[bool] = True,
         use_zero_init: Optional[bool] = True,
         zero_steps: Optional[int] = 0,
-
     ):
         r"""
         Function invoked when calling the pipeline for generation.
@@ -1078,19 +1081,23 @@ class StableDiffusion3Pipeline(
                 if self.do_classifier_free_guidance:
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
                     if use_cfg_zero_star:
-                        positive_flat = noise_pred_text.view(batch_size, -1)  
-                        negative_flat = noise_pred_uncond.view(batch_size, -1)  
+                        positive_flat = noise_pred_text.view(batch_size, -1)
+                        negative_flat = noise_pred_uncond.view(batch_size, -1)
 
-                        alpha = optimized_scale(positive_flat,negative_flat)
+                        alpha = optimized_scale(positive_flat, negative_flat)
                         alpha = alpha.view(batch_size, 1, 1, 1)
                         alpha = alpha.to(positive_flat.dtype)
 
                         if (i <= zero_steps) and use_zero_init:
-                            noise_pred = noise_pred_text*0.
+                            noise_pred = noise_pred_text * 0.0
                         else:
-                            noise_pred = noise_pred_uncond * alpha + guidance_scale * (noise_pred_text - noise_pred_uncond * alpha)
+                            noise_pred = noise_pred_uncond * alpha + guidance_scale * (
+                                noise_pred_text - noise_pred_uncond * alpha
+                            )
                     else:
-                        noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+                        noise_pred = noise_pred_uncond + guidance_scale * (
+                            noise_pred_text - noise_pred_uncond
+                        )
 
                     should_skip_layers = (
                         True
@@ -1873,7 +1880,6 @@ class StableDiffusion3Img2ImgPipeline(
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 256,
-
     ):
         r"""
         Function invoked when calling the pipeline for generation.

@@ -844,6 +844,10 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
 
                 # TODO optionally use batch prediction to speed this up.
                 if guidance_scale_real > 1.0 and i >= no_cfg_until_timestep:
+                    if negative_mask is not None:
+                        extra_transformer_args["attention_mask"] = negative_mask.to(
+                            device=self.transformer.device
+                        )
                     noise_pred_uncond = self.transformer(
                         hidden_states=latents.to(
                             device=self.transformer.device  # , dtype=self.transformer.dtype     # can't cast dtype like this because of NF4
@@ -860,6 +864,7 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                         txt_ids=negative_text_ids.to(device=self.transformer.device),
                         img_ids=latent_image_ids.to(device=self.transformer.device),
                         joint_attention_kwargs=self.joint_attention_kwargs,
+                        **extra_transformer_args,
                         return_dict=False,
                     )[0]
 

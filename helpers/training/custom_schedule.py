@@ -5,30 +5,28 @@ import accelerate
 import os
 import logging
 from torch.optim.lr_scheduler import LRScheduler
-from helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 def segmented_timestep_selection(
-    actual_num_timesteps, bsz, weights, use_refiner_range: bool = False
+    actual_num_timesteps, bsz, weights, config, use_refiner_range: bool = False
 ):
-    args = StateTracker.get_args()
     # Determine the range of timesteps to use
     num_timesteps = actual_num_timesteps
-    if use_refiner_range or args.refiner_training:
-        if args.refiner_training_invert_schedule:
+    if use_refiner_range or config.refiner_training:
+        if config.refiner_training_invert_schedule:
             # Inverted schedule calculation: we start from the last timestep and move downwards
             start_timestep = (
                 actual_num_timesteps - 1
             )  # Start from the last timestep, e.g., 999
             # Calculate the end of the range based on the inverse of the training strength
-            end_timestep = int(args.refiner_training_strength * actual_num_timesteps)
+            end_timestep = int(config.refiner_training_strength * actual_num_timesteps)
         else:
             # Normal refiner training schedule
             start_timestep = (
-                int(actual_num_timesteps * args.refiner_training_strength) - 1
+                int(actual_num_timesteps * config.refiner_training_strength) - 1
             )
             end_timestep = 0
         num_timesteps = start_timestep - end_timestep + 1
@@ -37,7 +35,7 @@ def segmented_timestep_selection(
         end_timestep = 0
 
     # logger.debug(
-    #     f"{'Using SDXL refiner' if StateTracker.is_sdxl_refiner() else 'Training base model '} with {num_timesteps} timesteps from a full schedule of {actual_num_timesteps} and a segment size of {num_timesteps // bsz} timesteps."
+    #     f"{'Using SDXL refiner' if config.refiner_training else 'Training base model '} with {num_timesteps} timesteps from a full schedule of {actual_num_timesteps} and a segment size of {num_timesteps // bsz} timesteps."
     # )
     segment_size = max(num_timesteps // bsz, 1)
     selected_timesteps = []
@@ -59,24 +57,6 @@ def segmented_timestep_selection(
 
     # logger.debug(f"Selected timesteps: {selected_timesteps}")
     return torch.tensor(selected_timesteps)
-
-
-def get_sd3_sigmas(
-    accelerator, noise_scheduler_copy, timesteps, n_dim=4, dtype=torch.float32
-):
-    sigmas = noise_scheduler_copy.sigmas.to(device=accelerator.device, dtype=dtype)
-    # print(f'sigmas: {sigmas.shape}')
-    schedule_timesteps = noise_scheduler_copy.timesteps.to(accelerator.device)
-    timesteps = timesteps.to(accelerator.device)
-    step_indices = [(schedule_timesteps == t).nonzero().item() for t in timesteps]
-    # print(f'step_indices: {step_indices}')
-
-    sigma = sigmas[step_indices].flatten()
-    while len(sigma.shape) < n_dim:
-        # print('unsqueeze')
-        sigma = sigma.unsqueeze(-1)
-    # print('return')
-    return sigma
 
 
 def generate_timestep_weights(args, num_timesteps):
@@ -259,7 +239,7 @@ class Cosine(LRScheduler):
         self.T_mult = T_mult
         self.eta_min = eta_min
         self.T_cur = last_step
-        super().__init__(optimizer, last_step, verbose)
+        super().__init__(optimizer=optimizer, last_epoch=last_step)
 
     def get_lr(self):
         lrs = [
@@ -370,7 +350,7 @@ class CosineAnnealingHardRestarts(LRScheduler):
         self.eta_min = eta_min
         self.T_cur = last_step
         self.last_step = last_step
-        super().__init__(optimizer, last_step, verbose)
+        super().__init__(optimizer=optimizer, last_epoch=last_step)
 
     def get_lr(self):
         lrs = [
@@ -452,7 +432,7 @@ class Sine(LRScheduler):
         self.verbose = verbose
         self._last_lr = self.base_lrs
         self.total_steps = 0  # Track total steps for a continuous wave
-        super().__init__(optimizer, last_step, verbose)
+        super().__init__(optimizer=optimizer, last_epoch=last_step)
 
     def get_lr(self):
         # Calculate learning rates using a continuous sine function based on total steps
@@ -487,10 +467,38 @@ class Sine(LRScheduler):
 
 
 from diffusers.optimization import get_scheduler
+from helpers.models.flux import calculate_shift_flux
+
+
+def apply_flow_schedule_shift(args, noise_scheduler, sigmas, noise):
+    # Resolution-dependent shifting of timestep schedules as per section 5.3.2 of SD3 paper
+    shift = None
+    if args.flow_schedule_shift is not None and args.flow_schedule_shift > 0:
+        # Static shift value for every resolution
+        shift = args.flow_schedule_shift
+    elif args.flow_schedule_auto_shift:
+        # Resolution-dependent shift value calculation used by official Flux inference implementation
+        image_seq_len = (noise.shape[-1] * noise.shape[-2]) // 4
+        mu = calculate_shift_flux(
+            (noise.shape[-1] * noise.shape[-2]) // 4,
+            noise_scheduler.config.base_image_seq_len,
+            noise_scheduler.config.max_image_seq_len,
+            noise_scheduler.config.base_shift,
+            noise_scheduler.config.max_shift,
+        )
+        shift = math.exp(mu)
+    if shift is not None:
+        sigmas = (sigmas * shift) / (1 + (shift - 1) * sigmas)
+    return sigmas
 
 
 def get_lr_scheduler(
-    args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
+    args,
+    optimizer,
+    accelerator,
+    logger,
+    global_step: int,
+    use_deepspeed_scheduler=False,
 ):
     if use_deepspeed_scheduler:
         logger.info("Using DeepSpeed learning rate scheduler")
@@ -543,7 +551,7 @@ def get_lr_scheduler(
         )
     elif args.lr_scheduler == "polynomial":
         logger.info(
-            f"Using Polynomial learning rate scheduler with last epoch {StateTracker.get_global_step() - 2}."
+            f"Using Polynomial learning rate scheduler with last epoch {global_step - 2}."
         )
         lr_scheduler = get_polynomial_decay_schedule_with_warmup(
             optimizer=optimizer,
@@ -551,7 +559,7 @@ def get_lr_scheduler(
             num_training_steps=args.max_train_steps * accelerator.num_processes,
             lr_end=args.lr_end,
             power=args.lr_power,
-            last_epoch=StateTracker.get_global_step() - 1,
+            last_epoch=global_step - 1,
         )
     else:
         logger.info(f"Using generic '{args.lr_scheduler}' learning rate scheduler.")

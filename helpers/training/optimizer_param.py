@@ -51,7 +51,7 @@ try:
     is_bitsandbytes_available = True
 except:
     if torch.cuda.is_available():
-        logger.warning(
+        print(
             "Could not load bitsandbytes library. BnB-specific optimisers and other functionality will be unavailable."
         )
 
@@ -68,9 +68,7 @@ try:
     is_prodigy_available = True
 except:
     if torch.cuda.is_available():
-        logger.warning(
-            "Could not load prodigyplus library. Prodigy will not be available."
-        )
+        print("Could not load prodigyplus library. Prodigy will not be available.")
 
 
 optimizer_choices = {
@@ -689,62 +687,33 @@ def determine_optimizer_class_with_config(
 
 def determine_params_to_optimize(
     args,
-    controlnet,
-    unet,
-    transformer,
-    text_encoder_1,
-    text_encoder_2,
+    model,
     model_type_label,
     lycoris_wrapped_network,
 ):
-    if args.model_type == "full":
-        if args.controlnet:
-            params_to_optimize = controlnet.parameters()
-        elif unet is not None:
-            params_to_optimize = list(
-                filter(lambda p: p.requires_grad, unet.parameters())
-            )
-        elif transformer is not None:
-            params_to_optimize = list(
-                filter(lambda p: p.requires_grad, transformer.parameters())
-            )
-        if args.train_text_encoder:
-            raise ValueError(
-                "Full model tuning does not currently support text encoder training."
-            )
-    elif "lora" in args.model_type:
-        if args.controlnet:
-            raise ValueError(
-                "SimpleTuner does not currently support training a ControlNet LoRA."
-            )
-        if unet is not None:
-            params_to_optimize = list(
-                filter(lambda p: p.requires_grad, unet.parameters())
-            )
-        if transformer is not None:
-            params_to_optimize = list(
-                filter(lambda p: p.requires_grad, transformer.parameters())
-            )
-        if args.train_text_encoder:
-            if args.model_family in ["sd3", "pixart_sigma"]:
-                raise ValueError(
-                    f"{model_type_label} does not support finetuning the text encoders, as T5 does not benefit from it."
+    params_to_optimize = list(
+        filter(lambda p: p.requires_grad, model.get_trained_component().parameters())
+    )
+    if args.train_text_encoder:
+        # add the first text encoder's parameters
+        for text_encoder in model.text_encoders:
+            if "t5" in str(text_encoder.__class__).lower():
+                logger.warning(
+                    f"{text_encoder.__class__} does not support finetuning, skipping model."
                 )
-            else:
-                # add the first text encoder's parameters
-                params_to_optimize = params_to_optimize + list(
-                    filter(lambda p: p.requires_grad, text_encoder_1.parameters())
-                )
-                # if text_encoder_2 is not None, add its parameters
-                if text_encoder_2 is None and args.model_family not in ["flux"]:
-                    # but not flux. it has t5 as enc 2.
-                    params_to_optimize = params_to_optimize + list(
-                        filter(lambda p: p.requires_grad, text_encoder_2.parameters())
-                    )
+                continue
+            params_to_optimize = params_to_optimize + list(
+                filter(lambda p: p.requires_grad, text_encoder.parameters())
+            )
 
-        if args.lora_type == "lycoris" and lycoris_wrapped_network is not None:
+    if args.model_type == "lora" and args.lora_type == "lycoris":
+        if lycoris_wrapped_network is not None:
             params_to_optimize = list(
                 filter(lambda p: p.requires_grad, lycoris_wrapped_network.parameters())
+            )
+        else:
+            raise Exception(
+                "Lycoris wrapped network is None, cannot optimize parameters."
             )
 
     return params_to_optimize

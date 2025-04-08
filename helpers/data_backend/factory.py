@@ -13,6 +13,7 @@ from helpers.caching.vae import VAECache
 from helpers.training.multi_process import should_log, rank_info, _get_rank as get_rank
 from helpers.training.collate import collate_fn
 from helpers.training.state_tracker import StateTracker
+from helpers.models.common import ModelFoundation
 
 import json
 import os
@@ -26,6 +27,7 @@ import queue
 from math import sqrt
 import pandas as pd
 import numpy as np
+from typing import Union
 
 logger = logging.getLogger("DataBackendFactory")
 if should_log():
@@ -53,6 +55,11 @@ def info_log(message):
 def warning_log(message):
     if StateTracker.get_accelerator().is_main_process:
         logger.warning(message)
+
+
+def debug_log(message):
+    if StateTracker.get_accelerator().is_main_process:
+        logger.debug(message)
 
 
 def check_column_values(
@@ -275,7 +282,6 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         and output["config"]["resolution_type"] == "pixel"
         and maximum_image_size < 512
         and "deepfloyd" not in args.model_type
-        and args.model_family != "smoldit"
     ):
         raise ValueError(
             f"When a data backend is configured to use `'resolution_type':pixel`, `maximum_image_size` must be at least 512 pixels. You may have accidentally entered {maximum_image_size} megapixels, instead of pixels."
@@ -294,7 +300,6 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         and output["config"]["resolution_type"] == "pixel"
         and target_downsample_size < 512
         and "deepfloyd" not in args.model_type
-        and args.model_family != "smoldit"
     ):
         raise ValueError(
             f"When a data backend is configured to use `'resolution_type':pixel`, `target_downsample_size` must be at least 512 pixels. You may have accidentally entered {target_downsample_size} megapixels, instead of pixels."
@@ -450,11 +455,15 @@ def configure_parquet_database(backend: dict, args, data_backend: BaseDataBacken
 
 def move_text_encoders(text_encoders: list, target_device: str):
     """Move text encoders to the target device."""
-    logger.info(f"Moving text encoders to {target_device}")
+    if text_encoders is None:
+        return
+    logger.debug(f"Moving text encoders to {target_device}")
     return [encoder.to(target_device) for encoder in text_encoders]
 
 
-def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenizers):
+def configure_multi_databackend(
+    args: dict, accelerator, text_encoders, tokenizers, model: ModelFoundation
+):
     """
     Configure a multiple dataloaders based on the provided commandline args.
     """
@@ -561,6 +570,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             cache_dir=init_backend.get("cache_dir", args.cache_dir_text),
             model_type=StateTracker.get_model_family(),
             write_batch_size=backend.get("write_batch_size", args.write_batch_size),
+            model=model,
         )
         logger.debug(f"rank {get_rank()} completed creation of TextEmbeddingCache")
         init_backend["text_embed_cache"].set_webhook_handler(
@@ -581,6 +591,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             info_log("Pre-computing null embedding")
             logger.debug(f"rank {get_rank()} may skip computing the embedding..")
             with accelerator.main_process_first():
+                model.get_pipeline()
                 logger.debug(f"rank {get_rank()} is computing the null embed")
                 init_backend["text_embed_cache"].compute_embeddings_for_prompts(
                     [""], return_concat=False, load_from_cache=False
@@ -986,7 +997,13 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
 
         init_backend["config"]["config_version"] = current_config_version
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
-        info_log(f"Configured backend: {init_backend}")
+
+        init_backend_debug_info = {
+            k: v
+            for k, v in init_backend.items()
+            if isinstance(v, Union[list, int, float, str, dict, tuple])
+        }
+        info_log(f"Configured backend: {init_backend_debug_info}")
 
         if len(init_backend["metadata_backend"]) == 0 and conditioning_type is None:
             raise Exception(
@@ -1045,6 +1062,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             id=init_backend["id"],
             metadata_backend=init_backend["metadata_backend"],
             data_backend=init_backend["data_backend"],
+            model=model,
             accelerator=accelerator,
             batch_size=args.train_batch_size,
             debug_aspect_buckets=args.debug_aspect_buckets,
@@ -1119,6 +1137,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                 f"(id={init_backend['id']}) Initialise text embed pre-computation using the {caption_strategy} caption strategy. We have {len(captions)} captions to process."
             )
             move_text_encoders(text_encoders, accelerator.device)
+            model.get_pipeline()
             init_backend["text_embed_cache"].compute_embeddings_for_prompts(
                 captions, return_concat=False, load_from_cache=False
             )
@@ -1137,10 +1156,9 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
         logger.debug(f"Hashing filenames: {hash_filenames}")
 
-        if (
-            "deepfloyd" not in StateTracker.get_args().model_type
-            and conditioning_type not in ["mask", "controlnet"]
-        ):
+        if getattr(
+            model, "AUTOENCODER_CLASS", None
+        ) is not None and conditioning_type not in ["mask", "controlnet"]:
             info_log(f"(id={init_backend['id']}) Creating VAE latent cache.")
             vae_cache_dir = backend.get("cache_dir_vae", None)
             if vae_cache_dir in vae_cache_dir_paths:
@@ -1167,6 +1185,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             init_backend["vaecache"] = VAECache(
                 id=init_backend["id"],
                 dataset_type=init_backend["dataset_type"],
+                model=model,
                 vae=StateTracker.get_vae(),
                 accelerator=accelerator,
                 metadata_backend=init_backend["metadata_backend"],
@@ -1261,7 +1280,12 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             logger.debug(f"Encoding images during training: {args.vae_cache_ondemand}")
             accelerator.wait_for_everyone()
 
-        info_log(f"Configured backend: {init_backend}")
+        init_backend_debug_info = {
+            k: v
+            for k, v in init_backend.items()
+            if isinstance(v, Union[list, int, float, str, dict, tuple])
+        }
+        info_log(f"Configured backend: {init_backend_debug_info}")
 
         StateTracker.register_data_backend(init_backend)
         init_backend["metadata_backend"].save_cache()

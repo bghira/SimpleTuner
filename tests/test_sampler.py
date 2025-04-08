@@ -35,6 +35,7 @@ class TestMultiAspectSampler(unittest.TestCase):
             accelerator=self.accelerator,
             batch_size=self.batch_size,
             minimum_image_size=0,
+            model=MagicMock(),
         )
 
         self.sampler.state_manager = Mock(spec=BucketStateManager)

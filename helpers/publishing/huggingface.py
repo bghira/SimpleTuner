@@ -15,8 +15,9 @@ EMA_SAFETENSORS_FILENAME = "ema_model.safetensors"
 
 
 class HubManager:
-    def __init__(self, config, repo_id: str = None):
+    def __init__(self, config, model, repo_id: str = None):
         self.config = config
+        self.model = model
         self.repo_id = (
             repo_id or self.config.hub_model_id or self.config.tracker_project_name
         )
@@ -44,7 +45,7 @@ class HubManager:
             f"Trained for {StateTracker.get_epoch() - 1} epochs and {StateTracker.get_global_step()} steps."
             f"\nTrained with datasets {self.collected_data_backend_str}"
             f"\nLearning rate {self.config.learning_rate}, batch size {self.config.train_batch_size}, and {self.config.gradient_accumulation_steps} gradient accumulation steps."
-            f"\nUsed DDPM noise scheduler for training with {self.config.prediction_type} prediction type and rescaled_betas_zero_snr={self.config.rescale_betas_zero_snr}"
+            f"\nTrained with {self.config.prediction_type} prediction type and rescaled_betas_zero_snr={self.config.rescale_betas_zero_snr}"
             f"\nUsing '{self.config.training_scheduler_timestep_spacing}' timestep spacing."
             f"\nBase model: {self.config.pretrained_model_name_or_path}"
             f"{self._vae_string()}"
@@ -59,9 +60,9 @@ class HubManager:
             f"No Hugging Face Hub token found ({token_path}). Please ensure you have logged in with 'huggingface-cli login'."
         )
 
-    def set_validation_prompts(self, validation_prompts, validation_shortnames):
-        self.validation_prompts = validation_prompts
-        self.validation_shortnames = validation_shortnames
+    def set_validation_prompts(self, validation_prompts):
+        self.validation_prompts = validation_prompts.values()
+        self.validation_shortnames = validation_prompts.keys()
 
     def upload_validation_folder(self, webhook_handler=None, override_path=None):
         try:
@@ -82,6 +83,7 @@ class HubManager:
                 message=f"Uploading {'model' if override_path is None else 'intermediary checkpoint'} to Hugging Face Hub as `{self.repo_id}`."
             )
         save_model_card(
+            model=self.model,
             repo_id=self.repo_id,
             images=validation_images,
             base_model=self.config.pretrained_model_name_or_path,

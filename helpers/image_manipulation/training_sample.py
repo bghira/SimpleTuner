@@ -29,6 +29,7 @@ class TrainingSample:
         image_metadata: dict = None,
         image_path: str = None,
         conditioning_type: str = None,
+        model=None,
     ):
         """
         Initializes a new TrainingSample instance with a provided PIL.Image object and a data backend identifier.
@@ -38,6 +39,13 @@ class TrainingSample:
             data_backend_id (str): Identifier for the data backend used for additional operations.
             metadata (dict): Optional metadata associated with the image.
         """
+        # Torchvision transforms turn the pixels into a Tensor and normalize them for the VAE.
+        self.model = model
+        self.transforms = None
+        if model is None:
+            self.model = StateTracker.get_model()
+        if self.model is not None:
+            self.transforms = self.model.get_transforms()
         self.image = image
         self.target_size = None
         self.intermediary_size = None
@@ -78,9 +86,6 @@ class TrainingSample:
 
         if not self.original_size:
             raise Exception("Original size not found in metadata.")
-
-        # Torchvision transforms turn the pixels into a Tensor and normalize them for the VAE.
-        self.transforms = MultiaspectImage.get_image_transforms()
 
         # Backend config details
         self.data_backend_config = StateTracker.get_data_backend_config(data_backend_id)
@@ -390,7 +395,7 @@ class TrainingSample:
             self.save_debug_image(f"images/{time.time()}-2-final-output.png")
 
         image = self.image
-        if return_tensor:
+        if return_tensor and self.transforms is not None:
             # Return normalised tensor.
             image = self.transforms(image)
         webhook_handler = StateTracker.get_webhook_handler()
