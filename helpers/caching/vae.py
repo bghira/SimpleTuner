@@ -829,7 +829,6 @@ class VAECache(WebhookMixin):
                 filepath, _, aspect_bucket = initial_data[idx]
                 filepaths.append(filepath)
 
-                logger.info(f"Image: {image.shape}")
 
                 pixel_values = self.transform_sample(image).to(
                     self.accelerator.device, dtype=self.vae.dtype
