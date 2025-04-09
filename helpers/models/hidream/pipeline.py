@@ -23,7 +23,6 @@ from diffusers.utils import (
 )
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
-from helpers.models.hidream.transformer import HiDreamImageTransformer2DModel
 from diffusers import FlowUniPCMultistepScheduler
 
 from dataclasses import dataclass

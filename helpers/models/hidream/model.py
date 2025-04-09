@@ -11,8 +11,14 @@ from transformers import (
     CLIPTokenizer,
     CLIPTextModelWithProjection,
 )
-from helpers.models.hidream.transformer import HiImageTransformer2DModel
-from helpers.models.hidream.pipeline import HiDreamImagePipeline
+
+HiImageTransformer2DModel = None
+HiDreamImagePipeline = None
+try:
+    from helpers.models.hidream.transformer import HiImageTransformer2DModel
+    from helpers.models.hidream.pipeline import HiDreamImagePipeline
+except Exception as e:
+    print(f"HiDream not available: {e}")
 from diffusers import AutoencoderKL
 from helpers.training.multi_process import _get_rank
 
