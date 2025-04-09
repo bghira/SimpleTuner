@@ -23,7 +23,7 @@ from diffusers.utils import (
 )
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
-from diffusers import FlowUniPCMultistepScheduler
+from helpers.models.hidream.schedule import FlowUniPCMultistepScheduler
 
 from dataclasses import dataclass
 from typing import List, Union
@@ -143,6 +143,7 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
 
     def __init__(
         self,
+        transformer,
         scheduler: FlowMatchEulerDiscreteScheduler,
         vae: AutoencoderKL,
         text_encoder: CLIPTextModelWithProjection,
@@ -157,6 +158,7 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
         super().__init__()
 
         self.register_modules(
+            transformer=transformer,
             vae=vae,
             text_encoder=text_encoder,
             text_encoder_2=text_encoder_2,
