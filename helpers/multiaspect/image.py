@@ -16,38 +16,6 @@ from PIL import Image
 import numpy as np
 
 
-class VideoToTensor:
-    def __call__(self, video):
-        """
-        Converts a video (numpy array of shape (num_frames, height, width, channels))
-        to a tensor of shape (num_frames, channels, height, width) by applying the
-        standard ToTensor conversion to each frame.
-        """
-        if isinstance(video, np.ndarray):
-            frames = []
-            for frame in video:
-                # Convert frame to PIL Image if not already.
-                if not isinstance(frame, Image.Image):
-                    frame = Image.fromarray(frame)
-                # Apply the standard ToTensor transform.
-                frame_tensor = transforms.functional.to_tensor(frame)
-                frames.append(frame_tensor)
-            return torch.stack(frames)
-        elif isinstance(video, list):
-            # If video is a list of frames, process similarly.
-            frames = []
-            for frame in video:
-                if not isinstance(frame, Image.Image):
-                    frame = Image.fromarray(frame)
-                frames.append(transforms.functional.to_tensor(frame))
-            return torch.stack(frames)
-        else:
-            raise TypeError("Input video must be a numpy array or a list of frames.")
-
-    def __repr__(self):
-        return self.__class__.__name__ + "()"
-
-
 class MultiaspectImage:
     @staticmethod
     def get_video_transforms(model: VideoModelFoundation):
