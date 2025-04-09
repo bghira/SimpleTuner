@@ -8,23 +8,27 @@ from helpers.models.common import (
 from transformers import (
     T5TokenizerFast,
     T5EncoderModel,
+    PreTrainedTokenizerFast,
+    LlamaForCausalLM,
     CLIPTokenizer,
     CLIPTextModelWithProjection,
 )
 
-HiImageTransformer2DModel = None
+HiDreamImageTransformer2DModel = None
 HiDreamImagePipeline = None
 try:
-    from helpers.models.hidream.transformer import HiImageTransformer2DModel
+    from helpers.models.hidream.transformer import HiDreamImageTransformer2DModel
     from helpers.models.hidream.pipeline import HiDreamImagePipeline
 except Exception as e:
     print(f"HiDream not available: {e}")
 from diffusers import AutoencoderKL
-from helpers.training.multi_process import _get_rank
-
 logger = logging.getLogger(__name__)
+is_primary_process = True
+if os.environ.get("RANK") is not None:
+    if int(os.environ.get("RANK")) != 0:
+        is_primary_process = False
 logger.setLevel(
-    os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO") if _get_rank() == 0 else "ERROR"
+    os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO") if is_primary_process else "ERROR"
 )
 
 
@@ -39,7 +43,7 @@ class HiDream(ImageModelFoundation):
     # Only training the Attention blocks by default seems to help more with HiDream.
     DEFAULT_LYCORIS_TARGET = ["Attention"]
 
-    MODEL_CLASS = HiImageTransformer2DModel
+    MODEL_CLASS = HiDreamImageTransformer2DModel
     PIPELINE_CLASSES = {
         PipelineTypes.TEXT2IMG: HiDreamImagePipeline,
         # PipelineTypes.IMG2IMG: None,
@@ -47,9 +51,11 @@ class HiDream(ImageModelFoundation):
     }
     MODEL_SUBFOLDER = "transformer"
     # The default model flavor to use when none is specified.
-    DEFAULT_MODEL_FLAVOUR = "v1"
+    DEFAULT_MODEL_FLAVOUR = "dev"
     HUGGINGFACE_PATHS = {
-        "v1": "HiDream-ai/HiDream-I1",
+        "dev": "HiDream-ai/HiDream-I1-Dev",
+        "full": "HiDream-ai/HiDream-I1-Full",
+        "fast": "HiDream-ai/HiDream-I1-Fast",
     }
     MODEL_LICENSE = "other"
 
@@ -76,10 +82,12 @@ class HiDream(ImageModelFoundation):
         },
         "text_encoder_4": {
             "name": "Llama",
-            "tokenizer": T5TokenizerFast,
-            "subfolder": "text_encoder_4",
-            "tokenizer_subfolder": "tokenizer_4",
-            "model": T5EncoderModel,
+            "tokenizer": PreTrainedTokenizerFast,
+            "subfolder": None,
+            "tokenizer_subfolder": None,
+            "model": LlamaForCausalLM,
+            "path": "meta-llama/Llama-3.1-8B-Instruct",
+            "required_quantisation_level": "int4_weight_only",
         },
     }
 

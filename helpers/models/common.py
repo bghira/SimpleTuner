@@ -471,9 +471,6 @@ class ModelFoundation(ABC):
             return
         self.tokenizers = []
         tokenizer_kwargs = {
-            "pretrained_model_name_or_path": get_model_config_path(
-                self.config.model_family, self.config.pretrained_model_name_or_path
-            ),
             "subfolder": "tokenizer",
             "revision": self.config.revision,
             "use_fast": False,
@@ -486,6 +483,13 @@ class ModelFoundation(ABC):
                 "tokenizer_subfolder", "tokenizer"
             )
             tokenizer_kwargs["use_fast"] = text_encoder_config.get("use_fast", False)
+            tokenizer_kwargs["pretrained_model_name_or_path"] = get_model_config_path(
+                self.config.model_family, self.config.pretrained_model_name_or_path
+            )
+            if text_encoder_config.get("path", None) is not None:
+                tokenizer_kwargs["pretrained_model_name_or_path"] = text_encoder_config.get(
+                    "path"
+                )
             logger.info(
                 f"Loading tokenizer {tokenizer_idx}: {tokenizer_cls.__name__} with args: {tokenizer_kwargs}"
             )
@@ -515,14 +519,25 @@ class ModelFoundation(ABC):
                 if "torch_dtype" in signature.parameters:
                     extra_kwargs["torch_dtype"] = self.config.weight_dtype
                 logger.info(f"Loading {text_encoder_config.get('name')} text encoder")
+                text_encoder_path = get_model_config_path(
+                    self.config.model_family, self.config.pretrained_model_name_or_path
+                )
+                if text_encoder_config.get("path", None) is not None:
+                    text_encoder_path = text_encoder_config.get(
+                        "path"
+                    )
+                requires_quant = text_encoder_config.get("required_quantisation_level", None)
+                if requires_quant is not None and requires_quant == "int4_weight_only":
+                    # we'll use the QuantizationConfig.
+                    from transformers import TorchAoConfig, AutoModelForCausalLM, AutoTokenizer
+                    extra_kwargs["device_map"] = "auto"
+                    extra_kwargs["quantization_config"] = TorchAoConfig("int4_weight_only", group_size=128)
+
                 text_encoder = text_encoder_config["model"].from_pretrained(
-                    get_model_config_path(
-                        self.config.model_family,
-                        self.config.pretrained_model_name_or_path,
-                    ),
+                    text_encoder_path,
                     variant=self.config.variant,
                     revision=self.config.revision,
-                    subfolder=text_encoder_config.get("subfolder", "text_encoder"),
+                    subfolder=text_encoder_config.get("subfolder", "text_encoder") or "",
                     **extra_kwargs,
                 )
                 if move_to_device:
@@ -678,33 +693,27 @@ class ModelFoundation(ABC):
             )
         else:
             pipeline_kwargs[self.MODEL_TYPE.value] = None
+
         if getattr(self, "vae", None) is not None:
             pipeline_kwargs["vae"] = unwrap_model(self.accelerator, self.vae)
         elif getattr(self, "AUTOENCODER_CLASS", None) is not None:
             pipeline_kwargs["vae"] = self.get_vae()
-        if self.text_encoders is not None and len(self.text_encoders) > 0:
-            pipeline_kwargs["text_encoder"] = unwrap_model(
-                self.accelerator, self.text_encoders[0]
-            )
-        elif len(self.TEXT_ENCODER_CONFIGURATION) > 0:
-            pipeline_kwargs["text_encoder"] = None
-        if self.text_encoders is not None and len(self.text_encoders) > 1:
-            pipeline_kwargs["text_encoder_2"] = unwrap_model(
-                self.accelerator, self.text_encoders[1]
-            )
-        elif len(self.TEXT_ENCODER_CONFIGURATION) > 1:
-            pipeline_kwargs["text_encoder_2"] = None
-        if self.text_encoders is not None and len(self.text_encoders) > 2:
-            pipeline_kwargs["text_encoder_3"] = unwrap_model(
-                self.accelerator, self.text_encoders[2]
-            )
-        elif len(self.TEXT_ENCODER_CONFIGURATION) > 2:
-            pipeline_kwargs["text_encoder_3"] = None
+
+        text_encoder_idx = 0
+        for text_encoder_attr, text_encoder_config in self.TEXT_ENCODER_CONFIGURATION.items():
+            if len(self.text_encoders) >= text_encoder_idx:
+                pipeline_kwargs[text_encoder_attr] = unwrap_model(
+                    self.accelerator, self.text_encoders[text_encoder_idx]
+                )
+            else:
+                pipeline_kwargs[text_encoder_attr] = None
+            text_encoder_idx += 1
+
         if self.config.controlnet:
             pipeline_kwargs["controlnet"] = unwrap_model(self.accelerator, self.model)
 
         logger.debug(
-            f"Initialising {pipeline_class.__name__} with components: {list(pipeline_kwargs.keys())}"
+            f"Initialising {pipeline_class.__name__} with components: {pipeline_kwargs}"
         )
         self.pipeline = pipeline_class.from_pretrained(
             **pipeline_kwargs,

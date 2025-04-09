@@ -17,11 +17,13 @@ from helpers.models.sd3.pipeline import (
     StableDiffusion3Img2ImgPipeline,
 )
 from diffusers import AutoencoderKL
-from helpers.training.multi_process import _get_rank
-
 logger = logging.getLogger(__name__)
+is_primary_process = True
+if os.environ.get("RANK") is not None:
+    if int(os.environ.get("RANK")) != 0:
+        is_primary_process = False
 logger.setLevel(
-    os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO") if _get_rank() == 0 else "ERROR"
+    os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO") if is_primary_process else "ERROR"
 )
 
 
