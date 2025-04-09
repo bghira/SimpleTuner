@@ -47,10 +47,9 @@ class HiDream(ImageModelFoundation):
     }
     MODEL_SUBFOLDER = "transformer"
     # The default model flavor to use when none is specified.
-    DEFAULT_MODEL_FLAVOUR = "medium"
+    DEFAULT_MODEL_FLAVOUR = "v1"
     HUGGINGFACE_PATHS = {
-        "medium": "stabilityai/stable-diffusion-3.5-medium",
-        "large": "stabilityai/stable-diffusion-3.5-large",
+        "v1": "HiDream-ai/HiDream-I1",
     }
     MODEL_LICENSE = "other"
 
