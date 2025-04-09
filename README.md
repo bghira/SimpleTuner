@@ -4,6 +4,9 @@
 
 **SimpleTuner** is geared towards simplicity, with a focus on making the code easily understood. This codebase serves as a shared academic exercise, and contributions are welcome.
 
+If you'd like to join our community, we can be found [on Discord](https://discord.gg/uRZPwbPEGG) via Terminus Research Group.
+If you have any questions, please feel free to reach out to us there.
+
 ## Table of Contents
 
 - [Design Philosophy](#design-philosophy)
