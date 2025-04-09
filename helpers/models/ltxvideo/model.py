@@ -66,6 +66,42 @@ class LTXVideo(VideoModelFoundation):
         },
     }
 
+    def apply_i2v_augmentation(self, batch):
+        num_frame_latents = batch["latents"].shape[2]
+        if num_frame_latents > 1 and batch["is_i2v_data"] is True:
+            # the theory is that if you have a single-frame latent, we expand it to num_frames and then do less destructive denoising.
+            single_frame_latents = batch["latents"]
+            if num_frame_latents > 1:
+                # for an actual video though, we'll grab one frame using the worst syntax we can think of:
+                single_frame_latents = batch["latents"][
+                    :, :, 0, :, :
+                ].unsqueeze(dim=2)
+                logger.info(
+                    f"All latents shape: {batch['latents'].shape}"
+                )
+                logger.info(
+                    f"Single frame latents shape: {single_frame_latents.shape}"
+                )
+            batch["i2v_conditioning_mask"] = make_i2v_conditioning_mask(
+                batch["latents"], protect_frame_index=0
+            )
+            batch["timesteps"], batch["noise"], new_sigmas = (
+                apply_first_frame_protection(
+                    batch["latents"],
+                    batch["timesteps"],
+                    batch["noise"],
+                    batch["i2v_conditioning_mask"],
+                    protect_first_frame=self.config.ltx_protect_first_frame,
+                    first_frame_probability=self.config.ltx_i2v_prob,
+                    partial_noise_fraction=self.config.ltx_partial_noise_fraction,
+                )
+            )
+            if new_sigmas is not None:
+                batch["sigmas"] = new_sigmas
+            logger.info(
+                f"Applied mask {batch['i2v_conditioning_mask'].shape} to timestep {batch['timesteps'].shape}"
+            )
+
     def update_pipeline_call_kwargs(self, pipeline_kwargs):
         """
         When we're running the pipeline, we'll update the kwargs specifically for this model here.
@@ -175,7 +211,7 @@ class LTXVideo(VideoModelFoundation):
         ]
         # rope_interpolation_scale = [1 / 25, 32, 32]
 
-        model_pred = self.transformer(
+        model_pred = self.model(
             packed_noisy_latents,
             encoder_hidden_states=prepared_batch["encoder_hidden_states"],
             encoder_attention_mask=prepared_batch["encoder_attention_mask"],
@@ -209,11 +245,11 @@ class LTXVideo(VideoModelFoundation):
             raise ValueError(
                 f"{self.NAME} does not support fp8-quanto. Please use fp8-torchao or int8 precision level instead."
             )
-        if self.config.aspect_bucket_alignment != 32:
+        if self.config.aspect_bucket_alignment != 64:
             logger.warning(
-                "{self.NAME} requires an alignment value of 32px. Overriding the value of --aspect_bucket_alignment."
+                "{self.NAME} requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
             )
-            self.config.aspect_bucket_alignment = 32
+            self.config.aspect_bucket_alignment = 64
 
         if self.config.prediction_type is not None:
             logger.warning(
@@ -240,8 +276,8 @@ class LTXVideo(VideoModelFoundation):
         if self.config.framerate is None:
             self.config.framerate = 25
 
-        self.config.vae_enable_tiling = True
-        self.config.vae_enable_slicing = True
+        # self.config.vae_enable_tiling = True
+        # self.config.vae_enable_slicing = True
 
     def custom_model_card_schedule_info(self):
         output_args = []

@@ -24,6 +24,9 @@ from helpers.training.deepspeed import (
 from abc import ABC, abstractmethod
 from enum import Enum
 from peft import LoraConfig
+import numpy as np
+from torchvision import transforms
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 is_primary_process = True
@@ -224,8 +227,6 @@ class ModelFoundation(ABC):
         """
         Returns nothing, but subclasses can implement different torchvision transforms as needed.
         """
-        from torchvision import transforms
-
         transforms.Compose(
             [
                 transforms.ToTensor(),
@@ -896,7 +897,7 @@ class ModelFoundation(ABC):
                 )
             batch["timesteps"] = batch["sigmas"] * 1000.0
             # Ensure sigmas is reshaped appropriately (default is 4D, may be overriden in video subclass)
-            batch["sigmas"] = batch["sigmas"].view(-1, 1, 1, 1)
+            self.expand_sigmas(batch)
             batch["noisy_latents"] = (1 - batch["sigmas"]) * batch["latents"] + batch[
                 "sigmas"
             ] * batch["noise"]
@@ -1049,6 +1050,11 @@ class ImageModelFoundation(ModelFoundation):
         self.text_encoders = None
         self.tokenizers = None
 
+    def expand_sigmas(self, batch: dict) -> dict:
+        batch["sigmas"] = batch["sigmas"].view(-1, 1, 1, 1)
+        
+        return batch
+
     def get_lora_target_layers(self):
         # Some models, eg. Flux should override this with more complex config-driven logic.
         if self.config.lora_type.lower() == "standard":
@@ -1093,6 +1099,37 @@ class ImageModelFoundation(ModelFoundation):
         """
         return []
 
+class VideoToTensor:
+    def __call__(self, video):
+        """
+        Converts a video (numpy array of shape (num_frames, height, width, channels))
+        to a tensor of shape (num_frames, channels, height, width) by applying the
+        standard ToTensor conversion to each frame.
+        """
+        if isinstance(video, np.ndarray):
+            frames = []
+            for frame in video:
+                # Convert frame to PIL Image if not already.
+                if not isinstance(frame, Image.Image):
+                    frame = Image.fromarray(frame)
+                # Apply the standard ToTensor transform.
+                frame_tensor = transforms.functional.to_tensor(frame)
+                frames.append(frame_tensor)
+            return torch.stack(frames)
+        elif isinstance(video, list):
+            # If video is a list of frames, process similarly.
+            frames = []
+            for frame in video:
+                if not isinstance(frame, Image.Image):
+                    frame = Image.fromarray(frame)
+                frames.append(transforms.functional.to_tensor(frame))
+            return torch.stack(frames)
+        else:
+            raise TypeError("Input video must be a numpy array or a list of frames.")
+
+    def __repr__(self):
+        return self.__class__.__name__ + "()"
+
 
 class VideoModelFoundation(ImageModelFoundation):
     """
@@ -1123,9 +1160,20 @@ class VideoModelFoundation(ImageModelFoundation):
 
         return transforms.Compose(
             [
-                transforms.ToTensor(),
+                VideoToTensor(),
             ]
         )
+
+    def expand_sigmas(self, batch):
+        if len(batch["latents"].shape) == 5:
+            # ltxvideo and others with 5D tensors need expansion to match dims here i think
+            logger.debug(
+                f"Latents shape vs sigmas, timesteps: {batch['latents'].shape}, {batch['sigmas'].shape}, {batch['timesteps'].shape}"
+            )
+            batch["sigmas"] = batch["sigmas"].reshape(batch['latents'].shape[0], 1, 1, 1, 1)
+
+    def apply_i2v_augmentation(self, batch):
+        pass
 
     def prepare_5d_inputs(self, tensor):
         """

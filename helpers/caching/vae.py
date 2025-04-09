@@ -453,18 +453,21 @@ class VAECache(WebhookMixin):
     def prepare_video_latents(self, samples):
         if StateTracker.get_model_family() in ["ltxvideo", "wan"]:
             if samples.ndim == 4:
-                logger.debug("PROCESSING IMAGE to VIDEO LATENTS CONVERSION")
-                logger.debug(f"Unsqueeze from dim {samples.shape}")
+                original_shape = samples.shape
                 samples = samples.unsqueeze(2)
-                logger.debug(f"New dim: {samples.shape}")
+                logger.debug("PROCESSING IMAGE to VIDEO LATENTS CONVERSION ({original_shape} to {samples.shape})")
             assert samples.ndim == 5, f"Expected 5D tensor, got {samples.ndim}D tensor"
             logger.debug(
                 f"PROCESSING VIDEO to VIDEO LATENTS CONVERSION ({samples.shape})"
             )
-            # images are torch.Size([1, 3, 1, 640, 448]) (B, C, F, H, W) but videos are torch.Size([2, 600, 3, 384, 395])
+            # images are torch.Size([1, 3, 1, 640, 448]) (B, C, F, H, W) but videos are torch.Size([1, 600, 3, 384, 395]) (B, F, C, H, W)
             # we have to permute the video latent samples to match the image latent samples
+            num_frames = samples.shape[1]
             if samples.shape[2] == 3:
-                samples = samples.permute(0, 2, 1, 3, 4)
+                original_shape = samples.shape
+                samples = samples.permute(0, 2, 1, 3, 4) # (B, C, F, H, W)
+                num_frames = samples.shape[2]
+                logger.debug(f"Found video latent of shape: {original_shape} (B, F, C, H, W) to (B, C, F, H, W) {samples.shape}")
 
             num_frames = samples.shape[1]
             if (
@@ -473,13 +476,10 @@ class VAECache(WebhookMixin):
             ):
                 # we'll discard along dim2 after num_video_frames
                 samples = samples[:, :, : self.num_video_frames, :, :]
-                logger.debug(f"Sliced to {samples.shape}")
         elif StateTracker.get_model_family() in ["hunyuan-video", "mochi"]:
             raise Exception(
                 f"{StateTracker.get_model_family()} not supported for VAE Caching yet."
             )
-
-        logger.debug(f"Permute to: {samples.shape}")
         logger.debug(f"Final samples shape: {samples.shape}")
         return samples
 
@@ -612,7 +612,6 @@ class VAECache(WebhookMixin):
                     self.accelerator.device, dtype=StateTracker.get_vae_dtype()
                 )
                 processed_images = self.prepare_video_latents(processed_images)
-                logger.debug(f"Encoding: {processed_images.shape}")
                 latents_uncached = self.vae.encode(processed_images)
 
                 if hasattr(latents_uncached, "latent_dist"):
@@ -829,6 +828,8 @@ class VAECache(WebhookMixin):
                     first_aspect_ratio = new_aspect_ratio
                 filepath, _, aspect_bucket = initial_data[idx]
                 filepaths.append(filepath)
+
+                logger.info(f"Image: {image.shape}")
 
                 pixel_values = self.transform_sample(image).to(
                     self.accelerator.device, dtype=self.vae.dtype
