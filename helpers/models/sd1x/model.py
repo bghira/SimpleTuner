@@ -12,6 +12,7 @@ from helpers.models.sd1x.pipeline import (
     StableDiffusionControlNetPipeline,
 )
 from diffusers import AutoencoderKL, UNet2DConditionModel
+
 logger = logging.getLogger(__name__)
 is_primary_process = True
 if os.environ.get("RANK") is not None:
@@ -100,7 +101,7 @@ class StableDiffusion1(ImageModelFoundation):
         Returns:
             Text encoder output (raw)
         """
-        prompt_embeds, _ = self.pipeline.encode_prompt(
+        prompt_embeds, _ = self.pipelines[PipelineTypes.TEXT2IMG].encode_prompt(
             prompt=prompts,
             device=self.accelerator.device,
             num_images_per_prompt=1,

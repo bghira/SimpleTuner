@@ -9,6 +9,7 @@ from diffusers.pipelines.kolors.text_encoder import ChatGLMModel
 from diffusers.pipelines.kolors.tokenizer import ChatGLMTokenizer
 from helpers.models.kolors.pipeline import KolorsPipeline, KolorsImg2ImgPipeline
 from diffusers import AutoencoderKL, UNet2DConditionModel
+
 logger = logging.getLogger(__name__)
 is_primary_process = True
 if os.environ.get("RANK") is not None:
