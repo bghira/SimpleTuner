@@ -6,9 +6,9 @@ from helpers.models.common import (
     ModelTypes,
 )
 from transformers import (
-    T5TokenizerFast,
+    PreTrainedTokenizer,
     T5EncoderModel,
-    PreTrainedTokenizerFast,
+    AutoTokenizer,
     LlamaForCausalLM,
     CLIPTokenizer,
     CLIPTextModelWithProjection,
@@ -75,19 +75,19 @@ class HiDream(ImageModelFoundation):
         },
         "text_encoder_3": {
             "name": "T5 XXL v1.1",
-            "tokenizer": T5TokenizerFast,
+            "tokenizer": AutoTokenizer,
             "subfolder": "text_encoder_3",
             "tokenizer_subfolder": "tokenizer_3",
             "model": T5EncoderModel,
         },
         "text_encoder_4": {
             "name": "Llama",
-            "tokenizer": PreTrainedTokenizerFast,
+            "tokenizer": AutoTokenizer,
             "subfolder": None,
             "tokenizer_subfolder": None,
             "model": LlamaForCausalLM,
             "path": "meta-llama/Llama-3.1-8B-Instruct",
-            "required_quantisation_level": "int4_weight_only",
+            # "required_quantisation_level": "int4_weight_only",
         },
     }
 
@@ -143,13 +143,16 @@ class HiDream(ImageModelFoundation):
         """
         prompt_embeds, pooled_prompt_embeds = self.pipeline._encode_prompt(
             prompt=prompts,
-            device="cpu",
+            prompt_2=prompts,
+            prompt_3=prompts,
+            prompt_4=prompts,
+            device=self.accelerator.device,
             dtype=self.config.base_weight_dtype,
             num_images_per_prompt=1,
-            max_sequence_length=self.config.tokenizer_max_length,
+            max_sequence_length=self.config.tokenizer_max_length or 128,
         )
 
-        return prompt_embeds, pooled_prompt_embeds
+        return prompt_embeds[0], pooled_prompt_embeds[0]
 
     def model_predict(self, prepared_batch):
         logger.debug(
