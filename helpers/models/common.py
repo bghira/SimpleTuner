@@ -112,6 +112,7 @@ class ModelFoundation(ABC):
         self.config = config
         self.accelerator = accelerator
         self.noise_schedule = None
+        self.pipelines = {}
         self.setup_model_flavour()
         self.setup_training_noise_schedule()
 
@@ -359,6 +360,28 @@ class ModelFoundation(ABC):
     def unwrap_model(self, model=None):
         return unwrap_model(self.accelerator, model or self.model)
 
+    def move_extra_models(self, target_device):
+        """
+        Move any extra models in the child class.
+
+        This is a stub and can be optionally implemented in subclasses.
+        """
+        pass
+
+    def move_models(self, target_device):
+        """
+        Moves the model to the target device.
+        """
+        if self.model is not None:
+            self.model.to(target_device)
+        if self.vae is not None and self.vae.device != "meta":
+            self.vae.to(target_device)
+        if self.text_encoders is not None:
+            for text_encoder in self.text_encoders:
+                if text_encoder.device != "meta":
+                    text_encoder.to(target_device)
+        self.move_extra_models(target_device)
+
     def get_vae(self):
         """
         Returns the VAE model.
@@ -487,8 +510,8 @@ class ModelFoundation(ABC):
                 self.config.model_family, self.config.pretrained_model_name_or_path
             )
             if text_encoder_config.get("path", None) is not None:
-                tokenizer_kwargs["pretrained_model_name_or_path"] = text_encoder_config.get(
-                    "path"
+                tokenizer_kwargs["pretrained_model_name_or_path"] = (
+                    text_encoder_config.get("path")
                 )
             logger.info(
                 f"Loading tokenizer {tokenizer_idx}: {tokenizer_cls.__name__} with args: {tokenizer_kwargs}"
@@ -523,26 +546,32 @@ class ModelFoundation(ABC):
                     self.config.model_family, self.config.pretrained_model_name_or_path
                 )
                 if text_encoder_config.get("path", None) is not None:
-                    text_encoder_path = text_encoder_config.get(
-                        "path"
-                    )
-                requires_quant = text_encoder_config.get("required_quantisation_level", None)
+                    text_encoder_path = text_encoder_config.get("path")
+                requires_quant = text_encoder_config.get(
+                    "required_quantisation_level", None
+                )
                 if requires_quant is not None and requires_quant == "int4_weight_only":
                     # we'll use the QuantizationConfig.
                     from torchao.quantization import Int4WeightOnlyConfig
                     from transformers import TorchAoConfig
+
                     extra_kwargs["device_map"] = "auto"
                     quant_config = Int4WeightOnlyConfig(group_size=128)
-                    extra_kwargs["quantization_config"] = TorchAoConfig(quant_type=quant_config)
+                    extra_kwargs["quantization_config"] = TorchAoConfig(
+                        quant_type=quant_config
+                    )
 
                 text_encoder = text_encoder_config["model"].from_pretrained(
                     text_encoder_path,
                     variant=self.config.variant,
                     revision=self.config.revision,
-                    subfolder=text_encoder_config.get("subfolder", "text_encoder") or "",
+                    subfolder=text_encoder_config.get("subfolder", "text_encoder")
+                    or "",
                     **extra_kwargs,
                 )
-                if move_to_device and getattr(self.config, f"{attr_name}_precision", None) in ["no_change", None]:
+                if move_to_device and getattr(
+                    self.config, f"{attr_name}_precision", None
+                ) in ["no_change", None]:
                     logger.info(f"Moving {text_encoder_config.get('name')} to GPU")
                     text_encoder.to(
                         self.accelerator.device,
@@ -670,6 +699,9 @@ class ModelFoundation(ABC):
         Loads the pipeline class for the model.
         This is a stub and should be implemented in subclasses.
         """
+        active_pipelines = getattr(self, "pipelines", {})
+        if pipeline_type in active_pipelines:
+            return active_pipelines[pipeline_type]
         pipeline_kwargs = {
             "pretrained_model_name_or_path": self._model_config_path(),
         }
@@ -702,12 +734,20 @@ class ModelFoundation(ABC):
             pipeline_kwargs["vae"] = self.get_vae()
 
         text_encoder_idx = 0
-        for text_encoder_attr, text_encoder_config in self.TEXT_ENCODER_CONFIGURATION.items():
-            if len(self.text_encoders) >= text_encoder_idx:
+        for (
+            text_encoder_attr,
+            text_encoder_config,
+        ) in self.TEXT_ENCODER_CONFIGURATION.items():
+            if (
+                self.text_encoders is not None
+                and len(self.text_encoders) >= text_encoder_idx
+            ):
                 pipeline_kwargs[text_encoder_attr] = unwrap_model(
                     self.accelerator, self.text_encoders[text_encoder_idx]
                 )
-                pipeline_kwargs[text_encoder_attr.replace("text_encoder", "tokenizer")] = self.tokenizers[text_encoder_idx]
+                pipeline_kwargs[
+                    text_encoder_attr.replace("text_encoder", "tokenizer")
+                ] = self.tokenizers[text_encoder_idx]
             else:
                 pipeline_kwargs[text_encoder_attr] = None
             text_encoder_idx += 1
@@ -718,16 +758,42 @@ class ModelFoundation(ABC):
         logger.debug(
             f"Initialising {pipeline_class.__name__} with components: {pipeline_kwargs}"
         )
-        self.pipeline = pipeline_class.from_pretrained(
+        self.pipelines[pipeline_type] = pipeline_class.from_pretrained(
             **pipeline_kwargs,
         )
 
-        return self.pipeline
+        return self.pipelines[pipeline_type]
 
     def get_pipeline(
         self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True
     ) -> DiffusionPipeline:
-        return self._load_pipeline(pipeline_type, load_base_model)
+        possibly_cached_pipeline = self._load_pipeline(pipeline_type, load_base_model)
+        if (
+            self.model is not None
+            and getattr(possibly_cached_pipeline, self.MODEL_TYPE.value, None) is None
+        ):
+            setattr(possibly_cached_pipeline, self.MODEL_TYPE.value, self.model)
+        if (
+            self.vae is not None
+            and getattr(possibly_cached_pipeline, "vae", None) is None
+        ):
+            setattr(possibly_cached_pipeline, "vae", self.vae)
+        if self.text_encoders is not None:
+            for (
+                text_encoder_attr,
+                text_encoder_config,
+            ) in self.TEXT_ENCODER_CONFIGURATION.items():
+                if getattr(possibly_cached_pipeline, text_encoder_attr, None) is None:
+                    setattr(
+                        possibly_cached_pipeline,
+                        text_encoder_attr,
+                        self.text_encoders[int(text_encoder_attr.split("_")[-1]) - 1],
+                    )
+        if self.config.controlnet:
+            if getattr(possibly_cached_pipeline, "controlnet", None) is None:
+                setattr(possibly_cached_pipeline, "controlnet", self.model)
+
+        return possibly_cached_pipeline
 
     def update_pipeline_call_kwargs(self, pipeline_kwargs):
         """
@@ -1064,7 +1130,7 @@ class ImageModelFoundation(ModelFoundation):
 
     def expand_sigmas(self, batch: dict) -> dict:
         batch["sigmas"] = batch["sigmas"].view(-1, 1, 1, 1)
-        
+
         return batch
 
     def get_lora_target_layers(self):
@@ -1110,6 +1176,7 @@ class ImageModelFoundation(ModelFoundation):
         See SD3 or Flux classes for an example.
         """
         return []
+
 
 class VideoToTensor:
     def __call__(self, video):
@@ -1182,7 +1249,9 @@ class VideoModelFoundation(ImageModelFoundation):
             logger.debug(
                 f"Latents shape vs sigmas, timesteps: {batch['latents'].shape}, {batch['sigmas'].shape}, {batch['timesteps'].shape}"
             )
-            batch["sigmas"] = batch["sigmas"].reshape(batch['latents'].shape[0], 1, 1, 1, 1)
+            batch["sigmas"] = batch["sigmas"].reshape(
+                batch["latents"].shape[0], 1, 1, 1, 1
+            )
 
     def apply_i2v_augmentation(self, batch):
         pass
