@@ -1838,7 +1838,7 @@ def get_argument_parser():
             " and may not be necessary for your use case."
         ),
     )
-    for i in range(1, 4):
+    for i in range(1, 5):
         parser.add_argument(
             f"--text_encoder_{i}_precision",
             type=str,
