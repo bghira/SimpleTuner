@@ -258,7 +258,7 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
         text_inputs = tokenizer(
             prompt,
             padding="max_length",
-            max_length=min(max_sequence_length, 218),
+            max_length=min(max_sequence_length, 128),
             truncation=True,
             return_tensors="pt",
         )
