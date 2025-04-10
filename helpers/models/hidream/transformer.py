@@ -1,9 +1,7 @@
 from typing import Any, Dict, Optional, Tuple, List
 
-import math
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import einops
 from einops import repeat
 
@@ -22,40 +20,11 @@ from diffusers.models.modeling_outputs import Transformer2DModelOutput
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
-#################################################################
-#         1. Try-except chain for FlashAttention import         #
-#################################################################
-try:
-    # If you have a custom flash_attn_interface
-    from flash_attn_interface import flash_attn_func
-
-    _HAS_FLASH_ATTN = True
-    _FLASH_ATTN_V3 = True
-except ImportError:
-    try:
-        # Otherwise try the official flash_attn library
-        from flash_attn import flash_attn_func
-
-        _HAS_FLASH_ATTN = True
-        _FLASH_ATTN_V3 = False
-    except ImportError:
-        # Fallback if neither is available
-        _HAS_FLASH_ATTN = False
-        _FLASH_ATTN_V3 = False
-
-        def flash_attn_func(
-            query, key, value, dropout_p=0.0, causal=False, deterministic=False
-        ):
-            # Dummy fallback to ensure the code won't crash if flash_attn is not installed.
-            raise RuntimeError(
-                "FlashAttention is not available. Please install flash_attn (or flash_attn_interface) "
-                "or switch to the fallback attention method."
-            )
-
-
-#################################################################
-#                    2. Load-balancing logic                    #
-#################################################################
+import math
+import torch
+from torch import nn
+import torch.nn.functional as F
+from torch.distributed.nn.functional import all_gather
 
 _LOAD_BALANCING_LOSS = []
 
@@ -81,8 +50,6 @@ def batched_load_balancing_loss():
     Pi = torch.stack([ent[1] for ent in aux_losses_arr], dim=0)
     fi = torch.stack([ent[2] for ent in aux_losses_arr], dim=0)
 
-    from torch.distributed.nn.functional import all_gather
-
     fi_list = all_gather(fi)
     fi = torch.stack(fi_list, 0).mean(0)
 
@@ -90,11 +57,17 @@ def batched_load_balancing_loss():
     return aux_loss
 
 
-#################################################################
-#                 3. Rope embedding + Timestep etc.             #
-#################################################################
+import torch
+from torch import nn
+from typing import Optional
+from diffusers.models.attention_processor import Attention
+from diffusers.utils.torch_utils import maybe_allow_in_graph
+from typing import Optional
+from typing import List
+from diffusers.models.embeddings import Timesteps, TimestepEmbedding
 
 
+# Copied from https://github.com/black-forest-labs/flux/blob/main/src/flux/math.py
 def rope(pos: torch.Tensor, dim: int, theta: int) -> torch.Tensor:
     assert dim % 2 == 0, "The dimension must be even."
 
@@ -111,6 +84,7 @@ def rope(pos: torch.Tensor, dim: int, theta: int) -> torch.Tensor:
     return out.float()
 
 
+# Copied from https://github.com/black-forest-labs/flux/blob/main/src/flux/modules/layers.py
 class EmbedND(nn.Module):
     def __init__(self, theta: int, axes_dim: List[int]):
         super().__init__()
@@ -155,9 +129,8 @@ class PatchEmbed(nn.Module):
 class PooledEmbed(nn.Module):
     def __init__(self, text_emb_dim, hidden_size):
         super().__init__()
-        self.pooled_embedder = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(text_emb_dim, hidden_size, bias=True),
+        self.pooled_embedder = TimestepEmbedding(
+            in_channels=text_emb_dim, time_embed_dim=hidden_size
         )
         self.apply(self._init_weights)
 
@@ -174,8 +147,6 @@ class PooledEmbed(nn.Module):
 class TimestepEmbed(nn.Module):
     def __init__(self, hidden_size, frequency_embedding_size=256):
         super().__init__()
-        from diffusers.models.embeddings import Timesteps, TimestepEmbedding
-
         self.time_proj = Timesteps(
             num_channels=frequency_embedding_size,
             flip_sin_to_cos=True,
@@ -223,14 +194,20 @@ class OutEmbed(nn.Module):
         return x
 
 
-#################################################################
-#     4. FlashAttention wrapper with an optional fallback       #
-#################################################################
+try:
+    from flash_attn_interface import flash_attn_func
+
+    USE_FLASH_ATTN3 = True
+except:
+    from flash_attn import flash_attn_func
+
+    USE_FLASH_ATTN3 = False
 
 
+# Copied from https://github.com/black-forest-labs/flux/blob/main/src/flux/math.py
 def apply_rope(
     xq: torch.Tensor, xk: torch.Tensor, freqs_cis: torch.Tensor
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor]:
     xq_ = xq.float().reshape(*xq.shape[:-1], -1, 1, 2)
     xk_ = xk.float().reshape(*xk.shape[:-1], -1, 1, 2)
     xq_out = freqs_cis[..., 0] * xq_[..., 0] + freqs_cis[..., 1] * xq_[..., 1]
@@ -238,76 +215,16 @@ def apply_rope(
     return xq_out.reshape(*xq.shape).type_as(xq), xk_out.reshape(*xk.shape).type_as(xk)
 
 
-#################################################################
-#      5. Fallback attention if FlashAttention isn't found      #
-#################################################################
-
-
-def fallback_attention(
-    query: torch.Tensor, key: torch.Tensor, value: torch.Tensor
-) -> torch.Tensor:
-    """
-    PyTorch-based multi-head attention fallback
-    (Uses the shapes from the original code: [B, S, nHeads, headDim]).
-    """
-    # query, key, value have shape [batch, seq, heads, head_dim]
-    # We want to do: attn = softmax( (q * k^T) / sqrt(d), dim=-1 ) * v
-    # Then shape the result back to [batch, seq, heads, head_dim].
-    d = query.shape[-1]
-
-    # Move heads dimension to batch for easier matmul: [B, heads, seq, dim]
-    query = query.transpose(1, 2)  # [B, heads, seq, dim]
-    key = key.transpose(1, 2)  # [B, heads, seq, dim]
-    value = value.transpose(1, 2)  # [B, heads, seq, dim]
-
-    # [B, heads, seq, dim] x [B, heads, dim, seq] => [B, heads, seq, seq]
-    attn_weights = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(d)
-    attn_probs = F.softmax(attn_weights, dim=-1)
-
-    # [B, heads, seq, seq] x [B, heads, seq, dim] => [B, heads, seq, dim]
-    hidden_states = torch.matmul(attn_probs, value)
-
-    # Move heads dim back to the last: [B, seq, heads, dim]
-    hidden_states = hidden_states.transpose(1, 2)
-    # Flatten the last two dims [B, seq, heads * dim]
-    hidden_states = hidden_states.flatten(-2)
-    hidden_states = hidden_states.to(query.dtype)
-    return hidden_states
-
-
-def flash_or_fallback_attention(
-    query: torch.Tensor, key: torch.Tensor, value: torch.Tensor
-) -> torch.Tensor:
-    """
-    Single entry point that tries FlashAttention if _HAS_FLASH_ATTN is True.
-    Otherwise, uses fallback_attention.
-    """
-    if not _HAS_FLASH_ATTN:
-        # No flash_attn library found, fallback to standard PyTorch attention
-        return fallback_attention(query, key, value)
-
-    # FlashAttention is available. The code below tries to unify
-    # the usage for v2 or v3 versions. You can adapt as needed.
-    if _FLASH_ATTN_V3:
-        # v3 "flash_attn_interface" style
-        # returns a tuple (output, lse, *others) => get [0]
+def attention(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor):
+    if USE_FLASH_ATTN3:
         hidden_states = flash_attn_func(
             query, key, value, causal=False, deterministic=False
         )[0]
     else:
-        # v2 "flash_attn" style
         hidden_states = flash_attn_func(query, key, value, dropout_p=0.0, causal=False)
-    # Flatten last two dims
     hidden_states = hidden_states.flatten(-2)
     hidden_states = hidden_states.to(query.dtype)
     return hidden_states
-
-
-#################################################################
-#         6. Actual custom attention modules/processors         #
-#################################################################
-
-from diffusers.models.attention_processor import Attention
 
 
 @maybe_allow_in_graph
@@ -382,6 +299,8 @@ class HiDreamAttention(Attention):
 
 
 class HiDreamAttnProcessor_flashattn:
+    """Attention processor used typically in processing the SD3-like self-attention projections."""
+
     def __call__(
         self,
         attn: HiDreamAttention,
@@ -427,7 +346,6 @@ class HiDreamAttnProcessor_flashattn:
             key = key_i
             value = value_i
 
-        # Rope
         if query.shape[-1] == rope.shape[-3] * 2:
             query, key = apply_rope(query, key, rope)
         else:
@@ -437,10 +355,7 @@ class HiDreamAttnProcessor_flashattn:
             query = torch.cat([query_1, query_2], dim=-1)
             key = torch.cat([key_1, key_2], dim=-1)
 
-        ##################################################################
-        # 7. Here is where we now call our flash_or_fallback_attention  #
-        ##################################################################
-        hidden_states = flash_or_fallback_attention(query, key, value)
+        hidden_states = attention(query, key, value)
 
         if not attn.single:
             hidden_states_i, hidden_states_t = torch.split(
@@ -454,11 +369,6 @@ class HiDreamAttnProcessor_flashattn:
             return hidden_states
 
 
-#################################################################
-#           8. FeedForward + MoE gating wrappers                #
-#################################################################
-
-
 class FeedForwardSwiGLU(nn.Module):
     def __init__(
         self,
@@ -469,6 +379,7 @@ class FeedForwardSwiGLU(nn.Module):
     ):
         super().__init__()
         hidden_dim = int(2 * hidden_dim / 3)
+        # custom dim factor multiplier
         if ffn_dim_multiplier is not None:
             hidden_dim = int(ffn_dim_multiplier * hidden_dim)
         hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
@@ -488,6 +399,7 @@ class FeedForwardSwiGLU(nn.Module):
         return self.w2(torch.nn.functional.silu(self.w1(x)) * self.w3(x))
 
 
+# Modified from https://github.com/deepseek-ai/DeepSeek-V3/blob/main/inference/model.py
 class MoEGate(nn.Module):
     def __init__(
         self,
@@ -519,34 +431,60 @@ class MoEGate(nn.Module):
 
     def forward(self, hidden_states):
         bsz, seq_len, h = hidden_states.shape
+        # print(bsz, seq_len, h)
+        ### compute gating score
         hidden_states = hidden_states.view(-1, h)
         logits = F.linear(hidden_states, self.weight, None)
         if self.scoring_func == "softmax":
             scores = logits.softmax(dim=-1)
         else:
             raise NotImplementedError(
-                f"scoring function not supported: {self.scoring_func}"
+                f"insupportable scoring function for MoE gating: {self.scoring_func}"
             )
 
+        ### select top-k experts
         topk_weight, topk_idx = torch.topk(scores, k=self.top_k, dim=-1, sorted=False)
 
+        ### norm gate to sum 1
         if self.top_k > 1 and self.norm_topk_prob:
             denominator = topk_weight.sum(dim=-1, keepdim=True) + 1e-20
             topk_weight = topk_weight / denominator
 
-        aux_loss = None
+        ### expert-level computation auxiliary loss
         if self.training and self.alpha > 0.0:
-            # compute aux loss
             scores_for_aux = scores
-            mask_ce = F.one_hot(topk_idx.view(-1), num_classes=self.n_routed_experts)
-            ce = mask_ce.float().mean(0)
-            Pi = scores_for_aux.mean(0)
-            fi = ce * self.n_routed_experts
-            aux_loss = (Pi * fi).sum() * self.alpha
-            save_load_balancing_loss((aux_loss, Pi, fi, self.alpha))
+            aux_topk = self.top_k
+            # always compute aux loss based on the naive greedy topk method
+            topk_idx_for_aux_loss = topk_idx.view(bsz, -1)
+            if self.seq_aux:
+                scores_for_seq_aux = scores_for_aux.view(bsz, seq_len, -1)
+                ce = torch.zeros(
+                    bsz, self.n_routed_experts, device=hidden_states.device
+                )
+                ce.scatter_add_(
+                    1,
+                    topk_idx_for_aux_loss,
+                    torch.ones(bsz, seq_len * aux_topk, device=hidden_states.device),
+                ).div_(seq_len * aux_topk / self.n_routed_experts)
+                aux_loss = (ce * scores_for_seq_aux.mean(dim=1)).sum(
+                    dim=1
+                ).mean() * self.alpha
+            else:
+                mask_ce = F.one_hot(
+                    topk_idx_for_aux_loss.view(-1), num_classes=self.n_routed_experts
+                )
+                ce = mask_ce.float().mean(0)
+
+                Pi = scores_for_aux.mean(0)
+                fi = ce * self.n_routed_experts
+                aux_loss = (Pi * fi).sum() * self.alpha
+                save_load_balancing_loss((aux_loss, Pi, fi, self.alpha))
+        else:
+            aux_loss = None
         return topk_idx, topk_weight, aux_loss
 
 
+# Modified from https://github.com/deepseek-ai/DeepSeek-V3/blob/main/inference/model.py
 class MOEFeedForwardSwiGLU(nn.Module):
     def __init__(
         self,
@@ -574,7 +512,6 @@ class MOEFeedForwardSwiGLU(nn.Module):
         topk_idx, topk_weight, aux_loss = self.gate(x)
         x = x.view(-1, x.shape[-1])
         flat_topk_idx = topk_idx.view(-1)
-
         if self.training:
             x = x.repeat_interleave(self.num_activated_experts, dim=0)
             y = torch.empty_like(x, dtype=wtype)
@@ -582,11 +519,11 @@ class MOEFeedForwardSwiGLU(nn.Module):
                 y[flat_topk_idx == i] = expert(x[flat_topk_idx == i]).to(dtype=wtype)
             y = (y.view(*topk_weight.shape, -1) * topk_weight.unsqueeze(-1)).sum(dim=1)
             y = y.view(*orig_shape).to(dtype=wtype)
+            # y = AddAuxiliaryLoss.apply(y, aux_loss)
         else:
             y = self.moe_infer(x, flat_topk_idx, topk_weight.view(-1, 1)).view(
                 *orig_shape
             )
-
         y = y + self.shared_experts(identity)
         return y
 
@@ -605,6 +542,9 @@ class MOEFeedForwardSwiGLU(nn.Module):
             expert_tokens = x[exp_token_idx]
             expert_out = expert(expert_tokens)
             expert_out.mul_(flat_expert_weights[idxs[start_idx:end_idx]])
+
+            # for fp16 and other dtype
+            expert_cache = expert_cache.to(expert_out.dtype)
             expert_cache.scatter_reduce_(
                 0,
                 exp_token_idx.view(-1, 1).repeat(1, x.shape[-1]),
@@ -624,11 +564,6 @@ class TextProjection(nn.Module):
     def forward(self, caption):
         hidden_states = self.linear(caption)
         return hidden_states
-
-
-#################################################################
-#             9. Single/double Transformer Blocks               #
-#################################################################
 
 
 class BlockType:
@@ -689,16 +624,20 @@ class HiDreamImageSingleTransformerBlock(nn.Module):
             self.adaLN_modulation(adaln_input)[:, None].chunk(6, dim=-1)
         )
 
-        # 1. MSA
+        # 1. MM-Attention
         norm_image_tokens = self.norm1_i(image_tokens).to(dtype=wtype)
         norm_image_tokens = norm_image_tokens * (1 + scale_msa_i) + shift_msa_i
-        attn_output_i = self.attn1(norm_image_tokens, image_tokens_masks, rope=rope)
+        attn_output_i = self.attn1(
+            norm_image_tokens,
+            image_tokens_masks,
+            rope=rope,
+        )
         image_tokens = gate_msa_i * attn_output_i + image_tokens
 
-        # 2. FF
+        # 2. Feed-forward
         norm_image_tokens = self.norm3_i(image_tokens).to(dtype=wtype)
         norm_image_tokens = norm_image_tokens * (1 + scale_mlp_i) + shift_mlp_i
-        ff_output_i = gate_mlp_i * self.ff_i(norm_image_tokens)
+        ff_output_i = gate_mlp_i * self.ff_i(norm_image_tokens.to(dtype=wtype))
         image_tokens = ff_output_i + image_tokens
         return image_tokens
 
@@ -743,7 +682,6 @@ class HiDreamImageTransformerBlock(nn.Module):
             )
         else:
             self.ff_i = FeedForwardSwiGLU(dim=dim, hidden_dim=4 * dim)
-
         self.norm3_t = nn.LayerNorm(dim, eps=1e-06, elementwise_affine=False)
         self.ff_t = FeedForwardSwiGLU(dim=dim, hidden_dim=4 * dim)
 
@@ -841,11 +779,6 @@ class HiDreamImageBlock(nn.Module):
         )
 
 
-#################################################################
-#      10. The main HiDreamImageTransformer2DModel class        #
-#################################################################
-
-
 class HiDreamImageTransformer2DModel(
     ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin
 ):
@@ -916,7 +849,6 @@ class HiDreamImageTransformer2DModel(
 
         self.final_layer = OutEmbed(self.inner_dim, patch_size, self.out_channels)
 
-        # We'll project LLaMA (or T5) encodings to the correct dimension:
         caption_channels = [
             caption_channels[1],
         ] * (num_layers + num_single_layers) + [
@@ -948,25 +880,21 @@ class HiDreamImageTransformer2DModel(
             timesteps = torch.tensor([timesteps], dtype=dtype, device=device)
         elif len(timesteps.shape) == 0:
             timesteps = timesteps[None].to(device)
+        # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
         timesteps = timesteps.expand(batch_size)
         return timesteps
 
     def unpatchify(
         self, x: torch.Tensor, img_sizes: List[Tuple[int, int]], is_training: bool
-    ) -> torch.Tensor:
+    ) -> List[torch.Tensor]:
         if is_training:
-            # If training, shape is [B, S, p1*p2*C]
-            # we often keep it in a B, S, C' form for MSE or so.
-            # Adjust as needed for your training code:
             x = einops.rearrange(
                 x,
                 "B S (p1 p2 C) -> B C S (p1 p2)",
                 p1=self.config.patch_size,
                 p2=self.config.patch_size,
             )
-            return x
         else:
-            # If inference, we convert it back to NxCxHxW
             x_arr = []
             for i, img_size in enumerate(img_sizes):
                 pH, pW = img_size
@@ -978,7 +906,8 @@ class HiDreamImageTransformer2DModel(
                         p2=self.config.patch_size,
                     )
                 )
-            return torch.cat(x_arr, dim=0)
+            x = torch.cat(x_arr, dim=0)
+        return x
 
     def patchify(self, x, max_seq, img_sizes=None):
         pz2 = self.config.patch_size * self.config.patch_size
@@ -990,13 +919,11 @@ class HiDreamImageTransformer2DModel(
             B, C = len(x), x[0].shape[0]
             device = x[0].device
             dtype = x[0].dtype
-
         x_masks = torch.zeros((B, max_seq), dtype=dtype, device=device)
 
         if img_sizes is not None:
             for i, img_size in enumerate(img_sizes):
                 x_masks[i, 0 : img_size[0] * img_size[1]] = 1
-            # x: [B, C, S, patchDim] => rearrange
             x = einops.rearrange(x, "B C S p -> B S (p C)", p=pz2)
         elif isinstance(x, torch.Tensor):
             pH, pW = (
@@ -1033,8 +960,18 @@ class HiDreamImageTransformer2DModel(
             lora_scale = 1.0
 
         if USE_PEFT_BACKEND:
+            # weight the lora layers by setting lora_scale for each PEFT layer
             scale_lora_layers(self, lora_scale)
+        else:
+            if (
+                joint_attention_kwargs is not None
+                and joint_attention_kwargs.get("scale", None) is not None
+            ):
+                logger.warning(
+                    "Passing scale via joint_attention_kwargs when not using the PEFT backend is ineffective."
+                )
 
+        # spatial forward
         batch_size = hidden_states.shape[0]
         hidden_states_type = hidden_states.dtype
 
@@ -1063,7 +1000,6 @@ class HiDreamImageTransformer2DModel(
         encoder_hidden_states = encoder_hidden_states[-1]
         encoder_hidden_states = [encoder_hidden_states[k] for k in self.llama_layers]
 
-        # Project for each block + final T5
         if self.caption_projection is not None:
             new_encoder_hidden_states = []
             for i, enc_hidden_state in enumerate(encoder_hidden_states):
@@ -1072,15 +1008,14 @@ class HiDreamImageTransformer2DModel(
                     batch_size, -1, hidden_states.shape[-1]
                 )
                 new_encoder_hidden_states.append(enc_hidden_state)
-            # Last one is for T5
+            encoder_hidden_states = new_encoder_hidden_states
             T5_encoder_hidden_states = self.caption_projection[-1](
                 T5_encoder_hidden_states
             )
             T5_encoder_hidden_states = T5_encoder_hidden_states.view(
                 batch_size, -1, hidden_states.shape[-1]
             )
-            new_encoder_hidden_states.append(T5_encoder_hidden_states)
-            encoder_hidden_states = new_encoder_hidden_states
+            encoder_hidden_states.append(T5_encoder_hidden_states)
 
         txt_ids = torch.zeros(
             batch_size,
@@ -1094,7 +1029,7 @@ class HiDreamImageTransformer2DModel(
         ids = torch.cat((img_ids, txt_ids), dim=1)
         rope = self.pe_embedder(ids)
 
-        # 2. Double-stream Blocks
+        # 2. Blocks
         block_id = 0
         initial_encoder_hidden_states = torch.cat(
             [encoder_hidden_states[-1], encoder_hidden_states[-2]], dim=1
@@ -1106,12 +1041,14 @@ class HiDreamImageTransformer2DModel(
                 [initial_encoder_hidden_states, cur_llama31_encoder_hidden_states],
                 dim=1,
             )
-
             if self.training and self.gradient_checkpointing:
 
-                def create_custom_forward(module):
+                def create_custom_forward(module, return_dict=None):
                     def custom_forward(*inputs):
-                        return module(*inputs)
+                        if return_dict is not None:
+                            return module(*inputs, return_dict=return_dict)
+                        else:
+                            return module(*inputs)
 
                     return custom_forward
 
@@ -1137,14 +1074,11 @@ class HiDreamImageTransformer2DModel(
                     adaln_input=adaln_input,
                     rope=rope,
                 )
-
-            # Restrict text side to original size
             initial_encoder_hidden_states = initial_encoder_hidden_states[
                 :, :initial_encoder_hidden_states_seq_len
             ]
             block_id += 1
 
-        # 3. Single-stream Blocks
         image_tokens_seq_len = hidden_states.shape[1]
         hidden_states = torch.cat([hidden_states, initial_encoder_hidden_states], dim=1)
         hidden_states_seq_len = hidden_states.shape[1]
@@ -1152,7 +1086,8 @@ class HiDreamImageTransformer2DModel(
             encoder_attention_mask_ones = torch.ones(
                 (
                     batch_size,
-                    initial_encoder_hidden_states.shape[1],
+                    initial_encoder_hidden_states.shape[1]
+                    + cur_llama31_encoder_hidden_states.shape[1],
                 ),
                 device=image_tokens_masks.device,
                 dtype=image_tokens_masks.dtype,
@@ -1168,9 +1103,12 @@ class HiDreamImageTransformer2DModel(
             )
             if self.training and self.gradient_checkpointing:
 
-                def create_custom_forward(module):
+                def create_custom_forward(module, return_dict=None):
                     def custom_forward(*inputs):
-                        return module(*inputs)
+                        if return_dict is not None:
+                            return module(*inputs, return_dict=return_dict)
+                        else:
+                            return module(*inputs)
 
                     return custom_forward
 
@@ -1197,15 +1135,14 @@ class HiDreamImageTransformer2DModel(
             hidden_states = hidden_states[:, :hidden_states_seq_len]
             block_id += 1
 
-        # Restrict to image tokens
         hidden_states = hidden_states[:, :image_tokens_seq_len, ...]
         output = self.final_layer(hidden_states, adaln_input)
         output = self.unpatchify(output, img_sizes, self.training)
-
         if image_tokens_masks is not None:
             image_tokens_masks = image_tokens_masks[:, :image_tokens_seq_len]
 
         if USE_PEFT_BACKEND:
+            # remove lora_scale from each PEFT layer
             unscale_lora_layers(self, lora_scale)
 
         if not return_dict:
