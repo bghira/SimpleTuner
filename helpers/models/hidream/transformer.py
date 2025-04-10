@@ -866,10 +866,6 @@ class HiDreamImageTransformer2DModel(
 
         self.gradient_checkpointing = False
 
-    def _set_gradient_checkpointing(self, module, value=False):
-        if hasattr(module, "gradient_checkpointing"):
-            module.gradient_checkpointing = value
-
     def expand_timesteps(self, timesteps, batch_size, device):
         if not torch.is_tensor(timesteps):
             is_mps = device.type == "mps"
