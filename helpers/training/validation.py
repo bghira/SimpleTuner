@@ -432,7 +432,6 @@ class Validation:
         self.embed_cache = embed_cache
         self.ema_model = ema_model
         self.ema_enabled = False
-        self.model.pipeline = None
         self.deepfloyd = True if "deepfloyd" in self.config.model_family else False
         self.deepfloyd_stage2 = (
             True if str(self.config.model_flavour).startswith("ii-") else False
@@ -836,9 +835,12 @@ class Validation:
             )
 
         if getattr(self.model, "pipeline", None) is None:
-            self.model.get_pipeline(pipeline_type=self.model.DEFAULT_PIPELINE_TYPE)
+            self.model.pipeline = self.model.get_pipeline(
+                pipeline_type=self.model.DEFAULT_PIPELINE_TYPE
+            )
 
-        self.model.pipeline = self.model.pipeline.to(self.inference_device)
+        self.model.move_models(self.accelerator.device)
+        # self.model = self.model.pipeline.to(self.inference_device)
         self.model.pipeline.set_progress_bar_config(disable=True)
 
     def clean_pipeline(self):
@@ -949,6 +951,7 @@ class Validation:
         # untouched / un-stitched validation images
         checkpoint_validation_images = {}
         ema_validation_images = {}
+        benchmark_image = None
         for resolution in self.validation_resolutions:
             extra_validation_kwargs = {}
             if validation_input_image is not None:
