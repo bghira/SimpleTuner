@@ -236,7 +236,12 @@ def quantise_model(
         tuple: A tuple containing the quantized models in the order:
                (model, text_encoders, controlnet)
     """
-    text_encoder_1, text_encoder_2, text_encoder_3, text_encoder_4 = None, None, None, None
+    text_encoder_1, text_encoder_2, text_encoder_3, text_encoder_4 = (
+        None,
+        None,
+        None,
+        None,
+    )
     if text_encoders is not None:
         if len(text_encoders) > 0:
             text_encoder_1 = text_encoders[0]
