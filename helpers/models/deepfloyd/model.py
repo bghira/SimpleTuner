@@ -21,6 +21,7 @@ from diffusers.utils import (
 )
 from peft import set_peft_model_state_dict
 from peft.utils import get_peft_model_state_dict
+
 logger = logging.getLogger(__name__)
 is_primary_process = True
 if os.environ.get("RANK") is not None:
@@ -110,7 +111,9 @@ class DeepFloydIF(ImageModelFoundation):
             Text encoder output (raw)
         """
 
-        positive_embed, negative_embed = self.pipeline.encode_prompt(
+        positive_embed, negative_embed = self.pipelines[
+            PipelineTypes.TEXT2IMG
+        ].encode_prompt(
             prompt=prompts,
             do_classifier_free_guidance=False,
             device=self.accelerator.device,

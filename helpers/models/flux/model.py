@@ -137,13 +137,13 @@ class Flux(ImageModelFoundation):
         Returns:
             Text encoder output (raw)
         """
-        prompt_embeds, pooled_prompt_embeds, time_ids, masks = (
-            self.pipeline.encode_prompt(
-                prompt=prompts,
-                prompt_2=prompts,
-                device=self.accelerator.device,
-                max_sequence_length=int(self.config.tokenizer_max_length),
-            )
+        prompt_embeds, pooled_prompt_embeds, time_ids, masks = self.pipelines[
+            PipelineTypes.TEXT2IMG
+        ].encode_prompt(
+            prompt=prompts,
+            prompt_2=prompts,
+            device=self.accelerator.device,
+            max_sequence_length=int(self.config.tokenizer_max_length),
         )
         if self.config.t5_padding == "zero":
             # we can zero the padding tokens if we're just going to mask them later anyway.

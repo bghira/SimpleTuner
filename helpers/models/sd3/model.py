@@ -17,6 +17,7 @@ from helpers.models.sd3.pipeline import (
     StableDiffusion3Img2ImgPipeline,
 )
 from diffusers import AutoencoderKL
+
 logger = logging.getLogger(__name__)
 is_primary_process = True
 if os.environ.get("RANK") is not None:
