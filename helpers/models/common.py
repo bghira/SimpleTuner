@@ -529,9 +529,11 @@ class ModelFoundation(ABC):
                 requires_quant = text_encoder_config.get("required_quantisation_level", None)
                 if requires_quant is not None and requires_quant == "int4_weight_only":
                     # we'll use the QuantizationConfig.
-                    from transformers import TorchAoConfig, AutoModelForCausalLM, AutoTokenizer
+                    from torchao.quantization import Int4WeightOnlyConfig
+                    from transformers import TorchAoConfig
                     extra_kwargs["device_map"] = "auto"
-                    extra_kwargs["quantization_config"] = TorchAoConfig("int4_weight_only", group_size=128)
+                    quant_config = Int4WeightOnlyConfig(group_size=128)
+                    extra_kwargs["quantization_config"] = TorchAoConfig(quant_type=quant_config)
 
                 text_encoder = text_encoder_config["model"].from_pretrained(
                     text_encoder_path,
@@ -540,7 +542,7 @@ class ModelFoundation(ABC):
                     subfolder=text_encoder_config.get("subfolder", "text_encoder") or "",
                     **extra_kwargs,
                 )
-                if move_to_device:
+                if move_to_device and getattr(self.config, f"{attr_name}_precision", None) in ["no_change", None]:
                     logger.info(f"Moving {text_encoder_config.get('name')} to GPU")
                     text_encoder.to(
                         self.accelerator.device,
@@ -705,6 +707,7 @@ class ModelFoundation(ABC):
                 pipeline_kwargs[text_encoder_attr] = unwrap_model(
                     self.accelerator, self.text_encoders[text_encoder_idx]
                 )
+                pipeline_kwargs[text_encoder_attr.replace("text_encoder", "tokenizer")] = self.tokenizers[text_encoder_idx]
             else:
                 pipeline_kwargs[text_encoder_attr] = None
             text_encoder_idx += 1
