@@ -22,6 +22,7 @@ try:
 except Exception as e:
     print(f"HiDream not available: {e}")
 from diffusers import AutoencoderKL
+
 logger = logging.getLogger(__name__)
 is_primary_process = True
 if os.environ.get("RANK") is not None:
@@ -141,7 +142,9 @@ class HiDream(ImageModelFoundation):
         Returns:
             Text encoder output (raw)
         """
-        prompt_embeds, pooled_prompt_embeds = self.pipeline._encode_prompt(
+        prompt_embeds, pooled_prompt_embeds = self.pipelines[
+            PipelineTypes.TEXT2IMG
+        ]._encode_prompt(
             prompt=prompts,
             prompt_2=prompts,
             prompt_3=prompts,
