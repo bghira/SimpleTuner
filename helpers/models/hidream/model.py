@@ -179,17 +179,26 @@ class HiDream(ImageModelFoundation):
         }, self.accelerator.device)
 
     def model_predict(self, prepared_batch):
+        """
+        Process a batch through the transformer model.
+        
+        Args:
+            prepared_batch: Dictionary containing input tensors and embeddings
+            
+        Returns:
+            Dictionary containing model predictions
+        """
         logger.debug(f"Prompt embeds: {prepared_batch['text_encoder_output']}")
         logger.debug(
-            f"Input shapes:"
+            "Input shapes:"
             f"\n{prepared_batch['noisy_latents'].shape}"
             f"\n{prepared_batch['timesteps'].shape}"
-            f"\n{gather_dict_of_tensors_shapes(prepared_batch['text_encoder_output'])}"
             f"\nT5: {prepared_batch['text_encoder_output']['t5_prompt_embeds'].shape if hasattr(prepared_batch['text_encoder_output']['t5_prompt_embeds'], 'shape') else [x.shape for x in prepared_batch['text_encoder_output']['t5_prompt_embeds']]}"
             f"\nLlama: {prepared_batch['text_encoder_output']['llama_prompt_embeds'].shape if hasattr(prepared_batch['text_encoder_output']['llama_prompt_embeds'], 'shape') else [x.shape for x in prepared_batch['text_encoder_output']['llama_prompt_embeds']]}"
             f"\nCLIP L + G: {prepared_batch['text_encoder_output']['pooled_prompt_embeds'].shape}"
         )
 
+        # Handle non-square images
         if (
             prepared_batch["noisy_latents"].shape[-2]
             != prepared_batch["noisy_latents"].shape[-1]
@@ -239,6 +248,7 @@ class HiDream(ImageModelFoundation):
             out[:, :, 0 : pH * pW] = latent_model_input
             latent_model_input = out
 
+        # Call the forward method with the updated parameter names
         return {
             "model_prediction": self.model(
                 hidden_states=latent_model_input.to(
@@ -246,15 +256,9 @@ class HiDream(ImageModelFoundation):
                     dtype=self.config.base_weight_dtype,
                 ),
                 timesteps=prepared_batch["timesteps"],
-                t5_hidden_states=prepared_batch["text_encoder_output"][
-                    "t5_prompt_embeds"
-                ],
-                llama_hidden_states=prepared_batch["text_encoder_output"][
-                    "llama_prompt_embeds"
-                ],
-                pooled_embeds=prepared_batch["text_encoder_output"][
-                    "pooled_prompt_embeds"
-                ],
+                t5_hidden_states=prepared_batch["text_encoder_output"]["t5_prompt_embeds"],
+                llama_hidden_states=prepared_batch["text_encoder_output"]["llama_prompt_embeds"],
+                pooled_embeds=prepared_batch["text_encoder_output"]["pooled_prompt_embeds"],
                 img_sizes=img_sizes,
                 img_ids=img_ids,
                 return_dict=False,
