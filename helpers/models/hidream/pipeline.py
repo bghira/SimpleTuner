@@ -392,236 +392,6 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
         )
         return prompt_embeds
 
-    def encode_prompt(
-        self,
-        prompt: Union[str, List[str]],
-        prompt_2: Union[str, List[str]],
-        prompt_3: Union[str, List[str]],
-        prompt_4: Union[str, List[str]],
-        device: Optional[torch.device] = None,
-        dtype: Optional[torch.dtype] = None,
-        num_images_per_prompt: int = 1,
-        do_classifier_free_guidance: bool = True,
-        negative_prompt: Optional[Union[str, List[str]]] = None,
-        negative_prompt_2: Optional[Union[str, List[str]]] = None,
-        negative_prompt_3: Optional[Union[str, List[str]]] = None,
-        negative_prompt_4: Optional[Union[str, List[str]]] = None,
-        prompt_embeds: Optional[List[torch.FloatTensor]] = None,
-        negative_prompt_embeds: Optional[torch.FloatTensor] = None,
-        pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
-        negative_pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
-        max_sequence_length: int = 128,
-        lora_scale: Optional[float] = None,
-    ):
-        """
-        Encode prompt into model embeddings needed for transformer.
-        
-        Args:
-            prompt: Main text prompt (for CLIP L/14)
-            prompt_2: Secondary text prompt (for CLIP G/14)
-            prompt_3: Text prompt for T5 encoder
-            prompt_4: Text prompt for Llama encoder
-            device: Device to place embeddings on
-            dtype: Data type for embeddings
-            num_images_per_prompt: Number of images to generate per prompt
-            do_classifier_free_guidance: Whether to use classifier-free guidance
-            negative_prompt: Negative prompt for CLIP L/14
-            negative_prompt_2: Negative prompt for CLIP G/14
-            negative_prompt_3: Negative prompt for T5
-            negative_prompt_4: Negative prompt for Llama
-            prompt_embeds: Pre-computed prompt embeddings
-            negative_prompt_embeds: Pre-computed negative prompt embeddings
-            pooled_prompt_embeds: Pre-computed pooled prompt embeddings
-            negative_pooled_prompt_embeds: Pre-computed negative pooled prompt embeddings
-            max_sequence_length: Maximum sequence length for tokenization
-            lora_scale: Scale for LoRA weights
-            
-        Returns:
-            Tuple containing:
-            - t5_prompt_embeds: T5 encoder embeddings
-            - llama_prompt_embeds: Llama encoder embeddings
-            - negative_t5_prompt_embeds: Negative T5 encoder embeddings (if using guidance)
-            - negative_llama_prompt_embeds: Negative Llama encoder embeddings (if using guidance)
-            - pooled_prompt_embeds: Pooled CLIP embeddings
-            - negative_pooled_prompt_embeds: Negative pooled CLIP embeddings (if using guidance)
-        """
-        prompt = [prompt] if isinstance(prompt, str) else prompt
-        if prompt is not None:
-            batch_size = len(prompt)
-        else:
-            batch_size = prompt_embeds.shape[0]
-
-        t5_prompt_embeds, llama_prompt_embeds, pooled_prompt_embeds = self._encode_prompt(
-            prompt=prompt,
-            prompt_2=prompt_2,
-            prompt_3=prompt_3,
-            prompt_4=prompt_4,
-            device=device,
-            dtype=dtype,
-            num_images_per_prompt=num_images_per_prompt,
-            prompt_embeds=prompt_embeds,
-            pooled_prompt_embeds=pooled_prompt_embeds,
-            max_sequence_length=max_sequence_length,
-        )
-
-        negative_t5_prompt_embeds = None
-        negative_llama_prompt_embeds = None
-        
-        if do_classifier_free_guidance and negative_prompt_embeds is None:
-            negative_prompt = negative_prompt or ""
-            negative_prompt_2 = negative_prompt_2 or negative_prompt
-            negative_prompt_3 = negative_prompt_3 or negative_prompt
-            negative_prompt_4 = negative_prompt_4 or negative_prompt
-
-            # normalize str to list
-            negative_prompt = (
-                batch_size * [negative_prompt]
-                if isinstance(negative_prompt, str)
-                else negative_prompt
-            )
-            negative_prompt_2 = (
-                batch_size * [negative_prompt_2]
-                if isinstance(negative_prompt_2, str)
-                else negative_prompt_2
-            )
-            negative_prompt_3 = (
-                batch_size * [negative_prompt_3]
-                if isinstance(negative_prompt_3, str)
-                else negative_prompt_3
-            )
-            negative_prompt_4 = (
-                batch_size * [negative_prompt_4]
-                if isinstance(negative_prompt_4, str)
-                else negative_prompt_4
-            )
-
-            if prompt is not None and type(prompt) is not type(negative_prompt):
-                raise TypeError(
-                    f"`negative_prompt` should be the same type to `prompt`, but got {type(negative_prompt)} !="
-                    f" {type(prompt)}."
-                )
-            elif batch_size != len(negative_prompt):
-                raise ValueError(
-                    f"`negative_prompt`: {negative_prompt} has batch size {len(negative_prompt)}, but `prompt`:"
-                    f" {prompt} has batch size {batch_size}. Please make sure that passed `negative_prompt` matches"
-                    " the batch size of `prompt`."
-                )
-
-            negative_t5_prompt_embeds, negative_llama_prompt_embeds, negative_pooled_prompt_embeds = self._encode_prompt(
-                prompt=negative_prompt,
-                prompt_2=negative_prompt_2,
-                prompt_3=negative_prompt_3,
-                prompt_4=negative_prompt_4,
-                device=device,
-                dtype=dtype,
-                num_images_per_prompt=num_images_per_prompt,
-                prompt_embeds=negative_prompt_embeds,
-                pooled_prompt_embeds=negative_pooled_prompt_embeds,
-                max_sequence_length=max_sequence_length,
-            )
-
-        return (
-            t5_prompt_embeds,
-            llama_prompt_embeds,
-            negative_t5_prompt_embeds,
-            negative_llama_prompt_embeds,
-            pooled_prompt_embeds,
-            negative_pooled_prompt_embeds,
-        )
-
-    def _encode_prompt(
-        self,
-        prompt: Union[str, List[str]],
-        prompt_2: Union[str, List[str]],
-        prompt_3: Union[str, List[str]],
-        prompt_4: Union[str, List[str]],
-        device: Optional[torch.device] = None,
-        dtype: Optional[torch.dtype] = None,
-        num_images_per_prompt: int = 1,
-        prompt_embeds: Optional[List[torch.FloatTensor]] = None,
-        pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
-        max_sequence_length: int = 128,
-    ):
-        """
-        Internal method to encode prompts to embeddings for the model.
-        
-        Args:
-            prompt: Main text prompt (for CLIP L/14)
-            prompt_2: Secondary text prompt (for CLIP G/14)
-            prompt_3: Text prompt for T5 encoder
-            prompt_4: Text prompt for Llama encoder
-            device: Device to place embeddings on
-            dtype: Data type for embeddings
-            num_images_per_prompt: Number of images to generate per prompt
-            prompt_embeds: Pre-computed prompt embeddings
-            pooled_prompt_embeds: Pre-computed pooled prompt embeddings
-            max_sequence_length: Maximum sequence length for tokenization
-            
-        Returns:
-            Tuple containing:
-            - t5_prompt_embeds: T5 encoder embeddings
-            - llama_prompt_embeds: Llama encoder embeddings
-            - pooled_prompt_embeds: Pooled CLIP embeddings
-        """
-        device = device or self._execution_device
-
-        if prompt_embeds is None:
-            prompt_2 = prompt_2 or prompt
-            prompt_2 = [prompt_2] if isinstance(prompt_2, str) else prompt_2
-
-            prompt_3 = prompt_3 or prompt
-            prompt_3 = [prompt_3] if isinstance(prompt_3, str) else prompt_3
-
-            prompt_4 = prompt_4 or prompt
-            prompt_4 = [prompt_4] if isinstance(prompt_4, str) else prompt_4
-
-            # Get CLIP L/14 embeddings
-            pooled_prompt_embeds_1 = self._get_clip_prompt_embeds(
-                self.tokenizer,
-                self.text_encoder,
-                prompt=prompt,
-                num_images_per_prompt=num_images_per_prompt,
-                max_sequence_length=max_sequence_length,
-                device=device,
-                dtype=dtype,
-            )
-
-            # Get CLIP G/14 embeddings
-            pooled_prompt_embeds_2 = self._get_clip_prompt_embeds(
-                self.tokenizer_2,
-                self.text_encoder_2,
-                prompt=prompt_2,
-                num_images_per_prompt=num_images_per_prompt,
-                max_sequence_length=max_sequence_length,
-                device=device,
-                dtype=dtype,
-            )
-
-            # Concatenate CLIP embeddings
-            pooled_prompt_embeds = torch.cat(
-                [pooled_prompt_embeds_1, pooled_prompt_embeds_2], dim=-1
-            )
-
-            # Get T5 embeddings
-            t5_prompt_embeds = self._get_t5_prompt_embeds(
-                prompt=prompt_3,
-                num_images_per_prompt=num_images_per_prompt,
-                max_sequence_length=max_sequence_length,
-                device=device,
-                dtype=dtype,
-            )
-            
-            # Get Llama embeddings
-            llama_prompt_embeds = self._get_llama3_prompt_embeds(
-                prompt=prompt_4,
-                num_images_per_prompt=num_images_per_prompt,
-                max_sequence_length=max_sequence_length,
-                device=device,
-                dtype=dtype,
-            )
-
-        return t5_prompt_embeds, llama_prompt_embeds, pooled_prompt_embeds
-
     def enable_vae_slicing(self):
         r"""
         Enable sliced VAE decoding. When this option is enabled, the VAE will split the input tensor in slices to
@@ -717,6 +487,266 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
     def interrupt(self):
         return self._interrupt
 
+    def encode_prompt(
+        self,
+        prompt: Union[str, List[str]],
+        prompt_2: Union[str, List[str]],
+        prompt_3: Union[str, List[str]],
+        prompt_4: Union[str, List[str]],
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None,
+        num_images_per_prompt: int = 1,
+        do_classifier_free_guidance: bool = True,
+        negative_prompt: Optional[Union[str, List[str]]] = None,
+        negative_prompt_2: Optional[Union[str, List[str]]] = None,
+        negative_prompt_3: Optional[Union[str, List[str]]] = None,
+        negative_prompt_4: Optional[Union[str, List[str]]] = None,
+        t5_prompt_embeds: Optional[torch.FloatTensor] = None,
+        llama_prompt_embeds: Optional[torch.FloatTensor] = None,
+        negative_t5_prompt_embeds: Optional[torch.FloatTensor] = None,
+        negative_llama_prompt_embeds: Optional[torch.FloatTensor] = None,
+        pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
+        negative_pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
+        max_sequence_length: int = 128,
+        lora_scale: Optional[float] = None,
+    ):
+        """
+        Encode prompt into model embeddings needed for transformer.
+        
+        Args:
+            prompt: Main text prompt (for CLIP L/14)
+            prompt_2: Secondary text prompt (for CLIP G/14)
+            prompt_3: Text prompt for T5 encoder
+            prompt_4: Text prompt for Llama encoder
+            device: Device to place embeddings on
+            dtype: Data type for embeddings
+            num_images_per_prompt: Number of images to generate per prompt
+            do_classifier_free_guidance: Whether to use classifier-free guidance
+            negative_prompt: Negative prompt for CLIP L/14
+            negative_prompt_2: Negative prompt for CLIP G/14
+            negative_prompt_3: Negative prompt for T5
+            negative_prompt_4: Negative prompt for Llama
+            t5_prompt_embeds: Pre-computed T5 prompt embeddings
+            llama_prompt_embeds: Pre-computed Llama prompt embeddings
+            negative_t5_prompt_embeds: Pre-computed negative T5 prompt embeddings
+            negative_llama_prompt_embeds: Pre-computed negative Llama prompt embeddings
+            pooled_prompt_embeds: Pre-computed pooled prompt embeddings
+            negative_pooled_prompt_embeds: Pre-computed negative pooled prompt embeddings
+            max_sequence_length: Maximum sequence length for tokenization
+            lora_scale: Scale for LoRA weights
+            
+        Returns:
+            Tuple containing:
+            - t5_prompt_embeds: T5 encoder embeddings
+            - llama_prompt_embeds: Llama encoder embeddings
+            - negative_t5_prompt_embeds: Negative T5 encoder embeddings (if using guidance)
+            - negative_llama_prompt_embeds: Negative Llama encoder embeddings (if using guidance)
+            - pooled_prompt_embeds: Pooled CLIP embeddings
+            - negative_pooled_prompt_embeds: Negative pooled CLIP embeddings (if using guidance)
+        """
+        prompt = [prompt] if isinstance(prompt, str) else prompt
+        if prompt is not None:
+            batch_size = len(prompt)
+        else:
+            # If no prompt is provided, determine batch size from embeddings
+            if t5_prompt_embeds is not None:
+                batch_size = t5_prompt_embeds.shape[0]
+            elif llama_prompt_embeds is not None:
+                # Handle based on expected shape format
+                if len(llama_prompt_embeds.shape) == 4:  # [num_layers, batch, seq, dim]
+                    batch_size = llama_prompt_embeds.shape[1]
+                elif len(llama_prompt_embeds.shape) == 5:  # [batch, num_layers, 1, seq, dim]
+                    batch_size = llama_prompt_embeds.shape[0]
+                else:
+                    raise ValueError(f"Unexpected llama embedding shape: {llama_prompt_embeds.shape}")
+            else:
+                raise ValueError("Either prompt or pre-computed embeddings must be provided")
+
+        # Check if we need to compute embeddings or use provided ones
+        if t5_prompt_embeds is None or llama_prompt_embeds is None or pooled_prompt_embeds is None:
+            t5_prompt_embeds, llama_prompt_embeds, pooled_prompt_embeds = self._encode_prompt(
+                prompt=prompt,
+                prompt_2=prompt_2,
+                prompt_3=prompt_3,
+                prompt_4=prompt_4,
+                device=device,
+                dtype=dtype,
+                num_images_per_prompt=num_images_per_prompt,
+                t5_prompt_embeds=t5_prompt_embeds,
+                llama_prompt_embeds=llama_prompt_embeds,
+                pooled_prompt_embeds=pooled_prompt_embeds,
+                max_sequence_length=max_sequence_length,
+            )
+
+        # Handle negative embeddings for classifier-free guidance
+        if do_classifier_free_guidance:
+            if negative_t5_prompt_embeds is None or negative_llama_prompt_embeds is None or negative_pooled_prompt_embeds is None:
+                negative_prompt = negative_prompt or ""
+                negative_prompt_2 = negative_prompt_2 or negative_prompt
+                negative_prompt_3 = negative_prompt_3 or negative_prompt
+                negative_prompt_4 = negative_prompt_4 or negative_prompt
+
+                # normalize str to list
+                negative_prompt = (
+                    batch_size * [negative_prompt]
+                    if isinstance(negative_prompt, str)
+                    else negative_prompt
+                )
+                negative_prompt_2 = (
+                    batch_size * [negative_prompt_2]
+                    if isinstance(negative_prompt_2, str)
+                    else negative_prompt_2
+                )
+                negative_prompt_3 = (
+                    batch_size * [negative_prompt_3]
+                    if isinstance(negative_prompt_3, str)
+                    else negative_prompt_3
+                )
+                negative_prompt_4 = (
+                    batch_size * [negative_prompt_4]
+                    if isinstance(negative_prompt_4, str)
+                    else negative_prompt_4
+                )
+
+                if prompt is not None and type(prompt) is not type(negative_prompt):
+                    raise TypeError(
+                        f"`negative_prompt` should be the same type to `prompt`, but got {type(negative_prompt)} !="
+                        f" {type(prompt)}."
+                    )
+                elif batch_size != len(negative_prompt):
+                    raise ValueError(
+                        f"`negative_prompt`: {negative_prompt} has batch size {len(negative_prompt)}, but `prompt`:"
+                        f" {prompt} has batch size {batch_size}. Please make sure that passed `negative_prompt` matches"
+                        " the batch size of `prompt`."
+                    )
+
+                negative_t5_prompt_embeds, negative_llama_prompt_embeds, negative_pooled_prompt_embeds = self._encode_prompt(
+                    prompt=negative_prompt,
+                    prompt_2=negative_prompt_2,
+                    prompt_3=negative_prompt_3,
+                    prompt_4=negative_prompt_4,
+                    device=device,
+                    dtype=dtype,
+                    num_images_per_prompt=num_images_per_prompt,
+                    t5_prompt_embeds=negative_t5_prompt_embeds,
+                    llama_prompt_embeds=negative_llama_prompt_embeds,
+                    pooled_prompt_embeds=negative_pooled_prompt_embeds,
+                    max_sequence_length=max_sequence_length,
+                )
+
+        return (
+            t5_prompt_embeds,
+            llama_prompt_embeds,
+            negative_t5_prompt_embeds,
+            negative_llama_prompt_embeds,
+            pooled_prompt_embeds,
+            negative_pooled_prompt_embeds,
+        )
+
+    def _encode_prompt(
+        self,
+        prompt: Union[str, List[str]],
+        prompt_2: Union[str, List[str]],
+        prompt_3: Union[str, List[str]],
+        prompt_4: Union[str, List[str]],
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None,
+        num_images_per_prompt: int = 1,
+        t5_prompt_embeds: Optional[torch.FloatTensor] = None,
+        llama_prompt_embeds: Optional[torch.FloatTensor] = None,
+        pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
+        max_sequence_length: int = 128,
+    ):
+        """
+        Internal method to encode prompts to embeddings for the model.
+        
+        Args:
+            prompt: Main text prompt (for CLIP L/14)
+            prompt_2: Secondary text prompt (for CLIP G/14)
+            prompt_3: Text prompt for T5 encoder
+            prompt_4: Text prompt for Llama encoder
+            device: Device to place embeddings on
+            dtype: Data type for embeddings
+            num_images_per_prompt: Number of images to generate per prompt
+            t5_prompt_embeds: Pre-computed T5 prompt embeddings
+            llama_prompt_embeds: Pre-computed Llama prompt embeddings
+            pooled_prompt_embeds: Pre-computed pooled prompt embeddings
+            max_sequence_length: Maximum sequence length for tokenization
+            
+        Returns:
+            Tuple containing:
+            - t5_prompt_embeds: T5 encoder embeddings
+            - llama_prompt_embeds: Llama encoder embeddings
+            - pooled_prompt_embeds: Pooled CLIP embeddings
+        """
+        device = device or self._execution_device
+
+        # Check if we need to compute any embeddings
+        need_pooled = pooled_prompt_embeds is None
+        need_t5 = t5_prompt_embeds is None
+        need_llama = llama_prompt_embeds is None
+        
+        if need_pooled or need_t5 or need_llama:
+            prompt_2 = prompt_2 or prompt
+            prompt_2 = [prompt_2] if isinstance(prompt_2, str) else prompt_2
+
+            prompt_3 = prompt_3 or prompt
+            prompt_3 = [prompt_3] if isinstance(prompt_3, str) else prompt_3
+
+            prompt_4 = prompt_4 or prompt
+            prompt_4 = [prompt_4] if isinstance(prompt_4, str) else prompt_4
+
+            # Get CLIP embeddings for pooled embeddings if needed
+            if need_pooled:
+                # Get CLIP L/14 embeddings
+                pooled_prompt_embeds_1 = self._get_clip_prompt_embeds(
+                    self.tokenizer,
+                    self.text_encoder,
+                    prompt=prompt,
+                    num_images_per_prompt=num_images_per_prompt,
+                    max_sequence_length=max_sequence_length,
+                    device=device,
+                    dtype=dtype,
+                )
+
+                # Get CLIP G/14 embeddings
+                pooled_prompt_embeds_2 = self._get_clip_prompt_embeds(
+                    self.tokenizer_2,
+                    self.text_encoder_2,
+                    prompt=prompt_2,
+                    num_images_per_prompt=num_images_per_prompt,
+                    max_sequence_length=max_sequence_length,
+                    device=device,
+                    dtype=dtype,
+                )
+
+                # Concatenate CLIP embeddings
+                pooled_prompt_embeds = torch.cat(
+                    [pooled_prompt_embeds_1, pooled_prompt_embeds_2], dim=-1
+                )
+
+            # Get T5 embeddings if needed
+            if need_t5:
+                t5_prompt_embeds = self._get_t5_prompt_embeds(
+                    prompt=prompt_3,
+                    num_images_per_prompt=num_images_per_prompt,
+                    max_sequence_length=max_sequence_length,
+                    device=device,
+                    dtype=dtype,
+                )
+            
+            # Get Llama embeddings if needed
+            if need_llama:
+                llama_prompt_embeds = self._get_llama3_prompt_embeds(
+                    prompt=prompt_4,
+                    num_images_per_prompt=num_images_per_prompt,
+                    max_sequence_length=max_sequence_length,
+                    device=device,
+                    dtype=dtype,
+                )
+
+        return t5_prompt_embeds, llama_prompt_embeds, pooled_prompt_embeds
+
     @torch.no_grad()
     def __call__(
         self,
@@ -736,8 +766,10 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
         num_images_per_prompt: Optional[int] = 1,
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         latents: Optional[torch.FloatTensor] = None,
-        prompt_embeds: Optional[torch.FloatTensor] = None,
-        negative_prompt_embeds: Optional[torch.FloatTensor] = None,
+        t5_prompt_embeds: Optional[torch.FloatTensor] = None,
+        llama_prompt_embeds: Optional[torch.FloatTensor] = None,
+        negative_t5_prompt_embeds: Optional[torch.FloatTensor] = None,
+        negative_llama_prompt_embeds: Optional[torch.FloatTensor] = None,
         pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
         negative_pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
         output_type: Optional[str] = "pil",
@@ -767,8 +799,10 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
             num_images_per_prompt: Number of images to generate per prompt
             generator: Random number generator
             latents: Optional existing latents to use
-            prompt_embeds: Pre-computed prompt embeddings
-            negative_prompt_embeds: Pre-computed negative prompt embeddings
+            t5_prompt_embeds: Pre-computed T5 prompt embeddings
+            llama_prompt_embeds: Pre-computed Llama prompt embeddings
+            negative_t5_prompt_embeds: Pre-computed negative T5 prompt embeddings
+            negative_llama_prompt_embeds: Pre-computed negative Llama prompt embeddings
             pooled_prompt_embeds: Pre-computed pooled prompt embeddings
             negative_pooled_prompt_embeds: Pre-computed negative pooled prompt embeddings
             output_type: Output type - "pil", "latent", or "pt"
@@ -804,7 +838,19 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
         elif prompt is not None and isinstance(prompt, list):
             batch_size = len(prompt)
         else:
-            batch_size = prompt_embeds.shape[0]
+            # Determine batch size from embeddings
+            if t5_prompt_embeds is not None:
+                batch_size = t5_prompt_embeds.shape[0]
+            elif llama_prompt_embeds is not None:
+                # Handle based on expected shape format
+                if len(llama_prompt_embeds.shape) == 4:  # [num_layers, batch, seq, dim]
+                    batch_size = llama_prompt_embeds.shape[1]
+                elif len(llama_prompt_embeds.shape) == 5:  # [batch, num_layers, 1, seq, dim]
+                    batch_size = llama_prompt_embeds.shape[0]
+                else:
+                    raise ValueError(f"Unexpected llama embedding shape: {llama_prompt_embeds.shape}")
+            else:
+                raise ValueError("Either prompt or embeddings must be provided")
 
         device = self._execution_device
 
@@ -831,8 +877,10 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
             negative_prompt_3=negative_prompt_3,
             negative_prompt_4=negative_prompt_4,
             do_classifier_free_guidance=self.do_classifier_free_guidance,
-            prompt_embeds=prompt_embeds,
-            negative_prompt_embeds=negative_prompt_embeds,
+            t5_prompt_embeds=t5_prompt_embeds,
+            llama_prompt_embeds=llama_prompt_embeds,
+            negative_t5_prompt_embeds=negative_t5_prompt_embeds,
+            negative_llama_prompt_embeds=negative_llama_prompt_embeds,
             pooled_prompt_embeds=pooled_prompt_embeds,
             negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
             device=device,
