@@ -849,10 +849,9 @@ class HiDreamImageTransformer2DModel(
 
         self.final_layer = OutEmbed(self.inner_dim, patch_size, self.out_channels)
 
-        caption_channels = [
-            caption_channels[1],
-        ] * (num_layers + num_single_layers) + [
-            caption_channels[0],
+        # Create projection layers for both T5 and Llama embeddings
+        caption_channels = [caption_channels[1]] * (num_layers + num_single_layers) + [
+            caption_channels[0]
         ]
         caption_projection = []
         for caption_channel in caption_channels:
@@ -883,7 +882,7 @@ class HiDreamImageTransformer2DModel(
     def unpatchify(
         self, x: torch.Tensor, img_sizes: List[Tuple[int, int]], is_training: bool
     ) -> List[torch.Tensor]:
-        if 0 and is_training:
+        if is_training:
             x = einops.rearrange(
                 x,
                 "B S (p1 p2 C) -> B C S (p1 p2)",
@@ -938,6 +937,45 @@ class HiDreamImageTransformer2DModel(
             raise NotImplementedError
         return x, x_masks, img_sizes
 
+    def _extract_llama_layers(self, llama_hidden_states):
+        """
+        Extract specific layers from the provided Llama hidden states based on self.llama_layers.
+
+        Args:
+            llama_hidden_states: Tensor containing Llama hidden states
+
+        Returns:
+            List of extracted layer tensors
+        """
+        llama_shape = llama_hidden_states.shape
+        extracted_layers = []
+
+        # Process based on tensor shape
+        if len(llama_shape) == 5:  # [batch, num_layers, 1, seq, dim]
+            # Remove singleton dimension if present
+            llama_hidden_states = llama_hidden_states.squeeze(2)
+            for layer_idx in self.llama_layers:
+                # Handle index being out of bounds by using modulo
+                safe_idx = layer_idx % llama_shape[1]
+                layer_emb = llama_hidden_states[:, safe_idx]
+                extracted_layers.append(layer_emb)
+        elif len(llama_shape) == 4:  # [num_layers, batch, seq, dim]
+            for layer_idx in self.llama_layers:
+                # Handle index being out of bounds by using modulo
+                safe_idx = layer_idx % llama_shape[0]
+                layer_emb = llama_hidden_states[safe_idx]
+                extracted_layers.append(layer_emb)
+        else:
+            # Unsupported format, try to use as is but log warning
+            logger.warning(f"Unexpected llama_hidden_states shape: {llama_shape}")
+            # Handle as best we can
+            if not isinstance(llama_hidden_states, list):
+                extracted_layers = [llama_hidden_states]
+            else:
+                extracted_layers = llama_hidden_states
+
+        return extracted_layers
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -957,7 +995,8 @@ class HiDreamImageTransformer2DModel(
             hidden_states: Input latents
             timesteps: Current timestep
             t5_hidden_states: T5 encoder hidden states with shape [batch_size, seq_len, dim]
-            llama_hidden_states: Llama hidden states with shape [num_layers, batch_size, seq_len, dim] or [batch_size, num_layers, seq_len, dim]
+            llama_hidden_states: Llama hidden states with shape [batch_size, num_layers, 1, seq_len, dim] or
+                                 [num_layers, batch_size, seq_len, dim]
             pooled_embeds: Pooled embeddings from CLIP encoders
             img_sizes: List of image dimensions
             img_ids: Image positional IDs
@@ -967,6 +1006,7 @@ class HiDreamImageTransformer2DModel(
         Returns:
             Output sample and mask
         """
+        # Handle LoRA scale if provided
         if joint_attention_kwargs is not None:
             joint_attention_kwargs = joint_attention_kwargs.copy()
             lora_scale = joint_attention_kwargs.pop("scale", 1.0)
@@ -974,7 +1014,7 @@ class HiDreamImageTransformer2DModel(
             lora_scale = 1.0
 
         if USE_PEFT_BACKEND:
-            # weight the lora layers by setting lora_scale for each PEFT layer
+            # Weight the lora layers by setting lora_scale for each PEFT layer
             scale_lora_layers(self, lora_scale)
         else:
             if (
@@ -985,19 +1025,22 @@ class HiDreamImageTransformer2DModel(
                     "Passing scale via joint_attention_kwargs when not using the PEFT backend is ineffective."
                 )
 
-        # spatial forward
+        # Get batch size and data type
         batch_size = hidden_states.shape[0]
         hidden_states_type = hidden_states.dtype
 
-        # 0. time
+        # 1. Process timesteps and pooled embeddings
         timesteps = self.expand_timesteps(timesteps, batch_size, hidden_states.device)
         timesteps = self.t_embedder(timesteps, hidden_states_type)
         p_embedder = self.p_embedder(pooled_embeds)
         adaln_input = timesteps + p_embedder
 
+        # 2. Process input hidden states
         hidden_states, image_tokens_masks, img_sizes = self.patchify(
             hidden_states, self.max_seq, img_sizes
         )
+
+        # Create image positional IDs if not provided
         if image_tokens_masks is None:
             pH, pW = img_sizes[0]
             img_ids = torch.zeros(pH, pW, 3, device=hidden_states.device)
@@ -1008,38 +1051,15 @@ class HiDreamImageTransformer2DModel(
                 img_ids[..., 2] + torch.arange(pW, device=hidden_states.device)[None, :]
             )
             img_ids = repeat(img_ids, "h w c -> b (h w) c", b=batch_size)
+
+        # Embed input hidden states
         hidden_states = self.x_embedder(hidden_states)
 
-        # Extract the Llama layers we need using self.llama_layers
-        # Handle either [num_layers, batch, seq, dim] or [batch, num_layers, seq, dim] format
-        llama_shape = llama_hidden_states.shape
-        extracted_llama_states = []
+        # 3. Extract and process text embeddings
+        # Extract specified Llama layers
+        extracted_llama_states = self._extract_llama_layers(llama_hidden_states)
 
-        # Check if we need to reshape based on the dimensions
-        if len(llama_shape) == 5:  # [batch, num_layers, 1, seq, dim]
-            # Remove singleton dimension if present
-            llama_hidden_states = llama_hidden_states.squeeze(2)
-            for layer_idx in self.llama_layers:
-                # Handle index being out of bounds by using modulo
-                safe_idx = layer_idx % llama_shape[1]
-                layer_emb = llama_hidden_states[:, safe_idx]
-                extracted_llama_states.append(layer_emb)
-        elif len(llama_shape) == 4:  # [num_layers, batch, seq, dim]
-            for layer_idx in self.llama_layers:
-                # Handle index being out of bounds by using modulo
-                safe_idx = layer_idx % llama_shape[0]
-                layer_emb = llama_hidden_states[safe_idx]
-                extracted_llama_states.append(layer_emb)
-        else:
-            # Unsupported format, try to use as is but log warning
-            logger.warning(f"Unexpected llama_hidden_states shape: {llama_shape}")
-            # Make a single element list if it's not already a list
-            if not isinstance(llama_hidden_states, list):
-                extracted_llama_states = [llama_hidden_states]
-            else:
-                extracted_llama_states = llama_hidden_states
-
-        # Process the embeddings through projection layers
+        # Process the text embeddings through projection layers
         if self.caption_projection is not None:
             # Process T5 embeddings
             processed_t5_embeddings = self.caption_projection[-1](t5_hidden_states)
@@ -1047,7 +1067,7 @@ class HiDreamImageTransformer2DModel(
                 batch_size, -1, hidden_states.shape[-1]
             )
 
-            # Process extracted LLAMA embeddings
+            # Process extracted Llama embeddings
             processed_llama_embeddings = []
             for i, llama_emb in enumerate(extracted_llama_states):
                 if i < len(self.caption_projection) - 1:  # Reserve last one for T5
@@ -1057,7 +1077,7 @@ class HiDreamImageTransformer2DModel(
                     )
                     processed_llama_embeddings.append(processed_emb)
 
-        # Ensure we have at least the minimum number of processed embeddings needed
+        # Ensure we have enough processed embeddings for all blocks
         total_blocks = self.config.num_layers + self.config.num_single_layers
         while len(processed_llama_embeddings) < total_blocks:
             # Cycle through existing embeddings if we don't have enough
@@ -1067,7 +1087,7 @@ class HiDreamImageTransformer2DModel(
                 else:
                     break
 
-        # Generate text positional IDs
+        # 4. Create positional encoding
         txt_ids = torch.zeros(
             batch_size,
             processed_t5_embeddings.shape[1]
@@ -1079,8 +1099,9 @@ class HiDreamImageTransformer2DModel(
         ids = torch.cat((img_ids, txt_ids), dim=1)
         rope = self.pe_embedder(ids)
 
-        # 2. Blocks processing
+        # 5. Process through transformer blocks
         block_id = 0
+
         # Prepare initial combined embeddings for first set of blocks
         initial_encoder_hidden_states = torch.cat(
             [
@@ -1093,17 +1114,17 @@ class HiDreamImageTransformer2DModel(
 
         # Process through double stream blocks
         for bid, block in enumerate(self.double_stream_blocks):
-            # Get the current Llama embedding for this block using safe indexing
+            # Get the current Llama embedding for this block with safe indexing
             safe_idx = block_id % len(processed_llama_embeddings)
-            cur_llama_encoder_hidden_states = processed_llama_embeddings[safe_idx]
+            cur_llama_embedding = processed_llama_embeddings[safe_idx]
 
             # Combine embeddings for this block
             cur_encoder_hidden_states = torch.cat(
-                [initial_encoder_hidden_states, cur_llama_encoder_hidden_states],
+                [initial_encoder_hidden_states, cur_llama_embedding],
                 dim=1,
             )
 
-            # Process through the block
+            # Process through the block with optional gradient checkpointing
             if self.training and self.gradient_checkpointing:
 
                 def create_custom_forward(module, return_dict=None):
@@ -1138,44 +1159,42 @@ class HiDreamImageTransformer2DModel(
                     rope=rope,
                 )
 
-            # Keep the initial encoder states at consistent length
+            # Keep consistent encoder states length
             initial_encoder_hidden_states = initial_encoder_hidden_states[
                 :, :initial_encoder_hidden_states_seq_len
             ]
             block_id += 1
 
-        # Prepare for single stream blocks
+        # 6. Prepare for single stream blocks
         image_tokens_seq_len = hidden_states.shape[1]
         hidden_states = torch.cat([hidden_states, initial_encoder_hidden_states], dim=1)
         hidden_states_seq_len = hidden_states.shape[1]
 
+        # Update attention masks for combined hidden states
         if image_tokens_masks is not None:
-            # Create attention mask for encoder states
-            encoder_attention_mask_ones = torch.ones(
+            attention_mask_ones = torch.ones(
                 (
                     batch_size,
                     initial_encoder_hidden_states.shape[1]
-                    + cur_llama_encoder_hidden_states.shape[1],
+                    + cur_llama_embedding.shape[1],
                 ),
                 device=image_tokens_masks.device,
                 dtype=image_tokens_masks.dtype,
             )
             image_tokens_masks = torch.cat(
-                [image_tokens_masks, encoder_attention_mask_ones], dim=1
+                [image_tokens_masks, attention_mask_ones], dim=1
             )
 
-        # Process through single stream blocks
+        # 7. Process through single stream blocks
         for bid, block in enumerate(self.single_stream_blocks):
-            # Get the current Llama embedding for this block using safe indexing
+            # Get the current Llama embedding for this block with safe indexing
             safe_idx = block_id % len(processed_llama_embeddings)
-            cur_llama_encoder_hidden_states = processed_llama_embeddings[safe_idx]
+            cur_llama_embedding = processed_llama_embeddings[safe_idx]
 
             # Concatenate for processing
-            hidden_states = torch.cat(
-                [hidden_states, cur_llama_encoder_hidden_states], dim=1
-            )
+            hidden_states = torch.cat([hidden_states, cur_llama_embedding], dim=1)
 
-            # Process through the block
+            # Process through the block with optional gradient checkpointing
             if self.training and self.gradient_checkpointing:
 
                 def create_custom_forward(module, return_dict=None):
@@ -1212,17 +1231,20 @@ class HiDreamImageTransformer2DModel(
             hidden_states = hidden_states[:, :hidden_states_seq_len]
             block_id += 1
 
-        # Final processing
+        # 8. Final processing
         hidden_states = hidden_states[:, :image_tokens_seq_len, ...]
         output = self.final_layer(hidden_states, adaln_input)
         output = self.unpatchify(output, img_sizes, self.training)
+
+        # Update attention mask if needed
         if image_tokens_masks is not None:
             image_tokens_masks = image_tokens_masks[:, :image_tokens_seq_len]
 
+        # 9. Unscale LoRA if needed
         if USE_PEFT_BACKEND:
-            # remove lora_scale from each PEFT layer
             unscale_lora_layers(self, lora_scale)
 
+        # 10. Return results
         if not return_dict:
             return (output, image_tokens_masks)
         return Transformer2DModelOutput(sample=output, mask=image_tokens_masks)
