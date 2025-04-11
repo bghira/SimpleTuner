@@ -1,4 +1,5 @@
-import torch, os, logging
+import torch, os, logging, einops
+from helpers.training.wrappers import gather_dict_of_tensors_shapes, move_dict_of_tensors_to_device
 from helpers.models.common import (
     ImageModelFoundation,
     PredictionTypes,
@@ -107,17 +108,21 @@ class HiDream(ImageModelFoundation):
         Returns:
             torch.Tensor: The adjusted embed. By default, this method does nothing.
         """
-        prompt_embeds, pooled_prompt_embeds = text_embedding
+        t5_embeds, llama_embeds, pooled_prompt_embeds = text_embedding
 
         return {
-            "prompt_embeds": prompt_embeds,
+            "t5_prompt_embeds": t5_embeds.squeeze(0),
+            "llama_prompt_embeds": llama_embeds.squeeze(0),
             "pooled_prompt_embeds": pooled_prompt_embeds.squeeze(0),
         }
 
     def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
         return {
-            "prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
+            "prompt_embeds": [
+                text_embedding["t5_embeds"].unsqueeze(0),
+                text_embedding["llama_embeds"].unsqueeze(0),
+            ],
             "pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0),
         }
 
@@ -126,7 +131,10 @@ class HiDream(ImageModelFoundation):
     ) -> dict:
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
         return {
-            "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
+            "negative_prompt_embeds": [
+                text_embedding["t5_embeds"].unsqueeze(0),
+                text_embedding["llama_embeds"].unsqueeze(0),
+            ],
             "negative_pooled_prompt_embeds": text_embedding[
                 "pooled_prompt_embeds"
             ].unsqueeze(0),
@@ -142,7 +150,7 @@ class HiDream(ImageModelFoundation):
         Returns:
             Text encoder output (raw)
         """
-        prompt_embeds, pooled_prompt_embeds = self.pipelines[
+        t5_embeds, llama_embeds, pooled_prompt_embeds = self.pipelines[
             PipelineTypes.TEXT2IMG
         ]._encode_prompt(
             prompt=prompts,
@@ -154,16 +162,32 @@ class HiDream(ImageModelFoundation):
             num_images_per_prompt=1,
             max_sequence_length=self.config.tokenizer_max_length or 128,
         )
+        # verbose declarations are simply for clarity.
+        return t5_embeds, llama_embeds, pooled_prompt_embeds
 
-        return prompt_embeds[0], pooled_prompt_embeds[0]
+    def collate_prompt_embeds(self, text_encoder_output: dict) -> dict:
+        return move_dict_of_tensors_to_device({
+            "t5_prompt_embeds": torch.stack(
+                [e["t5_prompt_embeds"] for e in text_encoder_output], dim=0
+            ),
+            "llama_prompt_embeds": torch.stack(
+                [e["llama_prompt_embeds"] for e in text_encoder_output], dim=0
+            ),
+            "pooled_prompt_embeds": torch.stack(
+                [e["pooled_prompt_embeds"] for e in text_encoder_output], dim=0
+            ),
+        }, self.accelerator.device)
 
     def model_predict(self, prepared_batch):
+        logger.debug(f"Prompt embeds: {prepared_batch['text_encoder_output']}")
         logger.debug(
-            "Input shapes:"
+            f"Input shapes:"
             f"\n{prepared_batch['noisy_latents'].shape}"
             f"\n{prepared_batch['timesteps'].shape}"
-            f"\n{prepared_batch['encoder_hidden_states'].shape}"
-            f"\n{prepared_batch['add_text_embeds'].shape}"
+            f"\n{gather_dict_of_tensors_shapes(prepared_batch['text_encoder_output'])}"
+            f"\nT5: {prepared_batch['text_encoder_output']['t5_prompt_embeds'].shape if hasattr(prepared_batch['text_encoder_output']['t5_prompt_embeds'], 'shape') else [x.shape for x in prepared_batch['text_encoder_output']['t5_prompt_embeds']]}"
+            f"\nLlama: {prepared_batch['text_encoder_output']['llama_prompt_embeds'].shape if hasattr(prepared_batch['text_encoder_output']['llama_prompt_embeds'], 'shape') else [x.shape for x in prepared_batch['text_encoder_output']['llama_prompt_embeds']]}"
+            f"\nCLIP L + G: {prepared_batch['text_encoder_output']['pooled_prompt_embeds'].shape}"
         )
 
         if (
@@ -172,8 +196,8 @@ class HiDream(ImageModelFoundation):
         ):
             B, C, H, W = prepared_batch["noisy_latents"].shape
             pH, pW = (
-                H // self.transformer.config.patch_size,
-                W // self.transformer.config.patch_size,
+                H // self.model.config.patch_size,
+                W // self.model.config.patch_size,
             )
 
             img_sizes = torch.tensor([pH, pW], dtype=torch.int64).reshape(-1)
@@ -181,7 +205,7 @@ class HiDream(ImageModelFoundation):
             img_ids[..., 1] = img_ids[..., 1] + torch.arange(pH)[:, None]
             img_ids[..., 2] = img_ids[..., 2] + torch.arange(pW)[None, :]
             img_ids = img_ids.reshape(pH * pW, -1)
-            img_ids_pad = torch.zeros(self.transformer.max_seq, 3)
+            img_ids_pad = torch.zeros(self.model.max_seq, 3)
             img_ids_pad[: pH * pW, :] = img_ids
 
             img_sizes = img_sizes.unsqueeze(0).to(
@@ -196,21 +220,41 @@ class HiDream(ImageModelFoundation):
         else:
             img_sizes = img_ids = None
 
+        latent_model_input = prepared_batch["noisy_latents"]
+        if latent_model_input.shape[-2] != latent_model_input.shape[-1]:
+            B, C, H, W = latent_model_input.shape
+            patch_size = self.model.config.patch_size
+            pH, pW = H // patch_size, W // patch_size
+            out = torch.zeros(
+                (B, C, self.model.max_seq, patch_size * patch_size),
+                dtype=latent_model_input.dtype,
+                device=latent_model_input.device,
+            )
+            latent_model_input = einops.rearrange(
+                latent_model_input,
+                "B C (H p1) (W p2) -> B C (H W) (p1 p2)",
+                p1=patch_size,
+                p2=patch_size,
+            )
+            out[:, :, 0 : pH * pW] = latent_model_input
+            latent_model_input = out
+
         return {
             "model_prediction": self.model(
-                hidden_states=prepared_batch["noisy_latents"].to(
+                hidden_states=latent_model_input.to(
                     device=self.accelerator.device,
                     dtype=self.config.base_weight_dtype,
                 ),
                 timesteps=prepared_batch["timesteps"],
-                encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(
-                    device=self.accelerator.device,
-                    dtype=self.config.base_weight_dtype,
-                ),
-                pooled_embeds=prepared_batch["add_text_embeds"].to(
-                    device=self.accelerator.device,
-                    dtype=self.config.weight_dtype,
-                ),
+                t5_hidden_states=prepared_batch["text_encoder_output"][
+                    "t5_prompt_embeds"
+                ],
+                llama_hidden_states=prepared_batch["text_encoder_output"][
+                    "llama_prompt_embeds"
+                ],
+                pooled_embeds=prepared_batch["text_encoder_output"][
+                    "pooled_prompt_embeds"
+                ],
                 img_sizes=img_sizes,
                 img_ids=img_ids,
                 return_dict=False,
