@@ -805,9 +805,7 @@ class HiDreamImageTransformer2DModel(
     ):
         super().__init__()
         self.out_channels = out_channels or in_channels
-        self.inner_dim = (
-            self.config.num_attention_heads * self.config.attention_head_dim
-        )
+        self.inner_dim = self.config.num_attention_heads * self.config.attention_head_dim
         self.llama_layers = llama_layers
 
         self.t_embedder = TimestepEmbed(self.inner_dim)
@@ -850,20 +848,42 @@ class HiDreamImageTransformer2DModel(
         self.final_layer = OutEmbed(self.inner_dim, patch_size, self.out_channels)
 
         # Create projection layers for both T5 and Llama embeddings
-        caption_channels = [caption_channels[1]] * (num_layers + num_single_layers) + [
-            caption_channels[0]
-        ]
+        caption_channels = [caption_channels[1]] * (num_layers + num_single_layers) + [caption_channels[0]]
         caption_projection = []
         for caption_channel in caption_channels:
             caption_projection.append(
                 TextProjection(in_features=caption_channel, hidden_size=self.inner_dim)
             )
         self.caption_projection = nn.ModuleList(caption_projection)
-        self.max_seq = (
-            max_resolution[0] * max_resolution[1] // (patch_size * patch_size)
-        )
+        self.max_seq = max_resolution[0] * max_resolution[1] // (patch_size * patch_size)
 
         self.gradient_checkpointing = False
+        
+    def _set_gradient_checkpointing(self, module, value=False):
+        """
+        Recursively enables or disables gradient checkpointing for all modules.
+        
+        Args:
+            module: Module to set gradient checkpointing for
+            value: Whether to enable (True) or disable (False) gradient checkpointing
+        """
+        if isinstance(module, (HiDreamImageBlock, HiDreamAttention, FeedForwardSwiGLU, MOEFeedForwardSwiGLU)):
+            if hasattr(module, "gradient_checkpointing"):
+                module.gradient_checkpointing = value
+        
+        # Also set checkpointing for child modules that might not be directly accessible
+        for child in module.children():
+            self._set_gradient_checkpointing(child, value)
+    
+    def enable_gradient_checkpointing(self):
+        """Enables gradient checkpointing for the model"""
+        self.gradient_checkpointing = True
+        self._set_gradient_checkpointing(self, True)
+        
+    def disable_gradient_checkpointing(self):
+        """Disables gradient checkpointing for the model"""
+        self.gradient_checkpointing = False
+        self._set_gradient_checkpointing(self, False)
 
     def expand_timesteps(self, timesteps, batch_size, device):
         if not torch.is_tensor(timesteps):
@@ -882,7 +902,7 @@ class HiDreamImageTransformer2DModel(
     def unpatchify(
         self, x: torch.Tensor, img_sizes: List[Tuple[int, int]], is_training: bool
     ) -> List[torch.Tensor]:
-        if is_training:
+        if 0 and is_training:
             x = einops.rearrange(
                 x,
                 "B S (p1 p2 C) -> B C S (p1 p2)",
@@ -940,16 +960,16 @@ class HiDreamImageTransformer2DModel(
     def _extract_llama_layers(self, llama_hidden_states):
         """
         Extract specific layers from the provided Llama hidden states based on self.llama_layers.
-
+        
         Args:
             llama_hidden_states: Tensor containing Llama hidden states
-
+            
         Returns:
             List of extracted layer tensors
         """
         llama_shape = llama_hidden_states.shape
         extracted_layers = []
-
+        
         # Process based on tensor shape
         if len(llama_shape) == 5:  # [batch, num_layers, 1, seq, dim]
             # Remove singleton dimension if present
@@ -973,8 +993,68 @@ class HiDreamImageTransformer2DModel(
                 extracted_layers = [llama_hidden_states]
             else:
                 extracted_layers = llama_hidden_states
-
+                
         return extracted_layers
+    
+    def _process_embeddings(self, t5_hidden_states, extracted_llama_states, batch_size, hidden_dim):
+        """
+        Process T5 and Llama embeddings through projection layers.
+        
+        Args:
+            t5_hidden_states: T5 encoder hidden states
+            extracted_llama_states: List of extracted Llama states
+            batch_size: Batch size
+            hidden_dim: Hidden dimension for reshaping
+            
+        Returns:
+            Tuple of (processed_t5_embeddings, processed_llama_embeddings)
+        """
+        # Apply gradient checkpointing to embedding processing if enabled
+        if self.training and self.gradient_checkpointing:
+            def create_custom_forward_t5(t5_states):
+                def custom_forward(proj):
+                    processed = proj(t5_states)
+                    return processed.view(batch_size, -1, hidden_dim)
+                return custom_forward
+                
+            def create_custom_forward_llama(llama_state, i):
+                def custom_forward(proj):
+                    processed = proj(llama_state)
+                    return processed.view(batch_size, -1, hidden_dim)
+                return custom_forward
+            
+            ckpt_kwargs = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
+            
+            # Process T5 embeddings with checkpointing
+            processed_t5_embeddings = torch.utils.checkpoint.checkpoint(
+                create_custom_forward_t5(t5_hidden_states),
+                self.caption_projection[-1],
+                **ckpt_kwargs
+            )
+            
+            # Process Llama embeddings with checkpointing
+            processed_llama_embeddings = []
+            for i, llama_emb in enumerate(extracted_llama_states):
+                if i < len(self.caption_projection) - 1:  # Reserve last one for T5
+                    processed_emb = torch.utils.checkpoint.checkpoint(
+                        create_custom_forward_llama(llama_emb, i),
+                        self.caption_projection[i],
+                        **ckpt_kwargs
+                    )
+                    processed_llama_embeddings.append(processed_emb)
+        else:
+            # Standard processing without checkpointing
+            processed_t5_embeddings = self.caption_projection[-1](t5_hidden_states)
+            processed_t5_embeddings = processed_t5_embeddings.view(batch_size, -1, hidden_dim)
+            
+            processed_llama_embeddings = []
+            for i, llama_emb in enumerate(extracted_llama_states):
+                if i < len(self.caption_projection) - 1:  # Reserve last one for T5
+                    processed_emb = self.caption_projection[i](llama_emb)
+                    processed_emb = processed_emb.view(batch_size, -1, hidden_dim)
+                    processed_llama_embeddings.append(processed_emb)
+        
+        return processed_t5_embeddings, processed_llama_embeddings
 
     def forward(
         self,
@@ -990,19 +1070,19 @@ class HiDreamImageTransformer2DModel(
     ):
         """
         Forward pass for the HiDreamImageTransformer2DModel.
-
+        
         Args:
             hidden_states: Input latents
             timesteps: Current timestep
             t5_hidden_states: T5 encoder hidden states with shape [batch_size, seq_len, dim]
-            llama_hidden_states: Llama hidden states with shape [batch_size, num_layers, 1, seq_len, dim] or
-                                 [num_layers, batch_size, seq_len, dim]
+            llama_hidden_states: Llama hidden states with shape [batch_size, num_layers, 1, seq_len, dim] or 
+                                [num_layers, batch_size, seq_len, dim]
             pooled_embeds: Pooled embeddings from CLIP encoders
             img_sizes: List of image dimensions
             img_ids: Image positional IDs
             joint_attention_kwargs: Additional attention parameters
             return_dict: Whether to return as a dict
-
+            
         Returns:
             Output sample and mask
         """
@@ -1030,16 +1110,62 @@ class HiDreamImageTransformer2DModel(
         hidden_states_type = hidden_states.dtype
 
         # 1. Process timesteps and pooled embeddings
-        timesteps = self.expand_timesteps(timesteps, batch_size, hidden_states.device)
-        timesteps = self.t_embedder(timesteps, hidden_states_type)
-        p_embedder = self.p_embedder(pooled_embeds)
-        adaln_input = timesteps + p_embedder
+        # Apply gradient checkpointing to this step if enabled
+        if self.training and self.gradient_checkpointing:
+            def create_custom_forward_timestep(timesteps):
+                def custom_forward(t_embedder):
+                    return t_embedder(timesteps, hidden_states_type)
+                return custom_forward
+                    
+            def create_custom_forward_pooled(pooled):
+                def custom_forward(p_embedder):
+                    return p_embedder(pooled)
+                return custom_forward
+                    
+            ckpt_kwargs = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
+                
+            timesteps = self.expand_timesteps(timesteps, batch_size, hidden_states.device)
+            timesteps_emb = torch.utils.checkpoint.checkpoint(
+                create_custom_forward_timestep(timesteps),
+                self.t_embedder,
+                **ckpt_kwargs
+            )
+                
+            pooled_emb = torch.utils.checkpoint.checkpoint(
+                create_custom_forward_pooled(pooled_embeds),
+                self.p_embedder,
+                **ckpt_kwargs
+            )
+            adaln_input = timesteps_emb + pooled_emb
+        else:
+            # Standard processing without checkpointing
+            timesteps = self.expand_timesteps(timesteps, batch_size, hidden_states.device)
+            timesteps = self.t_embedder(timesteps, hidden_states_type)
+            p_embedder = self.p_embedder(pooled_embeds)
+            adaln_input = timesteps + p_embedder
 
-        # 2. Process input hidden states
+        # 2. Process input hidden states (no checkpointing for patchify)
         hidden_states, image_tokens_masks, img_sizes = self.patchify(
             hidden_states, self.max_seq, img_sizes
         )
-
+        
+        # Apply checkpointing only to the embedding step, not patchify
+        if self.training and self.gradient_checkpointing:
+            def create_custom_forward_embed(patched_states):
+                def custom_forward(embedder):
+                    return embedder(patched_states)
+                return custom_forward
+                
+            ckpt_kwargs = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
+            
+            hidden_states = torch.utils.checkpoint.checkpoint(
+                create_custom_forward_embed(hidden_states),
+                self.x_embedder,
+                **ckpt_kwargs
+            )
+        else:
+            hidden_states = self.x_embedder(hidden_states)
+            
         # Create image positional IDs if not provided
         if image_tokens_masks is None:
             pH, pW = img_sizes[0]
@@ -1052,22 +1178,49 @@ class HiDreamImageTransformer2DModel(
             )
             img_ids = repeat(img_ids, "h w c -> b (h w) c", b=batch_size)
 
-        # Embed input hidden states
-        hidden_states = self.x_embedder(hidden_states)
-
         # 3. Extract and process text embeddings
-        # Extract specified Llama layers
         extracted_llama_states = self._extract_llama_layers(llama_hidden_states)
-
-        # Process the text embeddings through projection layers
-        if self.caption_projection is not None:
-            # Process T5 embeddings
+        
+        # Process the text embeddings with optional checkpointing
+        if self.training and self.gradient_checkpointing:
+            def create_custom_forward_t5(t5_states):
+                def custom_forward(proj):
+                    processed = proj(t5_states)
+                    return processed.view(batch_size, -1, hidden_states.shape[-1])
+                return custom_forward
+                
+            def create_custom_forward_llama(llama_state, i):
+                def custom_forward(proj):
+                    processed = proj(llama_state)
+                    return processed.view(batch_size, -1, hidden_states.shape[-1])
+                return custom_forward
+                
+            ckpt_kwargs = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
+            
+            # Process T5 embeddings with checkpointing
+            processed_t5_embeddings = torch.utils.checkpoint.checkpoint(
+                create_custom_forward_t5(t5_hidden_states),
+                self.caption_projection[-1],
+                **ckpt_kwargs
+            )
+            
+            # Process Llama embeddings with checkpointing
+            processed_llama_embeddings = []
+            for i, llama_emb in enumerate(extracted_llama_states):
+                if i < len(self.caption_projection) - 1:  # Reserve last one for T5
+                    processed_emb = torch.utils.checkpoint.checkpoint(
+                        create_custom_forward_llama(llama_emb, i),
+                        self.caption_projection[i],
+                        **ckpt_kwargs
+                    )
+                    processed_llama_embeddings.append(processed_emb)
+        else:
+            # Standard processing without checkpointing
             processed_t5_embeddings = self.caption_projection[-1](t5_hidden_states)
             processed_t5_embeddings = processed_t5_embeddings.view(
                 batch_size, -1, hidden_states.shape[-1]
             )
-
-            # Process extracted Llama embeddings
+            
             processed_llama_embeddings = []
             for i, llama_emb in enumerate(extracted_llama_states):
                 if i < len(self.caption_projection) - 1:  # Reserve last one for T5
@@ -1076,7 +1229,7 @@ class HiDreamImageTransformer2DModel(
                         batch_size, -1, hidden_states.shape[-1]
                     )
                     processed_llama_embeddings.append(processed_emb)
-
+        
         # Ensure we have enough processed embeddings for all blocks
         total_blocks = self.config.num_layers + self.config.num_single_layers
         while len(processed_llama_embeddings) < total_blocks:
@@ -1087,53 +1240,70 @@ class HiDreamImageTransformer2DModel(
                 else:
                     break
 
-        # 4. Create positional encoding
-        txt_ids = torch.zeros(
-            batch_size,
-            processed_t5_embeddings.shape[1]
-            + processed_llama_embeddings[0].shape[1] * 2,
-            3,
-            device=img_ids.device,
-            dtype=img_ids.dtype,
-        )
-        ids = torch.cat((img_ids, txt_ids), dim=1)
-        rope = self.pe_embedder(ids)
+        # 4. Create positional encoding with optional checkpointing
+        if self.training and self.gradient_checkpointing:
+            def create_custom_forward_rope(ids):
+                def custom_forward(pe_embedder):
+                    return pe_embedder(ids)
+                return custom_forward
+                
+            ckpt_kwargs = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
+            
+            txt_ids = torch.zeros(
+                batch_size,
+                processed_t5_embeddings.shape[1] + processed_llama_embeddings[0].shape[1] * 2,
+                3,
+                device=img_ids.device,
+                dtype=img_ids.dtype,
+            )
+            ids = torch.cat((img_ids, txt_ids), dim=1)
+            
+            rope = torch.utils.checkpoint.checkpoint(
+                create_custom_forward_rope(ids),
+                self.pe_embedder,
+                **ckpt_kwargs
+            )
+        else:
+            txt_ids = torch.zeros(
+                batch_size,
+                processed_t5_embeddings.shape[1] + processed_llama_embeddings[0].shape[1] * 2,
+                3,
+                device=img_ids.device,
+                dtype=img_ids.dtype,
+            )
+            ids = torch.cat((img_ids, txt_ids), dim=1)
+            rope = self.pe_embedder(ids)
 
         # 5. Process through transformer blocks
         block_id = 0
-
+        
         # Prepare initial combined embeddings for first set of blocks
         initial_encoder_hidden_states = torch.cat(
-            [
-                processed_t5_embeddings,
-                processed_llama_embeddings[-1 % len(processed_llama_embeddings)],
-            ],
+            [processed_t5_embeddings, processed_llama_embeddings[-1 % len(processed_llama_embeddings)]],
             dim=1,
         )
         initial_encoder_hidden_states_seq_len = initial_encoder_hidden_states.shape[1]
-
+        
         # Process through double stream blocks
         for bid, block in enumerate(self.double_stream_blocks):
             # Get the current Llama embedding for this block with safe indexing
             safe_idx = block_id % len(processed_llama_embeddings)
             cur_llama_embedding = processed_llama_embeddings[safe_idx]
-
+            
             # Combine embeddings for this block
             cur_encoder_hidden_states = torch.cat(
                 [initial_encoder_hidden_states, cur_llama_embedding],
                 dim=1,
             )
-
+            
             # Process through the block with optional gradient checkpointing
             if self.training and self.gradient_checkpointing:
-
                 def create_custom_forward(module, return_dict=None):
                     def custom_forward(*inputs):
                         if return_dict is not None:
                             return module(*inputs, return_dict=return_dict)
                         else:
                             return module(*inputs)
-
                     return custom_forward
 
                 ckpt_kwargs: Dict[str, Any] = (
@@ -1158,7 +1328,7 @@ class HiDreamImageTransformer2DModel(
                     adaln_input=adaln_input,
                     rope=rope,
                 )
-
+                
             # Keep consistent encoder states length
             initial_encoder_hidden_states = initial_encoder_hidden_states[
                 :, :initial_encoder_hidden_states_seq_len
@@ -1169,14 +1339,13 @@ class HiDreamImageTransformer2DModel(
         image_tokens_seq_len = hidden_states.shape[1]
         hidden_states = torch.cat([hidden_states, initial_encoder_hidden_states], dim=1)
         hidden_states_seq_len = hidden_states.shape[1]
-
+        
         # Update attention masks for combined hidden states
         if image_tokens_masks is not None:
             attention_mask_ones = torch.ones(
                 (
                     batch_size,
-                    initial_encoder_hidden_states.shape[1]
-                    + cur_llama_embedding.shape[1],
+                    initial_encoder_hidden_states.shape[1] + cur_llama_embedding.shape[1]
                 ),
                 device=image_tokens_masks.device,
                 dtype=image_tokens_masks.dtype,
@@ -1190,20 +1359,20 @@ class HiDreamImageTransformer2DModel(
             # Get the current Llama embedding for this block with safe indexing
             safe_idx = block_id % len(processed_llama_embeddings)
             cur_llama_embedding = processed_llama_embeddings[safe_idx]
-
+            
             # Concatenate for processing
-            hidden_states = torch.cat([hidden_states, cur_llama_embedding], dim=1)
-
+            hidden_states = torch.cat(
+                [hidden_states, cur_llama_embedding], dim=1
+            )
+            
             # Process through the block with optional gradient checkpointing
             if self.training and self.gradient_checkpointing:
-
                 def create_custom_forward(module, return_dict=None):
                     def custom_forward(*inputs):
                         if return_dict is not None:
                             return module(*inputs, return_dict=return_dict)
                         else:
                             return module(*inputs)
-
                     return custom_forward
 
                 ckpt_kwargs: Dict[str, Any] = (
@@ -1226,16 +1395,34 @@ class HiDreamImageTransformer2DModel(
                     adaln_input=adaln_input,
                     rope=rope,
                 )
-
+                
             # Maintain consistent hidden state length
             hidden_states = hidden_states[:, :hidden_states_seq_len]
             block_id += 1
 
-        # 8. Final processing
+        # 8. Final processing with optional checkpointing
         hidden_states = hidden_states[:, :image_tokens_seq_len, ...]
-        output = self.final_layer(hidden_states, adaln_input)
-        output = self.unpatchify(output, img_sizes, self.training)
-
+        
+        if self.training and self.gradient_checkpointing:
+            def create_custom_forward_final(hidden_states):
+                def custom_forward(final_layer):
+                    return final_layer(hidden_states, adaln_input)
+                return custom_forward
+                
+            ckpt_kwargs = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
+            
+            output = torch.utils.checkpoint.checkpoint(
+                create_custom_forward_final(hidden_states),
+                self.final_layer,
+                **ckpt_kwargs
+            )
+            
+            # Don't checkpoint the unpatchify operation
+            output = self.unpatchify(output, img_sizes, self.training)
+        else:
+            output = self.final_layer(hidden_states, adaln_input)
+            output = self.unpatchify(output, img_sizes, self.training)
+        
         # Update attention mask if needed
         if image_tokens_masks is not None:
             image_tokens_masks = image_tokens_masks[:, :image_tokens_seq_len]
