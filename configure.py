@@ -28,6 +28,7 @@ model_classes = {
         "sana",
         "deepfloyd",
         "omnigen",
+        "hidream",
     ],
     "lora": [
         "flux",

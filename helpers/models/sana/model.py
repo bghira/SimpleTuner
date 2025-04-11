@@ -10,11 +10,14 @@ from helpers.models.sana.transformer import SanaTransformer2DModel
 from helpers.models.sana.pipeline import SanaImg2ImgPipeline
 from diffusers.pipelines import SanaPipeline
 from diffusers import AutoencoderDC
-from helpers.training.multi_process import _get_rank
 
 logger = logging.getLogger(__name__)
+is_primary_process = True
+if os.environ.get("RANK") is not None:
+    if int(os.environ.get("RANK")) != 0:
+        is_primary_process = False
 logger.setLevel(
-    os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO") if _get_rank() == 0 else "ERROR"
+    os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO") if is_primary_process else "ERROR"
 )
 
 
@@ -102,7 +105,9 @@ class Sana(ImageModelFoundation):
         Returns:
             Text encoder output (raw)
         """
-        prompt_embeds, prompt_attention_mask, _, _ = self.pipeline.encode_prompt(
+        prompt_embeds, prompt_attention_mask, _, _ = self.pipelines[
+            PipelineTypes.TEXT2IMG
+        ].encode_prompt(
             prompt=prompts,
             do_classifier_free_guidance=False,
             device=self.accelerator.device,

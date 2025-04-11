@@ -73,15 +73,9 @@ class LTXVideo(VideoModelFoundation):
             single_frame_latents = batch["latents"]
             if num_frame_latents > 1:
                 # for an actual video though, we'll grab one frame using the worst syntax we can think of:
-                single_frame_latents = batch["latents"][
-                    :, :, 0, :, :
-                ].unsqueeze(dim=2)
-                logger.info(
-                    f"All latents shape: {batch['latents'].shape}"
-                )
-                logger.info(
-                    f"Single frame latents shape: {single_frame_latents.shape}"
-                )
+                single_frame_latents = batch["latents"][:, :, 0, :, :].unsqueeze(dim=2)
+                logger.info(f"All latents shape: {batch['latents'].shape}")
+                logger.info(f"Single frame latents shape: {single_frame_latents.shape}")
             batch["i2v_conditioning_mask"] = make_i2v_conditioning_mask(
                 batch["latents"], protect_frame_index=0
             )
@@ -161,12 +155,22 @@ class LTXVideo(VideoModelFoundation):
         Returns:
             Text encoder output (raw)
         """
-        prompt_embeds, prompt_attention_mask, negative_prompt_embeds, negative_prompt_attention_mask = self.pipeline.encode_prompt(
+        (
+            prompt_embeds,
+            prompt_attention_mask,
+            negative_prompt_embeds,
+            negative_prompt_attention_mask,
+        ) = self.pipelines[PipelineTypes.TEXT2IMG].encode_prompt(
             prompt=prompts,
             device=self.accelerator.device,
         )
 
-        return prompt_embeds, prompt_attention_mask, negative_prompt_embeds, negative_prompt_attention_mask
+        return (
+            prompt_embeds,
+            prompt_attention_mask,
+            negative_prompt_embeds,
+            negative_prompt_attention_mask,
+        )
 
     def model_predict(self, prepared_batch):
         if prepared_batch["noisy_latents"].shape[1] != 128:

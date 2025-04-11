@@ -13,11 +13,14 @@ from transformers import (
 from diffusers import AutoencoderKLWan
 from helpers.models.wan.transformer import WanTransformer3DModel
 from helpers.models.wan.pipeline import WanPipeline
-from helpers.training.multi_process import _get_rank
 
 logger = logging.getLogger(__name__)
+is_primary_process = True
+if os.environ.get("RANK") is not None:
+    if int(os.environ.get("RANK")) != 0:
+        is_primary_process = False
 logger.setLevel(
-    os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO") if _get_rank() == 0 else "ERROR"
+    os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO") if is_primary_process else "ERROR"
 )
 
 
@@ -126,7 +129,7 @@ class Wan(VideoModelFoundation):
         Returns:
             Text encoder output (raw)
         """
-        prompt_embeds, masks = self.pipeline.encode_prompt(
+        prompt_embeds, masks = self.pipelines[PipelineTypes.TEXT2IMG].encode_prompt(
             prompt=prompts,
             device=self.accelerator.device,
         )
