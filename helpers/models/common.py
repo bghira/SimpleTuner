@@ -217,6 +217,14 @@ class ModelFoundation(ABC):
             "convert_text_embed_for_pipeline must be implemented in the child class."
         )
 
+    def collate_prompt_embeds(self, text_encoder_output: dict) -> dict:
+        """
+        Optional stub method for client classes to do their own text embed collation/stacking.
+
+        Returns a dictionary. If the dictionary is empty, it is ignored and usual collate occurs.
+        """
+        return {}
+
     @classmethod
     def get_flavour_choices(cls):
         """
