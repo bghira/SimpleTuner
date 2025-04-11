@@ -119,9 +119,9 @@ class HiDream(ImageModelFoundation):
     def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
         return {
-            "t5_prompt_embeds": text_embedding["t5_prompt_embeds"].unsqueeze(0),
-            "llama_prompt_embeds": text_embedding["llama_prompt_embeds"].unsqueeze(0),
-            "pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0),
+            "t5_prompt_embeds": text_embedding["t5_prompt_embeds"].unsqueeze(0).to(self.accelerator.device),
+            "llama_prompt_embeds": text_embedding["llama_prompt_embeds"].unsqueeze(0).to(self.accelerator.device),
+            "pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0).to(self.accelerator.device),
         }
 
     def convert_negative_text_embed_for_pipeline(
@@ -129,9 +129,9 @@ class HiDream(ImageModelFoundation):
     ) -> dict:
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
         return {
-            "negative_t5_prompt_embeds": text_embedding["t5_prompt_embeds"].unsqueeze(0),
-            "negative_llama_prompt_embeds": text_embedding["llama_prompt_embeds"].unsqueeze(0),
-            "negative_pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0),
+            "negative_t5_prompt_embeds": text_embedding["t5_prompt_embeds"].unsqueeze(0).to(self.accelerator.device),
+            "negative_llama_prompt_embeds": text_embedding["llama_prompt_embeds"].unsqueeze(0).to(self.accelerator.device),
+            "negative_pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0).to(self.accelerator.device),
         }
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
