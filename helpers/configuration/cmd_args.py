@@ -123,6 +123,22 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--hidream_use_load_balancing_loss",
+        action="store_true",
+        default=False,
+        help=(
+            "When set, will use the load balancing loss for HiDream training. This is an experimental implementation."
+        ),
+    )
+    parser.add_argument(
+        "--hidream_load_balancing_loss_weight",
+        type=float,
+        default=None,
+        help=(
+            "When set, will use augment the load balancing loss for HiDream training. This is an experimental implementation."
+        ),
+    )
+    parser.add_argument(
         "--flux_lora_target",
         type=str,
         choices=[
@@ -1838,7 +1854,7 @@ def get_argument_parser():
             " and may not be necessary for your use case."
         ),
     )
-    for i in range(1, 4):
+    for i in range(1, 5):
         parser.add_argument(
             f"--text_encoder_{i}_precision",
             type=str,

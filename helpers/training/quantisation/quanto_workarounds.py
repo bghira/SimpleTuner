@@ -112,4 +112,3 @@ def reshape_qlf_backward(ctx, gO):
 
 
 optimum.quanto.tensor.function.QuantizedLinearFunction.backward = reshape_qlf_backward
-

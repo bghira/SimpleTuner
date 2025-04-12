@@ -236,7 +236,12 @@ def quantise_model(
         tuple: A tuple containing the quantized models in the order:
                (model, text_encoders, controlnet)
     """
-    text_encoder_1, text_encoder_2, text_encoder_3 = None, None, None
+    text_encoder_1, text_encoder_2, text_encoder_3, text_encoder_4 = (
+        None,
+        None,
+        None,
+        None,
+    )
     if text_encoders is not None:
         if len(text_encoders) > 0:
             text_encoder_1 = text_encoders[0]
@@ -244,6 +249,9 @@ def quantise_model(
             text_encoder_2 = text_encoders[1]
         if len(text_encoders) > 2:
             text_encoder_3 = text_encoders[2]
+        if len(text_encoders) > 3:
+            text_encoder_4 = text_encoders[3]
+
     models = [
         (
             model,
@@ -286,6 +294,14 @@ def quantise_model(
             },
         ),
         (
+            text_encoder_4,
+            {
+                "quant_fn": get_quant_fn(args.text_encoder_4_precision),
+                "model_precision": args.text_encoder_4_precision,
+                "base_model_precision": args.base_model_precision,
+            },
+        ),
+        (
             ema,
             {
                 "quant_fn": get_quant_fn(args.base_model_precision),
@@ -310,6 +326,9 @@ def quantise_model(
                     "quantize_activations", args.quantize_activations
                 ),
             }
+            logger.info(
+                f"Quantising {model.__class__.__name__} with {quant_args_combined}"
+            )
             models[i] = (quant_fn(model, **quant_args_combined), quant_args)
 
     # Unpack the quantized models
@@ -319,6 +338,7 @@ def quantise_model(
         text_encoder_1,
         text_encoder_2,
         text_encoder_3,
+        text_encoder_4,
         ema,
     ) = [model for model, _ in models]
 
@@ -330,6 +350,8 @@ def quantise_model(
         text_encoders.append(text_encoder_2)
     if text_encoder_3 is not None:
         text_encoders.append(text_encoder_3)
+    if text_encoder_4 is not None:
+        text_encoders.append(text_encoder_4)
     if len(text_encoders) == 0:
         text_encoders = None
 

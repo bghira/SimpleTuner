@@ -354,6 +354,23 @@ class Trainer:
             self.config.is_torchao = True
         elif "bnb" in self.config.base_model_precision:
             self.config.is_bnb = True
+        # if text_encoder_1_precision -> text_encoder_4_precision has quanto we'll mark that as well
+        for i in range(1, 5):
+            if isinstance(getattr(self.config, f"text_encoder_{i}_precision", None), str) and getattr(self.config, f"text_encoder_{i}_precision", None):
+                if "quanto" in getattr(self.config, f"text_encoder_{i}_precision"):
+                    if self.config.is_torchao:
+                        raise ValueError(
+                            "Cannot enable Quanto and TorchAO together. One quant engine must be used for all precision levels."
+                        )
+                    self.config.is_quanto = True
+                elif "torchao" in getattr(self.config, f"text_encoder_{i}_precision"):
+                    if self.config.is_quanto:
+                        raise ValueError(
+                            "Cannot enable Quanto and TorchAO together. One quant engine must be used for all precision levels."
+                        )
+                    self.config.is_torchao = True
+                elif "bnb" in getattr(self.config, f"text_encoder_{i}_precision"):
+                    self.config.is_bnb = True
         if self.config.is_quanto or self.config.is_torchao:
             from helpers.training.quantisation import quantise_model
 
@@ -1744,20 +1761,6 @@ class Trainer:
                 model_pred = self.model.model_predict(
                     prepared_batch=prepared_batch,
                 )
-            elif self.config.model_family == "pixart_sigma":
-                if noisy_latents.shape[1] != 4:
-                    raise ValueError(
-                        "Pixart Sigma models require a latent size of 4 channels. Ensure you are using the correct VAE cache path."
-                    )
-                model_pred = self.transformer(
-                    noisy_latents,
-                    encoder_hidden_states=encoder_hidden_states,
-                    encoder_attention_mask=prepared_batch["encoder_attention_mask"],
-                    timestep=timesteps,
-                    added_cond_kwargs=added_cond_kwargs,
-                    return_dict=False,
-                )[0]
-                model_pred = model_pred.chunk(2, dim=1)[0]
             elif self.model.get_trained_component() is not None:
                 model_pred = self.model.model_predict(
                     prepared_batch=prepared_batch,
@@ -2048,7 +2051,7 @@ class Trainer:
                                 raise ValueError(
                                     f"Cannot train parent-student networks on {self.config.lora_type} model. Only LyCORIS is supported."
                                 )
-                            target = self.model_predict(
+                            prepared_batch["target"] = self.model_predict(
                                 prepared_batch=prepared_batch,
                             )
                             if self.config.lora_type.lower() == "lycoris":
@@ -2067,6 +2070,11 @@ class Trainer:
                         prepared_batch=prepared_batch,
                         model_output=model_pred,
                         apply_conditioning_mask=True,
+                    )
+                    loss, aux_loss_logs = self.model.auxiliary_loss(
+                        prepared_batch=prepared_batch,
+                        model_output=model_pred,
+                        loss=loss,
                     )
 
                     parent_loss = None
@@ -2165,6 +2173,9 @@ class Trainer:
                     )
                     if parent_loss is not None:
                         wandb_logs["regularisation_loss"] = parent_loss
+                    if aux_loss_logs is not None:
+                        for key, value in aux_loss_logs.items():
+                            wandb_logs[f"aux_loss/{key}"] = value
                     if self.grad_norm is not None:
                         if self.config.grad_clip_method == "norm":
                             wandb_logs["grad_norm"] = self.grad_norm
@@ -2358,6 +2369,11 @@ class Trainer:
                     "step_loss": loss.detach().item(),
                     "lr": float(self.lr),
                 }
+                if aux_loss_logs is not None:
+                    logs_to_print = {}
+                    for key, value in aux_loss_logs.items():
+                        logs_to_print[f"aux_loss/{key}"] = value
+                    training_logger.debug(f"Aux loss: {logs_to_print}")
                 if self.grad_norm is not None:
                     if self.config.grad_clip_method == "norm":
                         logs["grad_norm"] = float(self.grad_norm.clone().detach())

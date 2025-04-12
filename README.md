@@ -66,6 +66,19 @@ For multi-node distributed training, [this guide](/documentation/DISTRIBUTED.md)
 - Webhook support for updating eg. Discord channels with your training progress, validations, and errors
 - Integration with the [Hugging Face Hub](https://huggingface.co) for seamless model upload and nice automatically-generated model cards.
 
+### HiDream
+
+Full training support for HiDream is included:
+
+- Memory-efficient training for NVIDIA GPUs (AMD support is planned)
+- Dev and Full both functioning and trainable. Fast is untested.
+- Optional MoEGate loss augmentation
+- Lycoris or full tuning via DeepSpeed ZeRO on a single GPU
+- Quantise the base model using `--base_model_precision` to `int8-quanto` or `fp8-quanto` for major memory savings
+- Quantise Llama LLM using `--text_encoder_4_precision` set to `int4-quanto` or `int8-quanto` to run on 24G cards.
+
+See [hardware requirements](#hidream) or the [quickstart guide](/documentation/quickstart/HIDREAM.md).
+
 ### Flux.1
 
 Full training support for Flux.1 is included:
@@ -165,6 +178,15 @@ Lacking `xformers`, it will use more memory than Nvidia equivalent hardware.
 LoRA and full-rank tuning are tested to work on an M3 Max with 128G memory, taking about **12G** of "Wired" memory and **4G** of system memory for SDXL.
   - You likely need a 24G or greater machine for machine learning with M-series hardware due to the lack of memory-efficient attention.
   - Subscribing to Pytorch issues for MPS is probably a good idea, as random bugs will make training stop working.
+
+### HiDream [dev, full]
+
+- A100-80G (Full tune with DeepSpeed)
+- A100-40G (LoRA, LoKr)
+- 3090 24G (LoRA, LoKr)
+
+HiDream has not been tested on 16G cards, but with aggressive quantisation and pre-caching of embeds, you might make it work.
+
 
 ### Flux.1 [dev, schnell]
 

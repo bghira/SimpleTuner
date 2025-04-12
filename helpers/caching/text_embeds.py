@@ -7,6 +7,10 @@ import gc
 from tqdm import tqdm
 from helpers.data_backend.base import BaseDataBackend
 from helpers.training.state_tracker import StateTracker
+from helpers.training.wrappers import (
+    move_dict_of_tensors_to_device,
+    gather_dict_of_tensors_shapes,
+)
 from helpers.prompts import PromptHandler
 from helpers.training.multi_process import rank_info
 from queue import Queue
@@ -377,9 +381,9 @@ class TextEmbeddingCache(WebhookMixin):
                     try:
                         # We attempt to load.
                         text_encoder_output = self.load_from_cache(filename)
-                        embed_shapes = {
-                            k: v.shape for k, v in text_encoder_output.items()
-                        }
+                        embed_shapes = gather_dict_of_tensors_shapes(
+                            tensors=text_encoder_output
+                        )
                         logger.debug(f"Cached text embeds: {embed_shapes}")
                         logger.debug(
                             f"Filename {filename} prompt embeds: {embed_shapes}, keys: {text_encoder_output.keys()}"
@@ -405,9 +409,8 @@ class TextEmbeddingCache(WebhookMixin):
                     text_encoder_output = self.model.encode_text_batch(
                         [prompt], is_negative_prompt=is_negative_prompt
                     )
-                    embed_shapes = {k: v.shape for k, v in text_encoder_output.items()}
                     logger.debug(
-                        f"Filename {filename} prompt embeds: {embed_shapes}, keys: {text_encoder_output.keys()}"
+                        f"Filename {filename} prompt embeds: {gather_dict_of_tensors_shapes(tensors=text_encoder_output)}, keys: {text_encoder_output.keys()}"
                     )
                     # Get the current size of the queue.
                     current_size = self.write_queue.qsize()
@@ -445,15 +448,14 @@ class TextEmbeddingCache(WebhookMixin):
 
                     if return_concat:
                         # we're returning the embeds for training, so we'll prepare them
-                        text_encoder_output = {
-                            k: v.to(self.accelerator.device)
-                            for k, v in text_encoder_output.items()
-                        }
+                        text_encoder_output = move_dict_of_tensors_to_device(
+                            tensors=text_encoder_output, device=self.accelerator.device
+                        )
                     else:
                         # if we're not returning them, we'll just nuke them
-                        text_encoder_output = {
-                            k: v.to("meta") for k, v in text_encoder_output.items()
-                        }
+                        text_encoder_output = move_dict_of_tensors_to_device(
+                            tensors=text_encoder_output, device="meta"
+                        )
                         del text_encoder_output
                         continue
 

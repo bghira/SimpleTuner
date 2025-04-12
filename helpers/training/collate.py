@@ -241,7 +241,7 @@ def compute_single_embedding(caption, text_embed_cache):
     return text_encoder_output
 
 
-def compute_prompt_embeddings(captions, text_embed_cache):
+def compute_prompt_embeddings(captions, text_embed_cache, model):
     """
     Retrieve / compute text embeds in parallel.
     Args:
@@ -263,24 +263,25 @@ def compute_prompt_embeddings(captions, text_embed_cache):
             )
         )
     prompt_embeds, pooled_prompt_embeds, attn_masks, time_ids = [], [], [], []
-    transformed_encoder_output = {}
     # Is there a better way to do this?
-    if "prompt_embeds" in text_encoder_output[0]:
-        transformed_encoder_output["prompt_embeds"] = torch.stack(
-            [t["prompt_embeds"] for t in text_encoder_output]
-        )
-    if "pooled_prompt_embeds" in text_encoder_output[0]:
-        transformed_encoder_output["pooled_prompt_embeds"] = torch.stack(
-            [t["pooled_prompt_embeds"] for t in text_encoder_output]
-        )
-    if "attention_mask" in text_encoder_output[0]:
-        transformed_encoder_output["attention_masks"] = torch.stack(
-            [t["attention_mask"] for t in text_encoder_output]
-        )
-    if "time_ids" in text_encoder_output[0]:
-        transformed_encoder_output["time_ids"] = torch.stack(
-            [t["time_ids"] for t in text_encoder_output]
-        )
+    transformed_encoder_output = model.collate_prompt_embeds(text_encoder_output)
+    if transformed_encoder_output == {}:
+        if "prompt_embeds" in text_encoder_output[0]:
+            transformed_encoder_output["prompt_embeds"] = torch.stack(
+                [t["prompt_embeds"] for t in text_encoder_output]
+            )
+        if "pooled_prompt_embeds" in text_encoder_output[0]:
+            transformed_encoder_output["pooled_prompt_embeds"] = torch.stack(
+                [t["pooled_prompt_embeds"] for t in text_encoder_output]
+            )
+        if "attention_mask" in text_encoder_output[0]:
+            transformed_encoder_output["attention_masks"] = torch.stack(
+                [t["attention_mask"] for t in text_encoder_output]
+            )
+        if "time_ids" in text_encoder_output[0]:
+            transformed_encoder_output["time_ids"] = torch.stack(
+                [t["time_ids"] for t in text_encoder_output]
+            )
 
     if transformed_encoder_output == {}:
         raise Exception(f"Could not compute text encoder output: {text_encoder_output}")
@@ -494,7 +495,9 @@ def collate_fn(batch):
     ]
 
     if not text_embed_cache.disabled:
-        all_text_encoder_outputs = compute_prompt_embeddings(captions, text_embed_cache)
+        all_text_encoder_outputs = compute_prompt_embeddings(
+            captions, text_embed_cache, StateTracker.get_model()
+        )
     else:
         all_text_encoder_outputs = {}
     # TODO: Remove model-specific logic from collate.
@@ -519,6 +522,7 @@ def collate_fn(batch):
     return {
         "latent_batch": latent_batch,
         "prompts": captions,
+        "text_encoder_output": all_text_encoder_outputs,
         "prompt_embeds": all_text_encoder_outputs.get("prompt_embeds"),
         "add_text_embeds": all_text_encoder_outputs.get("pooled_prompt_embeds"),
         "batch_time_ids": all_text_encoder_outputs.get("batch_time_ids"),

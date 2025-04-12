@@ -814,7 +814,7 @@ class PixArtSigmaPipeline(DiffusionPipeline):
                 # expand init_latents for batch_size
                 additional_image_per_prompt = batch_size // init_latents.shape[0]
                 init_latents = torch.cat(
-                    [init_latents] * additional_image_per_ompt, dim=0
+                    [init_latents] * additional_image_per_prompt, dim=0
                 )
             elif (
                 batch_size > init_latents.shape[0]

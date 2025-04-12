@@ -154,6 +154,7 @@ class TestTrainer(unittest.TestCase):
             validation_num_video_frames=None,
             eval_steps_interval=None,
             controlnet=False,
+            text_encoder_4_precision="no_change",
             attention_mechanism="diffusers",
         ),
     )
