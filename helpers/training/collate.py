@@ -495,7 +495,9 @@ def collate_fn(batch):
     ]
 
     if not text_embed_cache.disabled:
-        all_text_encoder_outputs = compute_prompt_embeddings(captions, text_embed_cache, StateTracker.get_model())
+        all_text_encoder_outputs = compute_prompt_embeddings(
+            captions, text_embed_cache, StateTracker.get_model()
+        )
     else:
         all_text_encoder_outputs = {}
     # TODO: Remove model-specific logic from collate.

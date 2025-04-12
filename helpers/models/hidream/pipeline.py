@@ -193,14 +193,14 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
     ):
         """
         Get T5 text encoder embeddings for the given prompt.
-        
+
         Args:
             prompt: Text prompt to encode
             num_images_per_prompt: Number of images to generate per prompt
             max_sequence_length: Maximum sequence length for tokenization
             device: Device to place embeddings on
             dtype: Data type for embeddings
-        
+
         Returns:
             T5 embeddings tensor of shape [batch_size, seq_len, dim]
         """
@@ -264,7 +264,7 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
     ):
         """
         Get CLIP text encoder embeddings for the given prompt.
-        
+
         Args:
             tokenizer: CLIP tokenizer
             text_encoder: CLIP text encoder
@@ -273,7 +273,7 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
             max_sequence_length: Maximum sequence length for tokenization
             device: Device to place embeddings on
             dtype: Data type for embeddings
-        
+
         Returns:
             CLIP embeddings tensor of shape [batch_size, embedding_dim]
         """
@@ -327,14 +327,14 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
     ):
         """
         Get Llama text encoder embeddings for the given prompt.
-        
+
         Args:
             prompt: Text prompt to encode
             num_images_per_prompt: Number of images to generate per prompt
             max_sequence_length: Maximum sequence length for tokenization
             device: Device to place embeddings on
             dtype: Data type for embeddings
-        
+
         Returns:
             Llama embeddings tensor of shape [num_layers, batch_size, seq_len, dim]
         """
@@ -434,7 +434,7 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
     ):
         """
         Prepare latents for denoising.
-        
+
         Args:
             batch_size: Batch size
             num_channels_latents: Number of channels in latents
@@ -444,7 +444,7 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
             device: Device to place latents on
             generator: Random number generator
             latents: Optional existing latents to use
-            
+
         Returns:
             Prepared latent tensors
         """
@@ -512,7 +512,7 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
     ):
         """
         Encode prompt into model embeddings needed for transformer.
-        
+
         Args:
             prompt: Main text prompt (for CLIP L/14)
             prompt_2: Secondary text prompt (for CLIP G/14)
@@ -534,7 +534,7 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
             negative_pooled_prompt_embeds: Pre-computed negative pooled prompt embeddings
             max_sequence_length: Maximum sequence length for tokenization
             lora_scale: Scale for LoRA weights
-            
+
         Returns:
             Tuple containing:
             - t5_prompt_embeds: T5 encoder embeddings
@@ -555,32 +555,48 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
                 # Handle based on expected shape format
                 if len(llama_prompt_embeds.shape) == 4:  # [num_layers, batch, seq, dim]
                     batch_size = llama_prompt_embeds.shape[1]
-                elif len(llama_prompt_embeds.shape) == 5:  # [batch, num_layers, 1, seq, dim]
+                elif (
+                    len(llama_prompt_embeds.shape) == 5
+                ):  # [batch, num_layers, 1, seq, dim]
                     batch_size = llama_prompt_embeds.shape[0]
                 else:
-                    raise ValueError(f"Unexpected llama embedding shape: {llama_prompt_embeds.shape}")
+                    raise ValueError(
+                        f"Unexpected llama embedding shape: {llama_prompt_embeds.shape}"
+                    )
             else:
-                raise ValueError("Either prompt or pre-computed embeddings must be provided")
+                raise ValueError(
+                    "Either prompt or pre-computed embeddings must be provided"
+                )
 
         # Check if we need to compute embeddings or use provided ones
-        if t5_prompt_embeds is None or llama_prompt_embeds is None or pooled_prompt_embeds is None:
-            t5_prompt_embeds, llama_prompt_embeds, pooled_prompt_embeds = self._encode_prompt(
-                prompt=prompt,
-                prompt_2=prompt_2,
-                prompt_3=prompt_3,
-                prompt_4=prompt_4,
-                device=device,
-                dtype=dtype,
-                num_images_per_prompt=num_images_per_prompt,
-                t5_prompt_embeds=t5_prompt_embeds,
-                llama_prompt_embeds=llama_prompt_embeds,
-                pooled_prompt_embeds=pooled_prompt_embeds,
-                max_sequence_length=max_sequence_length,
+        if (
+            t5_prompt_embeds is None
+            or llama_prompt_embeds is None
+            or pooled_prompt_embeds is None
+        ):
+            t5_prompt_embeds, llama_prompt_embeds, pooled_prompt_embeds = (
+                self._encode_prompt(
+                    prompt=prompt,
+                    prompt_2=prompt_2,
+                    prompt_3=prompt_3,
+                    prompt_4=prompt_4,
+                    device=device,
+                    dtype=dtype,
+                    num_images_per_prompt=num_images_per_prompt,
+                    t5_prompt_embeds=t5_prompt_embeds,
+                    llama_prompt_embeds=llama_prompt_embeds,
+                    pooled_prompt_embeds=pooled_prompt_embeds,
+                    max_sequence_length=max_sequence_length,
+                )
             )
 
         # Handle negative embeddings for classifier-free guidance
         if do_classifier_free_guidance:
-            if negative_t5_prompt_embeds is None or negative_llama_prompt_embeds is None or negative_pooled_prompt_embeds is None:
+            if (
+                negative_t5_prompt_embeds is None
+                or negative_llama_prompt_embeds is None
+                or negative_pooled_prompt_embeds is None
+            ):
                 negative_prompt = negative_prompt or ""
                 negative_prompt_2 = negative_prompt_2 or negative_prompt
                 negative_prompt_3 = negative_prompt_3 or negative_prompt
@@ -620,7 +636,11 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
                         " the batch size of `prompt`."
                     )
 
-                negative_t5_prompt_embeds, negative_llama_prompt_embeds, negative_pooled_prompt_embeds = self._encode_prompt(
+                (
+                    negative_t5_prompt_embeds,
+                    negative_llama_prompt_embeds,
+                    negative_pooled_prompt_embeds,
+                ) = self._encode_prompt(
                     prompt=negative_prompt,
                     prompt_2=negative_prompt_2,
                     prompt_3=negative_prompt_3,
@@ -659,7 +679,7 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
     ):
         """
         Internal method to encode prompts to embeddings for the model.
-        
+
         Args:
             prompt: Main text prompt (for CLIP L/14)
             prompt_2: Secondary text prompt (for CLIP G/14)
@@ -672,7 +692,7 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
             llama_prompt_embeds: Pre-computed Llama prompt embeddings
             pooled_prompt_embeds: Pre-computed pooled prompt embeddings
             max_sequence_length: Maximum sequence length for tokenization
-            
+
         Returns:
             Tuple containing:
             - t5_prompt_embeds: T5 encoder embeddings
@@ -685,7 +705,7 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
         need_pooled = pooled_prompt_embeds is None
         need_t5 = t5_prompt_embeds is None
         need_llama = llama_prompt_embeds is None
-        
+
         if need_pooled or need_t5 or need_llama:
             prompt_2 = prompt_2 or prompt
             prompt_2 = [prompt_2] if isinstance(prompt_2, str) else prompt_2
@@ -734,7 +754,7 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
                     device=device,
                     dtype=dtype,
                 )
-            
+
             # Get Llama embeddings if needed
             if need_llama:
                 llama_prompt_embeds = self._get_llama3_prompt_embeds(
@@ -781,7 +801,7 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
     ):
         """
         Generate images based on text prompts.
-        
+
         Args:
             prompt: Main text prompt (for CLIP L/14)
             prompt_2: Secondary text prompt (for CLIP G/14)
@@ -811,7 +831,7 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
             callback_on_step_end: Callback after each denoising step
             callback_on_step_end_tensor_inputs: Tensor inputs to pass to callback
             max_sequence_length: Maximum sequence length for tokenization
-            
+
         Returns:
             Generated images
         """
@@ -845,10 +865,14 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
                 # Handle based on expected shape format
                 if len(llama_prompt_embeds.shape) == 4:  # [num_layers, batch, seq, dim]
                     batch_size = llama_prompt_embeds.shape[1]
-                elif len(llama_prompt_embeds.shape) == 5:  # [batch, num_layers, 1, seq, dim]
+                elif (
+                    len(llama_prompt_embeds.shape) == 5
+                ):  # [batch, num_layers, 1, seq, dim]
                     batch_size = llama_prompt_embeds.shape[0]
                 else:
-                    raise ValueError(f"Unexpected llama embedding shape: {llama_prompt_embeds.shape}")
+                    raise ValueError(
+                        f"Unexpected llama embedding shape: {llama_prompt_embeds.shape}"
+                    )
             else:
                 raise ValueError("Either prompt or embeddings must be provided")
 
@@ -894,24 +918,36 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
             # Format embeddings for the transformer which expects separate inputs
             # Handle T5 embeddings (shape: [batch, seq_len, dim])
             if negative_t5_prompt_embeds is not None:
-                t5_embeds_input = torch.cat([negative_t5_prompt_embeds, t5_prompt_embeds], dim=0)
+                t5_embeds_input = torch.cat(
+                    [negative_t5_prompt_embeds, t5_prompt_embeds], dim=0
+                )
             else:
                 t5_embeds_input = t5_prompt_embeds
-            
+
             # Handle Llama embeddings
             if negative_llama_prompt_embeds is not None:
                 # The shape handling depends on the format of llama embeddings
                 if len(llama_prompt_embeds.shape) == 4:  # [num_layers, batch, seq, dim]
-                    llama_embeds_input = torch.cat([negative_llama_prompt_embeds, llama_prompt_embeds], dim=1)
-                elif len(llama_prompt_embeds.shape) == 5:  # [batch, num_layers, 1, seq, dim]
-                    llama_embeds_input = torch.cat([negative_llama_prompt_embeds, llama_prompt_embeds], dim=0)
+                    llama_embeds_input = torch.cat(
+                        [negative_llama_prompt_embeds, llama_prompt_embeds], dim=1
+                    )
+                elif (
+                    len(llama_prompt_embeds.shape) == 5
+                ):  # [batch, num_layers, 1, seq, dim]
+                    llama_embeds_input = torch.cat(
+                        [negative_llama_prompt_embeds, llama_prompt_embeds], dim=0
+                    )
                 else:
-                    raise ValueError(f"Unexpected llama embedding shape: {llama_prompt_embeds.shape}")
+                    raise ValueError(
+                        f"Unexpected llama embedding shape: {llama_prompt_embeds.shape}"
+                    )
             else:
                 llama_embeds_input = llama_prompt_embeds
-            
+
             # Combine embeddings for passing to transformer
-            pooled_embeds_input = torch.cat([negative_pooled_prompt_embeds, pooled_prompt_embeds], dim=0)
+            pooled_embeds_input = torch.cat(
+                [negative_pooled_prompt_embeds, pooled_prompt_embeds], dim=0
+            )
         else:
             # If not using guidance, use the embeddings directly
             t5_embeds_input = t5_prompt_embeds
@@ -1048,9 +1084,15 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
                     callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
 
                     latents = callback_outputs.pop("latents", latents)
-                    t5_embeds_input = callback_outputs.pop("t5_embeds_input", t5_embeds_input)
-                    llama_embeds_input = callback_outputs.pop("llama_embeds_input", llama_embeds_input)
-                    pooled_embeds_input = callback_outputs.pop("pooled_embeds_input", pooled_embeds_input)
+                    t5_embeds_input = callback_outputs.pop(
+                        "t5_embeds_input", t5_embeds_input
+                    )
+                    llama_embeds_input = callback_outputs.pop(
+                        "llama_embeds_input", llama_embeds_input
+                    )
+                    pooled_embeds_input = callback_outputs.pop(
+                        "pooled_embeds_input", pooled_embeds_input
+                    )
 
                 # call the callback, if provided
                 if i == len(timesteps) - 1 or (
@@ -1069,7 +1111,10 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
                 latents / self.vae.config.scaling_factor
             ) + self.vae.config.shift_factor
 
-            image = self.vae.decode(latents.to(dtype=self.vae.dtype, device=self.vae.device), return_dict=False)[0]
+            image = self.vae.decode(
+                latents.to(dtype=self.vae.dtype, device=self.vae.device),
+                return_dict=False,
+            )[0]
             image = self.image_processor.postprocess(image, output_type=output_type)
 
         # Offload all models

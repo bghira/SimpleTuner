@@ -1,5 +1,8 @@
 import torch, os, logging, einops
-from helpers.training.wrappers import gather_dict_of_tensors_shapes, move_dict_of_tensors_to_device
+from helpers.training.wrappers import (
+    gather_dict_of_tensors_shapes,
+    move_dict_of_tensors_to_device,
+)
 from helpers.models.common import (
     ImageModelFoundation,
     PredictionTypes,
@@ -17,7 +20,11 @@ from transformers import (
 HiDreamImageTransformer2DModel = None
 HiDreamImagePipeline = None
 try:
-    from helpers.models.hidream.transformer import HiDreamImageTransformer2DModel, get_load_balancing_loss, clear_load_balancing_loss
+    from helpers.models.hidream.transformer import (
+        HiDreamImageTransformer2DModel,
+        get_load_balancing_loss,
+        clear_load_balancing_loss,
+    )
     from helpers.models.hidream.pipeline import HiDreamImagePipeline
 except Exception as e:
     print(f"HiDream not available: {e}")
@@ -93,11 +100,14 @@ class HiDream(ImageModelFoundation):
     }
 
     def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
-        if self.config.hidream_load_balancing_loss_weight is not None and self.config.hidream_load_balancing_loss_weight > 0:
+        if (
+            self.config.hidream_load_balancing_loss_weight is not None
+            and self.config.hidream_load_balancing_loss_weight > 0
+        ):
             pretrained_load_args["aux_loss_alpha"] = (
                 self.config.hidream_load_balancing_loss_weight
             )
-        
+
         return pretrained_load_args
 
     def post_vae_load_setup(self):
@@ -120,15 +130,24 @@ class HiDream(ImageModelFoundation):
         return {
             "t5_prompt_embeds": t5_embeds.squeeze(0).detach().clone().to("cpu"),
             "llama_prompt_embeds": llama_embeds.squeeze(0).detach().clone().to("cpu"),
-            "pooled_prompt_embeds": pooled_prompt_embeds.squeeze(0).detach().clone().to("cpu"),
+            "pooled_prompt_embeds": pooled_prompt_embeds.squeeze(0)
+            .detach()
+            .clone()
+            .to("cpu"),
         }
 
     def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
         return {
-            "t5_prompt_embeds": text_embedding["t5_prompt_embeds"].unsqueeze(0).to(self.accelerator.device),
-            "llama_prompt_embeds": text_embedding["llama_prompt_embeds"].unsqueeze(0).to(self.accelerator.device),
-            "pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0).to(self.accelerator.device),
+            "t5_prompt_embeds": text_embedding["t5_prompt_embeds"]
+            .unsqueeze(0)
+            .to(self.accelerator.device),
+            "llama_prompt_embeds": text_embedding["llama_prompt_embeds"]
+            .unsqueeze(0)
+            .to(self.accelerator.device),
+            "pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"]
+            .unsqueeze(0)
+            .to(self.accelerator.device),
         }
 
     def convert_negative_text_embed_for_pipeline(
@@ -136,9 +155,15 @@ class HiDream(ImageModelFoundation):
     ) -> dict:
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
         return {
-            "negative_t5_prompt_embeds": text_embedding["t5_prompt_embeds"].unsqueeze(0).to(self.accelerator.device),
-            "negative_llama_prompt_embeds": text_embedding["llama_prompt_embeds"].unsqueeze(0).to(self.accelerator.device),
-            "negative_pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0).to(self.accelerator.device),
+            "negative_t5_prompt_embeds": text_embedding["t5_prompt_embeds"]
+            .unsqueeze(0)
+            .to(self.accelerator.device),
+            "negative_llama_prompt_embeds": text_embedding["llama_prompt_embeds"]
+            .unsqueeze(0)
+            .to(self.accelerator.device),
+            "negative_pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"]
+            .unsqueeze(0)
+            .to(self.accelerator.device),
         }
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
@@ -167,25 +192,28 @@ class HiDream(ImageModelFoundation):
         return t5_embeds, llama_embeds, pooled_prompt_embeds
 
     def collate_prompt_embeds(self, text_encoder_output: dict) -> dict:
-        return move_dict_of_tensors_to_device({
-            "t5_prompt_embeds": torch.stack(
-                [e["t5_prompt_embeds"] for e in text_encoder_output], dim=0
-            ),
-            "llama_prompt_embeds": torch.stack(
-                [e["llama_prompt_embeds"] for e in text_encoder_output], dim=0
-            ),
-            "pooled_prompt_embeds": torch.stack(
-                [e["pooled_prompt_embeds"] for e in text_encoder_output], dim=0
-            ),
-        }, self.accelerator.device)
+        return move_dict_of_tensors_to_device(
+            {
+                "t5_prompt_embeds": torch.stack(
+                    [e["t5_prompt_embeds"] for e in text_encoder_output], dim=0
+                ),
+                "llama_prompt_embeds": torch.stack(
+                    [e["llama_prompt_embeds"] for e in text_encoder_output], dim=0
+                ),
+                "pooled_prompt_embeds": torch.stack(
+                    [e["pooled_prompt_embeds"] for e in text_encoder_output], dim=0
+                ),
+            },
+            self.accelerator.device,
+        )
 
     def model_predict(self, prepared_batch):
         """
         Process a batch through the transformer model.
-        
+
         Args:
             prepared_batch: Dictionary containing input tensors and embeddings
-            
+
         Returns:
             Dictionary containing model predictions
         """
@@ -257,9 +285,15 @@ class HiDream(ImageModelFoundation):
                     dtype=self.config.base_weight_dtype,
                 ),
                 timesteps=prepared_batch["timesteps"],
-                t5_hidden_states=prepared_batch["text_encoder_output"]["t5_prompt_embeds"],
-                llama_hidden_states=prepared_batch["text_encoder_output"]["llama_prompt_embeds"],
-                pooled_embeds=prepared_batch["text_encoder_output"]["pooled_prompt_embeds"],
+                t5_hidden_states=prepared_batch["text_encoder_output"][
+                    "t5_prompt_embeds"
+                ],
+                llama_hidden_states=prepared_batch["text_encoder_output"][
+                    "llama_prompt_embeds"
+                ],
+                pooled_embeds=prepared_batch["text_encoder_output"][
+                    "pooled_prompt_embeds"
+                ],
                 img_sizes=img_sizes,
                 img_ids=img_ids,
                 return_dict=False,
@@ -328,32 +362,47 @@ class HiDream(ImageModelFoundation):
     def auxiliary_loss(self, model_output, prepared_batch: dict, loss: torch.Tensor):
         aux_losses = get_load_balancing_loss()
         aux_log_info = {}
-        
+
         if aux_losses:
             # Extract and accumulate the actual loss values (first element of each tuple)
-            accumulated_aux_loss = torch.sum(torch.stack([aux_tuple[0] for aux_tuple in aux_losses]))
-            
+            accumulated_aux_loss = torch.sum(
+                torch.stack([aux_tuple[0] for aux_tuple in aux_losses])
+            )
+
             # For logging purposes - gather these regardless of whether we add to main loss
             aux_log_info = {
                 "total": accumulated_aux_loss.item(),
                 "count": len(aux_losses),
                 "mean": accumulated_aux_loss.item() / max(1, len(aux_losses)),
                 # Extract statistics about expert utilization (the third element)
-                "expert_usage_min": min([torch.min(aux_tuple[2]).item() for aux_tuple in aux_losses], default=0),
-                "expert_usage_max": max([torch.max(aux_tuple[2]).item() for aux_tuple in aux_losses], default=0),
-                "expert_usage_mean": sum([torch.mean(aux_tuple[2]).item() for aux_tuple in aux_losses]) / max(1, len(aux_losses)),
+                "expert_usage_min": min(
+                    [torch.min(aux_tuple[2]).item() for aux_tuple in aux_losses],
+                    default=0,
+                ),
+                "expert_usage_max": max(
+                    [torch.max(aux_tuple[2]).item() for aux_tuple in aux_losses],
+                    default=0,
+                ),
+                "expert_usage_mean": sum(
+                    [torch.mean(aux_tuple[2]).item() for aux_tuple in aux_losses]
+                )
+                / max(1, len(aux_losses)),
             }
-            
+
             # Only add to the main loss if configured to do so
             if self.config.hidream_use_load_balancing_loss:
-                total_loss = loss + accumulated_aux_loss * self.config.hidream_load_balancing_loss_weight
+                total_loss = (
+                    loss
+                    + accumulated_aux_loss
+                    * self.config.hidream_load_balancing_loss_weight
+                )
             else:
                 total_loss = loss
         else:
             total_loss = loss
             aux_log_info = {"total": 0.0, "count": 0}
-        
+
         # Always clear the global list after processing to prevent memory buildup
         clear_load_balancing_loss()
-        
+
         return total_loss, aux_log_info
