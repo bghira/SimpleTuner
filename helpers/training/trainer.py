@@ -356,7 +356,7 @@ class Trainer:
             self.config.is_bnb = True
         # if text_encoder_1_precision -> text_encoder_4_precision has quanto we'll mark that as well
         for i in range(1, 5):
-            if getattr(self.config, f"text_encoder_{i}_precision", None):
+            if isinstance(getattr(self.config, f"text_encoder_{i}_precision", None), str) and getattr(self.config, f"text_encoder_{i}_precision", None):
                 if "quanto" in getattr(self.config, f"text_encoder_{i}_precision"):
                     if self.config.is_torchao:
                         raise ValueError(
