@@ -61,8 +61,8 @@ class HubManager:
         )
 
     def set_validation_prompts(self, validation_prompts):
-        self.validation_prompts = validation_prompts.values()
-        self.validation_shortnames = validation_prompts.keys()
+        self.validation_prompts = validation_prompts.get("validation_prompts", [])
+        self.validation_shortnames = validation_prompts.get("validation_shortnames", [])
 
     def upload_validation_folder(self, webhook_handler=None, override_path=None):
         try:
@@ -208,7 +208,8 @@ class HubManager:
                 )
             except Exception as e:
                 logger.error(f"Failed to upload latest checkpoint: {e}")
-                logger.error(e)
+                import traceback
+                logger.error(traceback.format_exc())
 
     def upload_validation_images(
         self, validation_images, webhook_handler=None, override_path=None
