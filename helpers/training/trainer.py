@@ -1761,20 +1761,6 @@ class Trainer:
                 model_pred = self.model.model_predict(
                     prepared_batch=prepared_batch,
                 )
-            elif self.config.model_family == "pixart_sigma":
-                if noisy_latents.shape[1] != 4:
-                    raise ValueError(
-                        "Pixart Sigma models require a latent size of 4 channels. Ensure you are using the correct VAE cache path."
-                    )
-                model_pred = self.transformer(
-                    noisy_latents,
-                    encoder_hidden_states=encoder_hidden_states,
-                    encoder_attention_mask=prepared_batch["encoder_attention_mask"],
-                    timestep=timesteps,
-                    added_cond_kwargs=added_cond_kwargs,
-                    return_dict=False,
-                )[0]
-                model_pred = model_pred.chunk(2, dim=1)[0]
             elif self.model.get_trained_component() is not None:
                 model_pred = self.model.model_predict(
                     prepared_batch=prepared_batch,
@@ -2065,7 +2051,7 @@ class Trainer:
                                 raise ValueError(
                                     f"Cannot train parent-student networks on {self.config.lora_type} model. Only LyCORIS is supported."
                                 )
-                            target = self.model_predict(
+                            prepared_batch["target"] = self.model_predict(
                                 prepared_batch=prepared_batch,
                             )
                             if self.config.lora_type.lower() == "lycoris":
