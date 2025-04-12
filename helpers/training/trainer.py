@@ -2085,6 +2085,11 @@ class Trainer:
                         model_output=model_pred,
                         apply_conditioning_mask=True,
                     )
+                    loss, aux_loss_logs = self.model.auxiliary_loss(
+                        prepared_batch=prepared_batch,
+                        model_output=model_pred,
+                        loss=loss,
+                    )
 
                     parent_loss = None
                     if is_regularisation_data:
@@ -2182,6 +2187,9 @@ class Trainer:
                     )
                     if parent_loss is not None:
                         wandb_logs["regularisation_loss"] = parent_loss
+                    if aux_loss_logs is not None:
+                        for key, value in aux_loss_logs.items():
+                            wandb_logs[f"aux_loss/{key}"] = value
                     if self.grad_norm is not None:
                         if self.config.grad_clip_method == "norm":
                             wandb_logs["grad_norm"] = self.grad_norm
@@ -2375,6 +2383,11 @@ class Trainer:
                     "step_loss": loss.detach().item(),
                     "lr": float(self.lr),
                 }
+                if aux_loss_logs is not None:
+                    logs_to_print = {}
+                    for key, value in aux_loss_logs.items():
+                        logs_to_print[f"aux_loss/{key}"] = value
+                    training_logger.debug(f"Aux loss: {logs_to_print}")
                 if self.grad_norm is not None:
                     if self.config.grad_clip_method == "norm":
                         logs["grad_norm"] = float(self.grad_norm.clone().detach())
