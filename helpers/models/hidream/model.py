@@ -88,7 +88,7 @@ class HiDream(ImageModelFoundation):
             "subfolder": None,
             "tokenizer_subfolder": None,
             "model": LlamaForCausalLM,
-            "path": "meta-llama/Llama-3.1-8B-Instruct",
+            "path": "unsloth/Meta-Llama-3.1-8B-Instruct",
             # "required_quantisation_level": "int4_weight_only",
         },
     }
