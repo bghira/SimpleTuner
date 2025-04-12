@@ -56,6 +56,7 @@ default_models = {
     "sana": "terminusresearch/sana-1.6b-1024px",
     "ltxvideo": "Lightricks/LTX-Video",
     "wan": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+    "hidream": "HiDream-ai/HiDream-I1-Full"
 }
 
 default_cfg = {
@@ -66,6 +67,7 @@ default_cfg = {
     "terminus": 8.0,
     "sd3": 5.0,
     "ltxvideo": 4.0,
+    "hidream": 2.5,
     "wan": 4.0,
     "sana": 3.8,
 }
@@ -81,6 +83,7 @@ model_labels = {
     "sd1x": "Stable Diffusion",
     "ltxvideo": "LTX Video",
     "wan": "WanX",
+    "hidream": "HiDream I1",
     "sana": "Sana",
 }
 
