@@ -50,7 +50,6 @@ upstream_config_sources = {
     "wan": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
 }
 
-
 def get_model_config_path(model_family: str, model_path: str):
     if model_path is not None and model_path.endswith(".safetensors"):
         if model_family in upstream_config_sources:
@@ -63,7 +62,6 @@ def get_model_config_path(model_family: str, model_path: str):
             )
 
     return model_path
-
 
 class PipelineTypes(Enum):
     IMG2IMG = "img2img"
@@ -396,7 +394,7 @@ class ModelFoundation(ABC):
         """
         if not getattr(self, "AUTOENCODER_CLASS", None):
             return
-        if not hasattr(self, "vae") or self.vae is None:
+        if not hasattr(self, "vae") or self.vae is None or getattr(self.vae, 'device', None) == "meta":
             self.load_vae()
         return self.vae
 
@@ -601,6 +599,12 @@ class ModelFoundation(ABC):
         if self.tokenizers is not None:
             self.tokenizers = None
 
+    def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
+        """
+        A stub method for child classes to augment pretrained class load arguments with.
+        """
+        return pretrained_load_args
+
     def load_model(self, move_to_device: bool = True):
         logger.info(
             f"Loading diffusion model from {self.config.pretrained_model_name_or_path}"
@@ -632,6 +636,7 @@ class ModelFoundation(ABC):
             )
         if model_path.endswith(".safetensors"):
             loader_fn = self.MODEL_CLASS.from_single_file
+        pretrained_load_args = self.pretrained_load_args(pretrained_load_args)
         self.model = loader_fn(
             model_path,
             subfolder=self.MODEL_SUBFOLDER,
@@ -781,11 +786,7 @@ class ModelFoundation(ABC):
             and getattr(possibly_cached_pipeline, self.MODEL_TYPE.value, None) is None
         ):
             setattr(possibly_cached_pipeline, self.MODEL_TYPE.value, self.model)
-        if (
-            self.vae is not None
-            and getattr(possibly_cached_pipeline, "vae", None) is None
-        ):
-            setattr(possibly_cached_pipeline, "vae", self.vae)
+        setattr(possibly_cached_pipeline, "vae", self.get_vae())
         if self.text_encoders is not None:
             for (
                 text_encoder_attr,
@@ -1112,6 +1113,12 @@ class ModelFoundation(ABC):
         loss = loss.mean(dim=list(range(1, len(loss.shape)))).mean()
         return loss
 
+    def auxiliary_loss(self, model_output, prepared_batch: dict, loss: torch.Tensor):
+        """
+        Computes an auxiliary loss if needed.
+        This is a stub and can be optionally implemented in subclasses.
+        """
+        return loss, None
 
 class ImageModelFoundation(ModelFoundation):
     """
