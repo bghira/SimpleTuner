@@ -7,7 +7,6 @@ from helpers.models.common import (
     ModelTypes,
 )
 from transformers import (
-    PreTrainedTokenizer,
     T5EncoderModel,
     AutoTokenizer,
     LlamaForCausalLM,
@@ -18,7 +17,7 @@ from transformers import (
 HiDreamImageTransformer2DModel = None
 HiDreamImagePipeline = None
 try:
-    from helpers.models.hidream.transformer import HiDreamImageTransformer2DModel
+    from helpers.models.hidream.transformer import HiDreamImageTransformer2DModel, get_load_balancing_loss, clear_load_balancing_loss
     from helpers.models.hidream.pipeline import HiDreamImagePipeline
 except Exception as e:
     print(f"HiDream not available: {e}")
@@ -92,6 +91,14 @@ class HiDream(ImageModelFoundation):
             # "required_quantisation_level": "int4_weight_only",
         },
     }
+
+    def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
+        if self.config.hidream_load_balancing_loss_weight is not None and self.config.hidream_load_balancing_loss_weight > 0:
+            pretrained_load_args["aux_loss_alpha"] = (
+                self.config.hidream_load_balancing_loss_weight
+            )
+        
+        return pretrained_load_args
 
     def post_vae_load_setup(self):
         # we have to differently scale VAE inputs due to the patches.
@@ -317,3 +324,36 @@ class HiDream(ImageModelFoundation):
         )
 
         return output_str
+
+    def auxiliary_loss(self, model_output, prepared_batch: dict, loss: torch.Tensor):
+        aux_losses = get_load_balancing_loss()
+        aux_log_info = {}
+        
+        if aux_losses:
+            # Extract and accumulate the actual loss values (first element of each tuple)
+            accumulated_aux_loss = torch.sum(torch.stack([aux_tuple[0] for aux_tuple in aux_losses]))
+            
+            # For logging purposes - gather these regardless of whether we add to main loss
+            aux_log_info = {
+                "total": accumulated_aux_loss.item(),
+                "count": len(aux_losses),
+                "mean": accumulated_aux_loss.item() / max(1, len(aux_losses)),
+                # Extract statistics about expert utilization (the third element)
+                "expert_usage_min": min([torch.min(aux_tuple[2]).item() for aux_tuple in aux_losses], default=0),
+                "expert_usage_max": max([torch.max(aux_tuple[2]).item() for aux_tuple in aux_losses], default=0),
+                "expert_usage_mean": sum([torch.mean(aux_tuple[2]).item() for aux_tuple in aux_losses]) / max(1, len(aux_losses)),
+            }
+            
+            # Only add to the main loss if configured to do so
+            if self.config.hidream_use_load_balancing_loss:
+                total_loss = loss + accumulated_aux_loss * self.config.hidream_load_balancing_loss_weight
+            else:
+                total_loss = loss
+        else:
+            total_loss = loss
+            aux_log_info = {"total": 0.0, "count": 0}
+        
+        # Always clear the global list after processing to prevent memory buildup
+        clear_load_balancing_loss()
+        
+        return total_loss, aux_log_info
