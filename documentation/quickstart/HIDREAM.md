@@ -8,6 +8,8 @@ A 24G GPU is likely the minimum you'll get away with without extensive block off
 
 HiDream is a 17B total parameters with ~8B active at any given time using a learnt MoE gate to distribute its work. It uses **four** text encoders, and the Flux VAE.
 
+Overall the model suffers from architectural complexity, and seems to be a derivative of Flux Dev, either by direct distillation or by continued fine-tuning, evident from some validation samples that look like they share the same weights.
+
 ### Prerequisites
 
 Make sure that you have python installed; SimpleTuner does well with 3.10 through 3.12.
@@ -96,6 +98,7 @@ There, you will possibly need to modify the following variables:
 - `lora_type` - Set this to `lycoris`.
 - `model_family` - Set this to `hidream`.
 - `model_flavour` - Set this to `full`, because `dev` is distilled in a way that it is not easily directly trained unless you want to go the distance and break its distillation.
+  - In fact, the `full` model is also difficult to train, but is the only one that has not been distilled.
 - `output_dir` - Set this to the directory where you want to store your checkpoints and validation images. It's recommended to use a full path here.
 - `train_batch_size` - 1, maybe?.
 - `validation_resolution` - You should set this to `1024x1024` or one of HiDream's other supported resolutions.
@@ -248,7 +251,9 @@ If you wish to use stable MSE loss to score the model's performance, see [this d
 
 Flow-matching models such as OmniGen, Sana, Flux, and SD3 have a property called "shift" that allows us to shift the trained portion of the timestep schedule using a simple decimal value.
 
-The `full` model is trained with a value of `3.0` and `dev` used `6.0`
+The `full` model is trained with a value of `3.0` and `dev` used `6.0`.
+
+In practice, using such a high shift value tends to destroy either model. A value of `1.0` is a good starting point, but may move the model too little, and 3.0 may be too high.
 
 ##### Auto-shift
 A commonly-recommended approach is to follow several recent works and enable resolution-dependent timestep shift, `--flow_schedule_auto_shift` which uses higher shift values for larger images, and lower shift values for smaller images. This results in stable but potentially mediocre training results.
