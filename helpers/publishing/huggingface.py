@@ -208,6 +208,7 @@ class HubManager:
                 )
             except Exception as e:
                 logger.error(f"Failed to upload latest checkpoint: {e}")
+                logger.error(e)
 
     def upload_validation_images(
         self, validation_images, webhook_handler=None, override_path=None
