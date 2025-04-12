@@ -95,7 +95,7 @@ There, you will possibly need to modify the following variables:
 - `model_type` - Set this to `lora`.
 - `lora_type` - Set this to `lycoris`.
 - `model_family` - Set this to `hidream`.
-- `model_flavour` - Set this to `dev`, though `full` should work quite well too.
+- `model_flavour` - Set this to `full`, because `dev` is distilled in a way that it is not easily directly trained unless you want to go the distance and break its distillation.
 - `output_dir` - Set this to the directory where you want to store your checkpoints and validation images. It's recommended to use a full path here.
 - `train_batch_size` - 1, maybe?.
 - `validation_resolution` - You should set this to `1024x1024` or one of HiDream's other supported resolutions.
@@ -182,15 +182,11 @@ And a simple `config/lycoris_config.json` file - note that the `FeedForward` may
     "apply_preset": {
         "target_module": [
             "Attention",
-            "FeedForward"
         ],
         "module_algo_map": {
             "Attention": {
                 "factor": 16
             },
-            "FeedForward": {
-                "factor": 8
-            }
         }
     }
 }
@@ -251,6 +247,8 @@ If you wish to use stable MSE loss to score the model's performance, see [this d
 #### Flow schedule shifting
 
 Flow-matching models such as OmniGen, Sana, Flux, and SD3 have a property called "shift" that allows us to shift the trained portion of the timestep schedule using a simple decimal value.
+
+The `full` model is trained with a value of `3.0` and `dev` used `6.0`
 
 ##### Auto-shift
 A commonly-recommended approach is to follow several recent works and enable resolution-dependent timestep shift, `--flow_schedule_auto_shift` which uses higher shift values for larger images, and lower shift values for smaller images. This results in stable but potentially mediocre training results.
