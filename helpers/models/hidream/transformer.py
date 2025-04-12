@@ -60,7 +60,7 @@ def batched_load_balancing_loss():
 import torch
 from torch import nn
 from typing import Optional
-from diffusers.models.attention_processor import Attention
+from diffusers.models.attention_processor import Attention as VanillaAttention
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 from typing import Optional
 from typing import List
@@ -228,7 +228,7 @@ def attention(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor):
 
 
 @maybe_allow_in_graph
-class Attention(Attention):
+class Attention(VanillaAttention):
     def __init__(
         self,
         query_dim: int,
@@ -242,7 +242,7 @@ class Attention(Attention):
         out_dim: int = None,
         single: bool = False,
     ):
-        super(Attention, self).__init__()
+        super(VanillaAttention, self).__init__()
         self.inner_dim = out_dim if out_dim is not None else dim_head * heads
         self.query_dim = query_dim
         self.upcast_attention = upcast_attention
@@ -1177,7 +1177,6 @@ class HiDreamImageTransformer2DModel(
             timesteps = self.expand_timesteps(
                 timesteps, batch_size, hidden_states.device
             )
-            print(f"t_embedder device: {self.t_embedder.device}")
             timesteps_emb = torch.utils.checkpoint.checkpoint(
                 create_custom_forward_timestep(timesteps),
                 self.t_embedder,
@@ -1195,7 +1194,6 @@ class HiDreamImageTransformer2DModel(
             timesteps = self.expand_timesteps(
                 timesteps, batch_size, hidden_states.device
             )
-            print(f"t_embedder device: {self.t_embedder.device}")
             timesteps = self.t_embedder(timesteps, hidden_states_type)
             p_embedder = self.p_embedder(pooled_embeds)
             adaln_input = timesteps + p_embedder
