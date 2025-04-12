@@ -431,7 +431,7 @@ class MoEGate(nn.Module):
 
     def forward(self, hidden_states):
         bsz, seq_len, h = hidden_states.shape
-        
+
         # Compute gating score
         hidden_states = hidden_states.view(-1, h)
         logits = F.linear(hidden_states, self.weight, None)
@@ -455,7 +455,7 @@ class MoEGate(nn.Module):
             scores_for_aux = scores
             aux_topk = self.top_k
             topk_idx_for_aux_loss = topk_idx.view(bsz, -1)
-            
+
             if self.seq_aux:
                 # Sequence-level auxiliary loss with gradient checkpointing
                 def create_seq_aux_loss_fn(scores_view, idx, device):
@@ -467,16 +467,21 @@ class MoEGate(nn.Module):
                             torch.ones(bsz, seq_len * aux_topk, device=device),
                         ).div_(seq_len * aux_topk / self.n_routed_experts)
                         return ce, scores_view
+
                     return compute_seq_aux_loss
-                
-                ckpt_kwargs = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-                scores_for_seq_aux = scores_for_aux.view(bsz, seq_len, -1)
-                
-                ce, scores_view = torch.utils.checkpoint.checkpoint(
-                    create_seq_aux_loss_fn(scores_for_seq_aux, topk_idx_for_aux_loss, hidden_states.device),
-                    **ckpt_kwargs
+
+                ckpt_kwargs = (
+                    {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
                 )
-                
+                scores_for_seq_aux = scores_for_aux.view(bsz, seq_len, -1)
+
+                ce, scores_view = torch.utils.checkpoint.checkpoint(
+                    create_seq_aux_loss_fn(
+                        scores_for_seq_aux, topk_idx_for_aux_loss, hidden_states.device
+                    ),
+                    **ckpt_kwargs,
+                )
+
                 aux_loss = (ce * scores_view.mean(dim=1)).sum(dim=1).mean() * self.alpha
             else:
                 # Token-level auxiliary loss with gradient checkpointing
@@ -485,26 +490,39 @@ class MoEGate(nn.Module):
                         mask_ce = F.one_hot(idx.view(-1), num_classes=num_classes)
                         ce = mask_ce.float().mean(0)
                         return ce, scores_mean
+
                     return compute_token_aux_loss
-                
-                ckpt_kwargs = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-                scores_mean = scores_for_aux.mean(0)
-                
-                ce, scores_mean = torch.utils.checkpoint.checkpoint(
-                    create_token_aux_loss_fn(scores_mean, topk_idx_for_aux_loss, self.n_routed_experts),
-                    **ckpt_kwargs
+
+                ckpt_kwargs = (
+                    {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
                 )
-                
+                scores_mean = scores_for_aux.mean(0)
+
+                ce, scores_mean = torch.utils.checkpoint.checkpoint(
+                    create_token_aux_loss_fn(
+                        scores_mean, topk_idx_for_aux_loss, self.n_routed_experts
+                    ),
+                    **ckpt_kwargs,
+                )
+
                 fi = ce * self.n_routed_experts
                 aux_loss = (scores_mean * fi).sum() * self.alpha
-                
+
                 # Store for later use but detach to prevent memory leakage
                 with torch.no_grad():
-                    save_load_balancing_loss((aux_loss.detach(), scores_mean.detach(), fi.detach(), self.alpha))
+                    save_load_balancing_loss(
+                        (
+                            aux_loss.detach(),
+                            scores_mean.detach(),
+                            fi.detach(),
+                            self.alpha,
+                        )
+                    )
         else:
             aux_loss = None
-            
+
         return topk_idx, topk_weight, aux_loss
+
 
 # Modified from https://github.com/deepseek-ai/DeepSeek-V3/blob/main/inference/model.py
 class MOEFeedForwardSwiGLU(nn.Module):

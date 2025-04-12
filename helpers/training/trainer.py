@@ -357,17 +357,17 @@ class Trainer:
         # if text_encoder_1_precision -> text_encoder_4_precision has quanto we'll mark that as well
         for i in range(1, 5):
             if getattr(self.config, f"text_encoder_{i}_precision", None):
-                if "quanto" in getattr(
-                    self.config, f"text_encoder_{i}_precision"
-                ):
+                if "quanto" in getattr(self.config, f"text_encoder_{i}_precision"):
                     if self.config.is_torchao:
-                        raise ValueError("Cannot enable Quanto and TorchAO together. One quant engine must be used for all precision levels.")
+                        raise ValueError(
+                            "Cannot enable Quanto and TorchAO together. One quant engine must be used for all precision levels."
+                        )
                     self.config.is_quanto = True
-                elif "torchao" in getattr(
-                    self.config, f"text_encoder_{i}_precision"
-                ):
+                elif "torchao" in getattr(self.config, f"text_encoder_{i}_precision"):
                     if self.config.is_quanto:
-                        raise ValueError("Cannot enable Quanto and TorchAO together. One quant engine must be used for all precision levels.")
+                        raise ValueError(
+                            "Cannot enable Quanto and TorchAO together. One quant engine must be used for all precision levels."
+                        )
                     self.config.is_torchao = True
                 elif "bnb" in getattr(self.config, f"text_encoder_{i}_precision"):
                     self.config.is_bnb = True

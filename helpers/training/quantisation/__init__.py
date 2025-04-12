@@ -326,7 +326,9 @@ def quantise_model(
                     "quantize_activations", args.quantize_activations
                 ),
             }
-            logger.info(f"Quantising {model.__class__.__name__} with {quant_args_combined}")
+            logger.info(
+                f"Quantising {model.__class__.__name__} with {quant_args_combined}"
+            )
             models[i] = (quant_fn(model, **quant_args_combined), quant_args)
 
     # Unpack the quantized models

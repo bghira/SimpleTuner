@@ -50,6 +50,7 @@ upstream_config_sources = {
     "wan": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
 }
 
+
 def get_model_config_path(model_family: str, model_path: str):
     if model_path is not None and model_path.endswith(".safetensors"):
         if model_family in upstream_config_sources:
@@ -62,6 +63,7 @@ def get_model_config_path(model_family: str, model_path: str):
             )
 
     return model_path
+
 
 class PipelineTypes(Enum):
     IMG2IMG = "img2img"
@@ -394,7 +396,11 @@ class ModelFoundation(ABC):
         """
         if not getattr(self, "AUTOENCODER_CLASS", None):
             return
-        if not hasattr(self, "vae") or self.vae is None or getattr(self.vae, 'device', None) == "meta":
+        if (
+            not hasattr(self, "vae")
+            or self.vae is None
+            or getattr(self.vae, "device", None) == "meta"
+        ):
             self.load_vae()
         return self.vae
 
@@ -1119,6 +1125,7 @@ class ModelFoundation(ABC):
         This is a stub and can be optionally implemented in subclasses.
         """
         return loss, None
+
 
 class ImageModelFoundation(ModelFoundation):
     """
