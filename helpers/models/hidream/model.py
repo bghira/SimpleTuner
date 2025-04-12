@@ -85,10 +85,10 @@ class HiDream(ImageModelFoundation):
         "text_encoder_4": {
             "name": "Llama",
             "tokenizer": AutoTokenizer,
-            "subfolder": None,
-            "tokenizer_subfolder": None,
+            "subfolder": "text_encoder_4",
+            "tokenizer_subfolder": "tokenizer_4",
             "model": LlamaForCausalLM,
-            "path": "unsloth/Meta-Llama-3.1-8B-Instruct",
+            "path": "terminusresearch/HiDream-I1-Llama-3.1-8B-Instruct",
             # "required_quantisation_level": "int4_weight_only",
         },
     }
