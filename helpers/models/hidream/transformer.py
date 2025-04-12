@@ -193,15 +193,36 @@ class OutEmbed(nn.Module):
         x = self.linear(x)
         return x
 
-
+USE_FLASH_ATTN3 = False
+USE_FLASH_ATTN2 = False
+USE_TORCH_SDPA = False
 try:
     from flash_attn_interface import flash_attn_func
 
     USE_FLASH_ATTN3 = True
 except:
-    from flash_attn import flash_attn_func
+    try:
+        print(f"HiDream: FlashAttention3 not found, trying FlashAttention2")
+        from flash_attn import flash_attn_func
+        USE_FLASH_ATTN2 = True
 
-    USE_FLASH_ATTN3 = False
+    except Exception as e:
+        print(f"HiDream: FlashAttention2 failed to load ({e}), falling back to Torch SDPA.")
+        USE_TORCH_SDPA = True
+
+        def flash_attn_func(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False):
+            q = query.transpose(1, 2)  
+            k = key.transpose(1, 2)    
+            v = value.transpose(1, 2)
+            
+            hidden_states = torch.nn.functional.scaled_dot_product_attention(
+                q, k, v, 
+                attn_mask=attn_mask,
+                dropout_p=dropout_p,
+                is_causal=is_causal
+            )
+            hidden_states = hidden_states.transpose(1, 2)
+            return hidden_states
 
 
 # Copied from https://github.com/black-forest-labs/flux/blob/main/src/flux/math.py
@@ -220,8 +241,12 @@ def attention(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor):
         hidden_states = flash_attn_func(
             query, key, value, causal=False, deterministic=False
         )[0]
-    else:
+    elif USE_FLASH_ATTN2:
         hidden_states = flash_attn_func(query, key, value, dropout_p=0.0, causal=False)
+    elif USE_TORCH_SDPA:
+        hidden_states = flash_attn_func(
+            query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False
+        )
     hidden_states = hidden_states.flatten(-2)
     hidden_states = hidden_states.to(query.dtype)
     return hidden_states
