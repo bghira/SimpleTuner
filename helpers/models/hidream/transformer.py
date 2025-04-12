@@ -228,7 +228,7 @@ def attention(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor):
 
 
 @maybe_allow_in_graph
-class HiDreamAttention(Attention):
+class Attention(Attention):
     def __init__(
         self,
         query_dim: int,
@@ -303,7 +303,7 @@ class HiDreamAttnProcessor_flashattn:
 
     def __call__(
         self,
-        attn: HiDreamAttention,
+        attn: Attention,
         image_tokens: torch.FloatTensor,
         image_tokens_masks: Optional[torch.FloatTensor] = None,
         text_tokens: Optional[torch.FloatTensor] = None,
@@ -613,7 +613,7 @@ class HiDreamImageSingleTransformerBlock(nn.Module):
 
         # 1. Attention
         self.norm1_i = nn.LayerNorm(dim, eps=1e-06, elementwise_affine=False)
-        self.attn1 = HiDreamAttention(
+        self.attn1 = Attention(
             query_dim=dim,
             heads=num_attention_heads,
             dim_head=attention_head_dim,
@@ -685,7 +685,7 @@ class HiDreamImageTransformerBlock(nn.Module):
         # 1. Attention
         self.norm1_i = nn.LayerNorm(dim, eps=1e-06, elementwise_affine=False)
         self.norm1_t = nn.LayerNorm(dim, eps=1e-06, elementwise_affine=False)
-        self.attn1 = HiDreamAttention(
+        self.attn1 = Attention(
             query_dim=dim,
             heads=num_attention_heads,
             dim_head=attention_head_dim,
@@ -899,7 +899,7 @@ class HiDreamImageTransformer2DModel(
             module,
             (
                 HiDreamImageBlock,
-                HiDreamAttention,
+                Attention,
                 FeedForwardSwiGLU,
                 MOEFeedForwardSwiGLU,
             ),
@@ -1177,6 +1177,7 @@ class HiDreamImageTransformer2DModel(
             timesteps = self.expand_timesteps(
                 timesteps, batch_size, hidden_states.device
             )
+            print(f"t_embedder device: {self.t_embedder.device}")
             timesteps_emb = torch.utils.checkpoint.checkpoint(
                 create_custom_forward_timestep(timesteps),
                 self.t_embedder,
@@ -1194,6 +1195,7 @@ class HiDreamImageTransformer2DModel(
             timesteps = self.expand_timesteps(
                 timesteps, batch_size, hidden_states.device
             )
+            print(f"t_embedder device: {self.t_embedder.device}")
             timesteps = self.t_embedder(timesteps, hidden_states_type)
             p_embedder = self.p_embedder(pooled_embeds)
             adaln_input = timesteps + p_embedder
