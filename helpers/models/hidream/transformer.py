@@ -583,7 +583,9 @@ class MOEFeedForwardSwiGLU(nn.Module):
             x = x.repeat_interleave(self.num_activated_experts, dim=0)
             y = torch.empty_like(x, dtype=wtype)
             for i, expert in enumerate(self.experts):
-                y[flat_topk_idx == i] = expert(x[flat_topk_idx == i]).to(dtype=wtype)
+                x2 = x[flat_topk_idx == i]
+                if x2.size(0):
+                    y[flat_topk_idx == i] = expert(x2).to(dtype=wtype)
             y = (y.view(*topk_weight.shape, -1) * topk_weight.unsqueeze(-1)).sum(dim=1)
             y = y.view(*orig_shape).to(dtype=wtype)
             # y = AddAuxiliaryLoss.apply(y, aux_loss)
