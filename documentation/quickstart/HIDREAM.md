@@ -473,11 +473,11 @@ model_output.save("output.png", format="PNG")
 
 ### Lowest VRAM config
 
-The lowest VRAM OmniGen configuration is not yet known, but it is expected to be similar to the following:
+The lowest VRAM OmniGen configuration is about 20-22G:
 
 - OS: Ubuntu Linux 24
 - GPU: A single NVIDIA CUDA device (10G, 12G)
-- System memory: 50G of system memory approximately
+- System memory: 50G of system memory approximately (could be more, could be less)
 - Base model precision:
   - For Apple and AMD systems, `int8-quanto` (or `fp8-torchao`, `int8-torchao` all follow similar memory use profiles)
     - `int4-quanto` works as well, but you might have lower accuracy / worse results
@@ -501,7 +501,7 @@ If you are training a subject or style and would like to mask one or the other, 
 
 ### Quantisation
 
-Not tested thoroughly (yet).
+HiDream tends to respond well down to `int4` precision level, though `int8` will be a sweet spot for quality and stability if you can't afford `bf16`.
 
 ### Learning rates
 
@@ -522,4 +522,12 @@ If any image quality issues arise, please open an issue on Github.
 
 ### Aspect bucketing
 
-This model has an unknown response to aspect bucketed data. Experimentation will be helpful.
+Some limitations with the model's patch embed implementation mean that there are certain resolutions that will cause an error.
+
+Experimentation will be helpful, as well as thorough bug reports.
+
+### Full-rank tuning
+
+DeepSpeed will use a LOT of system memory with HiDream, and full tuning might not perform the way you hope in terms of learning concepts or avoiding model collapse.
+
+Lycoris LoKr is recommended in lieu of full-rank tuning, as it is more stable and has a lower memory footprint.
