@@ -1443,6 +1443,11 @@ class Validation:
             for image in image_list:
                 evaluation_score = self.model_evaluator.evaluate([image], [prompt])
                 self.eval_scores[shortname] = round(float(evaluation_score), 4)
+        if len(self.eval_scores) == 0:
+            logger.warning(
+                "No evaluation scores were calculated. Please check your evaluation settings."
+            )
+            return {}
         # Log the scores into dict: {"min", "max", "mean", "std"}
         result = {
             "clip/min": min(self.eval_scores.values()),
