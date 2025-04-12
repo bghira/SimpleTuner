@@ -1069,7 +1069,7 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
                 latents / self.vae.config.scaling_factor
             ) + self.vae.config.shift_factor
 
-            image = self.vae.decode(latents, return_dict=False)[0]
+            image = self.vae.decode(latents.to(dtype=self.vae.dtype, device=self.vae.device), return_dict=False)[0]
             image = self.image_processor.postprocess(image, output_type=output_type)
 
         # Offload all models
