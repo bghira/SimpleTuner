@@ -59,7 +59,7 @@ class HiDream(ImageModelFoundation):
     }
     MODEL_SUBFOLDER = "transformer"
     # The default model flavor to use when none is specified.
-    DEFAULT_MODEL_FLAVOUR = "dev"
+    DEFAULT_MODEL_FLAVOUR = "full"
     HUGGINGFACE_PATHS = {
         "dev": "HiDream-ai/HiDream-I1-Dev",
         "full": "HiDream-ai/HiDream-I1-Full",
