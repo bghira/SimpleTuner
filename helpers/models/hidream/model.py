@@ -111,9 +111,9 @@ class HiDream(ImageModelFoundation):
         t5_embeds, llama_embeds, pooled_prompt_embeds = text_embedding
 
         return {
-            "t5_prompt_embeds": t5_embeds.squeeze(0),
-            "llama_prompt_embeds": llama_embeds.squeeze(0),
-            "pooled_prompt_embeds": pooled_prompt_embeds.squeeze(0),
+            "t5_prompt_embeds": t5_embeds.squeeze(0).detach().clone().to("cpu"),
+            "llama_prompt_embeds": llama_embeds.squeeze(0).detach().clone().to("cpu"),
+            "pooled_prompt_embeds": pooled_prompt_embeds.squeeze(0).detach().clone().to("cpu"),
         }
 
     def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
