@@ -852,7 +852,7 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
             else:
                 raise ValueError("Either prompt or embeddings must be provided")
 
-        device = self._execution_device
+        device = self.transformer.device
 
         # 4. Encode prompts
         lora_scale = (
