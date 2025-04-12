@@ -514,6 +514,7 @@ class MOEFeedForwardSwiGLU(nn.Module):
         hidden_dim: int,
         num_routed_experts: int,
         num_activated_experts: int,
+        aux_loss_alpha: float = 0.01,
     ):
         super().__init__()
         self.shared_experts = FeedForwardSwiGLU(dim, hidden_dim // 2)
@@ -524,6 +525,7 @@ class MOEFeedForwardSwiGLU(nn.Module):
             embed_dim=dim,
             num_routed_experts=num_routed_experts,
             num_activated_experts=num_activated_experts,
+            aux_loss_alpha=aux_loss_alpha,
         )
         self.num_activated_experts = num_activated_experts
 
@@ -602,6 +604,7 @@ class HiDreamImageSingleTransformerBlock(nn.Module):
         attention_head_dim: int,
         num_routed_experts: int = 4,
         num_activated_experts: int = 2,
+        aux_loss_alpha: float = 0.01,
     ):
         super().__init__()
         self.num_attention_heads = num_attention_heads
@@ -629,6 +632,7 @@ class HiDreamImageSingleTransformerBlock(nn.Module):
                 hidden_dim=4 * dim,
                 num_routed_experts=num_routed_experts,
                 num_activated_experts=num_activated_experts,
+                aux_loss_alpha=aux_loss_alpha,
             )
         else:
             self.ff_i = FeedForwardSwiGLU(dim=dim, hidden_dim=4 * dim)
@@ -673,6 +677,7 @@ class HiDreamImageTransformerBlock(nn.Module):
         attention_head_dim: int,
         num_routed_experts: int = 4,
         num_activated_experts: int = 2,
+        aux_loss_alpha: float = 0.01,
     ):
         super().__init__()
         self.num_attention_heads = num_attention_heads
@@ -769,6 +774,7 @@ class HiDreamImageBlock(nn.Module):
         attention_head_dim: int,
         num_routed_experts: int = 4,
         num_activated_experts: int = 2,
+        aux_loss_alpha: float = 0.01,
         block_type: BlockType = BlockType.TransformerBlock,
     ):
         super().__init__()
@@ -782,6 +788,7 @@ class HiDreamImageBlock(nn.Module):
             attention_head_dim,
             num_routed_experts,
             num_activated_experts,
+            aux_loss_alpha,
         )
 
     def forward(
@@ -824,6 +831,7 @@ class HiDreamImageTransformer2DModel(
         axes_dims_rope: Tuple[int, int] = (32, 32),
         max_resolution: Tuple[int, int] = (128, 128),
         llama_layers: List[int] = None,
+        aux_loss_alpha: float = 0.0,
     ):
         super().__init__()
         self.out_channels = out_channels or in_channels
@@ -850,6 +858,7 @@ class HiDreamImageTransformer2DModel(
                     num_routed_experts=num_routed_experts,
                     num_activated_experts=num_activated_experts,
                     block_type=BlockType.TransformerBlock,
+                    aux_loss_alpha=aux_loss_alpha,
                 )
                 for i in range(self.config.num_layers)
             ]
@@ -864,6 +873,7 @@ class HiDreamImageTransformer2DModel(
                     num_routed_experts=num_routed_experts,
                     num_activated_experts=num_activated_experts,
                     block_type=BlockType.SingleTransformerBlock,
+                    aux_loss_alpha=aux_loss_alpha,
                 )
                 for i in range(self.config.num_single_layers)
             ]
