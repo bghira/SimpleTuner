@@ -799,10 +799,13 @@ class ModelFoundation(ABC):
                 text_encoder_config,
             ) in self.TEXT_ENCODER_CONFIGURATION.items():
                 if getattr(possibly_cached_pipeline, text_encoder_attr, None) is None:
+                    text_encoder_attr_number = 1
+                    if 'encoder_' in text_encoder_attr:
+                        text_encoder_attr_number = text_encoder_attr.split("_")[-1]
                     setattr(
                         possibly_cached_pipeline,
                         text_encoder_attr,
-                        self.text_encoders[int(text_encoder_attr.split("_")[-1]) - 1],
+                        self.text_encoders[int(text_encoder_attr_number) - 1],
                     )
         if self.config.controlnet:
             if getattr(possibly_cached_pipeline, "controlnet", None) is None:
