@@ -945,7 +945,7 @@ class Validation:
     ):
         """Generate validation images for a single prompt."""
         # Placeholder for actual image generation and logging
-        logger.debug(f"Validating prompt: {prompt}")
+        logger.debug(f"Validating ({validation_shortname}) prompt: {prompt}")
         # benchmarked / stitched validation images
         stitched_validation_images = {}
         # untouched / un-stitched validation images
@@ -1180,9 +1180,15 @@ class Validation:
                     validation_image_results
                 )
                 if self.config.use_ema:
-                    ema_validation_images[validation_shortname].extend(
-                        ema_image_results
-                    )
+                    if validation_shortname in ema_validation_images and ema_image_results is not None:
+                        if ema_validation_images[validation_shortname] is None:
+                            # init the value
+                            ema_validation_images[validation_shortname] = []
+                        if isinstance(ema_validation_images[validation_shortname], list):
+                            # if we have a list of images, we can stitch them.
+                            ema_validation_images[validation_shortname].extend(
+                                ema_image_results
+                            )
 
             except Exception as e:
                 import traceback
