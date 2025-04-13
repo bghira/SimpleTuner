@@ -14,7 +14,7 @@
 
 import inspect
 from typing import Any, Callable, Dict, List, Optional, Union
-
+import PIL
 import torch
 from transformers import (
     CLIPTextModelWithProjection,
