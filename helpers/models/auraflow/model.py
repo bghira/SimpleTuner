@@ -179,13 +179,15 @@ class Auraflow(ImageModelFoundation):
                 f"{self.NAME} does not support fp8-quanto. Please use fp8-torchao or int8 precision level instead."
             )
         t5_max_length = 120
-        if (
-            self.config.tokenizer_max_length is None
-            or int(self.config.tokenizer_max_length) > t5_max_length
-        ):
+        if self.config.tokenizer_max_length is None or self.config.tokenizer_max_length == 0:
+            logger.warning(
+                f"Setting T5 XXL tokeniser max length to {t5_max_length} for {self.NAME}."
+            )
+            self.config.tokenizer_max_length = t5_max_length
+        if int(self.config.tokenizer_max_length) > t5_max_length:
             if not self.config.i_know_what_i_am_doing:
                 logger.warning(
-                    f"Updating T5 XXL tokeniser max length to {t5_max_length} for {self.NAME}."
+                    f"Overriding T5 XXL tokeniser max length to {t5_max_length} for {self.NAME} because `--i_know_what_i_am_doing` has not been set."
                 )
                 self.config.tokenizer_max_length = t5_max_length
             else:
