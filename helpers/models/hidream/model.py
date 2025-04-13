@@ -252,6 +252,8 @@ class HiDream(ImageModelFoundation):
             img_ids = img_ids_pad.unsqueeze(0).to(
                 prepared_batch["noisy_latents"].device
             )
+            img_sizes = img_sizes.repeat(B, 1)
+            img_ids = img_ids.repeat(B, 1, 1)
         else:
             img_sizes = img_ids = None
 
