@@ -198,6 +198,14 @@ HiDream has not been tested on 16G cards, but with aggressive quantisation and p
 
 Flux prefers being trained with multiple large GPUs but a single 16G card should be able to do it with quantisation of the transformer and text encoders.
 
+### Auraflow
+
+- A100-80G (Full tune with DeepSpeed)
+- A100-40G (LoRA, LoKr)
+- 3090 24G (LoRA, LoKr)
+- 4060 Ti 16G, 4070 Ti 16G, 3080 16G (int8, LoRA, LoKr)
+- 4070 Super 12G, 3080 10G, 3060 12GB (nf4, LoRA, LoKr)
+
 ### SDXL, 1024px
 
 - A100-80G (EMA, large batches, LoRA @ insane batch sizes)
