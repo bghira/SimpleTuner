@@ -605,6 +605,8 @@ class Trainer:
             elif self.config.base_model_default_dtype == "bf16":
                 self.config.base_weight_dtype = torch.bfloat16
                 self.config.enable_adamw_bf16 = True
+            elif self.config.base_model_default_dtype == "fp16":
+                raise ValueError("fp16 mixed precision training is not supported.")
             if not preprocessing_models_only:
                 logger.info(
                     f"Moving {self.model.MODEL_TYPE.value} to dtype={self.config.base_weight_dtype}, device={quantization_device}"
@@ -612,7 +614,6 @@ class Trainer:
                 self.model.model.to(
                     quantization_device, dtype=self.config.base_weight_dtype
                 )
-
         if self.config.is_quanto:
             with self.accelerator.local_main_process_first():
                 if ema_only:
