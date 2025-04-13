@@ -1,14 +1,14 @@
-## HiDream Quickstart
+## Auraflow Quickstart
 
-In this example, we'll be training a Lycoris LoKr for HiDream, hoping to god we've got enough memory to pull it off.
+In this example, we'll be training a Lycoris LoKr for Auraflow.
 
-A 24G GPU is likely the minimum you'll get away with without extensive block offloading and fused backward pass. A Lycoris LoKr will function just as well!
+Full fine-tuning for this model will require a lot of VRAM due to the 6B parameters, and you'd need to use [DeepSpeed](/documentation/DEEPSPEED.md) for that to work.
 
 ### Hardware requirements
 
-HiDream is a 17B total parameters with ~8B active at any given time using a learnt MoE gate to distribute its work. It uses **four** text encoders, and the Flux VAE.
+Auraflow v0.3 was released as a 6B parameter MMDiT that uses Pile T5 for its encoded text representation and the 4ch SDXL VAE for its latent image representation.
 
-Overall the model suffers from architectural complexity, and seems to be a derivative of Flux Dev, either by direct distillation or by continued fine-tuning, evident from some validation samples that look like they share the same weights.
+This model is somewhat slow for inference, but trains at a decent speed.
 
 ### Prerequisites
 
@@ -96,25 +96,21 @@ There, you will possibly need to modify the following variables:
 
 - `model_type` - Set this to `lora`.
 - `lora_type` - Set this to `lycoris`.
-- `model_family` - Set this to `hidream`.
-- `model_flavour` - Set this to `full`, because `dev` is distilled in a way that it is not easily directly trained unless you want to go the distance and break its distillation.
-  - In fact, the `full` model is also difficult to train, but is the only one that has not been distilled.
+- `model_family` - Set this to `auraflow`.
+- `model_flavour` - Set this to `v0.3`, or leave it unset to use the default model.
 - `output_dir` - Set this to the directory where you want to store your checkpoints and validation images. It's recommended to use a full path here.
-- `train_batch_size` - 1, maybe?.
-- `validation_resolution` - You should set this to `1024x1024` or one of HiDream's other supported resolutions.
+- `train_batch_size` - 1 to 4 should work for 24G card.
+- `validation_resolution` - You should set this to `1024x1024` or one of Auraflow's other supported resolutions.
   - Other resolutions may be specified using commas to separate them: `1024x1024,1280x768,2048x2048`
-- `validation_guidance` - Use whatever you are used to selecting at inference time for HiDream; a lower value around 2.5-3.0 makes more realistic results
-- `validation_num_inference_steps` - Use somewhere around 30
+  - Note that Auraflow's positional embeds are a bit strange and training with multi-scale images (multiple base resolutions) has an uncertain outcome.
+- `validation_guidance` - Use whatever you are used to selecting at inference time for Auraflow; a lower value around 3.5-4.0 makes more realistic results
+- `validation_num_inference_steps` - Use somewhere around 30-50
 - `use_ema` - setting this to `true` will greatly help obtain a more smoothed result alongside your main trained checkpoint.
 
 - `optimizer` - You can use any optimiser you are comfortable and familiar with, but we will use `optimi-lion` for this example.
-- `mixed_precision` - It's recommended to set this to `bf16` for the most efficient training configuration, or `no` (but will consume more memory and be slower).
+- `mixed_precision` - It's recommended to set this to `bf16` for the most efficient training configuration, or `no` for better results (but will consume more memory and be slower).
 - `gradient_checkpointing` - Disabling this will go the fastest, but limits your batch sizes. It is required to enable this to get the lowest VRAM usage.
 
-Some advanced HiDream options can be set to include MoE auxiliary loss during training. By adding the MoE loss, the value will naturally be much higher than usual.
-
-- `hidream_use_load_balancing_loss` - Set this to `true` to enable load balancing loss.
-- `hidream_load_balancing_loss_weight` - This is the magnitude of the auxiliary loss. A value of `0.01` is the default, but you can set it to `0.1` or `0.2` for a more aggressive training run.
 
 The impact of these options are currently unknown.
 
@@ -139,12 +135,12 @@ Your config.json will look something like mine by the end:
     "resolution": 1024,
     "resolution_type": "pixel_area",
     "report_to": "tensorboard",
-    "output_dir": "output/models-hidream",
+    "output_dir": "output/models-auraflow",
     "optimizer": "optimi-lion",
     "num_train_epochs": 0,
     "num_eval_images": 1,
     "model_type": "lora",
-    "model_family": "hidream",
+    "model_family": "auraflow",
     "mixed_precision": "bf16",
     "minimum_image_size": 0,
     "max_train_steps": 10000,
@@ -158,22 +154,18 @@ Your config.json will look something like mine by the end:
     "grad_clip_method": "value",
     "eval_steps_interval": 100,
     "disable_benchmark": false,
-    "data_backend_config": "config/hidream/multidatabackend.json",
+    "data_backend_config": "config/auraflow/multidatabackend.json",
     "checkpoints_total_limit": 5,
     "checkpointing_steps": 500,
     "caption_dropout_probability": 0.0,
     "base_model_precision": "int8-quanto",
-    "text_encoder_3_precision": "int8-quanto",
-    "text_encoder_4_precision": "int8-quanto",
     "aspect_bucket_rounding": 2
 }
 ```
 
 > ℹ️ Multi-GPU users can reference [this document](/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
 
-> ℹ️ This configuration sets the T5 (#3) and Llama (#4) text encoder precision levels to int8 to save memory for 24G cards. You can remove these options or set them to `no_change` if you have more memory available.
-
-And a simple `config/lycoris_config.json` file - note that the `FeedForward` may be removed for additional training stability.
+And a simple `config/lycoris_config.json` file:
 
 ```json
 {
@@ -188,7 +180,7 @@ And a simple `config/lycoris_config.json` file - note that the `FeedForward` may
         ],
         "module_algo_map": {
             "Attention": {
-                "factor": 16
+                "factor": 8
             },
         }
     }
@@ -237,7 +229,7 @@ A set of diverse prompt will help determine whether the model is collapsing as i
 }
 ```
 
-> ℹ️ HiDream defaults to 128 tokens and then truncates.
+> ℹ️ Auraflow defaults to 128 tokens and then truncates.
 
 #### CLIP score tracking
 
@@ -250,10 +242,6 @@ If you wish to use stable MSE loss to score the model's performance, see [this d
 #### Flow schedule shifting
 
 Flow-matching models such as OmniGen, Sana, Flux, and SD3 have a property called "shift" that allows us to shift the trained portion of the timestep schedule using a simple decimal value.
-
-The `full` model is trained with a value of `3.0` and `dev` used `6.0`.
-
-In practice, using such a high shift value tends to destroy either model. A value of `1.0` is a good starting point, but may move the model too little, and 3.0 may be too high.
 
 ##### Auto-shift
 A commonly-recommended approach is to follow several recent works and enable resolution-dependent timestep shift, `--flow_schedule_auto_shift` which uses higher shift values for larger images, and lower shift values for smaller images. This results in stable but potentially mediocre training results.
@@ -281,7 +269,7 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
 ```json
 [
   {
-    "id": "pseudo-camera-10k-hidream",
+    "id": "pseudo-camera-10k-auraflow",
     "type": "local",
     "crop": true,
     "crop_aspect": "square",
@@ -291,7 +279,7 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
     "maximum_image_size": 1024,
     "target_downsample_size": 1024,
     "resolution_type": "pixel_area",
-    "cache_dir_vae": "cache/vae/hidream/pseudo-camera-10k",
+    "cache_dir_vae": "cache/vae/auraflow/pseudo-camera-10k",
     "instance_data_dir": "datasets/pseudo-camera-10k",
     "disabled": false,
     "skip_file_discovery": "",
@@ -309,7 +297,7 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
     "maximum_image_size": 1024,
     "target_downsample_size": 1024,
     "resolution_type": "pixel_area",
-    "cache_dir_vae": "cache/vae/hidream/dreambooth-subject",
+    "cache_dir_vae": "cache/vae/auraflow/dreambooth-subject",
     "instance_data_dir": "datasets/dreambooth-subject",
     "caption_strategy": "instanceprompt",
     "instance_prompt": "the name of your subject goes here",
@@ -321,7 +309,7 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
     "type": "local",
     "dataset_type": "text_embeds",
     "default": true,
-    "cache_dir": "cache/text/hidream",
+    "cache_dir": "cache/text/auraflow",
     "disabled": false,
     "write_batch_size": 128
   }
@@ -383,25 +371,14 @@ Since it's a new model, the example will need some adjustment to work. Here's a 
 
 ```py
 import torch
-from helpers.models.hidream.pipeline import HiDreamImagePipeline
-from helpers.models.hidream.transformer import HiDreamImageTransformer2DModel
+from helpers.models.auraflow.pipeline import AuraFlowPipeline
+from helpers.models.auraflow.transformer import AuraFlowTransformer2DModel
 from lycoris import create_lycoris_from_weights
 from transformers import PreTrainedTokenizerFast, LlamaForCausalLM
 
-llama_repo = "unsloth/Meta-Llama-3.1-8B-Instruct"
-model_id = 'HiDream-ai/HiDream-I1-Dev'
-adapter_repo_id = 'bghira/hidream5m-photo-1mp-Prodigy'
+model_id = 'terminusresearch/auraflow-v0.3'
+adapter_repo_id = 'bghira/auraflow-photo-1mp-Prodigy'
 adapter_filename = 'pytorch_lora_weights.safetensors'
-
-tokenizer_4 = PreTrainedTokenizerFast.from_pretrained(
-    llama_repo,
-)
-text_encoder_4 = LlamaForCausalLM.from_pretrained(
-    llama_repo,
-    output_hidden_states=True,
-    output_attentions=True,
-    torch_dtype=torch.bfloat16,
-)
 
 def download_adapter(repo_id: str):
     import os
@@ -419,8 +396,8 @@ def download_adapter(repo_id: str):
     return path_to_adapter_file
     
 adapter_file_path = download_adapter(repo_id=adapter_repo_id)
-transformer = HiDreamImageTransformer2DModel.from_pretrained(model_id, torch_dtype=torch.bfloat16, subfolder="transformer")
-pipeline = HiDreamImagePipeline.from_pretrained(
+transformer = AuraFlowTransformer2DModel.from_pretrained(model_id, torch_dtype=torch.bfloat16, subfolder="transformer")
+pipeline = AuraFlowPipeline.from_pretrained(
     model_id,
     torch_dtype=torch.bfloat16,
     tokenizer_4=tokenizer_4,
@@ -471,7 +448,7 @@ model_output.save("output.png", format="PNG")
 
 ### Lowest VRAM config
 
-The lowest VRAM HiDream configuration is about 20-22G:
+The lowest VRAM OmniGen configuration is about 20-22G:
 
 - OS: Ubuntu Linux 24
 - GPU: A single NVIDIA CUDA device (10G, 12G)
@@ -499,7 +476,7 @@ If you are training a subject or style and would like to mask one or the other, 
 
 ### Quantisation
 
-HiDream tends to respond well down to `int4` precision level, though `int8` will be a sweet spot for quality and stability if you can't afford `bf16`.
+Auraflow tends to respond well down to `int4` precision level, though `int8` will be a sweet spot for quality and stability if you can't afford `bf16`.
 
 ### Learning rates
 
@@ -510,11 +487,11 @@ HiDream tends to respond well down to `int4` precision level, though `int8` will
 #### LoKr (--lora_type=lycoris)
 - Mild learning rates are better for LoKr (`1e-4` with AdamW, `2e-5` with Lion)
 - Other algo need more exploration.
-- Setting `is_regularisation_data` has unknown impact/effect with HiDream (not tested, but, should be fine?)
+- Setting `is_regularisation_data` has unknown impact/effect with Auraflow (not tested, but, should be fine?)
 
 ### Image artifacts
 
-HiDream has an unknown response to image artifacts, though it uses the Flux VAE, and has similar fine-details limitations.
+Auraflow has an unknown response to image artifacts, though it uses the Flux VAE, and has similar fine-details limitations.
 
 If any image quality issues arise, please open an issue on Github.
 
@@ -526,6 +503,6 @@ Experimentation will be helpful, as well as thorough bug reports.
 
 ### Full-rank tuning
 
-DeepSpeed will use a LOT of system memory with HiDream, and full tuning might not perform the way you hope in terms of learning concepts or avoiding model collapse.
+DeepSpeed will use a LOT of system memory with Auraflow, and full tuning might not perform the way you hope in terms of learning concepts or avoiding model collapse.
 
 Lycoris LoKr is recommended in lieu of full-rank tuning, as it is more stable and has a lower memory footprint.
