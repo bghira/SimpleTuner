@@ -2053,7 +2053,7 @@ class Trainer:
                                 )
                             prepared_batch["target"] = self.model_predict(
                                 prepared_batch=prepared_batch,
-                            )
+                            )["model_prediction"]
                             if self.config.lora_type.lower() == "lycoris":
                                 training_logger.debug(
                                     "Attaching LyCORIS adapter for student prediction."
