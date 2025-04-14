@@ -708,7 +708,6 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
             batch_size = prompt_embeds.shape[0]
 
         max_length = max_sequence_length
-        print(f'max length: {max_sequence_length}')
         if prompt_embeds is None:
             text_inputs = self.tokenizer(
                 prompt,
