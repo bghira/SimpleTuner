@@ -865,7 +865,10 @@ class ModelFoundation(ABC):
         Depending on the noise schedule prediction type or flow-matching settings,
         the target is computed differently.
         """
-        if self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
+        if prepared_batch.get("target") is not None:
+            # Parent-student training
+            target = prepared_batch["target"]
+        elif self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
             target = prepared_batch["noise"] - prepared_batch["latents"]
         elif self.PREDICTION_TYPE is PredictionTypes.EPSILON:
             target = prepared_batch["noise"]
