@@ -43,6 +43,8 @@ class Auraflow(ImageModelFoundation):
     DEFAULT_MODEL_FLAVOUR = "v0.3"
     HUGGINGFACE_PATHS = {
         "v0.3": "terminusresearch/auraflow-v0.3",
+        "v0.2": "fal/AuraFlow-v0.2",
+        "v0.1": "fal/AuraFlow",
     }
     MODEL_LICENSE = "apache-2.0"
 
@@ -53,6 +55,7 @@ class Auraflow(ImageModelFoundation):
             "subfolder": "text_encoder",
             "tokenizer_subfolder": "tokenizer",
             "model": UMT5EncoderModel,
+            "path": "terminusresearch/auraflow-v0.3"
         },
     }
 
@@ -123,9 +126,9 @@ class Auraflow(ImageModelFoundation):
             raise ValueError(
                 f"Input latent channels must be {self.LATENT_CHANNEL_COUNT}, but got {prepared_batch['noisy_latents'].shape[1]}."
             )
-        if height % self.model.config.patch_size != 0 or width % self.model.config.patch_size != 0:
+        if height % self.unwrap_model().config.patch_size != 0 or width % self.unwrap_model().config.patch_size != 0:
             raise ValueError(
-                f"Input latent height and width must be divisible by patch_size ({self.model.config.patch_size})."
+                f"Input latent height and width must be divisible by patch_size ({self.unwrap_model().config.patch_size})."
                 f" Got height={height}, width={width}."
             )
         
@@ -139,30 +142,30 @@ class Auraflow(ImageModelFoundation):
                 dtype=self.config.base_weight_dtype,
             ),
             timestep=prepared_batch["timesteps"],
-            return_dict=False,
-        )[0]
+            return_dict=True,
+        ).sample
         
         # unpatchify model_output
-        height = height // self.model.config.patch_size
-        width = width // self.model.config.patch_size
+        height = height // self.unwrap_model().config.patch_size
+        width = width // self.unwrap_model().config.patch_size
 
         model_output = model_output.reshape(
             shape=(
                 model_output.shape[0],
                 height,
                 width,
-                self.model.config.patch_size,
-                self.model.config.patch_size,
-                self.model.config.out_channels,
+                self.unwrap_model().config.patch_size,
+                self.unwrap_model().config.patch_size,
+                self.unwrap_model().config.out_channels,
             )
         )
         model_output = torch.einsum("nhwpqc->nchpwq", model_output)
         model_output = model_output.reshape(
             shape=(
                 model_output.shape[0],
-                self.model.config.out_channels,
-                height * self.model.config.patch_size,
-                width * self.model.config.patch_size,
+                self.unwrap_model().config.out_channels,
+                height * self.unwrap_model().config.patch_size,
+                width * self.unwrap_model().config.patch_size,
             )
         )
 
