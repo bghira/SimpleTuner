@@ -720,6 +720,7 @@ class ModelFoundation(ABC):
         """
         active_pipelines = getattr(self, "pipelines", {})
         if pipeline_type in active_pipelines:
+            setattr(active_pipelines[pipeline_type], self.MODEL_TYPE.value, unwrap_model(self.accelerator, self.model))
             return active_pipelines[pipeline_type]
         pipeline_kwargs = {
             "pretrained_model_name_or_path": self._model_config_path(),
