@@ -340,7 +340,7 @@ class MetadataBackend:
         self.save_cache(enforce_constraints=True)
         logger.info("Completed aspect bucket update.")
 
-    def split_buckets_between_processes(self, gradient_accumulation_steps=1):
+    def split_buckets_between_processes(self, gradient_accumulation_steps=1, apply_padding=False):
         """
         Splits the contents of each bucket in aspect_ratio_bucket_indices between the available processes.
         """
@@ -368,7 +368,7 @@ class MetadataBackend:
                 )
 
             with self.accelerator.split_between_processes(
-                trimmed_images, apply_padding=False
+                trimmed_images, apply_padding=apply_padding
             ) as images_split:
                 # Now images_split contains only the part of the images list that this process should handle
                 new_aspect_ratio_bucket_indices[bucket] = images_split
