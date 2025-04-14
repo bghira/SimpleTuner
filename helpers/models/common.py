@@ -709,7 +709,7 @@ class ModelFoundation(ABC):
                 self.model.requires_grad_(False)
 
     def get_trained_component(self):
-        return self.model
+        return self.unwrap_model()
 
     def _load_pipeline(
         self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True
@@ -720,6 +720,7 @@ class ModelFoundation(ABC):
         """
         active_pipelines = getattr(self, "pipelines", {})
         if pipeline_type in active_pipelines:
+            setattr(active_pipelines[pipeline_type], self.MODEL_TYPE.value, self.unwrap_model())
             return active_pipelines[pipeline_type]
         pipeline_kwargs = {
             "pretrained_model_name_or_path": self._model_config_path(),
@@ -741,14 +742,12 @@ class ModelFoundation(ABC):
         if "watermark" in signature.parameters:
             pipeline_kwargs["watermark"] = None
         if load_base_model:
-            pipeline_kwargs[self.MODEL_TYPE.value] = unwrap_model(
-                self.accelerator, self.model
-            )
+            pipeline_kwargs[self.MODEL_TYPE.value] = self.unwrap_model()
         else:
             pipeline_kwargs[self.MODEL_TYPE.value] = None
 
         if getattr(self, "vae", None) is not None:
-            pipeline_kwargs["vae"] = unwrap_model(self.accelerator, self.vae)
+            pipeline_kwargs["vae"] = self.unwrap_model(self.vae)
         elif getattr(self, "AUTOENCODER_CLASS", None) is not None:
             pipeline_kwargs["vae"] = self.get_vae()
 
@@ -761,8 +760,8 @@ class ModelFoundation(ABC):
                 self.text_encoders is not None
                 and len(self.text_encoders) >= text_encoder_idx
             ):
-                pipeline_kwargs[text_encoder_attr] = unwrap_model(
-                    self.accelerator, self.text_encoders[text_encoder_idx]
+                pipeline_kwargs[text_encoder_attr] = self.unwrap_model(
+                    self.text_encoders[text_encoder_idx]
                 )
                 pipeline_kwargs[
                     text_encoder_attr.replace("text_encoder", "tokenizer")
@@ -772,7 +771,9 @@ class ModelFoundation(ABC):
             text_encoder_idx += 1
 
         if self.config.controlnet:
-            pipeline_kwargs["controlnet"] = unwrap_model(self.accelerator, self.model)
+            pipeline_kwargs["controlnet"] = self.unwrap_model(
+                self.get_trained_component()
+            )
 
         logger.debug(
             f"Initialising {pipeline_class.__name__} with components: {pipeline_kwargs}"
@@ -799,10 +800,13 @@ class ModelFoundation(ABC):
                 text_encoder_config,
             ) in self.TEXT_ENCODER_CONFIGURATION.items():
                 if getattr(possibly_cached_pipeline, text_encoder_attr, None) is None:
+                    text_encoder_attr_number = 1
+                    if 'encoder_' in text_encoder_attr:
+                        text_encoder_attr_number = text_encoder_attr.split("_")[-1]
                     setattr(
                         possibly_cached_pipeline,
                         text_encoder_attr,
-                        self.text_encoders[int(text_encoder_attr.split("_")[-1]) - 1],
+                        self.text_encoders[int(text_encoder_attr_number) - 1],
                     )
         if self.config.controlnet:
             if getattr(possibly_cached_pipeline, "controlnet", None) is None:
@@ -1172,7 +1176,7 @@ class ImageModelFoundation(ModelFoundation):
     def add_lora_adapter(self):
         target_modules = self.get_lora_target_layers()
         addkeys, misskeys = [], []
-        lora_config = LoraConfig(
+        self.lora_config = LoraConfig(
             r=self.config.lora_rank,
             lora_alpha=(
                 self.config.lora_alpha
@@ -1184,7 +1188,7 @@ class ImageModelFoundation(ModelFoundation):
             target_modules=target_modules,
             use_dora=self.config.use_dora,
         )
-        self.model.add_adapter(lora_config)
+        self.model.add_adapter(self.lora_config)
         if self.config.init_lora:
             addkeys, misskeys = load_lora_weights(
                 {self.MODEL_TYPE: self.model},

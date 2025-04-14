@@ -605,6 +605,8 @@ class Trainer:
             elif self.config.base_model_default_dtype == "bf16":
                 self.config.base_weight_dtype = torch.bfloat16
                 self.config.enable_adamw_bf16 = True
+            elif self.config.base_model_default_dtype == "fp16":
+                raise ValueError("fp16 mixed precision training is not supported.")
             if not preprocessing_models_only:
                 logger.info(
                     f"Moving {self.model.MODEL_TYPE.value} to dtype={self.config.base_weight_dtype}, device={quantization_device}"
@@ -612,7 +614,6 @@ class Trainer:
                 self.model.model.to(
                     quantization_device, dtype=self.config.base_weight_dtype
                 )
-
         if self.config.is_quanto:
             with self.accelerator.local_main_process_first():
                 if ema_only:
@@ -2048,9 +2049,7 @@ class Trainer:
                                     0.0
                                 )
                             else:
-                                raise ValueError(
-                                    f"Cannot train parent-student networks on {self.config.lora_type} model. Only LyCORIS is supported."
-                                )
+                                self.model.get_trained_component().disable_lora()
                             prepared_batch["target"] = self.model_predict(
                                 prepared_batch=prepared_batch,
                             )["model_prediction"]
@@ -2061,6 +2060,8 @@ class Trainer:
                                 self.accelerator._lycoris_wrapped_network.set_multiplier(
                                     1.0
                                 )
+                            else:
+                                self.model.get_trained_component().enable_lora()
 
                     training_logger.debug("Predicting noise residual.")
                     model_pred = self.model_predict(

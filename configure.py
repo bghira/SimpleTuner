@@ -29,6 +29,7 @@ model_classes = {
         "deepfloyd",
         "omnigen",
         "hidream",
+        "auraflow",
     ],
     "lora": [
         "flux",
@@ -40,6 +41,7 @@ model_classes = {
         "ltxvideo",
         "wan",
         "deepfloyd",
+        "auraflow",
     ],
     "controlnet": ["sdxl", "sd1x", "sd2x"],
 }
@@ -56,7 +58,10 @@ default_models = {
     "sana": "terminusresearch/sana-1.6b-1024px",
     "ltxvideo": "Lightricks/LTX-Video",
     "wan": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
-    "hidream": "HiDream-ai/HiDream-I1-Full"
+    "hidream": "HiDream-ai/HiDream-I1-Full",
+    "auraflow": "terminusresearch/auraflow-v0.3",
+    "deepfloyd": "DeepFloyd/DeepFloyd-IF-I-XL-v1.0",
+    "omnigen": "Shitao/OmniGen-v1-diffusers",    
 }
 
 default_cfg = {
@@ -70,6 +75,10 @@ default_cfg = {
     "hidream": 2.5,
     "wan": 4.0,
     "sana": 3.8,
+    "omnigen": 3.2,
+    "deepfloyd": 6.0,
+    "sd2x": 7.0,
+    "sd1x": 6.0,    
 }
 
 model_labels = {
