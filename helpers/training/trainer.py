@@ -2049,9 +2049,7 @@ class Trainer:
                                     0.0
                                 )
                             else:
-                                raise ValueError(
-                                    f"Cannot train parent-student networks on {self.config.lora_type} model. Only LyCORIS is supported."
-                                )
+                                self.model.get_trained_component().disable_lora()
                             prepared_batch["target"] = self.model_predict(
                                 prepared_batch=prepared_batch,
                             )["model_prediction"]
@@ -2062,6 +2060,8 @@ class Trainer:
                                 self.accelerator._lycoris_wrapped_network.set_multiplier(
                                     1.0
                                 )
+                            else:
+                                self.model.get_trained_component().enable_lora()
 
                     training_logger.debug("Predicting noise residual.")
                     model_pred = self.model_predict(
