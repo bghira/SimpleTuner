@@ -209,6 +209,7 @@ class HubManager:
             except Exception as e:
                 logger.error(f"Failed to upload latest checkpoint: {e}")
                 import traceback
+
                 logger.error(traceback.format_exc())
 
     def upload_validation_images(
