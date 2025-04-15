@@ -453,12 +453,86 @@ def configure_parquet_database(backend: dict, args, data_backend: BaseDataBacken
     )
 
 
-def move_text_encoders(text_encoders: list, target_device: str):
+def move_text_encoders(args, text_encoders: list, target_device: str):
     """Move text encoders to the target device."""
     if text_encoders is None:
         return
-    logger.debug(f"Moving text encoders to {target_device}")
-    return [encoder.to(target_device) for encoder in text_encoders]
+    # we'll move text encoder only if their precision arg is no_change
+    # otherwise, we assume the user has already moved them to the correct device due to quantisation.
+    te_idx = -1  # these are 0-indexed, and we increment it immediately to 0.
+    te_attr_id = 0  # these are 1-indexed and we increment it immediately to 1.
+    for text_encoder in text_encoders:
+        te_idx += 1
+        te_attr_id += 1
+        # if (
+        #     getattr(args, f"text_encoder_{te_idx + 1}_precision", "no_change")
+        #     != "no_change"
+        # ):
+        #     logger.info(f"Not moving text encoder {te_idx + 1}")
+        #     continue
+        if text_encoder.device == target_device:
+            logger.info(f"Text encoder {te_idx + 1} already on target device")
+            continue
+        logger.info(
+            f"Moving text encoder {te_idx + 1} to {target_device} from {text_encoder.device}"
+        )
+        text_encoder.to(target_device)
+
+    return text_encoders
+
+
+def synchronize_conditioning_settings():
+    """
+    Synchronize resolution settings between main image datasets and their conditioning datasets
+    """
+    for (
+        main_dataset_id,
+        conditioning_dataset_id,
+    ) in StateTracker.get_conditioning_mappings().items():
+        main_config = StateTracker.get_data_backend_config(main_dataset_id)
+        conditioning_config = StateTracker.get_data_backend_config(
+            conditioning_dataset_id
+        )
+
+        # Copy resolution settings from main dataset to conditioning dataset
+        resolution_settings = [
+            "resolution",
+            "resolution_type",
+            "maximum_image_size",
+            "target_downsample_size",
+            "minimum_image_size",
+        ]
+
+        for setting in resolution_settings:
+            if setting in main_config:
+                # Log that we're overriding a setting
+                if (
+                    setting in conditioning_config
+                    and conditioning_config[setting] != main_config[setting]
+                ):
+                    info_log(
+                        f"Overriding {conditioning_dataset_id}'s {setting} ({conditioning_config[setting]}) "
+                        f"with value from {main_dataset_id} ({main_config[setting]})"
+                    )
+
+                # Update the conditioning dataset's configuration
+                conditioning_config[setting] = main_config[setting]
+
+                # Update both in-memory configs and backend objects
+                StateTracker.set_data_backend_config(
+                    conditioning_dataset_id, conditioning_config
+                )
+
+                # Also update the metadata_backend object if it exists
+                conditioning_backend = StateTracker.get_data_backend(
+                    conditioning_dataset_id
+                )
+                if "metadata_backend" in conditioning_backend:
+                    setattr(
+                        conditioning_backend["metadata_backend"],
+                        setting,
+                        main_config[setting],
+                    )
 
 
 def configure_multi_databackend(
@@ -560,7 +634,7 @@ def configure_multi_databackend(
 
         # Generate a TextEmbeddingCache object
         logger.debug(f"rank {get_rank()} is creating TextEmbeddingCache")
-        move_text_encoders(text_encoders, accelerator.device)
+        move_text_encoders(args, text_encoders, accelerator.device)
         init_backend["text_embed_cache"] = TextEmbeddingCache(
             id=init_backend["id"],
             data_backend=init_backend["data_backend"],
@@ -609,7 +683,7 @@ def configure_multi_databackend(
             )
 
         # We don't compute the text embeds at this time, because we do not really have any captions available yet.
-        # move_text_encoders(text_encoders, "cpu")
+        # move_text_encoders(args, text_encoders, "cpu")
         text_embed_backends[init_backend["id"]] = init_backend
 
     if not text_embed_backends:
@@ -1136,7 +1210,7 @@ def configure_multi_databackend(
             info_log(
                 f"(id={init_backend['id']}) Initialise text embed pre-computation using the {caption_strategy} caption strategy. We have {len(captions)} captions to process."
             )
-            move_text_encoders(text_encoders, accelerator.device)
+            move_text_encoders(args, text_encoders, accelerator.device)
             model.get_pipeline()
             init_backend["text_embed_cache"].compute_embeddings_for_prompts(
                 captions, return_concat=False, load_from_cache=False
@@ -1178,10 +1252,11 @@ def configure_multi_databackend(
             if backend["type"] == "local" and (
                 vae_cache_dir is None or vae_cache_dir == ""
             ):
-                raise ValueError(
-                    f"VAE image embed cache directory {backend.get('cache_dir_vae')} is not set. This is required for the VAE image embed cache."
-                )
-            move_text_encoders(text_encoders, "cpu")
+                if not args.controlnet or backend["dataset_type"] != "conditioning":
+                    raise ValueError(
+                        f"VAE image embed cache directory {backend.get('cache_dir_vae')} is not set. This is required for the VAE image embed cache."
+                    )
+            move_text_encoders(args, text_encoders, "cpu")
             init_backend["vaecache"] = VAECache(
                 id=init_backend["id"],
                 dataset_type=init_backend["dataset_type"],
@@ -1223,7 +1298,7 @@ def configure_multi_databackend(
                 vae_cache_ondemand=args.vae_cache_ondemand,
                 hash_filenames=hash_filenames,
             )
-            move_text_encoders(text_encoders, accelerator.device)
+            move_text_encoders(args, text_encoders, accelerator.device)
             init_backend["vaecache"].set_webhook_handler(
                 StateTracker.get_webhook_handler()
             )
@@ -1319,6 +1394,9 @@ def configure_multi_databackend(
         raise ValueError(
             "Must provide at least one data backend in the data backend config file."
         )
+    # Connect the conditioning resolution settings to the root dataset.
+    synchronize_conditioning_settings()
+
     return StateTracker.get_data_backends(_types=["image", "video"])
 
 
