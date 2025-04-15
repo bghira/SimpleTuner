@@ -1307,7 +1307,6 @@ def configure_multi_databackend(
                 vae_cache_ondemand=args.vae_cache_ondemand,
                 hash_filenames=hash_filenames,
             )
-            move_text_encoders(args, text_encoders, accelerator.device)
             init_backend["vaecache"].set_webhook_handler(
                 StateTracker.get_webhook_handler()
             )
@@ -1364,6 +1363,7 @@ def configure_multi_databackend(
             logger.debug(f"Encoding images during training: {args.vae_cache_ondemand}")
             accelerator.wait_for_everyone()
 
+        move_text_encoders(args, text_encoders, accelerator.device)
         init_backend_debug_info = {
             k: v
             for k, v in init_backend.items()
