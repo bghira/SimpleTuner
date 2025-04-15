@@ -862,8 +862,10 @@ class Validation:
         if self.validation_image_inputs:
             # Override the pipeline inputs to be entirely based upon the validation image inputs.
             _content = self.validation_image_inputs
-            # Resize validation input to 64px area
-            _content = resize_validation_images(_content, 64)
+            if "DeepFloyd" in self.model.NAME:
+                resize_edge_length = 64
+                # Resize validation input to 64px area
+                _content = resize_validation_images(_content, resize_edge_length)
             total_samples = len(_content) if _content is not None else 0
 
         logger.debug(f"Processing content: {_content}")
@@ -1180,11 +1182,16 @@ class Validation:
                     validation_image_results
                 )
                 if self.config.use_ema:
-                    if validation_shortname in ema_validation_images and ema_image_results is not None:
+                    if (
+                        validation_shortname in ema_validation_images
+                        and ema_image_results is not None
+                    ):
                         if ema_validation_images[validation_shortname] is None:
                             # init the value
                             ema_validation_images[validation_shortname] = []
-                        if isinstance(ema_validation_images[validation_shortname], list):
+                        if isinstance(
+                            ema_validation_images[validation_shortname], list
+                        ):
                             # if we have a list of images, we can stitch them.
                             ema_validation_images[validation_shortname].extend(
                                 ema_image_results
