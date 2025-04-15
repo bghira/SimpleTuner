@@ -149,6 +149,8 @@ def optimized_scale(positive_flat, negative_flat):
     # Compute the scaling factors
     alpha = torch.clamp(similarity, 0, 1)
     return alpha
+
+
 import os
 import PIL
 from diffusers.utils import (
@@ -163,10 +165,12 @@ from diffusers.utils import (
     is_transformers_available,
     is_transformers_version,
 )
+
 TEXT_ENCODER_NAME = "text_encoder"
 UNET_NAME = "unet"
 TRANSFORMER_NAME = "transformer"
 from huggingface_hub.utils import validate_hf_hub_args
+
 _LOW_CPU_MEM_USAGE_DEFAULT_LORA = False
 if is_torch_version(">=", "1.9.0"):
     if (
@@ -176,6 +180,7 @@ if is_torch_version(">=", "1.9.0"):
         and is_transformers_version(">", "4.45.2")
     ):
         _LOW_CPU_MEM_USAGE_DEFAULT_LORA = True
+
 
 class AuraFlowLoraLoaderMixin(LoraBaseMixin):
     r"""
@@ -285,7 +290,10 @@ class AuraFlowLoraLoaderMixin(LoraBaseMixin):
 
     # Copied from diffusers.loaders.lora_pipeline.CogVideoXLoraLoaderMixin.load_lora_weights
     def load_lora_weights(
-        self, pretrained_model_name_or_path_or_dict: Union[str, Dict[str, torch.Tensor]], adapter_name=None, **kwargs
+        self,
+        pretrained_model_name_or_path_or_dict: Union[str, Dict[str, torch.Tensor]],
+        adapter_name=None,
+        **kwargs,
     ):
         """
         Load LoRA weights specified in `pretrained_model_name_or_path_or_dict` into `self.transformer` and
@@ -309,7 +317,9 @@ class AuraFlowLoraLoaderMixin(LoraBaseMixin):
         if not USE_PEFT_BACKEND:
             raise ValueError("PEFT backend is required for this method.")
 
-        low_cpu_mem_usage = kwargs.pop("low_cpu_mem_usage", _LOW_CPU_MEM_USAGE_DEFAULT_LORA)
+        low_cpu_mem_usage = kwargs.pop(
+            "low_cpu_mem_usage", _LOW_CPU_MEM_USAGE_DEFAULT_LORA
+        )
         if low_cpu_mem_usage and is_peft_version("<", "0.13.0"):
             raise ValueError(
                 "`low_cpu_mem_usage=True` is not compatible with this `peft` version. Please update it with `pip install -U peft`."
@@ -317,10 +327,14 @@ class AuraFlowLoraLoaderMixin(LoraBaseMixin):
 
         # if a dict is passed, copy it instead of modifying it inplace
         if isinstance(pretrained_model_name_or_path_or_dict, dict):
-            pretrained_model_name_or_path_or_dict = pretrained_model_name_or_path_or_dict.copy()
+            pretrained_model_name_or_path_or_dict = (
+                pretrained_model_name_or_path_or_dict.copy()
+            )
 
         # First, ensure that the checkpoint is a compatible one and can be successfully loaded.
-        state_dict = self.lora_state_dict(pretrained_model_name_or_path_or_dict, **kwargs)
+        state_dict = self.lora_state_dict(
+            pretrained_model_name_or_path_or_dict, **kwargs
+        )
 
         is_correct_format = all("lora" in key for key in state_dict.keys())
         if not is_correct_format:
@@ -328,7 +342,11 @@ class AuraFlowLoraLoaderMixin(LoraBaseMixin):
 
         self.load_lora_into_transformer(
             state_dict,
-            transformer=getattr(self, self.transformer_name) if not hasattr(self, "transformer") else self.transformer,
+            transformer=(
+                getattr(self, self.transformer_name)
+                if not hasattr(self, "transformer")
+                else self.transformer
+            ),
             adapter_name=adapter_name,
             _pipeline=self,
             low_cpu_mem_usage=low_cpu_mem_usage,
@@ -337,7 +355,13 @@ class AuraFlowLoraLoaderMixin(LoraBaseMixin):
     @classmethod
     # Copied from diffusers.loaders.lora_pipeline.SD3LoraLoaderMixin.load_lora_into_transformer with SD3Transformer2DModel->AuraFlowTransformer2DModel
     def load_lora_into_transformer(
-        cls, state_dict, transformer, adapter_name=None, _pipeline=None, low_cpu_mem_usage=False, hotswap: bool = False
+        cls,
+        state_dict,
+        transformer,
+        adapter_name=None,
+        _pipeline=None,
+        low_cpu_mem_usage=False,
+        hotswap: bool = False,
     ):
         """
         This will load the LoRA layers specified in `state_dict` into `transformer`.
@@ -431,7 +455,9 @@ class AuraFlowLoraLoaderMixin(LoraBaseMixin):
             raise ValueError("You must pass `transformer_lora_layers`.")
 
         if transformer_lora_layers:
-            state_dict.update(cls.pack_weights(transformer_lora_layers, cls.transformer_name))
+            state_dict.update(
+                cls.pack_weights(transformer_lora_layers, cls.transformer_name)
+            )
 
         # Save the model
         cls.write_lora_layers(
@@ -492,7 +518,9 @@ class AuraFlowLoraLoaderMixin(LoraBaseMixin):
         )
 
     # Copied from diffusers.loaders.lora_pipeline.SanaLoraLoaderMixin.unfuse_lora
-    def unfuse_lora(self, components: List[str] = ["transformer", "text_encoder"], **kwargs):
+    def unfuse_lora(
+        self, components: List[str] = ["transformer", "text_encoder"], **kwargs
+    ):
         r"""
         Reverses the effect of
         [`pipe.fuse_lora()`](https://huggingface.co/docs/diffusers/main/en/api/loaders#diffusers.loaders.LoraBaseMixin.fuse_lora).
@@ -508,6 +536,7 @@ class AuraFlowLoraLoaderMixin(LoraBaseMixin):
             unfuse_transformer (`bool`, defaults to `True`): Whether to unfuse the UNet LoRA parameters.
         """
         super().unfuse_lora(components=components, **kwargs)
+
 
 class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
     r"""
@@ -1388,9 +1417,11 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
             image = latents
         else:
             # Scale and shift latents according to VAE configuration
-            if hasattr(self.vae.config, "scaling_factor") and hasattr(
-                self.vae.config, "shift_factor"
-            ) and getattr(self.vae.config, "shift_factor", None) is not None:
+            if (
+                hasattr(self.vae.config, "scaling_factor")
+                and hasattr(self.vae.config, "shift_factor")
+                and getattr(self.vae.config, "shift_factor", None) is not None
+            ):
                 latents = (
                     latents / self.vae.config.scaling_factor
                 ) + self.vae.config.shift_factor
