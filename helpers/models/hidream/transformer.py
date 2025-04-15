@@ -193,6 +193,7 @@ class OutEmbed(nn.Module):
         x = self.linear(x)
         return x
 
+
 USE_FLASH_ATTN3 = False
 USE_FLASH_ATTN2 = False
 USE_TORCH_SDPA = False
@@ -204,22 +205,24 @@ except:
     try:
         print(f"HiDream: FlashAttention3 not found, trying FlashAttention2")
         from flash_attn import flash_attn_func
+
         USE_FLASH_ATTN2 = True
 
     except Exception as e:
-        print(f"HiDream: FlashAttention2 failed to load ({e}), falling back to Torch SDPA.")
+        print(
+            f"HiDream: FlashAttention2 failed to load ({e}), falling back to Torch SDPA."
+        )
         USE_TORCH_SDPA = True
 
-        def flash_attn_func(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False):
-            q = query.transpose(1, 2)  
-            k = key.transpose(1, 2)    
+        def flash_attn_func(
+            query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False
+        ):
+            q = query.transpose(1, 2)
+            k = key.transpose(1, 2)
             v = value.transpose(1, 2)
-            
+
             hidden_states = torch.nn.functional.scaled_dot_product_attention(
-                q, k, v, 
-                attn_mask=attn_mask,
-                dropout_p=dropout_p,
-                is_causal=is_causal
+                q, k, v, attn_mask=attn_mask, dropout_p=dropout_p, is_causal=is_causal
             )
             hidden_states = hidden_states.transpose(1, 2)
             return hidden_states
