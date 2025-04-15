@@ -422,6 +422,16 @@ class StateTracker:
         cls.data_backends[data_backend_id]["config"] = config
 
     @classmethod
+    def get_conditioning_mappings(cls):
+        conditioning_mappings = {}
+        for data_backend_id, data_backend in cls.data_backends.items():
+            if "conditioning_data" in data_backend:
+                conditioning_mappings[data_backend_id] = data_backend[
+                    "conditioning_data"
+                ]["id"]
+        return conditioning_mappings
+
+    @classmethod
     def clear_data_backends(cls):
         cls.data_backends = {}
 
