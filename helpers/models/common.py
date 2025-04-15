@@ -615,6 +615,7 @@ class ModelFoundation(ABC):
                     #         f"Converting {text_encoder.__class__.__name__} to NovelAI T5 implementation.."
                     #     )
                     #     text_encoder = NovelAIT5EncoderModel.from_hf_model(text_encoder)
+                    pass
 
                 if move_to_device and getattr(
                     self.config, f"{attr_name}_precision", None

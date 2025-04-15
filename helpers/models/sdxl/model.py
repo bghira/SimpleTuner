@@ -10,7 +10,7 @@ from helpers.models.sdxl.pipeline import (
     StableDiffusionXLImg2ImgPipeline,
     StableDiffusionXLPipeline,
 )
-from diffusers import AutoencoderKL, UNet2DConditionModel
+from diffusers import AutoencoderKL, UNet2DConditionModel, ControlNetModel
 from helpers.training.multi_process import _get_rank
 from diffusers.pipelines import StableDiffusionXLControlNetPipeline
 
@@ -180,6 +180,62 @@ class SDXL(ImageModelFoundation):
         # pooled_prompt_embeds = torch.cat(pooled_prompt_embeds_list, dim=-1)
         prompt_embeds = torch.cat(prompt_embeds_list, dim=-1)
         return prompt_embeds, pooled_prompt_embeds
+
+    def controlnet_init(self):
+        logger.info("Creating the controlnet..")
+        if self.config.controlnet_model_name_or_path:
+            logger.info("Loading existing controlnet weights")
+            self.controlnet = ControlNetModel.from_pretrained(
+                self.config.controlnet_model_name_or_path
+            )
+        else:
+            logger.info("Initializing controlnet weights from base model")
+            self.controlnet = ControlNetModel.from_unet(self.unwrap_model(self.model))
+        self.controlnet.to(self.accelerator.device, self.config.weight_dtype)
+
+    def controlnet_predict(self, prepared_batch: dict) -> dict:
+        # ControlNet conditioning.
+        controlnet_image = prepared_batch["conditioning_pixel_values"].to(
+            device=self.accelerator.device, dtype=self.config.weight_dtype
+        )
+        logger.debug(f"Image shape: {controlnet_image.shape}")
+        down_block_res_samples, mid_block_res_sample = self.controlnet(
+            prepared_batch["noisy_latents"].to(
+                device=self.accelerator.device, dtype=self.config.base_weight_dtype
+            ),
+            prepared_batch["timesteps"],
+            encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(
+                device=self.accelerator.device, dtype=self.config.base_weight_dtype
+            ),
+            added_cond_kwargs=prepared_batch["added_cond_kwargs"],
+            controlnet_cond=controlnet_image,
+            return_dict=False,
+        )
+
+        return {
+            "model_prediction": self.model(
+                prepared_batch["noisy_latents"].to(
+                    device=self.accelerator.device,
+                    dtype=self.config.base_weight_dtype,
+                ),
+                prepared_batch["timesteps"].to(self.accelerator.device),
+                encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(
+                    device=self.accelerator.device,
+                    dtype=self.config.base_weight_dtype,
+                ),
+                added_cond_kwargs=prepared_batch["added_cond_kwargs"],
+                down_block_additional_residuals=[
+                    sample.to(
+                        device=self.accelerator.device, dtype=self.config.weight_dtype
+                    )
+                    for sample in down_block_res_samples
+                ],
+                mid_block_additional_residual=mid_block_res_sample.to(
+                    device=self.accelerator.device, dtype=self.config.weight_dtype
+                ),
+                return_dict=False,
+            )[0]
+        }
 
     def model_predict(self, prepared_batch):
         logger.debug(
