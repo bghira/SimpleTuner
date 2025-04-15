@@ -325,6 +325,98 @@ class Flux(ImageModelFoundation):
                 "Flux Schnell requires fewer inference steps. Consider reducing --validation_num_inference_steps to 4."
             )
 
+    def get_lora_target_layers(self):
+        # Some models, eg. Flux should override this with more complex config-driven logic.
+        if self.config.lora_type.lower() == "standard":
+            if self.config.flux_lora_target == "all":
+                # target_modules = mmdit layers here
+                return [
+                    "to_k",
+                    "to_q",
+                    "to_v",
+                    "add_k_proj",
+                    "add_q_proj",
+                    "add_v_proj",
+                    "to_out.0",
+                    "to_add_out",
+                ]
+            elif self.config.flux_lora_target == "context":
+                # i think these are the text input layers.
+                return [
+                    "add_k_proj",
+                    "add_q_proj",
+                    "add_v_proj",
+                    "to_add_out",
+                ]
+            elif self.config.flux_lora_target == "context+ffs":
+                # i think these are the text input layers.
+                return [
+                    "add_k_proj",
+                    "add_q_proj",
+                    "add_v_proj",
+                    "to_add_out",
+                    "ff_context.net.0.proj",
+                    "ff_context.net.2",
+                ]
+            elif self.config.flux_lora_target == "all+ffs":
+                return [
+                    "to_k",
+                    "to_q",
+                    "to_v",
+                    "add_k_proj",
+                    "add_q_proj",
+                    "add_v_proj",
+                    "to_out.0",
+                    "to_add_out",
+                    "ff.net.0.proj",
+                    "ff.net.2",
+                    "ff_context.net.0.proj",
+                    "ff_context.net.2",
+                    "proj_mlp",
+                    "proj_out",
+                ]
+            elif self.config.flux_lora_target == "ai-toolkit":
+                # from ostris' ai-toolkit, possibly required to continue finetuning one.
+                return [
+                    "to_q",
+                    "to_k",
+                    "to_v",
+                    "add_q_proj",
+                    "add_k_proj",
+                    "add_v_proj",
+                    "to_out.0",
+                    "to_add_out",
+                    "ff.net.0.proj",
+                    "ff.net.2",
+                    "ff_context.net.0.proj",
+                    "ff_context.net.2",
+                    "norm.linear",
+                    "norm1.linear",
+                    "norm1_context.linear",
+                    "proj_mlp",
+                    "proj_out",
+                ]
+            elif self.config.flux_lora_target == "tiny":
+                # From TheLastBen
+                # https://www.reddit.com/r/StableDiffusion/comments/1f523bd/good_flux_loras_can_be_less_than_45mb_128_dim/
+                return [
+                    "single_transformer_blocks.7.proj_out",
+                    "single_transformer_blocks.20.proj_out",
+                ]
+            elif self.config.flux_lora_target == "nano":
+                # From TheLastBen
+                # https://www.reddit.com/r/StableDiffusion/comments/1f523bd/good_flux_loras_can_be_less_than_45mb_128_dim/
+                return [
+                    "single_transformer_blocks.7.proj_out",
+                ]
+            return self.DEFAULT_LORA_TARGET
+        elif self.config.lora_type.lower() == "lycoris":
+            return self.DEFAULT_LYCORIS_TARGET
+        else:
+            raise NotImplementedError(
+                f"Unknown LoRA target type {self.config.lora_type}."
+            )
+
     def custom_model_card_schedule_info(self):
         output_args = []
         if self.config.flux_fast_schedule:
