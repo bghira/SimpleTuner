@@ -907,6 +907,8 @@ class Validation:
             self._log_validations_to_trackers(validation_images)
         except Exception as e:
             logger.error(f"Error logging validation images: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
 
     def get_eval_result(self):
         return self.evaluation_result or {}
@@ -1350,6 +1352,9 @@ class Validation:
                             f"Prompt {prompt_shortname} has {len(image_list)} images"
                         )
                         for idx, image in enumerate(image_list):
+                            # if it's a list of images, make a grid
+                            if isinstance(image, list) and isinstance(image[0], Image.Image):
+                                image = image[0]
                             wandb_image = wandb.Image(
                                 image,
                                 caption=f"{prompt_shortname} - {resolution_list[idx]}",
