@@ -309,7 +309,10 @@ class HiDream(ImageModelFoundation):
                 f"{self.NAME} does not support fp8-quanto. Please use fp8-torchao or int8 precision level instead."
             )
         t5_max_length = 128
-        if self.config.tokenizer_max_length is None or self.config.tokenizer_max_length == 0:
+        if (
+            self.config.tokenizer_max_length is None
+            or self.config.tokenizer_max_length == 0
+        ):
             logger.warning(
                 f"Setting T5 XXL tokeniser max length to {t5_max_length} for {self.NAME}."
             )
