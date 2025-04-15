@@ -64,7 +64,9 @@ class AuraFlowPatchEmbed(nn.Module):
         # PE will be viewed as 2d-grid, and H/p x W/p of the PE will be selected
         # because original input are in flattened format, we have to flatten this 2d grid as well.
         h_p, w_p = h // self.patch_size, w // self.patch_size
-        h_max, w_max = int(self.pos_embed_max_size**0.5), int(self.pos_embed_max_size**0.5)
+        h_max, w_max = int(self.pos_embed_max_size**0.5), int(
+            self.pos_embed_max_size**0.5
+        )
 
         # Calculate the top-left corner indices for the centered patch grid
         starth = h_max // 2 - h_p // 2
@@ -215,7 +217,6 @@ class AuraFlowSingleTransformerBlock(nn.Module):
         hidden_states = residual + hidden_states
 
         return hidden_states
-
 
 
 @maybe_allow_in_graph
