@@ -22,6 +22,7 @@ logger.setLevel(
     os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO") if is_primary_process else "ERROR"
 )
 
+
 class Auraflow(ImageModelFoundation):
     NAME = "Auraflow"
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
@@ -55,7 +56,7 @@ class Auraflow(ImageModelFoundation):
             "subfolder": "text_encoder",
             "tokenizer_subfolder": "tokenizer",
             "model": UMT5EncoderModel,
-            "path": "terminusresearch/auraflow-v0.3"
+            "path": "terminusresearch/auraflow-v0.3",
         },
     }
 
@@ -81,7 +82,9 @@ class Auraflow(ImageModelFoundation):
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
         return {
             "prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            "prompt_attention_mask": text_embedding["prompt_attention_mask"].unsqueeze(0),
+            "prompt_attention_mask": text_embedding["prompt_attention_mask"].unsqueeze(
+                0
+            ),
         }
 
     def convert_negative_text_embed_for_pipeline(
@@ -90,7 +93,9 @@ class Auraflow(ImageModelFoundation):
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
         return {
             "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            "negative_prompt_attention_mask": text_embedding["prompt_attention_mask"].unsqueeze(0),
+            "negative_prompt_attention_mask": text_embedding[
+                "prompt_attention_mask"
+            ].unsqueeze(0),
         }
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
@@ -103,7 +108,9 @@ class Auraflow(ImageModelFoundation):
         Returns:
             Text encoder output (raw)
         """
-        prompt_embeds, prompt_attention_mask, _, _ = self.pipelines[PipelineTypes.TEXT2IMG].encode_prompt(
+        prompt_embeds, prompt_attention_mask, _, _ = self.pipelines[
+            PipelineTypes.TEXT2IMG
+        ].encode_prompt(
             prompt=prompts,
             negative_prompt=None,
             do_classifier_free_guidance=False,
@@ -126,12 +133,15 @@ class Auraflow(ImageModelFoundation):
             raise ValueError(
                 f"Input latent channels must be {self.LATENT_CHANNEL_COUNT}, but got {prepared_batch['noisy_latents'].shape[1]}."
             )
-        if height % self.unwrap_model().config.patch_size != 0 or width % self.unwrap_model().config.patch_size != 0:
+        if (
+            height % self.unwrap_model().config.patch_size != 0
+            or width % self.unwrap_model().config.patch_size != 0
+        ):
             raise ValueError(
                 f"Input latent height and width must be divisible by patch_size ({self.unwrap_model().config.patch_size})."
                 f" Got height={height}, width={width}."
             )
-        
+
         model_output = self.model(
             prepared_batch["noisy_latents"].to(
                 device=self.accelerator.device,
@@ -144,7 +154,7 @@ class Auraflow(ImageModelFoundation):
             timestep=prepared_batch["timesteps"],
             return_dict=True,
         ).sample
-        
+
         # unpatchify model_output
         height = height // self.unwrap_model().config.patch_size
         width = width // self.unwrap_model().config.patch_size
@@ -169,9 +179,7 @@ class Auraflow(ImageModelFoundation):
             )
         )
 
-        return {
-            "model_prediction": model_output
-        }
+        return {"model_prediction": model_output}
 
     def check_user_config(self):
         """
@@ -182,7 +190,10 @@ class Auraflow(ImageModelFoundation):
                 f"{self.NAME} does not support fp8-quanto. Please use fp8-torchao or int8 precision level instead."
             )
         t5_max_length = 120
-        if self.config.tokenizer_max_length is None or self.config.tokenizer_max_length == 0:
+        if (
+            self.config.tokenizer_max_length is None
+            or self.config.tokenizer_max_length == 0
+        ):
             logger.warning(
                 f"Setting T5 XXL tokeniser max length to {t5_max_length} for {self.NAME}."
             )
@@ -205,7 +216,6 @@ class Auraflow(ImageModelFoundation):
                 "MM-DiT requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
             )
             self.config.aspect_bucket_alignment = 64
-
 
     def custom_model_card_schedule_info(self):
         output_args = []
