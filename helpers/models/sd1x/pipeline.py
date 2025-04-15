@@ -294,7 +294,7 @@ class StableDiffusionPipeline(
             < version.parse("0.9.0.dev0")
         )
         self._is_unet_config_sample_size_int = unet is not None and isinstance(
-            unet.config.sample_size, int
+            getattr(unet.config, "sample_size", None), int
         )
         is_unet_sample_size_less_64 = (
             unet is not None
@@ -1089,6 +1089,8 @@ class StableDiffusionPipeline(
             else None
         )
 
+        self.do_classifier_free_guidance = True if guidance_scale > 1.0 else False
+
         prompt_embeds, negative_prompt_embeds = self.encode_prompt(
             prompt,
             device,
@@ -1132,7 +1134,7 @@ class StableDiffusionPipeline(
             device,
             generator,
             latents,
-        )
+        ).to(self.unet.device)
 
         # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
@@ -1174,9 +1176,9 @@ class StableDiffusionPipeline(
 
                 # predict the noise residual
                 noise_pred = self.unet(
-                    latent_model_input,
-                    t,
-                    encoder_hidden_states=prompt_embeds,
+                    latent_model_input.to(self.unet.device),
+                    t.to(self.unet.device),
+                    encoder_hidden_states=prompt_embeds.to(self.unet.device),
                     timestep_cond=timestep_cond,
                     cross_attention_kwargs=self.cross_attention_kwargs,
                     added_cond_kwargs=added_cond_kwargs,
