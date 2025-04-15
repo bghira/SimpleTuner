@@ -296,7 +296,7 @@ class StableDiffusionXLPipeline(
         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
         self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor)
 
-        if self.unet is not None:
+        if self.unet is not None and hasattr(self.unet.config, 'sample_size'):
             self.default_sample_size = self.unet.config.sample_size
         else:
             self.default_sample_size = 128
