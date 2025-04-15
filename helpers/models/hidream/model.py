@@ -1,4 +1,4 @@
-import torch, os, logging, einops
+import torch, os, logging, einops, inspect
 from helpers.training.wrappers import (
     gather_dict_of_tensors_shapes,
     move_dict_of_tensors_to_device,
@@ -18,7 +18,7 @@ from transformers import (
 )
 
 HiDreamImageTransformer2DModel = None
-HiDreamImagePipeline = None
+HiDreamImagePipeline: object = None
 try:
     from helpers.models.hidream.transformer import (
         HiDreamImageTransformer2DModel,
@@ -113,6 +113,80 @@ class HiDream(ImageModelFoundation):
     def post_vae_load_setup(self):
         # we have to differently scale VAE inputs due to the patches.
         self.AUTOENCODER_SCALING_FACTOR *= 2
+
+    def _load_pipeline(
+        self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True
+    ):
+        """
+        Loads the pipeline class for the model.
+        This is a stub and should be implemented in subclasses.
+        """
+        active_pipelines = getattr(self, "pipelines", {})
+        if pipeline_type in active_pipelines:
+            setattr(active_pipelines[pipeline_type], self.MODEL_TYPE.value, self.unwrap_model())
+            return active_pipelines[pipeline_type]
+        pipeline_kwargs = {
+            "pretrained_model_name_or_path": self._model_config_path(),
+        }
+        if not hasattr(self, "PIPELINE_CLASSES"):
+            raise NotImplementedError("Pipeline class not defined.")
+        if pipeline_type not in self.PIPELINE_CLASSES:
+            raise NotImplementedError(
+                f"Pipeline type {pipeline_type} not defined in {self.__class__.__name__}."
+            )
+        pipeline_class = self.PIPELINE_CLASSES[pipeline_type]
+        if not hasattr(pipeline_class, "from_pretrained"):
+            raise NotImplementedError(
+                f"Pipeline class {pipeline_class} does not have from_pretrained method."
+            )
+        signature = inspect.signature(pipeline_class.from_pretrained)
+        if "watermarker" in signature.parameters:
+            pipeline_kwargs["watermarker"] = None
+        if "watermark" in signature.parameters:
+            pipeline_kwargs["watermark"] = None
+        if load_base_model:
+            pipeline_kwargs[self.MODEL_TYPE.value] = self.unwrap_model()
+        else:
+            pipeline_kwargs[self.MODEL_TYPE.value] = None
+
+        if getattr(self, "vae", None) is not None:
+            pipeline_kwargs["vae"] = self.unwrap_model(self.vae)
+        elif getattr(self, "AUTOENCODER_CLASS", None) is not None:
+            pipeline_kwargs["vae"] = self.get_vae()
+
+        text_encoder_idx = 0
+        for (
+            text_encoder_attr,
+            text_encoder_config,
+        ) in self.TEXT_ENCODER_CONFIGURATION.items():
+            if (
+                self.text_encoders is not None
+                and len(self.text_encoders) >= text_encoder_idx
+            ):
+                pipeline_kwargs[text_encoder_attr] = self.unwrap_model(
+                    self.text_encoders[text_encoder_idx]
+                )
+                pipeline_kwargs[
+                    text_encoder_attr.replace("text_encoder", "tokenizer")
+                ] = self.tokenizers[text_encoder_idx]
+            else:
+                pipeline_kwargs[text_encoder_attr] = None
+            text_encoder_idx += 1
+
+        if self.config.controlnet:
+            pipeline_kwargs["controlnet"] = self.unwrap_model(
+                self.get_trained_component()
+            )
+
+        logger.debug(
+            f"Initialising {pipeline_class.__name__} with components: {pipeline_kwargs}"
+        )
+        self.pipelines[pipeline_type] = pipeline_class.from_pretrained(
+            **pipeline_kwargs,
+        )
+
+        return self.pipelines[pipeline_type]
+
 
     def _format_text_embedding(self, text_embedding: torch.Tensor):
         """
