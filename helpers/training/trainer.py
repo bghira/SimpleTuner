@@ -356,7 +356,9 @@ class Trainer:
             self.config.is_bnb = True
         # if text_encoder_1_precision -> text_encoder_4_precision has quanto we'll mark that as well
         for i in range(1, 5):
-            if isinstance(getattr(self.config, f"text_encoder_{i}_precision", None), str) and getattr(self.config, f"text_encoder_{i}_precision", None):
+            if isinstance(
+                getattr(self.config, f"text_encoder_{i}_precision", None), str
+            ) and getattr(self.config, f"text_encoder_{i}_precision", None):
                 if "quanto" in getattr(self.config, f"text_encoder_{i}_precision"):
                     if self.config.is_torchao:
                         raise ValueError(
@@ -659,18 +661,7 @@ class Trainer:
     def init_controlnet_model(self):
         if not self.config.controlnet:
             return
-        logger.info("Creating the controlnet..")
-        if self.config.controlnet_model_name_or_path:
-            logger.info("Loading existing controlnet weights")
-            self.controlnet = ControlNetModel.from_pretrained(
-                self.config.controlnet_model_name_or_path
-            )
-        else:
-            logger.info("Initializing controlnet weights from base model")
-            self.controlnet = ControlNetModel.from_unet(
-                self.model.get_trained_component()
-            )
-
+        self.model.controlnet_init()
         self.accelerator.wait_for_everyone()
 
     def init_trainable_peft_adapter(self):
@@ -1578,7 +1569,7 @@ class Trainer:
             logger.info(
                 f"Moving ControlNet to {target_device} in {self.config.weight_dtype} precision."
             )
-            self.model.get_trained_component().to(
+            self.model.unwrap_model(self.model.model).to(
                 device=target_device, dtype=self.config.weight_dtype
             )
             if self.config.train_text_encoder:
@@ -1758,16 +1749,14 @@ class Trainer:
         if custom_timesteps is not None:
             timesteps = custom_timesteps
         if not self.config.disable_accelerator:
-            if self.model is not None:
-                model_pred = self.model.model_predict(
-                    prepared_batch=prepared_batch,
-                )
-            elif self.model.get_trained_component() is not None:
-                model_pred = self.model.model_predict(
+            if self.config.controlnet:
+                model_pred = self.model.controlnet_predict(
                     prepared_batch=prepared_batch,
                 )
             else:
-                raise Exception("Unknown error occurred, no prediction could be made.")
+                model_pred = self.model.model_predict(
+                    prepared_batch=prepared_batch,
+                )
 
         else:
             # Dummy model prediction for debugging.
@@ -1925,12 +1914,8 @@ class Trainer:
                 )
                 break
             self._epoch_rollover(epoch)
-            if self.config.controlnet:
-                self.controlnet.train()
-                training_models = [self.controlnet]
-            else:
-                self.model.get_trained_component().train()
-                training_models = [self.model.get_trained_component()]
+            self.model.get_trained_component().train()
+            training_models = [self.model.get_trained_component()]
             if (
                 "lora" in self.config.model_type
                 and self.config.train_text_encoder
