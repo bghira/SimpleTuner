@@ -7,7 +7,7 @@ from helpers.models.common import (
     ModelTypes,
 )
 from transformers import (
-    T5TokenizerFast,
+    AutoTokenizer,
     T5EncoderModel,
 )
 from diffusers import AutoencoderKLLTXVideo
@@ -51,7 +51,6 @@ class LTXVideo(VideoModelFoundation):
     DEFAULT_MODEL_FLAVOUR = "0.9.5"
     HUGGINGFACE_PATHS = {
         "0.9.5": "Lightricks/LTX-Video-0.9.5",
-        "0.9.1": "Lightricks/LTX-Video-0.9.1",
         "0.9.0": "Lightricks/LTX-Video",
     }
     MODEL_LICENSE = "apache-2.0"
@@ -59,7 +58,7 @@ class LTXVideo(VideoModelFoundation):
     TEXT_ENCODER_CONFIGURATION = {
         "text_encoder": {
             "name": "T5 XXL v1.1",
-            "tokenizer": T5TokenizerFast,
+            "tokenizer": AutoTokenizer,
             "subfolder": "text_encoder",
             "tokenizer_subfolder": "tokenizer",
             "model": T5EncoderModel,
