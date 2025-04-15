@@ -1014,9 +1014,18 @@ def configure_multi_databackend(
                 f"Cannot train using a dataset that has a single bucket with fewer than {args.train_batch_size} images."
                 f" You have to reduce your batch size, or increase your dataset size (id={init_backend['id']})."
             )
+
+        # In the case where max_train_steps is false and num_train_epochs is being used,
+        # padding should be applied so as to ensure each process is operating on the same
+        # number of images. If no padding is used the recalculated max_train_steps value
+        # may differ between processes resulting in training hanging near the end as each
+        # process ends up having their own idea of total steps.
+        apply_padding = True if not args.max_train_steps or args.max_train_steps == 0 else False
+
         # Now split the contents of these buckets between all processes
         init_backend["metadata_backend"].split_buckets_between_processes(
             gradient_accumulation_steps=args.gradient_accumulation_steps,
+            apply_padding=apply_padding
         )
 
         # Check if there is an existing 'config' in the metadata_backend.config
