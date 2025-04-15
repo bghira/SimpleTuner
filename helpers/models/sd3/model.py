@@ -16,7 +16,7 @@ from helpers.models.sd3.pipeline import (
     StableDiffusion3Pipeline,
     StableDiffusion3Img2ImgPipeline,
 )
-from diffusers import AutoencoderKL
+from diffusers import AutoencoderKL, SD3ControlNetModel
 
 logger = logging.getLogger(__name__)
 is_primary_process = True
