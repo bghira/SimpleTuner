@@ -608,13 +608,14 @@ class ModelFoundation(ABC):
                     "T5EncoderModel",
                 ]:
                     # maybe the user enabled NovelAI T5.
-                    if self.config.t5_encoder_implementation == "novelai":
-                        from helpers.models.t5 import NovelAIT5EncoderModel
+                    # if self.config.t5_encoder_implementation == "novelai":
+                    #     from helpers.models.t5 import NovelAIT5EncoderModel
 
-                        logger.info(
-                            f"Converting {text_encoder.__class__.__name__} to NovelAI T5 implementation.."
-                        )
-                        text_encoder = NovelAIT5EncoderModel.from_hf_model(text_encoder)
+                    #     logger.info(
+                    #         f"Converting {text_encoder.__class__.__name__} to NovelAI T5 implementation.."
+                    #     )
+                    #     text_encoder = NovelAIT5EncoderModel.from_hf_model(text_encoder)
+                    pass
 
                 if move_to_device and getattr(
                     self.config, f"{attr_name}_precision", None
