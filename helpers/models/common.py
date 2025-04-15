@@ -179,6 +179,24 @@ class ModelFoundation(ABC):
             "model_predict must be implemented in the child class."
         )
 
+    def controlnet_init(self):
+        """
+        Initialize the controlnet model.
+        This is a stub and should be implemented in subclasses.
+        """
+        raise NotImplementedError(
+            "controlnet_init must be implemented in the child class."
+        )
+
+    def controlnet_predict(self, prepared_batch, custom_timesteps: list = None):
+        """
+        Run a forward pass on the model.
+        Must be implemented by the subclass.
+        """
+        raise NotImplementedError(
+            "model_predict must be implemented in the child class."
+        )
+
     @abstractmethod
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
         """
@@ -366,6 +384,8 @@ class ModelFoundation(ABC):
         )
 
     def unwrap_model(self, model=None):
+        if self.config.controlnet and model is None:
+            return unwrap_model(self.accelerator, self.controlnet)
         return unwrap_model(self.accelerator, model or self.model)
 
     def move_extra_models(self, target_device):
@@ -382,6 +402,8 @@ class ModelFoundation(ABC):
         """
         if self.model is not None:
             self.model.to(target_device)
+        if self.controlnet is not None:
+            self.controlnet.to(target_device)
         if self.vae is not None and self.vae.device != "meta":
             self.vae.to(target_device)
         if self.text_encoders is not None:
@@ -581,6 +603,19 @@ class ModelFoundation(ABC):
                     or "",
                     **extra_kwargs,
                 )
+                if text_encoder.__class__.__name__ in [
+                    "UMT5EncoderModel",
+                    "T5EncoderModel",
+                ]:
+                    # maybe the user enabled NovelAI T5.
+                    if self.config.t5_encoder_implementation == "novelai":
+                        from helpers.models.t5 import NovelAIT5EncoderModel
+
+                        logger.info(
+                            f"Converting {text_encoder.__class__.__name__} to NovelAI T5 implementation.."
+                        )
+                        text_encoder = NovelAIT5EncoderModel.from_hf_model(text_encoder)
+
                 if move_to_device and getattr(
                     self.config, f"{attr_name}_precision", None
                 ) in ["no_change", None]:
@@ -695,7 +730,10 @@ class ModelFoundation(ABC):
 
     def set_prepared_model(self, model):
         # after accelerate prepare, we'll set the model again.
-        self.model = model
+        if self.config.controlnet:
+            self.controlnet = model
+        else:
+            self.model = model
 
     def freeze_components(self):
         # Freeze vae and text_encoders
@@ -718,10 +756,10 @@ class ModelFoundation(ABC):
         Loads the pipeline class for the model.
         This is a stub and should be implemented in subclasses.
         """
-        active_pipelines = getattr(self, "pipelines", {})
-        if pipeline_type in active_pipelines:
-            setattr(active_pipelines[pipeline_type], self.MODEL_TYPE.value, self.unwrap_model())
-            return active_pipelines[pipeline_type]
+        # active_pipelines = getattr(self, "pipelines", {})
+        # if pipeline_type in active_pipelines:
+        #     setattr(active_pipelines[pipeline_type], self.MODEL_TYPE.value, self.unwrap_model())
+        #     return active_pipelines[pipeline_type]
         pipeline_kwargs = {
             "pretrained_model_name_or_path": self._model_config_path(),
         }
@@ -801,7 +839,7 @@ class ModelFoundation(ABC):
             ) in self.TEXT_ENCODER_CONFIGURATION.items():
                 if getattr(possibly_cached_pipeline, text_encoder_attr, None) is None:
                     text_encoder_attr_number = 1
-                    if 'encoder_' in text_encoder_attr:
+                    if "encoder_" in text_encoder_attr:
                         text_encoder_attr_number = text_encoder_attr.split("_")[-1]
                     setattr(
                         possibly_cached_pipeline,
@@ -1154,6 +1192,7 @@ class ImageModelFoundation(ModelFoundation):
         # These will be set by your loading methods
         self.vae = None
         self.model = None
+        self.controlnet = None
         self.text_encoders = None
         self.tokenizers = None
 
