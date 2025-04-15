@@ -11,7 +11,7 @@ from helpers.models.sd1x.pipeline import (
     StableDiffusionImg2ImgPipeline,
     StableDiffusionControlNetPipeline,
 )
-from diffusers import AutoencoderKL, UNet2DConditionModel
+from diffusers import AutoencoderKL, UNet2DConditionModel, ControlNetModel
 
 logger = logging.getLogger(__name__)
 is_primary_process = True
@@ -110,57 +110,63 @@ class StableDiffusion1(ImageModelFoundation):
 
         return prompt_embeds
 
-    def model_predict(self, prepared_batch):
-        logger.debug(
-            "Input shapes:"
-            f"\n{prepared_batch['noisy_latents'].shape}"
-            f"\n{prepared_batch['timesteps'].shape}"
-            f"\n{prepared_batch['encoder_hidden_states'].shape}"
-        )
-        if self.config.controlnet:
-            # ControlNet conditioning.
-            controlnet_image = prepared_batch["conditioning_pixel_values"].to(
-                dtype=self.config.weight_dtype
+    def controlnet_init(self):
+        logger.info("Creating the controlnet..")
+        if self.config.controlnet_model_name_or_path:
+            logger.info("Loading existing controlnet weights")
+            self.controlnet = ControlNetModel.from_pretrained(
+                self.config.controlnet_model_name_or_path
             )
-            logger.debug(f"Image shape: {controlnet_image.shape}")
-            down_block_res_samples, mid_block_res_sample = self.controlnet(
+        else:
+            logger.info("Initializing controlnet weights from base model")
+            self.controlnet = ControlNetModel.from_unet(self.unwrap_model(self.model))
+        self.controlnet.to(self.accelerator.device, self.config.weight_dtype)
+
+    def controlnet_predict(self, prepared_batch: dict) -> dict:
+        # ControlNet conditioning.
+        controlnet_image = prepared_batch["conditioning_pixel_values"].to(
+            device=self.accelerator.device, dtype=self.config.weight_dtype
+        )
+        logger.debug(f"Image shape: {controlnet_image.shape}")
+        down_block_res_samples, mid_block_res_sample = self.controlnet(
+            prepared_batch["noisy_latents"].to(
+                device=self.accelerator.device, dtype=self.config.base_weight_dtype
+            ),
+            prepared_batch["timesteps"],
+            encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(
+                device=self.accelerator.device, dtype=self.config.base_weight_dtype
+            ),
+            # added_cond_kwargs=added_cond_kwargs,
+            controlnet_cond=controlnet_image,
+            return_dict=False,
+        )
+
+        return {
+            "model_prediction": self.model(
                 prepared_batch["noisy_latents"].to(
-                    device=self.accelerator.device, dtype=self.config.base_weight_dtype
+                    device=self.accelerator.device,
+                    dtype=self.config.base_weight_dtype,
                 ),
-                prepared_batch["timesteps"],
+                prepared_batch["timesteps"].to(self.accelerator.device),
                 encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(
-                    device=self.accelerator.device, dtype=self.config.base_weight_dtype
+                    device=self.accelerator.device,
+                    dtype=self.config.base_weight_dtype,
                 ),
                 # added_cond_kwargs=added_cond_kwargs,
-                controlnet_cond=controlnet_image,
+                down_block_additional_residuals=[
+                    sample.to(
+                        device=self.accelerator.device, dtype=self.config.weight_dtype
+                    )
+                    for sample in down_block_res_samples
+                ],
+                mid_block_additional_residual=mid_block_res_sample.to(
+                    device=self.accelerator.device, dtype=self.config.weight_dtype
+                ),
                 return_dict=False,
-            )
-            if self.model.MODEL_TYPE.value == "transformer":
-                raise Exception(
-                    "ControlNet predictions for transformer models are not yet implemented."
-                )
-            # Predict the noise residual
-            if self.model.get_trained_component() is not None:
-                model_pred = self.model.get_trained_component()(
-                    prepared_batch["noisy_latents"].to(
-                        device=self.accelerator.device,
-                        dtype=self.config.base_weight_dtype,
-                    ),
-                    prepared_batch["timesteps"],
-                    encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(
-                        device=self.accelerator.device,
-                        dtype=self.config.base_weight_dtype,
-                    ),
-                    # added_cond_kwargs=added_cond_kwargs,
-                    down_block_additional_residuals=[
-                        sample.to(dtype=self.config.weight_dtype)
-                        for sample in down_block_res_samples
-                    ],
-                    mid_block_additional_residual=mid_block_res_sample.to(
-                        dtype=self.config.weight_dtype
-                    ),
-                    return_dict=False,
-                )[0]
+            )[0]
+        }
+
+    def model_predict(self, prepared_batch):
 
         return {
             "model_prediction": self.model(
