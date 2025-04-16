@@ -1197,6 +1197,15 @@ def get_argument_parser():
         help="Power factor of the polynomial scheduler.",
     )
     parser.add_argument(
+        "--distillation_method",
+        default=None,
+        choices=["perflow"],
+        help=(
+            "The distillation method to use. Currently, only 'perflow' is supported via LoRA."
+            " This will apply the perflow distillation method to the model."
+        ),
+    )
+    parser.add_argument(
         "--use_ema",
         action="store_true",
         help="Whether to use EMA (exponential moving average) model. Works with LoRA, Lycoris, and full training.",

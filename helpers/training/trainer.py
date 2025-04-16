@@ -239,6 +239,8 @@ class Trainer:
             self.init_benchmark_base_model()
             self.disable_sageattention_inference()
             self._exit_on_signal()
+            self.init_distillation()
+            self._exit_on_signal()
             self.resume_and_prepare()
             self._exit_on_signal()
             self.init_trackers()
@@ -758,6 +760,66 @@ class Trainer:
                 )
         self.enable_gradient_checkpointing()
 
+    def init_distillation(self):
+        if self.config.distillation_method is None:
+            return
+
+        if self.config.distillation_method == "slimflow":
+            from helpers.distillation.slimflow import SlimFlowDistiller
+
+            self.distiller = SlimFlowDistiller(
+                teacher_model=None,
+                student_model=self.model,
+                config={
+                    'annealing_schedule': 'linear',
+                    'beta_steps': 50000,
+                    'train_mode': 'annealing_reflow',  # Start with reflow
+                }
+            )
+        elif self.config.distillation_method == "perflow":
+            from helpers.distillation.perflow import PeRFlowDistiller, FlowMatchingPeRFlowDistiller
+            # For LoRA with PeRFlow regularization (single model)
+            if self.config.model_type == "lora":
+                if self.model.PREDICTION_TYPE.value == "flow_matching":
+                    logger.info("Loading flow-matching PeRF distillation for low-rank training.")
+                    self.distiller = FlowMatchingPeRFlowDistiller(
+                        teacher_model=self.model,
+                        student_model=None,
+                        config={
+                            'loss_type': 'velocity_matching',
+                            'pred_type': 'velocity',
+                            'windows': 16,
+                            'is_regularisation_data': True,  # Use regularization approach
+                        }
+                    )
+                else:
+                    logger.info("Loading flow-matching PeRF distillation for full-rank training.")
+                    self.distiller = PeRFlowDistiller(
+                        teacher_model=self.model,
+                        student_model=None,
+                        config={
+                            'loss_type': 'velocity_matching',
+                            'pred_type': 'velocity',
+                            'windows': 16,
+                            'is_regularisation_data': True,  # Use regularization approach
+                        }
+                    )
+            elif self.config.model_type == "full":
+                ## For separate teacher/student models
+                ## TODO: Implement
+                # distiller = PeRFlowDistiller(
+                #     teacher_model=teacher_model,
+                #     student_model=student_model,
+                #     config={
+                #         'loss_type': 'velocity_matching',
+                #         'pred_type': 'velocity',
+                #         'windows': 16,
+                #         'is_regularisation_data': False,  # Use full PeRFlow approach
+                #     }
+                # )
+                raise NotImplementedError(
+                    "Separate teacher/student models for PeRFlow are not implemented yet."
+                )
     def enable_gradient_checkpointing(self):
         if self.config.gradient_checkpointing:
             logger.debug("Enabling gradient checkpointing.")
@@ -1796,85 +1858,15 @@ class Trainer:
             )
             return batch
 
-        return self.model.prepare_batch(batch, state=self.state)
+        prepared_batch = self.model.prepare_batch(batch, state=self.state)
+        
+        if self.distiller:
+            prepared_batch = self.distiller.prepare_batch(prepared_batch, self.model, self.state)
+
+        return prepared_batch
 
     def get_prediction_target(self, prepared_batch: dict):
         return self.model.get_prediction_target(prepared_batch)
-
-    def _calculate_loss(
-        self,
-        prepared_batch: dict,
-        model_pred,
-        target,
-        apply_conditioning_mask: bool = True,
-    ):
-        # Compute the per-pixel loss without reducing over spatial dimensions
-        if self.config.flow_matching:
-            # For flow matching, compute the per-pixel squared differences
-            loss = (
-                model_pred.float() - target.float()
-            ) ** 2  # Shape: (batch_size, C, H, W)
-        elif self.config.snr_gamma is None or self.config.snr_gamma == 0:
-            training_logger.debug("Calculating loss")
-            loss = self.config.snr_weight * F.mse_loss(
-                model_pred.float(), target.float(), reduction="none"
-            )  # Shape: (batch_size, C, H, W)
-        else:
-            # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
-            # Since we predict the noise instead of x_0, the original formulation is slightly changed.
-            # This is discussed in Section 4.2 of the same paper.
-            training_logger.debug("Using min-SNR loss")
-            snr = compute_snr(prepared_batch["timesteps"], self.noise_scheduler)
-            snr_divisor = snr
-            if self.noise_scheduler.config.prediction_type == "v_prediction":
-                snr_divisor = snr + 1
-
-            training_logger.debug("Calculating MSE loss weights using SNR as divisor")
-            mse_loss_weights = (
-                torch.stack(
-                    [
-                        snr,
-                        self.config.snr_gamma
-                        * torch.ones_like(prepared_batch["timesteps"]),
-                    ],
-                    dim=1,
-                ).min(dim=1)[0]
-                / snr_divisor
-            )  # Shape: (batch_size,)
-
-            # Compute the per-pixel MSE loss without reduction
-            loss = F.mse_loss(
-                model_pred.float(), target.float(), reduction="none"
-            )  # Shape: (batch_size, C, H, W)
-
-            # Reshape mse_loss_weights for broadcasting and apply to loss
-            mse_loss_weights = mse_loss_weights.view(
-                -1, 1, 1, 1
-            )  # Shape: (batch_size, 1, 1, 1)
-            loss = loss * mse_loss_weights  # Shape: (batch_size, C, H, W)
-
-        # Mask the loss using any conditioning data
-        conditioning_type = prepared_batch.get("conditioning_type")
-        if conditioning_type == "mask" and apply_conditioning_mask:
-            # Adapted from:
-            # https://github.com/kohya-ss/sd-scripts/blob/main/library/custom_train_functions.py#L482
-            mask_image = (
-                prepared_batch["conditioning_pixel_values"]
-                .to(dtype=loss.dtype, device=loss.device)[:, 0]
-                .unsqueeze(1)
-            )  # Shape: (batch_size, 1, H', W')
-            mask_image = torch.nn.functional.interpolate(
-                mask_image, size=loss.shape[2:], mode="area"
-            )  # Resize to match loss spatial dimensions
-            mask_image = mask_image / 2 + 0.5  # Normalize to [0,1]
-            loss = loss * mask_image  # Element-wise multiplication
-
-        # Reduce the loss by averaging over channels and spatial dimensions
-        loss = loss.mean(dim=list(range(1, len(loss.shape))))  # Shape: (batch_size,)
-
-        # Further reduce the loss by averaging over the batch dimension
-        loss = loss.mean()  # Scalar value
-        return loss
 
     def train(self):
         self.init_trackers()
@@ -2062,6 +2054,9 @@ class Trainer:
                         model_output=model_pred,
                         loss=loss,
                     )
+                    distill_logs = {}
+                    if self.config.distillation_method is not None:
+                        loss, distill_logs = self.distiller.compute_distill_loss(prepared_batch, model_pred, loss)
 
                     parent_loss = None
                     if is_regularisation_data:
@@ -2132,6 +2127,8 @@ class Trainer:
                             set_to_none=self.config.set_grads_to_none
                         )
 
+                        self.distiller.post_training_step(self.model, step)
+
                 # Checks if the accelerator has performed an optimization step behind the scenes
                 wandb_logs = {}
                 if self.accelerator.sync_gradients:
@@ -2157,6 +2154,8 @@ class Trainer:
                             "epoch": epoch,
                         }
                     )
+                    if distill_logs is not None:
+                        wandb_logs.update(distill_logs)
                     if parent_loss is not None:
                         wandb_logs["regularisation_loss"] = parent_loss
                     if aux_loss_logs is not None:
