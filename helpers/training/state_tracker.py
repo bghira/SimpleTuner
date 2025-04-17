@@ -86,17 +86,23 @@ class StateTracker:
                     pass
 
     @classmethod
-    def _load_from_disk(cls, cache_name):
+    def _load_from_disk(cls, cache_name, retry_limit: int = 0):
         cache_path = Path(cls.args.output_dir) / f"{cache_name}.json"
-        if cache_path.exists():
-            try:
-                with cache_path.open("r") as f:
-                    return json.load(f)
-            except Exception as e:
-                logger.error(
-                    f"Invalidating cache: error loading {cache_name} from disk. {e}"
-                )
-                return None
+        retry_count = 0
+        while retry_count < retry_limit and not cache_path.exists():
+            if cache_path.exists():
+                try:
+                    with cache_path.open("r") as f:
+                        return json.load(f)
+                except Exception as e:
+                    logger.error(
+                        f"Invalidating cache: error loading {cache_name} from disk. {e}"
+                    )
+                    return None
+            retry_count += 1
+            if retry_count < retry_limit:
+                logger.warning(f"Cache file {cache_name} does not exist. Retry {retry_count}/{retry_limit}.")
+        logger.warning(f"No cache file was found: {cache_path}")
         return None
 
     @classmethod
