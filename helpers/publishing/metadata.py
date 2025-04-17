@@ -509,7 +509,7 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 - Optimizer: {StateTracker.get_args().optimizer}{optimizer_config if optimizer_config is not None else ''}
 - Trainable parameter precision: {'Pure BF16' if torch.backends.mps.is_available() or StateTracker.get_args().mixed_precision == "bf16" else 'FP32'}
 - Base model precision: `{args.base_model_precision}`
-- Caption dropout probability: {StateTracker.get_args().caption_dropout_probability * 100}%
+- Caption dropout probability: {StateTracker.get_args().caption_dropout_probability or 0.0 * 100}%
 {'- Xformers: Enabled' if StateTracker.get_args().attention_mechanism == 'xformers' else ''}
 {f'- SageAttention: Enabled {StateTracker.get_args().sageattention_usage}' if StateTracker.get_args().attention_mechanism == 'sageattention' else ''}
 {lora_info(args=StateTracker.get_args())}
