@@ -186,10 +186,10 @@ class StateTracker:
         return cls.all_image_files[data_backend_id]
 
     @classmethod
-    def get_image_files(cls, data_backend_id: str):
+    def get_image_files(cls, data_backend_id: str, retry_limit: int = 0):
         if data_backend_id not in cls.all_image_files:
             cls.all_image_files[data_backend_id] = cls._load_from_disk(
-                "all_image_files_{}".format(data_backend_id)
+                "all_image_files_{}".format(data_backend_id), retry_limit=retry_limit
             )
         return cls.all_image_files[data_backend_id]
 
@@ -336,7 +336,7 @@ class StateTracker:
         )
 
     @classmethod
-    def get_vae_cache_files(cls: list, data_backend_id: str):
+    def get_vae_cache_files(cls: list, data_backend_id: str, retry_limit: int = 0):
         if (
             data_backend_id not in cls.all_vae_cache_files
             or cls.all_vae_cache_files.get(data_backend_id) is None
@@ -365,10 +365,10 @@ class StateTracker:
         )
 
     @classmethod
-    def get_text_cache_files(cls: list, data_backend_id: str):
+    def get_text_cache_files(cls: list, data_backend_id: str, retry_limit: int = 0):
         if data_backend_id not in cls.all_text_cache_files:
             cls.all_text_cache_files[data_backend_id] = cls._load_from_disk(
-                "all_text_cache_files_{}".format(data_backend_id)
+                "all_text_cache_files_{}".format(data_backend_id), retry_limit=retry_limit
             )
         return cls.all_text_cache_files[data_backend_id]
 
@@ -378,9 +378,9 @@ class StateTracker:
         cls._save_to_disk("all_caption_files", cls.all_caption_files)
 
     @classmethod
-    def get_caption_files(cls):
+    def get_caption_files(cls, retry_limit: int = 0):
         if not cls.all_caption_files:
-            cls.all_caption_files = cls._load_from_disk("all_caption_files")
+            cls.all_caption_files = cls._load_from_disk("all_caption_files", retry_limit=retry_limit)
         return cls.all_caption_files
 
     @classmethod
@@ -566,12 +566,12 @@ class StateTracker:
         )
 
     @classmethod
-    def load_aspect_resolution_map(cls, dataloader_resolution: float):
+    def load_aspect_resolution_map(cls, dataloader_resolution: float, retry_limit: int = 0):
         if dataloader_resolution not in cls.aspect_resolution_map:
             cls.aspect_resolution_map = {dataloader_resolution: {}}
 
         cls.aspect_resolution_map[dataloader_resolution] = (
-            cls._load_from_disk(f"aspect_resolution_map-{dataloader_resolution}") or {}
+            cls._load_from_disk(f"aspect_resolution_map-{dataloader_resolution}") or {}, , retry_limit=retry_limit
         )
         logger.debug(
             f"Aspect resolution map: {cls.aspect_resolution_map[dataloader_resolution]}"
