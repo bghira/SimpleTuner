@@ -1,6 +1,7 @@
 from os import environ
 from pathlib import Path
 import json
+import time, os
 import logging
 from helpers.models.all import model_families
 
@@ -82,6 +83,7 @@ class StateTracker:
             if cache_path.exists():
                 try:
                     cache_path.unlink()
+                    logger.warning(f"(rank={os.environ.get('RANK')}) Deleted cache file: {cache_path}")
                 except:
                     pass
 
@@ -89,27 +91,34 @@ class StateTracker:
     def _load_from_disk(cls, cache_name, retry_limit: int = 0):
         cache_path = Path(cls.args.output_dir) / f"{cache_name}.json"
         retry_count = 0
-        while retry_count < retry_limit and not cache_path.exists():
+        results = None
+        while retry_count < retry_limit and (not cache_path.exists() or results is None):
             if cache_path.exists():
                 try:
                     with cache_path.open("r") as f:
-                        return json.load(f)
+                        results = json.load(f)
                 except Exception as e:
                     logger.error(
                         f"Invalidating cache: error loading {cache_name} from disk. {e}"
                     )
                     return None
-            retry_count += 1
-            if retry_count < retry_limit:
-                logger.warning(f"Cache file {cache_name} does not exist. Retry {retry_count}/{retry_limit}.")
-        logger.warning(f"No cache file was found: {cache_path}")
-        return None
+            else:
+                retry_count += 1
+                if retry_count < retry_limit:
+                    logger.debug(f"Cache file {cache_name} does not exist. Retry {retry_count}/{retry_limit}.")
+                    time.sleep(1)
+                else:
+                    logger.warning(f"No cache file was found: {cache_path}")
+        logger.debug(f"Returning: {type(results)}")
+        return results
 
     @classmethod
     def _save_to_disk(cls, cache_name, data):
         cache_path = Path(cls.args.output_dir) / f"{cache_name}.json"
+        logger.debug(f"(rank={os.environ.get('RANK')}) Saving {cache_name} to disk: {cache_path}")
         with cache_path.open("w") as f:
             json.dump(data, f)
+        logger.debug(f"(rank={os.environ.get('RANK')}) Save complete {cache_name} to disk: {cache_path}")
 
     @classmethod
     def set_config_path(cls, config_path: str):
@@ -187,10 +196,19 @@ class StateTracker:
 
     @classmethod
     def get_image_files(cls, data_backend_id: str, retry_limit: int = 0):
+        if data_backend_id in cls.all_image_files and cls.all_image_files[data_backend_id] is None:
+            # we should probaby try to reload it from disk if it failed earlier.
+            logger.debug(f"(rank={os.environ.get('RANK')}) Clearing out invalid pre-loaded cache entry for {data_backend_id}")
+            del cls.all_image_files[data_backend_id]
         if data_backend_id not in cls.all_image_files:
+            logger.debug(f"(rank={os.environ.get('RANK')}) Attempting to load from disk: {data_backend_id}")
             cls.all_image_files[data_backend_id] = cls._load_from_disk(
                 "all_image_files_{}".format(data_backend_id), retry_limit=retry_limit
             )
+            logger.debug(f"(rank={os.environ.get('RANK')}) Completed load from disk: {data_backend_id}: {type(cls.all_image_files[data_backend_id])}")
+        else:
+            logger.debug(f"()")
+        logger.debug(f"(rank={os.environ.get('RANK')}) Returning {type(cls.all_image_files[data_backend_id])} for {data_backend_id}")
         return cls.all_image_files[data_backend_id]
 
     @classmethod
@@ -571,7 +589,7 @@ class StateTracker:
             cls.aspect_resolution_map = {dataloader_resolution: {}}
 
         cls.aspect_resolution_map[dataloader_resolution] = (
-            cls._load_from_disk(f"aspect_resolution_map-{dataloader_resolution}") or {}, , retry_limit=retry_limit
+            cls._load_from_disk(f"aspect_resolution_map-{dataloader_resolution}", retry_limit=retry_limit) or {}
         )
         logger.debug(
             f"Aspect resolution map: {cls.aspect_resolution_map[dataloader_resolution]}"
