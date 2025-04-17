@@ -1317,7 +1317,7 @@ def configure_multi_databackend(
                     init_backend["vaecache"].discover_all_files()
                 accelerator.wait_for_everyone()
             all_image_files = StateTracker.get_image_files(
-                data_backend_id=init_backend["id"]
+                data_backend_id=init_backend["id"], retry_limit=3 # some filesystems maybe take longer to make it available.
             )
             init_backend["vaecache"].build_vae_cache_filename_map(
                 all_image_files=all_image_files
