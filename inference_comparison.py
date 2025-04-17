@@ -5,6 +5,7 @@
 from diffusers import AutoPipelineForText2Image
 from torch import manual_seed, float16
 import os
+import pillow_jxl
 from PIL import Image, ImageDraw, ImageFont
 from helpers.prompts import prompts
 

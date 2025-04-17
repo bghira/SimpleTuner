@@ -5,6 +5,7 @@ import random
 import argparse
 import base64
 import torch
+import pillow_jxl
 from PIL import Image
 from tqdm import tqdm
 import requests

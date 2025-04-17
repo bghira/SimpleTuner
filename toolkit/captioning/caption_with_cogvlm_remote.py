@@ -3,6 +3,7 @@ import queue
 import requests
 import torch, base64, logging, io, time
 import argparse
+import pillow_jxl
 from PIL import Image
 from io import BytesIO
 from accelerate import Accelerator

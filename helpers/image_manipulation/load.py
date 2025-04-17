@@ -5,6 +5,7 @@ import numpy as np
 
 from io import BytesIO
 from typing import Union, IO, Any
+import pillow_jxl
 from PIL import Image, PngImagePlugin
 
 logger = logging.getLogger(__name__)

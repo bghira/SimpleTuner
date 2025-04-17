@@ -1,3 +1,4 @@
+import pillow_jxl
 from PIL import Image
 import os, logging
 import csv

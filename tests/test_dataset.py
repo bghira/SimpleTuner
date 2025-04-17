@@ -1,6 +1,7 @@
 import unittest
 import pandas as pd
 from unittest.mock import patch, Mock, MagicMock
+import pillow_jxl
 from PIL import Image
 from pathlib import Path
 from helpers.multiaspect.dataset import MultiAspectDataset

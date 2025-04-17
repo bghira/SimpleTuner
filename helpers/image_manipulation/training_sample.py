@@ -1,3 +1,4 @@
+import pillow_jxl
 from PIL import Image
 from PIL.ImageOps import exif_transpose
 from helpers.multiaspect.image import MultiaspectImage, resize_helpers

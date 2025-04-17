@@ -1,5 +1,6 @@
 import argparse
 import os
+import pillow_jxl
 import PIL
 import cv2  # Import OpenCV for image processing
 import numpy as np

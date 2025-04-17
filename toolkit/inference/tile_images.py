@@ -1,4 +1,5 @@
 import os
+import pillow_jxl
 from PIL import Image
 
 # Define the image size

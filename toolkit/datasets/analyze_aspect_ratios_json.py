@@ -2,6 +2,7 @@ import json, os
 import threading, logging
 from concurrent.futures import ThreadPoolExecutor
 
+import pillow_jxl
 from PIL import Image
 
 # Allowed bucket values:

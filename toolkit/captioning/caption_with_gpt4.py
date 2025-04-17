@@ -4,6 +4,7 @@ import requests
 import random
 import argparse
 import base64
+import pillow_jxl
 from PIL import Image
 from tqdm import tqdm
 import io

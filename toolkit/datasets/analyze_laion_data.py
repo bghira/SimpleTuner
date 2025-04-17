@@ -5,6 +5,7 @@ Walk through a LAION dataset and analyze it.
 import os
 import json
 import concurrent.futures
+import pillow_jxl
 from PIL import Image
 
 

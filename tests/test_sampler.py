@@ -1,5 +1,6 @@
 import unittest, os, logging
 from math import ceil
+import pillow_jxl
 from PIL import Image
 from unittest import skip
 from unittest.mock import Mock, MagicMock, patch
