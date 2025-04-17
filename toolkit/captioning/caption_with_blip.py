@@ -1,4 +1,5 @@
 import os, torch, logging, re, random
+import pillow_jxl
 from PIL import Image
 from clip_interrogator import Config, Interrogator, LabelTable, load_list
 from clip_interrogator import clip_interrogator

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import inspect
+import pillow_jxl
 import PIL
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from diffusers.callbacks import PipelineCallback, MultiPipelineCallbacks

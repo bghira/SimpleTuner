@@ -1,5 +1,6 @@
 import os
 import cv2
+import pillow_jxl
 from PIL import Image
 
 

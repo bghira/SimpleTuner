@@ -1,5 +1,6 @@
 import os, torch, logging, accelerate, re, random, argparse, io
 from tqdm.auto import tqdm
+import pillow_jxl
 from PIL import Image
 import requests, boto3
 from botocore.config import Config

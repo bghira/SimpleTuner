@@ -1,4 +1,5 @@
 import torch
+import pillow_jxl
 from PIL import Image
 from diffusers import (
     StableDiffusionPipeline,

@@ -1,3 +1,4 @@
+import pillow_jxl
 from PIL import Image, ImageDraw, ImageFont
 import requests
 from io import BytesIO

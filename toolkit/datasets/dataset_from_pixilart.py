@@ -7,6 +7,7 @@ import requests
 import pandas as pd
 from tqdm import tqdm
 from io import BytesIO
+import pillow_jxl
 from PIL import Image
 from concurrent.futures import ThreadPoolExecutor
 

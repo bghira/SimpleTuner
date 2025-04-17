@@ -9,6 +9,7 @@ import time
 import io
 import pandas as pd
 import google.generativeai as genai
+import pillow_jxl
 from PIL import Image
 from tqdm import tqdm
 import pyarrow.parquet as pq

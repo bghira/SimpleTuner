@@ -9,6 +9,7 @@ from tqdm import tqdm
 from helpers.training.wrappers import unwrap_model
 from helpers.models.common import VideoModelFoundation, ImageModelFoundation
 from helpers.models.common import ModelFoundation
+import pillow_jxl
 from PIL import Image
 from helpers.training.state_tracker import StateTracker
 from helpers.models.common import PredictionTypes, PipelineTypes

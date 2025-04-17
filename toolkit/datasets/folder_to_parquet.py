@@ -12,6 +12,7 @@ image_data
 """
 
 import os, argparse
+import pillow_jxl
 from PIL import Image
 import numpy as np
 import pandas as pd

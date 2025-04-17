@@ -2,6 +2,7 @@ import os, json
 import logging
 import argparse
 import requests
+import pillow_jxl
 from PIL import Image
 from tqdm import tqdm
 import pandas as pd

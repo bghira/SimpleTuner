@@ -26,6 +26,7 @@ image_file_extensions = set(
     [
         "jpg",
         "jpeg",
+        "jxl",
         "png",
         "webp",
         "bmp",
