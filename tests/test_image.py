@@ -4,6 +4,10 @@ logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", logging.INFO))
 from unittest.mock import patch
 from unittest.mock import Mock, MagicMock
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 from PIL import Image
 from io import BytesIO
 from helpers.multiaspect.image import MultiaspectImage

@@ -1,4 +1,8 @@
 import os, logging, re, random, argparse, json, torch
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 from PIL import Image
 from tqdm import tqdm
 import requests, io

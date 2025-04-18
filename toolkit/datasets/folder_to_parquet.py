@@ -12,6 +12,10 @@ image_data
 """
 
 import os, argparse
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 from PIL import Image
 import numpy as np
 import pandas as pd

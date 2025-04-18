@@ -3,6 +3,10 @@ import queue
 import requests
 import torch, base64, logging, io, time
 import argparse
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 from PIL import Image
 from io import BytesIO
 from accelerate import Accelerator

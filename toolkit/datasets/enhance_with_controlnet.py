@@ -1,4 +1,8 @@
 import torch
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 from PIL import Image
 from diffusers import ControlNetModel, DiffusionPipeline
 from diffusers.utils import load_image

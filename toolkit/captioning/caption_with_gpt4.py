@@ -4,6 +4,10 @@ import requests
 import random
 import argparse
 import base64
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 from PIL import Image
 from tqdm import tqdm
 import io
