@@ -1,5 +1,8 @@
 import os
-import pillow_jxl
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 from PIL import Image, ImageDraw, ImageFont
 from helpers.prompts import prompts
 

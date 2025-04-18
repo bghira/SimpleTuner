@@ -1,6 +1,9 @@
 import boto3, os, logging, argparse, datetime
 from botocore.config import Config
-import pillow_jxl
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 from PIL import Image
 
 # Set up logging

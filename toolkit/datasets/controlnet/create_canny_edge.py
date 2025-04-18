@@ -1,6 +1,9 @@
 import os
 import cv2
-import pillow_jxl
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 from PIL import Image
 import numpy as np
 

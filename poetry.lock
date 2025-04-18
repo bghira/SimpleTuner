@@ -2696,7 +2696,7 @@ version = "24.2"
 description = "Core utilities for Python packages"
 optional = false
 python-versions = ">=3.8"
-groups = ["main"]
+groups = ["main", "jxl"]
 files = [
     {file = "packaging-24.2-py3-none-any.whl", hash = "sha256:09abb1bccd265c01f4a3aa3f7a7db064b36514d2cba19a2f694fe6150451a759"},
     {file = "packaging-24.2.tar.gz", hash = "sha256:c228a6dc5e932d346bc5739379109d49e8853dd8223571c7c5b55260edc0b97f"},
@@ -2842,7 +2842,7 @@ version = "11.2.1"
 description = "Python Imaging Library (Fork)"
 optional = false
 python-versions = ">=3.9"
-groups = ["main"]
+groups = ["main", "jxl"]
 files = [
     {file = "pillow-11.2.1-cp310-cp310-macosx_10_10_x86_64.whl", hash = "sha256:d57a75d53922fc20c165016a20d9c44f73305e67c351bbc60d1adaf662e74047"},
     {file = "pillow-11.2.1-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:127bf6ac4a5b58b3d32fc8289656f77f80567d65660bc46f72c0d77e6600cc95"},
@@ -2942,7 +2942,7 @@ version = "1.3.2"
 description = "Pillow plugin for JPEG-XL, using Rust for bindings."
 optional = false
 python-versions = ">=3.9"
-groups = ["main"]
+groups = ["jxl"]
 files = [
     {file = "pillow_jxl_plugin-1.3.2-cp310-cp310-macosx_10_12_x86_64.whl", hash = "sha256:2e80701afb838cecd593934fd1eee7074a46009c6b44bd4eef2eba544db726fe"},
     {file = "pillow_jxl_plugin-1.3.2-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:1835e90e0dc083392d0ae43a14da7e016e1a2d587b1749ecc711d62d57b03e2e"},
@@ -5848,4 +5848,4 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<3.13"
-content-hash = "7f490ce3729433b00cfc04a152205393ca2b1e15cbfe6f5272bee8245b455bcb"
+content-hash = "17dd2a2f63d14072a7f49b3756f59c3d422a3022627a836125c776bc9f7b1a3e"

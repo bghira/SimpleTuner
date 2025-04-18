@@ -2,7 +2,10 @@ import json, os
 import threading, logging
 from concurrent.futures import ThreadPoolExecutor
 
-import pillow_jxl
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 from PIL import Image
 
 # Allowed bucket values:

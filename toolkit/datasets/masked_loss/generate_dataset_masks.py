@@ -1,6 +1,9 @@
 import argparse
 import os
-import pillow_jxl
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 import PIL
 import cv2  # Import OpenCV for image processing
 import numpy as np

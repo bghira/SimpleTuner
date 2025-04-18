@@ -3,8 +3,6 @@ import numpy as np
 import os
 from skimage.metrics import structural_similarity as compare_ssim
 import imutils
-import pillow_jxl
-from PIL import Image
 
 
 def process_video(input_video_path, output_folder, detect_faces=False):
@@ -106,16 +104,6 @@ def process(input_path, output_folder, detect_faces=False):
         # If input path is a directory, process each image file in the directory
         for image_file in Path(input_path).glob("*"):
             image = cv2.imread(str(image_file))
-            if image is None:
-                # If OpenCV fails, try loading the image with Pillow
-                try:
-                    pil_image = Image.open(str(image_file))
-                    # Convert Pillow image to a format OpenCV can use
-                    image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
-                    return image
-                except Exception as e:
-                    logging.info(f"Image had ERROR: {input_path}")
-                    continue
             process_image(image, output_folder, detect_faces)
     else:
         # If input path is not a directory, assume it's a video file and process it

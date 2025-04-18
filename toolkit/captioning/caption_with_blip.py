@@ -1,5 +1,8 @@
 import os, torch, logging, re, random
-import pillow_jxl
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 from PIL import Image
 from clip_interrogator import Config, Interrogator, LabelTable, load_list
 from clip_interrogator import clip_interrogator
