@@ -688,6 +688,10 @@ class ModelFoundation(ABC):
             # we're using a custom transformer, let's check its subfolder
             if str(self.config.pretrained_transformer_subfolder).lower() == "none":
                 model_subfolder = None
+            elif str(self.config.pretrained_unet_model_name_or_path).lower() is None:
+                model_subfolder = self.MODEL_SUBFOLDER
+            else:
+                model_subfolder = self.config.pretrained_transformer_subfolder
         elif (
             self.MODEL_TYPE is ModelTypes.UNET
             and self.config.pretrained_unet_model_name_or_path == model_path
@@ -695,6 +699,10 @@ class ModelFoundation(ABC):
             # we're using a custom transformer, let's check its subfolder
             if str(self.config.pretrained_unet_model_name_or_path).lower() == "none":
                 model_subfolder = None
+            elif str(self.config.pretrained_unet_model_name_or_path).lower() is None:
+                model_subfolder = self.MODEL_SUBFOLDER
+            else:
+                model_subfolder = self.config.pretrained_unet_subfolder
 
         self.model = loader_fn(
             model_path,
