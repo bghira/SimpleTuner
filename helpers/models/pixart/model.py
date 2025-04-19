@@ -5,7 +5,7 @@ from helpers.models.common import (
     PipelineTypes,
     ModelTypes,
 )
-from transformers import T5TokenizerFast, T5EncoderModel
+from transformers import AutoTokenizer, T5EncoderModel
 from helpers.models.pixart.pipeline import (
     PixArtSigmaPipeline,
 )
@@ -56,7 +56,7 @@ class PixartSigma(ImageModelFoundation):
     TEXT_ENCODER_CONFIGURATION = {
         "text_encoder": {
             "name": "T5 XXL v1.1",
-            "tokenizer": T5TokenizerFast,
+            "tokenizer": AutoTokenizer,
             "subfolder": "text_encoder",
             "tokenizer_subfolder": "tokenizer",
             "model": T5EncoderModel,
