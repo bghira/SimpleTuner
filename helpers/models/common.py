@@ -670,8 +670,9 @@ class ModelFoundation(ABC):
         loader_fn = self.MODEL_CLASS.from_pretrained
         model_path = (
             self.config.pretrained_transformer_model_name_or_path
-            or self.config.pretrained_model_name_or_path
-        )
+            if self.MODEL_TYPE is ModelTypes.TRANSFORMER
+            else self.config.pretrained_unet_model_name_or_path
+        ) or self.config.pretrained_model_name_or_path
         if self.config.pretrained_model_name_or_path.endswith(".safetensors"):
             self.config.pretrained_model_name_or_path = get_model_config_path(
                 self.config.model_family, model_path
@@ -679,9 +680,25 @@ class ModelFoundation(ABC):
         if model_path.endswith(".safetensors"):
             loader_fn = self.MODEL_CLASS.from_single_file
         pretrained_load_args = self.pretrained_load_args(pretrained_load_args)
+        model_subfolder = self.MODEL_SUBFOLDER
+        if (
+            self.MODEL_TYPE is ModelTypes.TRANSFORMER
+            and self.config.pretrained_transformer_model_name_or_path == model_path
+        ):
+            # we're using a custom transformer, let's check its subfolder
+            if str(self.config.pretrained_transformer_subfolder).lower() == "none":
+                model_subfolder = None
+        elif (
+            self.MODEL_TYPE is ModelTypes.UNET
+            and self.config.pretrained_unet_model_name_or_path == model_path
+        ):
+            # we're using a custom transformer, let's check its subfolder
+            if str(self.config.pretrained_unet_model_name_or_path).lower() == "none":
+                model_subfolder = None
+
         self.model = loader_fn(
             model_path,
-            subfolder=self.MODEL_SUBFOLDER,
+            subfolder=model_subfolder,
             **pretrained_load_args,
         )
         if move_to_device and self.model is not None:
