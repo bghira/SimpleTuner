@@ -65,6 +65,8 @@ if __name__ == "__main__":
         trainer.init_validations()
         trainer.init_benchmark_base_model()
 
+        trainer.init_distillation()
+
         trainer.resume_and_prepare()
 
         trainer.init_trackers()
