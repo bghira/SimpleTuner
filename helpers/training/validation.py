@@ -411,6 +411,7 @@ class Validation:
         self,
         accelerator,
         model: ModelFoundation,
+        distiller,
         args,
         validation_prompt_metadata,
         vae_path,
@@ -426,6 +427,7 @@ class Validation:
         self.prompt_handler = None
         self.unet, self.transformer = None, None
         self.model = model
+        self.distiller = distiller
         if args.controlnet:
             self.controlnet = model.get_trained_component()
         elif "unet" in str(self.model.get_trained_component().__class__).lower():
@@ -785,6 +787,11 @@ class Validation:
         )
 
     def setup_scheduler(self):
+        if self.distiller is not None:
+            distillation_scheduler = self.distiller.get_scheduler()
+            if distillation_scheduler is not None:
+                self.model.pipeline.scheduler = distillation_scheduler
+                return distillation_scheduler
         scheduler_args = {
             "prediction_type": self.config.prediction_type,
         }
@@ -920,6 +927,7 @@ class Validation:
         except Exception as e:
             logger.error(f"Error logging validation images: {e}")
             import traceback
+
             logger.error(traceback.format_exc())
 
     def get_eval_result(self):
@@ -1398,7 +1406,9 @@ class Validation:
                         )
                         for idx, image in enumerate(image_list):
                             # if it's a list of images, make a grid
-                            if isinstance(image, list) and isinstance(image[0], Image.Image):
+                            if isinstance(image, list) and isinstance(
+                                image[0], Image.Image
+                            ):
                                 image = image[0]
                             wandb_image = wandb.Image(
                                 image,

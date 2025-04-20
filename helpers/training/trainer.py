@@ -233,13 +233,13 @@ class Trainer:
             # Model movement and validation setup
             self.move_models(destination="accelerator")
             self._exit_on_signal()
+            self.init_distillation()
+            self._exit_on_signal()
             self.init_validations()
             self._exit_on_signal()
             self.enable_sageattention_inference()
             self.init_benchmark_base_model()
             self.disable_sageattention_inference()
-            self._exit_on_signal()
-            self.init_distillation()
             self._exit_on_signal()
             self.resume_and_prepare()
             self._exit_on_signal()
@@ -761,6 +761,7 @@ class Trainer:
         self.enable_gradient_checkpointing()
 
     def init_distillation(self):
+        self.distiller = None
         if self.config.distillation_method is None:
             return
 
@@ -771,55 +772,55 @@ class Trainer:
                 teacher_model=None,
                 student_model=self.model,
                 config={
-                    'annealing_schedule': 'linear',
-                    'beta_steps': 50000,
-                    'train_mode': 'annealing_reflow',  # Start with reflow
-                }
+                    "annealing_schedule": "linear",
+                    "beta_steps": 50000,
+                    "train_mode": "annealing_reflow",  # Start with reflow
+                },
             )
         elif self.config.distillation_method == "perflow":
-            from helpers.distillation.perflow import PeRFlowDistiller, FlowMatchingPeRFlowDistiller
+            from helpers.distillation.perflow import (
+                DDPMPeRFlowDistiller,
+                FlowMatchingPeRFlowDistiller,
+            )
+
             # For LoRA with PeRFlow regularization (single model)
+            perflow_config = {
+                "loss_type": self.model.PREDICTION_TYPE.value,
+                "pred_type": self.model.PREDICTION_TYPE.value,
+                "windows": 16,
+                "is_regularisation_data": True,  # Use regularization approach
+            }
             if self.config.model_type == "lora":
                 if self.model.PREDICTION_TYPE.value == "flow_matching":
-                    logger.info("Loading flow-matching PeRF distillation for low-rank training.")
+                    logger.info(
+                        "Loading flow-matching PeRF distillation for low-rank training."
+                    )
                     self.distiller = FlowMatchingPeRFlowDistiller(
                         teacher_model=self.model,
                         student_model=None,
-                        config={
-                            'loss_type': 'velocity_matching',
-                            'pred_type': 'velocity',
-                            'windows': 16,
-                            'is_regularisation_data': True,  # Use regularization approach
-                        }
+                        config=perflow_config,
                     )
                 else:
-                    logger.info("Loading flow-matching PeRF distillation for full-rank training.")
-                    self.distiller = PeRFlowDistiller(
+                    logger.info(
+                        "Loading flow-matching PeRF distillation for full-rank training."
+                    )
+                    self.distiller = DDPMPeRFlowDistiller(
                         teacher_model=self.model,
                         student_model=None,
-                        config={
-                            'loss_type': 'velocity_matching',
-                            'pred_type': 'velocity',
-                            'windows': 16,
-                            'is_regularisation_data': True,  # Use regularization approach
-                        }
+                        config=perflow_config,
                     )
             elif self.config.model_type == "full":
                 ## For separate teacher/student models
                 ## TODO: Implement
-                # distiller = PeRFlowDistiller(
+                # distiller = DDPMPeRFlowDistiller(
                 #     teacher_model=teacher_model,
                 #     student_model=student_model,
-                #     config={
-                #         'loss_type': 'velocity_matching',
-                #         'pred_type': 'velocity',
-                #         'windows': 16,
-                #         'is_regularisation_data': False,  # Use full PeRFlow approach
-                #     }
+                #     config=perflow_config
                 # )
                 raise NotImplementedError(
                     "Separate teacher/student models for PeRFlow are not implemented yet."
                 )
+
     def enable_gradient_checkpointing(self):
         if self.config.gradient_checkpointing:
             logger.debug("Enabling gradient checkpointing.")
@@ -1215,6 +1216,7 @@ class Trainer:
             trainable_parameters=self._get_trainable_parameters,
             accelerator=self.accelerator,
             model=self.model,
+            distiller=self.distiller,
             args=self.config,
             validation_prompt_metadata=self.validation_prompt_metadata,
             vae_path=self.config.vae_path,
@@ -1859,9 +1861,11 @@ class Trainer:
             return batch
 
         prepared_batch = self.model.prepare_batch(batch, state=self.state)
-        
-        if self.distiller:
-            prepared_batch = self.distiller.prepare_batch(prepared_batch, self.model, self.state)
+
+        if getattr(self, "distiller", None) is not None:
+            prepared_batch = self.distiller.prepare_batch(
+                prepared_batch, self.model, self.state
+            )
 
         return prepared_batch
 
@@ -2056,7 +2060,9 @@ class Trainer:
                     )
                     distill_logs = {}
                     if self.config.distillation_method is not None:
-                        loss, distill_logs = self.distiller.compute_distill_loss(prepared_batch, model_pred, loss)
+                        loss, distill_logs = self.distiller.compute_distill_loss(
+                            prepared_batch, model_pred, loss
+                        )
 
                     parent_loss = None
                     if is_regularisation_data:
@@ -2127,7 +2133,8 @@ class Trainer:
                             set_to_none=self.config.set_grads_to_none
                         )
 
-                        self.distiller.post_training_step(self.model, step)
+                        if getattr(self, "distiller", None) is not None:
+                            self.distiller.post_training_step(self.model, step)
 
                 # Checks if the accelerator has performed an optimization step behind the scenes
                 wandb_logs = {}
