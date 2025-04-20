@@ -62,10 +62,9 @@ if __name__ == "__main__":
         trainer.init_precision(ema_only=True)
 
         trainer.move_models(destination="accelerator")
+        trainer.init_distillation()
         trainer.init_validations()
         trainer.init_benchmark_base_model()
-
-        trainer.init_distillation()
 
         trainer.resume_and_prepare()
 
