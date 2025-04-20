@@ -5,6 +5,7 @@ import random
 import logging
 import inspect
 import os
+from torchvision import transforms
 from diffusers import DiffusionPipeline
 from torch.distributions import Beta
 from helpers.training.wrappers import unwrap_model
@@ -250,10 +251,16 @@ class ModelFoundation(ABC):
         """
         return list(cls.HUGGINGFACE_PATHS.keys())
 
-    def get_transforms(self):
+    def get_transforms(self, dataset_type: str = "image"):
         """
         Returns nothing, but subclasses can implement different torchvision transforms as needed.
+
+        dataset_type is passed in for models that support transforming videos or images etc.
         """
+        if dataset_type != "image":
+            raise ValueError(
+                f"{dataset_type} transforms are not supported by {self.NAME}."
+            )
         return transforms.Compose(
             [
                 transforms.ToTensor(),
@@ -1328,12 +1335,10 @@ class VideoModelFoundation(ImageModelFoundation):
         # }
         # The trainer or child class might call self._init_text_encoders() at the right time.
 
-    def get_transforms(self):
-        from torchvision import transforms
-
+    def get_transforms(self, dataset_type: str = "image"):
         return transforms.Compose(
             [
-                VideoToTensor(),
+                VideoToTensor() if dataset_type == "video" else transforms.ToTensor(),
             ]
         )
 

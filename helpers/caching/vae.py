@@ -116,7 +116,7 @@ class VAECache(WebhookMixin):
         self.vae_batch_size = vae_batch_size
         self.instance_data_dir = instance_data_dir
         self.model = model
-        self.transform_sample = model.get_transforms()
+        self.transform_sample = model.get_transforms(dataset_type=dataset_type)
         self.num_video_frames = None
         if self.dataset_type == "video":
             self.num_video_frames = num_video_frames
@@ -894,13 +894,19 @@ class VAECache(WebhookMixin):
                 count_to_process = min(qlen, self.vae_batch_size)
                 for idx in range(0, count_to_process):
                     if image_pixel_values:
-                        pixel_values, filepath, aspect_bucket, is_final_sample = (
-                            image_pixel_values.pop()
-                        )
+                        (
+                            pixel_values,
+                            filepath,
+                            aspect_bucket,
+                            is_final_sample,
+                        ) = image_pixel_values.pop()
                     else:
-                        pixel_values, filepath, aspect_bucket, is_final_sample = (
-                            self.vae_input_queue.get()
-                        )
+                        (
+                            pixel_values,
+                            filepath,
+                            aspect_bucket,
+                            is_final_sample,
+                        ) = self.vae_input_queue.get()
 
                     if batch_aspect_bucket is None:
                         batch_aspect_bucket = aspect_bucket
