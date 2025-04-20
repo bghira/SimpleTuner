@@ -1012,9 +1012,26 @@ class ModelFoundation(ABC):
                 **target_device_kwargs
             )
 
-        # Sample noise and add potential input perturbation.
+        # Sample noise
         noise = torch.randn_like(batch["latents"])
         bsz = batch["latents"].shape[0]
+        # If not flow matching, possibly apply an offset to noise
+        if not self.config.flow_matching and self.config.offset_noise:
+            if (
+                self.config.noise_offset_probability == 1.0
+                or random.random()
+                < self.config.noise_offset_probability
+            ):
+                noise = noise + self.config.noise_offset * torch.randn(
+                    latents.shape[0],
+                    latents.shape[1],
+                    1,
+                    1,
+                    device=latents.device,
+                )
+        batch["noise"] = noise
+
+        # Possibly add input perturbation to input noise only
         if self.config.input_perturbation != 0 and (
             not getattr(self.config, "input_perturbation_steps", None)
             or state["global_step"] < self.config.input_perturbation_steps
@@ -1024,11 +1041,11 @@ class ModelFoundation(ABC):
                 input_perturbation *= 1.0 - (
                     state["global_step"] / self.config.input_perturbation_steps
                 )
-            batch["noise"] = noise + input_perturbation * torch.randn_like(
+            batch["input_noise"] = noise + input_perturbation * torch.randn_like(
                 batch["latents"]
             )
         else:
-            batch["noise"] = noise
+            batch["input_noise"] = noise
 
         # Flow matching branch: set sigmas and timesteps.
         if self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
@@ -1058,7 +1075,7 @@ class ModelFoundation(ABC):
                     device=self.accelerator.device
                 )
                 batch["sigmas"] = apply_flow_schedule_shift(
-                    self.config, self.noise_schedule, batch["sigmas"], noise
+                    self.config, self.noise_schedule, batch["sigmas"], batch["noise"]
                 )
             else:
                 available_sigmas = [1.0] * 7 + [0.75, 0.5, 0.25]
@@ -1071,21 +1088,8 @@ class ModelFoundation(ABC):
             self.expand_sigmas(batch)
             batch["noisy_latents"] = (1 - batch["sigmas"]) * batch["latents"] + batch[
                 "sigmas"
-            ] * batch["noise"]
+            ] * batch["input_noise"]
         else:
-            # If not flow matching, possibly apply an offset to noise
-            if self.config.offset_noise:
-                if (
-                    self.config.noise_offset_probability == 1.0
-                    or random.random() < self.config.noise_offset_probability
-                ):
-                    noise = noise + self.config.noise_offset * torch.randn(
-                        batch["latents"].shape[0],
-                        batch["latents"].shape[1],
-                        1,
-                        1,
-                        device=batch["latents"].device,
-                    )
             weights = generate_timestep_weights(
                 self.config, self.noise_schedule.config.num_train_timesteps
             ).to(self.accelerator.device)
@@ -1102,7 +1106,7 @@ class ModelFoundation(ABC):
                     weights, bsz, replacement=True
                 ).long()
             batch["noisy_latents"] = self.noise_schedule.add_noise(
-                batch["latents"].float(), batch["noise"].float(), batch["timesteps"]
+                batch["latents"].float(), batch["input_noise"].float(), batch["timesteps"]
             ).to(device=self.accelerator.device, dtype=self.config.weight_dtype)
 
         # any model-specific augmentation can occur inside prepare_batch_conditions.
