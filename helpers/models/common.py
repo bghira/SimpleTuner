@@ -257,7 +257,7 @@ class ModelFoundation(ABC):
 
         dataset_type is passed in for models that support transforming videos or images etc.
         """
-        if dataset_type != "image":
+        if dataset_type in ["video"]:
             raise ValueError(
                 f"{dataset_type} transforms are not supported by {self.NAME}."
             )
