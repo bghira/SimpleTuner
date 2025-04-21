@@ -1,6 +1,7 @@
 import os, logging
 import torch
 import torch.nn.functional as F
+from copy import deepcopy
 from helpers.distillation.common import DistillationBase
 from helpers.training.custom_schedule import Time_Windows
 
@@ -8,19 +9,90 @@ logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
-class FlowMatchingPeRFlowDistiller(DistillationBase):
-    """Implementation of PeRFlow distillation adapted for flow matching models."""
+def sigmoid_schedule(T, alpha=5.12):
+    x = torch.linspace(1, 0, T + 1, device="cuda")
+    ts = torch.sigmoid(x * alpha - alpha / 2)
+    return (ts - ts.min()) / (ts.max() - ts.min())
 
+
+def compute_segment_vector(
+    model,
+    latents,
+    t_start,
+    t_end,
+    steps,
+    guidance_scale,
+    prompt_embeds,
+    negative_prompt_embeds,
+    prepared_batch,
+):
+    assert latents.ndim in (4, 5)
+    B = latents.shape[0]
+    device = latents.device
+    dtype = latents.dtype
+
+    step_points = torch.linspace(0, 1, steps + 1, device=device, dtype=dtype).view(
+        1, -1
+    )  # (1, steps+1)
+    t_schedule = (
+        t_start[:, None] * (1 - step_points) + t_end[:, None] * step_points
+    )  # (B, steps+1)
+
+    dt = (t_start - t_end) / steps  # (B,)
+    dt = dt.view(B, *([1] * (latents.ndim - 1)))
+
+    do_cfg = guidance_scale > 1.0 and negative_prompt_embeds is not None
+
+    x = latents.clone()
+    for i in range(steps):
+        t_i = t_schedule[:, i]
+
+        model_inputs = prepared_batch.copy()
+        model_inputs.update(
+            {
+                "latents": x,
+                "noisy_latents": x,
+                "timesteps": t_i,
+                "encoder_hidden_states": prompt_embeds,
+            }
+        )
+        for key in ["encoder_attention_mask", "added_cond_kwargs"]:
+            if key in prepared_batch:
+                model_inputs[key] = prepared_batch[key]
+
+        if do_cfg:
+            cond_inputs = model_inputs.copy()
+            uncond_inputs = model_inputs.copy()
+            uncond_inputs.update({"encoder_hidden_states": negative_prompt_embeds})
+            for key in ["encoder_attention_mask", "added_cond_kwargs"]:
+                if key in prepared_batch:
+                    uncond_inputs[key] = prepared_batch[key]
+
+            with torch.no_grad():
+                uncond_pred = model.model_predict(uncond_inputs)["model_prediction"]
+                cond_pred = model.model_predict(cond_inputs)["model_prediction"]
+            pred = uncond_pred + guidance_scale * (cond_pred - uncond_pred)
+        else:
+            with torch.no_grad():
+                pred = model.model_predict(model_inputs)["model_prediction"]
+
+        x = x + dt * pred
+
+    delta = (latents - x) / (t_start - t_end).view(B, *([1] * (latents.ndim - 1)))
+    return delta.detach()
+
+
+class FlowMatchingPeRFlowDistiller(DistillationBase):
     def __init__(self, teacher_model, student_model=None, config=None):
         flow_perflow_config = {
             "loss_type": "flow_matching",
-            "solving_steps": 35,
-            "windows": 2,
+            "solving_steps": 40,
+            "windows": 4,
             "support_cfg": True,
             "cfg_sync": False,
             "discrete_timesteps": -1,
-            "velocity_norm_weight": 0.01,
-            "debug_cosine": True,
+            "segment_loss": True,
+            "segment_steps": 8,
         }
 
         if config:
@@ -42,6 +114,21 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
         self.time_windows = Time_Windows(num_windows=self.config["windows"])
 
     def solve_flow(self, prepared_batch, t_start, t_end, guidance_scale=1.0):
+        if self.config.get("segment_loss", False):
+            return compute_segment_vector(
+                self.teacher_model,
+                prepared_batch["perflow_latents_start"],
+                t_start,
+                t_end,
+                steps=self.config.get("segment_steps", 8),
+                guidance_scale=guidance_scale,
+                prompt_embeds=prepared_batch["encoder_hidden_states"],
+                negative_prompt_embeds=prepared_batch.get(
+                    "negative_encoder_hidden_states"
+                ),
+                prepared_batch=prepared_batch,
+            )
+
         logger.info(f"Solving flow with t_start: {t_start}, t_end: {t_end}")
         latents = prepared_batch["perflow_latents_start"]
         prompt_embeds = prepared_batch["encoder_hidden_states"]
@@ -100,10 +187,12 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
                     ]
 
             x_predict = (
-                current_latents + step_size.view(-1, *([1] * (v1.dim() - 1))) * v1
+                current_latents + step_size[:, None, None, None] * v1
+                if len(current_latents.shape) == 4
+                else current_latents + step_size[:, None, None, None, None] * v1
             )
-            next_t = current_t - step_size
 
+            next_t = current_t - step_size
             model_inputs["latents"] = x_predict
             model_inputs["noisy_latents"] = x_predict
             model_inputs["timesteps"] = next_t
@@ -138,15 +227,17 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
 
             avg_v = 0.5 * (v1 + v2)
             current_latents = (
-                current_latents + step_size.view(-1, *([1] * (avg_v.dim() - 1))) * avg_v
+                current_latents + step_size[:, None, None, None] * avg_v
+                if len(current_latents.shape) == 4
+                else current_latents + step_size[:, None, None, None, None] * avg_v
             )
             current_t = next_t
 
             logger.info(
-                f"Step {i+1}/{num_steps}: step_size={step_size.mean().item():.6f}, v1 mean={v1.mean().item():.6f}, v2 mean={v2.mean().item():.6f}, avg_v std={avg_v.std().item():.6f}"
+                f"Step {i+1}/{num_steps}: step_size={step_size.mean().item()}, v1 mean={v1.mean().item()}, v2 mean={v2.mean().item()}, avg_v std={avg_v.std().item()}"
             )
             logger.info(
-                f"After step {i+1}/{num_steps}: latents mean={current_latents.mean().item():.6f}, std={current_latents.std().item():.6f}"
+                f"After step {i+1}/{num_steps}: latents mean={current_latents.mean().item()}, std={current_latents.std().item()}"
             )
 
         return current_latents
