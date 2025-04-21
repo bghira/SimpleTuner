@@ -1189,9 +1189,13 @@ class Time_Windows:
 
     def get_window(self, tp):
         idx = 0
-        # robust to numerical error; e.g, (0.6+1/10000) belongs to [0.6, 0.3)
-        while (tp - 0.1 * self.precision) <= self.window_ends[idx]:
+        while (
+            idx < len(self.window_ends) - 1
+            and (tp - 0.1 * self.precision) <= self.window_ends[idx]
+        ):
             idx += 1
+        if idx >= len(self.window_ends):
+            idx = len(self.window_ends) - 1  # clamp to last window
         return self.window_starts[idx], self.window_ends[idx]
 
     def lookup_window(self, timepoint):
