@@ -73,12 +73,15 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
 
             if do_cfg:
                 cond_inputs = model_inputs.copy()
-                uncond_inputs = {
-                    "latents": current_latents,
-                    "noisy_latents": current_latents,
-                    "timesteps": current_t,
-                    "encoder_hidden_states": negative_prompt_embeds,
-                }
+                uncond_inputs = model_inputs.copy()
+                uncond_inputs.update(
+                    {
+                        "latents": current_latents,
+                        "noisy_latents": current_latents,
+                        "timesteps": current_t,
+                        "encoder_hidden_states": negative_prompt_embeds,
+                    }
+                )
                 for key in ["encoder_attention_mask", "added_cond_kwargs"]:
                     if key in prepared_batch:
                         uncond_inputs[key] = prepared_batch[key]
