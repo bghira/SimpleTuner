@@ -1434,18 +1434,18 @@ class PeRFlowScheduler(SchedulerMixin, ConfigMixin):
             num_inference_steps (`int`):
                 The number of diffusion steps used when generating samples with a pre-trained model.
         """
-        if self.prediction_type == "flow_matching":
-            # For flow_matching, use a simpler timestep schedule similar to FlowMatchEulerDiscreteScheduler
-            timesteps = np.linspace(
-                self.time_windows.window_starts[0],
-                self.time_windows.window_ends[-1],
-                num=num_inference_steps,
-                endpoint=False,
-            )
-            self.timesteps = torch.from_numpy(
-                (timesteps * self.config.num_train_timesteps).astype(np.int64)
-            ).to(device)
-            return
+        # if self.prediction_type == "flow_matching":
+        #     # For flow_matching, use a simpler timestep schedule similar to FlowMatchEulerDiscreteScheduler
+        #     timesteps = np.linspace(
+        #         self.time_windows.window_starts[0],
+        #         self.time_windows.window_ends[-1],
+        #         num=num_inference_steps,
+        #         endpoint=False,
+        #     )
+        #     self.timesteps = torch.from_numpy(
+        #         (timesteps * self.config.num_train_timesteps).astype(np.int64)
+        #     ).to(device)
+        #     return
 
         # Original window-based timestep setting for other prediction types
         if num_inference_steps < self.config.num_time_windows:
@@ -1468,6 +1468,7 @@ class PeRFlowScheduler(SchedulerMixin, ConfigMixin):
             timesteps_cur_win = np.linspace(
                 t_s, t_e, num=num_steps_cur_win, endpoint=False
             )
+            print(f"Timesteps in current window {i}: {timesteps_cur_win}")
             timesteps.append(timesteps_cur_win)
 
         timesteps = np.concatenate(timesteps)
@@ -1475,6 +1476,7 @@ class PeRFlowScheduler(SchedulerMixin, ConfigMixin):
         self.timesteps = torch.from_numpy(
             (timesteps * self.config.num_train_timesteps).astype(np.int64)
         ).to(device)
+        print(f"Perflow scheduler using timesteps: {self.timesteps}")
 
     # 3. Add a helper method for specifically handling flow_matching
 
