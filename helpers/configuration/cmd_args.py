@@ -1206,6 +1206,16 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--distillation_config",
+        default=None,
+        type=str,
+        help=(
+            "The distillation method to use. Currently, only 'perflow' is supported via LoRA."
+            " This will apply the perflow distillation method to the model."
+        ),
+    )
+
+    parser.add_argument(
         "--use_ema",
         action="store_true",
         help="Whether to use EMA (exponential moving average) model. Works with LoRA, Lycoris, and full training.",
@@ -2577,6 +2587,16 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
                     "DoRA support is experimental and not very thoroughly tested."
                 )
                 args.lora_initialisation_style = "default"
+
+    if args.distillation_config is not None:
+        if args.distillation_config.startswith("{"):
+            try:
+                import ast
+
+                args.distillation_config = ast.literal_eval(args.distillation_config)
+            except Exception as e:
+                logger.error(f"Could not load distillation_config: {e}")
+                raise
 
     if not args.data_backend_config:
         from helpers.training.state_tracker import StateTracker
