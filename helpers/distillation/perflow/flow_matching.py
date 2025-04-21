@@ -134,6 +134,7 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
 
         with torch.no_grad():
             timepoints = 1 - torch.rand((bsz,), device=device)
+            timepoints = torch.clamp(timepoints, min=1e-6)
             if self.config["discrete_timesteps"] != -1:
                 timepoints = (
                     timepoints * self.config["discrete_timesteps"]
