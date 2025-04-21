@@ -790,6 +790,12 @@ class Trainer:
                 # "windows": 16,
                 "is_regularisation_data": True,  # Use regularization approach
             }
+            if self.config.distillation_config is not None:
+                if "perflow" in self.config.distillation_config:
+                    perflow_config.update(self.config.distillation_config["perflow"])
+                else:
+                    perflow_config.update(self.config.distillation_config)
+            logger.info(f"Distillation config: {perflow_config}")
             if self.config.model_type == "lora":
                 if self.model.PREDICTION_TYPE.value == "flow_matching":
                     logger.info(
