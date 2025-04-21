@@ -26,12 +26,12 @@ def compute_segment_vector(
     t_start,
     t_end,
     steps=8,
-    cfg=False,
-    encoder_hidden_states=None,
-    negative_encoder_hidden_states=None,
-    encoder_attention_mask=None,
-    added_cond_kwargs=None,
-    guidance_scale=1.0,
+    cfg: bool = False,
+    encoder_hidden_states: torch.Tensor =None,
+    negative_encoder_hidden_states: torch.Tensor = None,
+    encoder_attention_mask: torch.Tensor = None,
+    added_cond_kwargs: dict = None,
+    guidance_scale: float = 1.0,
     prepared_batch: dict = {},
 ):
     """
@@ -143,11 +143,11 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
             "loss_type": "flow_matching",
             "solving_steps": 8,
             "windows": 4,
-            "support_cfg": False,
-            "cfg_sync": True,
-            "discrete_timesteps": -1,
+            "cfg_transfer": True,
+            "cfg_value": 7.0,
             "segment_loss": False,
             "segment_steps": 4,
+            "discrete_timesteps": -1,
         }
 
         if config:
@@ -169,20 +169,6 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
         self.time_windows = Time_Windows(num_windows=self.config["windows"])
 
     def solve_flow(self, prepared_batch, t_start, t_end, guidance_scale=1.0):
-        if self.config.get("segment_loss", False):
-            return compute_segment_vector(
-                self.teacher_model,
-                prepared_batch["perflow_latents_start"],
-                t_start,
-                t_end,
-                steps=self.config.get("segment_steps", 8),
-                # guidance_scale=guidance_scale,
-                encoder_hidden_states=prepared_batch["encoder_hidden_states"],
-                negative_encoder_hidden_states=prepared_batch.get(
-                    "negative_encoder_hidden_states"
-                ),
-                prepared_batch=prepared_batch,
-            )
 
         logger.info(f"Solving flow with t_start: {t_start}, t_end: {t_end}")
         latents = prepared_batch["perflow_latents_start"]
@@ -191,6 +177,19 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
             "negative_encoder_hidden_states"
         ) or torch.zeros_like(prompt_embeds)
         device = latents.device
+
+        if self.config.get("segment_loss", False):
+            return compute_segment_vector(
+                model=self.teacher_model,
+                latents=prepared_batch["perflow_latents_start"],
+                t_start=t_start,
+                t_end=t_end,
+                steps=self.config.get("segment_steps", 8),
+                guidance_scale=guidance_scale,
+                encoder_hidden_states=prepared_batch["encoder_hidden_states"],
+                negative_encoder_hidden_states=negative_prompt_embeds,
+                prepared_batch=prepared_batch,
+            )
 
         do_cfg = guidance_scale > 1.0 and negative_prompt_embeds is not None
         logger.info(f"Using classifier-free guidance: {do_cfg}")
@@ -365,7 +364,9 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
             if self.low_rank_distillation:
                 self.toggle_adapter(enable=False)
 
-            guidance_scale = 1.0 if self.config["cfg_sync"] else 7.5
+            enable_cfg = self.config.get("cfg_transfer", True)
+            guidance_scale = self.config.get("cfg_value", 7.0) if enable_cfg else 1.0
+
             latents_end = self.solve_flow(
                 prepared_batch, t_start, t_end, guidance_scale=guidance_scale
             )
