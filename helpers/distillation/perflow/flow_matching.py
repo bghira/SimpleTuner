@@ -15,6 +15,11 @@ def sigmoid_schedule(T, alpha=5.12):
     return (ts - ts.min()) / (ts.max() - ts.min())
 
 
+def to_model_timestep(t):
+    logger.info(f"Converting from {t} to {t * 1000.0}")
+    return t * 1000.0
+
+
 def compute_segment_vector(
     model,
     latents,
@@ -72,7 +77,7 @@ def compute_segment_vector(
                 {
                     "latents": x,
                     "noisy_latents": x,
-                    "timesteps": t_curr,
+                    "timesteps": to_model_timestep(t_curr),
                     "encoder_hidden_states": encoder_hidden_states,
                 }
             )
@@ -80,7 +85,7 @@ def compute_segment_vector(
                 {
                     "latents": x,
                     "noisy_latents": x,
-                    "timesteps": t_curr,
+                    "timesteps": to_model_timestep(t_curr),
                     "encoder_hidden_states": negative_encoder_hidden_states,
                 }
             )
@@ -111,7 +116,7 @@ def compute_segment_vector(
                 {
                     "latents": x,
                     "noisy_latents": x,
-                    "timesteps": t_curr,
+                    "timesteps": to_model_timestep(t_curr),
                     "encoder_hidden_states": encoder_hidden_states,
                 }
             )
@@ -206,7 +211,7 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
                 {
                     "latents": current_latents,
                     "noisy_latents": current_latents,
-                    "timesteps": current_t,
+                    "timesteps": to_model_timestep(current_t),
                     "encoder_hidden_states": prompt_embeds,
                 }
             )
@@ -221,7 +226,7 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
                     {
                         "latents": current_latents,
                         "noisy_latents": current_latents,
-                        "timesteps": current_t,
+                        "timesteps": to_model_timestep(current_t),
                         "encoder_hidden_states": negative_prompt_embeds,
                     }
                 )
@@ -260,7 +265,7 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
                     {
                         "latents": x_predict,
                         "noisy_latents": x_predict,
-                        "timesteps": next_t,
+                        "timesteps": to_model_timestep(next_t),
                         "encoder_hidden_states": negative_prompt_embeds,
                     }
                 )
