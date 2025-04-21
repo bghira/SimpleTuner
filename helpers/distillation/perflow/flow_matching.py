@@ -107,7 +107,7 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
                 current_t = current_t - step_size
 
             logger.info(
-                f"Step {i+1}/{num_steps}: step_size={step_size.item()}, model_prediction mean={model_prediction.mean().item()}, std={model_prediction.std().item()}"
+                f"Step {i+1}/{num_steps}: step_size={step_size.mean().item()}, model_prediction mean={model_prediction.mean().item()}, std={model_prediction.std().item()}"
             )
             logger.info(
                 f"After step {i+1}/{num_steps}: mean={current_latents.mean().item()}, std={current_latents.std().item()}"
