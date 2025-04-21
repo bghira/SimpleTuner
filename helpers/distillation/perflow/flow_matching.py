@@ -16,7 +16,7 @@ def sigmoid_schedule(T, alpha=5.12):
 
 
 def to_model_timestep(t):
-    logger.info(f"Converting from {t} to {t * 1000.0}")
+    # logger.info(f"Converting from {t} to {t * 1000.0}")
     return t * 1000.0
 
 
@@ -95,14 +95,10 @@ def compute_segment_vector(
             if added_cond_kwargs is not None:
                 inputs_pos["added_cond_kwargs"] = added_cond_kwargs
                 inputs_neg["added_cond_kwargs"] = added_cond_kwargs
-            if (
-                "add_text_embeds" in prepared_batch
-                and prepared_batch.get("add_text_embeds") is not None
-            ):
-                inputs_pos["add_text_embeds"] = prepared_batch["add_text_embeds"]
-                inputs_neg["add_text_embeds"] = torch.zeros_like(
-                    prepared_batch["add_text_embeds"]
-                )
+            add_text_embeds = prepared_batch.get("add_text_embeds", None)
+            if add_text_embeds is not None:
+                inputs_pos["add_text_embeds"] = add_text_embeds
+                inputs_neg["add_text_embeds"] = torch.zeros_like(add_text_embeds)
 
             with torch.no_grad():
                 v_pos = model.model_predict(inputs_pos)["model_prediction"]
@@ -124,11 +120,9 @@ def compute_segment_vector(
                 inputs["encoder_attention_mask"] = encoder_attention_mask
             if added_cond_kwargs is not None:
                 inputs["added_cond_kwargs"] = added_cond_kwargs
-            if (
-                "add_text_embeds" in prepared_batch
-                and prepared_batch.get("add_text_embeds") is not None
-            ):
-                inputs["add_text_embeds"] = prepared_batch["add_text_embeds"]
+            add_text_embeds = prepared_batch.get("add_text_embeds", None)
+            if add_text_embeds is not None:
+                inputs["add_text_embeds"] = add_text_embeds
 
             with torch.no_grad():
                 v = model.model_predict(inputs)["model_prediction"]
@@ -147,13 +141,13 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
     def __init__(self, teacher_model, student_model=None, config=None):
         flow_perflow_config = {
             "loss_type": "flow_matching",
-            "solving_steps": 30,
+            "solving_steps": 8,
             "windows": 4,
             "support_cfg": False,
             "cfg_sync": True,
             "discrete_timesteps": -1,
             "segment_loss": False,
-            "segment_steps": 8,
+            "segment_steps": 4,
         }
 
         if config:
@@ -187,7 +181,7 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
                 negative_encoder_hidden_states=prepared_batch.get(
                     "negative_encoder_hidden_states"
                 ),
-                # prepared_batch=prepared_batch,
+                prepared_batch=prepared_batch,
             )
 
         logger.info(f"Solving flow with t_start: {t_start}, t_end: {t_end}")
@@ -220,7 +214,6 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
                     model_inputs[key] = prepared_batch[key]
 
             if do_cfg:
-                cond_inputs = model_inputs.copy()
                 uncond_inputs = model_inputs.copy()
                 uncond_inputs.update(
                     {
@@ -237,7 +230,7 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
                     uncond_pred = self.teacher_model.model_predict(uncond_inputs)[
                         "model_prediction"
                     ]
-                    cond_pred = self.teacher_model.model_predict(cond_inputs)[
+                    cond_pred = self.teacher_model.model_predict(model_inputs)[
                         "model_prediction"
                     ]
                 v1 = uncond_pred + guidance_scale * (cond_pred - uncond_pred)
@@ -256,7 +249,7 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
             next_t = current_t - step_size
             model_inputs["latents"] = x_predict
             model_inputs["noisy_latents"] = x_predict
-            model_inputs["timesteps"] = next_t
+            model_inputs["timesteps"] = to_model_timestep(next_t)
 
             if do_cfg:
                 cond_inputs = model_inputs.copy()
@@ -334,13 +327,10 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
             "perflow_loss_min": loss_min,
         }
 
-    def prepare_batch(self, batch, model, state):
-        if "is_regularisation_data" in batch:
-            del batch["is_regularisation_data"]
-
-        prepared_batch = (
-            model.prepare_batch(batch, state) if "noisy_latents" not in batch else batch
-        )
+    def prepare_batch(self, prepared_batch, model, state):
+        print(f'Incoming timesteps: {prepared_batch["timesteps"]}')
+        if "is_regularisation_data" in prepared_batch:
+            del prepared_batch["is_regularisation_data"]
 
         logger.info(f"Prepared batch keys: {prepared_batch.keys()}")
         if "latents" in prepared_batch:
@@ -352,14 +342,19 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
         device = prepared_batch["latents"].device
 
         with torch.no_grad():
-            timepoints = 1 - torch.rand((bsz,), device=device)
-            timepoints = torch.clamp(timepoints, min=1e-6)
+            sigmoid_ts = sigmoid_schedule(1000)
+            timepoints = sigmoid_ts[
+                torch.randint(0, len(sigmoid_ts), (bsz,), device=device)
+            ]
+            # timepoints = 1 - torch.rand((bsz,), device=device)
+            # timepoints = torch.clamp(timepoints, min=0)
             if self.config["discrete_timesteps"] != -1:
                 timepoints = (
                     timepoints * self.config["discrete_timesteps"]
                 ).floor() / self.config["discrete_timesteps"]
 
             t_start, t_end = self.time_windows.lookup_window(timepoints)
+            prepared_batch["timesteps"] = to_model_timestep(timepoints)
             prepared_batch["perflow_timepoints"] = timepoints
             prepared_batch["perflow_t_start"] = t_start
             prepared_batch["perflow_t_end"] = t_end
@@ -429,6 +424,7 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
                 f"perflow_targets shape: {prepared_batch['perflow_targets'].shape}"
             )
 
+        print(f'Outgoing timesteps: {prepared_batch["timesteps"]}')
         return prepared_batch
 
     def get_scheduler(self):
