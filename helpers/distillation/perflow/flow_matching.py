@@ -271,23 +271,6 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
 
         return prepared_batch
 
-    def compute_distill_loss(self, prepared_batch, model_output, original_loss):
-        model_pred = model_output["model_prediction"]
-        targets = prepared_batch["perflow_targets"]
-        logger.info(
-            f"Computing loss - model_pred shape: {model_pred.shape}, targets shape: {targets.shape}"
-        )
-        loss = F.mse_loss(model_pred.float(), targets.float(), reduction="none")
-        loss_mean = loss.mean().item()
-        loss_max = loss.max().item()
-        loss_min = loss.min().item()
-        logger.info(f"Loss stats - mean: {loss_mean}, max: {loss_max}, min: {loss_min}")
-        return loss.mean(), {
-            "perflow_loss": loss_mean,
-            "perflow_loss_max": loss_max,
-            "perflow_loss_min": loss_min,
-        }
-
     def get_scheduler(self):
         from helpers.training.custom_schedule import PeRFlowScheduler
 
