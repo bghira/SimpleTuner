@@ -20,65 +20,121 @@ def compute_segment_vector(
     latents,
     t_start,
     t_end,
-    steps,
-    guidance_scale,
-    prompt_embeds,
-    negative_prompt_embeds,
-    prepared_batch,
+    steps=8,
+    cfg=False,
+    encoder_hidden_states=None,
+    negative_encoder_hidden_states=None,
+    encoder_attention_mask=None,
+    added_cond_kwargs=None,
+    guidance_scale=1.0,
+    prepared_batch: dict = {},
 ):
-    assert latents.ndim in (4, 5)
+    """
+    Computes a flow-matching vector (delta) using Euler integration between t_start and t_end.
+    Works batched, optionally with classifier-free guidance (CFG).
+
+    Args:
+        model: The teacher model.
+        latents: [B, C, H, W] or [B, C, F, H, W] tensor.
+        t_start: [B] float tensor.
+        t_end: [B] float tensor.
+        steps: Integer number of Euler steps.
+        cfg: Whether to apply CFG.
+        encoder_hidden_states: [B, ..., D] positive prompt embeds.
+        negative_encoder_hidden_states: [B, ..., D] negative prompt embeds (if CFG enabled).
+        encoder_attention_mask: Optional mask.
+        added_cond_kwargs: Optional additional kwargs.
+
+    Returns:
+        delta: [B, ...] flow vector normalized by step duration.
+    """
+    assert latents.ndim in (4, 5), "Latents must be 4D or 5D"
+    assert (
+        t_start.shape == t_end.shape == (latents.shape[0],)
+    ), "Timesteps must be batch-aligned"
+
     B = latents.shape[0]
     device = latents.device
     dtype = latents.dtype
 
-    step_points = torch.linspace(0, 1, steps + 1, device=device, dtype=dtype).view(
-        1, -1
-    )  # (1, steps+1)
-    t_schedule = (
-        t_start[:, None] * (1 - step_points) + t_end[:, None] * step_points
-    )  # (B, steps+1)
-
-    dt = (t_start - t_end) / steps  # (B,)
-    dt = dt.view(B, *([1] * (latents.ndim - 1)))
-
-    do_cfg = guidance_scale > 1.0 and negative_prompt_embeds is not None
+    # Create time schedule [B, steps+1] linearly spaced from t_start to t_end
+    t_steps = torch.linspace(0, 1, steps + 1, device=device, dtype=dtype)
+    t_schedule = t_start[:, None] * (1 - t_steps) + t_end[:, None] * t_steps  # [B, S+1]
 
     x = latents.clone()
     for i in range(steps):
-        t_i = t_schedule[:, i]
-
-        model_inputs = prepared_batch.copy()
-        model_inputs.update(
-            {
-                "latents": x,
-                "noisy_latents": x,
-                "timesteps": t_i,
-                "encoder_hidden_states": prompt_embeds,
-            }
-        )
-        for key in ["encoder_attention_mask", "added_cond_kwargs"]:
-            if key in prepared_batch:
-                model_inputs[key] = prepared_batch[key]
-
-        if do_cfg:
-            cond_inputs = model_inputs.copy()
-            uncond_inputs = model_inputs.copy()
-            uncond_inputs.update({"encoder_hidden_states": negative_prompt_embeds})
-            for key in ["encoder_attention_mask", "added_cond_kwargs"]:
-                if key in prepared_batch:
-                    uncond_inputs[key] = prepared_batch[key]
+        t_curr = t_schedule[:, i]  # [B]
+        if cfg:
+            assert negative_encoder_hidden_states is not None
+            inputs_pos = prepared_batch.copy()
+            inputs_neg = prepared_batch.copy()
+            inputs_pos.update(
+                {
+                    "latents": x,
+                    "noisy_latents": x,
+                    "timesteps": t_curr,
+                    "encoder_hidden_states": encoder_hidden_states,
+                }
+            )
+            inputs_neg.update(
+                {
+                    "latents": x,
+                    "noisy_latents": x,
+                    "timesteps": t_curr,
+                    "encoder_hidden_states": negative_encoder_hidden_states,
+                }
+            )
+            if encoder_attention_mask is not None:
+                inputs_pos["encoder_attention_mask"] = encoder_attention_mask
+                inputs_neg["encoder_attention_mask"] = encoder_attention_mask
+            if added_cond_kwargs is not None:
+                inputs_pos["added_cond_kwargs"] = added_cond_kwargs
+                inputs_neg["added_cond_kwargs"] = added_cond_kwargs
+            if (
+                "add_text_embeds" in prepared_batch
+                and prepared_batch.get("add_text_embeds") is not None
+            ):
+                inputs_pos["add_text_embeds"] = prepared_batch["add_text_embeds"]
+                inputs_neg["add_text_embeds"] = torch.zeros_like(
+                    prepared_batch["add_text_embeds"]
+                )
 
             with torch.no_grad():
-                uncond_pred = model.model_predict(uncond_inputs)["model_prediction"]
-                cond_pred = model.model_predict(cond_inputs)["model_prediction"]
-            pred = uncond_pred + guidance_scale * (cond_pred - uncond_pred)
+                v_pos = model.model_predict(inputs_pos)["model_prediction"]
+                v_neg = model.model_predict(inputs_neg)["model_prediction"]
+            v = (
+                v_neg + (v_pos - v_neg) * guidance_scale
+            )  # guidance_scale fixed at 1.0 for pure interpolation
         else:
+            inputs = prepared_batch.copy()
+            inputs.update(
+                {
+                    "latents": x,
+                    "noisy_latents": x,
+                    "timesteps": t_curr,
+                    "encoder_hidden_states": encoder_hidden_states,
+                }
+            )
+            if encoder_attention_mask is not None:
+                inputs["encoder_attention_mask"] = encoder_attention_mask
+            if added_cond_kwargs is not None:
+                inputs["added_cond_kwargs"] = added_cond_kwargs
+            if (
+                "add_text_embeds" in prepared_batch
+                and prepared_batch.get("add_text_embeds") is not None
+            ):
+                inputs["add_text_embeds"] = prepared_batch["add_text_embeds"]
+
             with torch.no_grad():
-                pred = model.model_predict(model_inputs)["model_prediction"]
+                v = model.model_predict(inputs)["model_prediction"]
 
-        x = x + dt * pred
+        dt = t_schedule[:, i + 1] - t_schedule[:, i]  # [B]
+        dt = dt.reshape(
+            B, *((1,) * (latents.ndim - 1))
+        )  # [B, 1, 1, 1] or [B, 1, 1, 1, 1]
+        x = x + dt * v
 
-    delta = (latents - x) / (t_start - t_end).view(B, *([1] * (latents.ndim - 1)))
+    delta = (latents - x) / (t_start - t_end).reshape(B, *((1,) * (latents.ndim - 1)))
     return delta.detach()
 
 
@@ -86,12 +142,12 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
     def __init__(self, teacher_model, student_model=None, config=None):
         flow_perflow_config = {
             "loss_type": "flow_matching",
-            "solving_steps": 40,
+            "solving_steps": 30,
             "windows": 4,
-            "support_cfg": True,
-            "cfg_sync": False,
+            "support_cfg": False,
+            "cfg_sync": True,
             "discrete_timesteps": -1,
-            "segment_loss": True,
+            "segment_loss": False,
             "segment_steps": 8,
         }
 
@@ -121,12 +177,12 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
                 t_start,
                 t_end,
                 steps=self.config.get("segment_steps", 8),
-                guidance_scale=guidance_scale,
-                prompt_embeds=prepared_batch["encoder_hidden_states"],
-                negative_prompt_embeds=prepared_batch.get(
+                # guidance_scale=guidance_scale,
+                encoder_hidden_states=prepared_batch["encoder_hidden_states"],
+                negative_encoder_hidden_states=prepared_batch.get(
                     "negative_encoder_hidden_states"
                 ),
-                prepared_batch=prepared_batch,
+                # prepared_batch=prepared_batch,
             )
 
         logger.info(f"Solving flow with t_start: {t_start}, t_end: {t_end}")
