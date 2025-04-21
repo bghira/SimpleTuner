@@ -787,7 +787,7 @@ class Trainer:
             perflow_config = {
                 "loss_type": self.model.PREDICTION_TYPE.value,
                 "pred_type": self.model.PREDICTION_TYPE.value,
-                "windows": 16,
+                # "windows": 16,
                 "is_regularisation_data": True,  # Use regularization approach
             }
             if self.config.model_type == "lora":

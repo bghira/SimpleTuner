@@ -14,8 +14,8 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
     def __init__(self, teacher_model, student_model=None, config=None):
         flow_perflow_config = {
             "loss_type": "flow_matching",
-            "solving_steps": 6,
-            "windows": 4,
+            "solving_steps": 35,
+            "windows": 2,
             "support_cfg": True,
             "cfg_sync": False,
             "discrete_timesteps": -1,
@@ -45,7 +45,9 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
         logger.info(f"Solving flow with t_start: {t_start}, t_end: {t_end}")
         latents = prepared_batch["perflow_latents_start"]
         prompt_embeds = prepared_batch["encoder_hidden_states"]
-        negative_prompt_embeds = prepared_batch.get("negative_encoder_hidden_states")
+        negative_prompt_embeds = prepared_batch.get(
+            "negative_encoder_hidden_states"
+        ) or torch.zeros_like(prompt_embeds)
         device = latents.device
 
         do_cfg = guidance_scale > 1.0 and negative_prompt_embeds is not None
