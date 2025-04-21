@@ -245,9 +245,6 @@ class SD3(ImageModelFoundation):
             f"\n{prepared_batch['encoder_hidden_states'].shape}"
             f"\n{prepared_batch['add_text_embeds'].shape}"
         )
-        logger.info(
-            f"Calling model_predict with timestep {prepared_batch['timesteps']}"
-        )
         return {
             "model_prediction": self.model(
                 hidden_states=prepared_batch["noisy_latents"].to(
