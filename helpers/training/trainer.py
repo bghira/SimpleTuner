@@ -2044,7 +2044,7 @@ class Trainer:
                             else:
                                 self.model.get_trained_component().enable_lora()
 
-                    training_logger.debug("Predicting noise residual.")
+                    training_logger.debug("Predicting.")
                     model_pred = self.model_predict(
                         prepared_batch=prepared_batch,
                     )

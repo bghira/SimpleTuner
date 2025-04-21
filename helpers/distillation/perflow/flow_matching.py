@@ -19,6 +19,8 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
             "support_cfg": True,
             "cfg_sync": False,
             "discrete_timesteps": -1,
+            "velocity_norm_weight": 0.01,
+            "debug_cosine": True,
         }
 
         if config:
@@ -93,11 +95,8 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
                     ]
 
             x_predict = (
-                current_latents + step_size[:, None, None, None] * v1
-                if len(current_latents.shape) == 4
-                else current_latents + step_size[:, None, None, None, None] * v1
+                current_latents + step_size.view(-1, *([1] * (v1.dim() - 1))) * v1
             )
-
             next_t = current_t - step_size
 
             model_inputs["latents"] = x_predict
@@ -131,20 +130,49 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
 
             avg_v = 0.5 * (v1 + v2)
             current_latents = (
-                current_latents + step_size[:, None, None, None] * avg_v
-                if len(current_latents.shape) == 4
-                else current_latents + step_size[:, None, None, None, None] * avg_v
+                current_latents + step_size.view(-1, *([1] * (avg_v.dim() - 1))) * avg_v
             )
             current_t = next_t
 
             logger.info(
-                f"Step {i+1}/{num_steps}: step_size={step_size.mean().item()}, v1 mean={v1.mean().item()}, v2 mean={v2.mean().item()}, avg_v std={avg_v.std().item()}"
+                f"Step {i+1}/{num_steps}: step_size={step_size.mean().item():.6f}, v1 mean={v1.mean().item():.6f}, v2 mean={v2.mean().item():.6f}, avg_v std={avg_v.std().item():.6f}"
             )
             logger.info(
-                f"After step {i+1}/{num_steps}: latents mean={current_latents.mean().item()}, std={current_latents.std().item()}"
+                f"After step {i+1}/{num_steps}: latents mean={current_latents.mean().item():.6f}, std={current_latents.std().item():.6f}"
             )
 
         return current_latents
+
+    def compute_distill_loss(self, prepared_batch, model_output, original_loss):
+        model_pred = model_output["model_prediction"]
+        targets = prepared_batch["perflow_targets"]
+        logger.info(
+            f"Computing loss - model_pred shape: {model_pred.shape}, targets shape: {targets.shape}"
+        )
+        loss = F.mse_loss(model_pred.float(), targets.float(), reduction="none")
+
+        # Optional cosine debug logging
+        if self.config.get("debug_cosine", False):
+            cosine = F.cosine_similarity(model_pred.flatten(), targets.flatten(), dim=0)
+            logger.info(
+                f"Velocity cosine similarity (student vs. target): {cosine.item():.6f}"
+            )
+
+        # Optional velocity norm penalty
+        if self.config.get("velocity_norm_weight", 0.0) > 0:
+            vnorm = model_pred.norm(dim=list(range(1, model_pred.ndim))).mean()
+            loss += self.config["velocity_norm_weight"] * vnorm
+            logger.info(f"Velocity norm penalty: {vnorm.item():.6f}")
+
+        loss_mean = loss.mean().item()
+        loss_max = loss.max().item()
+        loss_min = loss.min().item()
+        logger.info(f"Loss stats - mean: {loss_mean}, max: {loss_max}, min: {loss_min}")
+        return loss.mean(), {
+            "perflow_loss": loss_mean,
+            "perflow_loss_max": loss_max,
+            "perflow_loss_min": loss_min,
+        }
 
     def prepare_batch(self, batch, model, state):
         if "is_regularisation_data" in batch:
