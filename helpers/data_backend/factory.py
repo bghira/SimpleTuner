@@ -842,7 +842,7 @@ def configure_multi_databackend(
         )
 
         preserve_data_backend_cache = backend.get("preserve_data_backend_cache", False)
-        if not preserve_data_backend_cache:
+        if not preserve_data_backend_cache and accelerator.is_local_main_process:
             StateTracker.delete_cache_files(
                 data_backend_id=init_backend["id"],
                 preserve_data_backend_cache=preserve_data_backend_cache,
