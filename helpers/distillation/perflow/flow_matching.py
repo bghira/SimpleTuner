@@ -160,7 +160,7 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
 
         # Optional velocity norm penalty
         if self.config.get("velocity_norm_weight", 0.0) > 0:
-            vnorm = model_pred.norm(dim=list(range(1, model_pred.ndim))).mean()
+            vnorm = torch.norm(model_pred, dim=1).mean()
             loss += self.config["velocity_norm_weight"] * vnorm
             logger.info(f"Velocity norm penalty: {vnorm.item():.6f}")
 
