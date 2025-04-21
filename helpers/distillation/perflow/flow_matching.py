@@ -14,10 +14,10 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
     def __init__(self, teacher_model, student_model=None, config=None):
         flow_perflow_config = {
             "loss_type": "flow_matching",
-            "solving_steps": 2,
-            "windows": 16,
-            "support_cfg": False,
-            "cfg_sync": True,
+            "solving_steps": 6,
+            "windows": 4,
+            "support_cfg": True,
+            "cfg_sync": False,
             "discrete_timesteps": -1,
         }
 
@@ -85,32 +85,63 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
                     cond_pred = self.teacher_model.model_predict(cond_inputs)[
                         "model_prediction"
                     ]
-                model_prediction = uncond_pred + guidance_scale * (
-                    cond_pred - uncond_pred
-                )
+                v1 = uncond_pred + guidance_scale * (cond_pred - uncond_pred)
             else:
                 with torch.no_grad():
-                    model_prediction = self.teacher_model.model_predict(model_inputs)[
+                    v1 = self.teacher_model.model_predict(model_inputs)[
                         "model_prediction"
                     ]
 
-            if len(current_latents.shape) == 5:
-                current_latents = (
-                    current_latents
-                    + step_size[:, None, None, None, None] * model_prediction
-                )
-                current_t = current_t - step_size
+            x_predict = (
+                current_latents + step_size[:, None, None, None] * v1
+                if len(current_latents.shape) == 4
+                else current_latents + step_size[:, None, None, None, None] * v1
+            )
+
+            next_t = current_t - step_size
+
+            model_inputs["latents"] = x_predict
+            model_inputs["noisy_latents"] = x_predict
+            model_inputs["timesteps"] = next_t
+
+            if do_cfg:
+                cond_inputs = model_inputs.copy()
+                uncond_inputs = {
+                    "latents": x_predict,
+                    "noisy_latents": x_predict,
+                    "timesteps": next_t,
+                    "encoder_hidden_states": negative_prompt_embeds,
+                }
+                for key in ["encoder_attention_mask", "added_cond_kwargs"]:
+                    if key in prepared_batch:
+                        uncond_inputs[key] = prepared_batch[key]
+                with torch.no_grad():
+                    uncond_pred = self.teacher_model.model_predict(uncond_inputs)[
+                        "model_prediction"
+                    ]
+                    cond_pred = self.teacher_model.model_predict(cond_inputs)[
+                        "model_prediction"
+                    ]
+                v2 = uncond_pred + guidance_scale * (cond_pred - uncond_pred)
             else:
-                current_latents = (
-                    current_latents + step_size[:, None, None, None] * model_prediction
-                )
-                current_t = current_t - step_size
+                with torch.no_grad():
+                    v2 = self.teacher_model.model_predict(model_inputs)[
+                        "model_prediction"
+                    ]
+
+            avg_v = 0.5 * (v1 + v2)
+            current_latents = (
+                current_latents + step_size[:, None, None, None] * avg_v
+                if len(current_latents.shape) == 4
+                else current_latents + step_size[:, None, None, None, None] * avg_v
+            )
+            current_t = next_t
 
             logger.info(
-                f"Step {i+1}/{num_steps}: step_size={step_size.mean().item()}, model_prediction mean={model_prediction.mean().item()}, std={model_prediction.std().item()}"
+                f"Step {i+1}/{num_steps}: step_size={step_size.mean().item()}, v1 mean={v1.mean().item()}, v2 mean={v2.mean().item()}, avg_v std={avg_v.std().item()}"
             )
             logger.info(
-                f"After step {i+1}/{num_steps}: mean={current_latents.mean().item()}, std={current_latents.std().item()}"
+                f"After step {i+1}/{num_steps}: latents mean={current_latents.mean().item()}, std={current_latents.std().item()}"
             )
 
         return current_latents
@@ -233,7 +264,7 @@ class FlowMatchingPeRFlowDistiller(DistillationBase):
         from helpers.training.custom_schedule import PeRFlowScheduler
 
         return PeRFlowScheduler(
-            num_time_windows=16,
+            num_time_windows=self.config["windows"],
             num_train_timesteps=self.teacher_scheduler.num_train_timesteps,
             prediction_type=self.teacher_model.PREDICTION_TYPE.value,
         )
