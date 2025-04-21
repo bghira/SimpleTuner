@@ -71,7 +71,7 @@ class DistillationBase:
 
     def get_scheduler(self, scheduler_name):
         """A child class can override this to provide a custom scheduler."""
-        logger.warning("No distillation scheduler provided. Using default.")
+        self.logger.warning("No distillation scheduler provided. Using default.")
         return None
 
     def toggle_adapter(self, enable=False):
