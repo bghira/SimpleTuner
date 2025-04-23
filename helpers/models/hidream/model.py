@@ -123,7 +123,11 @@ class HiDream(ImageModelFoundation):
         """
         active_pipelines = getattr(self, "pipelines", {})
         if pipeline_type in active_pipelines:
-            setattr(active_pipelines[pipeline_type], self.MODEL_TYPE.value, self.unwrap_model())
+            setattr(
+                active_pipelines[pipeline_type],
+                self.MODEL_TYPE.value,
+                self.unwrap_model(),
+            )
             return active_pipelines[pipeline_type]
         pipeline_kwargs = {
             "pretrained_model_name_or_path": self._model_config_path(),
@@ -186,7 +190,6 @@ class HiDream(ImageModelFoundation):
         )
 
         return self.pipelines[pipeline_type]
-
 
     def _format_text_embedding(self, text_embedding: torch.Tensor):
         """
@@ -308,8 +311,8 @@ class HiDream(ImageModelFoundation):
         ):
             B, C, H, W = prepared_batch["noisy_latents"].shape
             pH, pW = (
-                H // self.model.config.patch_size,
-                W // self.model.config.patch_size,
+                H // self.unwrap_model(model=self.model).config.patch_size,
+                W // self.unwrap_model(model=self.model).config.patch_size,
             )
 
             img_sizes = torch.tensor([pH, pW], dtype=torch.int64).reshape(-1)
@@ -334,7 +337,7 @@ class HiDream(ImageModelFoundation):
         latent_model_input = prepared_batch["noisy_latents"]
         if latent_model_input.shape[-2] != latent_model_input.shape[-1]:
             B, C, H, W = latent_model_input.shape
-            patch_size = self.model.config.patch_size
+            patch_size = self.unwrap_model(model=self.model).config.patch_size
             pH, pW = H // patch_size, W // patch_size
             out = torch.zeros(
                 (B, C, self.model.max_seq, patch_size * patch_size),
