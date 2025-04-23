@@ -795,7 +795,7 @@ class Validation:
                 # The Beta schedule looks WAY better...
                 scheduler_args["use_beta_sigmas"] = True
                 scheduler_args["shift"] = self.config.flow_schedule_shift
-            if self.config.validation_noise_scheduler == "unipc":
+            if self.config.validation_noise_scheduler in ["flow_unipc", "unipc"]:
                 scheduler_args["prediction_type"] = "flow_prediction"
                 scheduler_args["use_flow_sigmas"] = True
                 scheduler_args["num_train_timesteps"] = 1000
