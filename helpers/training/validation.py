@@ -26,6 +26,7 @@ from diffusers.schedulers import (
     DDIMScheduler,
     DDPMScheduler,
 )
+from helpers.models.hidream.schedule import FlowUniPCMultistepScheduler
 from diffusers.utils.torch_utils import is_compiled_module
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.image_manipulation.brightness import calculate_luminance
@@ -45,6 +46,7 @@ SCHEDULER_NAME_MAP = {
     "euler-a": EulerAncestralDiscreteScheduler,
     "flow_matching": FlowMatchEulerDiscreteScheduler,
     "unipc": UniPCMultistepScheduler,
+    "flow_unipc": FlowUniPCMultistepScheduler,
     "ddim": DDIMScheduler,
     "ddpm": DDPMScheduler,
     "dpm++": DPMSolverMultistepScheduler,
