@@ -1288,6 +1288,14 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--offload_during_startup",
+        action="store_true",
+        help=(
+            "When set, text encoders, the VAE, or other models will be moved to and from the CPU as needed, which can slow"
+            " down startup, but saves VRAM. This is useful for video models or high-resolution pre-caching of latent embeds."
+        ),
+    )
+    parser.add_argument(
         "--offload_param_path",
         type=str,
         default=None,

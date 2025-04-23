@@ -455,7 +455,7 @@ def configure_parquet_database(backend: dict, args, data_backend: BaseDataBacken
 
 def move_text_encoders(args, text_encoders: list, target_device: str):
     """Move text encoders to the target device."""
-    if text_encoders is None:
+    if text_encoders is None or not args.offload_during_startup:
         return
     # we'll move text encoder only if their precision arg is no_change
     # otherwise, we assume the user has already moved them to the correct device due to quantisation.
