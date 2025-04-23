@@ -42,6 +42,7 @@ model_classes = {
         "wan",
         "deepfloyd",
         "auraflow",
+        "hidream",
     ],
     "controlnet": ["sdxl", "sd1x", "sd2x"],
 }
@@ -61,7 +62,7 @@ default_models = {
     "hidream": "HiDream-ai/HiDream-I1-Full",
     "auraflow": "terminusresearch/auraflow-v0.3",
     "deepfloyd": "DeepFloyd/DeepFloyd-IF-I-XL-v1.0",
-    "omnigen": "Shitao/OmniGen-v1-diffusers",    
+    "omnigen": "Shitao/OmniGen-v1-diffusers",
 }
 
 default_cfg = {
@@ -78,7 +79,7 @@ default_cfg = {
     "omnigen": 3.2,
     "deepfloyd": 6.0,
     "sd2x": 7.0,
-    "sd1x": 6.0,    
+    "sd1x": 6.0,
 }
 
 model_labels = {
