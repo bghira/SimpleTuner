@@ -778,10 +778,7 @@ class Trainer:
                 },
             )
         elif self.config.distillation_method == "perflow":
-            from helpers.distillation.perflow import (
-                DDPMPeRFlowDistiller,
-                FlowMatchingPeRFlowDistiller,
-            )
+            from helpers.distillation.perflow import PeRFlowDistiller
 
             # For LoRA with PeRFlow regularization (single model)
             perflow_config = {
@@ -797,24 +794,14 @@ class Trainer:
                     perflow_config.update(self.config.distillation_config)
             logger.info(f"Distillation config: {perflow_config}")
             if self.config.model_type == "lora":
-                if self.model.PREDICTION_TYPE.value == "flow_matching":
-                    logger.info(
-                        "Loading flow-matching PeRF distillation for low-rank training."
-                    )
-                    self.distiller = FlowMatchingPeRFlowDistiller(
-                        teacher_model=self.model,
-                        student_model=None,
-                        config=perflow_config,
-                    )
-                else:
-                    logger.info(
-                        "Loading flow-matching PeRF distillation for full-rank training."
-                    )
-                    self.distiller = DDPMPeRFlowDistiller(
-                        teacher_model=self.model,
-                        student_model=None,
-                        config=perflow_config,
-                    )
+                logger.info(
+                    "Loading flow-matching PeRF distillation for low-rank training."
+                )
+                self.distiller = PeRFlowDistiller(
+                    teacher_model=self.model,
+                    student_model=None,
+                    config=perflow_config,
+                )
             elif self.config.model_type == "full":
                 ## For separate teacher/student models
                 ## TODO: Implement
