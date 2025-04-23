@@ -96,8 +96,6 @@ class FlowUniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
         final_sigmas_type: Optional[str] = "zero",  # "zero", "sigma_min"
     ):
 
-        if prediction_type is None:
-            prediction_type = "flow_prediction"
         if solver_type not in ["bh1", "bh2"]:
             if solver_type in ["midpoint", "heun", "logrho"]:
                 self.register_to_config(solver_type="bh2")
