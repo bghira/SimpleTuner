@@ -13,7 +13,7 @@ from transformers import (
 )
 
 from diffusers.image_processor import VaeImageProcessor
-from diffusers.loaders import FromSingleFileMixin
+from diffusers.loaders import FromSingleFileMixin, HiDreamImageLoraLoaderMixin
 from diffusers.models.autoencoders import AutoencoderKL
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from diffusers.utils import (
@@ -136,7 +136,9 @@ class HiDreamImagePipelineOutput(BaseOutput):
     images: Union[List[PIL.Image.Image], np.ndarray]
 
 
-class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
+class HiDreamImagePipeline(
+    DiffusionPipeline, FromSingleFileMixin, HiDreamImageLoraLoaderMixin
+):
     model_cpu_offload_seq = "text_encoder->text_encoder_2->text_encoder_3->text_encoder_4->image_encoder->transformer->vae"
     _optional_components = ["image_encoder", "feature_extractor"]
     _callback_tensor_inputs = ["latents", "prompt_embeds"]
