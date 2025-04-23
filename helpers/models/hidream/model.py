@@ -46,7 +46,7 @@ class HiDream(ImageModelFoundation):
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 16
-    DEFAULT_NOISE_SCHEDULER = "flow_matching"
+    DEFAULT_NOISE_SCHEDULER = "flow_unipc"
     # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     # Only training the Attention blocks by default seems to help more with HiDream.
