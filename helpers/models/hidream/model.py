@@ -321,7 +321,7 @@ class HiDream(ImageModelFoundation):
             img_ids[..., 1] = img_ids[..., 1] + torch.arange(pH)[:, None]
             img_ids[..., 2] = img_ids[..., 2] + torch.arange(pW)[None, :]
             img_ids = img_ids.reshape(pH * pW, -1)
-            img_ids_pad = torch.zeros(self.model.max_seq, 3)
+            img_ids_pad = torch.zeros(self.unwrap_model(model=self.model).max_seq, 3)
             img_ids_pad[: pH * pW, :] = img_ids
 
             img_sizes = img_sizes.unsqueeze(0).to(
@@ -341,7 +341,12 @@ class HiDream(ImageModelFoundation):
             patch_size = self.unwrap_model(model=self.model).config.patch_size
             pH, pW = H // patch_size, W // patch_size
             out = torch.zeros(
-                (B, C, self.model.max_seq, patch_size * patch_size),
+                (
+                    B,
+                    C,
+                    self.unwrap_model(model=self.model).max_seq,
+                    patch_size * patch_size,
+                ),
                 dtype=latent_model_input.dtype,
                 device=latent_model_input.device,
             )
