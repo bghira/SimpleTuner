@@ -653,7 +653,7 @@ training = ["Jinja2", "accelerate (>=0.31.0)", "datasets", "peft (>=0.6.0)", "pr
 type = "git"
 url = "https://github.com/huggingface/diffusers"
 reference = "HEAD"
-resolved_reference = "aabf8ce20bb66c96ed2f4cae20b65cd1be0e76fe"
+resolved_reference = "4b60f4b60293bff0f132179a4d68ba585b360a41"
 
 [[package]]
 name = "dill"
