@@ -506,7 +506,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--lr_scheduler {linear,sine,cosine,cosine_with_restarts,polynomial,constant,constant_with_warmup}]
                 [--lr_warmup_steps LR_WARMUP_STEPS]
                 [--lr_num_cycles LR_NUM_CYCLES] [--lr_power LR_POWER]
-                [--distillation_method {perflow}]
+                [--distillation_method {dcm}]
                 [--distillation_config DISTILLATION_CONFIG] [--use_ema]
                 [--ema_device {cpu,accelerator}]
                 [--ema_validation {none,ema_only,comparison}] [--ema_cpu_only]
@@ -1266,14 +1266,14 @@ options:
                         Number of hard resets of the lr in
                         cosine_with_restarts scheduler.
   --lr_power LR_POWER   Power factor of the polynomial scheduler.
-  --distillation_method {perflow}
-                        The distillation method to use. Currently, only
-                        'perflow' is supported via LoRA. This will apply the
-                        perflow distillation method to the model.
+  --distillation_method {dcm}
+                        The distillation method to use. Currently, only 'dcm'
+                        is supported via LoRA. This will apply the selected
+                        distillation method to the model.
   --distillation_config DISTILLATION_CONFIG
-                        The distillation method to use. Currently, only
-                        'perflow' is supported via LoRA. This will apply the
-                        perflow distillation method to the model.
+                        The config for your selected distillation method. If
+                        passing it via config.json, simply provide the JSON
+                        object directly.
   --use_ema             Whether to use EMA (exponential moving average) model.
                         Works with LoRA, Lycoris, and full training.
   --ema_device {cpu,accelerator}
