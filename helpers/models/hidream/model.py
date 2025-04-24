@@ -111,10 +111,6 @@ class HiDream(ImageModelFoundation):
 
         return pretrained_load_args
 
-    def post_vae_load_setup(self):
-        # we have to differently scale VAE inputs due to the patches.
-        self.AUTOENCODER_SCALING_FACTOR *= 2
-
     def _load_pipeline(
         self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True
     ):
