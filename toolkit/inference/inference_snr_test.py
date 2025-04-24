@@ -1,4 +1,9 @@
 import torch
+
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 from PIL import Image
 from diffusers import (
     StableDiffusionPipeline,

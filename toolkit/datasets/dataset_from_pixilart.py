@@ -7,6 +7,11 @@ import requests
 import pandas as pd
 from tqdm import tqdm
 from io import BytesIO
+
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 from PIL import Image
 from concurrent.futures import ThreadPoolExecutor
 

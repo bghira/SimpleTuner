@@ -99,12 +99,11 @@ fi
 if [ -z "${DISABLE_UPDATES}" ]; then
     echo 'Updating dependencies. Set DISABLE_UPDATES to prevent this.'
     if [ -f "pyproject.toml" ] && [ -f "poetry.lock" ]; then
-        nvidia-smi 2> /dev/null && poetry install
+        nvidia-smi > /dev/null 2>&1 && poetry install
         uname -s | grep -q Darwin && poetry install -C install/apple
-        rocm-smi 2> /dev/null && poetry install -C install/rocm
+        rocm-smi > /dev/null 2>&1 && poetry install -C install/rocm
     fi
 fi
-# Run the training script.
 if [[ -z "${ACCELERATE_CONFIG_PATH}" ]]; then
     # Look for accelerate config in HF_HOME first, otherwise fallback to $HOME
     if [[ -f "${HF_HOME}/accelerate/default_config.yaml" ]]; then
@@ -113,6 +112,7 @@ if [[ -z "${ACCELERATE_CONFIG_PATH}" ]]; then
         ACCELERATE_CONFIG_PATH="${HOME}/.cache/huggingface/accelerate/default_config.yaml"
     fi
 fi
+# Run the training script.
 if [ -f "${ACCELERATE_CONFIG_PATH}" ]; then
     echo "Using Accelerate config file: ${ACCELERATE_CONFIG_PATH}"
     accelerate launch --config_file="${ACCELERATE_CONFIG_PATH}" train.py

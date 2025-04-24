@@ -104,9 +104,6 @@ def process(input_path, output_folder, detect_faces=False):
         # If input path is a directory, process each image file in the directory
         for image_file in Path(input_path).glob("*"):
             image = cv2.imread(str(image_file))
-            if image is None:
-                logging.info(f"Image had ERROR: {input_path}")
-                continue
             process_image(image, output_folder, detect_faces)
     else:
         # If input path is not a directory, assume it's a video file and process it

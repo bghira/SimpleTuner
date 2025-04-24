@@ -1,6 +1,12 @@
 import os
 import cv2
+
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 from PIL import Image
+import numpy as np
 
 
 def generate_canny_edge_dataset(input_dir, output_dir_original, output_dir_edges):
@@ -12,13 +18,22 @@ def generate_canny_edge_dataset(input_dir, output_dir_original, output_dir_edges
 
     # Process each image in the input directory
     for filename in os.listdir(input_dir):
-        if filename.lower().endswith((".png", ".jpg", ".jpeg")):
+        if filename.lower().endswith((".png", ".jpg", ".jpeg", ".jxl")):
             image_path = os.path.join(input_dir, filename)
             original_image = Image.open(image_path)
             original_image.save(os.path.join(output_dir_original, filename))
 
             # Read image in grayscale
             image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+            if image is None:
+                # If OpenCV fails, try loading the image with Pillow
+                try:
+                    pil_image = Image.open(image_path)
+                    # Convert Pillow image to a format OpenCV can use
+                    image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+                except Exception as e:
+                    print(f"Failed to load image with Pillow: {e}")
+                    continue
             # Apply Canny edge detection
             edges = cv2.Canny(image, 100, 200)
 

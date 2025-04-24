@@ -22,22 +22,19 @@ if torch.cuda.is_available():
         # Hopper! Or blackwell+.
         quantised_precision_levels.append("fp8-torchao")
 
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
+from PIL import Image
+
+supported_extensions = Image.registered_extensions()
 image_file_extensions = set(
-    [
-        "jpg",
-        "jpeg",
-        "png",
-        "webp",
-        "bmp",
-        "tiff",
-        "tif",
-        "mp4",
-        "avi",
-        "gif",
-        "mov",
-        "webm",
-    ]
+    ext.lower().lstrip(".")
+    for ext, img_format in supported_extensions.items()
+    if img_format in Image.OPEN
 )
+
 video_file_extensions = set(["mp4", "avi", "gif", "mov", "webm"])
 
 lycoris_defaults = {

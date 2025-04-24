@@ -6,6 +6,11 @@ import boto3
 from io import BytesIO
 import pandas as pd
 from pathlib import Path
+
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 from PIL import Image, ExifTags
 from tqdm import tqdm
 from requests.adapters import HTTPAdapter

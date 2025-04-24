@@ -5,6 +5,11 @@ Walk through a LAION dataset and analyze it.
 import os
 import json
 import concurrent.futures
+
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 from PIL import Image
 
 

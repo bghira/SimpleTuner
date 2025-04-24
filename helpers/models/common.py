@@ -5,6 +5,7 @@ import random
 import logging
 import inspect
 import os
+from torchvision import transforms
 from diffusers import DiffusionPipeline
 from torch.distributions import Beta
 from helpers.training.wrappers import unwrap_model
@@ -250,10 +251,16 @@ class ModelFoundation(ABC):
         """
         return list(cls.HUGGINGFACE_PATHS.keys())
 
-    def get_transforms(self):
+    def get_transforms(self, dataset_type: str = "image"):
         """
         Returns nothing, but subclasses can implement different torchvision transforms as needed.
+
+        dataset_type is passed in for models that support transforming videos or images etc.
         """
+        if dataset_type in ["video"]:
+            raise ValueError(
+                f"{dataset_type} transforms are not supported by {self.NAME}."
+            )
         return transforms.Compose(
             [
                 transforms.ToTensor(),
@@ -670,8 +677,9 @@ class ModelFoundation(ABC):
         loader_fn = self.MODEL_CLASS.from_pretrained
         model_path = (
             self.config.pretrained_transformer_model_name_or_path
-            or self.config.pretrained_model_name_or_path
-        )
+            if self.MODEL_TYPE is ModelTypes.TRANSFORMER
+            else self.config.pretrained_unet_model_name_or_path
+        ) or self.config.pretrained_model_name_or_path
         if self.config.pretrained_model_name_or_path.endswith(".safetensors"):
             self.config.pretrained_model_name_or_path = get_model_config_path(
                 self.config.model_family, model_path
@@ -679,9 +687,33 @@ class ModelFoundation(ABC):
         if model_path.endswith(".safetensors"):
             loader_fn = self.MODEL_CLASS.from_single_file
         pretrained_load_args = self.pretrained_load_args(pretrained_load_args)
+        model_subfolder = self.MODEL_SUBFOLDER
+        if (
+            self.MODEL_TYPE is ModelTypes.TRANSFORMER
+            and self.config.pretrained_transformer_model_name_or_path == model_path
+        ):
+            # we're using a custom transformer, let's check its subfolder
+            if str(self.config.pretrained_transformer_subfolder).lower() == "none":
+                model_subfolder = None
+            elif str(self.config.pretrained_unet_model_name_or_path).lower() is None:
+                model_subfolder = self.MODEL_SUBFOLDER
+            else:
+                model_subfolder = self.config.pretrained_transformer_subfolder
+        elif (
+            self.MODEL_TYPE is ModelTypes.UNET
+            and self.config.pretrained_unet_model_name_or_path == model_path
+        ):
+            # we're using a custom transformer, let's check its subfolder
+            if str(self.config.pretrained_unet_model_name_or_path).lower() == "none":
+                model_subfolder = None
+            elif str(self.config.pretrained_unet_model_name_or_path).lower() is None:
+                model_subfolder = self.MODEL_SUBFOLDER
+            else:
+                model_subfolder = self.config.pretrained_unet_subfolder
+
         self.model = loader_fn(
             model_path,
-            subfolder=self.MODEL_SUBFOLDER,
+            subfolder=model_subfolder,
             **pretrained_load_args,
         )
         if move_to_device and self.model is not None:
@@ -980,9 +1012,25 @@ class ModelFoundation(ABC):
                 **target_device_kwargs
             )
 
-        # Sample noise and add potential input perturbation.
+        # Sample noise
         noise = torch.randn_like(batch["latents"])
         bsz = batch["latents"].shape[0]
+        # If not flow matching, possibly apply an offset to noise
+        if not self.config.flow_matching and self.config.offset_noise:
+            if (
+                self.config.noise_offset_probability == 1.0
+                or random.random() < self.config.noise_offset_probability
+            ):
+                noise = noise + self.config.noise_offset * torch.randn(
+                    latents.shape[0],
+                    latents.shape[1],
+                    1,
+                    1,
+                    device=latents.device,
+                )
+        batch["noise"] = noise
+
+        # Possibly add input perturbation to input noise only
         if self.config.input_perturbation != 0 and (
             not getattr(self.config, "input_perturbation_steps", None)
             or state["global_step"] < self.config.input_perturbation_steps
@@ -992,11 +1040,11 @@ class ModelFoundation(ABC):
                 input_perturbation *= 1.0 - (
                     state["global_step"] / self.config.input_perturbation_steps
                 )
-            batch["noise"] = noise + input_perturbation * torch.randn_like(
+            batch["input_noise"] = noise + input_perturbation * torch.randn_like(
                 batch["latents"]
             )
         else:
-            batch["noise"] = noise
+            batch["input_noise"] = noise
 
         # Flow matching branch: set sigmas and timesteps.
         if self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
@@ -1026,7 +1074,7 @@ class ModelFoundation(ABC):
                     device=self.accelerator.device
                 )
                 batch["sigmas"] = apply_flow_schedule_shift(
-                    self.config, self.noise_schedule, batch["sigmas"], noise
+                    self.config, self.noise_schedule, batch["sigmas"], batch["noise"]
                 )
             else:
                 available_sigmas = [1.0] * 7 + [0.75, 0.5, 0.25]
@@ -1039,21 +1087,8 @@ class ModelFoundation(ABC):
             self.expand_sigmas(batch)
             batch["noisy_latents"] = (1 - batch["sigmas"]) * batch["latents"] + batch[
                 "sigmas"
-            ] * batch["noise"]
+            ] * batch["input_noise"]
         else:
-            # If not flow matching, possibly apply an offset to noise
-            if self.config.offset_noise:
-                if (
-                    self.config.noise_offset_probability == 1.0
-                    or random.random() < self.config.noise_offset_probability
-                ):
-                    noise = noise + self.config.noise_offset * torch.randn(
-                        batch["latents"].shape[0],
-                        batch["latents"].shape[1],
-                        1,
-                        1,
-                        device=batch["latents"].device,
-                    )
             weights = generate_timestep_weights(
                 self.config, self.noise_schedule.config.num_train_timesteps
             ).to(self.accelerator.device)
@@ -1070,7 +1105,9 @@ class ModelFoundation(ABC):
                     weights, bsz, replacement=True
                 ).long()
             batch["noisy_latents"] = self.noise_schedule.add_noise(
-                batch["latents"].float(), batch["noise"].float(), batch["timesteps"]
+                batch["latents"].float(),
+                batch["input_noise"].float(),
+                batch["timesteps"],
             ).to(device=self.accelerator.device, dtype=self.config.weight_dtype)
 
         # any model-specific augmentation can occur inside prepare_batch_conditions.
@@ -1303,12 +1340,10 @@ class VideoModelFoundation(ImageModelFoundation):
         # }
         # The trainer or child class might call self._init_text_encoders() at the right time.
 
-    def get_transforms(self):
-        from torchvision import transforms
-
+    def get_transforms(self, dataset_type: str = "image"):
         return transforms.Compose(
             [
-                VideoToTensor(),
+                VideoToTensor() if dataset_type == "video" else transforms.ToTensor(),
             ]
         )
 

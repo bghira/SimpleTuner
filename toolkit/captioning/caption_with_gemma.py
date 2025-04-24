@@ -2,6 +2,11 @@ import os, json
 import logging
 import argparse
 import requests
+
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 from PIL import Image
 from tqdm import tqdm
 import pandas as pd

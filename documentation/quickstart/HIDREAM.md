@@ -128,9 +128,8 @@ Your config.json will look something like mine by the end:
     "validation_resolution": "1024x1024",
     "validation_prompt": "A photo-realistic image of a cat",
     "validation_num_inference_steps": "20",
-    "validation_guidance": 2.0,
+    "validation_guidance": 3.0,
     "validation_guidance_rescale": "0.0",
-    "vae_cache_ondemand": true,
     "vae_batch_size": 1,
     "train_batch_size": 1,
     "tracker_run_name": "eval_loss_test1",
@@ -151,7 +150,7 @@ Your config.json will look something like mine by the end:
     "max_grad_norm": 0.01,
     "lycoris_config": "config/lycoris_config.json",
     "lr_warmup_steps": 100,
-    "lr_scheduler": "constant",
+    "lr_scheduler": "constant_with_warmup",
     "lora_type": "lycoris",
     "learning_rate": "4e-5",
     "gradient_checkpointing": "true",
@@ -179,8 +178,10 @@ And a simple `config/lycoris_config.json` file - note that the `FeedForward` may
 {
     "algo": "lokr",
     "multiplier": 1.0,
-    "linear_dim": 10000,
+    "linear_dim": 16384,
     "linear_alpha": 1,
+    "full_matrix": true,
+    "use_scalar": true,
     "factor": 16,
     "apply_preset": {
         "target_module": [
@@ -191,6 +192,44 @@ And a simple `config/lycoris_config.json` file - note that the `FeedForward` may
                 "factor": 16
             },
         }
+    }
+}
+```
+
+Setting either `"use_scalar": true` in `config/lycoris_config.json` or setting `"init_lokr_norm": 1e-4` in `config/config.json` will speed up training considerably. Enabling both seems to slow down training slightly. Note that setting `init_lokr_norm` will slightly change the validation images at step 0.
+
+Adding the `FeedForward` module to `config/lycoris_config.json` will train a much larger number of parameters, including all the experts. Training the experts seems to be rather difficult though.
+
+An easier option is to only train the feed forward parameters outside the experts using the following `config/lycoris_config.json` file.
+
+```json
+{
+    "algo": "lokr",
+    "multiplier": 1.0,
+    "linear_dim": 16384,
+    "linear_alpha": 1,
+    "full_matrix": true,
+    "use_scalar": true,
+    "factor": 16,
+    "apply_preset": {
+        "name_algo_map": {
+            "double_stream_blocks.*.block.attn*": {
+                "factor": 16
+            },
+            "double_stream_blocks.*.block.ff_t*": {
+                "factor": 16
+            },
+            "double_stream_blocks.*.block.ff_i.shared_experts*": {
+                "factor": 16
+            },
+            "single_stream_blocks.*.block.attn*": {
+                "factor": 16
+            },
+            "single_stream_blocks.*.block.ff_i.shared_experts*": {
+                "factor": 16
+            }
+        },
+        "use_fnmatch": true
     }
 }
 ```
@@ -488,12 +527,15 @@ The lowest VRAM HiDream configuration is about 20-22G:
 - Using `--quantize_via=cpu` to avoid outOfMemory error during startup on <=16G cards.
 - Enable `--gradient_checkpointing`
 - Use a tiny LoRA or Lycoris configuration (eg. LoRA rank 1 or Lokr factor 25)
+- Setting the environment variable `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` helps minimize VRAM usage when training multiple aspect ratios.
 
 **NOTE**: Pre-caching of VAE embeds and text encoder outputs may use more memory and still OOM. VAE tiling and slicing are enabled by default. If you see OOM, you might just be out of luck.
 
 Speed was approximately 3 iterations per second on an NVIDIA 4090 using Pytorch 2.7 and CUDA 12.8
 
 ### Masked loss
+
+Masked loss training is currently not supported with HiDream.
 
 If you are training a subject or style and would like to mask one or the other, see the [masked loss training](/documentation/DREAMBOOTH.md#masked-loss) section of the Dreambooth guide.
 
@@ -523,6 +565,10 @@ If any image quality issues arise, please open an issue on Github.
 Some limitations with the model's patch embed implementation mean that there are certain resolutions that will cause an error.
 
 Experimentation will be helpful, as well as thorough bug reports.
+
+### Multiple-resolution training
+
+The model can be initially trained at a lower resolution such as 512px to speed up training. It is a good idea to enable `--flow_schedule_auto_shift` when training resolutions different from 1024px. Lower resolutions use less VRAM, allowing higher batch sizes to be used.
 
 ### Full-rank tuning
 

@@ -1319,7 +1319,8 @@ def configure_multi_databackend(
                     init_backend["vaecache"].discover_all_files()
                 accelerator.wait_for_everyone()
             all_image_files = StateTracker.get_image_files(
-                data_backend_id=init_backend["id"]
+                data_backend_id=init_backend["id"],
+                retry_limit=3,  # some filesystems maybe take longer to make it available.
             )
             if all_image_files is None:
                 from helpers.training import image_file_extensions

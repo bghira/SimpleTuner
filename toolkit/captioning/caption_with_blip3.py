@@ -5,6 +5,11 @@ import random
 import argparse
 import base64
 import torch
+
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 from PIL import Image
 from tqdm import tqdm
 import requests
@@ -75,7 +80,10 @@ def eval_blip3_model(query, raw_image, model, tokenizer, image_processor):
     )
     language_inputs = tokenizer([prompt], return_tensors="pt")
     inputs.update(language_inputs)
-    inputs = {name: tensor.to("mps" if torch.backends.mps.is_available() else "cuda") for name, tensor in inputs.items()}
+    inputs = {
+        name: tensor.to("mps" if torch.backends.mps.is_available() else "cuda")
+        for name, tensor in inputs.items()
+    }
     generated_text = model.generate(
         **inputs,
         image_size=[raw_image.size],

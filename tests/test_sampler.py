@@ -1,5 +1,10 @@
 import unittest, os, logging
 from math import ceil
+
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 from PIL import Image
 from unittest import skip
 from unittest.mock import Mock, MagicMock, patch

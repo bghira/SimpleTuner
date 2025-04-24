@@ -9,6 +9,11 @@ from tqdm import tqdm
 from helpers.training.wrappers import unwrap_model
 from helpers.models.common import VideoModelFoundation, ImageModelFoundation
 from helpers.models.common import ModelFoundation
+
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 from PIL import Image
 from helpers.training.state_tracker import StateTracker
 from helpers.models.common import PredictionTypes, PipelineTypes

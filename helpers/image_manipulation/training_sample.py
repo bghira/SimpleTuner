@@ -1,3 +1,7 @@
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 from PIL import Image
 from PIL.ImageOps import exif_transpose
 from helpers.multiaspect.image import MultiaspectImage, resize_helpers
