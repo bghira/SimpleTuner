@@ -456,7 +456,7 @@ The lowest VRAM OmniGen configuration is not yet known, but it is expected to be
 - Enable `--gradient_checkpointing`
 - Use a tiny LoRA or Lycoris configuration (eg. LoRA rank 1 or Lokr factor 25)
 
-**NOTE**: Pre-caching of VAE embeds and text encoder outputs may use more memory and still OOM. If so, VAE tiling and slicing can be optionally enabled.
+**NOTE**: Pre-caching of VAE embeds and text encoder outputs may use more memory and still OOM. If so, VAE tiling and slicing can be optionally enabled. Text encoders can be offloaded to CPU during VAE caching with `offload_during_startup=true`.
 
 Speed was approximately 3.4 iterations per second on an AMD 7900XTX using Pytorch 2.7 and ROCm 6.3.
 
