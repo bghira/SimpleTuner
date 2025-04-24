@@ -453,9 +453,9 @@ def configure_parquet_database(backend: dict, args, data_backend: BaseDataBacken
     )
 
 
-def move_text_encoders(args, text_encoders: list, target_device: str):
+def move_text_encoders(args, text_encoders: list, target_device: str, force_move: bool = False):
     """Move text encoders to the target device."""
-    if text_encoders is None or not args.offload_during_startup:
+    if text_encoders is None or (not args.offload_during_startup and not force_move):
         return
     # we'll move text encoder only if their precision arg is no_change
     # otherwise, we assume the user has already moved them to the correct device due to quantisation.
@@ -634,7 +634,7 @@ def configure_multi_databackend(
 
         # Generate a TextEmbeddingCache object
         logger.debug(f"rank {get_rank()} is creating TextEmbeddingCache")
-        move_text_encoders(args, text_encoders, accelerator.device)
+        move_text_encoders(args, text_encoders, accelerator.device, force_move=True)
         init_backend["text_embed_cache"] = TextEmbeddingCache(
             id=init_backend["id"],
             data_backend=init_backend["data_backend"],
