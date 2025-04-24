@@ -3,23 +3,29 @@
 > ⚠️ These tutorials are a work-in-progress. They contain full end-to-end instructions for a basic training session.
 
 **Note**: For more advanced configurations, see the [tutorial](/TUTORIAL.md), [dataloader configuration guide](/documentation/DATALOADER.md), and the [options breakdown](/OPTIONS.md) pages.
+# Quickstart Guide
 
-## PixArt Sigma (1K, 2K & 4K)
+> ⚠️ These tutorials are a work-in-progress. They contain full end-to-end instructions for a basic training session.
 
-For a fun and lightweight model, see [this quickstart guide](/documentation/quickstart/SIGMA.md)
+**Note**: For more advanced configurations, see the [tutorial](/TUTORIAL.md), [dataloader configuration guide](/documentation/DATALOADER.md), and the [options breakdown](/OPTIONS.md) pages.
 
-## NVLabs Sana (1024px, currently)
 
-Probably the fastest model currently; see [this quickstart guide](/documentation/quickstart/SANA.md)
+## Feature Compatibility Matrix
 
-## Kwai Kolors
+| Model                                             | Params       | PEFT LoRA | Lycoris LoKr | Full-Rank | Quantization              | Mixed Precision | Grad Checkpoint      | Flow Shift      | Multi-Res |
+|---------------------------------------------------|-------------:|:----:|:----:|:---------:|:------------------------:|:---------------:|:--------------------:|:---------------:|:---------:|
+| [PixArt Sigma](/documentation/quickstart/SIGMA.md)| ~1 B         |      |  ✓   |     ✓     | optional (int8)           | bf16            | ✓                    |                 |           |
+| [NVLabs Sana](/documentation/quickstart/SANA.md)  | 1.6B-4.8B       |      |  ✓   |     ✓     | optional (int8)           | bf16            | ✓+                   | ✓               |           |
+| [Kwai Kolors](/documentation/quickstart/KOLORS.md)| ~4 B         |  ✓   |  ✓   |     ✓     | not recommended           | bf16            | ✓                    |                 | ✓         |
+| [Stable Diffusion 3](/documentation/quickstart/SD3.md)| 2B–8B    |  ✓   |  ✓   |     ✓     | not recommended           | bf16            | ✓+                   | ✓ (SLG)         | ✓         |
+| [Flux.1](/documentation/quickstart/FLUX.md)      | ~8B-12B         |  ✓   |  ✓   |     ✓*    | optional (int8, fp8, nf4)  | bf16            | ✓+                   | ✓               | ✓         |
+| [Auraflow](/documentation/quickstart/AURAFLOW.md)| 6 B          |  ✓   |  ✓   |     ✓*    | optional (int8, fp8, nf4)  | bf16            | ✓+                   | ✓ (SLG)         | ✓         |
+| [HiDream I1](/documentation/quickstart/HIDREAM.md)| 17 B (8.5B MoE)|  ✓   |  ✓   |     ✓*    | optional (int8, fp8, nf4)  | bf16            | ✓                    | ✓               |           |
+| [LTX Video](/documentation/quickstart/LTXVIDEO.md)| ~2.5 B      |  ✓   |  ✓   |     ✓     | optional (int8, fp8)       | bf16            | ✓                    | ✓               |           |
+| [OmniGen](/documentation/quickstart/OMNIGEN.md)  | 3.8 B        |  ✓   |  ✓   |     ✓     | optional (int8, fp8)       | bf16            | ✓                    | ✓               |           |
+| [Stable Diffusion XL](/documentation/quickstart/SDXL.md)| 2.6 B      |  ✓   |  ✓   |     ✓     | not recommended           | bf16            | ✓                    |                 | ✓         |
+| [Wan 2.1](/documentation/quickstart/WAN.md)      | 1.3B-14B   |  ✓   |  ✓   |     ✓*    | optional (int8)           | bf16            | ✓                    | ✓               |           |
 
-An SDXL-like U-net based architecture that uses a language model called ChatGLM for its text parsing can be found [here](/documentation/quickstart/KOLORS.md)
-
-## Stable Diffusion 3
-
-For personalisation of the Stable Diffusion 3 model family, see [this quickstart guide](/documentation/quickstart/SD3.md)
-
-## Flux.1
-
-For training of the enormous monster known as Flux, see [its specific quickstart guide](/documentation/quickstart/FLUX.md)
+- _* Requires DeepSpeed for full-rank_
+- _+ Allows gradient checkpointing with interval specified_
+- _SLG = Skip-layer guidance_
