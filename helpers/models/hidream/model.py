@@ -46,6 +46,7 @@ class HiDream(ImageModelFoundation):
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 16
+    DEFAULT_NOISE_SCHEDULER = "flow_unipc"
     # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     # Only training the Attention blocks by default seems to help more with HiDream.
@@ -123,7 +124,11 @@ class HiDream(ImageModelFoundation):
         """
         active_pipelines = getattr(self, "pipelines", {})
         if pipeline_type in active_pipelines:
-            setattr(active_pipelines[pipeline_type], self.MODEL_TYPE.value, self.unwrap_model())
+            setattr(
+                active_pipelines[pipeline_type],
+                self.MODEL_TYPE.value,
+                self.unwrap_model(),
+            )
             return active_pipelines[pipeline_type]
         pipeline_kwargs = {
             "pretrained_model_name_or_path": self._model_config_path(),
@@ -186,7 +191,6 @@ class HiDream(ImageModelFoundation):
         )
 
         return self.pipelines[pipeline_type]
-
 
     def _format_text_embedding(self, text_embedding: torch.Tensor):
         """
@@ -308,8 +312,8 @@ class HiDream(ImageModelFoundation):
         ):
             B, C, H, W = prepared_batch["noisy_latents"].shape
             pH, pW = (
-                H // self.model.config.patch_size,
-                W // self.model.config.patch_size,
+                H // self.unwrap_model(model=self.model).config.patch_size,
+                W // self.unwrap_model(model=self.model).config.patch_size,
             )
 
             img_sizes = torch.tensor([pH, pW], dtype=torch.int64).reshape(-1)
@@ -317,7 +321,7 @@ class HiDream(ImageModelFoundation):
             img_ids[..., 1] = img_ids[..., 1] + torch.arange(pH)[:, None]
             img_ids[..., 2] = img_ids[..., 2] + torch.arange(pW)[None, :]
             img_ids = img_ids.reshape(pH * pW, -1)
-            img_ids_pad = torch.zeros(self.model.max_seq, 3)
+            img_ids_pad = torch.zeros(self.unwrap_model(model=self.model).max_seq, 3)
             img_ids_pad[: pH * pW, :] = img_ids
 
             img_sizes = img_sizes.unsqueeze(0).to(
@@ -334,10 +338,15 @@ class HiDream(ImageModelFoundation):
         latent_model_input = prepared_batch["noisy_latents"]
         if latent_model_input.shape[-2] != latent_model_input.shape[-1]:
             B, C, H, W = latent_model_input.shape
-            patch_size = self.model.config.patch_size
+            patch_size = self.unwrap_model(model=self.model).config.patch_size
             pH, pW = H // patch_size, W // patch_size
             out = torch.zeros(
-                (B, C, self.model.max_seq, patch_size * patch_size),
+                (
+                    B,
+                    C,
+                    self.unwrap_model(model=self.model).max_seq,
+                    patch_size * patch_size,
+                ),
                 dtype=latent_model_input.dtype,
                 device=latent_model_input.device,
             )

@@ -103,6 +103,9 @@ class FlowUniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
                 raise NotImplementedError(
                     f"{solver_type} is not implemented for {self.__class__}"
                 )
+        if prediction_type is None:
+            prediction_type = "flow_prediction"
+            self.config.prediction_type = prediction_type
 
         self.predict_x0 = predict_x0
         # setable values
