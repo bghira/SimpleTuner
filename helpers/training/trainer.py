@@ -766,19 +766,7 @@ class Trainer:
         if self.config.distillation_method is None:
             return
 
-        if self.config.distillation_method == "slimflow":
-            from helpers.distillation.slimflow import SlimFlowDistiller
-
-            self.distiller = SlimFlowDistiller(
-                teacher_model=None,
-                student_model=self.model,
-                config={
-                    "annealing_schedule": "linear",
-                    "beta_steps": 50000,
-                    "train_mode": "annealing_reflow",  # Start with reflow
-                },
-            )
-        elif self.config.distillation_method == "perflow":
+        if self.config.distillation_method == "perflow":
             from helpers.distillation.perflow import PeRFlowDistiller
 
             # For LoRA with PeRFlow regularization (single model)
