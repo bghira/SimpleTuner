@@ -116,9 +116,10 @@ logging.basicConfig(
     datefmt="%m/%d/%Y %H:%M:%S",
     level=logging.INFO,
 )
-
-transformers.utils.logging.set_verbosity_warning()
-diffusers.utils.logging.set_verbosity_warning()
+if hasattr(transformers.utils, "logging"):
+    transformers.utils.logging.set_verbosity_warning()
+if hasattr(diffusers.utils, "logging"):
+    diffusers.utils.logging.set_verbosity_warning()
 
 
 class Trainer:
