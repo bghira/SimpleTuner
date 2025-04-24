@@ -59,6 +59,6 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.source]]
-secondary = true
+priority = "supplemental"
 name = "pytorch-rocm"
 url = "https://download.pytorch.org/whl/test/rocm6.3"
