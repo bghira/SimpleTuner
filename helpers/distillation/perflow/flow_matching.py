@@ -340,9 +340,14 @@ class PeRFlowDistiller(DistillationBase):
         if do_cfg:
             prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
             if pooled_prompt_embeds is not None:
-                pooled_prompt_embeds = torch.cat([torch.zeros_like(pooled_prompt_embeds), pooled_prompt_embeds], dim=0)
+                pooled_prompt_embeds = torch.cat(
+                    [torch.zeros_like(pooled_prompt_embeds), pooled_prompt_embeds],
+                    dim=0,
+                )
             if prompt_attention_mask is not None:
-                prompt_attention_mask = torch.cat([prompt_attention_mask, prompt_attention_mask], dim=0)
+                prompt_attention_mask = torch.cat(
+                    [prompt_attention_mask, prompt_attention_mask], dim=0
+                )
 
         t_vec = torch.linspace(0, 1, num_steps + 1, device=device, dtype=latents.dtype)
         t_schedule = t_start[:, None] * (1 - t_vec) + t_end[:, None] * t_vec
@@ -353,7 +358,9 @@ class PeRFlowDistiller(DistillationBase):
         for i in range(num_steps):
             t_curr = timesteps[:, i]
             t_next = timesteps[:, i + 1]
-            step = (t_curr - t_next).float().reshape(bsz, *[1] * (latents.ndim - 1)) / scheduler.config.num_train_timesteps
+            step = (t_curr - t_next).float().reshape(
+                bsz, *[1] * (latents.ndim - 1)
+            ) / scheduler.config.num_train_timesteps
 
             t_input = t_curr
             if do_cfg:
@@ -386,7 +393,9 @@ class PeRFlowDistiller(DistillationBase):
 
             x = x[:bsz] + step * velocity
 
-        delta = (latents - x) / (t_start - t_end).reshape(bsz, *[1] * (latents.ndim - 1))
+        delta = (latents - x) / (t_start - t_end).reshape(
+            bsz, *[1] * (latents.ndim - 1)
+        )
         return delta.detach()
 
     def compute_distill_loss(self, prepared_batch, model_output, original_loss):
