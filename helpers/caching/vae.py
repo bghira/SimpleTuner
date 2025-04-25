@@ -288,16 +288,7 @@ class VAECache(WebhookMixin):
             if args.pretrained_vae_model_name_or_path is None
             else args.pretrained_vae_model_name_or_path
         )
-        precached_vae = StateTracker.get_vae()
-        self.vae = precached_vae or AutoencoderClass.from_pretrained(
-            vae_path,
-            subfolder="vae" if args.pretrained_vae_model_name_or_path is None else None,
-            revision=args.revision,
-            force_upcast=False,
-        ).to(self.accelerator.device)
-        if self.vae.device != self.accelerator.device:
-            self.vae = self.vae.to(self.accelerator.device)
-        StateTracker.set_vae(self.vae)
+        self.vae = self.model.get_vae()
 
     def rebuild_cache(self):
         """
