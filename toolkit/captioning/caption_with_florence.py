@@ -5,6 +5,7 @@ import random
 import argparse
 import base64
 import torch
+
 try:
     import pillow_jxl
 except ModuleNotFoundError:

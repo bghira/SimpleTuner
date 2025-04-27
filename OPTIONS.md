@@ -30,6 +30,11 @@ The script `configure.py` in the project root can be used via `python configure.
 - **What**: Determines which model architecture is being trained.
 - **Choices**: pixart_sigma, flux, sd3, sdxl, kolors, legacy
 
+### `--offload_during_startup`
+
+- **What**: Offloads text encoder weights to CPU when VAE caching is going.
+- **Why**: This is useful for large models like HiDream and Wan 2.1, which can OOM when loading the VAE cache. This option does not impact quality of training, but for very large text encoders or slow CPUs, it can extend startup time substantially with many datasets. This is disabled by default due to this reason.
+
 ### `--pretrained_model_name_or_path`
 
 - **What**: Path to the pretrained model or its identifier from https://huggingface.co/models.
@@ -142,7 +147,6 @@ Using `--sageattention_usage` to enable training with SageAttention should be en
 
 - **What**: The name of the Huggingface Hub model and local results directory.
 - **Why**: This value is used as the directory name under the location specified as `--output_dir`. If `--push_to_hub` is provided, this will become the name of the model on Huggingface Hub.
-
 
 ### `--disable_benchmark`
 
@@ -400,21 +404,18 @@ This is a basic overview meant to help you get started. For a complete list of o
 usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
                 --model_family
-                {pixart_sigma,sana,kolors,sd3,flux,smoldit,sdxl,ltxvideo,legacy}
-                [--model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}]
+                {sd1x,sd2x,sd3,deepfloyd,sana,sdxl,kolors,flux,wan,ltxvideo,pixart_sigma,omnigen,hidream,auraflow}
+                [--model_flavour {1.5,1.4,dreamshaper,realvis,digitaldiffusion,pseudoflex-v2,pseudojourney,2.1,2.0,medium,large,i-medium-400m,i-large-900m,i-xlarge-4.3b,ii-medium-450m,ii-large-1.2b,sana1.5-4.8b-1024,sana1.5-1.6b-1024,sana1.0-1.6b-2048,sana1.0-1.6b-1024,sana1.0-600m-1024,sana1.0-600m-512,base-1.0,refiner-1.0,base-0.9,refiner-0.9,1.0,dev,schnell,t2v-480p-1.3b-2.1,t2v-480p-14b-2.1,0.9.5,0.9.0,900M-1024-v0.6,900M-1024-v0.7-stage1,900M-1024-v0.7-stage2,600M-512,600M-1024,600M-2048,v1,dev,full,fast,v0.3,v0.2,v0.1}]
+                [--model_type {full,lora}] [--hidream_use_load_balancing_loss]
+                [--hidream_load_balancing_loss_weight HIDREAM_LOAD_BALANCING_LOSS_WEIGHT]
                 [--flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,nano}]
-                [--flow_matching_sigmoid_scale FLOW_MATCHING_SIGMOID_SCALE]
                 [--flow_sigmoid_scale FLOW_SIGMOID_SCALE]
-                [--flux_fast_schedule] [--flux_use_uniform_schedule]
-                [--flow_use_uniform_schedule] [--flux_use_beta_schedule]
+                [--flux_fast_schedule] [--flow_use_uniform_schedule]
                 [--flow_use_beta_schedule]
-                [--flux_beta_schedule_alpha FLUX_BETA_SCHEDULE_ALPHA]
                 [--flow_beta_schedule_alpha FLOW_BETA_SCHEDULE_ALPHA]
-                [--flux_beta_schedule_beta FLUX_BETA_SCHEDULE_BETA]
                 [--flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA]
-                [--flux_schedule_shift FLUX_SCHEDULE_SHIFT]
                 [--flow_schedule_shift FLOW_SCHEDULE_SHIFT]
-                [--flux_schedule_auto_shift] [--flow_schedule_auto_shift]
+                [--flow_schedule_auto_shift]
                 [--flux_guidance_mode {constant,random-range}]
                 [--flux_guidance_value FLUX_GUIDANCE_VALUE]
                 [--flux_guidance_min FLUX_GUIDANCE_MIN]
@@ -423,9 +424,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--ltx_train_mode {t2v,i2v}] [--ltx_i2v_prob LTX_I2V_PROB]
                 [--ltx_protect_first_frame]
                 [--ltx_partial_noise_fraction LTX_PARTIAL_NOISE_FRACTION]
-                [--t5_padding {zero,unmodified}] [--smoldit]
-                [--smoldit_config {smoldit-small,smoldit-swiglu,smoldit-base,smoldit-large,smoldit-huge}]
-                [--flow_matching_loss {diffusers,compatible,diffusion,sd35}]
+                [--t5_padding {zero,unmodified}]
                 [--sd3_clip_uncond_behaviour {empty_string,zero}]
                 [--sd3_t5_uncond_behaviour {empty_string,zero}]
                 [--lora_type {standard,lycoris}]
@@ -435,14 +434,14 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--lycoris_config LYCORIS_CONFIG]
                 [--init_lokr_norm INIT_LOKR_NORM] [--controlnet]
                 [--controlnet_model_name_or_path]
-                --pretrained_model_name_or_path PRETRAINED_MODEL_NAME_OR_PATH
+                [--pretrained_model_name_or_path PRETRAINED_MODEL_NAME_OR_PATH]
                 [--pretrained_transformer_model_name_or_path PRETRAINED_TRANSFORMER_MODEL_NAME_OR_PATH]
                 [--pretrained_transformer_subfolder PRETRAINED_TRANSFORMER_SUBFOLDER]
                 [--pretrained_unet_model_name_or_path PRETRAINED_UNET_MODEL_NAME_OR_PATH]
                 [--pretrained_unet_subfolder PRETRAINED_UNET_SUBFOLDER]
                 [--pretrained_vae_model_name_or_path PRETRAINED_VAE_MODEL_NAME_OR_PATH]
                 [--pretrained_t5_model_name_or_path PRETRAINED_T5_MODEL_NAME_OR_PATH]
-                [--prediction_type {epsilon,v_prediction,sample}]
+                [--prediction_type {epsilon,v_prediction,sample,flow_matching}]
                 [--snr_weight SNR_WEIGHT]
                 [--training_scheduler_timestep_spacing {leading,linspace,trailing}]
                 [--inference_scheduler_timestep_spacing {leading,linspace,trailing}]
@@ -457,6 +456,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--rescale_betas_zero_snr]
                 [--vae_dtype {default,fp16,fp32,bf16}]
                 [--vae_batch_size VAE_BATCH_SIZE] [--vae_enable_tiling]
+                [--vae_enable_slicing]
                 [--vae_cache_scan_behaviour {recreate,sync}]
                 [--vae_cache_ondemand] [--compress_disk_cache]
                 [--aspect_bucket_disable_rebuild] [--keep_vae_loaded]
@@ -502,14 +502,18 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--gradient_checkpointing_interval GRADIENT_CHECKPOINTING_INTERVAL]
                 [--learning_rate LEARNING_RATE]
                 [--text_encoder_lr TEXT_ENCODER_LR] [--lr_scale]
+                [--lr_scale_sqrt]
                 [--lr_scheduler {linear,sine,cosine,cosine_with_restarts,polynomial,constant,constant_with_warmup}]
                 [--lr_warmup_steps LR_WARMUP_STEPS]
                 [--lr_num_cycles LR_NUM_CYCLES] [--lr_power LR_POWER]
-                [--use_ema] [--ema_device {cpu,accelerator}]
+                [--distillation_method {perflow}]
+                [--distillation_config DISTILLATION_CONFIG] [--use_ema]
+                [--ema_device {cpu,accelerator}]
                 [--ema_validation {none,ema_only,comparison}] [--ema_cpu_only]
                 [--ema_foreach_disable]
                 [--ema_update_interval EMA_UPDATE_INTERVAL]
                 [--ema_decay EMA_DECAY] [--non_ema_revision NON_EMA_REVISION]
+                [--offload_during_startup]
                 [--offload_param_path OFFLOAD_PARAM_PATH] --optimizer
                 {adamw_bf16,ao-adamw8bit,ao-adamw4bit,ao-adamfp8,ao-adamwfp8,adamw_schedulefree,adamw_schedulefree+aggressive,adamw_schedulefree+no_kahan,optimi-stableadamw,optimi-adamw,optimi-lion,optimi-radam,optimi-ranger,optimi-adan,optimi-adam,optimi-sgd,soap,bnb-adagrad,bnb-adagrad8bit,bnb-adam,bnb-adam8bit,bnb-adamw,bnb-adamw8bit,bnb-adamw-paged,bnb-adamw8bit-paged,bnb-lion,bnb-lion8bit,bnb-lion-paged,bnb-lion8bit-paged,bnb-ademamix,bnb-ademamix8bit,bnb-ademamix-paged,bnb-ademamix8bit-paged,prodigy}
                 [--optimizer_config OPTIMIZER_CONFIG]
@@ -526,8 +530,8 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--push_checkpoints_to_hub] [--hub_model_id HUB_MODEL_ID]
                 [--model_card_note MODEL_CARD_NOTE]
                 [--model_card_safe_for_work] [--logging_dir LOGGING_DIR]
-                [--benchmark_base_model] [--disable_benchmark]
-                [--evaluation_type {clip,none}] [--eval_dataset_pooling]
+                [--disable_benchmark] [--evaluation_type {clip,none}]
+                [--eval_dataset_pooling]
                 [--pretrained_evaluation_model_name_or_path PRETRAINED_EVALUATION_MODEL_NAME_OR_PATH]
                 [--validation_on_startup] [--validation_seed_source {gpu,cpu}]
                 [--validation_lycoris_strength VALIDATION_LYCORIS_STRENGTH]
@@ -538,7 +542,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--validation_guidance_skip_layers_stop VALIDATION_GUIDANCE_SKIP_LAYERS_STOP]
                 [--validation_guidance_skip_scale VALIDATION_GUIDANCE_SKIP_SCALE]
                 [--sana_complex_human_instruction SANA_COMPLEX_HUMAN_INSTRUCTION]
-                [--allow_tf32] [--disable_tf32] [--validation_using_datasets]
+                [--disable_tf32] [--validation_using_datasets]
                 [--webhook_config WEBHOOK_CONFIG]
                 [--webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL]
                 [--report_to REPORT_TO] [--tracker_run_name TRACKER_RUN_NAME]
@@ -549,28 +553,29 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--user_prompt_library USER_PROMPT_LIBRARY]
                 [--validation_negative_prompt VALIDATION_NEGATIVE_PROMPT]
                 [--num_validation_images NUM_VALIDATION_IMAGES]
-                [--validation_steps VALIDATION_STEPS]
+                [--validation_disable] [--validation_steps VALIDATION_STEPS]
                 [--eval_steps_interval EVAL_STEPS_INTERVAL]
                 [--eval_timesteps EVAL_TIMESTEPS]
                 [--num_eval_images NUM_EVAL_IMAGES]
                 [--eval_dataset_id EVAL_DATASET_ID]
                 [--validation_num_inference_steps VALIDATION_NUM_INFERENCE_STEPS]
+                [--validation_num_video_frames VALIDATION_NUM_VIDEO_FRAMES]
                 [--validation_resolution VALIDATION_RESOLUTION]
-                [--validation_noise_scheduler {ddim,ddpm,euler,euler-a,unipc}]
+                [--validation_noise_scheduler {ddim,ddpm,euler,euler-a,unipc,dpm++}]
                 [--validation_disable_unconditional] [--enable_watermark]
                 [--mixed_precision {bf16,fp16,no}]
                 [--gradient_precision {unmodified,fp32}]
                 [--quantize_via {cpu,accelerator}]
-                [--base_model_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,fp8-quanto,fp8uz-quanto}]
+                [--base_model_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,fp8-quanto,fp8uz-quanto,fp8-torchao}]
                 [--quantize_activations]
                 [--base_model_default_dtype {bf16,fp32}]
-                [--text_encoder_1_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,fp8-quanto,fp8uz-quanto}]
-                [--text_encoder_2_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,fp8-quanto,fp8uz-quanto}]
-                [--text_encoder_3_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,fp8-quanto,fp8uz-quanto}]
+                [--text_encoder_1_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,fp8-quanto,fp8uz-quanto,fp8-torchao}]
+                [--text_encoder_2_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,fp8-quanto,fp8uz-quanto,fp8-torchao}]
+                [--text_encoder_3_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,fp8-quanto,fp8uz-quanto,fp8-torchao}]
+                [--text_encoder_4_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,fp8-quanto,fp8uz-quanto,fp8-torchao}]
                 [--local_rank LOCAL_RANK]
                 [--attention_mechanism {diffusers,xformers,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}]
                 [--sageattention_usage {training,inference,training+inference}]
-                [--enable_xformers_memory_efficient_attention]
                 [--set_grads_to_none] [--noise_offset NOISE_OFFSET]
                 [--noise_offset_probability NOISE_OFFSET_PROBABILITY]
                 [--validation_guidance VALIDATION_GUIDANCE]
@@ -615,12 +620,39 @@ options:
                         The standard deviation of the data used in the soft
                         min weighting method. This is required when using the
                         soft min SNR calculation method.
-  --model_family {pixart_sigma,sana,kolors,sd3,flux,smoldit,sdxl,ltxvideo,legacy}
+  --model_family {sd1x,sd2x,sd3,deepfloyd,sana,sdxl,kolors,flux,wan,ltxvideo,pixart_sigma,omnigen,hidream,auraflow}
                         The model family to train. This option is required.
-  --model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}
+  --model_flavour {1.5,1.4,dreamshaper,realvis,digitaldiffusion,pseudoflex-v2,pseudojourney,2.1,2.0,medium,large,i-medium-400m,i-large-900m,i-xlarge-4.3b,ii-medium-450m,ii-large-1.2b,sana1.5-4.8b-1024,sana1.5-1.6b-1024,sana1.0-1.6b-2048,sana1.0-1.6b-1024,sana1.0-600m-1024,sana1.0-600m-512,base-1.0,refiner-1.0,base-0.9,refiner-0.9,1.0,dev,schnell,t2v-480p-1.3b-2.1,t2v-480p-14b-2.1,0.9.5,0.9.0,900M-1024-v0.6,900M-1024-v0.7-stage1,900M-1024-v0.7-stage2,600M-512,600M-1024,600M-2048,v1,dev,full,fast,v0.3,v0.2,v0.1}
+                        Certain models require designating a given flavour to
+                        reference configurations from. The value for this
+                        depends on the model that is selected. Currently
+                        supported values: sd1x: ['1.5', '1.4', 'dreamshaper',
+                        'realvis'] sd2x: ['digitaldiffusion', 'pseudoflex-v2',
+                        'pseudojourney', '2.1', '2.0'] sd3: ['medium',
+                        'large'] deepfloyd: ['i-medium-400m', 'i-large-900m',
+                        'i-xlarge-4.3b', 'ii-medium-450m', 'ii-large-1.2b']
+                        sana: ['sana1.5-4.8b-1024', 'sana1.5-1.6b-1024',
+                        'sana1.0-1.6b-2048', 'sana1.0-1.6b-1024',
+                        'sana1.0-600m-1024', 'sana1.0-600m-512'] sdxl:
+                        ['base-1.0', 'refiner-1.0', 'base-0.9', 'refiner-0.9']
+                        kolors: ['1.0'] flux: ['dev', 'schnell'] wan:
+                        ['t2v-480p-1.3b-2.1', 't2v-480p-14b-2.1'] ltxvideo:
+                        ['0.9.5', '0.9.0'] pixart_sigma: ['900M-1024-v0.6',
+                        '900M-1024-v0.7-stage1', '900M-1024-v0.7-stage2',
+                        '600M-512', '600M-1024', '600M-2048'] omnigen: ['v1']
+                        hidream: ['dev', 'full', 'fast'] auraflow: ['v0.3',
+                        'v0.2', 'v0.1']
+  --model_type {full,lora}
                         The training type to use. 'full' will train the full
                         model, while 'lora' will train the LoRA model. LoRA is
                         a smaller model that can be used for faster training.
+  --hidream_use_load_balancing_loss
+                        When set, will use the load balancing loss for HiDream
+                        training. This is an experimental implementation.
+  --hidream_load_balancing_loss_weight HIDREAM_LOAD_BALANCING_LOSS_WEIGHT
+                        When set, will use augment the load balancing loss for
+                        HiDream training. This is an experimental
+                        implementation.
   --flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,nano}
                         This option only applies to Standard LoRA, not
                         Lycoris. Flux has single and joint attention blocks.
@@ -639,8 +671,6 @@ options:
                         norms (based on ostris/ai-toolkit). If 'tiny' is
                         provided, only two layers will be trained. If 'nano'
                         is provided, only one layers will be trained.
-  --flow_matching_sigmoid_scale FLOW_MATCHING_SIGMOID_SCALE
-                        Deprecated option. Replaced with --flow_sigmoid_scale.
   --flow_sigmoid_scale FLOW_SIGMOID_SCALE
                         Scale factor for sigmoid timestep sampling for flow-
                         matching models.
@@ -648,36 +678,21 @@ options:
                         schedule closer to what it was trained with, which has
                         improved results in short experiments. Thanks to
                         @mhirki for the contribution.
-  --flux_use_uniform_schedule
-                        Deprecated option. Replaced with
-                        --flow_use_uniform_schedule.
   --flow_use_uniform_schedule
                         Whether or not to use a uniform schedule instead of
                         sigmoid for flow-matching noise schedule. Using
                         uniform sampling may cause a bias toward dark images,
                         and should be used with caution.
-  --flux_use_beta_schedule
-                        Deprecated option. Replaced with
-                        --flow_use_beta_schedule.
   --flow_use_beta_schedule
                         Whether or not to use a beta schedule instead of
                         sigmoid for flow-matching. The default values of alpha
                         and beta approximate a sigmoid.
-  --flux_beta_schedule_alpha FLUX_BETA_SCHEDULE_ALPHA
-                        Deprecated option. Replaced with
-                        --flux_beta_schedule_alpha.
   --flow_beta_schedule_alpha FLOW_BETA_SCHEDULE_ALPHA
                         The alpha value of the flow-matching beta schedule.
                         Default is 2.0
-  --flux_beta_schedule_beta FLUX_BETA_SCHEDULE_BETA
-                        Deprecated option. Replaced with
-                        --flow_beta_schedule_beta.
   --flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA
                         The beta value of the flow-matching beta schedule.
                         Default is 2.0
-  --flux_schedule_shift FLUX_SCHEDULE_SHIFT
-                        Deprecated option. Replaced with
-                        --flow_schedule_shift.
   --flow_schedule_shift FLOW_SCHEDULE_SHIFT
                         Shift the noise schedule. This is a value between 0
                         and ~4.0, where 0 disables the timestep-dependent
@@ -689,9 +704,6 @@ options:
                         higher value will focus more on large compositional
                         features, and a lower value will focus on the high
                         frequency fine details.
-  --flux_schedule_auto_shift
-                        Deprecated option. Replaced with
-                        --flow_schedule_auto_shift.
   --flow_schedule_auto_shift
                         Shift the noise schedule depending on image
                         resolution. The shift value calculation is taken from
@@ -751,20 +763,6 @@ options:
                         The padding behaviour for Flux and SD3. 'zero' will
                         pad the input with zeros. The default is 'unmodified',
                         which will not pad the input.
-  --smoldit             Use the experimental SmolDiT model architecture.
-  --smoldit_config {smoldit-small,smoldit-swiglu,smoldit-base,smoldit-large,smoldit-huge}
-                        The SmolDiT configuration to use. This is a list of
-                        pre-configured models. The default is 'smoldit-base'.
-  --flow_matching_loss {diffusers,compatible,diffusion,sd35}
-                        A discrepancy exists between the Diffusers
-                        implementation of flow matching and the minimal
-                        implementation provided by StabilityAI. This
-                        experimental option allows switching loss calculations
-                        to be compatible with those. Additionally, 'diffusion'
-                        is offered as an option to reparameterise a model to
-                        v_prediction loss. sd35 provides the ability to train
-                        on SD3.5's flow-matching target, which is the denoised
-                        sample.
   --sd3_clip_uncond_behaviour {empty_string,zero}
                         SD3 can be trained using zeroed prompt embeds during
                         unconditional dropout, or an encoded empty string may
@@ -850,11 +848,13 @@ options:
                         time. This option allows you to specify a specific
                         location to retrieve T5-XXL v1.1 from, so that it only
                         downloads once..
-  --prediction_type {epsilon,v_prediction,sample}
-                        The type of prediction to use for the u-net. Choose
-                        between ['epsilon', 'v_prediction', 'sample']. For SD
-                        2.1-v, this is v_prediction. For 2.1-base, it is
-                        epsilon. SDXL is generally epsilon. SD 1.5 is epsilon.
+  --prediction_type {epsilon,v_prediction,sample,flow_matching}
+                        For models which support it, you can supply this value
+                        to override the prediction type. Choose between
+                        ['epsilon', 'v_prediction', 'sample',
+                        'flow_matching']. This may be needed for some SDXL
+                        derivatives that are trained using v_prediction or
+                        flow_matching.
   --snr_weight SNR_WEIGHT
                         When training a model using
                         `--prediction_type=sample`, one can supply an SNR
@@ -915,7 +915,8 @@ options:
                         When using `--timestep_bias_strategy=range`, the final
                         timestep to bias. Defaults to 1000, which is the
                         number of timesteps that SDXL Base and SD 2.x were
-                        trained on.
+                        trained on. Just to throw a wrench into the works,
+                        Kolors was trained on 1100 timesteps.
   --timestep_bias_portion TIMESTEP_BIAS_PORTION
                         The portion of timesteps to bias. Defaults to 0.25,
                         which 25 percent of timesteps will be biased. A value
@@ -951,6 +952,8 @@ options:
                         This may be required for 2048px VAE caching on 24G
                         accelerators, in addition to reducing
                         --vae_batch_size.
+  --vae_enable_slicing  If set, will enable slicing for VAE caching. This is
+                        useful for video models.
   --vae_cache_scan_behaviour {recreate,sync}
                         When a mismatched latent vector is detected, a scan
                         will be initiated to locate inconsistencies and
@@ -1097,8 +1100,7 @@ options:
   --cache_clear_validation_prompts
                         When provided, any validation prompt entries in the
                         text embed cache will be recreated. This is useful if
-                        you've modified any of the existing prompts, or,
-                        disabled/enabled Compel, via `--disable_compel`
+                        you've modified any of the existing prompts.
   --caption_strategy {filename,textfile,instance_prompt,parquet}
                         The default captioning strategy, 'filename', will use
                         the filename as the caption, after stripping some
@@ -1166,7 +1168,7 @@ options:
                         use a base resolution of 64 pixels, as aligning to 64
                         pixels would result in a 1:1 or 2:1 aspect ratio,
                         overly distorting images. For DeepFloyd, this value is
-                        set to 8, but all other training defaults to 64. You
+                        set to 32, but all other training defaults to 64. You
                         may experiment with this value, but it is not
                         recommended.
   --minimum_image_size MINIMUM_IMAGE_SIZE
@@ -1197,8 +1199,15 @@ options:
   --train_text_encoder  (SD 2.x only) Whether to train the text encoder. If
                         set, the text encoder should be float32 precision.
   --tokenizer_max_length TOKENIZER_MAX_LENGTH
-                        The maximum length of the tokenizer. If not set, will
-                        default to the tokenizer's max length.
+                        The maximum sequence length of the tokenizer output,
+                        which defines the sequence length of text embed
+                        outputs. If not set, will default to the tokenizer's
+                        max length. Unfortunately, this option only applies to
+                        T5 models, and due to the biases inducted by sequence
+                        length, changing it will result in potentially
+                        catastrophic model collapse. This option causes poor
+                        training results. This is normal, and can be expected
+                        from changing this value.
   --train_batch_size TRAIN_BATCH_SIZE
                         Batch size (per device) for the training dataloader.
   --num_train_epochs NUM_TRAIN_EPOCHS
@@ -1247,6 +1256,8 @@ options:
                         the value of --learning_rate will be used.
   --lr_scale            Scale the learning rate by the number of GPUs,
                         gradient accumulation steps, and batch size.
+  --lr_scale_sqrt       If using --lr-scale, use the square root of (number of
+                        GPUs * gradient accumulation steps * batch size).
   --lr_scheduler {linear,sine,cosine,cosine_with_restarts,polynomial,constant,constant_with_warmup}
                         The scheduler type to use. Default: sine
   --lr_warmup_steps LR_WARMUP_STEPS
@@ -1255,6 +1266,14 @@ options:
                         Number of hard resets of the lr in
                         cosine_with_restarts scheduler.
   --lr_power LR_POWER   Power factor of the polynomial scheduler.
+  --distillation_method {perflow}
+                        The distillation method to use. Currently, only
+                        'perflow' is supported via LoRA. This will apply the
+                        perflow distillation method to the model.
+  --distillation_config DISTILLATION_CONFIG
+                        The distillation method to use. Currently, only
+                        'perflow' is supported via LoRA. This will apply the
+                        perflow distillation method to the model.
   --use_ema             Whether to use EMA (exponential moving average) model.
                         Works with LoRA, Lycoris, and full training.
   --ema_device {cpu,accelerator}
@@ -1296,6 +1315,12 @@ options:
                         be a branch, tag or git identifier of the local or
                         remote repository specified with
                         --pretrained_model_name_or_path.
+  --offload_during_startup
+                        When set, text encoders, the VAE, or other models will
+                        be moved to and from the CPU as needed, which can slow
+                        down startup, but saves VRAM. This is useful for video
+                        models or high-resolution pre-caching of latent
+                        embeds.
   --offload_param_path OFFLOAD_PARAM_PATH
                         When using DeepSpeed ZeRo stage 2 or 3 with NVMe
                         offload, this may be specified to provide a path for
@@ -1386,9 +1411,6 @@ options:
                         [TensorBoard](https://www.tensorflow.org/tensorboard)
                         log directory. Will default to
                         *output_dir/runs/**CURRENT_DATETIME_HOSTNAME***.
-  --benchmark_base_model
-                        Deprecated option, benchmarks are now enabled by
-                        default. Use --disable_benchmark to disable.
   --disable_benchmark   By default, the model will be benchmarked on the first
                         batch of the first epoch. This can be disabled with
                         this option.
@@ -1437,11 +1459,12 @@ options:
                         default mode, provides the most benefit.
   --validation_guidance_skip_layers VALIDATION_GUIDANCE_SKIP_LAYERS
                         StabilityAI recommends a value of [7, 8, 9] for Stable
-                        Diffusion 3.5 Medium.
+                        Diffusion 3.5 Medium. For Wan 2.1, a value of [9],
+                        [10], or, [9, 10] was found to work well.
   --validation_guidance_skip_layers_start VALIDATION_GUIDANCE_SKIP_LAYERS_START
                         StabilityAI recommends a value of 0.01 for SLG start.
   --validation_guidance_skip_layers_stop VALIDATION_GUIDANCE_SKIP_LAYERS_STOP
-                        StabilityAI recommends a value of 0.2 for SLG start.
+                        StabilityAI recommends a value of 0.2 for SLG stop.
   --validation_guidance_skip_scale VALIDATION_GUIDANCE_SKIP_SCALE
                         StabilityAI recommends a value of 2.8 for SLG guidance
                         skip scaling. When adding more layers, you must
@@ -1452,8 +1475,6 @@ options:
                         instruction will be attached to your prompt by
                         default. This is required for the Gemma model to
                         produce meaningful image caption embeds.
-  --allow_tf32          Deprecated option. TF32 is now enabled by default. Use
-                        --disable_tf32 to disable.
   --disable_tf32        Previous defaults were to disable TF32 on Ampere GPUs.
                         This option is provided to explicitly disable TF32,
                         after default configuration was updated to enable TF32
@@ -1505,8 +1526,8 @@ options:
   --num_validation_images NUM_VALIDATION_IMAGES
                         Number of images that should be generated during
                         validation with `validation_prompt`.
-  --validation_disable
-                        Enable to completely disable all validation.
+  --validation_disable  Enable to completely disable the generation of
+                        validation images.
   --validation_steps VALIDATION_STEPS
                         Run validation every X steps. Validation consists of
                         running the prompt `args.validation_prompt` multiple
@@ -1540,17 +1561,20 @@ options:
                         during validations, reduce this value. For better
                         quality, increase it. For model distilation, you will
                         likely want to keep this low.
+  --validation_num_video_frames VALIDATION_NUM_VIDEO_FRAMES
+                        When this is set, you can reduce the number of frames
+                        from the default model value (but not go beyond that).
   --validation_resolution VALIDATION_RESOLUTION
                         Square resolution images will be output at this
                         resolution (256x256).
-  --validation_noise_scheduler {ddim,ddpm,euler,euler-a,unipc}
+  --validation_noise_scheduler {ddim,ddpm,euler,euler-a,unipc,dpm++}
                         When validating the model at inference time, a
                         different scheduler may be chosen. UniPC can offer
                         better speed, and Euler A can put up with
                         instabilities a bit better. For zero-terminal SNR
                         models, DDIM is the best choice. Choices: ['ddim',
-                        'ddpm', 'euler', 'euler-a', 'unipc'], Default: None
-                        (use the model default)
+                        'ddpm', 'euler', 'euler-a', 'unipc', 'dpm++'],
+                        Default: None (use the model default)
   --validation_disable_unconditional
                         When set, the validation pipeline will not generate
                         unconditional samples. This is useful to speed up
@@ -1589,7 +1613,7 @@ options:
                         required, but the process completes in milliseconds.
                         When done on the CPU, the process may take upwards of
                         60 seconds, but can complete without OOM on 16G cards.
-  --base_model_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,fp8-quanto,fp8uz-quanto}
+  --base_model_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,fp8-quanto,fp8uz-quanto,fp8-torchao}
                         When training a LoRA, you might want to quantise the
                         base model to a lower precision to save more VRAM. The
                         default value, 'no_change', does not quantise any
@@ -1610,7 +1634,7 @@ options:
                         optimizers than adamw_bf16. However, this uses
                         marginally more memory, and may not be necessary for
                         your use case.
-  --text_encoder_1_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,fp8-quanto,fp8uz-quanto}
+  --text_encoder_1_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,fp8-quanto,fp8uz-quanto,fp8-torchao}
                         When training a LoRA, you might want to quantise text
                         encoder 1 to a lower precision to save more VRAM. The
                         default value is to follow base_model_precision
@@ -1618,7 +1642,7 @@ options:
                         Bits n Bytes for quantisation (NVIDIA, maybe AMD).
                         Using 'fp8-quanto' will require Quanto for
                         quantisation (Apple Silicon, NVIDIA, AMD).
-  --text_encoder_2_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,fp8-quanto,fp8uz-quanto}
+  --text_encoder_2_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,fp8-quanto,fp8uz-quanto,fp8-torchao}
                         When training a LoRA, you might want to quantise text
                         encoder 2 to a lower precision to save more VRAM. The
                         default value is to follow base_model_precision
@@ -1626,9 +1650,17 @@ options:
                         Bits n Bytes for quantisation (NVIDIA, maybe AMD).
                         Using 'fp8-quanto' will require Quanto for
                         quantisation (Apple Silicon, NVIDIA, AMD).
-  --text_encoder_3_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,fp8-quanto,fp8uz-quanto}
+  --text_encoder_3_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,fp8-quanto,fp8uz-quanto,fp8-torchao}
                         When training a LoRA, you might want to quantise text
                         encoder 3 to a lower precision to save more VRAM. The
+                        default value is to follow base_model_precision
+                        (no_change). Using 'fp4-bnb' or 'fp8-bnb' will require
+                        Bits n Bytes for quantisation (NVIDIA, maybe AMD).
+                        Using 'fp8-quanto' will require Quanto for
+                        quantisation (Apple Silicon, NVIDIA, AMD).
+  --text_encoder_4_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,fp8-quanto,fp8uz-quanto,fp8-torchao}
+                        When training a LoRA, you might want to quantise text
+                        encoder 4 to a lower precision to save more VRAM. The
                         default value is to follow base_model_precision
                         (no_change). Using 'fp4-bnb' or 'fp8-bnb' will require
                         Bits n Bytes for quantisation (NVIDIA, maybe AMD).
@@ -1659,9 +1691,6 @@ options:
                         training setup or do not wish to train QKV layers, you
                         may use 'training' to enable SageAttention for
                         training.
-  --enable_xformers_memory_efficient_attention
-                        Whether or not to use xformers. Deprecated and slated
-                        for future removal. Use --attention_mechanism.
   --set_grads_to_none   Save more memory by using setting grads to None
                         instead of zero. Be aware, that this changes certain
                         behaviors, so disable this argument if it causes any
@@ -1677,8 +1706,8 @@ options:
   --validation_guidance VALIDATION_GUIDANCE
                         CFG value for validation images. Default: 7.5
   --validation_guidance_real VALIDATION_GUIDANCE_REAL
-                        Use real CFG sampling for Flux validation images.
-                        Default: 1.0 (no CFG)
+                        Use real CFG sampling for distilled models. Default:
+                        1.0 (no CFG)
   --validation_no_cfg_until_timestep VALIDATION_NO_CFG_UNTIL_TIMESTEP
                         When using real CFG sampling for Flux validation
                         images, skip doing CFG on these timesteps. Default: 2

@@ -5,6 +5,7 @@ import argparse
 from urllib.parse import urlparse, parse_qs
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
+
 try:
     import pillow_jxl
 except ModuleNotFoundError:

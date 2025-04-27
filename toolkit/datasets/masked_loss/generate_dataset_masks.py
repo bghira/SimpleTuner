@@ -1,5 +1,6 @@
 import argparse
 import os
+
 try:
     import pillow_jxl
 except ModuleNotFoundError:

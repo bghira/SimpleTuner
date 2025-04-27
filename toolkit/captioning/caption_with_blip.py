@@ -1,4 +1,5 @@
 import os, torch, logging, re, random
+
 try:
     import pillow_jxl
 except ModuleNotFoundError:
@@ -6,9 +7,12 @@ except ModuleNotFoundError:
 from PIL import Image
 from clip_interrogator import Config, Interrogator, LabelTable, load_list
 from clip_interrogator import clip_interrogator
-clip_interrogator.CAPTION_MODELS.update({
-    'unography': 'unography/blip-large-long-cap',           # 1.9GB
-})
+
+clip_interrogator.CAPTION_MODELS.update(
+    {
+        "unography": "unography/blip-large-long-cap",  # 1.9GB
+    }
+)
 print(f"Models supported: {clip_interrogator.CAPTION_MODELS}")
 
 # Directory where the images are located
@@ -45,12 +49,18 @@ def content_to_filename(content):
     return cleaned_content + ".png"
 
 
-def interrogator(
-    clip_model_name="ViT-H-14/laion2b_s32b_b79k", blip_model="unography"
-):
+def interrogator(clip_model_name="ViT-H-14/laion2b_s32b_b79k", blip_model="unography"):
     # Create an Interrogator instance with the latest CLIP model for Stable Diffusion 2.1
     conf = Config(
-        clip_model_name=clip_model_name, clip_offload=True, caption_offload=True, caption_max_length=170, device="cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+        clip_model_name=clip_model_name,
+        clip_offload=True,
+        caption_offload=True,
+        caption_max_length=170,
+        device=(
+            "cuda"
+            if torch.cuda.is_available()
+            else "mps" if torch.backends.mps.is_available() else "cpu"
+        ),
     )
     conf.caption_model_name = blip_model
     ci = Interrogator(conf)
@@ -109,7 +119,6 @@ def process_directory(image_dir="images", terms_file=None, active_interrogator=N
 
                     image.save(new_filepath)
                 image.close()
-
 
             except Exception as e:
                 logging.error(f"Error processing {filename}: {str(e)}")

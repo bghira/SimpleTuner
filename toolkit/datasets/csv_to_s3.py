@@ -6,6 +6,7 @@ import boto3
 from io import BytesIO
 import pandas as pd
 from pathlib import Path
+
 try:
     import pillow_jxl
 except ModuleNotFoundError:

@@ -340,7 +340,9 @@ class MetadataBackend:
         self.save_cache(enforce_constraints=True)
         logger.info("Completed aspect bucket update.")
 
-    def split_buckets_between_processes(self, gradient_accumulation_steps=1, apply_padding=False):
+    def split_buckets_between_processes(
+        self, gradient_accumulation_steps=1, apply_padding=False
+    ):
         """
         Splits the contents of each bucket in aspect_ratio_bucket_indices between the available processes.
         """

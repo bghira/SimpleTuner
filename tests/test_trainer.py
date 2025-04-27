@@ -156,6 +156,7 @@ class TestTrainer(unittest.TestCase):
             controlnet=False,
             text_encoder_4_precision="no_change",
             attention_mechanism="diffusers",
+            distillation_config=None,
         ),
     )
     def test_misc_init(

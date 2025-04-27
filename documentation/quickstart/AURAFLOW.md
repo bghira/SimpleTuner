@@ -466,7 +466,7 @@ The lowest VRAM OmniGen configuration is about 20-22G:
 - Enable `--gradient_checkpointing`
 - Use a tiny LoRA or Lycoris configuration (eg. LoRA rank 1 or Lokr factor 25)
 
-**NOTE**: Pre-caching of VAE embeds and text encoder outputs may use more memory and still OOM. VAE tiling and slicing are enabled by default. If you see OOM, you might just be out of luck.
+**NOTE**: Pre-caching of VAE embeds and text encoder outputs may use more memory and still OOM. VAE tiling and slicing are enabled by default. If you see OOM, you might need to enable `offload_during_startup=true`; otherwise, you may just be out of luck.
 
 Speed was approximately 3 iterations per second on an NVIDIA 4090 using Pytorch 2.7 and CUDA 12.8
 

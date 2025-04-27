@@ -2,6 +2,7 @@ import os, json
 import logging
 import argparse
 import requests
+
 try:
     import pillow_jxl
 except ModuleNotFoundError:

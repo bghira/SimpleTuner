@@ -1,5 +1,6 @@
 import os
 import cv2
+
 try:
     import pillow_jxl
 except ModuleNotFoundError:
