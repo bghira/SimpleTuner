@@ -2,6 +2,7 @@ from os import environ
 from pathlib import Path
 import json
 import time, os
+import fcntl
 import logging
 from helpers.models.all import model_families
 
@@ -80,12 +81,17 @@ class StateTracker:
             cache_path = (
                 Path(cls.args.output_dir) / f"{cache_name}{data_backend_id_suffix}.json"
             )
-            if cache_path.exists():
+            if not cache_path.exists():
+                continue
+
+            with cache_path.open("w") as f:
+                fcntl.flock(f, fcntl.LOCK_EX)
                 try:
                     cache_path.unlink()
                     logger.warning(f"(rank={os.environ.get('RANK')}) Deleted cache file: {cache_path}")
                 except:
                     pass
+                fcntl.flock(f, fcntl.LOCK_UN)
 
     @classmethod
     def _load_from_disk(cls, cache_name, retry_limit: int = 0):
@@ -96,7 +102,9 @@ class StateTracker:
             if cache_path.exists():
                 try:
                     with cache_path.open("r") as f:
+                        fcntl.flock(f, fcntl.LOCK_SH)
                         results = json.load(f)
+                        fcntl.flock(f, fcntl.LOCK_UN)
                 except Exception as e:
                     logger.error(
                         f"Invalidating cache: error loading {cache_name} from disk. {e}"
@@ -117,7 +125,9 @@ class StateTracker:
         cache_path = Path(cls.args.output_dir) / f"{cache_name}.json"
         logger.debug(f"(rank={os.environ.get('RANK')}) Saving {cache_name} to disk: {cache_path}")
         with cache_path.open("w") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
             json.dump(data, f)
+            fcntl.flock(f, fcntl.LOCK_UN)
         logger.debug(f"(rank={os.environ.get('RANK')}) Save complete {cache_name} to disk: {cache_path}")
 
     @classmethod
