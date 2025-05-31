@@ -1435,9 +1435,7 @@ class KolorsPipeline(
 
                 # [max_sequence_length, batch, hidden_size] -> [batch, max_sequence_length, hidden_size]
                 # clone to have a contiguous tensor
-                print(f"Shape A: {[o.shape for o in output.hidden_states]}")
                 prompt_embeds = output.hidden_states[-2].permute(1, 0, 2).clone()
-                print(f"Shape B: {prompt_embeds.shape}")
                 # [max_sequence_length, batch, hidden_size] -> [batch, hidden_size]
                 pooled_prompt_embeds = output.hidden_states[-1][-1, :, :].clone()
                 bs_embed, seq_len, _ = prompt_embeds.shape
@@ -1445,7 +1443,6 @@ class KolorsPipeline(
                 prompt_embeds = prompt_embeds.view(
                     bs_embed * num_images_per_prompt, seq_len, -1
                 )
-                print(f"Shape C: {prompt_embeds.shape}")
 
                 prompt_embeds_list.append(prompt_embeds)
 
