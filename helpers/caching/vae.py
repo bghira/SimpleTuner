@@ -48,7 +48,41 @@ def prepare_sample(
         image_path=filepath,
         model=model,
     )
-    prepared_sample = training_sample.prepare()
+    is_cond = data_backend_id in StateTracker.get_conditioning_mappings().values()
+
+    if is_cond:
+        # If this VAECache is attached to a *conditioning* dataset, make sure
+        # the geometry matches its training counterpart.  The counterpart’s
+        # metadata is already stored, so we can derive it straight away.
+        if data_backend_id in StateTracker.get_conditioning_mappings().values():
+            # locate the partner backend id
+            for train_id, cond_id in StateTracker.get_conditioning_mappings().items():
+                if cond_id == data_backend_id:
+                    partner_path = training_sample.image_path()
+                    train_meta = StateTracker.get_metadata_by_filepath(
+                        partner_path, data_backend_id=train_id
+                    )
+                    if not train_meta:
+                        training_sample.prepare_like(
+                            TrainingSample(
+                                image=None,
+                                data_backend_id=train_id,
+                                image_metadata=train_meta,
+                                image_path=partner_path,
+                                model=model,
+                            )
+                        )
+                    else:
+                        # prepare the sample independently of the training sample,
+                        # since the metadata scan built an element for this.
+                        # a metadata object will exist for conditioning samples that
+                        # have their dataset configured to operate somewhat independently.
+                        training_sample.prepare()
+    else:
+        # If this VAECache is attached to a *training* dataset, we prepare the
+        # sample for training, which includes cropping and resizing.
+        prepared_sample = training_sample.prepare()
+
     return (
         prepared_sample.image,
         prepared_sample.crop_coordinates,
