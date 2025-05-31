@@ -13,13 +13,14 @@ from transformers import (
     T5EncoderModel,
 )
 from diffusers import AutoencoderKL
-from helpers.models.flux.transformer import FluxTransformer2DModelWithMasking
-from helpers.models.flux.pipeline import FluxPipeline
+from helpers.models.flux.transformer import FluxTransformer2DModel
+from helpers.models.flux.pipeline import FluxPipeline, FluxKontextPipeline
 from helpers.training.multi_process import _get_rank
 from helpers.models.flux import (
     prepare_latent_image_ids,
     pack_latents,
     unpack_latents,
+    build_kontext_inputs,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ class Flux(ImageModelFoundation):
     # Only training the Attention blocks by default.
     DEFAULT_LYCORIS_TARGET = ["Attention"]
 
-    MODEL_CLASS = FluxTransformer2DModelWithMasking
+    MODEL_CLASS = FluxTransformer2DModel
     MODEL_SUBFOLDER = "transformer"
     PIPELINE_CLASSES = {
         PipelineTypes.TEXT2IMG: FluxPipeline,
@@ -52,6 +53,7 @@ class Flux(ImageModelFoundation):
     HUGGINGFACE_PATHS = {
         "dev": "black-forest-labs/flux.1-dev",
         "schnell": "black-forest-labs/flux.1-schnell",
+        "kontext": "black-forest-labs/flux.1-kontext-dev",
     }
     MODEL_LICENSE = "other"
 
@@ -90,6 +92,26 @@ class Flux(ImageModelFoundation):
             "time_ids": time_ids,
             "attention_masks": masks,
         }
+
+    def update_pipeline_call_kwargs(self, kwargs: dict) -> dict:
+        """
+        Let the base class copy the dict unchanged, then patch in
+        Kontext-specific keys if we're running a Kontext checkpoint.
+        """
+        if self.config.model_flavour == "kontext":
+            # 1) rename the placeholder key coming from Validation.validate_prompt
+            if "image" in kwargs and "conditioning_image" not in kwargs:
+                kwargs["conditioning_image"] = kwargs.pop("image")
+
+            # 2) if the caller didn’t specify a range, run the ref image
+            #    for the *entire* denoise (default behaviour in training)
+            if "cond_start_step" not in kwargs:
+                kwargs["cond_start_step"] = 0
+            if "cond_end_step" not in kwargs:
+                # `num_inference_steps` is already inside kwargs
+                kwargs["cond_end_step"] = kwargs.get("num_inference_steps", 28)
+
+        return kwargs
 
     def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
@@ -152,6 +174,28 @@ class Flux(ImageModelFoundation):
             ).unsqueeze(-1).expand(prompt_embeds.shape)
 
         return prompt_embeds, pooled_prompt_embeds, time_ids, masks
+
+    def prepare_batch_conditions(self, batch: dict, state: dict):
+        """
+        If collate gave us `conditioning_latents`, turn them into packed
+        sequence + ids that model_predict expects.
+        """
+        cond = batch.get("conditioning_latents")
+        if cond is None:
+            logger.debug(f"No conditioning latents found :(")
+            return batch  # nothing to do
+
+        packed_cond, cond_ids = build_kontext_inputs(
+            cond,
+            dtype=self.config.weight_dtype,
+            device=self.accelerator.device,
+            latent_channels=self.LATENT_CHANNEL_COUNT,
+        )
+
+        batch["conditioning_packed_latents"] = packed_cond
+        batch["conditioning_ids"] = cond_ids
+
+        return batch
 
     def model_predict(self, prepared_batch):
         # handle guidance
@@ -222,8 +266,26 @@ class Flux(ImageModelFoundation):
             f"\n-> Packed Noisy Latents shape: {packed_noisy_latents.shape if hasattr(packed_noisy_latents, 'shape') else None}, dtype: {packed_noisy_latents.dtype if hasattr(packed_noisy_latents, 'dtype') else None}"
         )
 
+        if img_ids.dim() == 2:  # (S, 3)  -> (1, S, 3) -> (B, S, 3)
+            img_ids = img_ids.unsqueeze(0).expand(
+                prepared_batch["latents"].shape[0], -1, -1
+            )
+
+        # pull optional kontext inputs
+        cond_seq = prepared_batch.get("conditioning_packed_latents")
+        cond_ids = prepared_batch.get("conditioning_ids")
+
+        use_cond = cond_seq is not None
+        logger.debug(f"Using conditioning: {use_cond}")
+        lat_in = (
+            torch.cat([packed_noisy_latents, cond_seq], dim=1)
+            if use_cond
+            else packed_noisy_latents
+        )
+        id_in = torch.cat([img_ids, cond_ids], dim=1) if use_cond else img_ids
+
         flux_transformer_kwargs = {
-            "hidden_states": packed_noisy_latents,
+            "hidden_states": lat_in,
             # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
             "timestep": prepared_batch["timesteps"],
             "guidance": guidance,
@@ -239,7 +301,7 @@ class Flux(ImageModelFoundation):
                 device=self.accelerator.device,
                 dtype=self.config.base_weight_dtype,
             ),
-            "img_ids": img_ids,
+            "img_ids": id_in,
             "joint_attention_kwargs": None,
             "return_dict": False,
         }
@@ -253,6 +315,12 @@ class Flux(ImageModelFoundation):
                 )
 
         model_pred = self.get_trained_component()(**flux_transformer_kwargs)[0]
+        # Drop the reference-image tokens before unpacking
+        if use_cond and self.config.model_flavour == "kontext":
+            scene_seq_len = packed_noisy_latents.shape[
+                1
+            ]  # tokens that belong to the main image
+            model_pred = model_pred[:, :scene_seq_len, :]  # (B, S_scene, C*4)
 
         return {
             "model_prediction": unpack_latents(
@@ -324,6 +392,42 @@ class Flux(ImageModelFoundation):
             logger.warning(
                 "Flux Schnell requires fewer inference steps. Consider reducing --validation_num_inference_steps to 4."
             )
+        if not isinstance(self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG], FluxKontextPipeline):
+            self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG] = FluxKontextPipeline
+
+
+    def conditioning_validation_dataset_type(self) -> bool:
+        # Most conditioning inputs (ControlNet) etc require "conditioning" dataset, but Kontext requires "images".
+        if self.config.model_flavour == "kontext":
+            # Kontext wants the edited
+            return "image"
+        return "conditioning"
+
+    def requires_conditioning_dataset(self) -> bool:
+        if self.config.model_flavour == "kontext":
+            # Any flavour of “Kontext” always expects an extra image stream
+            return True
+        return False
+
+    def requires_conditioning_validation_inputs(self) -> bool:
+        if self.config.model_flavour == "kontext":
+            # Any flavour of “Kontext” always expects an extra image stream
+            return True
+        return False
+
+    def requires_validation_edit_captions(self) -> bool:
+        if self.config.model_flavour == "kontext":
+            # Kontext models require edit captions to be present.
+            return True
+        raise NotImplementedError(
+            f"{self.NAME} does not support validation edit captions unless the Kontext flavour is being trained."
+        )
+
+    def requires_conditioning_latents(self) -> bool:
+        if self.config.model_flavour == "kontext":
+            # Any flavour of “Kontext” needs latent inputs for its conditioning data.
+            return True
+        return super().requires_conditioning_latents()
 
     def get_lora_target_layers(self):
         # Some models, eg. Flux should override this with more complex config-driven logic.
