@@ -180,6 +180,22 @@ class ModelFoundation(ABC):
             "model_predict must be implemented in the child class."
         )
 
+    def requires_conditioning_dataset(self) -> bool:
+        # Most models don't require a conditioning dataset.
+        return False
+
+    def requires_conditioning_latents(self) -> bool:
+        # ControlNet requires pixel inputs instead of encoded latents.
+        return False
+
+    def requires_conditioning_validation_inputs(self) -> bool:
+        # Whether this model / flavour requires conditioning inputs during validation.
+        return False
+
+    def conditioning_validation_dataset_type(self) -> bool:
+        # Most conditioning inputs (ControlNet) etc require "conditioning" dataset.
+        return "conditioning"
+
     def controlnet_init(self):
         """
         Initialize the controlnet model.
@@ -655,10 +671,6 @@ class ModelFoundation(ABC):
         return pretrained_load_args
 
     def load_model(self, move_to_device: bool = True):
-        logger.info(
-            f"Loading diffusion model from {self.config.pretrained_model_name_or_path}"
-        )
-        # Stub: load your UNet (or transformer) model using your diffusion model loader.
         pretrained_load_args = {
             "revision": self.config.revision,
             "variant": self.config.variant,
@@ -711,6 +723,7 @@ class ModelFoundation(ABC):
             else:
                 model_subfolder = self.config.pretrained_unet_subfolder
 
+        logger.info(f"Loading diffusion model from {model_path}")
         self.model = loader_fn(
             model_path,
             subfolder=model_subfolder,
