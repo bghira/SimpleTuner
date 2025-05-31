@@ -83,6 +83,7 @@ See [hardware requirements](#hidream) or the [quickstart guide](/documentation/q
 
 Full training support for Flux.1 is included:
 
+- Instruct fine-tuning for the Kontext \[dev] editing model implementation generously provided by [Runware](https://runware.ai).
 - Classifier-free guidance training
   - Leave it disabled and preserve the dev model's distillation qualities
   - Or, reintroduce CFG to the model and improve its creativity at the cost of inference speed and training time.
@@ -197,6 +198,8 @@ HiDream has not been tested on 16G cards, but with aggressive quantisation and p
 - 4070 Super 12G, 3080 10G, 3060 12GB (nf4, LoRA, LoKr)
 
 Flux prefers being trained with multiple large GPUs but a single 16G card should be able to do it with quantisation of the transformer and text encoders.
+
+Kontext requires a bit beefier compute and memory allocation; a 4090 will go from ~3 to ~6 seconds per step when it is enabled.
 
 ### Auraflow
 
