@@ -203,15 +203,11 @@ try:
     USE_FLASH_ATTN3 = True
 except:
     try:
-        print(f"HiDream: FlashAttention3 not found, trying FlashAttention2")
         from flash_attn import flash_attn_func
 
         USE_FLASH_ATTN2 = True
 
     except Exception as e:
-        print(
-            f"HiDream: FlashAttention2 failed to load ({e}), falling back to Torch SDPA."
-        )
         USE_TORCH_SDPA = True
 
         def flash_attn_func(
