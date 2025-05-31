@@ -1045,7 +1045,7 @@ class StableDiffusion3Pipeline(
             len(timesteps) - num_inference_steps * self.scheduler.order, 0
         )
         self._num_timesteps = len(timesteps)
-        print(f"Denoising timesteps: {timesteps}")
+        # print(f"Denoising timesteps: {timesteps}")
 
         # 6. Denoising loop
         with self.progress_bar(total=num_inference_steps) as progress_bar:
@@ -1820,7 +1820,13 @@ class StableDiffusion3Img2ImgPipeline(
         noise = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
 
         # get latents
-        init_latents = self.scheduler.scale_noise(init_latents, timestep, noise)
+        noise = randn_tensor(
+            init_latents.shape,
+            generator=generator,
+            device=device,
+            dtype=init_latents.dtype,
+        )
+        latents = self.scheduler.scale_noise(init_latents, timestep, noise)
         latents = init_latents.to(device=device, dtype=dtype)
 
         return latents
