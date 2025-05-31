@@ -346,9 +346,16 @@ def check_latent_shapes(latents, filepaths, data_backend_id, batch):
     if len(test_shape) == 5:
         test_shape = test_shape[1:]
     # Check all "aspect_ratio" values and raise error if any differ, with the two differing values:
+    first_aspect_ratio = None
     for example in batch:
-        if example["aspect_ratio"] != batch[0]["aspect_ratio"]:
-            error_msg = f"(id=({data_backend_id}) Aspect ratio mismatch: {example['aspect_ratio']} != {batch[0][0]['aspect_ratio']}"
+        if isinstance(example, dict):
+            aspect_ratio = example["aspect_ratio"]
+        elif isinstance(example, TrainingSample):
+            aspect_ratio = example.aspect_ratio
+        if first_aspect_ratio is None:
+            first_aspect_ratio = aspect_ratio
+        if aspect_ratio != first_aspect_ratio:
+            error_msg = f"(id=({data_backend_id}) Aspect ratio mismatch: {aspect_ratio} != {first_aspect_ratio}"
             logger.error(error_msg)
             logger.error(f"Erroneous batch: {batch}")
             raise ValueError(error_msg)
@@ -429,7 +436,8 @@ def collate_fn(batch):
     debug_log("Extract filepaths")
     filepaths = extract_filepaths(examples)
     debug_log("Compute latents")
-    batch_data = compute_latents(filepaths, data_backend_id, StateTracker.get_model())
+    model = StateTracker.get_model()
+    batch_data = compute_latents(filepaths, data_backend_id, model)
     if isinstance(batch_data[0], dict):
         latent_batch = [v["latents"] for v in batch_data]
     else:
@@ -444,6 +452,7 @@ def collate_fn(batch):
     training_filepaths = []
     conditioning_type = None
     conditioning_pixel_values = None
+    conditioning_latents = None
 
     if len(conditioning_examples) > 0:
         if len(conditioning_examples) != len(examples):
@@ -471,20 +480,37 @@ def collate_fn(batch):
             conditioning_filepaths.append(cond_example.image_path(basename_only=False))
             training_filepaths.append(train_example["image_path"])
 
-        # Pass both file paths to `conditioning_pixels`
-        conditioning_pixel_values = conditioning_pixels(
-            conditioning_filepaths,
-            training_filepaths,
-            conditioning_data_backend_id,
-            data_backend_id,
-        )
+        if model.requires_conditioning_dataset():
+            # Kontext / other latent-conditioned models / adapters
+            conditioning_latents = compute_latents(
+                conditioning_filepaths,
+                conditioning_data_backend_id,
+                model,
+            )
 
-        conditioning_pixel_values = torch.stack(
-            [
-                latent.to(StateTracker.get_accelerator().device)
-                for latent in conditioning_pixel_values
-            ]
-        )
+            # unpack from dicts (vae-cache style) & shape-check
+            if isinstance(conditioning_latents[0], dict):
+                conditioning_latents = [v["latents"] for v in conditioning_latents]
+
+            conditioning_latents = check_latent_shapes(
+                conditioning_latents,
+                conditioning_filepaths,
+                conditioning_data_backend_id,
+                conditioning_examples,
+            )
+        else:
+            conditioning_pixel_values = conditioning_pixels(
+                conditioning_filepaths,
+                training_filepaths,
+                conditioning_data_backend_id,
+                data_backend_id,
+            )
+            conditioning_pixel_values = torch.stack(
+                [
+                    latent.to(StateTracker.get_accelerator().device)
+                    for latent in conditioning_pixel_values
+                ]
+            )
 
     # Compute embeddings and handle dropped conditionings
     debug_log("Extract captions")
@@ -528,6 +554,7 @@ def collate_fn(batch):
         "batch_time_ids": all_text_encoder_outputs.get("batch_time_ids"),
         "batch_luminance": batch_luminance,
         "conditioning_pixel_values": conditioning_pixel_values,
+        "conditioning_latents": conditioning_latents,
         "encoder_attention_mask": all_text_encoder_outputs.get("attention_masks"),
         "is_regularisation_data": is_regularisation_data,
         "is_i2v_data": is_i2v_data,
