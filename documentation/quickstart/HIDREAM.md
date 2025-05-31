@@ -536,43 +536,47 @@ Speed was approximately 3 iterations per second on an NVIDIA 4090 using Pytorch 
 
 ### Masked loss
 
-Masked loss training is currently not supported with HiDream.
-
 If you are training a subject or style and would like to mask one or the other, see the [masked loss training](/documentation/DREAMBOOTH.md#masked-loss) section of the Dreambooth guide.
 
 ### Quantisation
 
-HiDream tends to respond well down to `int4` precision level, though `int8` will be a sweet spot for quality and stability if you can't afford `bf16`.
+Though `int8` is the best option for speed/quality vs memory trade-offs, `nf4` and `int4` are also available. `int4` is not recommended for HiDream, as it may lead to worse results, but with long enough training, you would end up with a somewhat-capable `int4` model.
 
 ### Learning rates
 
 #### LoRA (--lora_type=standard)
 
-*Not supported.*
+- Higher learning rates around 4e-4 work better for smaller LoRAs (rank-1 through rank-8)
+- Lower learning rates around 6e-5 work better for larger LoRAs (rank-64 through rank-256)
+- Setting `lora_alpha` differently from `lora_rank` is not supported due to Diffusers limitations, unless you know what you're doing in inference tools afterwards.
+  - How to use it later for inference is out of scope, but setting `lora_alpha` to 1.0 would allow keeping the learning rate the same across all lora ranks.
 
 #### LoKr (--lora_type=lycoris)
+
 - Mild learning rates are better for LoKr (`1e-4` with AdamW, `2e-5` with Lion)
 - Other algo need more exploration.
-- Setting `is_regularisation_data` has unknown impact/effect with HiDream (not tested, but, should be fine?)
+- Prodigy seems to be a good choice for LoRA or LoKr, but might over-estimate the required learning rate and smoothen the skin.
 
 ### Image artifacts
 
 HiDream has an unknown response to image artifacts, though it uses the Flux VAE, and has similar fine-details limitations.
 
-If any image quality issues arise, please open an issue on Github.
+The most prevalent problem is using too-high of a learning rate and/or too-low of a batch size. This can cause the model to produce images with artifacts, such as smooth skin, blurriness, and pixelation.
 
 ### Aspect bucketing
 
-Some limitations with the model's patch embed implementation mean that there are certain resolutions that will cause an error.
-
-Experimentation will be helpful, as well as thorough bug reports.
+Initially, the model did not respond very well to aspect buckets, but the implementation has been improved by the community.
 
 ### Multiple-resolution training
 
-The model can be initially trained at a lower resolution such as 512px to speed up training. It is a good idea to enable `--flow_schedule_auto_shift` when training resolutions different from 1024px. Lower resolutions use less VRAM, allowing higher batch sizes to be used.
+The model can be initially trained at a lower resolution such as 512px to speed up training, but it's not certain whether the model will generalise very well to higher resolutions. Sequentially training first on 512px, and then 1024px, is probably the best approach.
+
+It is a good idea to enable `--flow_schedule_auto_shift` when training resolutions different from 1024px. Lower resolutions use less VRAM, allowing higher batch sizes to be used.
 
 ### Full-rank tuning
 
-DeepSpeed will use a LOT of system memory with HiDream, and full tuning might not perform the way you hope in terms of learning concepts or avoiding model collapse.
+DeepSpeed will use a LOT of system memory with HiDream, but full tuning seems to work just fine on a very-large system.
 
 Lycoris LoKr is recommended in lieu of full-rank tuning, as it is more stable and has a lower memory footprint.
+
+PEFT LoRA is useful for simpler styles, but harder to maintain fine details with.
