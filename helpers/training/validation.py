@@ -76,7 +76,7 @@ def resize_validation_images(validation_images, edge_length):
     # we have to scale all the inputs to a stage4 image down to 64px smaller edge.
     resized_validation_samples = []
     for _sample in validation_images:
-        validation_shortname, validation_prompt, training_sample_image = _sample
+        validation_shortname, validation_prompt, _, training_sample_image = _sample
         resize_to, crop_to, new_aspect_ratio = (
             MultiaspectImage.calculate_new_size_by_pixel_edge(
                 aspect_ratio=MultiaspectImage.calculate_image_aspect_ratio(
@@ -168,9 +168,22 @@ def retrieve_validation_images():
     Returns:
         dict: A dictionary of shortname to image paths.
     """
+    if StateTracker.get_model().requires_validation_edit_captions():
+        return retrieve_validation_edit_images()
+
     args = StateTracker.get_args()
+    requires_cond_input = any(
+        [
+            StateTracker.get_model().requires_conditioning_validation_inputs(),
+            args.controlnet,
+        ]
+    )
     data_backends = StateTracker.get_data_backends(
-        _type="conditioning" if args.controlnet else "image"
+        _type=(
+            StateTracker.get_model().conditioning_validation_dataset_type()
+            if requires_cond_input
+            else "image"
+        )
     )
     validation_data_backend_id = args.eval_dataset_id
     validation_set = []
@@ -181,7 +194,9 @@ def retrieve_validation_images():
         should_skip_dataset = data_backend_config.get("disable_validation", False)
         logger.debug(f"Backend {_data_backend}: {data_backend}")
         if "id" not in data_backend or (
-            args.controlnet and data_backend.get("dataset_type", None) != "conditioning"
+            requires_cond_input
+            and data_backend.get("dataset_type", None)
+            != StateTracker.get_model().conditioning_validation_dataset_type()
         ):
             logger.debug(
                 f"Skipping data backend: {_data_backend} dataset_type {data_backend.get('dataset_type', None)}"
@@ -219,6 +234,91 @@ def retrieve_validation_images():
     return validation_set
 
 
+def retrieve_validation_edit_images() -> list[tuple[str, str, Image.Image]]:
+    """
+    Returns [(shortname, *edited-scene caption*, reference_image), ...]
+    for models that need **edit** validation.
+
+    Logic
+    -----
+    • loop over *image* datasets that have a sampler
+    • for every deterministic validation sample returned by the sampler
+      – grab its original file path from metadata
+      – ask the dataset’s *registered* conditioning backend for the
+        counterpart via `get_conditioning_sample()`
+      – add the trio to output
+    """
+    model = StateTracker.get_model()
+    if not model.requires_validation_edit_captions():
+        return []  # no-op for ordinary models
+
+    args = StateTracker.get_args()
+    validation_set = []
+
+    # ---------- iterate over IMAGE datasets ---------------------------------
+    for backend_id, backend in StateTracker.get_data_backends(_type="image").items():
+        sampler = backend.get("sampler")
+        if sampler is None:  # nothing to iterate over
+            continue
+
+        # each backend should know which conditioning dataset is linked to it
+        cond_backend = backend.get("conditioning_data")
+        cond_backend_id = cond_backend.get("id") if cond_backend else None
+        if cond_backend_id is None:
+            logger.debug("No conditioning backend configured for this image dataset.")
+            continue
+
+        logger.debug(f"Backend id: {backend_id}, cond_backend_id: {cond_backend_id}")
+        cond_backend = StateTracker.get_data_backend(cond_backend_id)
+        if cond_backend is None:
+            logger.debug(f"Conditioning backend {cond_backend_id} not found.")
+            continue  # mis-configuration → skip
+
+        # deterministic slice for validation
+        for sample in sampler.retrieve_validation_set(batch_size=args.num_eval_images):
+            # sample == (shortname, edited_prompt, pil_image)
+            shortname, edited_prompt, sample_path, _ = sample
+
+            # original relative file-path comes from metadata backend
+            try:
+                meta = StateTracker.get_metadata_by_filepath(
+                    sample_path,
+                    data_backend_id=backend_id,
+                    search_dataset_types=["conditioning"],
+                )
+                image_dataset_dir_prefix = sampler.metadata_backend.instance_data_dir
+                if (
+                    image_dataset_dir_prefix is not None
+                    and image_dataset_dir_prefix in sample_path
+                ):
+                    rel_path = sample_path.replace(image_dataset_dir_prefix, "")
+                    # remove trailing '/'
+                    rel_path = rel_path.lstrip("/")
+                    logger.debug(f"Removed prefix, got relative path: {rel_path}")
+                logger.debug(f"Metadata: {meta}")
+            except Exception as e:
+                continue  # metadata missing → skip
+
+            conditioning_dir_prefix = cond_backend[
+                "sampler"
+            ].metadata_backend.instance_data_dir
+            cond_sample_path = os.path.join(conditioning_dir_prefix, rel_path)
+            cond_sample = cond_backend["sampler"].get_conditioning_sample(rel_path)
+
+            if cond_sample is None:
+                logger.warning(
+                    f"Conditioning sample for {rel_path} not found in {cond_backend_id}."
+                )
+                continue
+
+            reference_img = cond_sample.image
+            logger.debug(f"Validation sample path: {cond_sample_path}")
+            validation_set.append((shortname, edited_prompt, reference_img))
+
+    logger.info(f"Collected {len(validation_set)} edit-validation samples.")
+    return validation_set
+
+
 def prepare_validation_prompt_list(args, embed_cache, model):
     validation_prompts = (
         [""] if not StateTracker.get_args().validation_disable_unconditional else []
@@ -235,8 +335,8 @@ def prepare_validation_prompt_list(args, embed_cache, model):
     model_type = embed_cache.model_type
     validation_sample_images = None
     if (
-        "deepfloyd" in args.model_family
-        and str(args.model_flavour).startswith("ii-")
+        ("deepfloyd" in args.model_family and str(args.model_flavour).startswith("ii-"))
+        or model.requires_conditioning_validation_inputs()
         or args.controlnet
         or args.validation_using_datasets
     ):
@@ -315,52 +415,6 @@ def prepare_validation_prompt_list(args, embed_cache, model):
         "validation_shortnames": validation_shortnames,
         "validation_sample_images": validation_sample_images,
     }
-
-
-def parse_validation_resolution(input_str: str) -> tuple:
-    """
-    If the args.validation_resolution:
-     - is an int, we'll treat it as height and width square aspect
-     - if it has an x in it, we will split and treat as WIDTHxHEIGHT
-     - if it has comma, we will split and treat each value as above
-    """
-    if isinstance(input_str, int) or input_str.isdigit():
-        if (
-            str(StateTracker.get_args().model_flavour).startswith("ii-")
-            and int(input_str) < 256
-        ):
-            raise ValueError(
-                "Cannot use less than 256 resolution for DeepFloyd stage 2."
-            )
-        return (input_str, input_str)
-    if "x" in input_str:
-        pieces = input_str.split("x")
-        if str(StateTracker.get_args().model_flavour).startswith("ii-") and (
-            int(pieces[0]) < 256 or int(pieces[1]) < 256
-        ):
-            raise ValueError(
-                "Cannot use less than 256 resolution for DeepFloyd stage 2."
-            )
-        return (int(pieces[0]), int(pieces[1]))
-
-
-def get_validation_resolutions():
-    """
-    If the args.validation_resolution:
-     - is an int, we'll treat it as height and width square aspect
-     - if it has an x in it, we will split and treat as WIDTHxHEIGHT
-     - if it has comma, we will split and treat each value as above
-    """
-    validation_resolution_parameter = StateTracker.get_args().validation_resolution
-    if (
-        type(validation_resolution_parameter) is str
-        and "," in validation_resolution_parameter
-    ):
-        return [
-            parse_validation_resolution(res)
-            for res in validation_resolution_parameter.split(",")
-        ]
-    return [parse_validation_resolution(validation_resolution_parameter)]
 
 
 def get_validation_resolutions():
@@ -514,6 +568,7 @@ class Validation:
             self.deepfloyd_stage2
             or self.config.validation_using_datasets
             or self.config.controlnet
+            or self.model.requires_conditioning_validation_inputs()
         ):
             self.validation_image_inputs = retrieve_validation_images()
             # Validation inputs are in the format of a list of tuples:
