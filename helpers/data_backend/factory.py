@@ -1002,7 +1002,7 @@ def configure_multi_databackend(
             not in [
                 "mask",
                 "controlnet",
-                "kontext_strict",
+                "reference_strict",
             ]  # strict kontext conditioning doesn't have its own bucket list.
         ):
             if accelerator.is_local_main_process:
@@ -1361,7 +1361,7 @@ def configure_multi_databackend(
             and accelerator.is_main_process
             and backend.get("scan_for_errors", False)
             and "deepfloyd" not in StateTracker.get_args().model_type
-            and conditioning_type not in ["mask", "controlnet", "kontext_loose"]
+            and conditioning_type not in ["mask", "controlnet", "reference_loose"]
         ):
             info_log(
                 f"Beginning error scan for dataset {init_backend['id']}. Set 'scan_for_errors' to False in the dataset config to disable this."
