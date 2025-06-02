@@ -1197,7 +1197,9 @@ class Validation:
                     call_kwargs = inspect.signature(
                         self.model.pipeline.__call__
                     ).parameters
-                    logger.debug(f"Possible parameters for {type(self.model.pipeline)}: {call_kwargs}")
+                    logger.debug(
+                        f"Possible parameters for {type(self.model.pipeline)}: {call_kwargs}"
+                    )
                     # remove any kwargs that are not in the pipeline call
                     pipeline_kwargs = {
                         k: v for k, v in pipeline_kwargs.items() if k in call_kwargs
