@@ -19,10 +19,10 @@
 
 Kontext keeps the Flux transformer backbone but introduces **paired‑reference conditioning**.  Two operating modes exist:
 
-* `kontext_loose` (✅ stable, default) – reference can differ in aspect‐ratio/size from the edit.
+* `reference_loose` (✅ stable, default) – reference can differ in aspect‐ratio/size from the edit.
   - Currently, the only (truly) supported mode. Images are scanned for metadata, aspect bucketed, and cropped independently of each other.
   - This may be an issue for setups where you'd like to ensure the alignment of the edit and reference images, such as in a dataloader that uses a single image per file name.
-* `kontext_strict` (⚠️ experimental) – reference is pre‑transformed exactly like the edit crop.
+* `reference_strict` (⚠️ experimental) – reference is pre‑transformed exactly like the edit crop.
   - Currently, a bug prevents it from working because the VAE Cache is not generated, as the metadata is not available.
 
 Stick to **loose** for now unless you want to debug the dataloader.
@@ -84,7 +84,7 @@ Below is the *smallest* set of changes you need in `config/config.json` compared
     "id": "reference-images",
     "type": "local",
     "instance_data_dir": "/path/to/datasets/reference-images", // <-- use absolute paths
-    "conditioning_type": "kontext_loose",      // <‑‑ IMPORTANT
+    "conditioning_type": "reference_loose",      // <‑‑ IMPORTANT
     "resolution": 1024,
     "caption_strategy": "textfile"
   }
