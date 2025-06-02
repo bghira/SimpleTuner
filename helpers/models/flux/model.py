@@ -392,9 +392,10 @@ class Flux(ImageModelFoundation):
             logger.warning(
                 "Flux Schnell requires fewer inference steps. Consider reducing --validation_num_inference_steps to 4."
             )
-        if not isinstance(self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG], FluxKontextPipeline):
+        if self.config.model_flavour == "kontext" and not isinstance(
+            self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG], FluxKontextPipeline
+        ):
             self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG] = FluxKontextPipeline
-
 
     def conditioning_validation_dataset_type(self) -> bool:
         # Most conditioning inputs (ControlNet) etc require "conditioning" dataset, but Kontext requires "images".
