@@ -136,7 +136,9 @@ class StateTracker:
             fcntl.flock(f, fcntl.LOCK_EX)
             json.dump(data, f)
             fcntl.flock(f, fcntl.LOCK_UN)
-        logger.debug(f"(rank={os.environ.get('RANK')}) Save complete {cache_name} to disk: {cache_path}")
+        logger.debug(
+            f"(rank={os.environ.get('RANK')}) Save complete {cache_name} to disk: {cache_path}"
+        )
 
     @classmethod
     def set_config_path(cls, config_path: str):
