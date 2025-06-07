@@ -455,6 +455,7 @@ def collate_fn(batch):
     conditioning_latents = None
 
     if len(conditioning_examples) > 0:
+        logger.debug(f"Found {len(conditioning_examples)} conditioning examples.")
         if len(conditioning_examples) != len(examples):
             raise ValueError(
                 "The number of conditioning examples must match the number of training examples."
@@ -479,13 +480,20 @@ def collate_fn(batch):
             # Collect conditioning and training file paths
             conditioning_filepaths.append(cond_example.image_path(basename_only=False))
             training_filepaths.append(train_example["image_path"])
+        debug_log(
+            f"Counted {len(conditioning_filepaths)} conditioning filepaths and {len(training_filepaths)} training filepaths."
+        )
 
         if model.requires_conditioning_dataset():
             # Kontext / other latent-conditioned models / adapters
+            debug_log("Compute conditioning latents")
             conditioning_latents = compute_latents(
                 conditioning_filepaths,
                 conditioning_data_backend_id,
                 model,
+            )
+            debug_log(
+                f"Conditioning latents computed: {len(conditioning_latents)} items."
             )
 
             # unpack from dicts (vae-cache style) & shape-check
@@ -499,11 +507,15 @@ def collate_fn(batch):
                 conditioning_examples,
             )
         else:
+            debug_log("Model may require conditioning pixels.")
             conditioning_pixel_values = conditioning_pixels(
                 conditioning_filepaths,
                 training_filepaths,
                 conditioning_data_backend_id,
                 data_backend_id,
+            )
+            debug_log(
+                f"Found {len(conditioning_pixel_values)} conditioning pixel values."
             )
             conditioning_pixel_values = torch.stack(
                 [
