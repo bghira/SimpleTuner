@@ -213,9 +213,16 @@ def retrieve_validation_images():
             validation_samples_from_sampler = data_backend[
                 "sampler"
             ].retrieve_validation_set(batch_size=args.num_eval_images)
-            if "stage2" in args.model_type:
+            validation_input_image_pixel_edge_len = (
+                StateTracker.get_model().validation_image_input_edge_length()
+            )
+            if validation_input_image_pixel_edge_len is not None:
+                logger.debug(
+                    f"Resized validation image so that pixel edge length is {validation_input_image_pixel_edge_len}."
+                )
                 validation_samples_from_sampler = resize_validation_images(
-                    validation_samples_from_sampler, edge_length=64
+                    validation_samples_from_sampler,
+                    edge_length=validation_input_image_pixel_edge_len,
                 )
 
             validation_set.extend(validation_samples_from_sampler)
@@ -1030,6 +1037,8 @@ class Validation:
             if validation_input_image is not None:
                 extra_validation_kwargs["image"] = validation_input_image
                 if self.deepfloyd_stage2:
+                    # deepfloyd-if stage 2 requires 4x size declaration on the outputs.
+                    # the input is 64px edge len.
                     validation_resolution_width, validation_resolution_height = (
                         val * 4 for val in extra_validation_kwargs["image"].size
                     )
@@ -1038,9 +1047,34 @@ class Validation:
                     or self.config.validation_using_datasets
                     or self.model.requires_conditioning_validation_inputs()
                 ):
-                    validation_resolution_width, validation_resolution_height = (
-                        extra_validation_kwargs["image"].size
+                    # for most conditioned models, we want the input size to remain.
+                    validation_image_edge_len = (
+                        self.model.validation_image_input_edge_length()
                     )
+                    if validation_image_edge_len is not None:
+                        # calculate the megapixels value (eg ~0.25 for 512px)
+                        validation_image_megapixels = (
+                            validation_image_edge_len**2
+                        ) / 1_000_000
+                        validation_resolution, _, validation_aspect_ratio = (
+                            MultiaspectImage.calculate_new_size_by_pixel_area(
+                                aspect_ratio=MultiaspectImage.calculate_image_aspect_ratio(
+                                    extra_validation_kwargs["image"]
+                                ),
+                                megapixels=validation_image_megapixels,
+                                original_size=extra_validation_kwargs["image"].size,
+                            )
+                        )
+                        extra_validation_kwargs["image"] = extra_validation_kwargs[
+                            "image"
+                        ].resize(validation_resolution, Image.Resampling.LANCZOS)
+                        validation_resolution_width, validation_resolution_height = (
+                            validation_resolution
+                        )
+                    else:
+                        validation_resolution_width, validation_resolution_height = (
+                            extra_validation_kwargs["image"].size
+                        )
                 else:
                     raise ValueError(
                         "Validation input images are not supported for this model type."
