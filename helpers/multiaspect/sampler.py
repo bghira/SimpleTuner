@@ -84,8 +84,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             if conditioning_type not in [
                 "controlnet",
                 "mask",
-                "kontext_strict",
-                "kontext_loose",
+                "reference_strict",
+                "reference_loose",
             ]:
                 raise ValueError(
                     f"Unknown conditioning image type: {conditioning_type}"
