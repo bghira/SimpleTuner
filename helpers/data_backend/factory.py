@@ -1049,6 +1049,7 @@ def configure_multi_databackend(
             "maximum_image_size",
             "target_downsample_size",
             "parquet",
+            "video",
         ]
         # we will set the latest version by default.
         current_config_version = latest_config_version()
