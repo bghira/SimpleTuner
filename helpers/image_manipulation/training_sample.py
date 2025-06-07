@@ -64,7 +64,10 @@ class TrainingSample:
         if isinstance(image, np.ndarray):
             if len(image.shape) == 4:
                 logger.debug(f"Received 4D Shape: {image.shape}")
-                self.original_size = (image.shape[2], image.shape[1])
+                self.original_size = (
+                    image.shape[2],
+                    image.shape[1],
+                )  # mapping image.shape (F, H, W, C) to (W, H)
             elif len(image.shape) == 5:
                 raise ValueError(
                     f"Received invalid shape: {image.shape}, expected 4D item instead"
@@ -428,7 +431,17 @@ class TrainingSample:
             int: The area of the image.
         """
         if self.image is not None:
-            return self.image.size[0] * self.image.size[1]
+            if isinstance(self.image, np.ndarray):
+                # it's a numpy array of frames, probably?
+                if len(self.image.shape) == 4:
+                    # frames, height, width, channels (195, 360, 640, 3) as an example
+                    return self.image.shape[2] * self.image.shape[1]
+                else:
+                    raise NotImplementedError(
+                        f"NumPy array shape not supported: {self.image.shape}"
+                    )
+            elif hasattr(self.image, "size") and isinstance(self.image.size, tuple):
+                return self.image.size[0] * self.image.size[1]
         if self.original_size:
             return self.original_size[0] * self.original_size[1]
 
@@ -615,7 +628,9 @@ class TrainingSample:
         self._downsample_before_crop()
         self.save_debug_image(f"images/{time.time()}-0.5-downsampled.png")
         if self.image is not None:
-            logger.debug(f"setting image: {self.image.size}")
+            logger.debug(
+                f"setting image: {self.image.size if not isinstance(self.image, np.ndarray) else self.image.shape}"
+            )
             self.cropper.set_image(self.image)
         logger.debug(f"Cropper size updating to {self.current_size}")
         self.cropper.set_intermediary_size(self.current_size[0], self.current_size[1])
@@ -665,7 +680,10 @@ class TrainingSample:
                             self.image,
                             (self.intermediary_size[0], self.intermediary_size[1]),
                         )
-                        width, height = self.image.shape[2], self.image.shape[1]
+                        width, height = (
+                            self.image.shape[2],
+                            self.image.shape[1],
+                        )  # shape (F, H, W, C)
                         self.current_size = (width, height)
                         logger.debug(
                             f"Post resize: {self.current_size} / {self.image.shape}"
@@ -695,7 +713,9 @@ class TrainingSample:
             elif isinstance(self.image, np.ndarray):
                 # we have a video to resize
                 logger.debug(f"Resizing {self.image.shape} to {size}, ")
-                self.image = resize_video_frames(self.image, (size[1], size[0]))
+                self.image = resize_video_frames(self.image, (size[0], size[1]))
+                width, height = self.image.shape[2], self.image.shape[1]
+                self.current_size = (width, height)
                 self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(size)
                 logger.debug(f"Now {self.image.shape} @ {self.aspect_ratio}")
         self.current_size = size
