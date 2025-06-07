@@ -203,6 +203,10 @@ class ModelFoundation(ABC):
         # Most conditioning inputs (ControlNet) etc require "conditioning" dataset.
         return "conditioning"
 
+    def validation_image_input_edge_length(self):
+        # If a model requires a specific input edge length (HiDream E1 -> 768px, DeepFloyd stage2 -> 64px)
+        return None
+
     def controlnet_init(self):
         """
         Initialize the controlnet model.
@@ -730,9 +734,7 @@ class ModelFoundation(ABC):
             else:
                 model_subfolder = self.config.pretrained_unet_subfolder
 
-        logger.info(
-            f"Loading diffusion model from {model_path}"
-        )
+        logger.info(f"Loading diffusion model from {model_path}")
         self.model = loader_fn(
             model_path,
             subfolder=model_subfolder,
