@@ -1819,12 +1819,6 @@ class StableDiffusion3Img2ImgPipeline(
         noise = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
 
         # get latents
-        noise = randn_tensor(
-            init_latents.shape,
-            generator=generator,
-            device=device,
-            dtype=init_latents.dtype,
-        )
         latents = self.scheduler.scale_noise(init_latents, timestep, noise)
         latents = init_latents.to(device=device, dtype=dtype)
 
