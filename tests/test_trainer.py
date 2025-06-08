@@ -298,6 +298,9 @@ class TestTrainer(unittest.TestCase):
         self, mock_delete_cache_files, mock_makedirs, mock_parse_args, mock_misc_init
     ):
         trainer = Trainer()
+        trainer.accelerator = MagicMock(
+            is_local_main_process=True
+        )
         trainer.model = Mock()
         trainer.config = Mock(
             output_dir="/path/to/output", preserve_data_backend_cache=False
