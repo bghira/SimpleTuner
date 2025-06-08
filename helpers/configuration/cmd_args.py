@@ -420,7 +420,7 @@ def get_argument_parser():
     )
     parser.add_argument(
         "--controlnet_model_name_or_path",
-        action="store_true",
+        type=str,
         default=None,
         help=(
             "When provided alongside --controlnet, this will specify ControlNet model weights to preload from the hub."
