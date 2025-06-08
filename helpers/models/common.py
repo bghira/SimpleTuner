@@ -1190,7 +1190,7 @@ class ModelFoundation(ABC):
                 snr_divisor = snr
                 if (
                     self.noise_schedule.config.prediction_type
-                    == PredictionTypes.V_PREDICTION
+                    == PredictionTypes.V_PREDICTION.value
                 ):
                     snr_divisor = snr + 1
                 mse_loss_weights = (
