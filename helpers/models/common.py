@@ -180,6 +180,33 @@ class ModelFoundation(ABC):
             "model_predict must be implemented in the child class."
         )
 
+    def requires_conditioning_dataset(self) -> bool:
+        # Most models don't require a conditioning dataset.
+        return False
+
+    def requires_conditioning_latents(self) -> bool:
+        # ControlNet requires pixel inputs instead of encoded latents.
+        return False
+
+    def requires_validation_edit_captions(self) -> bool:
+        """
+        Some edit / in-painting models want the *reference* image plus the
+        *edited* caption.  Override to return True when that is the case.
+        """
+        return False
+
+    def requires_conditioning_validation_inputs(self) -> bool:
+        # Whether this model / flavour requires conditioning inputs during validation.
+        return False
+
+    def conditioning_validation_dataset_type(self) -> bool:
+        # Most conditioning inputs (ControlNet) etc require "conditioning" dataset.
+        return "conditioning"
+
+    def validation_image_input_edge_length(self):
+        # If a model requires a specific input edge length (HiDream E1 -> 768px, DeepFloyd stage2 -> 64px)
+        return None
+
     def controlnet_init(self):
         """
         Initialize the controlnet model.
@@ -711,6 +738,7 @@ class ModelFoundation(ABC):
             else:
                 model_subfolder = self.config.pretrained_unet_subfolder
 
+        logger.info(f"Loading diffusion model from {model_path}")
         self.model = loader_fn(
             model_path,
             subfolder=model_subfolder,

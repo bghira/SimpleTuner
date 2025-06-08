@@ -73,6 +73,12 @@ class DeepFloydIF(ImageModelFoundation):
         },
     }
 
+    def validation_image_input_edge_length(self):
+        # If a model requires a specific input edge length (HiDream E1 -> 768px, DeepFloyd stage2 -> 64px)
+        if self.config.model_flavour.startswith("ii-"):
+            return 64
+        return None
+
     def _format_text_embedding(self, text_embedding: torch.Tensor):
         """
         Models can optionally format the stored text embedding, eg. in a dict, or
