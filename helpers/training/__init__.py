@@ -35,6 +35,8 @@ image_file_extensions = set(
 )
 
 video_file_extensions = set(["mp4", "avi", "gif", "mov", "webm"])
+# we combine image and video extensions as image extensions because it's a hack that is used to list all files.
+image_file_extensions = image_file_extensions.union(video_file_extensions)
 
 lycoris_defaults = {
     "lora": {
