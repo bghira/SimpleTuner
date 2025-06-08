@@ -1563,7 +1563,17 @@ class Evaluation:
         return sum(len(x["sampler"]) for _, x in eval_datasets.items())
 
     def get_timestep_schedule(self, noise_scheduler):
-        noise_scheduler.set_timesteps(self.config.eval_timesteps)
+        accept_mu = "mu" in set(
+            inspect.signature(scheduler.set_timesteps).parameters.keys()
+        )
+        scheduler_kwargs = {}
+        if accept_mu and self.config.flow_schedule_auto_shift:
+            from helpers.models.sd3.pipeline import calculate_shift
+            scheduler_kwargs["mu"] = calculate_shift(
+                StateTracker.get_model().get_trained_component().config.max_seq
+            )
+
+        noise_scheduler.set_timesteps(self.config.eval_timesteps, **scheduler_kwargs)
         timesteps = noise_scheduler.timesteps
         return timesteps
 
