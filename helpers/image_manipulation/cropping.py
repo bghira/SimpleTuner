@@ -57,39 +57,80 @@ class BaseCropping:
 
 class CornerCropping(BaseCropping):
     def crop(self, target_width, target_height):
-        left = max(0, self.intermediary_width - target_width)
-        top = max(0, self.intermediary_height - target_height)
-        right = self.intermediary_width
-        bottom = self.intermediary_height
+        # Corner crop from top-left (0, 0)
+        left = 0
+        top = 0
+        right = min(target_width, self.intermediary_width)
+        bottom = min(target_height, self.intermediary_height)
+
+        logger.debug(
+            f"CornerCropping: intermediary_size=({self.intermediary_width}, {self.intermediary_height}), target_size=({target_width}, {target_height})"
+        )
+        logger.debug(
+            f"CornerCropping: crop_box=(left={left}, top={top}, right={right}, bottom={bottom})"
+        )
+
         if self.image is not None:
             if isinstance(self.image, Image.Image):
-                return self.image.crop((left, top, right, bottom)), (top, left)
+                cropped_image = self.image.crop((left, top, right, bottom))
+                logger.debug(f"CornerCropping PIL result: {cropped_image.size}")
+                return cropped_image, (top, left)
             elif isinstance(self.image, np.ndarray):
-                # Handle both video (4D) and single image (3D)
-                if self.image.ndim == 4:
+                if self.image.ndim == 4:  # video: (num_frames, height, width, channels)
+                    logger.debug(
+                        f"CornerCropping video input shape: {self.image.shape}"
+                    )
+                    # Standard numpy slicing: [frames, height_slice, width_slice, channels]
                     cropped = self.image[:, top:bottom, left:right, :]
-                else:
+                    logger.debug(f"CornerCropping video result shape: {cropped.shape}")
+                    return cropped, (top, left)
+                else:  # single image: (height, width, channels)
+                    logger.debug(
+                        f"CornerCropping image input shape: {self.image.shape}"
+                    )
                     cropped = self.image[top:bottom, left:right, :]
-                return cropped, (top, left)
+                    logger.debug(f"CornerCropping image result shape: {cropped.shape}")
+                    return cropped, (top, left)
         elif self.image_metadata:
             return None, (top, left)
 
 
 class CenterCropping(BaseCropping):
     def crop(self, target_width, target_height):
-        left = int((self.intermediary_width - target_width) / 2)
-        top = int((self.intermediary_height - target_height) / 2)
-        right = left + target_width
-        bottom = top + target_height
+        # Calculate center crop coordinates
+        left = max(0, int((self.intermediary_width - target_width) / 2))
+        top = max(0, int((self.intermediary_height - target_height) / 2))
+        right = left + min(target_width, self.intermediary_width - left)
+        bottom = top + min(target_height, self.intermediary_height - top)
+
+        logger.debug(
+            f"CenterCropping: intermediary_size=({self.intermediary_width}, {self.intermediary_height}), target_size=({target_width}, {target_height})"
+        )
+        logger.debug(
+            f"CenterCropping: crop_box=(left={left}, top={top}, right={right}, bottom={bottom})"
+        )
+
         if self.image is not None:
             if isinstance(self.image, Image.Image):
-                return self.image.crop((left, top, right, bottom)), (top, left)
+                cropped_image = self.image.crop((left, top, right, bottom))
+                logger.debug(f"CenterCropping PIL result: {cropped_image.size}")
+                return cropped_image, (top, left)
             elif isinstance(self.image, np.ndarray):
-                if self.image.ndim == 4:
+                if self.image.ndim == 4:  # video: (num_frames, height, width, channels)
+                    logger.debug(
+                        f"CenterCropping video input shape: {self.image.shape}"
+                    )
+                    # Standard numpy slicing: [frames, height_slice, width_slice, channels]
                     cropped = self.image[:, top:bottom, left:right, :]
-                else:
+                    logger.debug(f"CenterCropping video result shape: {cropped.shape}")
+                    return cropped, (top, left)
+                else:  # single image: (height, width, channels)
+                    logger.debug(
+                        f"CenterCropping image input shape: {self.image.shape}"
+                    )
                     cropped = self.image[top:bottom, left:right, :]
-                return cropped, (top, left)
+                    logger.debug(f"CenterCropping image result shape: {cropped.shape}")
+                    return cropped, (top, left)
         elif self.image_metadata:
             return None, (top, left)
 
@@ -98,19 +139,46 @@ class RandomCropping(BaseCropping):
     def crop(self, target_width, target_height):
         import random
 
-        left = random.randint(0, max(0, self.intermediary_width - target_width))
-        top = random.randint(0, max(0, self.intermediary_height - target_height))
-        right = left + target_width
-        bottom = top + target_height
+        # Calculate maximum possible crop coordinates
+        max_left = max(0, self.intermediary_width - target_width)
+        max_top = max(0, self.intermediary_height - target_height)
+
+        left = random.randint(0, max_left) if max_left > 0 else 0
+        top = random.randint(0, max_top) if max_top > 0 else 0
+        right = left + min(target_width, self.intermediary_width - left)
+        bottom = top + min(target_height, self.intermediary_height - top)
+
+        logger.debug(
+            f"RandomCropping: intermediary_size=({self.intermediary_width}, {self.intermediary_height}), target_size=({target_width}, {target_height})"
+        )
+        logger.debug(
+            f"RandomCropping: max_offsets=(max_left={max_left}, max_top={max_top})"
+        )
+        logger.debug(
+            f"RandomCropping: crop_box=(left={left}, top={top}, right={right}, bottom={bottom})"
+        )
+
         if self.image is not None:
             if isinstance(self.image, Image.Image):
-                return self.image.crop((left, top, right, bottom)), (top, left)
+                cropped_image = self.image.crop((left, top, right, bottom))
+                logger.debug(f"RandomCropping PIL result: {cropped_image.size}")
+                return cropped_image, (top, left)
             elif isinstance(self.image, np.ndarray):
-                if self.image.ndim == 4:
+                if self.image.ndim == 4:  # video: (num_frames, height, width, channels)
+                    logger.debug(
+                        f"RandomCropping video input shape: {self.image.shape}"
+                    )
+                    # Standard numpy slicing: [frames, height_slice, width_slice, channels]
                     cropped = self.image[:, top:bottom, left:right, :]
-                else:
+                    logger.debug(f"RandomCropping video result shape: {cropped.shape}")
+                    return cropped, (top, left)
+                else:  # single image: (height, width, channels)
+                    logger.debug(
+                        f"RandomCropping image input shape: {self.image.shape}"
+                    )
                     cropped = self.image[top:bottom, left:right, :]
-                return cropped, (top, left)
+                    logger.debug(f"RandomCropping image result shape: {cropped.shape}")
+                    return cropped, (top, left)
         elif self.image_metadata:
             return None, (top, left)
 
@@ -130,43 +198,99 @@ class FaceCropping(RandomCropping):
         )
 
         if isinstance(image, np.ndarray):
-            # Assume it's a video (4D) and use the first frame for face detection.
-            sample_frame = image[0]
-            gray = cv2.cvtColor(sample_frame, cv2.COLOR_BGR2GRAY)
+            # Use the first frame for face detection in videos
+            sample_frame = image[0] if image.ndim == 4 else image
+
+            # Convert to grayscale for face detection
+            if sample_frame.shape[-1] == 3:  # RGB
+                gray = cv2.cvtColor(sample_frame, cv2.COLOR_RGB2GRAY)
+            else:
+                gray = sample_frame
+
             faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+
             if len(faces) > 0:
-                # Get the largest face.
+                # Get the largest face
                 face = max(faces, key=lambda f: f[2] * f[3])
                 x, y, w, h = face
-                left = int(max(0, x - 0.5 * w))
-                top = int(max(0, y - 0.5 * h))
-                right = int(min(sample_frame.shape[1], x + 1.5 * w))
-                bottom = int(min(sample_frame.shape[0], y + 1.5 * h))
-            else:
-                # Fallback to random cropping on the sample frame.
-                import random
 
-                left = random.randint(0, max(0, sample_frame.shape[1] - target_width))
-                top = random.randint(0, max(0, sample_frame.shape[0] - target_height))
-                right = left + target_width
-                bottom = top + target_height
-            # Crop all frames in the video.
-            cropped = image[:, top:bottom, left:right, :]
-            return cropped, (top, left)
+                # Calculate crop area centered on face
+                face_center_x = x + w // 2
+                face_center_y = y + h // 2
+
+                left = max(0, face_center_x - target_width // 2)
+                top = max(0, face_center_y - target_height // 2)
+
+                # Ensure we don't go beyond image boundaries
+                if image.ndim == 4:  # video: (frames, height, width, channels)
+                    img_height, img_width = image.shape[1:3]
+                else:
+                    img_height, img_width = image.shape[:2]
+
+                right = min(img_width, left + target_width)
+                bottom = min(img_height, top + target_height)
+
+                # Adjust left/top if we hit the right/bottom boundary
+                if right - left < target_width:
+                    left = max(0, right - target_width)
+                if bottom - top < target_height:
+                    top = max(0, bottom - target_height)
+
+                logger.debug(f"FaceCropping: detected face at ({x}, {y}, {w}, {h})")
+                logger.debug(
+                    f"FaceCropping: crop_box=(left={left}, top={top}, right={right}, bottom={bottom})"
+                )
+
+                if image.ndim == 4:  # video: (frames, height, width, channels)
+                    # Standard numpy slicing: [frames, height_slice, width_slice, channels]
+                    cropped = image[:, top:bottom, left:right, :]
+                    logger.debug(f"FaceCropping video result shape: {cropped.shape}")
+                else:  # single image
+                    cropped = image[top:bottom, left:right, :]
+                    logger.debug(f"FaceCropping image result shape: {cropped.shape}")
+
+                return cropped, (top, left)
+            else:
+                logger.debug(
+                    "FaceCropping: No faces detected, falling back to random cropping"
+                )
+                return super().crop(target_width, target_height)
+
         elif isinstance(image, Image.Image):
             image_rgb = image.convert("RGB")
             image_np = np.array(image_rgb)
-            gray = cv2.cvtColor(image_np, cv2.COLOR_BGR2GRAY)
+            gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
             faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+
             if len(faces) > 0:
                 face = max(faces, key=lambda f: f[2] * f[3])
                 x, y, w, h = face
-                left = max(0, x - 0.5 * w)
-                top = max(0, y - 0.5 * h)
-                right = min(image_np.shape[1], x + 1.5 * w)
-                bottom = min(image_np.shape[0], y + 1.5 * h)
-                return image.crop((left, top, right, bottom)), (top, left)
+
+                face_center_x = x + w // 2
+                face_center_y = y + h // 2
+
+                left = max(0, face_center_x - target_width // 2)
+                top = max(0, face_center_y - target_height // 2)
+                right = min(image_np.shape[1], left + target_width)
+                bottom = min(image_np.shape[0], top + target_height)
+
+                if right - left < target_width:
+                    left = max(0, right - target_width)
+                if bottom - top < target_height:
+                    top = max(0, bottom - target_height)
+
+                logger.debug(f"FaceCropping PIL: detected face at ({x}, {y}, {w}, {h})")
+                logger.debug(
+                    f"FaceCropping PIL: crop_box=(left={left}, top={top}, right={right}, bottom={bottom})"
+                )
+
+                cropped_image = image.crop((left, top, right, bottom))
+                logger.debug(f"FaceCropping PIL result: {cropped_image.size}")
+                return cropped_image, (top, left)
             else:
+                logger.debug(
+                    "FaceCropping PIL: No faces detected, falling back to random cropping"
+                )
                 return super().crop(target_width, target_height)
 
 
