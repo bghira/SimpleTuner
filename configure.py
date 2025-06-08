@@ -790,6 +790,9 @@ def configure_env():
 
     # dataloader configuration
     resolution_configs = {
+        64: {"resolution": 64, "minimum_image_size": 48},
+        96: {"resolution": 96, "minimum_image_size": 64},
+        128: {"resolution": 128, "minimum_image_size": 96},
         256: {"resolution": 256, "minimum_image_size": 128},
         512: {"resolution": 512, "minimum_image_size": 256},
         768: {"resolution": 768, "minimum_image_size": 512},
@@ -953,7 +956,7 @@ def configure_env():
     # Now we'll modify the default json and if has_very_large_images is true, we will add two keys to each image dataset, 'maximum_image_size' and 'target_downsample_size' equal to the dataset's resolution value
     def create_dataset_config(resolution, default_config):
         dataset = default_config.copy()
-        dataset.update(resolution_configs[resolution])
+        dataset.update(resolution_configs.get(resolution, {"resolution": resolution}))
         dataset["id"] = f"{dataset['id']}-{resolution}"
         dataset["instance_data_dir"] = os.path.abspath(dataset_path)
         dataset["repeats"] = dataset_repeats
