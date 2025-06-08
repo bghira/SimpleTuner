@@ -9,6 +9,7 @@ from tqdm import tqdm
 from helpers.training.wrappers import unwrap_model
 from helpers.models.common import VideoModelFoundation, ImageModelFoundation
 from helpers.models.common import ModelFoundation
+
 try:
     import pillow_jxl
 except ModuleNotFoundError:
@@ -920,6 +921,7 @@ class Validation:
         except Exception as e:
             logger.error(f"Error logging validation images: {e}")
             import traceback
+
             logger.error(traceback.format_exc())
 
     def get_eval_result(self):
@@ -1398,7 +1400,9 @@ class Validation:
                         )
                         for idx, image in enumerate(image_list):
                             # if it's a list of images, make a grid
-                            if isinstance(image, list) and isinstance(image[0], Image.Image):
+                            if isinstance(image, list) and isinstance(
+                                image[0], Image.Image
+                            ):
                                 image = image[0]
                             wandb_image = wandb.Image(
                                 image,

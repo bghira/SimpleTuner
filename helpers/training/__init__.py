@@ -30,7 +30,8 @@ from PIL import Image
 
 supported_extensions = Image.registered_extensions()
 image_file_extensions = set(
-    ext.lower().lstrip(".") for ext, img_format in supported_extensions.items()
+    ext.lower().lstrip(".")
+    for ext, img_format in supported_extensions.items()
     if img_format in Image.OPEN
 )
 
