@@ -766,41 +766,36 @@ class Trainer:
         if self.config.distillation_method is None:
             return
 
-        if self.config.distillation_method == "perflow":
-            from helpers.distillation.perflow import PeRFlowDistiller
+        if self.config.distillation_method == "dcm":
+            from helpers.distillation.dcm.distiller import DCMDistiller
 
-            # For LoRA with PeRFlow regularization (single model)
-            perflow_config = {
+            # For LoRA with DCM regularization (single model)
+            dcm_config = {
+                "model_family": self.config.model_family,
+                "model_type": self.config.model_type,
                 "loss_type": self.model.PREDICTION_TYPE.value,
                 "pred_type": self.model.PREDICTION_TYPE.value,
                 # "windows": 16,
                 "is_regularisation_data": True,  # Use regularization approach
             }
             if self.config.distillation_config is not None:
-                if "perflow" in self.config.distillation_config:
-                    perflow_config.update(self.config.distillation_config["perflow"])
+                if "dcm" in self.config.distillation_config:
+                    dcm_config.update(self.config.distillation_config["dcm"])
                 else:
-                    perflow_config.update(self.config.distillation_config)
-            logger.info(f"Distillation config: {perflow_config}")
+                    dcm_config.update(self.config.distillation_config)
+            logger.info(f"Distillation config: {dcm_config}")
             if self.config.model_type == "lora":
                 logger.info(
-                    "Loading flow-matching PeRF distillation for low-rank training."
+                    "Loading flow-matching distillation via low-rank adapter training."
                 )
-                self.distiller = PeRFlowDistiller(
+                self.distiller = DCMDistiller(
                     teacher_model=self.model,
-                    student_model=None,
-                    config=perflow_config,
+                    noise_scheduler=self.noise_scheduler,
+                    config=dcm_config,
                 )
             elif self.config.model_type == "full":
-                ## For separate teacher/student models
-                ## TODO: Implement
-                # distiller = DDPMPeRFlowDistiller(
-                #     teacher_model=teacher_model,
-                #     student_model=student_model,
-                #     config=perflow_config
-                # )
                 raise NotImplementedError(
-                    "Separate teacher/student models for PeRFlow are not implemented yet."
+                    "Separate teacher/student models for distillation are not implemented yet."
                 )
 
     def enable_gradient_checkpointing(self):
@@ -1970,6 +1965,8 @@ class Trainer:
                 if "batch_luminance" in prepared_batch:
                     training_luminance_values.append(prepared_batch["batch_luminance"])
 
+                if getattr(self, "distiller", None) is not None:
+                    self.distiller.pre_training_step(self.model, step)
                 with self.accelerator.accumulate(training_models):
                     bsz = prepared_batch["latents"].shape[0]
                     training_logger.debug("Sending latent batch to GPU.")
