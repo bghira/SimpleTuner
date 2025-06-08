@@ -1199,10 +1199,10 @@ def get_argument_parser():
     parser.add_argument(
         "--distillation_method",
         default=None,
-        choices=["perflow"],
+        choices=["dcm"],
         help=(
-            "The distillation method to use. Currently, only 'perflow' is supported via LoRA."
-            " This will apply the perflow distillation method to the model."
+            "The distillation method to use. Currently, only 'dcm' is supported via LoRA."
+            " This will apply the selected distillation method to the model."
         ),
     )
     parser.add_argument(
@@ -1210,8 +1210,8 @@ def get_argument_parser():
         default=None,
         type=str,
         help=(
-            "The distillation method to use. Currently, only 'perflow' is supported via LoRA."
-            " This will apply the perflow distillation method to the model."
+            "The config for your selected distillation method."
+            " If passing it via config.json, simply provide the JSON object directly."
         ),
     )
 
