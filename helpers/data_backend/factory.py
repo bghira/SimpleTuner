@@ -573,6 +573,7 @@ def configure_multi_databackend(
     ###                                            ###
     default_text_embed_backend_id = None
     text_embed_cache_dir_paths = []
+    requires_conditioning_dataset = model.requires_conditioning_dataset()
     for backend in data_backend_config:
         dataset_type = backend.get("dataset_type", None)
         if dataset_type is None or dataset_type != "text_embeds":
@@ -997,7 +998,12 @@ def configure_multi_databackend(
         if (
             "aspect" not in args.skip_file_discovery
             and "aspect" not in backend.get("skip_file_discovery", "")
-            and conditioning_type not in ["mask", "controlnet"]
+            and conditioning_type
+            not in [
+                "mask",
+                "controlnet",
+                "reference_strict",
+            ]  # strict kontext conditioning doesn't have its own bucket list.
         ):
             if accelerator.is_local_main_process:
                 info_log(
@@ -1246,7 +1252,12 @@ def configure_multi_databackend(
 
         if getattr(
             model, "AUTOENCODER_CLASS", None
-        ) is not None and conditioning_type not in ["mask", "controlnet"]:
+        ) is not None and conditioning_type not in [
+            "mask",
+            (
+                "controlnet" if not model.requires_conditioning_latents() else -1
+            ),  # hack to encode VAE latents when the model requires them.
+        ]:
             info_log(f"(id={init_backend['id']}) Creating VAE latent cache.")
             vae_cache_dir = backend.get("cache_dir_vae", None)
             if vae_cache_dir in vae_cache_dir_paths:
@@ -1266,7 +1277,9 @@ def configure_multi_databackend(
             if backend["type"] == "local" and (
                 vae_cache_dir is None or vae_cache_dir == ""
             ):
-                if not args.controlnet or backend["dataset_type"] != "conditioning":
+                if (
+                    not args.controlnet or backend["dataset_type"] != "conditioning"
+                ) and not requires_conditioning_dataset:
                     raise ValueError(
                         f"VAE image embed cache directory {backend.get('cache_dir_vae')} is not set. This is required for the VAE image embed cache."
                     )
@@ -1337,7 +1350,7 @@ def configure_multi_databackend(
             and accelerator.is_main_process
             and backend.get("scan_for_errors", False)
             and "deepfloyd" not in StateTracker.get_args().model_type
-            and conditioning_type not in ["mask", "controlnet"]
+            and conditioning_type not in ["mask", "controlnet", "reference_loose"]
         ):
             info_log(
                 f"Beginning error scan for dataset {init_backend['id']}. Set 'scan_for_errors' to False in the dataset config to disable this."
@@ -1361,7 +1374,11 @@ def configure_multi_databackend(
             and "vae" not in args.skip_file_discovery
             and "vae" not in backend.get("skip_file_discovery", "")
             and "deepfloyd" not in StateTracker.get_args().model_type
-            and conditioning_type not in ["mask", "controlnet"]
+            and conditioning_type
+            not in [
+                "mask",
+                "controlnet",
+            ]  # kontext conditioning is encoded into latents.
         ):
             init_backend["vaecache"].discover_unprocessed_files()
             if not args.vae_cache_ondemand:
@@ -1381,6 +1398,7 @@ def configure_multi_databackend(
         init_backend["metadata_backend"].save_cache()
 
     # For each image backend, connect it to its conditioning backend.
+    has_conditioning_dataset = False
     for backend in data_backend_config:
         dataset_type = backend.get("dataset_type", "image")
         if dataset_type is not None and dataset_type != "image":
@@ -1398,6 +1416,7 @@ def configure_multi_databackend(
                 f"Conditioning data backend {backend['conditioning_data']} not found in data backend list: {StateTracker.get_data_backends(_type='conditionin')}."
             )
         if "conditioning_data" in backend:
+            has_conditioning_dataset = True
             StateTracker.set_conditioning_dataset(
                 backend["id"], backend["conditioning_data"]
             )
@@ -1412,6 +1431,10 @@ def configure_multi_databackend(
     # Connect the conditioning resolution settings to the root dataset.
     synchronize_conditioning_settings()
 
+    if not has_conditioning_dataset and requires_conditioning_dataset:
+        raise ValueError(
+            "Model requires a conditioning dataset, but none was found in the data backend config file."
+        )
     return StateTracker.get_data_backends(_types=["image", "video"])
 
 
