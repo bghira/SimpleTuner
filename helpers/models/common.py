@@ -682,6 +682,10 @@ class ModelFoundation(ABC):
         return pretrained_load_args
 
     def load_model(self, move_to_device: bool = True):
+        logger.info(
+            f"Loading diffusion model from {self.config.pretrained_model_name_or_path}"
+        )
+        # Stub: load your UNet (or transformer) model using your diffusion model loader.
         pretrained_load_args = {
             "revision": self.config.revision,
             "variant": self.config.variant,
@@ -1187,7 +1191,7 @@ class ModelFoundation(ABC):
                 snr_divisor = snr
                 if (
                     self.noise_schedule.config.prediction_type
-                    == self.PREDICTION_TYPE_V_PREDICTION
+                    == PredictionTypes.V_PREDICTION
                 ):
                     snr_divisor = snr + 1
                 mse_loss_weights = (
