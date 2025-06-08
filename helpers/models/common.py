@@ -685,7 +685,6 @@ class ModelFoundation(ABC):
         logger.info(
             f"Loading diffusion model from {self.config.pretrained_model_name_or_path}"
         )
-        # Stub: load your UNet (or transformer) model using your diffusion model loader.
         pretrained_load_args = {
             "revision": self.config.revision,
             "variant": self.config.variant,
