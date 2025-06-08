@@ -113,3 +113,41 @@ class DistillationBase:
     def post_training_step(self, model, step):
         """Perform any cleanup or logging after each training step."""
         pass
+
+    def generator_loss_step(
+        self,
+        prepared_batch: Dict[str, Any],
+        model_output: Dict[str, Any],
+        current_loss: torch.Tensor,
+    ) -> tuple[torch.Tensor, Dict[str, float]]:
+        """
+        Optionally add a generator-side adversarial term.
+
+        Returns
+        -------
+        current_loss : torch.Tensor
+            The (possibly) updated loss tensor that will be back-prop’d.
+        logs : Dict[str, float]
+            Extra items to merge into wandb / tensorboard logging.
+        """
+        return current_loss, {}
+
+    def discriminator_step(
+        self,
+        prepared_batch: Dict[str, Any],
+        **kwargs,
+    ):
+        """
+        Optionally perform a discriminator update *after* the student
+        optimizer.step().  Default is a no-op.
+        """
+        pass
+
+    def on_load_checkpoint(self, ckpt_dir: str):
+        pass
+
+    def on_save_checkpoint(self, step: int, ckpt_dir: str):
+        pass
+
+    def on_epoch_end(self, epoch: int):
+        pass
