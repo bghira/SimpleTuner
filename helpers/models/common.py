@@ -685,7 +685,6 @@ class ModelFoundation(ABC):
         logger.info(
             f"Loading diffusion model from {self.config.pretrained_model_name_or_path}"
         )
-        # Stub: load your UNet (or transformer) model using your diffusion model loader.
         pretrained_load_args = {
             "revision": self.config.revision,
             "variant": self.config.variant,
@@ -1047,8 +1046,7 @@ class ModelFoundation(ABC):
         if not self.config.flow_matching and self.config.offset_noise:
             if (
                 self.config.noise_offset_probability == 1.0
-                or random.random()
-                < self.config.noise_offset_probability
+                or random.random() < self.config.noise_offset_probability
             ):
                 noise = noise + self.config.noise_offset * torch.randn(
                     latents.shape[0],
@@ -1134,7 +1132,9 @@ class ModelFoundation(ABC):
                     weights, bsz, replacement=True
                 ).long()
             batch["noisy_latents"] = self.noise_schedule.add_noise(
-                batch["latents"].float(), batch["input_noise"].float(), batch["timesteps"]
+                batch["latents"].float(),
+                batch["input_noise"].float(),
+                batch["timesteps"],
             ).to(device=self.accelerator.device, dtype=self.config.weight_dtype)
 
         # any model-specific augmentation can occur inside prepare_batch_conditions.
@@ -1190,7 +1190,7 @@ class ModelFoundation(ABC):
                 snr_divisor = snr
                 if (
                     self.noise_schedule.config.prediction_type
-                    == self.PREDICTION_TYPE_V_PREDICTION
+                    == PredictionTypes.V_PREDICTION.value
                 ):
                     snr_divisor = snr + 1
                 mse_loss_weights = (

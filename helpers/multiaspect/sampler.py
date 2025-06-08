@@ -71,17 +71,25 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             f"MultiAspectSampler-{self.id}",
             os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"),
         )
-        if conditioning_type is not None:
-            if conditioning_type not in ["controlnet", "mask"]:
-                raise ValueError(
-                    f"Unknown conditioning image type: {conditioning_type}"
-                )
+
+        self._val_cursor = 0
+        self._val_master_list = []
         self.conditioning_type = conditioning_type
         self.is_regularisation_data = is_regularisation_data
 
         self.rank_info = rank_info()
         self.accelerator = accelerator
         self.metadata_backend = metadata_backend
+        if conditioning_type is not None:
+            if conditioning_type not in [
+                "controlnet",
+                "mask",
+                "reference_strict",
+                "reference_loose",
+            ]:
+                raise ValueError(
+                    f"Unknown conditioning image type: {conditioning_type}"
+                )
         self.data_backend = data_backend
         self.current_bucket = None
         self.current_epoch = 1
@@ -99,6 +107,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.exhausted_buckets = []
         self.buckets = self.load_buckets()
         self.state_manager = BucketStateManager(self.id)
+        self._val_master_list = sorted(
+            sum(self.metadata_backend.aspect_ratio_bucket_indices.values(), [])
+        )
 
     def save_state(self, state_path: str):
         """
@@ -159,7 +170,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             []
         )  # [tuple(validation_shortname, validation_prompt, validation_sample)]
         for img_idx in range(batch_size):
-            image_path = self._yield_random_image()
+            image_path = self._yield_sequential_image()
             image_data = self.data_backend.read_image(image_path)
             image_metadata = self.metadata_backend.get_metadata_by_filepath(image_path)
             training_sample = TrainingSample(
@@ -181,12 +192,17 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 instance_prompt=self.instance_prompt,
             )
             if type(validation_prompt) == list:
-                validation_prompt = random.choice(validation_prompt)
                 self.debug_log(
                     f"Selecting random prompt from list: {validation_prompt}"
                 )
+                validation_prompt = random.choice(validation_prompt)
             results.append(
-                (validation_shortname, validation_prompt, training_sample.image)
+                (
+                    validation_shortname,
+                    validation_prompt,
+                    image_path,
+                    training_sample.image,
+                )
             )
 
         return results
@@ -210,6 +226,22 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
         to_yield = self._validate_and_yield_images_from_samples(samples, bucket)
         return to_yield
+
+    def _yield_sequential_image(self):
+        """
+        Always return the *next* image in a fixed list, wrapping around when
+        we reach the end.  Nothing is random, so the same N calls → same N
+        paths every run.
+        """
+        if self._val_cursor >= len(self._val_master_list):
+            self._val_cursor = 0
+            if len(self._val_master_list) == 0:
+                raise MultiDatasetExhausted(
+                    "No validation images available. Please check your dataset."
+                )
+        path = self._val_master_list[self._val_cursor]
+        self._val_cursor = (self._val_cursor + 1) % len(self._val_master_list)
+        return path
 
     def _yield_random_image(self):
         bucket = random.choice(self.buckets)
@@ -466,9 +498,12 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         """
         # strip leading /
         original_sample_path = original_sample_path.lstrip("/")
-        full_path = os.path.join(
-            self.metadata_backend.instance_data_dir, original_sample_path
-        )
+        if self.metadata_backend.instance_data_dir not in original_sample_path:
+            full_path = os.path.join(
+                self.metadata_backend.instance_data_dir, original_sample_path
+            )
+        else:
+            full_path = original_sample_path
         try:
             conditioning_sample_data = self.data_backend.read_image(full_path)
         except Exception as e:
@@ -497,9 +532,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         sampler = conditioning_dataset["sampler"]
         outputs = list(samples)
         for sample in samples:
-            sample_path = sample["image_path"].split(
-                self.metadata_backend.instance_data_dir
-            )[-1]
+            sample_path = sample["image_path"]
+            if self.metadata_backend.instance_data_dir is not None and self.metadata_backend.instance_dir != "":
+                sample_path = sample_path.split(
+                    self.metadata_backend.instance_data_dir
+                )[-1]
             conditioning_sample = sampler.get_conditioning_sample(sample_path)
             outputs.append(conditioning_sample)
         return tuple(outputs)
