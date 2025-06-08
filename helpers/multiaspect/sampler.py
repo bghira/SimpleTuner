@@ -497,9 +497,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         sampler = conditioning_dataset["sampler"]
         outputs = list(samples)
         for sample in samples:
-            sample_path = sample["image_path"].split(
-                self.metadata_backend.instance_data_dir
-            )[-1]
+            sample_path = sample["image_path"]
+            if self.metadata_backend.instance_data_dir is not None and self.metadata_backend.instance_dir != "":
+                sample_path = sample_path.split(
+                    self.metadata_backend.instance_data_dir
+                )[-1]
             conditioning_sample = sampler.get_conditioning_sample(sample_path)
             outputs.append(conditioning_sample)
         return tuple(outputs)
