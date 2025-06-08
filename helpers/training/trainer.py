@@ -1267,8 +1267,12 @@ class Trainer:
             self.config.resume_from_checkpoint = None
             return lr_scheduler
 
-        logger.info(f"Resuming from checkpoint {path}")
-        self.accelerator.load_state(os.path.join(self.config.output_dir, path))
+        checkpoint_dir = os.path.join(self.config.output_dir, path)
+        logger.info(f"Resuming from checkpoint {checkpoint_dir}")
+        self.accelerator.load_state(checkpoint_dir)
+        if getattr(self, "distiller", None) is not None:
+            logger.info(f"Loading DCM checkpoint states..")
+            self.distiller.on_load_checkpoint(checkpoint_dir)
         try:
             if (
                 "constant" == self.config.lr_scheduler
@@ -2042,7 +2046,10 @@ class Trainer:
                         loss, distill_logs = self.distiller.compute_distill_loss(
                             prepared_batch, model_pred, loss
                         )
-
+                        loss, gen_logs = self.distiller.generator_loss_step(
+                            prepared_batch, model_pred, loss
+                        )
+                        distill_logs.update(gen_logs)
                     parent_loss = None
                     if is_regularisation_data:
                         parent_loss = loss
@@ -2111,8 +2118,13 @@ class Trainer:
                         self.optimizer.zero_grad(
                             set_to_none=self.config.set_grads_to_none
                         )
-
-                        if getattr(self, "distiller", None) is not None:
+                        if (
+                            getattr(self, "distiller", None) is not None
+                            and self.accelerator.sync_gradients  # run once per global step
+                        ):
+                            self.distiller.discriminator_step(
+                                prepared_batch=prepared_batch
+                            )
                             self.distiller.post_training_step(self.model, step)
 
                 # Checks if the accelerator has performed an optimization step behind the scenes
@@ -2292,6 +2304,10 @@ class Trainer:
                             # schedulefree optim needs the optimizer to be in eval mode to save the state (and then back to train after)
                             self.mark_optimizer_eval()
                             self.accelerator.save_state(save_path)
+                            if getattr(self, "distiller", None) is not None:
+                                self.distiller.on_save_checkpoint(
+                                    self.state["global_step"], save_path
+                                )
                             self.mark_optimizer_train()
                             for _, backend in StateTracker.get_data_backends().items():
                                 if "sampler" in backend:
