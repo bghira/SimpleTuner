@@ -1045,7 +1045,6 @@ class StableDiffusion3Pipeline(
             len(timesteps) - num_inference_steps * self.scheduler.order, 0
         )
         self._num_timesteps = len(timesteps)
-        print(f"Denoising timesteps: {timesteps}")
 
         # 6. Denoising loop
         with self.progress_bar(total=num_inference_steps) as progress_bar:
