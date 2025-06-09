@@ -924,7 +924,15 @@ class Validation:
 
         if getattr(self.model, "pipeline", None) is None:
             self.model.pipeline = self.model.get_pipeline(
-                pipeline_type=self.model.DEFAULT_PIPELINE_TYPE
+                pipeline_type=(
+                    PipelineTypes.CONTROLNET
+                    if self.config.controlnet
+                    else (
+                        PipelineTypes.CONTROL
+                        if self.config.control
+                        else self.model.DEFAULT_PIPELINE_TYPE
+                    )
+                ),
             )
 
         self.model.move_models(self.accelerator.device)
