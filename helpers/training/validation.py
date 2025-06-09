@@ -351,7 +351,10 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                 ncols=125,
                 desc="Precomputing validation image embeds",
             ):
-                _, validation_prompt, _ = _validation_sample
+                if isinstance(_validation_sample, tuple) and len(_validation_sample) == 3:
+                    _, validation_prompt, _ = _validation_sample
+                elif isinstance(_validation_sample, tuple) and len(_validation_sample) == 4:
+                    _, validation_prompt, _, _ = _validation_sample
                 embed_cache.compute_embeddings_for_prompts(
                     [validation_prompt], load_from_cache=False
                 )
@@ -949,6 +952,8 @@ class Validation:
             if len(prompt) == 3 and isinstance(prompt[2], Image.Image):
                 # DeepFloyd stage II inputs.
                 shortname, prompt, validation_input_image = prompt
+            elif len(prompt) == 4 and isinstance(prompt[3], Image.Image):
+                shortname, prompt, validation_input_image_path, validation_input_image = prompt
             else:
                 shortname = self.validation_prompt_metadata["validation_shortnames"][
                     idx
