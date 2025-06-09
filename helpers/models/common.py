@@ -207,6 +207,16 @@ class ModelFoundation(ABC):
         # If a model requires a specific input edge length (HiDream E1 -> 768px, DeepFloyd stage2 -> 64px)
         return None
 
+    def control_init(self):
+        """
+        Initialize the channelwise Control model.
+        This is distinct from ControlNet.
+        This is a stub and should be implemented in subclasses.
+        """
+        raise NotImplementedError(
+            "control_init must be implemented in the child class."
+        )
+
     def controlnet_init(self):
         """
         Initialize the controlnet model.
@@ -403,7 +413,12 @@ class ModelFoundation(ABC):
         logger.info("Finished loading LoRA weights successfully.")
 
     def save_lora_weights(self, *args, **kwargs):
-        self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG].save_lora_weights(*args, **kwargs)
+        if self.config.controlnet:
+            self.get_trained_component().save_lora_adapter(*args)
+        else:
+            self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG].save_lora_weights(
+                *args, **kwargs
+            )
 
     def check_user_config(self):
         """
