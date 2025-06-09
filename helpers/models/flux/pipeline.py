@@ -53,7 +53,7 @@ from diffusers.models.controlnets.controlnet_flux import (
     FluxMultiControlNetModel,
 )
 from diffusers.models.transformers import FluxTransformer2DModel
-from ..pipeline_utils import DiffusionPipeline
+from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.pipelines.flux.pipeline_output import FluxPipelineOutput
 
 
