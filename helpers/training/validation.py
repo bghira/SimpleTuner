@@ -3,6 +3,7 @@ import diffusers
 import os
 import wandb
 import logging
+import inspect
 import sys
 import numpy as np
 from tqdm import tqdm
@@ -176,6 +177,7 @@ def retrieve_validation_images():
         [
             StateTracker.get_model().requires_conditioning_validation_inputs(),
             args.controlnet,
+            args.control,
         ]
     )
     data_backends = StateTracker.get_data_backends(
@@ -338,6 +340,7 @@ def prepare_validation_prompt_list(args, embed_cache, model):
         ("deepfloyd" in args.model_family and str(args.model_flavour).startswith("ii-"))
         or model.requires_conditioning_validation_inputs()
         or args.controlnet
+        or args.control
         or args.validation_using_datasets
     ):
         # Now, we prepare the DeepFloyd upscaler image inputs so that we can calculate their prompts.
@@ -351,9 +354,15 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                 ncols=125,
                 desc="Precomputing validation image embeds",
             ):
-                if isinstance(_validation_sample, tuple) and len(_validation_sample) == 3:
+                if (
+                    isinstance(_validation_sample, tuple)
+                    and len(_validation_sample) == 3
+                ):
                     _, validation_prompt, _ = _validation_sample
-                elif isinstance(_validation_sample, tuple) and len(_validation_sample) == 4:
+                elif (
+                    isinstance(_validation_sample, tuple)
+                    and len(_validation_sample) == 4
+                ):
                     _, validation_prompt, _, _ = _validation_sample
                 embed_cache.compute_embeddings_for_prompts(
                     [validation_prompt], load_from_cache=False
@@ -571,6 +580,7 @@ class Validation:
             self.deepfloyd_stage2
             or self.config.validation_using_datasets
             or self.config.controlnet
+            or self.config.control
             or self.model.requires_conditioning_validation_inputs()
         ):
             self.validation_image_inputs = retrieve_validation_images()
@@ -585,18 +595,25 @@ class Validation:
             if self.config.validation_using_datasets:
                 if PipelineTypes.IMG2IMG not in self.model.PIPELINE_CLASSES:
                     raise ValueError(
-                        f"Cannot run {self.model.MODEL_CLASS} in Img2Img mode."
+                        f"Cannot run {self.model.MODEL_CLASS} in Img2Img mode for validation."
                     )
             if self.config.controlnet:
                 if PipelineTypes.CONTROLNET not in self.model.PIPELINE_CLASSES:
                     raise ValueError(
-                        f"Cannot run {self.model.MODEL_CLASS} in ControlNet mode."
+                        f"Cannot run {self.model.MODEL_CLASS} in ControlNet mode for validation."
+                    )
+            if self.config.control:
+                if PipelineTypes.CONTROL not in self.model.PIPELINE_CLASSES:
+                    raise ValueError(
+                        f"Cannot run {self.model.MODEL_CLASS} in Control mode for validation."
                     )
 
         if self.config.validation_using_datasets:
             return self.model.PIPELINE_CLASSES[PipelineTypes.IMG2IMG]
         if self.config.controlnet:
             return self.model.PIPELINE_CLASSES[PipelineTypes.CONTROLNET]
+        if self.config.control:
+            return self.model.PIPELINE_CLASSES[PipelineTypes.CONTROL]
         return self.model.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
 
     def _gather_prompt_embeds(self, validation_prompt: str):
@@ -953,7 +970,12 @@ class Validation:
                 # DeepFloyd stage II inputs.
                 shortname, prompt, validation_input_image = prompt
             elif len(prompt) == 4 and isinstance(prompt[3], Image.Image):
-                shortname, prompt, validation_input_image_path, validation_input_image = prompt
+                (
+                    shortname,
+                    prompt,
+                    validation_input_image_path,
+                    validation_input_image,
+                ) = prompt
             else:
                 shortname = self.validation_prompt_metadata["validation_shortnames"][
                     idx
@@ -1066,6 +1088,9 @@ class Validation:
                         extra_validation_kwargs["image"] = extra_validation_kwargs[
                             "image"
                         ].resize(validation_resolution, Image.Resampling.LANCZOS)
+                        extra_validation_kwargs["control_image"] = (
+                            extra_validation_kwargs["image"]
+                        )
                         validation_resolution_width, validation_resolution_height = (
                             validation_resolution
                         )
@@ -1264,10 +1289,10 @@ class Validation:
                 )
                 original_validation_image_results = validation_image_results
                 benchmark_image = None
-                if self.config.controlnet:
+                if any([self.config.controlnet, self.config.control]):
                     validation_image_results = self.stitch_conditioning_images(
                         original_validation_image_results,
-                        extra_validation_kwargs["image"],
+                        extra_validation_kwargs["control_image"],
                     )
                 elif not self.config.disable_benchmark and self.benchmark_exists(
                     "base_model"
@@ -1624,11 +1649,12 @@ class Evaluation:
 
     def get_timestep_schedule(self, noise_scheduler):
         accept_mu = "mu" in set(
-            inspect.signature(scheduler.set_timesteps).parameters.keys()
+            inspect.signature(noise_scheduler.set_timesteps).parameters.keys()
         )
         scheduler_kwargs = {}
         if accept_mu and self.config.flow_schedule_auto_shift:
             from helpers.models.sd3.pipeline import calculate_shift
+
             scheduler_kwargs["mu"] = calculate_shift(
                 StateTracker.get_model().get_trained_component().config.max_seq
             )
