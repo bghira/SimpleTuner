@@ -150,6 +150,9 @@ def get_argument_parser():
             "ai-toolkit",
             "tiny",
             "nano",
+            # control / controlnet
+            "all+ffs+embedder",
+            "all+ffs+embedder+controlnet",
         ],
         default="all",
         help=(
@@ -408,6 +411,14 @@ def get_argument_parser():
         default=None,
         help=(
             "Setting this turns on perturbed normal initialization of the LyCORIS LoKr PEFT layers. A good value is between 1e-4 and 1e-2."
+        ),
+    )
+    parser.add_argument(
+        "--control",
+        action="store_true",
+        default=False,
+        help=(
+            "If set, channel-wise control style training will be used, where a conditioning input image is required alongside the training data."
         ),
     )
     parser.add_argument(
@@ -1967,6 +1978,11 @@ def get_argument_parser():
             "When training with --offset_noise, the value of --noise_offset will only be applied probabilistically."
             " The default behaviour is for offset noise (if enabled) to be applied 25 percent of the time."
         ),
+    )
+    parser.add_argument(
+        "--masked_loss_probability",
+        type=float,
+        default=1.0,
     )
     parser.add_argument(
         "--validation_guidance",
