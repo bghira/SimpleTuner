@@ -8,6 +8,7 @@ from helpers.models.common import (
 from transformers import AutoTokenizer, T5EncoderModel
 from helpers.models.pixart.pipeline import (
     PixArtSigmaPipeline,
+    PixArtSigmaControlPipeline,
 )
 from diffusers import AutoencoderKL, PixArtTransformer2DModel
 
@@ -39,6 +40,7 @@ class PixartSigma(ImageModelFoundation):
         PipelineTypes.TEXT2IMG: PixArtSigmaPipeline,
         PipelineTypes.IMG2IMG: PixArtSigmaPipeline,
         # PipelineTypes.CONTROLNET: None,
+        PipelineTypes.CONTROL: PixArtSigmaControlPipeline,
     }
 
     # The default model flavor to use when none is specified.
