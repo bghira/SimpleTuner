@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
@@ -264,6 +265,9 @@ class FluxSingleTransformerBlock(nn.Module):
         hidden_states = gate * self.proj_out(hidden_states)
         hidden_states = residual + hidden_states
 
+        if hidden_states.dtype == torch.float16:
+            hidden_states = hidden_states.clip(-65504, 65504)
+
         return hidden_states
 
 
@@ -358,12 +362,16 @@ class FluxTransformerBlock(nn.Module):
             )
 
         # Attention.
-        attn_output, context_attn_output = self.attn(
+        attention_outputs = self.attn(
             hidden_states=norm_hidden_states,
             encoder_hidden_states=norm_encoder_hidden_states,
             image_rotary_emb=image_rotary_emb,
             attention_mask=attention_mask,
         )
+        if len(attention_outputs) == 2:
+            attn_output, context_attn_output = attention_outputs
+        elif len(attention_outputs) == 3:
+            attn_output, context_attn_output, ip_attn_output = attention_outputs
 
         # Process attention outputs for the `hidden_states`.
         attn_output = gate_msa.unsqueeze(1) * attn_output
@@ -378,9 +386,10 @@ class FluxTransformerBlock(nn.Module):
         ff_output = gate_mlp.unsqueeze(1) * ff_output
 
         hidden_states = hidden_states + ff_output
+        if len(attention_outputs) == 3:
+            hidden_states = hidden_states + ip_attn_output
 
         # Process attention outputs for the `encoder_hidden_states`.
-
         context_attn_output = c_gate_msa.unsqueeze(1) * context_attn_output
         encoder_hidden_states = encoder_hidden_states + context_attn_output
 
@@ -394,6 +403,9 @@ class FluxTransformerBlock(nn.Module):
         encoder_hidden_states = (
             encoder_hidden_states + c_gate_mlp.unsqueeze(1) * context_ff_output
         )
+
+        if encoder_hidden_states.dtype == torch.float16:
+            encoder_hidden_states = encoder_hidden_states.clip(-65504, 65504)
 
         return encoder_hidden_states, hidden_states
 
@@ -502,8 +514,11 @@ class FluxTransformer2DModelWithMasking(
         txt_ids: torch.Tensor = None,
         guidance: torch.Tensor = None,
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
+        controlnet_block_samples=None,
+        controlnet_single_block_samples=None,
         return_dict: bool = True,
         attention_mask: Optional[torch.Tensor] = None,
+        controlnet_blocks_repeat: bool = False,
     ) -> Union[torch.FloatTensor, Transformer2DModelOutput]:
         """
         The [`FluxTransformer2DModelWithMasking`] forward method.
@@ -571,6 +586,17 @@ class FluxTransformer2DModelWithMasking(
 
         image_rotary_emb = self.pos_embed(ids)
 
+        # IP adapter
+        if (
+            joint_attention_kwargs is not None
+            and "ip_adapter_image_embeds" in joint_attention_kwargs
+        ):
+            ip_adapter_image_embeds = joint_attention_kwargs.pop(
+                "ip_adapter_image_embeds"
+            )
+            ip_hidden_states = self.encoder_hid_proj(ip_adapter_image_embeds)
+            joint_attention_kwargs.update({"ip_hidden_states": ip_hidden_states})
+
         for index_block, block in enumerate(self.transformer_blocks):
             if (
                 self.training
@@ -614,6 +640,26 @@ class FluxTransformer2DModelWithMasking(
                     attention_mask=attention_mask,
                 )
 
+            # controlnet residual
+            if controlnet_block_samples is not None:
+                interval_control = len(self.transformer_blocks) / len(
+                    controlnet_block_samples
+                )
+                interval_control = int(np.ceil(interval_control))
+                # For Xlabs ControlNet.
+                if controlnet_blocks_repeat:
+                    hidden_states = (
+                        hidden_states
+                        + controlnet_block_samples[
+                            index_block % len(controlnet_block_samples)
+                        ]
+                    )
+                else:
+                    hidden_states = (
+                        hidden_states
+                        + controlnet_block_samples[index_block // interval_control]
+                    )
+
         # Flux places the text tokens in front of the image tokens in the
         # sequence.
         hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
@@ -655,6 +701,17 @@ class FluxTransformer2DModelWithMasking(
                     temb=temb,
                     image_rotary_emb=image_rotary_emb,
                     attention_mask=attention_mask,
+                )
+
+            # controlnet residual
+            if controlnet_single_block_samples is not None:
+                interval_control = len(self.single_transformer_blocks) / len(
+                    controlnet_single_block_samples
+                )
+                interval_control = int(np.ceil(interval_control))
+                hidden_states[:, encoder_hidden_states.shape[1] :, ...] = (
+                    hidden_states[:, encoder_hidden_states.shape[1] :, ...]
+                    + controlnet_single_block_samples[index_block // interval_control]
                 )
 
         hidden_states = hidden_states[:, encoder_hidden_states.shape[1] :, ...]
