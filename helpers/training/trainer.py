@@ -1876,18 +1876,12 @@ class Trainer:
         return loss
 
     def checkpoint_state_remove(self, output_dir, checkpoint):
-        removing_checkpoint = os.path.join(
-            output_dir, checkpoint
-        )
+        removing_checkpoint = os.path.join(output_dir, checkpoint)
         try:
             logger.debug(f"Removing {removing_checkpoint}")
-            shutil.rmtree(
-                removing_checkpoint, ignore_errors=True
-            )
+            shutil.rmtree(removing_checkpoint, ignore_errors=True)
         except Exception as e:
-            logger.error(
-                f"Failed to remove directory: {removing_checkpoint}"
-            )
+            logger.error(f"Failed to remove directory: {removing_checkpoint}")
             print(e)
 
     def checkpoint_state_filter(self, output_dir, suffix=None):
@@ -1895,13 +1889,14 @@ class Trainer:
         checkpoints = os.listdir(output_dir)
         for checkpoint in checkpoints:
             cs = checkpoint.split("-")
-            base = cs[0]; sfx = None
+            base = cs[0]
+            sfx = None
             if len(cs) < 2:
                 continue
             elif len(cs) > 2:
                 sfx = cs[2]
 
-            if base != 'checkpoint':
+            if base != "checkpoint":
                 continue
             if suffix and sfx and suffix != sfx:
                 continue
@@ -1914,15 +1909,13 @@ class Trainer:
 
     def checkpoint_state_cleanup(self, output_dir, limit, suffix=None):
         # remove any left over temp checkpoints (partially written, etc)
-        checkpoints = self.checkpoint_state_filter(output_dir, 'tmp')
+        checkpoints = self.checkpoint_state_filter(output_dir, "tmp")
         for removing_checkpoint in checkpoints:
             self.checkpoint_state_remove(output_dir, removing_checkpoint)
 
         # now remove normal checkpoints past the limit
         checkpoints = self.checkpoint_state_filter(output_dir, suffix)
-        checkpoints = sorted(
-            checkpoints, key=lambda x: int(x.split("-")[1])
-        )
+        checkpoints = sorted(checkpoints, key=lambda x: int(x.split("-")[1]))
 
         # before we save the new checkpoint, we need to have at _most_ `limit - 1` checkpoints
         if len(checkpoints) < limit:
@@ -1933,9 +1926,7 @@ class Trainer:
         logger.debug(
             f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints"
         )
-        logger.debug(
-            f"removing checkpoints: {', '.join(removing_checkpoints)}"
-        )
+        logger.debug(f"removing checkpoints: {', '.join(removing_checkpoints)}")
 
         for removing_checkpoint in removing_checkpoints:
             self.checkpoint_state_remove(output_dir, removing_checkpoint)
@@ -1951,7 +1942,9 @@ class Trainer:
             save_path = f"{save_path}-{suffix}"
 
         # A temporary directory should be used so that saving state is an atomic operation.
-        save_path_tmp = f"{save_path}-tmp" if self.config.checkpointing_use_tempdir else save_path
+        save_path_tmp = (
+            f"{save_path}-tmp" if self.config.checkpointing_use_tempdir else save_path
+        )
 
         # schedulefree optim needs the optimizer to be in eval mode to save the state (and then back to train after)
         self.mark_optimizer_eval()
@@ -2348,7 +2341,11 @@ class Trainer:
                             structured_data=structured_data, message_type="train"
                         )
 
-                    if self.config.checkpointing_steps and self.state["global_step"] % self.config.checkpointing_steps == 0:
+                    if (
+                        self.config.checkpointing_steps
+                        and self.state["global_step"] % self.config.checkpointing_steps
+                        == 0
+                    ):
                         self._send_webhook_msg(
                             message=f"Checkpoint: `{webhook_pending_msg}`",
                             message_level="info",
@@ -2358,14 +2355,22 @@ class Trainer:
                             and self.config.checkpoints_total_limit is not None
                         ):
                             # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
-                            self.checkpoint_state_cleanup(self.config.output_dir, self.config.checkpoints_total_limit)
+                            self.checkpoint_state_cleanup(
+                                self.config.output_dir,
+                                self.config.checkpoints_total_limit,
+                            )
 
                         if (
                             self.accelerator.is_main_process
                             or self.config.use_deepspeed_optimizer
                         ):
                             self.checkpoint_state_save(self.config.output_dir)
-                    elif self.config.checkpointing_rolling_steps and self.state["global_step"] % self.config.checkpointing_rolling_steps == 0:
+                    elif (
+                        self.config.checkpointing_rolling_steps
+                        and self.state["global_step"]
+                        % self.config.checkpointing_rolling_steps
+                        == 0
+                    ):
                         self._send_webhook_msg(
                             message=f"Checkpoint: `{webhook_pending_msg}`",
                             message_level="info",
@@ -2375,13 +2380,19 @@ class Trainer:
                             and self.config.checkpoints_rolling_total_limit is not None
                         ):
                             # _before_ saving state, check if this save would set us over the `checkpoints_rolling_total_limit`
-                            self.checkpoint_state_cleanup(self.config.output_dir, self.config.checkpoints_rolling_total_limit, 'rolling')
+                            self.checkpoint_state_cleanup(
+                                self.config.output_dir,
+                                self.config.checkpoints_rolling_total_limit,
+                                "rolling",
+                            )
 
                         if (
                             self.accelerator.is_main_process
                             or self.config.use_deepspeed_optimizer
                         ):
-                            self.checkpoint_state_save(self.config.output_dir, 'rolling')
+                            self.checkpoint_state_save(
+                                self.config.output_dir, "rolling"
+                            )
 
                     if (
                         self.config.accelerator_cache_clear_interval is not None
