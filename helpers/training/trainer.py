@@ -624,6 +624,20 @@ class Trainer:
                     self.quantise_model(ema=self.ema_model, args=self.config)
 
                     return
+                if self.config.controlnet:
+                    # we'll do the base model first
+                    self.quantise_model(
+                        model=(
+                            self.model.unwrap_model(model=self.model.model)
+                            if not preprocessing_models_only
+                            else None
+                        ),
+                        text_encoders=None,
+                        controlnet=None,
+                        ema=self.ema_model,
+                        args=self.config,
+                    )
+
                 self.quantise_model(
                     model=(
                         self.model.get_trained_component()
@@ -632,7 +646,7 @@ class Trainer:
                     ),
                     text_encoders=self.model.text_encoders,
                     controlnet=None,
-                    ema=self.ema_model,
+                    ema=None,
                     args=self.config,
                 )
         elif self.config.is_torchao:
@@ -669,8 +683,6 @@ class Trainer:
     def init_trainable_peft_adapter(self):
         if "lora" not in self.config.model_type:
             return
-        if self.config.controlnet:
-            raise ValueError("Cannot train LoRA with ControlNet.")
         if "standard" == self.config.lora_type.lower():
             lora_info_msg = f"Using LoRA training mode (rank={self.config.lora_rank})"
             logger.info(lora_info_msg)
@@ -1565,9 +1577,6 @@ class Trainer:
 
         if self.config.controlnet:
             self.model.get_trained_component().train()
-            logger.info(
-                f"Moving ControlNet to {target_device} in {self.config.weight_dtype} precision."
-            )
             self.model.unwrap_model(self.model.model).to(
                 device=target_device, dtype=self.config.weight_dtype
             )
