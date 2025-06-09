@@ -18,14 +18,15 @@ from typing import Any, Callable, Dict, List, Optional, Union
 import numpy as np
 import torch
 from transformers import (
+    CLIPImageProcessor,
+    CLIPVisionModelWithProjection,
     CLIPTextModel,
     CLIPTokenizer,
     T5EncoderModel,
     T5TokenizerFast,
 )
 
-from diffusers.image_processor import VaeImageProcessor
-from diffusers.loaders import FluxLoraLoaderMixin
+from diffusers.image_processor import PipelineImageInput, VaeImageProcessor
 from diffusers.models.autoencoders import AutoencoderKL
 from diffusers.models.transformers import FluxTransformer2DModel
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
@@ -39,6 +40,20 @@ from diffusers.utils import (
 )
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
+
+
+from diffusers.loaders import (
+    FluxIPAdapterMixin,
+    FluxLoraLoaderMixin,
+    FromSingleFileMixin,
+    TextualInversionLoaderMixin,
+)
+from diffusers.models.controlnets.controlnet_flux import (
+    FluxControlNetModel,
+    FluxMultiControlNetModel,
+)
+from diffusers.models.transformers import FluxTransformer2DModel
+from diffusers.pipelines.flux.pipeline_output import FluxPipelineOutput
 
 
 if is_torch_xla_available():
@@ -936,6 +951,311 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             return (image,)
 
         return FluxPipelineOutput(images=image)
+
+
+EXAMPLE_DOC_STRING = """
+    Examples:
+        ```py
+        >>> import torch
+        >>> from diffusers.utils import load_image
+        >>> from diffusers import FluxControlNetPipeline
+        >>> from diffusers import FluxControlNetModel
+
+        >>> base_model = "black-forest-labs/FLUX.1-dev"
+        >>> controlnet_model = "InstantX/FLUX.1-dev-controlnet-canny"
+        >>> controlnet = FluxControlNetModel.from_pretrained(controlnet_model, torch_dtype=torch.bfloat16)
+        >>> pipe = FluxControlNetPipeline.from_pretrained(
+        ...     base_model, controlnet=controlnet, torch_dtype=torch.bfloat16
+        ... )
+        >>> pipe.to("cuda")
+        >>> control_image = load_image("https://huggingface.co/InstantX/SD3-Controlnet-Canny/resolve/main/canny.jpg")
+        >>> prompt = "A girl in city, 25 years old, cool, futuristic"
+        >>> image = pipe(
+        ...     prompt,
+        ...     control_image=control_image,
+        ...     control_guidance_start=0.2,
+        ...     control_guidance_end=0.8,
+        ...     controlnet_conditioning_scale=1.0,
+        ...     num_inference_steps=28,
+        ...     guidance_scale=3.5,
+        ... ).images[0]
+        >>> image.save("flux.png")
+        ```
+"""
+
+
+# Copied from diffusers.pipelines.flux.pipeline_flux.calculate_shift
+def calculate_shift(
+    image_seq_len,
+    base_seq_len: int = 256,
+    max_seq_len: int = 4096,
+    base_shift: float = 0.5,
+    max_shift: float = 1.15,
+):
+    m = (max_shift - base_shift) / (max_seq_len - base_seq_len)
+    b = base_shift - m * base_seq_len
+    mu = image_seq_len * m + b
+    return mu
+
+
+# Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img.retrieve_latents
+def retrieve_latents(
+    encoder_output: torch.Tensor,
+    generator: Optional[torch.Generator] = None,
+    sample_mode: str = "sample",
+):
+    if hasattr(encoder_output, "latent_dist") and sample_mode == "sample":
+        return encoder_output.latent_dist.sample(generator)
+    elif hasattr(encoder_output, "latent_dist") and sample_mode == "argmax":
+        return encoder_output.latent_dist.mode()
+    elif hasattr(encoder_output, "latents"):
+        return encoder_output.latents
+    else:
+        raise AttributeError("Could not access latents of provided encoder_output")
+
+
+# Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.retrieve_timesteps
+def retrieve_timesteps(
+    scheduler,
+    num_inference_steps: Optional[int] = None,
+    device: Optional[Union[str, torch.device]] = None,
+    timesteps: Optional[List[int]] = None,
+    sigmas: Optional[List[float]] = None,
+    **kwargs,
+):
+    r"""
+    Calls the scheduler's `set_timesteps` method and retrieves timesteps from the scheduler after the call. Handles
+    custom timesteps. Any kwargs will be supplied to `scheduler.set_timesteps`.
+
+    Args:
+        scheduler (`SchedulerMixin`):
+            The scheduler to get timesteps from.
+        num_inference_steps (`int`):
+            The number of diffusion steps used when generating samples with a pre-trained model. If used, `timesteps`
+            must be `None`.
+        device (`str` or `torch.device`, *optional*):
+            The device to which the timesteps should be moved to. If `None`, the timesteps are not moved.
+        timesteps (`List[int]`, *optional*):
+            Custom timesteps used to override the timestep spacing strategy of the scheduler. If `timesteps` is passed,
+            `num_inference_steps` and `sigmas` must be `None`.
+        sigmas (`List[float]`, *optional*):
+            Custom sigmas used to override the timestep spacing strategy of the scheduler. If `sigmas` is passed,
+            `num_inference_steps` and `timesteps` must be `None`.
+
+    Returns:
+        `Tuple[torch.Tensor, int]`: A tuple where the first element is the timestep schedule from the scheduler and the
+        second element is the number of inference steps.
+    """
+    if timesteps is not None and sigmas is not None:
+        raise ValueError(
+            "Only one of `timesteps` or `sigmas` can be passed. Please choose one to set custom values"
+        )
+    if timesteps is not None:
+        accepts_timesteps = "timesteps" in set(
+            inspect.signature(scheduler.set_timesteps).parameters.keys()
+        )
+        if not accepts_timesteps:
+            raise ValueError(
+                f"The current scheduler class {scheduler.__class__}'s `set_timesteps` does not support custom"
+                f" timestep schedules. Please check whether you are using the correct scheduler."
+            )
+        scheduler.set_timesteps(timesteps=timesteps, device=device, **kwargs)
+        timesteps = scheduler.timesteps
+        num_inference_steps = len(timesteps)
+    elif sigmas is not None:
+        accept_sigmas = "sigmas" in set(
+            inspect.signature(scheduler.set_timesteps).parameters.keys()
+        )
+        if not accept_sigmas:
+            raise ValueError(
+                f"The current scheduler class {scheduler.__class__}'s `set_timesteps` does not support custom"
+                f" sigmas schedules. Please check whether you are using the correct scheduler."
+            )
+        scheduler.set_timesteps(sigmas=sigmas, device=device, **kwargs)
+        timesteps = scheduler.timesteps
+        num_inference_steps = len(timesteps)
+    else:
+        scheduler.set_timesteps(num_inference_steps, device=device, **kwargs)
+        timesteps = scheduler.timesteps
+    return timesteps, num_inference_steps
+
+    def controlnet_predict(self, prepared_batch: dict) -> dict:
+        """
+        Perform a forward pass with ControlNet for Flux model.
+
+        Args:
+            prepared_batch: Dictionary containing the batch data including conditioning_latents
+
+        Returns:
+            Dictionary containing the model prediction
+        """
+        # ControlNet conditioning - Flux uses latents instead of pixel values
+        controlnet_cond = prepared_batch["conditioning_latents"].to(
+            device=self.accelerator.device, dtype=self.config.weight_dtype
+        )
+
+        # Pack the conditioning latents (same as noisy latents)
+        packed_controlnet_cond = pack_latents(
+            controlnet_cond,
+            batch_size=controlnet_cond.shape[0],
+            num_channels_latents=controlnet_cond.shape[1],
+            height=controlnet_cond.shape[2],
+            width=controlnet_cond.shape[3],
+        ).to(
+            dtype=self.config.base_weight_dtype,
+            device=self.accelerator.device,
+        )
+
+        # Pack noisy latents
+        packed_noisy_latents = pack_latents(
+            prepared_batch["noisy_latents"],
+            batch_size=prepared_batch["latents"].shape[0],
+            num_channels_latents=prepared_batch["latents"].shape[1],
+            height=prepared_batch["latents"].shape[2],
+            width=prepared_batch["latents"].shape[3],
+        ).to(
+            dtype=self.config.base_weight_dtype,
+            device=self.accelerator.device,
+        )
+
+        # Handle guidance
+        if self.config.flux_guidance_mode == "constant":
+            guidance_scales = [float(self.config.flux_guidance_value)] * prepared_batch[
+                "latents"
+            ].shape[0]
+        elif self.config.flux_guidance_mode == "random-range":
+            guidance_scales = [
+                random.uniform(
+                    self.config.flux_guidance_min,
+                    self.config.flux_guidance_max,
+                )
+                for _ in range(prepared_batch["latents"].shape[0])
+            ]
+
+        # Check if guidance embeds are enabled
+        transformer_config = None
+        if hasattr(self.get_trained_component(), "module"):
+            transformer_config = self.get_trained_component().module.config
+        elif hasattr(self.get_trained_component(), "config"):
+            transformer_config = self.get_trained_component().config
+
+        if transformer_config is not None and getattr(
+            transformer_config, "guidance_embeds", False
+        ):
+            guidance = torch.tensor(guidance_scales, device=self.accelerator.device)
+        else:
+            guidance = None
+
+        # Prepare image IDs
+        img_ids = prepare_latent_image_ids(
+            prepared_batch["latents"].shape[0],
+            prepared_batch["latents"].shape[2],
+            prepared_batch["latents"].shape[3],
+            self.accelerator.device,
+            self.config.weight_dtype,
+        )
+
+        # Prepare timesteps
+        prepared_batch["timesteps"] = (
+            torch.tensor(prepared_batch["timesteps"])
+            .expand(prepared_batch["noisy_latents"].shape[0])
+            .to(device=self.accelerator.device)
+            / self.noise_schedule.config.num_train_timesteps
+        )
+
+        # Prepare text IDs
+        text_ids = torch.zeros(
+            prepared_batch["prompt_embeds"].shape[1],
+            3,
+        ).to(
+            device=self.accelerator.device,
+            dtype=self.config.base_weight_dtype,
+        )
+
+        # ControlNet forward pass
+        controlnet_block_samples, controlnet_single_block_samples = self.controlnet(
+            hidden_states=packed_noisy_latents,
+            controlnet_cond=packed_controlnet_cond,
+            controlnet_mode=None,  # Set this if using ControlNet-Union
+            conditioning_scale=1.0,  # You might want to make this configurable
+            encoder_hidden_states=prepared_batch["prompt_embeds"].to(
+                device=self.accelerator.device,
+                dtype=self.config.base_weight_dtype,
+            ),
+            pooled_projections=prepared_batch["add_text_embeds"].to(
+                device=self.accelerator.device,
+                dtype=self.config.base_weight_dtype,
+            ),
+            timestep=prepared_batch["timesteps"],
+            img_ids=img_ids,
+            txt_ids=text_ids,
+            guidance=guidance,
+            joint_attention_kwargs=None,
+            return_dict=False,
+        )
+
+        # Prepare kwargs for the main transformer
+        flux_transformer_kwargs = {
+            "hidden_states": packed_noisy_latents,
+            "timestep": prepared_batch["timesteps"],
+            "guidance": guidance,
+            "pooled_projections": prepared_batch["add_text_embeds"].to(
+                device=self.accelerator.device,
+                dtype=self.config.base_weight_dtype,
+            ),
+            "encoder_hidden_states": prepared_batch["prompt_embeds"].to(
+                device=self.accelerator.device,
+                dtype=self.config.base_weight_dtype,
+            ),
+            "txt_ids": text_ids.to(
+                device=self.accelerator.device,
+                dtype=self.config.base_weight_dtype,
+            ),
+            "img_ids": img_ids,
+            "joint_attention_kwargs": None,
+            "return_dict": False,
+        }
+
+        # Add ControlNet outputs to kwargs
+        if controlnet_block_samples is not None:
+            flux_transformer_kwargs["block_controlnet_hidden_states"] = [
+                sample.to(
+                    device=self.accelerator.device, dtype=self.config.weight_dtype
+                )
+                for sample in controlnet_block_samples
+            ]
+
+        if controlnet_single_block_samples is not None:
+            flux_transformer_kwargs["controlnet_single_hidden_states"] = [
+                sample.to(
+                    device=self.accelerator.device, dtype=self.config.weight_dtype
+                )
+                for sample in controlnet_single_block_samples
+            ]
+
+        # Add attention mask for the main transformer (ControlNet doesn't use attention masking)
+        if self.config.flux_attention_masked_training:
+            flux_transformer_kwargs["attention_mask"] = prepared_batch[
+                "encoder_attention_mask"
+            ]
+            if flux_transformer_kwargs["attention_mask"] is None:
+                raise ValueError(
+                    "No attention mask was discovered when attempting validation - "
+                    "this means you need to recreate your text embed cache."
+                )
+
+        # Forward pass through the transformer with ControlNet residuals
+        model_pred = self.get_trained_component()(**flux_transformer_kwargs)[0]
+
+        # Unpack the latents back to original shape
+        return {
+            "model_prediction": unpack_latents(
+                model_pred,
+                height=prepared_batch["latents"].shape[2] * 8,
+                width=prepared_batch["latents"].shape[3] * 8,
+                vae_scale_factor=16,
+            )
+        }
 
 
 from dataclasses import dataclass
