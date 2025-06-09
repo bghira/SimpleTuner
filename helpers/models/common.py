@@ -70,6 +70,7 @@ class PipelineTypes(Enum):
     IMG2IMG = "img2img"
     TEXT2IMG = "text2img"
     CONTROLNET = "controlnet"
+    CONTROL = "control"
 
 
 class PredictionTypes(Enum):
@@ -206,6 +207,16 @@ class ModelFoundation(ABC):
     def validation_image_input_edge_length(self):
         # If a model requires a specific input edge length (HiDream E1 -> 768px, DeepFloyd stage2 -> 64px)
         return None
+
+    def control_init(self):
+        """
+        Initialize the channelwise Control model.
+        This is distinct from ControlNet.
+        This is a stub and should be implemented in subclasses.
+        """
+        raise NotImplementedError(
+            "control_init must be implemented in the child class."
+        )
 
     def controlnet_init(self):
         """
@@ -403,7 +414,12 @@ class ModelFoundation(ABC):
         logger.info("Finished loading LoRA weights successfully.")
 
     def save_lora_weights(self, *args, **kwargs):
-        self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG].save_lora_weights(*args, **kwargs)
+        if self.config.controlnet:
+            self.get_trained_component().save_lora_adapter(*args)
+        else:
+            self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG].save_lora_weights(
+                *args, **kwargs
+            )
 
     def check_user_config(self):
         """
@@ -1224,6 +1240,19 @@ class ModelFoundation(ABC):
             )
             mask_image = mask_image / 2 + 0.5
             loss = loss * mask_image
+        elif conditioning_type == "segmentation" and apply_conditioning_mask:
+            if random.random() < self.config.masked_loss_probability:
+                mask_image = prepared_batch["conditioning_pixel_values"].to(
+                    dtype=loss.dtype, device=loss.device
+                )  # Shape: (batch_size, 3, H', W')
+                mask_image = torch.sum(mask_image, dim=1, keepdim=True) / 3
+                mask_image = torch.nn.functional.interpolate(
+                    mask_image, size=loss.shape[2:], mode="area"
+                )  # Resize to match loss spatial dimensions
+                mask_image = mask_image / 2 + 0.5  # Normalize to [0,1]
+                # binarize
+                mask_image = (mask_image > 0).to(dtype=loss.dtype, device=loss.device)
+                loss = loss * mask_image  # Element-wise multiplication
 
         # Average over channels and spatial dims, then over batch.
         loss = loss.mean(dim=list(range(1, len(loss.shape)))).mean()
@@ -1292,7 +1321,10 @@ class ImageModelFoundation(ModelFoundation):
             target_modules=target_modules,
             use_dora=self.config.use_dora,
         )
-        self.model.add_adapter(self.lora_config)
+        if self.config.controlnet:
+            self.controlnet.add_adapter(self.lora_config)
+        else:
+            self.model.add_adapter(self.lora_config)
         if self.config.init_lora:
             addkeys, misskeys = load_lora_weights(
                 {self.MODEL_TYPE: self.model},
