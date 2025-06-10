@@ -128,6 +128,7 @@ There, you will possibly need to modify the following variables:
 
 - `model_type` - Set this to `lora`.
 - `model_family` - Set this to `flux`.
+- `offload_during_startup` - Set this to `true` if you run out of memory during VAE encodes.
 - `pretrained_model_name_or_path` - Set this to `black-forest-labs/FLUX.1-dev`.
 - `pretrained_vae_model_name_or_path` - Set this to `black-forest-labs/FLUX.1-dev`.
   - Note that you will need to log in to Huggingface and be granted access to download this model. We will go over logging in to Huggingface later in this tutorial.
@@ -420,7 +421,7 @@ Currently, the lowest VRAM utilisation (9090M) can be attained with:
 - With `--attention_mechanism=sageattention` to further reduce VRAM by 0.1GB and improve training validation image generation speed.
 - Be sure to enable `--gradient_checkpointing` or nothing you do will stop it from OOMing
 
-**NOTE**: Pre-caching of VAE embeds and text encoder outputs may use more memory and still OOM. If so, text encoder quantisation and VAE tiling can be enabled.
+**NOTE**: Pre-caching of VAE embeds and text encoder outputs may use more memory and still OOM. If so, text encoder quantisation and VAE tiling can be enabled via `--vae_enable_tiling=true`. Further memory can be saved on startup with `--offload_during_startup=true`.
 
 Speed was approximately 1.4 iterations per second on a 4090.
 

@@ -2736,12 +2736,12 @@ category = "main"
 optional = false
 python-versions = "*"
 files = [
-    {file = "pytorch_triton_rocm-3.3.0-cp310-cp310-linux_x86_64.whl", hash = "sha256:a4a367bf87a2584669fb63bd93eef2016bf177406ffb0207a9e841b705b34308"},
-    {file = "pytorch_triton_rocm-3.3.0-cp311-cp311-linux_x86_64.whl", hash = "sha256:c906cc7bb53c7d6682eb1a9dfc5c950dccf62550e3db18012efd5f5cf45b3c76"},
-    {file = "pytorch_triton_rocm-3.3.0-cp312-cp312-linux_x86_64.whl", hash = "sha256:12cdb41dfea00837e559f803f325b76e84ce62a63b17ec52f0fa25394efe189d"},
-    {file = "pytorch_triton_rocm-3.3.0-cp313-cp313-linux_x86_64.whl", hash = "sha256:c4f460ef055b09409e2387bbce5372ec98fc799bc35e9f738fd542a32fd5ff4f"},
-    {file = "pytorch_triton_rocm-3.3.0-cp313-cp313t-linux_x86_64.whl", hash = "sha256:f4b826a90665cd6dd77f157fa4e809bdd247ea82ad37fccb1778c6c6be8dd4fd"},
-    {file = "pytorch_triton_rocm-3.3.0-cp39-cp39-linux_x86_64.whl", hash = "sha256:ae20f0c9e76a4de0d7ff71ce9467054dbfa01451970bd024f329cba25cb39335"},
+    {file = "pytorch_triton_rocm-3.3.0-cp310-cp310-linux_x86_64.whl", hash = "sha256:8d6af3d5b8b43c42b33478d8817c795dd5d6fa1a2e777a154848c18c38eda84a"},
+    {file = "pytorch_triton_rocm-3.3.0-cp311-cp311-linux_x86_64.whl", hash = "sha256:deab3d7270c85ddcdc39daab967434b1db8c08cf01ccc1cb9999fdaef8fc78a4"},
+    {file = "pytorch_triton_rocm-3.3.0-cp312-cp312-linux_x86_64.whl", hash = "sha256:433a71e77fc37fd77d674a8c5e6039a8d959c427d3d0972b46f186190691d26f"},
+    {file = "pytorch_triton_rocm-3.3.0-cp313-cp313-linux_x86_64.whl", hash = "sha256:43f9b1b062723599bdc235234911166825be0f78ddd2360c4c29c1229e83755f"},
+    {file = "pytorch_triton_rocm-3.3.0-cp313-cp313t-linux_x86_64.whl", hash = "sha256:6bd80532d21200ddc8a35ef76ff92d5719193f43e74f905b047671934360031e"},
+    {file = "pytorch_triton_rocm-3.3.0-cp39-cp39-linux_x86_64.whl", hash = "sha256:3d60ce5eefc60974658e963647b4384e4daf3d442952c4bad991504ce51d4b69"},
 ]
 
 [package.dependencies]
@@ -2754,7 +2754,7 @@ tutorials = ["matplotlib", "pandas", "tabulate"]
 
 [package.source]
 type = "legacy"
-url = "https://download.pytorch.org/whl/test/rocm6.3"
+url = "https://download.pytorch.org/whl/rocm6.3"
 reference = "pytorch-rocm"
 
 [[package]]
@@ -3671,8 +3671,7 @@ optree = ["optree (>=0.13.0)"]
 
 [package.source]
 type = "url"
-url = "https://download.pytorch.org/whl/test/rocm6.3/torch-2.7.0%2Brocm6.3-cp312-cp312-manylinux_2_28_x86_64.whl"
-
+url = "https://download.pytorch.org/whl/rocm6.3/torch-2.7.0%2Brocm6.3-cp312-cp312-manylinux_2_28_x86_64.whl"
 [[package]]
 name = "torch-optimi"
 version = "0.2.1"
@@ -3720,12 +3719,18 @@ category = "main"
 optional = false
 python-versions = "*"
 files = [
-    {file = "torchaudio-2.7.0+rocm6.3-cp310-cp310-linux_x86_64.whl", hash = "sha256:ebdcf2882e5cdd5259dd7fa7e91a336636218b96e947b0f9c5e3537523cfa8bc"},
-    {file = "torchaudio-2.7.0+rocm6.3-cp311-cp311-linux_x86_64.whl", hash = "sha256:afe4a1dde599200337530a1ec78bde9ec5e629a2b101c3ad2bda620e70b47067"},
-    {file = "torchaudio-2.7.0+rocm6.3-cp312-cp312-linux_x86_64.whl", hash = "sha256:3e75da6d5c2ed9a1790765ab57c9821f73ea935ad0704582a4c4e77d36c09f2e"},
-    {file = "torchaudio-2.7.0+rocm6.3-cp313-cp313-linux_x86_64.whl", hash = "sha256:faca07b3dd5f8959163df2d95792143ee7061a28ac0475097c8ca54eded26653"},
-    {file = "torchaudio-2.7.0+rocm6.3-cp313-cp313t-linux_x86_64.whl", hash = "sha256:fff6b500acebd525d0d6cdec3df6bf0d5405bc745abdd1f4d37be82e670f539b"},
-    {file = "torchaudio-2.7.0+rocm6.3-cp39-cp39-linux_x86_64.whl", hash = "sha256:6eebcb991dfbcf24db49b3008888ecb023264d77b42af972e310f49613347b02"},
+    {file = "torchaudio-2.7.0+rocm6.3-cp310-cp310-linux_x86_64.whl", hash = "sha256:89cce121995c8015e72af87cad3241474d2194e91a3351180cced4553c4427d4"},
+    {file = "torchaudio-2.7.0+rocm6.3-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:8bec99b1ca8d9082ae52a319b661979fd6f5553ee58f3924d62ef43393d505b3"},
+    {file = "torchaudio-2.7.0+rocm6.3-cp311-cp311-linux_x86_64.whl", hash = "sha256:97432c876462a3fd36e1bcf1bfe72d4b3e6000b33967be493d025c14ee8f0d5f"},
+    {file = "torchaudio-2.7.0+rocm6.3-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:f89303a22a5054e9ba12c5fe21200b9318d6196d314bf6037263914b8bed79d3"},
+    {file = "torchaudio-2.7.0+rocm6.3-cp312-cp312-linux_x86_64.whl", hash = "sha256:7f6ca6e432b51263685638a4f7aeb0173131f596856923797874fa643e2cbaa3"},
+    {file = "torchaudio-2.7.0+rocm6.3-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:cb8e28dbed785aad898da7772fc69456ddf51f95bea0a4b3180612987710713c"},
+    {file = "torchaudio-2.7.0+rocm6.3-cp313-cp313-linux_x86_64.whl", hash = "sha256:598e2789e9792d1212a4e51856d9afbcd416a6dcd0757d551c6c0556f47ad762"},
+    {file = "torchaudio-2.7.0+rocm6.3-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:ffdcffa2bcfb4621dc82b5e3023e26f6dc8d4911f2c4bf2634323dcabdf3feca"},
+    {file = "torchaudio-2.7.0+rocm6.3-cp313-cp313t-linux_x86_64.whl", hash = "sha256:3ccdacc264340c17504647e236db1e5cc2053f0637a28964255641e0eb522c9a"},
+    {file = "torchaudio-2.7.0+rocm6.3-cp313-cp313t-manylinux_2_28_x86_64.whl", hash = "sha256:5e0c461dc74c803333e3e0bef1b0c29c0b90ec2c628ae4daa5f045ffffadf929"},
+    {file = "torchaudio-2.7.0+rocm6.3-cp39-cp39-linux_x86_64.whl", hash = "sha256:d17438821e1fcd6b6488e969e9fbbecfa518ec32f8146451035d9a002087e6c7"},
+    {file = "torchaudio-2.7.0+rocm6.3-cp39-cp39-manylinux_2_28_x86_64.whl", hash = "sha256:7d65e00294f6db6209750815157280b66ae2246c5f9d0d8e764733560bbe92c5"},
 ]
 
 [package.dependencies]
@@ -3733,7 +3738,7 @@ torch = "2.7.0"
 
 [package.source]
 type = "legacy"
-url = "https://download.pytorch.org/whl/test/rocm6.3"
+url = "https://download.pytorch.org/whl/rocm6.3"
 reference = "pytorch-rocm"
 
 [[package]]
@@ -3792,12 +3797,18 @@ category = "main"
 optional = false
 python-versions = ">=3.9"
 files = [
-    {file = "torchvision-0.22.0+rocm6.3-cp310-cp310-linux_x86_64.whl", hash = "sha256:f19dde150800d12192004671bae63d33f1d75d87f05d76adb9c19ede4012af29"},
-    {file = "torchvision-0.22.0+rocm6.3-cp311-cp311-linux_x86_64.whl", hash = "sha256:7f09239b2d0dfbcccd1e52dbcc95737cbab47e839e02db4772d57902fa4339b8"},
-    {file = "torchvision-0.22.0+rocm6.3-cp312-cp312-linux_x86_64.whl", hash = "sha256:d6ead6ffe06b77a94322883474ccaec1bb6d3315c2f588bc7d4ed1594febe727"},
-    {file = "torchvision-0.22.0+rocm6.3-cp313-cp313-linux_x86_64.whl", hash = "sha256:baab9c8253ffda8893577e9bcc4e0b93ca0b09dd1009eeeb9436b8052f8c4b4d"},
-    {file = "torchvision-0.22.0+rocm6.3-cp313-cp313t-linux_x86_64.whl", hash = "sha256:d08e4189374efd1df48d4b71d704ddc15069fccf515947d5d134724eb17cc6dd"},
-    {file = "torchvision-0.22.0+rocm6.3-cp39-cp39-linux_x86_64.whl", hash = "sha256:f80418ddb5c938aada0c23a96ddbfdf140867c11c7df39f75693c11ec1ad660c"},
+    {file = "torchvision-0.22.0+rocm6.3-cp310-cp310-linux_x86_64.whl", hash = "sha256:0a87083459e68fc36c1296fd94a21027f0c1d4ce462416202b020b24cfbab10b"},
+    {file = "torchvision-0.22.0+rocm6.3-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:46bee27712b00287d8bcc725b7de2586fbc00497ec1c6c19f4b501d711cdebc5"},
+    {file = "torchvision-0.22.0+rocm6.3-cp311-cp311-linux_x86_64.whl", hash = "sha256:788e3301ee6f3e5601024227573360e88bfde0f7da50e924eb56609eb6c0bd0f"},
+    {file = "torchvision-0.22.0+rocm6.3-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:9ad8197d38018e1eb4315bad0273101685f82002329b6795953d65f540b27e05"},
+    {file = "torchvision-0.22.0+rocm6.3-cp312-cp312-linux_x86_64.whl", hash = "sha256:b468a34dbb3c1b04a95bad684dd3dd8f6a6843148c566a3455ce0d14c8bd4dfc"},
+    {file = "torchvision-0.22.0+rocm6.3-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:220907325f36be7c23077100a8f5645ac644e2eecde7f991fbea563ddde88b84"},
+    {file = "torchvision-0.22.0+rocm6.3-cp313-cp313-linux_x86_64.whl", hash = "sha256:a8a4bf1cd38ceccb1324b36c6fd748c68806b5f00b8c4c01b924031f24508355"},
+    {file = "torchvision-0.22.0+rocm6.3-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:5a4761182ed8db518ffb301b1181aaf7da6764c0b88645742816257986e6a9ba"},
+    {file = "torchvision-0.22.0+rocm6.3-cp313-cp313t-linux_x86_64.whl", hash = "sha256:bc3ed9738d0550758812544a6439f97aa4dcadca54e04835315863559aad3882"},
+    {file = "torchvision-0.22.0+rocm6.3-cp313-cp313t-manylinux_2_28_x86_64.whl", hash = "sha256:d7afe5ce3d266543ddd83213660e2800adbe3ba2c26ec31c739192278ba5c0bf"},
+    {file = "torchvision-0.22.0+rocm6.3-cp39-cp39-linux_x86_64.whl", hash = "sha256:db7599ef7d7edaf66fcfe59844f412c32b80a38182b862a33531a64937ca9a57"},
+    {file = "torchvision-0.22.0+rocm6.3-cp39-cp39-manylinux_2_28_x86_64.whl", hash = "sha256:99b839e537d78e4ebafb926f92e27a48a9aade9f43ba374088afa4d55c5384cf"},
 ]
 
 [package.dependencies]
@@ -3811,7 +3822,7 @@ scipy = ["scipy"]
 
 [package.source]
 type = "legacy"
-url = "https://download.pytorch.org/whl/test/rocm6.3"
+url = "https://download.pytorch.org/whl/rocm6.3"
 reference = "pytorch-rocm"
 
 [[package]]
@@ -4588,4 +4599,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.12"
-content-hash = "e20de2f931fffabc792de92610100e889df3744e36ca8d91f6cc10769874848d"
+content-hash = "ad5b2648ebcdf0d335ad46938e9f775fe4d8afb9f4229dadc95c882fd89ce8b9"

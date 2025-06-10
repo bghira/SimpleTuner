@@ -175,7 +175,7 @@ class LTXVideo(VideoModelFoundation):
         if prepared_batch["noisy_latents"].shape[1] != 128:
             raise ValueError(
                 "LTX Video requires a latent size of 128 channels. Ensure you are using the correct VAE cache path."
-                f" Shape received: {prepared_batch['noisy_latents'].shape}"
+                f" Batch received: {prepared_batch}"
             )
         scale_value = 1
         height, width = (

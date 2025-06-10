@@ -9,8 +9,8 @@ package-mode = false
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.13"
-torch = "^2.6.0"
-torchvision = "^0.21.0"
+torch = "^2.7.0"
+torchvision = "^0.22.0"
 diffusers = {git = "https://github.com/huggingface/diffusers"}
 transformers = "^4.51.1"
 datasets = "^3.0.1"
@@ -39,7 +39,7 @@ colorama = "^0.4.6"
 numpy = "^2.2.0"
 peft = "^0.14.0"
 tensorboard = "^2.18.0"
-triton = {version = "^3.1.0", source = "pytorch"}
+triton = "^3.3.0"
 sentencepiece = "^0.2.0"
 optimum-quanto = {git = "https://github.com/huggingface/optimum-quanto"}
 lycoris-lora = {git = "https://github.com/kohakublueleaf/lycoris", rev = "dev"}

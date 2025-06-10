@@ -110,7 +110,9 @@ def convert_unet_state_dict(unet_state_dict):
         for sd_part, hf_part in unet_conversion_map_layer:
             v = v.replace(hf_part, sd_part)
         mapping[k] = v
-    new_state_dict = {sd_name: unet_state_dict[hf_name] for hf_name, sd_name in mapping.items()}
+    new_state_dict = {
+        sd_name: unet_state_dict[hf_name] for hf_name, sd_name in mapping.items()
+    }
     return new_state_dict
 
 
@@ -245,19 +247,29 @@ def convert_openclip_text_enc_state_dict(text_enc_dict):
             capture_qkv_bias[k_pre][code2idx[k_code]] = v
             continue
 
-        relabelled_key = textenc_pattern.sub(lambda m: protected[re.escape(m.group(0))], k)
+        relabelled_key = textenc_pattern.sub(
+            lambda m: protected[re.escape(m.group(0))], k
+        )
         new_state_dict[relabelled_key] = v
 
     for k_pre, tensors in capture_qkv_weight.items():
         if None in tensors:
-            raise Exception("CORRUPTED MODEL: one of the q-k-v values for the text encoder was missing")
-        relabelled_key = textenc_pattern.sub(lambda m: protected[re.escape(m.group(0))], k_pre)
+            raise Exception(
+                "CORRUPTED MODEL: one of the q-k-v values for the text encoder was missing"
+            )
+        relabelled_key = textenc_pattern.sub(
+            lambda m: protected[re.escape(m.group(0))], k_pre
+        )
         new_state_dict[relabelled_key + ".in_proj_weight"] = torch.cat(tensors)
 
     for k_pre, tensors in capture_qkv_bias.items():
         if None in tensors:
-            raise Exception("CORRUPTED MODEL: one of the q-k-v values for the text encoder was missing")
-        relabelled_key = textenc_pattern.sub(lambda m: protected[re.escape(m.group(0))], k_pre)
+            raise Exception(
+                "CORRUPTED MODEL: one of the q-k-v values for the text encoder was missing"
+            )
+        relabelled_key = textenc_pattern.sub(
+            lambda m: protected[re.escape(m.group(0))], k_pre
+        )
         new_state_dict[relabelled_key + ".in_proj_bias"] = torch.cat(tensors)
 
     return new_state_dict
@@ -270,11 +282,27 @@ def convert_openai_text_enc_state_dict(text_enc_dict):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--model_path", default=None, type=str, required=True, help="Path to the model to convert.")
-    parser.add_argument("--checkpoint_path", default=None, type=str, required=True, help="Path to the output model.")
-    parser.add_argument("--half", action="store_true", help="Save weights in half precision.")
     parser.add_argument(
-        "--use_safetensors", action="store_true", help="Save weights use safetensors, default is ckpt."
+        "--model_path",
+        default=None,
+        type=str,
+        required=True,
+        help="Path to the model to convert.",
+    )
+    parser.add_argument(
+        "--checkpoint_path",
+        default=None,
+        type=str,
+        required=True,
+        help="Path to the output model.",
+    )
+    parser.add_argument(
+        "--half", action="store_true", help="Save weights in half precision."
+    )
+    parser.add_argument(
+        "--use_safetensors",
+        action="store_true",
+        help="Save weights use safetensors, default is ckpt.",
     )
 
     args = parser.parse_args()
@@ -311,25 +339,38 @@ if __name__ == "__main__":
     if osp.exists(text_enc_2_path):
         text_enc_2_dict = load_file(text_enc_2_path, device="cpu")
     else:
-        text_enc_2_path = osp.join(args.model_path, "text_encoder_2", "pytorch_model.bin")
+        text_enc_2_path = osp.join(
+            args.model_path, "text_encoder_2", "pytorch_model.bin"
+        )
         text_enc_2_dict = torch.load(text_enc_2_path, map_location="cpu")
 
     # Convert the UNet model
     unet_state_dict = convert_unet_state_dict(unet_state_dict)
-    unet_state_dict = {"model.diffusion_model." + k: v for k, v in unet_state_dict.items()}
+    unet_state_dict = {
+        "model.diffusion_model." + k: v for k, v in unet_state_dict.items()
+    }
 
     # Convert the VAE model
     vae_state_dict = convert_vae_state_dict(vae_state_dict)
     vae_state_dict = {"first_stage_model." + k: v for k, v in vae_state_dict.items()}
 
     text_enc_dict = convert_openai_text_enc_state_dict(text_enc_dict)
-    text_enc_dict = {"conditioner.embedders.0.transformer." + k: v for k, v in text_enc_dict.items()}
+    text_enc_dict = {
+        "conditioner.embedders.0.transformer." + k: v for k, v in text_enc_dict.items()
+    }
 
     text_enc_2_dict = convert_openclip_text_enc_state_dict(text_enc_2_dict)
-    text_enc_2_dict = {"conditioner.embedders.1.model." + k: v for k, v in text_enc_2_dict.items()}
+    text_enc_2_dict = {
+        "conditioner.embedders.1.model." + k: v for k, v in text_enc_2_dict.items()
+    }
 
     # Put together new checkpoint
-    state_dict = {**unet_state_dict, **vae_state_dict, **text_enc_dict, **text_enc_2_dict}
+    state_dict = {
+        **unet_state_dict,
+        **vae_state_dict,
+        **text_enc_dict,
+        **text_enc_2_dict,
+    }
 
     if args.half:
         state_dict = {k: v.half() for k, v in state_dict.items()}

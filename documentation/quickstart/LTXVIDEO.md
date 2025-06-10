@@ -148,6 +148,7 @@ At the end, your config should resemble mine:
   "seed": 42,
   "minimum_image_size": 0,
   "disable_benchmark": false,
+  "offload_during_startup": true,
   "output_dir": "output/ltxvideo",
   "lora_type": "lycoris",
   "lycoris_config": "config/ltxvideo/lycoris_config.json",
@@ -411,7 +412,7 @@ Like other models, it is possible that the lowest VRAM utilisation can be attain
 - PyTorch: 2.6
 - Be sure to enable `--gradient_checkpointing` or nothing you do will stop it from OOMing
 
-**NOTE**: Pre-caching of VAE embeds and text encoder outputs may use more memory and still OOM. If so, text encoder quantisation and VAE tiling can be enabled.
+**NOTE**: Pre-caching of VAE embeds and text encoder outputs may use more memory and still OOM. If so, text encoder quantisation and VAE tiling can be enabled. Beyond these options, `--offload_during_startup=true` will help avoid competition between VAE and text encoder memory use.
 
 Speed was approximately 0.8 iterations per second on an M3 Max Macbook Pro.
 

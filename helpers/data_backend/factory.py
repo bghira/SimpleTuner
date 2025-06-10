@@ -1338,6 +1338,18 @@ def configure_multi_databackend(
                 data_backend_id=init_backend["id"],
                 retry_limit=3,  # some filesystems maybe take longer to make it available.
             )
+            if all_image_files is None:
+                from helpers.training import image_file_extensions
+
+                logger.debug("No image file cache available, retrieving fresh")
+                all_image_files = init_backend["data_backend"].list_files(
+                    instance_data_dir=init_backend["instance_data_dir"],
+                    file_extensions=image_file_extensions,
+                )
+                all_image_files = StateTracker.set_image_files(
+                    all_image_files, data_backend_id=init_backend["id"]
+                )
+
             init_backend["vaecache"].build_vae_cache_filename_map(
                 all_image_files=all_image_files
             )

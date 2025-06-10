@@ -124,7 +124,8 @@ class TestMetadataBackend(unittest.TestCase):
         self.metadata_backend.maximum_aspect_ratio = 1.25
         self.metadata_backend._enforce_max_aspect_ratio()
         self.assertEqual(
-            self.metadata_backend.aspect_ratio_bucket_indices, {"1.0": ["image1", "image2"]}
+            self.metadata_backend.aspect_ratio_bucket_indices,
+            {"1.0": ["image1", "image2"]},
         )
 
     def test_unbound_aspect_list(self):

@@ -161,6 +161,7 @@ Your config at the end will look like mine:
   "aspect_bucket_rounding": 2,
   "seed": 42,
   "minimum_image_size": 0,
+  "offload_during_startup": true,
   "disable_benchmark": false,
   "output_dir": "output/wan",
   "lora_type": "standard",
@@ -452,7 +453,7 @@ Wan 2.1 is sensitive to quantisation, and cannot be used with NF4 or INT4 curren
 - Be sure to enable `--gradient_checkpointing` or nothing you do will stop it from OOMing
 - Only train on images, or set `num_frames` to 1 for your video dataset
 
-**NOTE**: Pre-caching of VAE embeds and text encoder outputs may use more memory and still OOM. If so, text encoder quantisation and VAE tiling can be enabled. (Wan does not currently support VAE tiling/slicing)
+**NOTE**: Pre-caching of VAE embeds and text encoder outputs may use more memory and still OOM. As a result, `--offload_during_startup=true` is basically required. If so, text encoder quantisation and VAE tiling can be enabled. (Wan does not currently support VAE tiling/slicing)
 
 Speeds:
 - 665.8 sec/iter on an M3 Max Macbook Pro

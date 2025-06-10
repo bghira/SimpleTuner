@@ -144,6 +144,7 @@ Your config.json will look something like mine by the end:
     "num_eval_images": 1,
     "model_type": "lora",
     "model_family": "hidream",
+    "offload_during_startup": true,
     "mixed_precision": "bf16",
     "minimum_image_size": 0,
     "max_train_steps": 10000,
@@ -529,7 +530,7 @@ The lowest VRAM HiDream configuration is about 20-22G:
 - Use a tiny LoRA or Lycoris configuration (eg. LoRA rank 1 or Lokr factor 25)
 - Setting the environment variable `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` helps minimize VRAM usage when training multiple aspect ratios.
 
-**NOTE**: Pre-caching of VAE embeds and text encoder outputs may use more memory and still OOM. VAE tiling and slicing are enabled by default. If you see OOM, you might just be out of luck.
+**NOTE**: Pre-caching of VAE embeds and text encoder outputs may use more memory and still OOM. VAE tiling and slicing are enabled by default. If you see OOM, try enabling `offload_during_startup=true`; otherwise, you might just be out of luck.
 
 Speed was approximately 3 iterations per second on an NVIDIA 4090 using Pytorch 2.7 and CUDA 12.8
 
