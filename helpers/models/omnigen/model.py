@@ -41,7 +41,7 @@ class OmniGen(ImageModelFoundation):
         # we have to differently scale VAE inputs due to the patches.
         self.AUTOENCODER_SCALING_FACTOR *= 2
 
-    def get_transforms(self):
+    def get_transforms(self, dataset_type: str = "image"):
         from torchvision import transforms
 
         return transforms.Compose(
@@ -94,22 +94,28 @@ class OmniGen(ImageModelFoundation):
             device = batch["latents"].device
 
             # Sample t using OmniGen's approach (normal -> sigmoid)
-            u = torch.randn(
-                bsz, device=device
-            )  # Using randn instead of normal for simplicity
+            u = torch.normal(mean=0.0, std=1.0, size=(bsz,), device=device)
             t = 1.0 / (1.0 + torch.exp(-u))  # sigmoid transformation
 
-            # Replace the timesteps
-            batch["timesteps"] = t * 1000.0
+            # OmniGen uses timesteps from 0 to 1, NOT scaled by 1000
+            batch["timesteps"] = t  # Keep as 0-1 range
 
-            # Create noisy samples correctly for OmniGen's flow matching
+            # OmniGen doesn't use sigmas in the traditional sense
+            # They directly use t for interpolation
+            batch["sigmas"] = t  # For compatibility with base class
+
+            # Expand t to match latent dimensions
             t_view = t.view(-1, 1, 1, 1)
+
+            # Create noisy samples using OmniGen's formulation
+            # xt = t * x1 + (1-t) * x0
+            # where x1 = clean latents, x0 = noise
             batch["noisy_latents"] = (
                 t_view * batch["latents"].float()
                 + (1.0 - t_view) * batch["noise"].float()
             )
 
-            # For loss calculation later
+            # Store t for potential debugging
             batch["t"] = t
 
         return batch
@@ -150,7 +156,13 @@ class OmniGen(ImageModelFoundation):
         # Run the custom collator to collect latent features into a batch with padding and masks
         processed_data = self.processor.collator(all_features)
 
+        # Ensure timesteps are in 0-1 range for OmniGen
+        timesteps = prepared_batch["timesteps"]
+        if timesteps.max() > 1.0:
+            # If timesteps were scaled to 0-1000, scale back to 0-1
+            timesteps = timesteps / 1000.0
         # Then call the model
+
         model_out = self.model(
             hidden_states=processed_data["output_latents"].to(self.accelerator.device),
             timestep=prepared_batch["timesteps"].to(self.accelerator.device),
