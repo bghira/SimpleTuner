@@ -97,17 +97,22 @@ There, you will possibly need to modify the following variables:
 - `model_type` - Set this to `lora`.
 - `lora_type` - Set this to `lycoris`.
 - `model_family` - Set this to `auraflow`.
-- `model_flavour` - Set this to `v0.3`, or leave it unset to use the default model.
+- `model_flavour` - Set this to `pony`, or leave it unset to use the default model.
 - `output_dir` - Set this to the directory where you want to store your checkpoints and validation images. It's recommended to use a full path here.
 - `train_batch_size` - 1 to 4 should work for 24G card.
 - `validation_resolution` - You should set this to `1024x1024` or one of Auraflow's other supported resolutions.
-  - Other resolutions may be specified using commas to separate them: `1024x1024,1280x768,2048x2048`
+  - Other resolutions may be specified using commas to separate them: `1024x1024,1280x768,1536x1536`
   - Note that Auraflow's positional embeds are a bit strange and training with multi-scale images (multiple base resolutions) has an uncertain outcome.
 - `validation_guidance` - Use whatever you are used to selecting at inference time for Auraflow; a lower value around 3.5-4.0 makes more realistic results
 - `validation_num_inference_steps` - Use somewhere around 30-50
 - `use_ema` - setting this to `true` will greatly help obtain a more smoothed result alongside your main trained checkpoint.
 
 - `optimizer` - You can use any optimiser you are comfortable and familiar with, but we will use `optimi-lion` for this example.
+  - The author of Pony Flow recommends using `adamw_bf16` for the fewest issues and most stably reliable training results
+  - We're using Lion for this demonstration to help you see the model train more rapidly, but for long term runs, `adamw_bf16` will be a safe bet.
+- `learning_rate` - For Lion optimiser with Lycoris LoKr, a value of `4e-5` is a good starting point.
+  - If you went with `adamw_bf16`, you'll want the LR to be about 10x larger than this, or `2.5e-4`
+  - Smaller Lycoris/LoRA ranks will require **higher learning rates** and larger Lycoris/LoRA require **smaller learning rates**
 - `mixed_precision` - It's recommended to set this to `bf16` for the most efficient training configuration, or `no` for better results (but will consume more memory and be slower).
 - `gradient_checkpointing` - Disabling this will go the fastest, but limits your batch sizes. It is required to enable this to get the lowest VRAM usage.
 
@@ -418,21 +423,18 @@ quantize(pipeline.transformer, weights=qint8)
 freeze(pipeline.transformer)
 
 pipeline.to('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu') # the pipeline is already in its target precision level
-t5_embeds, llama_embeds, negative_t5_embeds, negative_llama_embeds, pooled_embeds, negative_pooled_embeds = pipeline.encode_prompt(
+t5_embeds, negative_t5_embeds, attention_mask, negative_attention_mask = pipeline.encode_prompt(
     prompt=prompt, prompt_2=prompt, prompt_3=prompt, prompt_4=prompt, num_images_per_prompt=1
 )
 # We'll nuke the text encoders to save memory.
 pipeline.text_encoder.to("meta")
 pipeline.text_encoder_2.to("meta")
 pipeline.text_encoder_3.to("meta")
-pipeline.text_encoder_4.to("meta")
 model_output = pipeline(
-    t5_prompt_embeds=t5_embeds,
-    llama_prompt_embeds=llama_embeds,
-    pooled_prompt_embeds=pooled_embeds,
-    negative_t5_prompt_embeds=negative_t5_embeds,
-    negative_llama_prompt_embeds=negative_llama_embeds,
-    negative_pooled_prompt_embeds=negative_pooled_embeds,
+    prompt_embeds=t5_embeds,
+    prompt_attention_mask=attention_mask,
+    negative_prompt_embeds=negative_t5_embeds,
+    negative_prompt_attention_mask=negative_attention_mask,
     num_inference_steps=30,
     generator=torch.Generator(device='cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu').manual_seed(42),
     width=1024,
@@ -448,7 +450,7 @@ model_output.save("output.png", format="PNG")
 
 ### Lowest VRAM config
 
-The lowest VRAM OmniGen configuration is about 20-22G:
+The lowest VRAM Auraflow configuration is about 20-22G:
 
 - OS: Ubuntu Linux 24
 - GPU: A single NVIDIA CUDA device (10G, 12G)
