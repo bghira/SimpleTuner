@@ -153,6 +153,18 @@ class Flux(ImageModelFoundation):
             )
         self.controlnet.to(self.accelerator.device, self.config.weight_dtype)
 
+    def requires_conditioning_latents(self) -> bool:
+        # Flux ControlNet requires latent inputs instead of pixels.
+        if self.config.controlnet or self.config.control:
+            return True
+        return False
+
+    def requires_conditioning_validation_inputs(self) -> bool:
+        # Whether this model / flavour requires conditioning inputs during validation.
+        if self.config.controlnet or self.config.control:
+            return True
+        return False
+
     def _format_text_embedding(self, text_embedding: torch.Tensor):
         """
         Models can optionally format the stored text embedding, eg. in a dict, or
