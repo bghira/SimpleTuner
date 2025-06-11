@@ -1096,9 +1096,6 @@ class Validation:
                         extra_validation_kwargs["image"] = extra_validation_kwargs[
                             "image"
                         ].resize(validation_resolution, Image.Resampling.LANCZOS)
-                        extra_validation_kwargs["control_image"] = (
-                            extra_validation_kwargs["image"]
-                        )
                         validation_resolution_width, validation_resolution_height = (
                             validation_resolution
                         )
@@ -1110,6 +1107,9 @@ class Validation:
                     raise ValueError(
                         "Validation input images are not supported for this model type."
                     )
+                extra_validation_kwargs["control_image"] = extra_validation_kwargs[
+                    "image"
+                ]
             else:
                 validation_resolution_width, validation_resolution_height = resolution
 
