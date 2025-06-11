@@ -183,6 +183,8 @@ class ModelFoundation(ABC):
 
     def requires_conditioning_dataset(self) -> bool:
         # Most models don't require a conditioning dataset.
+        if self.config.controlnet or self.config.control:
+            return True
         return False
 
     def requires_conditioning_latents(self) -> bool:
@@ -856,7 +858,7 @@ class ModelFoundation(ABC):
         if "watermark" in signature.parameters:
             pipeline_kwargs["watermark"] = None
         if load_base_model:
-            pipeline_kwargs[self.MODEL_TYPE.value] = self.unwrap_model()
+            pipeline_kwargs[self.MODEL_TYPE.value] = self.unwrap_model(model=self.model)
         else:
             pipeline_kwargs[self.MODEL_TYPE.value] = None
 
@@ -924,7 +926,7 @@ class ModelFoundation(ABC):
                     )
         if self.config.controlnet:
             if getattr(possibly_cached_pipeline, "controlnet", None) is None:
-                setattr(possibly_cached_pipeline, "controlnet", self.model)
+                setattr(possibly_cached_pipeline, "controlnet", self.controlnet)
 
         return possibly_cached_pipeline
 
