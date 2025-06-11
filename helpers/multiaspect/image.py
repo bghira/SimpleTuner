@@ -18,14 +18,6 @@ import numpy as np
 
 class MultiaspectImage:
     @staticmethod
-    def get_video_transforms(model: VideoModelFoundation):
-        return model.get_transforms()
-
-    @staticmethod
-    def get_image_transforms(model: ImageModelFoundation):
-        return model.get_transforms()
-
-    @staticmethod
     def _round_to_nearest_multiple(value, override_value: int = None):
         """Round a value to the nearest multiple."""
         multiple = override_value or StateTracker.get_args().aspect_bucket_alignment
