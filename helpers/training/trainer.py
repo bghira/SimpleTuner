@@ -1220,12 +1220,14 @@ class Trainer:
         )
         StateTracker.set_global_resume_step(self.state["global_resume_step"])
         if not self.config.resume_from_checkpoint:
+            logger.info(f"Not resuming from checkpoint.")
             return lr_scheduler
         if self.config.resume_from_checkpoint != "latest":
             path = os.path.basename(self.config.resume_from_checkpoint)
         else:
             # Get the most recent checkpoint
             path = self.checkpoint_state_latest(self.config.output_dir)
+            logger.info(f"Checking {path} for latest checkpoint.")
 
         if path is None:
             logger.info(
