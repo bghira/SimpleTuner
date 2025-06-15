@@ -1757,10 +1757,6 @@ class Trainer:
         prepared_batch,
         custom_timesteps: list = None,
     ):
-        if self.config.controlnet:
-            training_logger.debug(
-                f"Extra conditioning dtype: {getattr(prepared_batch['conditioning_pixel_values'] or prepared_batch['conditioning_latents'], 'dtype', None)}"
-            )
         if custom_timesteps is not None:
             timesteps = custom_timesteps
         if not self.config.disable_accelerator:
