@@ -806,9 +806,9 @@ class ModelFoundation(ABC):
         """
         pass
 
-    def set_prepared_model(self, model):
+    def set_prepared_model(self, model, base_model: bool = False):
         # after accelerate prepare, we'll set the model again.
-        if self.config.controlnet:
+        if self.config.controlnet and not base_model:
             self.controlnet = model
         else:
             self.model = model
@@ -823,9 +823,11 @@ class ModelFoundation(ABC):
         if "lora" in self.config.model_type:
             if self.model is not None:
                 self.model.requires_grad_(False)
+        if self.config.controlnet and self.controlnet is not None:
+            self.controlnet.train()
 
-    def get_trained_component(self):
-        return self.unwrap_model()
+    def get_trained_component(self, base_model: bool = False):
+        return self.unwrap_model(model=self.model if base_model else None)
 
     def _load_pipeline(
         self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True
