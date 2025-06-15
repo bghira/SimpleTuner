@@ -59,7 +59,7 @@ For multi-node distributed training, [this guide](/documentation/DISTRIBUTED.md)
 - Quantised NF4/INT8/FP8 LoRA training, using low-precision base model to reduce VRAM consumption.
 - Optional EMA (Exponential moving average) weight network to counteract model overfitting and improve training stability.
 - Train directly from an S3-compatible storage provider, eliminating the requirement for expensive local storage. (Tested with Cloudflare R2 and Wasabi S3)
-- For only SDXL and SD 1.x/2.x, full [ControlNet model training](/documentation/CONTROLNET.md) (not ControlLoRA or ControlLite)
+- For SDXL, SD 1.x/2.x, and Flux, full or LoRA based [ControlNet model training](/documentation/CONTROLNET.md) (not ControlLite)
 - Training [Mixture of Experts](/documentation/MIXTURE_OF_EXPERTS.md) for lightweight, high-quality diffusion models
 - [Masked loss training](/documentation/DREAMBOOTH.md#masked-loss) for superior convergence and reduced overfitting on any model
 - Strong [prior regularisation](/documentation/DATALOADER.md#is_regularisation_data) training support for LyCORIS models
@@ -83,12 +83,13 @@ See [hardware requirements](#hidream) or the [quickstart guide](/documentation/q
 
 Full training support for Flux.1 is included:
 
+- ControlNet training via full-rank, LoRA or Lycoris
 - Classifier-free guidance training
   - Leave it disabled and preserve the dev model's distillation qualities
   - Or, reintroduce CFG to the model and improve its creativity at the cost of inference speed and training time.
 - (optional) T5 attention masked training for superior fine details and generalisation capabilities
 - LoRA or full tuning via DeepSpeed ZeRO on a single GPU
-- Quantise the base model using `--base_model_precision` to `int8-quanto` or `fp8-quanto` for major memory savings
+- Quantise the base model using `--base_model_precision` to `int8-quanto` or `fp8-torchao` for major memory savings
 
 See [hardware requirements](#flux1-dev-schnell) or the [quickstart guide](/documentation/quickstart/FLUX.md).
 
