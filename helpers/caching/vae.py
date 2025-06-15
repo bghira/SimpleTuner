@@ -59,14 +59,16 @@ def prepare_sample(
                 if cond_id == data_backend_id:
                     # We found a conditioning dataset.
                     train_data_backend = StateTracker.get_data_backend(train_id)
-                    train_sample_path = training_sample.training_sample_path(training_dataset_id=train_id)
+                    train_sample_path = training_sample.training_sample_path(
+                        training_dataset_id=train_id
+                    )
                     cond_meta = StateTracker.get_metadata_by_filepath(
                         conditioning_sample_path, data_backend_id=cond_id
                     )
                     if not cond_meta:
-                        train_meta = train_data_backend["metadata_backend"].get_metadata_by_filepath(
-                            train_sample_path
-                        )
+                        train_meta = train_data_backend[
+                            "metadata_backend"
+                        ].get_metadata_by_filepath(train_sample_path)
                         prepared_sample = training_sample.prepare_like(
                             TrainingSample(
                                 image=None,
@@ -882,7 +884,9 @@ class VAECache(WebhookMixin):
                             attribute="crop_coordinates",
                         )
                     )
-                    if current_crop_coordinates is not None and tuple(current_crop_coordinates) != tuple(crop_coordinates):
+                    if current_crop_coordinates is not None and tuple(
+                        current_crop_coordinates
+                    ) != tuple(crop_coordinates):
                         logger.debug(
                             f"Should be updating crop_coordinates for {filepath} from {current_crop_coordinates} to {crop_coordinates}. But we won't.."
                         )
