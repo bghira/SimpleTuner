@@ -330,6 +330,8 @@ class ModelFoundation(ABC):
             # Compare unwrapped type to main model's unwrapped type
             if isinstance(unwrapped_model, type(self.unwrap_model(self.model))):
                 denoiser = model  # e.g., the "transformer" or "unet"
+            elif isinstance(unwrapped_model, type(self.unwrap_model(self.controlnet))):
+                denoiser = model  # e.g., the "controlnet"
             # If your text_encoders exist:
             elif (
                 getattr(self, "text_encoders", None)
