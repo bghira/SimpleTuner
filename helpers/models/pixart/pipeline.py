@@ -17,8 +17,11 @@ import inspect
 import re
 import urllib.parse as ul
 from typing import Callable, List, Optional, Tuple, Union
-
+from diffusers.loaders import LoraLoaderMixin
+from helpers.models.pixart.controlnet import PixArtSigmaControlNetAdapterModel, PixArtSigmaControlNetTransformerModel
 import torch
+import numpy as np
+import PIL
 from transformers import T5EncoderModel, T5Tokenizer
 
 from diffusers.image_processor import (
@@ -206,7 +209,7 @@ def retrieve_timesteps(
     return timesteps, num_inference_steps
 
 
-class PixArtSigmaPipeline(DiffusionPipeline):
+class PixArtSigmaPipeline(DiffusionPipeline, LoraLoaderMixin):
     r"""
     Pipeline for text-to-image generation using PixArt-Sigma.
     """
@@ -2147,6 +2150,754 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
 
                 if XLA_AVAILABLE:
                     xm.mark_step()
+
+        if not output_type == "latent":
+            image = self.vae.decode(
+                latents / self.vae.config.scaling_factor, return_dict=False
+            )[0]
+            if use_resolution_binning:
+                image = self.image_processor.resize_and_crop_tensor(
+                    image, orig_width, orig_height
+                )
+        else:
+            image = latents
+
+        if not output_type == "latent":
+            image = self.image_processor.postprocess(image, output_type=output_type)
+
+        # Offload all models
+        self.maybe_free_model_hooks()
+
+        if not return_dict:
+            return (image,)
+
+        return ImagePipelineOutput(images=image)
+
+
+class PixArtSigmaControlNetPipeline(DiffusionPipeline):
+    """
+    Pipeline for text-to-image generation using PixArt-Sigma with ControlNet.
+    """
+
+    bad_punct_regex = re.compile(
+        r"["
+        + "#®•©™&@·º½¾¿¡§~"
+        + r"\)"
+        + r"\("
+        + r"\]"
+        + r"\["
+        + r"\}"
+        + r"\{"
+        + r"\|"
+        + "\\"
+        + r"\/"
+        + r"\*"
+        + r"]{1,}"
+    )  # noqa
+
+    _optional_components = ["tokenizer", "text_encoder"]
+    model_cpu_offload_seq = "text_encoder->transformer->vae"
+
+    def __init__(
+        self,
+        tokenizer: T5Tokenizer,
+        text_encoder: T5EncoderModel,
+        vae: AutoencoderKL,
+        transformer: PixArtTransformer2DModel,
+        controlnet: Union[PixArtSigmaControlNetAdapterModel, PixArtSigmaControlNetTransformerModel],
+        scheduler: KarrasDiffusionSchedulers,
+    ):
+        super().__init__()
+
+        # Check if controlnet is already a wrapper or just the adapter
+        from helpers.models.pixart.controlnet import (
+            PixArtSigmaControlNetTransformerModel,
+            PixArtSigmaControlNetAdapterModel,
+        )
+
+        if isinstance(controlnet, PixArtSigmaControlNetTransformerModel):
+            # Already wrapped, use it directly
+            controlnet_transformer = controlnet
+            # Extract the adapter for separate registration
+            controlnet_adapter = controlnet.controlnet
+        elif isinstance(controlnet, PixArtSigmaControlNetAdapterModel):
+            # Need to create wrapper
+            controlnet_transformer = PixArtSigmaControlNetTransformerModel(
+                transformer=transformer,
+                controlnet=controlnet,
+                blocks_num=controlnet.num_layers,
+            )
+            controlnet_adapter = controlnet
+        else:
+            raise ValueError(
+                f"controlnet must be either PixArtSigmaControlNetAdapterModel or "
+                f"PixArtSigmaControlNetTransformerModel, got {type(controlnet)}"
+            )
+
+        self.register_modules(
+            tokenizer=tokenizer,
+            text_encoder=text_encoder,
+            vae=vae,
+            transformer=controlnet_transformer,  # Use the wrapper
+            controlnet=controlnet_adapter,  # Register adapter for compatibility
+            scheduler=scheduler,
+        )
+
+        self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
+        self.image_processor = PixArtImageProcessor(
+            vae_scale_factor=self.vae_scale_factor
+        )
+        self.control_image_processor = PixArtImageProcessor(
+            vae_scale_factor=self.vae_scale_factor
+        )
+
+    def encode_prompt(
+        self,
+        prompt: Union[str, List[str]],
+        do_classifier_free_guidance: bool = True,
+        negative_prompt: str = "",
+        num_images_per_prompt: int = 1,
+        device: Optional[torch.device] = None,
+        prompt_embeds: Optional[torch.Tensor] = None,
+        negative_prompt_embeds: Optional[torch.Tensor] = None,
+        prompt_attention_mask: Optional[torch.Tensor] = None,
+        negative_prompt_attention_mask: Optional[torch.Tensor] = None,
+        clean_caption: bool = False,
+        max_sequence_length: int = 300,
+        **kwargs,
+    ):
+        if "mask_feature" in kwargs:
+            deprecation_message = "The use of `mask_feature` is deprecated. It is no longer used in any computation and that doesn't affect the end results. It will be removed in a future version."
+            deprecate("mask_feature", "1.0.0", deprecation_message, standard_warn=False)
+
+        if device is None:
+            device = self._execution_device
+
+        if prompt is not None and isinstance(prompt, str):
+            batch_size = 1
+        elif prompt is not None and isinstance(prompt, list):
+            batch_size = len(prompt)
+        else:
+            batch_size = prompt_embeds.shape[0]
+
+        max_length = max_sequence_length
+
+        if prompt_embeds is None:
+            prompt = self._text_preprocessing(prompt, clean_caption=clean_caption)
+            text_inputs = self.tokenizer(
+                prompt,
+                padding="max_length",
+                max_length=max_length,
+                truncation=True,
+                add_special_tokens=True,
+                return_tensors="pt",
+            )
+            text_input_ids = text_inputs.input_ids
+            untruncated_ids = self.tokenizer(
+                prompt, padding="longest", return_tensors="pt"
+            ).input_ids
+
+            if untruncated_ids.shape[-1] >= text_input_ids.shape[
+                -1
+            ] and not torch.equal(text_input_ids, untruncated_ids):
+                removed_text = self.tokenizer.batch_decode(
+                    untruncated_ids[:, max_length - 1 : -1]
+                )
+                logger.warning(
+                    "The following part of your input was truncated because T5 can only handle sequences up to"
+                    f" {max_length} tokens: {removed_text}"
+                )
+
+            prompt_attention_mask = text_inputs.attention_mask
+            prompt_attention_mask = prompt_attention_mask.to(device)
+
+            prompt_embeds = self.text_encoder(
+                text_input_ids.to(device), attention_mask=prompt_attention_mask
+            )
+            prompt_embeds = prompt_embeds[0]
+
+        if self.text_encoder is not None:
+            dtype = self.text_encoder.dtype
+        elif self.transformer is not None:
+            dtype = self.transformer.dtype
+        else:
+            dtype = None
+
+        prompt_embeds = prompt_embeds.to(dtype=dtype, device=device)
+
+        bs_embed, seq_len, _ = prompt_embeds.shape
+        prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
+        prompt_embeds = prompt_embeds.view(
+            bs_embed * num_images_per_prompt, seq_len, -1
+        )
+        prompt_attention_mask = prompt_attention_mask.view(bs_embed, -1)
+        prompt_attention_mask = prompt_attention_mask.repeat(num_images_per_prompt, 1)
+
+        if do_classifier_free_guidance and negative_prompt_embeds is None:
+            uncond_tokens = (
+                [negative_prompt] * batch_size
+                if isinstance(negative_prompt, str)
+                else negative_prompt
+            )
+            uncond_tokens = self._text_preprocessing(
+                uncond_tokens, clean_caption=clean_caption
+            )
+            max_length = prompt_embeds.shape[1]
+            uncond_input = self.tokenizer(
+                uncond_tokens,
+                padding="max_length",
+                max_length=max_length,
+                truncation=True,
+                return_attention_mask=True,
+                add_special_tokens=True,
+                return_tensors="pt",
+            )
+            negative_prompt_attention_mask = uncond_input.attention_mask
+            negative_prompt_attention_mask = negative_prompt_attention_mask.to(device)
+
+            negative_prompt_embeds = self.text_encoder(
+                uncond_input.input_ids.to(device),
+                attention_mask=negative_prompt_attention_mask,
+            )
+            negative_prompt_embeds = negative_prompt_embeds[0]
+
+        if do_classifier_free_guidance:
+            seq_len = negative_prompt_embeds.shape[1]
+            negative_prompt_embeds = negative_prompt_embeds.to(
+                dtype=dtype, device=device
+            )
+            negative_prompt_embeds = negative_prompt_embeds.repeat(
+                1, num_images_per_prompt, 1
+            )
+            negative_prompt_embeds = negative_prompt_embeds.view(
+                batch_size * num_images_per_prompt, seq_len, -1
+            )
+
+            negative_prompt_attention_mask = negative_prompt_attention_mask.view(
+                bs_embed, -1
+            )
+            negative_prompt_attention_mask = negative_prompt_attention_mask.repeat(
+                num_images_per_prompt, 1
+            )
+        else:
+            negative_prompt_embeds = None
+            negative_prompt_attention_mask = None
+
+        return (
+            prompt_embeds,
+            prompt_attention_mask,
+            negative_prompt_embeds,
+            negative_prompt_attention_mask,
+        )
+
+    def prepare_extra_step_kwargs(self, generator, eta):
+        accepts_eta = "eta" in set(
+            inspect.signature(self.scheduler.step).parameters.keys()
+        )
+        extra_step_kwargs = {}
+        if accepts_eta:
+            extra_step_kwargs["eta"] = eta
+
+        accepts_generator = "generator" in set(
+            inspect.signature(self.scheduler.step).parameters.keys()
+        )
+        if accepts_generator:
+            extra_step_kwargs["generator"] = generator
+        return extra_step_kwargs
+
+    def check_inputs(
+        self,
+        prompt,
+        height,
+        width,
+        negative_prompt,
+        callback_steps,
+        image=None,
+        prompt_embeds=None,
+        negative_prompt_embeds=None,
+        prompt_attention_mask=None,
+        negative_prompt_attention_mask=None,
+    ):
+        if height % 8 != 0 or width % 8 != 0:
+            raise ValueError(
+                f"`height` and `width` have to be divisible by 8 but are {height} and {width}."
+            )
+
+        if (callback_steps is None) or (
+            callback_steps is not None
+            and (not isinstance(callback_steps, int) or callback_steps <= 0)
+        ):
+            raise ValueError(
+                f"`callback_steps` has to be a positive integer but is {callback_steps} of type"
+                f" {type(callback_steps)}."
+            )
+
+        if prompt is not None and prompt_embeds is not None:
+            raise ValueError(
+                f"Cannot forward both `prompt`: {prompt} and `prompt_embeds`: {prompt_embeds}. Please make sure to"
+                " only forward one of the two."
+            )
+        elif prompt is None and prompt_embeds is None:
+            raise ValueError(
+                "Provide either `prompt` or `prompt_embeds`. Cannot leave both `prompt` and `prompt_embeds` undefined."
+            )
+        elif prompt is not None and (
+            not isinstance(prompt, str) and not isinstance(prompt, list)
+        ):
+            raise ValueError(
+                f"`prompt` has to be of type `str` or `list` but is {type(prompt)}"
+            )
+
+        if prompt is not None and negative_prompt_embeds is not None:
+            raise ValueError(
+                f"Cannot forward both `prompt`: {prompt} and `negative_prompt_embeds`:"
+                f" {negative_prompt_embeds}. Please make sure to only forward one of the two."
+            )
+
+        if negative_prompt is not None and negative_prompt_embeds is not None:
+            raise ValueError(
+                f"Cannot forward both `negative_prompt`: {negative_prompt} and `negative_prompt_embeds`:"
+                f" {negative_prompt_embeds}. Please make sure to only forward one of the two."
+            )
+
+        if prompt_embeds is not None and prompt_attention_mask is None:
+            raise ValueError(
+                "Must provide `prompt_attention_mask` when specifying `prompt_embeds`."
+            )
+
+        if (
+            negative_prompt_embeds is not None
+            and negative_prompt_attention_mask is None
+        ):
+            raise ValueError(
+                "Must provide `negative_prompt_attention_mask` when specifying `negative_prompt_embeds`."
+            )
+
+        if prompt_embeds is not None and negative_prompt_embeds is not None:
+            if prompt_embeds.shape != negative_prompt_embeds.shape:
+                raise ValueError(
+                    "`prompt_embeds` and `negative_prompt_embeds` must have the same shape when passed directly, but"
+                    f" got: `prompt_embeds` {prompt_embeds.shape} != `negative_prompt_embeds`"
+                    f" {negative_prompt_embeds.shape}."
+                )
+            if prompt_attention_mask.shape != negative_prompt_attention_mask.shape:
+                raise ValueError(
+                    "`prompt_attention_mask` and `negative_prompt_attention_mask` must have the same shape when passed directly, but"
+                    f" got: `prompt_attention_mask` {prompt_attention_mask.shape} != `negative_prompt_attention_mask`"
+                    f" {negative_prompt_attention_mask.shape}."
+                )
+
+        if image is not None:
+            self.check_image(image, prompt, prompt_embeds)
+
+    def check_image(self, image, prompt, prompt_embeds):
+        image_is_pil = isinstance(image, PIL.Image.Image)
+        image_is_tensor = isinstance(image, torch.Tensor)
+        image_is_np = isinstance(image, np.ndarray)
+        image_is_pil_list = isinstance(image, list) and isinstance(
+            image[0], PIL.Image.Image
+        )
+        image_is_tensor_list = isinstance(image, list) and isinstance(
+            image[0], torch.Tensor
+        )
+        image_is_np_list = isinstance(image, list) and isinstance(image[0], np.ndarray)
+
+        if (
+            not image_is_pil
+            and not image_is_tensor
+            and not image_is_np
+            and not image_is_pil_list
+            and not image_is_tensor_list
+            and not image_is_np_list
+        ):
+            raise TypeError(
+                f"image must be passed and be one of PIL image, numpy array, torch tensor, list of PIL images, list of numpy arrays or list of torch tensors, but is {type(image)}"
+            )
+
+        if image_is_pil:
+            image_batch_size = 1
+        else:
+            image_batch_size = len(image)
+
+        if prompt is not None and isinstance(prompt, str):
+            prompt_batch_size = 1
+        elif prompt is not None and isinstance(prompt, list):
+            prompt_batch_size = len(prompt)
+        elif prompt_embeds is not None:
+            prompt_batch_size = prompt_embeds.shape[0]
+
+        if image_batch_size != 1 and image_batch_size != prompt_batch_size:
+            raise ValueError(
+                f"If image batch size is not 1, image batch size must be same as prompt batch size. image batch size: {image_batch_size}, prompt batch size: {prompt_batch_size}"
+            )
+
+    def _text_preprocessing(self, text, clean_caption=False):
+        if clean_caption and not is_bs4_available():
+            logger.warning(
+                BACKENDS_MAPPING["bs4"][-1].format("Setting `clean_caption=True`")
+            )
+            logger.warning("Setting `clean_caption` to False...")
+            clean_caption = False
+
+        if clean_caption and not is_ftfy_available():
+            logger.warning(
+                BACKENDS_MAPPING["ftfy"][-1].format("Setting `clean_caption=True`")
+            )
+            logger.warning("Setting `clean_caption` to False...")
+            clean_caption = False
+
+        if not isinstance(text, (tuple, list)):
+            text = [text]
+
+        def process(text: str):
+            if clean_caption:
+                text = self._clean_caption(text)
+                text = self._clean_caption(text)
+            else:
+                text = text.lower().strip()
+            return text
+
+        return [process(t) for t in text]
+
+    def _clean_caption(self, caption):
+        # Implementation identical to PixArtSigmaPipeline
+        caption = str(caption)
+        caption = ul.unquote_plus(caption)
+        caption = caption.strip().lower()
+        caption = re.sub("<person>", "person", caption)
+
+        # Remove URLs
+        caption = re.sub(
+            r"\b((?:https?:(?:\/{1,3}|[a-zA-Z0-9%])|[a-zA-Z0-9.\-]+[.](?:com|co|ru|net|org|edu|gov|it)[\w/-]*\b\/?(?!@)))",
+            "",
+            caption,
+        )
+        caption = re.sub(
+            r"\b((?:www:(?:\/{1,3}|[a-zA-Z0-9%])|[a-zA-Z0-9.\-]+[.](?:com|co|ru|net|org|edu|gov|it)[\w/-]*\b\/?(?!@)))",
+            "",
+            caption,
+        )
+
+        # HTML
+        caption = BeautifulSoup(caption, features="html.parser").text
+
+        # @<nickname>
+        caption = re.sub(r"@[\w\d]+\b", "", caption)
+
+        return caption.strip()
+
+    def prepare_image(
+        self,
+        image,
+        width,
+        height,
+        batch_size,
+        num_images_per_prompt,
+        device,
+        dtype,
+        do_classifier_free_guidance=False,
+    ):
+        image = self.control_image_processor.preprocess(
+            image, height=height, width=width
+        ).to(dtype=torch.float32)
+        image_batch_size = image.shape[0]
+
+        if image_batch_size == 1:
+            repeat_by = batch_size
+        else:
+            repeat_by = num_images_per_prompt
+
+        image = image.repeat_interleave(repeat_by, dim=0)
+        image = image.to(device=device, dtype=dtype)
+
+        if do_classifier_free_guidance:
+            image = torch.cat([image] * 2)
+
+        return image
+
+    def prepare_image_latents(self, image, device, dtype):
+        image = image.to(device=device, dtype=dtype)
+        image_latents = self.vae.encode(image).latent_dist.sample()
+        image_latents = image_latents * self.vae.config.scaling_factor
+        return image_latents
+
+    def prepare_latents(
+        self,
+        batch_size,
+        num_channels_latents,
+        height,
+        width,
+        dtype,
+        device,
+        generator,
+        latents=None,
+    ):
+        shape = (
+            batch_size,
+            num_channels_latents,
+            int(height) // self.vae_scale_factor,
+            int(width) // self.vae_scale_factor,
+        )
+        if isinstance(generator, list) and len(generator) != batch_size:
+            raise ValueError(
+                f"You have passed a list of generators of length {len(generator)}, but requested an effective batch"
+                f" size of {batch_size}. Make sure the batch size matches the length of the generators."
+            )
+
+        if latents is None:
+            latents = randn_tensor(
+                shape, generator=generator, device=device, dtype=dtype
+            )
+        else:
+            latents = latents.to(device)
+
+        latents = latents * self.scheduler.init_noise_sigma
+        return latents
+
+    @torch.no_grad()
+    def __call__(
+        self,
+        prompt: Union[str, List[str]] = None,
+        image: PipelineImageInput = None,
+        negative_prompt: str = "",
+        num_inference_steps: int = 20,
+        timesteps: List[int] = None,
+        sigmas: List[float] = None,
+        guidance_scale: float = 4.5,
+        num_images_per_prompt: Optional[int] = 1,
+        height: Optional[int] = None,
+        width: Optional[int] = None,
+        eta: float = 0.0,
+        generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
+        latents: Optional[torch.Tensor] = None,
+        prompt_embeds: Optional[torch.Tensor] = None,
+        prompt_attention_mask: Optional[torch.Tensor] = None,
+        negative_prompt_embeds: Optional[torch.Tensor] = None,
+        negative_prompt_attention_mask: Optional[torch.Tensor] = None,
+        controlnet_conditioning_scale: Union[float, List[float]] = 1.0,
+        control_guidance_start: float = 0.0,
+        control_guidance_end: float = 1.0,
+        output_type: Optional[str] = "pil",
+        return_dict: bool = True,
+        callback: Optional[Callable[[int, int, torch.Tensor], None]] = None,
+        callback_steps: int = 1,
+        clean_caption: bool = True,
+        use_resolution_binning: bool = True,
+        max_sequence_length: int = 300,
+        **kwargs,
+    ) -> Union[ImagePipelineOutput, Tuple]:
+        """
+        Function invoked when calling the pipeline for generation.
+        """
+        # 1. Check inputs
+        height = height or self.transformer.transformer.config.sample_size * self.vae_scale_factor
+        width = width or self.transformer.transformer.config.sample_size * self.vae_scale_factor
+
+        if use_resolution_binning:
+            if self.transformer.transformer.config.sample_size == 256:
+                aspect_ratio_bin = ASPECT_RATIO_2048_BIN
+            elif self.transformer.transformer.config.sample_size == 128:
+                aspect_ratio_bin = ASPECT_RATIO_1024_BIN
+            elif self.transformer.transformer.config.sample_size == 64:
+                aspect_ratio_bin = ASPECT_RATIO_512_BIN
+            elif self.transformer.transformer.config.sample_size == 32:
+                aspect_ratio_bin = ASPECT_RATIO_256_BIN
+            else:
+                raise ValueError("Invalid sample size")
+            orig_height, orig_width = height, width
+            height, width = self.image_processor.classify_height_width_bin(
+                height, width, ratios=aspect_ratio_bin
+            )
+
+        self.check_inputs(
+            prompt,
+            height,
+            width,
+            negative_prompt,
+            callback_steps,
+            image,
+            prompt_embeds,
+            negative_prompt_embeds,
+            prompt_attention_mask,
+            negative_prompt_attention_mask,
+        )
+
+        # 2. Define call parameters
+        if prompt is not None and isinstance(prompt, str):
+            batch_size = 1
+        elif prompt is not None and isinstance(prompt, list):
+            batch_size = len(prompt)
+        else:
+            batch_size = prompt_embeds.shape[0]
+
+        device = self._execution_device
+        do_classifier_free_guidance = guidance_scale > 1.0
+
+        # 3. Encode input prompt
+        (
+            prompt_embeds,
+            prompt_attention_mask,
+            negative_prompt_embeds,
+            negative_prompt_attention_mask,
+        ) = self.encode_prompt(
+            prompt,
+            do_classifier_free_guidance,
+            negative_prompt=negative_prompt,
+            num_images_per_prompt=num_images_per_prompt,
+            device=device,
+            prompt_embeds=prompt_embeds,
+            negative_prompt_embeds=negative_prompt_embeds,
+            prompt_attention_mask=prompt_attention_mask,
+            negative_prompt_attention_mask=negative_prompt_attention_mask,
+            clean_caption=clean_caption,
+            max_sequence_length=max_sequence_length,
+        )
+
+        if do_classifier_free_guidance:
+            prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
+            prompt_attention_mask = torch.cat(
+                [negative_prompt_attention_mask, prompt_attention_mask], dim=0
+            )
+
+        # 4. Prepare timesteps
+        timesteps, num_inference_steps = retrieve_timesteps(
+            self.scheduler, num_inference_steps, device, timesteps, sigmas
+        )
+
+        # 4.1 Prepare control image
+        control_image_latents = None
+        if image is not None:
+            image = self.prepare_image(
+                image=image,
+                width=width,
+                height=height,
+                batch_size=batch_size * num_images_per_prompt,
+                num_images_per_prompt=num_images_per_prompt,
+                device=device,
+                dtype=prompt_embeds.dtype,
+                do_classifier_free_guidance=do_classifier_free_guidance,
+            )
+            # Convert to latents
+            control_image_latents = self.prepare_image_latents(
+                image, device, prompt_embeds.dtype
+            )
+
+        # 5. Prepare latents
+        latent_channels = self.transformer.transformer.config.in_channels
+        latents = self.prepare_latents(
+            batch_size * num_images_per_prompt,
+            latent_channels,
+            height,
+            width,
+            prompt_embeds.dtype,
+            device,
+            generator,
+            latents,
+        )
+
+        # 6. Prepare extra step kwargs
+        extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
+
+        # 6.1 Prepare added conditions (PixArt Sigma specific)
+        added_cond_kwargs = {"resolution": None, "aspect_ratio": None}
+
+        # 6.2 Determine which timesteps to apply controlnet
+        # Convert start/end to timestep indices
+        control_start_step = int(num_inference_steps * control_guidance_start)
+        control_end_step = int(num_inference_steps * control_guidance_end)
+
+        # 7. Denoising loop
+        num_warmup_steps = max(
+            len(timesteps) - num_inference_steps * self.scheduler.order, 0
+        )
+
+        with self.progress_bar(total=num_inference_steps) as progress_bar:
+            for i, t in enumerate(timesteps):
+                # Check if we should apply controlnet at this timestep
+                apply_control = control_start_step <= i < control_end_step
+                
+                latent_model_input = (
+                    torch.cat([latents] * 2) if do_classifier_free_guidance else latents
+                )
+                latent_model_input = self.scheduler.scale_model_input(
+                    latent_model_input, t
+                )
+
+                current_timestep = t
+                if not torch.is_tensor(current_timestep):
+                    is_mps = latent_model_input.device.type == "mps"
+                    if isinstance(current_timestep, float):
+                        dtype = torch.float32 if is_mps else torch.float64
+                    else:
+                        dtype = torch.int32 if is_mps else torch.int64
+                    current_timestep = torch.tensor(
+                        [current_timestep],
+                        dtype=dtype,
+                        device=latent_model_input.device,
+                    )
+                elif len(current_timestep.shape) == 0:
+                    current_timestep = current_timestep[None].to(
+                        latent_model_input.device
+                    )
+                current_timestep = current_timestep.expand(latent_model_input.shape[0])
+
+                # FIXED: Simplified controlnet prediction
+                if apply_control and control_image_latents is not None:
+                    # Apply conditioning scale to control latents
+                    scaled_control_latents = control_image_latents * controlnet_conditioning_scale
+                    
+                    # The wrapper model handles everything internally
+                    noise_pred = self.transformer(
+                        latent_model_input,
+                        encoder_hidden_states=prompt_embeds,
+                        encoder_attention_mask=prompt_attention_mask,
+                        timestep=current_timestep,
+                        controlnet_cond=scaled_control_latents,
+                        added_cond_kwargs=added_cond_kwargs,
+                        return_dict=False,
+                    )[0]
+                else:
+                    # Regular forward pass without controlnet
+                    noise_pred = self.transformer(
+                        latent_model_input,
+                        encoder_hidden_states=prompt_embeds,
+                        encoder_attention_mask=prompt_attention_mask,
+                        timestep=current_timestep,
+                        controlnet_cond=None,  # No control conditioning
+                        added_cond_kwargs=added_cond_kwargs,
+                        return_dict=False,
+                    )[0]
+
+                # perform guidance
+                if do_classifier_free_guidance:
+                    noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                    noise_pred = noise_pred_uncond + guidance_scale * (
+                        noise_pred_text - noise_pred_uncond
+                    )
+
+                # learned sigma
+                if self.transformer.transformer.config.out_channels // 2 == latent_channels:
+                    noise_pred = noise_pred.chunk(2, dim=1)[0]
+
+                # compute previous image: x_t -> x_t-1
+                if num_inference_steps == 1:
+                    # For DMD one step sampling
+                    latents = self.scheduler.step(
+                        noise_pred, t, latents, **extra_step_kwargs
+                    ).pred_original_sample
+                else:
+                    latents = self.scheduler.step(
+                        noise_pred, t, latents, **extra_step_kwargs, return_dict=False
+                    )[0]
+
+                # call the callback, if provided
+                if i == len(timesteps) - 1 or (
+                    (i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0
+                ):
+                    progress_bar.update()
+                    if callback is not None and i % callback_steps == 0:
+                        step_idx = i // getattr(self.scheduler, "order", 1)
+                        callback(step_idx, t, latents)
 
         if not output_type == "latent":
             image = self.vae.decode(
