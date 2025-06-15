@@ -51,24 +51,28 @@ def prepare_sample(
     is_cond = data_backend_id in StateTracker.get_conditioning_mappings().values()
 
     if is_cond:
-        # If this VAECache is attached to a *conditioning* dataset, make sure
-        # the geometry matches its training counterpart.  The counterpart’s
-        # metadata is already stored, so we can derive it straight away.
+        # On-demand VAE caching for conditioning inputs can get complicated.
         if data_backend_id in StateTracker.get_conditioning_mappings().values():
+            conditioning_sample_path = training_sample.image_path()
             # locate the partner backend id
             for train_id, cond_id in StateTracker.get_conditioning_mappings().items():
                 if cond_id == data_backend_id:
-                    partner_path = training_sample.image_path()
-                    train_meta = StateTracker.get_metadata_by_filepath(
-                        partner_path, data_backend_id=train_id
+                    # We found a conditioning dataset.
+                    train_data_backend = StateTracker.get_data_backend(train_id)
+                    train_sample_path = training_sample.training_sample_path(training_dataset_id=train_id)
+                    cond_meta = StateTracker.get_metadata_by_filepath(
+                        conditioning_sample_path, data_backend_id=cond_id
                     )
-                    if not train_meta:
-                        training_sample.prepare_like(
+                    if not cond_meta:
+                        train_meta = train_data_backend["metadata_backend"].get_metadata_by_filepath(
+                            train_sample_path
+                        )
+                        prepared_sample = training_sample.prepare_like(
                             TrainingSample(
                                 image=None,
                                 data_backend_id=train_id,
                                 image_metadata=train_meta,
-                                image_path=partner_path,
+                                image_path=train_sample_path,
                                 model=model,
                             )
                         )
@@ -77,7 +81,7 @@ def prepare_sample(
                         # since the metadata scan built an element for this.
                         # a metadata object will exist for conditioning samples that
                         # have their dataset configured to operate somewhat independently.
-                        training_sample.prepare()
+                        prepared_sample = training_sample.prepare()
     else:
         # If this VAECache is attached to a *training* dataset, we prepare the
         # sample for training, which includes cropping and resizing.
@@ -878,7 +882,7 @@ class VAECache(WebhookMixin):
                             attribute="crop_coordinates",
                         )
                     )
-                    if tuple(current_crop_coordinates) != tuple(crop_coordinates):
+                    if current_crop_coordinates is not None and tuple(current_crop_coordinates) != tuple(crop_coordinates):
                         logger.debug(
                             f"Should be updating crop_coordinates for {filepath} from {current_crop_coordinates} to {crop_coordinates}. But we won't.."
                         )
