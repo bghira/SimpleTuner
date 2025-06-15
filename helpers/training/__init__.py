@@ -156,3 +156,26 @@ def steps_remaining_in_epoch(current_step: int, steps_per_epoch: int) -> int:
     """
     remaining_steps = steps_per_epoch - (current_step % steps_per_epoch)
     return remaining_steps
+
+
+def trainable_parameter_count(trainable_parameters):
+    """
+    Convert parameter count to human-readable format.
+
+    Args:
+        num_params (int): Number of trainable parameters
+
+    Returns:
+        str: Formatted string like '1.01M', '2.34B', etc.
+    """
+    num_params = sum(p.numel() for p in trainable_parameters)
+    if num_params < 1000:
+        return str(num_params)
+    elif num_params < 1_000_000:
+        return f"{num_params / 1000:.2f}K".rstrip("0").rstrip(".")
+    elif num_params < 1_000_000_000:
+        return f"{num_params / 1_000_000:.2f}M".rstrip("0").rstrip(".")
+    elif num_params < 1_000_000_000_000:
+        return f"{num_params / 1_000_000_000:.2f}B".rstrip("0").rstrip(".")
+    else:
+        return f"{num_params / 1_000_000_000_000:.2f}T".rstrip("0").rstrip(".")

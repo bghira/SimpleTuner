@@ -1279,14 +1279,19 @@ class Validation:
                         logger.warning(
                             f"Removed the following kwargs from validation pipeline: {removed_kwargs}"
                         )
-                    if isinstance(self.model, VideoModelFoundation):
-                        all_validation_type_results[current_validation_type] = (
-                            self.model.pipeline(**pipeline_kwargs).frames
-                        )
-                    elif isinstance(self.model, ImageModelFoundation):
-                        all_validation_type_results[current_validation_type] = (
-                            self.model.pipeline(**pipeline_kwargs).images
-                        )
+                    # run in autocast ctx
+                    with torch.amp.autocast(
+                        self.inference_device.type,
+                        dtype=self.config.weight_dtype,
+                    ):
+                        if isinstance(self.model, VideoModelFoundation):
+                            all_validation_type_results[current_validation_type] = (
+                                self.model.pipeline(**pipeline_kwargs).frames
+                            )
+                        elif isinstance(self.model, ImageModelFoundation):
+                            all_validation_type_results[current_validation_type] = (
+                                self.model.pipeline(**pipeline_kwargs).images
+                            )
                     if current_validation_type == "ema":
                         self.disable_ema_for_inference()
 

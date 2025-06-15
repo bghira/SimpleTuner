@@ -577,7 +577,9 @@ class StateTracker:
 
     @classmethod
     def get_metadata_by_filepath(cls, filepath, data_backend_id: str):
-        for _, data_backend in cls.get_data_backends(_types=["image", "video"]).items():
+        for _, data_backend in cls.get_data_backends(
+            _types=["image", "video", "conditioning"]
+        ).items():
             if "metadata_backend" not in data_backend:
                 continue
             if data_backend_id != data_backend["metadata_backend"].id:

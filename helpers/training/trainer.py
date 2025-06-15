@@ -37,6 +37,7 @@ from helpers.training.deepspeed import (
 from helpers.training.wrappers import unwrap_model
 from helpers.data_backend.factory import configure_multi_databackend
 from helpers.data_backend.factory import random_dataloader_iterator
+from helpers.training import trainable_parameter_count
 from helpers.training.min_snr_gamma import compute_snr
 from helpers.training.peft_init import init_lokr_network_with_perturbed_normal
 from accelerate.logging import get_logger
@@ -699,6 +700,9 @@ class Trainer:
                     % (self.config.init_lora, str(misskeys))
                 )
 
+            logger.info(
+                f"LoRA network has been initialized with {trainable_parameter_count(self._get_trainable_parameters())} parameters"
+            )
         elif "lycoris" == self.config.lora_type.lower():
             from lycoris import create_lycoris
 
@@ -751,11 +755,8 @@ class Trainer:
                 "_lycoris_wrapped_network",
                 self.lycoris_wrapped_network,
             )
-            lycoris_num_params = sum(
-                p.numel() for p in self.lycoris_wrapped_network.parameters()
-            )
             logger.info(
-                f"LyCORIS network has been initialized with {lycoris_num_params:,} parameters"
+                f"LyCORIS network has been initialized with {trainable_parameter_count(self.lycoris_wrapped_network.parameters())} parameters"
             )
         self.accelerator.wait_for_everyone()
 
@@ -798,11 +799,11 @@ class Trainer:
                 self.model.get_trained_component(), "disable_gradient_checkpointing"
             ):
                 unwrap_model(
-                    self.accelerator, self.model.get_trained_component()
+                    self.accelerator, self.model.get_trained_component(base_model=True)
                 ).disable_gradient_checkpointing()
             if self.config.controlnet:
                 unwrap_model(
-                    self.accelerator, self.controlnet
+                    self.accelerator, self.model.get_trained_component()
                 ).disable_gradient_checkpointing()
             if (
                 hasattr(self.config, "train_text_encoder")
@@ -913,6 +914,9 @@ class Trainer:
             model=self.model,
             model_type_label=self.config.model_type_label,
             lycoris_wrapped_network=self.lycoris_wrapped_network,
+        )
+        logger.info(
+            f"Connecting optimizer to {trainable_parameter_count(self.params_to_optimize)} trainable parameters"
         )
 
         if self.config.use_deepspeed_optimizer:
@@ -1637,6 +1641,7 @@ class Trainer:
 
     def _train_initial_msg(self):
         initial_msg = "\n***** Running training *****"
+        initial_msg += f"\n-  Trainable parameters: {trainable_parameter_count(self._get_trainable_parameters())}"
         initial_msg += f"\n-  Num batches = {self.config.total_num_batches}"
         initial_msg += f"\n-  Num Epochs = {self.config.num_train_epochs}"
         initial_msg += f"\n  - Current Epoch = {self.state['first_epoch']}"
@@ -1752,7 +1757,7 @@ class Trainer:
     ):
         if self.config.controlnet:
             training_logger.debug(
-                f"Extra conditioning dtype: {prepared_batch['conditioning_pixel_values'].dtype}"
+                f"Extra conditioning dtype: {getattr(prepared_batch['conditioning_pixel_values'] or prepared_batch['conditioning_latents'], 'dtype', None)}"
             )
         if custom_timesteps is not None:
             timesteps = custom_timesteps
