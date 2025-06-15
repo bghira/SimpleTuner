@@ -263,6 +263,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     )
     output["config"]["maximum_image_size"] = maximum_image_size
     output["config"]["target_downsample_size"] = target_downsample_size
+    output["config"]["dataset_type"] = output["dataset_type"]
 
     if maximum_image_size and not target_downsample_size:
         raise ValueError(
