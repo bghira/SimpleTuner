@@ -11,11 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, Union, List
 
 import torch
 from torch import nn
+import numpy as np
 
+from diffusers.loaders import PeftAdapterMixin
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.utils import logging
 from diffusers.models.attention import BasicTransformerBlock
@@ -34,7 +36,7 @@ from diffusers.models.normalization import AdaLayerNormSingle
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
-class PixArtTransformer2DModel(ModelMixin, ConfigMixin):
+class PixArtTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
     r"""
     A 2D Transformer model as introduced in PixArt family of models (https://huggingface.co/papers/2310.00426,
     https://huggingface.co/papers/2403.04692).
