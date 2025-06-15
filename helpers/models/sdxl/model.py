@@ -10,7 +10,8 @@ from helpers.models.sdxl.pipeline import (
     StableDiffusionXLImg2ImgPipeline,
     StableDiffusionXLPipeline,
 )
-from diffusers import AutoencoderKL, UNet2DConditionModel, ControlNetModel
+from diffusers import AutoencoderKL, UNet2DConditionModel
+from helpers.models.sdxl.controlnet import ControlNetModel
 from helpers.training.multi_process import _get_rank
 from diffusers.pipelines import StableDiffusionXLControlNetPipeline
 

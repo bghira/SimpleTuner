@@ -70,6 +70,7 @@ class PipelineTypes(Enum):
     IMG2IMG = "img2img"
     TEXT2IMG = "text2img"
     CONTROLNET = "controlnet"
+    CONTROL = "control"
 
 
 class PredictionTypes(Enum):
@@ -182,6 +183,8 @@ class ModelFoundation(ABC):
 
     def requires_conditioning_dataset(self) -> bool:
         # Most models don't require a conditioning dataset.
+        if self.config.controlnet or self.config.control:
+            return True
         return False
 
     def requires_conditioning_latents(self) -> bool:
@@ -206,6 +209,16 @@ class ModelFoundation(ABC):
     def validation_image_input_edge_length(self):
         # If a model requires a specific input edge length (HiDream E1 -> 768px, DeepFloyd stage2 -> 64px)
         return None
+
+    def control_init(self):
+        """
+        Initialize the channelwise Control model.
+        This is distinct from ControlNet.
+        This is a stub and should be implemented in subclasses.
+        """
+        raise NotImplementedError(
+            "control_init must be implemented in the child class."
+        )
 
     def controlnet_init(self):
         """
@@ -317,6 +330,8 @@ class ModelFoundation(ABC):
             # Compare unwrapped type to main model's unwrapped type
             if isinstance(unwrapped_model, type(self.unwrap_model(self.model))):
                 denoiser = model  # e.g., the "transformer" or "unet"
+            elif isinstance(unwrapped_model, type(self.unwrap_model(self.controlnet))):
+                denoiser = model  # e.g., the "controlnet"
             # If your text_encoders exist:
             elif (
                 getattr(self, "text_encoders", None)
@@ -346,6 +361,13 @@ class ModelFoundation(ABC):
         #    whichever pipeline is relevant. For example:
         pipeline_cls = self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
         lora_state_dict = pipeline_cls.lora_state_dict(input_dir)
+        if (
+            type(lora_state_dict) is tuple
+            and len(lora_state_dict) == 2
+            and lora_state_dict[1] is None
+        ):
+            logger.debug("Overriding ControlNet LoRA state dict with correct structure")
+            lora_state_dict = lora_state_dict[0]
 
         # 3. Extract keys for the main model (which uses self.MODEL_TYPE.value as the prefix)
         #    For example, "transformer." or "unet." is stripped out.
@@ -403,7 +425,12 @@ class ModelFoundation(ABC):
         logger.info("Finished loading LoRA weights successfully.")
 
     def save_lora_weights(self, *args, **kwargs):
-        self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG].save_lora_weights(*args, **kwargs)
+        if self.config.controlnet:
+            self.get_trained_component().save_lora_adapter(*args)
+        else:
+            self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG].save_lora_weights(
+                *args, **kwargs
+            )
 
     def check_user_config(self):
         """
@@ -788,9 +815,9 @@ class ModelFoundation(ABC):
         """
         pass
 
-    def set_prepared_model(self, model):
+    def set_prepared_model(self, model, base_model: bool = False):
         # after accelerate prepare, we'll set the model again.
-        if self.config.controlnet:
+        if self.config.controlnet and not base_model:
             self.controlnet = model
         else:
             self.model = model
@@ -805,9 +832,11 @@ class ModelFoundation(ABC):
         if "lora" in self.config.model_type:
             if self.model is not None:
                 self.model.requires_grad_(False)
+        if self.config.controlnet and self.controlnet is not None:
+            self.controlnet.train()
 
-    def get_trained_component(self):
-        return self.unwrap_model()
+    def get_trained_component(self, base_model: bool = False):
+        return self.unwrap_model(model=self.model if base_model else None)
 
     def _load_pipeline(
         self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True
@@ -840,7 +869,7 @@ class ModelFoundation(ABC):
         if "watermark" in signature.parameters:
             pipeline_kwargs["watermark"] = None
         if load_base_model:
-            pipeline_kwargs[self.MODEL_TYPE.value] = self.unwrap_model()
+            pipeline_kwargs[self.MODEL_TYPE.value] = self.unwrap_model(model=self.model)
         else:
             pipeline_kwargs[self.MODEL_TYPE.value] = None
 
@@ -908,7 +937,7 @@ class ModelFoundation(ABC):
                     )
         if self.config.controlnet:
             if getattr(possibly_cached_pipeline, "controlnet", None) is None:
-                setattr(possibly_cached_pipeline, "controlnet", self.model)
+                setattr(possibly_cached_pipeline, "controlnet", self.controlnet)
 
         return possibly_cached_pipeline
 
@@ -1224,6 +1253,19 @@ class ModelFoundation(ABC):
             )
             mask_image = mask_image / 2 + 0.5
             loss = loss * mask_image
+        elif conditioning_type == "segmentation" and apply_conditioning_mask:
+            if random.random() < self.config.masked_loss_probability:
+                mask_image = prepared_batch["conditioning_pixel_values"].to(
+                    dtype=loss.dtype, device=loss.device
+                )  # Shape: (batch_size, 3, H', W')
+                mask_image = torch.sum(mask_image, dim=1, keepdim=True) / 3
+                mask_image = torch.nn.functional.interpolate(
+                    mask_image, size=loss.shape[2:], mode="area"
+                )  # Resize to match loss spatial dimensions
+                mask_image = mask_image / 2 + 0.5  # Normalize to [0,1]
+                # binarize
+                mask_image = (mask_image > 0).to(dtype=loss.dtype, device=loss.device)
+                loss = loss * mask_image  # Element-wise multiplication
 
         # Average over channels and spatial dims, then over batch.
         loss = loss.mean(dim=list(range(1, len(loss.shape)))).mean()
@@ -1245,6 +1287,43 @@ class ImageModelFoundation(ModelFoundation):
 
     # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
+    DEFAULT_CONTROLNET_LORA_TARGET = [
+        "to_q",
+        "to_k",
+        "to_v",
+        "to_out.0",
+        "ff.net.0.proj",
+        "ff.net.2",
+        "proj_in",
+        "proj_out",
+        "conv",
+        "conv1",
+        "conv2",
+        "conv_in",
+        "conv_shortcut",
+        "linear_1",
+        "linear_2",
+        "time_emb_proj",
+        "controlnet_cond_embedding.conv_in",
+        "controlnet_cond_embedding.blocks.0",
+        "controlnet_cond_embedding.blocks.1",
+        "controlnet_cond_embedding.blocks.2",
+        "controlnet_cond_embedding.blocks.3",
+        "controlnet_cond_embedding.blocks.4",
+        "controlnet_cond_embedding.blocks.5",
+        "controlnet_cond_embedding.conv_out",
+        "controlnet_down_blocks.0",
+        "controlnet_down_blocks.1",
+        "controlnet_down_blocks.2",
+        "controlnet_down_blocks.3",
+        "controlnet_down_blocks.4",
+        "controlnet_down_blocks.5",
+        "controlnet_down_blocks.6",
+        "controlnet_down_blocks.7",
+        "controlnet_down_blocks.8",
+        "controlnet_mid_block",
+    ]
+
     # A bit more than the default, but some will need to override this to just Attention layers, like SD3.
     DEFAULT_LYCORIS_TARGET = ["Attention", "FeedForward"]
     DEFAULT_PIPELINE_TYPE = PipelineTypes.TEXT2IMG
@@ -1266,9 +1345,14 @@ class ImageModelFoundation(ModelFoundation):
 
         return batch
 
+    def get_lora_save_layers(self):
+        return None
+
     def get_lora_target_layers(self):
         # Some models, eg. Flux should override this with more complex config-driven logic.
         if self.config.lora_type.lower() == "standard":
+            if self.config.controlnet:
+                return self.DEFAULT_CONTROLNET_LORA_TARGET
             return self.DEFAULT_LORA_TARGET
         elif self.config.lora_type.lower() == "lycoris":
             return self.DEFAULT_LYCORIS_TARGET
@@ -1279,6 +1363,7 @@ class ImageModelFoundation(ModelFoundation):
 
     def add_lora_adapter(self):
         target_modules = self.get_lora_target_layers()
+        save_modules = self.get_lora_save_layers()
         addkeys, misskeys = [], []
         self.lora_config = LoraConfig(
             r=self.config.lora_rank,
@@ -1290,9 +1375,13 @@ class ImageModelFoundation(ModelFoundation):
             lora_dropout=self.config.lora_dropout,
             init_lora_weights=self.config.lora_initialisation_style,
             target_modules=target_modules,
+            modules_to_save=save_modules,
             use_dora=self.config.use_dora,
         )
-        self.model.add_adapter(self.lora_config)
+        if self.config.controlnet:
+            self.controlnet.add_adapter(self.lora_config)
+        else:
+            self.model.add_adapter(self.lora_config)
         if self.config.init_lora:
             addkeys, misskeys = load_lora_weights(
                 {self.MODEL_TYPE: self.model},

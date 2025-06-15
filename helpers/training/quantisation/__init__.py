@@ -109,10 +109,10 @@ def _quanto_model(
             "context_embedder",
         ]
     if quantize_activations:
-        logger.info("Freezing model weights and activations")
+        logger.info("Quanto: Freezing model weights and activations")
         extra_quanto_args["activations"] = weight_quant
     else:
-        logger.info("Freezing model weights only")
+        logger.info("Quanto: Freezing model weights only")
 
     try:
         quantize(model, weights=weight_quant, **extra_quanto_args)

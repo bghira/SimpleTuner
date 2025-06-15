@@ -48,6 +48,13 @@ class BaseDataBackend(ABC):
         pass
 
     @abstractmethod
+    def get_abs_path(self, sample_path: str = None) -> tuple:
+        """
+        Given a relative path of a sample, return the absolute path.
+        """
+        pass
+
+    @abstractmethod
     def read_image(self, filepath: str, delete_problematic_images: bool = False):
         """
         Read an image from the backend and return a PIL Image.
