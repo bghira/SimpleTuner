@@ -412,10 +412,12 @@ class Flux(ImageModelFoundation):
 
         # Check if guidance embeds are enabled
         transformer_config = None
-        if hasattr(self.get_trained_component(), "module"):
-            transformer_config = self.get_trained_component().module.config
-        elif hasattr(self.get_trained_component(), "config"):
-            transformer_config = self.get_trained_component().config
+        if hasattr(self.get_trained_component(base_model=True), "module"):
+            transformer_config = self.get_trained_component(
+                base_model=True
+            ).module.config
+        elif hasattr(self.get_trained_component(base_model=True), "config"):
+            transformer_config = self.get_trained_component(base_model=True).config
 
         if transformer_config is not None and getattr(
             transformer_config, "guidance_embeds", False
@@ -496,7 +498,7 @@ class Flux(ImageModelFoundation):
 
         # Add ControlNet outputs to kwargs
         if controlnet_block_samples is not None:
-            flux_transformer_kwargs["block_controlnet_hidden_states"] = [
+            flux_transformer_kwargs["controlnet_block_samples"] = [
                 sample.to(
                     device=self.accelerator.device, dtype=self.config.weight_dtype
                 )
@@ -504,7 +506,7 @@ class Flux(ImageModelFoundation):
             ]
 
         if controlnet_single_block_samples is not None:
-            flux_transformer_kwargs["controlnet_single_hidden_states"] = [
+            flux_transformer_kwargs["controlnet_single_block_samples"] = [
                 sample.to(
                     device=self.accelerator.device, dtype=self.config.weight_dtype
                 )
@@ -523,7 +525,9 @@ class Flux(ImageModelFoundation):
                 )
 
         # Forward pass through the transformer with ControlNet residuals
-        model_pred = self.get_trained_component()(**flux_transformer_kwargs)[0]
+        model_pred = self.get_trained_component(base_model=True)(
+            **flux_transformer_kwargs
+        )[0]
 
         # Unpack the latents back to original shape
         return {
@@ -599,6 +603,14 @@ class Flux(ImageModelFoundation):
 
     def get_lora_target_layers(self):
         # Some models, eg. Flux should override this with more complex config-driven logic.
+        if self.config.model_type == "lora" and (
+            self.config.controlnet or self.config.control
+        ):
+            if "control" not in self.config.flux_lora_target.lower():
+                logger.warning(
+                    "ControlNet or Control is enabled, but the LoRA target does not include 'control'. Overriding to all+ffs+embedder+controlnet."
+                )
+            self.config.flux_lora_target = "all+ffs+embedder+controlnet"
         if self.config.lora_type.lower() == "standard":
             if self.config.flux_lora_target == "all":
                 # target_modules = mmdit layers here
@@ -648,7 +660,7 @@ class Flux(ImageModelFoundation):
                     "proj_out",
                 ]
             elif self.config.flux_lora_target == "all+ffs+embedder+controlnet":
-                target_modules = [
+                return [
                     "controlnet_x_embedder",
                     "controlnet_blocks.0",
                     "controlnet_blocks.1",
@@ -681,7 +693,7 @@ class Flux(ImageModelFoundation):
                     "proj_out",
                 ]
             elif self.config.flux_lora_target == "all+ffs+embedder":
-                target_modules = [
+                return [
                     "x_embedder",
                     "to_k",
                     "to_q",
