@@ -321,6 +321,8 @@ class PixArtTransformer2DModel(ModelMixin, ConfigMixin):
         cross_attention_kwargs: Dict[str, Any] = None,
         attention_mask: Optional[torch.Tensor] = None,
         encoder_attention_mask: Optional[torch.Tensor] = None,
+        controlnet_block_samples: Optional[List[torch.Tensor]] = None,
+        controlnet_conditioning_scale: float = 1.0,
         return_dict: bool = True,
     ):
         """
@@ -351,6 +353,8 @@ class PixArtTransformer2DModel(ModelMixin, ConfigMixin):
 
                 If `ndim == 2`: will be interpreted as a mask, then converted into a bias consistent with the format
                 above. This bias will be added to the cross-attention scores.
+            controlnet_block_samples: Optional list of tensors from ControlNet blocks to be added as residuals
+            controlnet_conditioning_scale: Scale factor for ControlNet influence (default: 1.0)
             return_dict (`bool`, *optional*, defaults to `True`):
                 Whether or not to return a [`~models.unets.unet_2d_condition.UNet2DConditionOutput`] instead of a plain
                 tuple.
@@ -364,25 +368,10 @@ class PixArtTransformer2DModel(ModelMixin, ConfigMixin):
                 "`added_cond_kwargs` cannot be None when using additional conditions for `adaln_single`."
             )
 
-        # ensure attention_mask is a bias, and give it a singleton query_tokens dimension.
-        #   we may have done this conversion already, e.g. if we came here via UNet2DConditionModel#forward.
-        #   we can tell by counting dims; if ndim == 2: it's a mask rather than a bias.
-        # expects mask of shape:
-        #   [batch, key_tokens]
-        # adds singleton query_tokens dimension:
-        #   [batch,                    1, key_tokens]
-        # this helps to broadcast it as a bias over attention scores, which will be in one of the following shapes:
-        #   [batch,  heads, query_tokens, key_tokens] (e.g. torch sdp attn)
-        #   [batch * heads, query_tokens, key_tokens] (e.g. xformers or classic attn)
         if attention_mask is not None and attention_mask.ndim == 2:
-            # assume that mask is expressed as:
-            #   (1 = keep,      0 = discard)
-            # convert mask into a bias that can be added to attention scores:
-            #       (keep = +0,     discard = -10000.0)
             attention_mask = (1 - attention_mask.to(hidden_states.dtype)) * -10000.0
             attention_mask = attention_mask.unsqueeze(1)
 
-        # convert encoder_attention_mask to a bias the same way we do for attention_mask
         if encoder_attention_mask is not None and encoder_attention_mask.ndim == 2:
             encoder_attention_mask = (
                 1 - encoder_attention_mask.to(hidden_states.dtype)
@@ -411,7 +400,7 @@ class PixArtTransformer2DModel(ModelMixin, ConfigMixin):
             )
 
         # 2. Blocks
-        for block in self.transformer_blocks:
+        for index_block, block in enumerate(self.transformer_blocks):
             if torch.is_grad_enabled() and self.gradient_checkpointing:
                 hidden_states = self._gradient_checkpointing_func(
                     block,
@@ -434,7 +423,19 @@ class PixArtTransformer2DModel(ModelMixin, ConfigMixin):
                     class_labels=None,
                 )
 
-        # 3. Output
+            # ControlNet residual injection
+            if controlnet_block_samples is not None:
+                interval_control = len(self.transformer_blocks) / len(
+                    controlnet_block_samples
+                )
+                interval_control = int(np.ceil(interval_control))
+                controlnet_idx = index_block // interval_control
+                if controlnet_idx < len(controlnet_block_samples):
+                    hidden_states = hidden_states + (
+                        controlnet_block_samples[controlnet_idx]
+                        * controlnet_conditioning_scale
+                    )
+
         shift, scale = (
             self.scale_shift_table[None]
             + embedded_timestep[:, None].to(self.scale_shift_table.device)
