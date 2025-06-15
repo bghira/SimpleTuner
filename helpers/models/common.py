@@ -361,6 +361,13 @@ class ModelFoundation(ABC):
         #    whichever pipeline is relevant. For example:
         pipeline_cls = self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
         lora_state_dict = pipeline_cls.lora_state_dict(input_dir)
+        if (
+            type(lora_state_dict) is tuple
+            and len(lora_state_dict) == 2
+            and lora_state_dict[1] is None
+        ):
+            logger.debug("Overriding ControlNet LoRA state dict with correct structure")
+            lora_state_dict = lora_state_dict[0]
 
         # 3. Extract keys for the main model (which uses self.MODEL_TYPE.value as the prefix)
         #    For example, "transformer." or "unet." is stripped out.
@@ -1280,6 +1287,43 @@ class ImageModelFoundation(ModelFoundation):
 
     # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
+    DEFAULT_CONTROLNET_LORA_TARGET = [
+        "to_q",
+        "to_k",
+        "to_v",
+        "to_out.0",
+        "ff.net.0.proj",
+        "ff.net.2",
+        "proj_in",
+        "proj_out",
+        "conv",
+        "conv1",
+        "conv2",
+        "conv_in",
+        "conv_shortcut",
+        "linear_1",
+        "linear_2",
+        "time_emb_proj",
+        "controlnet_cond_embedding.conv_in",
+        "controlnet_cond_embedding.blocks.0",
+        "controlnet_cond_embedding.blocks.1",
+        "controlnet_cond_embedding.blocks.2",
+        "controlnet_cond_embedding.blocks.3",
+        "controlnet_cond_embedding.blocks.4",
+        "controlnet_cond_embedding.blocks.5",
+        "controlnet_cond_embedding.conv_out",
+        "controlnet_down_blocks.0",
+        "controlnet_down_blocks.1",
+        "controlnet_down_blocks.2",
+        "controlnet_down_blocks.3",
+        "controlnet_down_blocks.4",
+        "controlnet_down_blocks.5",
+        "controlnet_down_blocks.6",
+        "controlnet_down_blocks.7",
+        "controlnet_down_blocks.8",
+        "controlnet_mid_block",
+    ]
+
     # A bit more than the default, but some will need to override this to just Attention layers, like SD3.
     DEFAULT_LYCORIS_TARGET = ["Attention", "FeedForward"]
     DEFAULT_PIPELINE_TYPE = PipelineTypes.TEXT2IMG
@@ -1301,9 +1345,14 @@ class ImageModelFoundation(ModelFoundation):
 
         return batch
 
+    def get_lora_save_layers(self):
+        return None
+
     def get_lora_target_layers(self):
         # Some models, eg. Flux should override this with more complex config-driven logic.
         if self.config.lora_type.lower() == "standard":
+            if self.config.controlnet:
+                return self.DEFAULT_CONTROLNET_LORA_TARGET
             return self.DEFAULT_LORA_TARGET
         elif self.config.lora_type.lower() == "lycoris":
             return self.DEFAULT_LYCORIS_TARGET
@@ -1314,6 +1363,7 @@ class ImageModelFoundation(ModelFoundation):
 
     def add_lora_adapter(self):
         target_modules = self.get_lora_target_layers()
+        save_modules = self.get_lora_save_layers()
         addkeys, misskeys = [], []
         self.lora_config = LoraConfig(
             r=self.config.lora_rank,
@@ -1325,6 +1375,7 @@ class ImageModelFoundation(ModelFoundation):
             lora_dropout=self.config.lora_dropout,
             init_lora_weights=self.config.lora_initialisation_style,
             target_modules=target_modules,
+            modules_to_save=save_modules,
             use_dora=self.config.use_dora,
         )
         if self.config.controlnet:
