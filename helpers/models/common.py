@@ -371,7 +371,9 @@ class ModelFoundation(ABC):
 
         # 3. Extract keys for the main model (which uses self.MODEL_TYPE.value as the prefix)
         #    For example, "transformer." or "unet." is stripped out.
-        key_to_replace = "controlnet" if self.config.controlnet else self.MODEL_TYPE.value
+        key_to_replace = (
+            "controlnet" if self.config.controlnet else self.MODEL_TYPE.value
+        )
         prefix = f"{key_to_replace}."
         denoiser_sd = {}
         for k, v in lora_state_dict.items():
