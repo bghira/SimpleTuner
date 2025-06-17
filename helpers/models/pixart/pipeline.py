@@ -15,13 +15,24 @@
 import html
 import inspect
 import re
+import os
 import urllib.parse as ul
-from typing import Callable, List, Optional, Tuple, Union
-from diffusers.loaders import LoraLoaderMixin
-from helpers.models.pixart.controlnet import PixArtSigmaControlNetAdapterModel, PixArtSigmaControlNetTransformerModel
+from typing import Callable, List, Optional, Tuple, Union, Dict
+from diffusers.utils import USE_PEFT_BACKEND
+from huggingface_hub.utils import validate_hf_hub_args
+from diffusers.loaders.lora_base import (
+    LoraBaseMixin,
+    _fetch_state_dict,
+    USE_PEFT_BACKEND,
+)
+from helpers.models.pixart.controlnet import (
+    PixArtSigmaControlNetAdapterModel,
+    PixArtSigmaControlNetTransformerModel,
+)
 import torch
 import numpy as np
 import PIL
+import peft
 from transformers import T5EncoderModel, T5Tokenizer
 
 from diffusers.image_processor import (
@@ -108,25 +119,6 @@ ASPECT_RATIO_2048_BIN = {
 }
 
 
-EXAMPLE_DOC_STRING = """
-    Examples:
-        ```py
-        >>> import torch
-        >>> from diffusers import PixArtSigmaPipeline
-
-        >>> # You can replace the checkpoint id with "PixArt-alpha/PixArt-Sigma-XL-2-512-MS" too.
-        >>> pipe = PixArtSigmaPipeline.from_pretrained(
-        ...     "PixArt-alpha/PixArt-Sigma-XL-2-1024-MS", torch_dtype=torch.float16
-        ... )
-        >>> # Enable memory optimizations.
-        >>> # pipe.enable_model_cpu_offload()
-
-        >>> prompt = "A small cactus with a happy face in the Sahara desert."
-        >>> image = pipe(prompt).images[0]
-        ```
-"""
-
-
 # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img.retrieve_latents
 def retrieve_latents(
     encoder_output: torch.Tensor,
@@ -209,7 +201,208 @@ def retrieve_timesteps(
     return timesteps, num_inference_steps
 
 
-class PixArtSigmaPipeline(DiffusionPipeline, LoraLoaderMixin):
+class PixArtSigmaControlNetLoraLoaderMixin(LoraBaseMixin):
+    """
+    Load LoRA layers into PixArt Sigma ControlNet models.
+    """
+
+    _lora_loadable_modules = ["transformer", "controlnet"]
+    transformer_name = "transformer"
+    controlnet_name = "controlnet"
+
+    @classmethod
+    def save_lora_weights(
+        cls,
+        save_directory: Union[str, os.PathLike],
+        transformer_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
+        controlnet_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
+        is_main_process: bool = True,
+        weight_name: str = None,
+        save_function: Callable = None,
+        safe_serialization: bool = True,
+    ):
+        """Save LoRA weights for both transformer and controlnet."""
+        state_dict = {}
+
+        # Pack transformer weights (only the non-replaced blocks)
+        if transformer_lora_layers:
+            transformer_state = cls.pack_weights(
+                transformer_lora_layers, cls.transformer_name
+            )
+            state_dict.update(transformer_state)
+
+        # Pack controlnet weights
+        if controlnet_lora_layers:
+            state_dict.update(controlnet_lora_layers)  # they're already packed
+
+        # Save the model
+        cls.write_lora_layers(
+            state_dict=state_dict,
+            save_directory=save_directory,
+            is_main_process=is_main_process,
+            weight_name=weight_name,
+            save_function=save_function,
+            safe_serialization=safe_serialization,
+        )
+
+    def load_lora_weights(
+        self,
+        pretrained_model_name_or_path_or_dict: Union[str, Dict[str, torch.Tensor]],
+        adapter_name=None,
+        **kwargs,
+    ):
+        """Load LoRA weights into transformer and controlnet."""
+        if not USE_PEFT_BACKEND:
+            raise ValueError("PEFT backend is required for this method.")
+
+        state_dict = self.lora_state_dict(
+            pretrained_model_name_or_path_or_dict, **kwargs
+        )
+
+        # Separate transformer and controlnet weights
+        transformer_state_dict = {}
+        controlnet_state_dict = {}
+
+        for key, value in state_dict.items():
+            if key.startswith("controlnet."):
+                # Remove the "controlnet." prefix for loading into controlnet
+                new_key = key[len("controlnet.") :]
+                controlnet_state_dict[new_key] = value
+            elif key.startswith("transformer."):
+                # Remove the "transformer." prefix
+                new_key = key[len("transformer.") :]
+                transformer_state_dict[new_key] = value
+            else:
+                # Handle unprefixed keys based on content
+                if "controlnet" in key:
+                    controlnet_state_dict[key] = value
+                else:
+                    transformer_state_dict[key] = value
+
+        # Load into transformer if there are transformer weights
+        if transformer_state_dict:
+            self.load_lora_into_transformer(
+                transformer_state_dict,
+                transformer=self.transformer.transformer,  # Access the base transformer
+                adapter_name=adapter_name,
+                _pipeline=self,
+            )
+
+        # Load into controlnet if there are controlnet weights
+        if controlnet_state_dict:
+            self.load_lora_into_controlnet(
+                controlnet_state_dict,
+                controlnet=self.transformer.controlnet,  # Access the controlnet through wrapper
+                adapter_name=adapter_name,
+                _pipeline=self,
+            )
+
+    @classmethod
+    def load_lora_into_controlnet(
+        cls,
+        state_dict,
+        controlnet,
+        adapter_name=None,
+        _pipeline=None,
+        low_cpu_mem_usage=False,
+    ):
+        """Load LoRA layers into the controlnet adapter."""
+        logger.info("Loading controlnet LoRA layers.")
+
+        # The controlnet should have a load_lora_adapter method similar to transformer
+        if hasattr(controlnet, "load_lora_adapter"):
+            out = controlnet.load_lora_adapter(
+                state_dict,
+                adapter_name=adapter_name,
+                _pipeline=_pipeline,
+                low_cpu_mem_usage=low_cpu_mem_usage,
+            )
+            print(f"output of loading: {out}")
+        else:
+            # Fallback: manually inject LoRA weights
+            print(
+                f"[WARNING] Fallback to manual PEFT injection for loading. This is bad!"
+            )
+            from peft import inject_adapter_in_model, LoraConfig
+
+            # Infer LoRA config from state dict
+            lora_config = LoraConfig(
+                r=16,  # You might want to infer this from the state dict
+                lora_alpha=16,
+                target_modules=[
+                    "to_k",
+                    "to_q",
+                    "to_v",
+                    "to_out.0",
+                    "before_proj",
+                    "after_proj",
+                ],
+            )
+
+            inject_adapter_in_model(lora_config, controlnet, adapter_name=adapter_name)
+            incompatible_keys = set()
+
+            # Load the weights
+            for key in state_dict.keys():
+                controlnet.load_state_dict({key: state_dict[key]}, strict=True)
+
+    @classmethod
+    @validate_hf_hub_args
+    def lora_state_dict(
+        cls,
+        pretrained_model_name_or_path_or_dict: Union[str, Dict[str, torch.Tensor]],
+        **kwargs,
+    ):
+        """
+        Return state dict for lora weights and the network alphas.
+
+        Parameters:
+            pretrained_model_name_or_path_or_dict (`str` or `os.PathLike` or `dict`):
+                Can be either:
+                    - A string, the *model id* of a pretrained model hosted on the Hub.
+                    - A path to a *directory* containing the model weights.
+                    - A torch state dict.
+        """
+        # Load the main state dict first
+        cache_dir = kwargs.pop("cache_dir", None)
+        force_download = kwargs.pop("force_download", False)
+        proxies = kwargs.pop("proxies", None)
+        local_files_only = kwargs.pop("local_files_only", None)
+        token = kwargs.pop("token", None)
+        revision = kwargs.pop("revision", None)
+        subfolder = kwargs.pop("subfolder", None)
+        weight_name = kwargs.pop("weight_name", None)
+        use_safetensors = kwargs.pop("use_safetensors", None)
+
+        allow_pickle = False
+        if use_safetensors is None:
+            use_safetensors = True
+            allow_pickle = True
+
+        user_agent = {
+            "file_type": "attn_procs_weights",
+            "framework": "pytorch",
+        }
+
+        state_dict = _fetch_state_dict(
+            pretrained_model_name_or_path_or_dict=pretrained_model_name_or_path_or_dict,
+            weight_name=weight_name,
+            use_safetensors=use_safetensors,
+            local_files_only=local_files_only,
+            cache_dir=cache_dir,
+            force_download=force_download,
+            proxies=proxies,
+            token=token,
+            revision=revision,
+            subfolder=subfolder,
+            user_agent=user_agent,
+            allow_pickle=allow_pickle,
+        )
+
+        return state_dict
+
+
+class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixin):
     r"""
     Pipeline for text-to-image generation using PixArt-Sigma.
     """
@@ -855,7 +1048,6 @@ class PixArtSigmaPipeline(DiffusionPipeline, LoraLoaderMixin):
         return self._num_timesteps
 
     @torch.no_grad()
-    @replace_example_docstring(EXAMPLE_DOC_STRING)
     def __call__(
         self,
         prompt: Union[str, List[str]] = None,
@@ -1280,23 +1472,6 @@ class PixArtSigmaPipeline(DiffusionPipeline, LoraLoaderMixin):
             return (image,)
 
         return ImagePipelineOutput(images=image)
-
-
-EXAMPLE_DOC_STRING = """
-    Examples:
-        ```py
-        >>> import torch
-        >>> from diffusers import PixArtSigmaPipeline
-        >>> # You can replace the checkpoint id with "PixArt-alpha/PixArt-Sigma-XL-2-512-MS" too.
-        >>> pipe = PixArtSigmaPipeline.from_pretrained(
-        ...     "PixArt-alpha/PixArt-Sigma-XL-2-1024-MS", torch_dtype=torch.float16
-        ... )
-        >>> # Enable memory optimizations.
-        >>> # pipe.enable_model_cpu_offload()
-        >>> prompt = "A small cactus with a happy face in the Sahara desert."
-        >>> image = pipe(prompt).images[0]
-        ```
-"""
 
 
 class PixArtSigmaControlPipeline(DiffusionPipeline):
@@ -1853,7 +2028,6 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
         return image
 
     @torch.no_grad()
-    @replace_example_docstring(EXAMPLE_DOC_STRING)
     def __call__(
         self,
         prompt: Union[str, List[str]] = None,
@@ -2174,7 +2348,9 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
         return ImagePipelineOutput(images=image)
 
 
-class PixArtSigmaControlNetPipeline(DiffusionPipeline):
+class PixArtSigmaControlNetPipeline(
+    DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixin
+):
     """
     Pipeline for text-to-image generation using PixArt-Sigma with ControlNet.
     """
@@ -2204,7 +2380,9 @@ class PixArtSigmaControlNetPipeline(DiffusionPipeline):
         text_encoder: T5EncoderModel,
         vae: AutoencoderKL,
         transformer: PixArtTransformer2DModel,
-        controlnet: Union[PixArtSigmaControlNetAdapterModel, PixArtSigmaControlNetTransformerModel],
+        controlnet: Union[
+            PixArtSigmaControlNetAdapterModel, PixArtSigmaControlNetTransformerModel
+        ],
         scheduler: KarrasDiffusionSchedulers,
     ):
         super().__init__()
@@ -2690,8 +2868,14 @@ class PixArtSigmaControlNetPipeline(DiffusionPipeline):
         Function invoked when calling the pipeline for generation.
         """
         # 1. Check inputs
-        height = height or self.transformer.transformer.config.sample_size * self.vae_scale_factor
-        width = width or self.transformer.transformer.config.sample_size * self.vae_scale_factor
+        height = (
+            height
+            or self.transformer.transformer.config.sample_size * self.vae_scale_factor
+        )
+        width = (
+            width
+            or self.transformer.transformer.config.sample_size * self.vae_scale_factor
+        )
 
         if use_resolution_binning:
             if self.transformer.transformer.config.sample_size == 256:
@@ -2815,7 +2999,7 @@ class PixArtSigmaControlNetPipeline(DiffusionPipeline):
             for i, t in enumerate(timesteps):
                 # Check if we should apply controlnet at this timestep
                 apply_control = control_start_step <= i < control_end_step
-                
+
                 latent_model_input = (
                     torch.cat([latents] * 2) if do_classifier_free_guidance else latents
                 )
@@ -2844,8 +3028,10 @@ class PixArtSigmaControlNetPipeline(DiffusionPipeline):
                 # FIXED: Simplified controlnet prediction
                 if apply_control and control_image_latents is not None:
                     # Apply conditioning scale to control latents
-                    scaled_control_latents = control_image_latents * controlnet_conditioning_scale
-                    
+                    scaled_control_latents = (
+                        control_image_latents * controlnet_conditioning_scale
+                    )
+
                     # The wrapper model handles everything internally
                     noise_pred = self.transformer(
                         latent_model_input,
@@ -2876,7 +3062,10 @@ class PixArtSigmaControlNetPipeline(DiffusionPipeline):
                     )
 
                 # learned sigma
-                if self.transformer.transformer.config.out_channels // 2 == latent_channels:
+                if (
+                    self.transformer.transformer.config.out_channels // 2
+                    == latent_channels
+                ):
                     noise_pred = noise_pred.chunk(2, dim=1)[0]
 
                 # compute previous image: x_t -> x_t-1
