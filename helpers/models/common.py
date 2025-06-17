@@ -886,6 +886,7 @@ class ModelFoundation(ABC):
             text_encoder_attr,
             text_encoder_config,
         ) in self.TEXT_ENCODER_CONFIGURATION.items():
+            tokenizer_attr = text_encoder_attr.replace("text_encoder", "tokenizer")
             if (
                 self.text_encoders is not None
                 and len(self.text_encoders) >= text_encoder_idx
@@ -893,14 +894,19 @@ class ModelFoundation(ABC):
                 pipeline_kwargs[text_encoder_attr] = self.unwrap_model(
                     self.text_encoders[text_encoder_idx]
                 )
-                pipeline_kwargs[
-                    text_encoder_attr.replace("text_encoder", "tokenizer")
-                ] = self.tokenizers[text_encoder_idx]
+                logger.info(f"Adding {tokenizer_attr}")
+                pipeline_kwargs[tokenizer_attr] = self.tokenizers[text_encoder_idx]
             else:
                 pipeline_kwargs[text_encoder_attr] = None
+            if self.tokenizers is not None and len(self.tokenizers) >= text_encoder_idx:
+                pipeline_kwargs[text_encoder_attr] = self.unwrap_model(
+                    self.tokenizers[text_encoder_idx]
+                )
+                pipeline_kwargs[tokenizer_attr] = self.tokenizers[text_encoder_idx]
+
             text_encoder_idx += 1
 
-        if self.config.controlnet:
+        if self.config.controlnet and pipeline_type is PipelineTypes.CONTROLNET:
             pipeline_kwargs["controlnet"] = self.unwrap_model(
                 self.get_trained_component()
             )
@@ -911,7 +917,7 @@ class ModelFoundation(ABC):
         self.pipelines[pipeline_type] = pipeline_class.from_pretrained(
             **pipeline_kwargs,
         )
-
+ 
         return self.pipelines[pipeline_type]
 
     def get_pipeline(
