@@ -1291,22 +1291,6 @@ class ImageModelFoundation(ModelFoundation):
     # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     DEFAULT_CONTROLNET_LORA_TARGET = [
-        "to_q",
-        "to_k",
-        "to_v",
-        "to_out.0",
-        "ff.net.0.proj",
-        "ff.net.2",
-        "proj_in",
-        "proj_out",
-        "conv",
-        "conv1",
-        "conv2",
-        "conv_in",
-        "conv_shortcut",
-        "linear_1",
-        "linear_2",
-        "time_emb_proj",
         "controlnet_cond_embedding.conv_in",
         "controlnet_cond_embedding.blocks.0",
         "controlnet_cond_embedding.blocks.1",
