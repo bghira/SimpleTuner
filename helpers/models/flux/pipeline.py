@@ -73,16 +73,8 @@ from diffusers.loaders.lora_base import LoraBaseMixin
 from huggingface_hub.utils import validate_hf_hub_args
 from diffusers.loaders.lora_conversion_utils import (
     _convert_bfl_flux_control_lora_to_diffusers,
-    _convert_hunyuan_video_lora_to_diffusers,
     _convert_kohya_flux_lora_to_diffusers,
-    _convert_musubi_wan_lora_to_diffusers,
-    _convert_non_diffusers_hidream_lora_to_diffusers,
-    _convert_non_diffusers_lora_to_diffusers,
-    _convert_non_diffusers_ltxv_lora_to_diffusers,
-    _convert_non_diffusers_lumina2_lora_to_diffusers,
-    _convert_non_diffusers_wan_lora_to_diffusers,
     _convert_xlabs_flux_lora_to_diffusers,
-    _maybe_map_sgm_blocks_to_diffusers,
 )
 
 if is_torch_xla_available():
@@ -357,26 +349,8 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
         **kwargs,
     ):
         """
-        Load LoRA weights specified in `pretrained_model_name_or_path_or_dict` into `self.transformer` and
-        `self.text_encoder`.
-
-        All kwargs are forwarded to `self.lora_state_dict`.
-
-        See [`~loaders.StableDiffusionLoraLoaderMixin.lora_state_dict`] for more details on how the state dict is
-        loaded.
-
-        See [`~loaders.StableDiffusionLoraLoaderMixin.load_lora_into_transformer`] for more details on how the state
-        dict is loaded into `self.transformer`.
-
-        Parameters:
-            pretrained_model_name_or_path_or_dict (`str` or `os.PathLike` or `dict`):
-                See [`~loaders.StableDiffusionLoraLoaderMixin.lora_state_dict`].
-            kwargs (`dict`, *optional*):
-                See [`~loaders.StableDiffusionLoraLoaderMixin.lora_state_dict`].
-            adapter_name (`str`, *optional*):
-                Adapter name to be used for referencing the loaded adapter model. If not specified, it will use
-                `default_{i}` where i is the total number of adapters being loaded.
-            Speed up model loading by only loading the pretrained LoRA weights and not initializing the random weights.:
+        Load LoRA weights specified in `pretrained_model_name_or_path_or_dict` into `self.transformer`,
+        `self.text_encoder`, and optionally `self.controlnet`.
         """
         if not USE_PEFT_BACKEND:
             raise ValueError("PEFT backend is required for this method.")
@@ -404,23 +378,37 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
         if not is_correct_format:
             raise ValueError("Invalid LoRA checkpoint.")
 
-        self.load_lora_into_transformer(
-            state_dict,
-            network_alphas=network_alphas,
-            transformer=(
-                getattr(self, self.transformer_name)
-                if not hasattr(self, "transformer")
-                else self.transformer
-            ),
-            adapter_name=adapter_name,
-            _pipeline=self,
-            low_cpu_mem_usage=low_cpu_mem_usage,
-        )
+        # Separate transformer, text encoder, and controlnet weights
+        transformer_state_dict = {}
+        text_encoder_state_dict = {}
+        controlnet_state_dict = {}
 
-        text_encoder_state_dict = {
-            k: v for k, v in state_dict.items() if "text_encoder." in k
-        }
-        if len(text_encoder_state_dict) > 0:
+        for k, v in state_dict.items():
+            if k.startswith("text_encoder."):
+                text_encoder_state_dict[k] = v
+            elif k.startswith("controlnet."):
+                controlnet_state_dict[k] = v
+            else:
+                # Assume transformer weights
+                transformer_state_dict[k] = v
+
+        # Load transformer weights
+        if transformer_state_dict:
+            self.load_lora_into_transformer(
+                transformer_state_dict,
+                network_alphas=network_alphas,
+                transformer=(
+                    getattr(self, self.transformer_name)
+                    if not hasattr(self, "transformer")
+                    else self.transformer
+                ),
+                adapter_name=adapter_name,
+                _pipeline=self,
+                low_cpu_mem_usage=low_cpu_mem_usage,
+            )
+
+        # Load text encoder weights
+        if text_encoder_state_dict:
             self.load_lora_into_text_encoder(
                 text_encoder_state_dict,
                 network_alphas=network_alphas,
@@ -431,6 +419,116 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
                 _pipeline=self,
                 low_cpu_mem_usage=low_cpu_mem_usage,
             )
+
+        # Load controlnet weights if present
+        if controlnet_state_dict and hasattr(self, "controlnet"):
+            self.load_lora_into_controlnet(
+                controlnet_state_dict,
+                network_alphas=network_alphas,
+                controlnet=self.controlnet,
+                adapter_name=adapter_name,
+                _pipeline=self,
+                low_cpu_mem_usage=low_cpu_mem_usage,
+            )
+
+    @classmethod
+    def load_lora_into_controlnet(
+        cls,
+        state_dict,
+        network_alphas,
+        controlnet,
+        adapter_name=None,
+        _pipeline=None,
+        low_cpu_mem_usage=False,
+    ):
+        """
+        Load LoRA layers into the controlnet.
+        """
+        if low_cpu_mem_usage and not is_peft_version(">=", "0.13.1"):
+            raise ValueError(
+                "`low_cpu_mem_usage=True` is not compatible with this `peft` version. Please update it with `pip install -U peft`."
+            )
+
+        from peft import LoraConfig, inject_adapter_in_model, set_peft_model_state_dict
+
+        keys = list(state_dict.keys())
+        controlnet_key = getattr(cls, "controlnet_name", "controlnet")
+
+        controlnet_keys = [k for k in keys if k.startswith(controlnet_key)]
+        state_dict = {
+            k.replace(f"{controlnet_key}.", ""): v
+            for k, v in state_dict.items()
+            if k in controlnet_keys
+        }
+
+        if len(state_dict.keys()) > 0:
+            # check with first key if is not in peft format
+            first_key = next(iter(state_dict.keys()))
+            if "lora_A" not in first_key:
+                state_dict = convert_unet_state_dict_to_peft(state_dict)
+
+            if adapter_name in getattr(controlnet, "peft_config", {}):
+                raise ValueError(
+                    f"Adapter name {adapter_name} already in use in the controlnet - please select a new adapter name."
+                )
+
+            rank = {}
+            for key, val in state_dict.items():
+                if "lora_B" in key:
+                    rank[key] = val.shape[1]
+
+            if network_alphas is not None and len(network_alphas) >= 1:
+                alpha_keys = [
+                    k for k in network_alphas.keys() if k.startswith(controlnet_key)
+                ]
+                network_alphas = {
+                    k.replace(f"{controlnet_key}.", ""): v
+                    for k, v in network_alphas.items()
+                    if k in alpha_keys
+                }
+
+            lora_config_kwargs = get_peft_kwargs(
+                rank, network_alpha_dict=network_alphas, peft_state_dict=state_dict
+            )
+            if "use_dora" in lora_config_kwargs:
+                if lora_config_kwargs["use_dora"] and is_peft_version("<", "0.9.0"):
+                    raise ValueError(
+                        "You need `peft` 0.9.0 at least to use DoRA-enabled LoRAs. Please upgrade your installation of `peft`."
+                    )
+                else:
+                    lora_config_kwargs.pop("use_dora")
+            lora_config = LoraConfig(**lora_config_kwargs)
+
+            # adapter_name
+            if adapter_name is None:
+                adapter_name = get_adapter_name(controlnet)
+
+            # In case the pipeline has been already offloaded to CPU - temporarily remove the hooks
+            is_model_cpu_offload, is_sequential_cpu_offload = (
+                cls._optionally_disable_offloading(_pipeline)
+            )
+
+            peft_kwargs = {}
+            if is_peft_version(">=", "0.13.1"):
+                peft_kwargs["low_cpu_mem_usage"] = low_cpu_mem_usage
+
+            inject_adapter_in_model(
+                lora_config, controlnet, adapter_name=adapter_name, **peft_kwargs
+            )
+            incompatible_keys = set_peft_model_state_dict(
+                controlnet, state_dict, adapter_name, **peft_kwargs
+            )
+
+            if incompatible_keys is not None:
+                logger.info(
+                    f"Loaded ControlNet LoRA with incompatible keys: {incompatible_keys}"
+                )
+
+            # Offload back.
+            if is_model_cpu_offload:
+                _pipeline.enable_model_cpu_offload()
+            elif is_sequential_cpu_offload:
+                _pipeline.enable_sequential_cpu_offload()
 
     @classmethod
     def load_lora_into_transformer(
@@ -730,19 +828,19 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
                 # Unsafe code />
 
     @classmethod
-    # Copied from diffusers.loaders.lora_pipeline.StableDiffusionLoraLoaderMixin.save_lora_weights with unet->transformer
     def save_lora_weights(
         cls,
         save_directory: Union[str, os.PathLike],
         transformer_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
         text_encoder_lora_layers: Dict[str, torch.nn.Module] = None,
+        controlnet_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
         is_main_process: bool = True,
         weight_name: str = None,
         save_function: Callable = None,
         safe_serialization: bool = True,
     ):
         r"""
-        Save the LoRA parameters corresponding to the UNet and text encoder.
+        Save the LoRA parameters corresponding to the UNet, text encoder, and optionally controlnet.
 
         Arguments:
             save_directory (`str` or `os.PathLike`):
@@ -752,6 +850,8 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
             text_encoder_lora_layers (`Dict[str, torch.nn.Module]` or `Dict[str, torch.Tensor]`):
                 State dict of the LoRA layers corresponding to the `text_encoder`. Must explicitly pass the text
                 encoder LoRA state dict because it comes from 🤗 Transformers.
+            controlnet_lora_layers (`Dict[str, torch.nn.Module]` or `Dict[str, torch.Tensor]`):
+                State dict of the LoRA layers corresponding to the `controlnet`.
             is_main_process (`bool`, *optional*, defaults to `True`):
                 Whether the process calling this is the main process or not. Useful during distributed training and you
                 need to call this function on all processes. In this case, set `is_main_process=True` only on the main
@@ -765,9 +865,13 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
         """
         state_dict = {}
 
-        if not (transformer_lora_layers or text_encoder_lora_layers):
+        if not (
+            transformer_lora_layers
+            or text_encoder_lora_layers
+            or controlnet_lora_layers
+        ):
             raise ValueError(
-                "You must pass at least one of `transformer_lora_layers` and `text_encoder_lora_layers`."
+                "You must pass at least one of `transformer_lora_layers`, `text_encoder_lora_layers`, or `controlnet_lora_layers`."
             )
 
         if transformer_lora_layers:
@@ -778,6 +882,12 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
         if text_encoder_lora_layers:
             state_dict.update(
                 cls.pack_weights(text_encoder_lora_layers, cls.text_encoder_name)
+            )
+
+        if controlnet_lora_layers:
+            controlnet_prefix = "controlnet"
+            state_dict.update(
+                cls.pack_weights(controlnet_lora_layers, controlnet_prefix)
             )
 
         # Save the model
