@@ -608,9 +608,9 @@ class Flux(ImageModelFoundation):
         ):
             if "control" not in self.config.flux_lora_target.lower():
                 logger.warning(
-                    "ControlNet or Control is enabled, but the LoRA target does not include 'control'. Overriding to all+ffs+embedder+controlnet."
+                    "ControlNet or Control is enabled, but the LoRA target does not include 'control'. Overriding to controlnet."
                 )
-            self.config.flux_lora_target = "all+ffs+embedder+controlnet"
+            self.config.flux_lora_target = "controlnet"
         if self.config.lora_type.lower() == "standard":
             if self.config.flux_lora_target == "all":
                 # target_modules = mmdit layers here
@@ -659,7 +659,7 @@ class Flux(ImageModelFoundation):
                     "proj_mlp",
                     "proj_out",
                 ]
-            elif self.config.flux_lora_target == "all+ffs+embedder+controlnet":
+            elif self.config.flux_lora_target == "controlnet":
                 return [
                     "controlnet_x_embedder",
                     "controlnet_blocks.0",
@@ -675,22 +675,7 @@ class Flux(ImageModelFoundation):
                     "controlnet_single_blocks.6",
                     "controlnet_single_blocks.7",
                     "controlnet_single_blocks.8",
-                    "controlnet_single_blocks.9",
-                    "x_embedder",
-                    "to_k",
-                    "to_q",
-                    "to_v",
-                    "to_out.0",
-                    "add_k_proj",
-                    "add_q_proj",
-                    "add_v_proj",
-                    "to_add_out",
-                    "ff.net.0.proj",
-                    "ff.net.2",
-                    "ff_context.net.0.proj",
-                    "ff_context.net.2",
-                    "proj_mlp",
-                    "proj_out",
+                    "controlnet_single_blocks.9"
                 ]
             elif self.config.flux_lora_target == "all+ffs+embedder":
                 return [
