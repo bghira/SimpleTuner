@@ -1291,6 +1291,22 @@ class ImageModelFoundation(ModelFoundation):
     # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     DEFAULT_CONTROLNET_LORA_TARGET = [
+        "to_q",
+        "to_k",
+        "to_v",
+        "to_out.0",
+        "ff.net.0.proj",
+        "ff.net.2",
+        "proj_in",
+        "proj_out",
+        "conv",
+        "conv1",
+        "conv2",
+        "conv_in",
+        "conv_shortcut",
+        "linear_1",
+        "linear_2",
+        "time_emb_proj",
         "controlnet_cond_embedding.conv_in",
         "controlnet_cond_embedding.blocks.0",
         "controlnet_cond_embedding.blocks.1",
@@ -1352,28 +1368,66 @@ class ImageModelFoundation(ModelFoundation):
         target_modules = self.get_lora_target_layers()
         save_modules = self.get_lora_save_layers()
         addkeys, misskeys = [], []
-        self.lora_config = LoraConfig(
-            r=self.config.lora_rank,
-            lora_alpha=(
-                self.config.lora_alpha
-                if self.config.lora_alpha is not None
-                else self.config.lora_rank
-            ),
-            lora_dropout=self.config.lora_dropout,
-            init_lora_weights=self.config.lora_initialisation_style,
-            target_modules=target_modules,
-            modules_to_save=save_modules,
-            use_dora=self.config.use_dora,
-        )
+
+        # Force LyCORIS for ControlNet on UNet models to support Conv2d
+        if self.config.controlnet and self.MODEL_TYPE.value == "unet":
+            logger.warning(
+                "ControlNet with UNet requires Conv2d layer support. "
+                "Using LyCORIS (LoHa) adapter instead of standard LoRA."
+            )
+            from peft import LoHaConfig
+
+            self.lora_config = LoHaConfig(
+                r=self.config.lora_rank,
+                alpha=(
+                    self.config.lora_alpha
+                    if self.config.lora_alpha is not None
+                    else self.config.lora_rank
+                ),
+                rank_dropout=self.config.lora_dropout,
+                module_dropout=0.0,
+                use_effective_conv2d=True,  # Critical for Conv2d support
+                target_modules=target_modules,
+                modules_to_save=save_modules,
+                # init_weights defaults to True, which is what we want
+            )
+        else:
+            # Standard LoRA for everything else
+            self.lora_config = LoraConfig(
+                r=self.config.lora_rank,
+                lora_alpha=(
+                    self.config.lora_alpha
+                    if self.config.lora_alpha is not None
+                    else self.config.lora_rank
+                ),
+                lora_dropout=self.config.lora_dropout,
+                init_lora_weights=self.config.lora_initialisation_style,
+                target_modules=target_modules,
+                modules_to_save=save_modules,
+                use_dora=self.config.use_dora,
+            )
+
+        # Apply adapter
         if self.config.controlnet:
             self.controlnet.add_adapter(self.lora_config)
         else:
             self.model.add_adapter(self.lora_config)
+
         if self.config.init_lora:
+            # Note: use_dora only applies to LoraConfig, not LoHaConfig
+            use_dora = (
+                self.config.use_dora
+                if isinstance(self.lora_config, LoraConfig)
+                else False
+            )
             addkeys, misskeys = load_lora_weights(
-                {self.MODEL_TYPE: self.model},
+                {
+                    self.MODEL_TYPE: (
+                        self.controlnet if self.config.controlnet else self.model
+                    )
+                },
                 self.config.init_lora,
-                use_dora=self.config.use_dora,
+                use_dora=use_dora,
             )
 
         return addkeys, misskeys
