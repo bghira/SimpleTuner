@@ -10,9 +10,11 @@ from helpers.models.pixart.pipeline import (
     PixArtSigmaPipeline,
     PixArtSigmaControlPipeline,
     PixArtSigmaControlNetPipeline,
+    PixArtSigmaControlNetLoraLoaderMixin,
 )
 from helpers.models.pixart.transformer import PixArtTransformer2DModel
 from diffusers import AutoencoderKL
+from peft.utils import get_peft_model_state_dict
 
 logger = logging.getLogger(__name__)
 is_primary_process = True
@@ -345,10 +347,7 @@ class PixartSigma(ImageModelFoundation):
         if self.config.model_type == "lora" and (
             self.config.controlnet or self.config.control
         ):
-            # Include controlnet blocks in LoRA targets
-            base_targets = self.DEFAULT_LORA_TARGET.copy()
-
-            # Add ControlNet-specific targets - only target linear layers
+            # ONLY target the controlnet adapter blocks, NOT the transformer
             num_layers = getattr(self.config, "controlnet_num_layers", 13)
             controlnet_targets = []
 
@@ -379,9 +378,27 @@ class PixartSigma(ImageModelFoundation):
                     ]
                 )
 
-            return base_targets + controlnet_targets
+            return controlnet_targets
 
         return self.DEFAULT_LORA_TARGET
+
+    def save_lora_weights(self, output_dir: str, **kwargs):
+        """Save LoRA weights for ControlNet model."""
+        if not (self.config.controlnet or self.config.control):
+            return super().save_lora_weights(output_dir)
+
+        # Only save the controlnet LoRA layers
+        controlnet_lora_layers = kwargs.get("controlnet_lora_layers", None)
+        assert (
+            controlnet_lora_layers is not None
+        ), "controlnet_lora_layers must be provided when saving LoRA weights for ControlNet models."
+
+        # Save using the pipeline's mixin method
+        PixArtSigmaControlNetLoraLoaderMixin.save_lora_weights(
+            save_directory=output_dir,
+            transformer_lora_layers=None,  # No transformer LoRA
+            controlnet_lora_layers=controlnet_lora_layers,
+        )
 
     def custom_model_card_schedule_info(self):
         output_args = []
@@ -422,3 +439,13 @@ class PixartSigma(ImageModelFoundation):
         )
 
         return output_str
+
+    def custom_model_card_code_example(self, repo_id: str = None) -> str:
+        """Provide custom code example for ControlNet models"""
+        if self.config.controlnet or self.config.control:
+            from helpers.models.pixart.model_card_templates import (
+                pixart_sigma_controlnet_code_example,
+            )
+
+            return pixart_sigma_controlnet_code_example(self.config, repo_id, self)
+        return None
