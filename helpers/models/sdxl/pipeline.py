@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import inspect
 
 try:
@@ -31,10 +32,10 @@ from transformers import (
 )
 
 from diffusers.image_processor import PipelineImageInput, VaeImageProcessor
+from diffusers.loaders.lora_base import LoraBaseMixin
 from diffusers.loaders import (
     FromSingleFileMixin,
     IPAdapterMixin,
-    StableDiffusionXLLoraLoaderMixin,
     TextualInversionLoaderMixin,
 )
 from diffusers.models import AutoencoderKL, ImageProjection, UNet2DConditionModel
@@ -54,7 +55,18 @@ from diffusers.utils import (
     replace_example_docstring,
     scale_lora_layers,
     unscale_lora_layers,
+    is_peft_available,
+    is_peft_version,
+    is_torch_version,
+    is_transformers_available,
+    is_transformers_version,
+    logging,
 )
+from diffusers.models.lora import (
+    text_encoder_attn_modules,
+    text_encoder_mlp_modules,
+)
+
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline, StableDiffusionMixin
 from diffusers.pipelines.stable_diffusion_xl.pipeline_output import (
@@ -73,7 +85,8 @@ if is_torch_xla_available():
     XLA_AVAILABLE = True
 else:
     XLA_AVAILABLE = False
-
+UNET_NAME = "unet"
+TEXT_ENCODER_NAME = "text_encoder"
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -192,6 +205,289 @@ def retrieve_timesteps(
         scheduler.set_timesteps(num_inference_steps, device=device, **kwargs)
         timesteps = scheduler.timesteps
     return timesteps, num_inference_steps
+
+
+_LOW_CPU_MEM_USAGE_DEFAULT_LORA = False
+if is_torch_version(">=", "1.9.0"):
+    if (
+        is_peft_available()
+        and is_peft_version(">=", "0.13.1")
+        and is_transformers_available()
+        and is_transformers_version(">", "4.45.2")
+    ):
+        _LOW_CPU_MEM_USAGE_DEFAULT_LORA = True
+
+
+class StableDiffusionXLLoraLoaderMixin(LoraBaseMixin):
+    r"""
+    Load LoRA layers into Stable Diffusion XL [`UNet2DConditionModel`],
+    [`CLIPTextModel`](https://huggingface.co/docs/transformers/model_doc/clip#transformers.CLIPTextModel),
+    [`CLIPTextModelWithProjection`](https://huggingface.co/docs/transformers/model_doc/clip#transformers.CLIPTextModelWithProjection),
+    and optionally [`ControlNetModel`].
+    """
+
+    _lora_loadable_modules = ["unet", "text_encoder", "text_encoder_2", "controlnet"]
+    unet_name = UNET_NAME
+    text_encoder_name = TEXT_ENCODER_NAME
+    controlnet_name = "controlnet"
+
+    def load_lora_weights(
+        self,
+        pretrained_model_name_or_path_or_dict: Union[str, Dict[str, torch.Tensor]],
+        adapter_name: Optional[str] = None,
+        **kwargs,
+    ):
+        """
+        Load LoRA weights specified in `pretrained_model_name_or_path_or_dict` into `self.unet`,
+        `self.text_encoder`, `self.text_encoder_2`, and optionally `self.controlnet`.
+        """
+        if not USE_PEFT_BACKEND:
+            raise ValueError("PEFT backend is required for this method.")
+
+        low_cpu_mem_usage = kwargs.pop(
+            "low_cpu_mem_usage", _LOW_CPU_MEM_USAGE_DEFAULT_LORA
+        )
+        if low_cpu_mem_usage and not is_peft_version(">=", "0.13.1"):
+            raise ValueError(
+                "`low_cpu_mem_usage=True` is not compatible with this `peft` version. Please update it with `pip install -U peft`."
+            )
+
+        # if a dict is passed, copy it instead of modifying it inplace
+        if isinstance(pretrained_model_name_or_path_or_dict, dict):
+            pretrained_model_name_or_path_or_dict = (
+                pretrained_model_name_or_path_or_dict.copy()
+            )
+
+        # First, ensure that the checkpoint is a compatible one and can be successfully loaded.
+        state_dict, network_alphas = self.lora_state_dict(
+            pretrained_model_name_or_path_or_dict,
+            unet_config=self.unet.config,
+            **kwargs,
+        )
+
+        is_correct_format = all("lora" in key for key in state_dict.keys())
+        if not is_correct_format:
+            raise ValueError("Invalid LoRA checkpoint.")
+
+        # Separate different component weights
+        unet_state_dict = {}
+        text_encoder_state_dict = {}
+        text_encoder_2_state_dict = {}
+        controlnet_state_dict = {}
+
+        for k, v in state_dict.items():
+            if k.startswith("text_encoder."):
+                text_encoder_state_dict[k] = v
+            elif k.startswith("text_encoder_2."):
+                text_encoder_2_state_dict[k] = v
+            elif k.startswith("controlnet."):
+                controlnet_state_dict[k] = v
+            else:
+                # Assume unet weights
+                unet_state_dict[k] = v
+
+        # Load UNet weights
+        if unet_state_dict:
+            self.load_lora_into_unet(
+                unet_state_dict,
+                network_alphas=network_alphas,
+                unet=self.unet,
+                adapter_name=adapter_name,
+                _pipeline=self,
+                low_cpu_mem_usage=low_cpu_mem_usage,
+            )
+
+        # Load text encoder weights
+        if text_encoder_state_dict:
+            self.load_lora_into_text_encoder(
+                text_encoder_state_dict,
+                network_alphas=network_alphas,
+                text_encoder=self.text_encoder,
+                prefix="text_encoder",
+                lora_scale=self.lora_scale,
+                adapter_name=adapter_name,
+                _pipeline=self,
+                low_cpu_mem_usage=low_cpu_mem_usage,
+            )
+
+        # Load text encoder 2 weights
+        if text_encoder_2_state_dict:
+            self.load_lora_into_text_encoder(
+                text_encoder_2_state_dict,
+                network_alphas=network_alphas,
+                text_encoder=self.text_encoder_2,
+                prefix="text_encoder_2",
+                lora_scale=self.lora_scale,
+                adapter_name=adapter_name,
+                _pipeline=self,
+                low_cpu_mem_usage=low_cpu_mem_usage,
+            )
+
+        # Load controlnet weights if present
+        if controlnet_state_dict and hasattr(self, "controlnet"):
+            self.load_lora_into_controlnet(
+                controlnet_state_dict,
+                network_alphas=network_alphas,
+                controlnet=self.controlnet,
+                adapter_name=adapter_name,
+                _pipeline=self,
+                low_cpu_mem_usage=low_cpu_mem_usage,
+            )
+
+    @classmethod
+    def load_lora_into_controlnet(
+        cls,
+        state_dict,
+        network_alphas,
+        controlnet,
+        adapter_name=None,
+        _pipeline=None,
+        low_cpu_mem_usage=False,
+    ):
+        """
+        This will load the LoRA layers specified in `state_dict` into `controlnet`.
+
+        Parameters:
+            state_dict (`dict`):
+                A standard state dict containing the lora layer parameters.
+            network_alphas (`Dict[str, float]`):
+                The value of the network alpha used for stable learning and preventing underflow.
+            controlnet (`ControlNetModel`):
+                The ControlNet model to load the LoRA layers into.
+            adapter_name (`str`, *optional*):
+                Adapter name to be used for referencing the loaded adapter model.
+            low_cpu_mem_usage (`bool`, *optional*):
+                Speed up model loading only loading the pretrained LoRA weights and not initializing the random weights.
+        """
+        if not USE_PEFT_BACKEND:
+            raise ValueError("PEFT backend is required for this method.")
+
+        if low_cpu_mem_usage and not is_peft_version(">=", "0.13.1"):
+            raise ValueError(
+                "`low_cpu_mem_usage=True` is not compatible with this `peft` version. Please update it with `pip install -U peft`."
+            )
+
+        # Extract controlnet keys
+        keys = list(state_dict.keys())
+        controlnet_keys = [k for k in keys if k.startswith(cls.controlnet_name)]
+        state_dict = {
+            k.replace(f"{cls.controlnet_name}.", ""): v
+            for k, v in state_dict.items()
+            if k in controlnet_keys
+        }
+
+        if len(state_dict.keys()) > 0:
+            # Load the layers corresponding to ControlNet.
+            logger.info(f"Loading {cls.controlnet_name}.")
+            controlnet.load_attn_procs(
+                state_dict,
+                network_alphas=network_alphas,
+                adapter_name=adapter_name,
+                _pipeline=_pipeline,
+                low_cpu_mem_usage=low_cpu_mem_usage,
+            )
+
+    @classmethod
+    def save_lora_weights(
+        cls,
+        save_directory: Union[str, os.PathLike],
+        unet_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
+        text_encoder_lora_layers: Dict[
+            str, Union[torch.nn.Module, torch.Tensor]
+        ] = None,
+        text_encoder_2_lora_layers: Dict[
+            str, Union[torch.nn.Module, torch.Tensor]
+        ] = None,
+        controlnet_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
+        is_main_process: bool = True,
+        weight_name: str = None,
+        save_function: Callable = None,
+        safe_serialization: bool = True,
+    ):
+        r"""
+        Save the LoRA parameters corresponding to the UNet, text encoders, and optionally controlnet.
+
+        Arguments:
+            save_directory (`str` or `os.PathLike`):
+                Directory to save LoRA parameters to. Will be created if it doesn't exist.
+            unet_lora_layers (`Dict[str, torch.nn.Module]` or `Dict[str, torch.Tensor]`):
+                State dict of the LoRA layers corresponding to the `unet`.
+            text_encoder_lora_layers (`Dict[str, torch.nn.Module]` or `Dict[str, torch.Tensor]`):
+                State dict of the LoRA layers corresponding to the `text_encoder`.
+            text_encoder_2_lora_layers (`Dict[str, torch.nn.Module]` or `Dict[str, torch.Tensor]`):
+                State dict of the LoRA layers corresponding to the `text_encoder_2`.
+            controlnet_lora_layers (`Dict[str, torch.nn.Module]` or `Dict[str, torch.Tensor]`):
+                State dict of the LoRA layers corresponding to the `controlnet`.
+            is_main_process (`bool`, *optional*, defaults to `True`):
+                Whether the process calling this is the main process or not.
+            save_function (`Callable`):
+                The function to use to save the state dictionary.
+            safe_serialization (`bool`, *optional*, defaults to `True`):
+                Whether to save the model using `safetensors` or the traditional PyTorch way.
+        """
+        state_dict = {}
+
+        if not (
+            unet_lora_layers
+            or text_encoder_lora_layers
+            or text_encoder_2_lora_layers
+            or controlnet_lora_layers
+        ):
+            raise ValueError(
+                "You must pass at least one of `unet_lora_layers`, `text_encoder_lora_layers`, "
+                "`text_encoder_2_lora_layers`, or `controlnet_lora_layers`."
+            )
+
+        if unet_lora_layers:
+            state_dict.update(cls.pack_weights(unet_lora_layers, "unet"))
+
+        if text_encoder_lora_layers:
+            state_dict.update(
+                cls.pack_weights(text_encoder_lora_layers, "text_encoder")
+            )
+
+        if text_encoder_2_lora_layers:
+            state_dict.update(
+                cls.pack_weights(text_encoder_2_lora_layers, "text_encoder_2")
+            )
+
+        if controlnet_lora_layers:
+            state_dict.update(
+                cls.pack_weights(controlnet_lora_layers, cls.controlnet_name)
+            )
+
+        cls.write_lora_layers(
+            state_dict=state_dict,
+            save_directory=save_directory,
+            is_main_process=is_main_process,
+            weight_name=weight_name,
+            save_function=save_function,
+            safe_serialization=safe_serialization,
+        )
+
+    def fuse_lora(
+        self,
+        components: List[str] = ["unet", "text_encoder", "text_encoder_2"],
+        lora_scale: float = 1.0,
+        safe_fusing: bool = False,
+        adapter_names: Optional[List[str]] = None,
+        **kwargs,
+    ):
+        # Note: controlnet fusion may need special handling
+        super().fuse_lora(
+            components=components,
+            lora_scale=lora_scale,
+            safe_fusing=safe_fusing,
+            adapter_names=adapter_names,
+        )
+
+    def unfuse_lora(
+        self,
+        components: List[str] = ["unet", "text_encoder", "text_encoder_2"],
+        **kwargs,
+    ):
+        # Note: controlnet unfusion may need special handling
+        super().unfuse_lora(components=components)
 
 
 class StableDiffusionXLPipeline(
