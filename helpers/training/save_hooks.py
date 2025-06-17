@@ -142,9 +142,14 @@ class SaveHookManager:
                 ),
             ):
                 # controlnet_lora_layers
-                lora_save_parameters[f"controlnet_lora_layers"] = (
-                    convert_state_dict_to_diffusers(get_peft_model_state_dict(model))
-                )
+                if self.model.MODEL_TYPE.value == "unet":
+                    # unet uses LoHa and it does not need the state dict conversion.
+                    controlnet_layers = get_peft_model_state_dict(model)
+                else:
+                    controlnet_layers = convert_state_dict_to_diffusers(
+                        get_peft_model_state_dict(model)
+                    )
+                lora_save_parameters[f"controlnet_lora_layers"] = controlnet_layers
             elif isinstance(
                 model,
                 type(
