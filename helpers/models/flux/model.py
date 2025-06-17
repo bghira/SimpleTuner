@@ -675,7 +675,7 @@ class Flux(ImageModelFoundation):
                     "controlnet_single_blocks.6",
                     "controlnet_single_blocks.7",
                     "controlnet_single_blocks.8",
-                    "controlnet_single_blocks.9"
+                    "controlnet_single_blocks.9",
                 ]
             elif self.config.flux_lora_target == "all+ffs+embedder":
                 return [
