@@ -307,6 +307,9 @@ def model_type(args):
     prefix = "ControlNet " if args.controlnet or args.control else ""
     if "lora" in args.model_type:
         if "standard" == args.lora_type.lower():
+            if StateTracker.get_model().MODEL_TYPE.value == "unet":
+                # SDXL and SD1x use LoHa for ControlNet adapters.
+                return f"{prefix}PEFT LoHa"
             return f"{prefix}PEFT LoRA"
         if "lycoris" == args.lora_type.lower():
             return f"{prefix}LyCORIS adapter"
