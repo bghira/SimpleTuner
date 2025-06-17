@@ -375,7 +375,11 @@ class ModelFoundation(ABC):
         denoiser_sd = {}
         for k, v in lora_state_dict.items():
             prefix = f"{key_to_replace}."
-            if k.startswith(prefix):
+            if (
+                k.startswith(prefix) or k.startswith("controlnet.")
+                if self.config.controlnet
+                else False
+            ):
                 new_key = k.replace(prefix, "")
                 denoiser_sd[new_key] = v
 
@@ -425,12 +429,13 @@ class ModelFoundation(ABC):
         logger.info("Finished loading LoRA weights successfully.")
 
     def save_lora_weights(self, *args, **kwargs):
-        if self.config.controlnet:
-            self.get_trained_component().save_lora_adapter(*args)
-        else:
-            self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG].save_lora_weights(
-                *args, **kwargs
+        self.PIPELINE_CLASSES[
+            (
+                PipelineTypes.TEXT2IMG
+                if not self.config.controlnet
+                else PipelineTypes.CONTROLNET
             )
+        ].save_lora_weights(*args, **kwargs)
 
     def check_user_config(self):
         """
@@ -1398,6 +1403,13 @@ class ImageModelFoundation(ModelFoundation):
         See SD3 or Flux classes for an example.
         """
         return []
+
+    def custom_model_card_code_example(self, repo_id: str = None) -> str:
+        """
+        Override this to provide custom code examples for model cards.
+        Returns None by default to use the standard template.
+        """
+        return None
 
 
 class VideoToTensor:
