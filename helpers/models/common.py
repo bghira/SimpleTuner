@@ -898,11 +898,11 @@ class ModelFoundation(ABC):
                 pipeline_kwargs[tokenizer_attr] = self.tokenizers[text_encoder_idx]
             else:
                 pipeline_kwargs[text_encoder_attr] = None
-            if self.tokenizers is not None and len(self.tokenizers) >= text_encoder_idx:
-                pipeline_kwargs[text_encoder_attr] = self.unwrap_model(
-                    self.tokenizers[text_encoder_idx]
-                )
-                pipeline_kwargs[tokenizer_attr] = self.tokenizers[text_encoder_idx]
+            # if self.tokenizers is not None and len(self.tokenizers) >= text_encoder_idx:
+            #     pipeline_kwargs[text_encoder_attr] = self.unwrap_model(
+            #         self.tokenizers[text_encoder_idx]
+            #     )
+            #     pipeline_kwargs[tokenizer_attr] = self.tokenizers[text_encoder_idx]
 
             text_encoder_idx += 1
 
