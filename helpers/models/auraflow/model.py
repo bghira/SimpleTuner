@@ -375,10 +375,10 @@ class Auraflow(ImageModelFoundation):
         }
 
         # Add attention mask if using masked training
-        if self.config.auraflow_attention_masked_training:
-            controlnet_kwargs["attention_kwargs"] = {
-                "attention_mask": prepared_batch["encoder_attention_mask"]
-            }
+        # if self.config.auraflow_attention_masked_training:
+        #     controlnet_kwargs["attention_kwargs"] = {
+        #         "attention_mask": prepared_batch["encoder_attention_mask"]
+        #     }
 
         # Get controlnet block samples
         # AuraFlow's forward expects block_controlnet_hidden_states as a list
@@ -400,10 +400,10 @@ class Auraflow(ImageModelFoundation):
         }
 
         # Add attention mask if using masked training
-        if self.config.auraflow_attention_masked_training:
-            transformer_kwargs["attention_kwargs"] = {
-                "attention_mask": prepared_batch["encoder_attention_mask"]
-            }
+        # if self.config.auraflow_attention_masked_training:
+        #     transformer_kwargs["attention_kwargs"] = {
+        #         "attention_mask": prepared_batch["encoder_attention_mask"]
+        #     }
 
         # Forward pass through the transformer with ControlNet residuals
         model_pred = self.get_trained_component(base_model=True)(**transformer_kwargs)[
