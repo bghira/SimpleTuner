@@ -659,13 +659,13 @@ class Trainer:
 
                     return
                 (
-                    self.model.model,
+                    q_model,
                     self.model.text_encoders,
                     self.controlnet,
                     self.ema_model,
                 ) = self.quantise_model(
                     model=(
-                        self.model.get_trained_component()
+                        self.model.get_trained_component(base_model=True)
                         if not preprocessing_models_only
                         else None
                     ),
@@ -674,6 +674,22 @@ class Trainer:
                     ema=self.ema_model,
                     args=self.config,
                 )
+                self.model.set_prepared_model(q_model, base_model=True)
+                if self.config.controlnet:
+                    (
+                        q_model,
+                        _,
+                        _,
+                        _,
+                    ) = self.quantise_model(
+                        model=(
+                            self.model.get_trained_component(base_model=False)
+                            if not preprocessing_models_only
+                            else None
+                        ),
+                        args=self.config,
+                    )
+                    self.model.set_prepared_model(q_model, base_model=False)
 
     def init_controlnet_model(self):
         if not self.config.controlnet:
