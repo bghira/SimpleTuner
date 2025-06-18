@@ -311,9 +311,9 @@ class AuraFlowControlNetModel(
         for name, module in self.named_children():
             fn_recursive_attn_processor(name, module, processor)
 
-    def _set_gradient_checkpointing(self, module, value=False):
-        if hasattr(module, "gradient_checkpointing"):
-            module.gradient_checkpointing = value
+    # def _set_gradient_checkpointing(self, module, enable=False, **kwargs):
+    #     if hasattr(module, "gradient_checkpointing"):
+    #         module.gradient_checkpointing = enable
 
     @classmethod
     def from_transformer(
