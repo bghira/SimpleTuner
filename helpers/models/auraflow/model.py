@@ -420,7 +420,11 @@ class Auraflow(ImageModelFoundation):
         if self.config.model_type == "lora" and (
             self.config.controlnet or self.config.control
         ):
-            return self.DEFAULT_CONTROLNET_LORA_TARGET
+            return [
+                "joint_transformer_blocks",
+                "single_transformer_blocks",
+                "time_step_proj",
+            ]
 
         if self.config.lora_type.lower() == "standard":
             return self.DEFAULT_LORA_TARGET
