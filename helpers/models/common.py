@@ -917,7 +917,7 @@ class ModelFoundation(ABC):
         self.pipelines[pipeline_type] = pipeline_class.from_pretrained(
             **pipeline_kwargs,
         )
- 
+
         return self.pipelines[pipeline_type]
 
     def get_pipeline(
