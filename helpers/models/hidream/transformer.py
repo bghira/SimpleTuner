@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import einops
 from einops import repeat
+import numpy as np
 
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
@@ -1165,6 +1166,8 @@ class HiDreamImageTransformer2DModel(
         img_sizes: Optional[List[Tuple[int, int]]] = None,
         img_ids: Optional[torch.Tensor] = None,
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
+        controlnet_block_samples: Optional[List[torch.Tensor]] = None,
+        controlnet_single_block_samples: Optional[List[torch.Tensor]] = None,
         return_dict: bool = True,
     ):
         """
@@ -1180,6 +1183,8 @@ class HiDreamImageTransformer2DModel(
             img_sizes: List of image dimensions
             img_ids: Image positional IDs
             joint_attention_kwargs: Additional attention parameters
+            controlnet_block_samples: ControlNet features for double stream blocks
+            controlnet_single_block_samples: ControlNet features for single stream blocks
             return_dict: Whether to return as a dict
 
         Returns:
@@ -1459,6 +1464,14 @@ class HiDreamImageTransformer2DModel(
             initial_encoder_hidden_states = initial_encoder_hidden_states[
                 :, :initial_encoder_hidden_states_seq_len
             ]
+            
+            # Add ControlNet residual for double stream blocks
+            if controlnet_block_samples is not None:
+                interval_control = len(self.double_stream_blocks) / len(controlnet_block_samples)
+                interval_control = int(np.ceil(interval_control))
+                control_idx = min(bid // interval_control, len(controlnet_block_samples) - 1)
+                hidden_states = hidden_states + controlnet_block_samples[control_idx]
+            
             block_id += 1
 
         # 6. Prepare for single stream blocks
@@ -1525,6 +1538,18 @@ class HiDreamImageTransformer2DModel(
 
             # Maintain consistent hidden state length
             hidden_states = hidden_states[:, :hidden_states_seq_len]
+            
+            # Add ControlNet residual for single stream blocks
+            if controlnet_single_block_samples is not None:
+                interval_control = len(self.single_stream_blocks) / len(controlnet_single_block_samples)
+                interval_control = int(np.ceil(interval_control))
+                control_idx = min(bid // interval_control, len(controlnet_single_block_samples) - 1)
+                # Only apply to image tokens portion
+                hidden_states[:, :image_tokens_seq_len] = (
+                    hidden_states[:, :image_tokens_seq_len] + 
+                    controlnet_single_block_samples[control_idx]
+                )
+            
             block_id += 1
 
         # 8. Final processing with optional checkpointing
