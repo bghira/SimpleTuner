@@ -200,6 +200,7 @@ def retrieve_timesteps(
         timesteps = scheduler.timesteps
     return timesteps, num_inference_steps
 
+
 # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img.retrieve_latents
 def retrieve_latents(
     encoder_output: torch.Tensor,
@@ -226,7 +227,12 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
     Specific to [`StableDiffusion3Pipeline`].
     """
 
-    _lora_loadable_modules = ["transformer", "text_encoder", "text_encoder_2", "controlnet"]
+    _lora_loadable_modules = [
+        "transformer",
+        "text_encoder",
+        "text_encoder_2",
+        "controlnet",
+    ]
     transformer_name = TRANSFORMER_NAME
     text_encoder_name = TEXT_ENCODER_NAME
     controlnet_name = "controlnet"
@@ -329,7 +335,10 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
         return state_dict
 
     def load_lora_weights(
-        self, pretrained_model_name_or_path_or_dict: Union[str, Dict[str, torch.Tensor]], adapter_name=None, **kwargs
+        self,
+        pretrained_model_name_or_path_or_dict: Union[str, Dict[str, torch.Tensor]],
+        adapter_name=None,
+        **kwargs,
     ):
         """
         Load LoRA weights specified in `pretrained_model_name_or_path_or_dict` into `self.unet`,
@@ -356,7 +365,9 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
         if not USE_PEFT_BACKEND:
             raise ValueError("PEFT backend is required for this method.")
 
-        low_cpu_mem_usage = kwargs.pop("low_cpu_mem_usage", _LOW_CPU_MEM_USAGE_DEFAULT_LORA)
+        low_cpu_mem_usage = kwargs.pop(
+            "low_cpu_mem_usage", _LOW_CPU_MEM_USAGE_DEFAULT_LORA
+        )
         if low_cpu_mem_usage and is_peft_version("<", "0.13.0"):
             raise ValueError(
                 "`low_cpu_mem_usage=True` is not compatible with this `peft` version. Please update it with `pip install -U peft`."
@@ -364,26 +375,48 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
 
         # if a dict is passed, copy it instead of modifying it inplace
         if isinstance(pretrained_model_name_or_path_or_dict, dict):
-            pretrained_model_name_or_path_or_dict = pretrained_model_name_or_path_or_dict.copy()
+            pretrained_model_name_or_path_or_dict = (
+                pretrained_model_name_or_path_or_dict.copy()
+            )
 
         # First, ensure that the checkpoint is a compatible one and can be successfully loaded.
-        state_dict = self.lora_state_dict(pretrained_model_name_or_path_or_dict, **kwargs)
+        state_dict = self.lora_state_dict(
+            pretrained_model_name_or_path_or_dict, **kwargs
+        )
 
         is_correct_format = all("lora" in key for key in state_dict.keys())
         if not is_correct_format:
             raise ValueError("Invalid LoRA checkpoint.")
 
         # Separate transformer, text encoder, and controlnet weights
-        transformer_state_dict = {k: v for k, v in state_dict.items() if not (k.startswith("text_encoder.") or k.startswith("text_encoder_2.") or k.startswith("controlnet."))}
-        text_encoder_state_dict = {k: v for k, v in state_dict.items() if k.startswith("text_encoder.")}
-        text_encoder_2_state_dict = {k: v for k, v in state_dict.items() if k.startswith("text_encoder_2.")}
-        controlnet_state_dict = {k: v for k, v in state_dict.items() if k.startswith("controlnet.")}
+        transformer_state_dict = {
+            k: v
+            for k, v in state_dict.items()
+            if not (
+                k.startswith("text_encoder.")
+                or k.startswith("text_encoder_2.")
+                or k.startswith("controlnet.")
+            )
+        }
+        text_encoder_state_dict = {
+            k: v for k, v in state_dict.items() if k.startswith("text_encoder.")
+        }
+        text_encoder_2_state_dict = {
+            k: v for k, v in state_dict.items() if k.startswith("text_encoder_2.")
+        }
+        controlnet_state_dict = {
+            k: v for k, v in state_dict.items() if k.startswith("controlnet.")
+        }
 
         # Load transformer weights
         if transformer_state_dict:
             self.load_lora_into_transformer(
                 transformer_state_dict,
-                transformer=getattr(self, self.transformer_name) if not hasattr(self, "transformer") else self.transformer,
+                transformer=(
+                    getattr(self, self.transformer_name)
+                    if not hasattr(self, "transformer")
+                    else self.transformer
+                ),
                 adapter_name=adapter_name,
                 _pipeline=self,
                 low_cpu_mem_usage=low_cpu_mem_usage,
@@ -542,7 +575,12 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
 
     @classmethod
     def load_lora_into_transformer(
-        cls, state_dict, transformer, adapter_name=None, _pipeline=None, low_cpu_mem_usage=False
+        cls,
+        state_dict,
+        transformer,
+        adapter_name=None,
+        _pipeline=None,
+        low_cpu_mem_usage=False,
     ):
         """
         This will load the LoRA layers specified in `state_dict` into `transformer`.
@@ -570,7 +608,9 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
 
         transformer_keys = [k for k in keys if k.startswith(cls.transformer_name)]
         state_dict = {
-            k.replace(f"{cls.transformer_name}.", ""): v for k, v in state_dict.items() if k in transformer_keys
+            k.replace(f"{cls.transformer_name}.", ""): v
+            for k, v in state_dict.items()
+            if k in transformer_keys
         }
 
         if len(state_dict.keys()) > 0:
@@ -589,7 +629,9 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
                 if "lora_B" in key:
                     rank[key] = val.shape[1]
 
-            lora_config_kwargs = get_peft_kwargs(rank, network_alpha_dict=None, peft_state_dict=state_dict)
+            lora_config_kwargs = get_peft_kwargs(
+                rank, network_alpha_dict=None, peft_state_dict=state_dict
+            )
             if "use_dora" in lora_config_kwargs:
                 if lora_config_kwargs["use_dora"] and is_peft_version("<", "0.9.0"):
                     raise ValueError(
@@ -605,21 +647,29 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
 
             # In case the pipeline has been already offloaded to CPU - temporarily remove the hooks
             # otherwise loading LoRA weights will lead to an error
-            is_model_cpu_offload, is_sequential_cpu_offload = cls._optionally_disable_offloading(_pipeline)
+            is_model_cpu_offload, is_sequential_cpu_offload = (
+                cls._optionally_disable_offloading(_pipeline)
+            )
 
             peft_kwargs = {}
             if is_peft_version(">=", "0.13.1"):
                 peft_kwargs["low_cpu_mem_usage"] = low_cpu_mem_usage
 
-            inject_adapter_in_model(lora_config, transformer, adapter_name=adapter_name, **peft_kwargs)
-            incompatible_keys = set_peft_model_state_dict(transformer, state_dict, adapter_name, **peft_kwargs)
+            inject_adapter_in_model(
+                lora_config, transformer, adapter_name=adapter_name, **peft_kwargs
+            )
+            incompatible_keys = set_peft_model_state_dict(
+                transformer, state_dict, adapter_name, **peft_kwargs
+            )
 
             warn_msg = ""
             if incompatible_keys is not None:
                 # Check only for unexpected keys.
                 unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
                 if unexpected_keys:
-                    lora_unexpected_keys = [k for k in unexpected_keys if "lora_" in k and adapter_name in k]
+                    lora_unexpected_keys = [
+                        k for k in unexpected_keys if "lora_" in k and adapter_name in k
+                    ]
                     if lora_unexpected_keys:
                         warn_msg = (
                             f"Loading adapter weights from state_dict led to unexpected keys found in the model:"
@@ -629,7 +679,9 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
                 # Filter missing keys specific to the current adapter.
                 missing_keys = getattr(incompatible_keys, "missing_keys", None)
                 if missing_keys:
-                    lora_missing_keys = [k for k in missing_keys if "lora_" in k and adapter_name in k]
+                    lora_missing_keys = [
+                        k for k in missing_keys if "lora_" in k and adapter_name in k
+                    ]
                     if lora_missing_keys:
                         warn_msg += (
                             f"Loading adapter weights from state_dict led to missing keys in the model:"
@@ -710,18 +762,26 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
         # Safe prefix to check with.
         if any(cls.text_encoder_name in key for key in keys):
             # Load the layers corresponding to text encoder and make necessary adjustments.
-            text_encoder_keys = [k for k in keys if k.startswith(prefix) and k.split(".")[0] == prefix]
+            text_encoder_keys = [
+                k for k in keys if k.startswith(prefix) and k.split(".")[0] == prefix
+            ]
             text_encoder_lora_state_dict = {
-                k.replace(f"{prefix}.", ""): v for k, v in state_dict.items() if k in text_encoder_keys
+                k.replace(f"{prefix}.", ""): v
+                for k, v in state_dict.items()
+                if k in text_encoder_keys
             }
 
             if len(text_encoder_lora_state_dict) > 0:
                 logger.info(f"Loading {prefix}.")
                 rank = {}
-                text_encoder_lora_state_dict = convert_state_dict_to_diffusers(text_encoder_lora_state_dict)
+                text_encoder_lora_state_dict = convert_state_dict_to_diffusers(
+                    text_encoder_lora_state_dict
+                )
 
                 # convert state dict
-                text_encoder_lora_state_dict = convert_state_dict_to_peft(text_encoder_lora_state_dict)
+                text_encoder_lora_state_dict = convert_state_dict_to_peft(
+                    text_encoder_lora_state_dict
+                )
 
                 for name, _ in text_encoder_attn_modules(text_encoder):
                     for module in ("out_proj", "q_proj", "k_proj", "v_proj"):
@@ -739,13 +799,19 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
 
                 if network_alphas is not None:
                     alpha_keys = [
-                        k for k in network_alphas.keys() if k.startswith(prefix) and k.split(".")[0] == prefix
+                        k
+                        for k in network_alphas.keys()
+                        if k.startswith(prefix) and k.split(".")[0] == prefix
                     ]
                     network_alphas = {
-                        k.replace(f"{prefix}.", ""): v for k, v in network_alphas.items() if k in alpha_keys
+                        k.replace(f"{prefix}.", ""): v
+                        for k, v in network_alphas.items()
+                        if k in alpha_keys
                     }
 
-                lora_config_kwargs = get_peft_kwargs(rank, network_alphas, text_encoder_lora_state_dict, is_unet=False)
+                lora_config_kwargs = get_peft_kwargs(
+                    rank, network_alphas, text_encoder_lora_state_dict, is_unet=False
+                )
                 if "use_dora" in lora_config_kwargs:
                     if lora_config_kwargs["use_dora"]:
                         if is_peft_version("<", "0.9.0"):
@@ -761,7 +827,9 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
                 if adapter_name is None:
                     adapter_name = get_adapter_name(text_encoder)
 
-                is_model_cpu_offload, is_sequential_cpu_offload = cls._optionally_disable_offloading(_pipeline)
+                is_model_cpu_offload, is_sequential_cpu_offload = (
+                    cls._optionally_disable_offloading(_pipeline)
+                )
 
                 # inject LoRA layers and load the state dict
                 # in transformers we automatically check whether the adapter name is already in use or not
@@ -789,8 +857,12 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
         cls,
         save_directory: Union[str, os.PathLike],
         transformer_lora_layers: Dict[str, torch.nn.Module] = None,
-        text_encoder_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
-        text_encoder_2_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
+        text_encoder_lora_layers: Dict[
+            str, Union[torch.nn.Module, torch.Tensor]
+        ] = None,
+        text_encoder_2_lora_layers: Dict[
+            str, Union[torch.nn.Module, torch.Tensor]
+        ] = None,
         controlnet_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
         is_main_process: bool = True,
         weight_name: str = None,
@@ -826,22 +898,35 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
         """
         state_dict = {}
 
-        if not (transformer_lora_layers or text_encoder_lora_layers or text_encoder_2_lora_layers or controlnet_lora_layers):
+        if not (
+            transformer_lora_layers
+            or text_encoder_lora_layers
+            or text_encoder_2_lora_layers
+            or controlnet_lora_layers
+        ):
             raise ValueError(
                 "You must pass at least one of `transformer_lora_layers`, `text_encoder_lora_layers`, `text_encoder_2_lora_layers`, or `controlnet_lora_layers`."
             )
 
         if transformer_lora_layers:
-            state_dict.update(cls.pack_weights(transformer_lora_layers, cls.transformer_name))
+            state_dict.update(
+                cls.pack_weights(transformer_lora_layers, cls.transformer_name)
+            )
 
         if text_encoder_lora_layers:
-            state_dict.update(cls.pack_weights(text_encoder_lora_layers, "text_encoder"))
+            state_dict.update(
+                cls.pack_weights(text_encoder_lora_layers, "text_encoder")
+            )
 
         if text_encoder_2_lora_layers:
-            state_dict.update(cls.pack_weights(text_encoder_2_lora_layers, "text_encoder_2"))
+            state_dict.update(
+                cls.pack_weights(text_encoder_2_lora_layers, "text_encoder_2")
+            )
 
         if controlnet_lora_layers:
-            state_dict.update(cls.pack_weights(controlnet_lora_layers, cls.controlnet_name))
+            state_dict.update(
+                cls.pack_weights(controlnet_lora_layers, cls.controlnet_name)
+            )
 
         # Save the model
         cls.write_lora_layers(
@@ -855,7 +940,12 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
 
     def fuse_lora(
         self,
-        components: List[str] = ["transformer", "text_encoder", "text_encoder_2", "controlnet"],
+        components: List[str] = [
+            "transformer",
+            "text_encoder",
+            "text_encoder_2",
+            "controlnet",
+        ],
         lora_scale: float = 1.0,
         safe_fusing: bool = False,
         adapter_names: Optional[List[str]] = None,
@@ -893,10 +983,22 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
         ```
         """
         super().fuse_lora(
-            components=components, lora_scale=lora_scale, safe_fusing=safe_fusing, adapter_names=adapter_names
+            components=components,
+            lora_scale=lora_scale,
+            safe_fusing=safe_fusing,
+            adapter_names=adapter_names,
         )
 
-    def unfuse_lora(self, components: List[str] = ["transformer", "text_encoder", "text_encoder_2", "controlnet"], **kwargs):
+    def unfuse_lora(
+        self,
+        components: List[str] = [
+            "transformer",
+            "text_encoder",
+            "text_encoder_2",
+            "controlnet",
+        ],
+        **kwargs,
+    ):
         r"""
         Reverses the effect of
         [`pipe.fuse_lora()`](https://huggingface.co/docs/diffusers/main/en/api/loaders#diffusers.loaders.LoraBaseMixin.fuse_lora).
@@ -911,6 +1013,8 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
             components (`List[str]`): List of LoRA-injectable components to unfuse LoRA from.
         """
         super().unfuse_lora(components=components)
+
+
 class StableDiffusion3Pipeline(
     DiffusionPipeline, SD3LoraLoaderMixin, FromSingleFileMixin
 ):
