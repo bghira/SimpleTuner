@@ -92,7 +92,7 @@ class TrainingSample:
         self.current_size = self.original_size
 
         if not self.original_size:
-            raise Exception("Original size not found in metadata.")
+            raise Exception(f"Original size not found in metadata: {image_metadata}")
 
         # Backend config details
         self.data_backend_config = StateTracker.get_data_backend_config(data_backend_id)
@@ -203,7 +203,7 @@ class TrainingSample:
             )
 
         cond_backend_id = conditioning_backend["id"]
-        cond_data_dir = conditioning_backend["data_backend"].instance_data_dir
+        cond_data_dir = conditioning_backend["config"]["instance_data_dir"]
         train_data_dir = StateTracker.get_data_backend(training_backend_id)[
             "data_backend"
         ].instance_data_dir
@@ -226,6 +226,29 @@ class TrainingSample:
         cond_sample.prepare_like(train_sample, return_tensor=False)
         cond_sample.conditioning_type = conditioning_backend.get("conditioning_type")
         return cond_sample
+
+    def training_sample_path(self, training_dataset_id: str) -> str:
+        """
+        For a conditioning sample, this will return the primary training sample counterpart path inside training_dataset_id dataset.
+        """
+        training_backend = StateTracker.get_data_backend(training_dataset_id)
+        cond_backend = StateTracker.get_data_backend(self.data_backend_id)
+        if training_backend is None:
+            raise ValueError(
+                f"No training dataset registered for backend “{training_dataset_id}”."
+            )
+        training_data_dir = training_backend["config"]["instance_data_dir"]
+        cond_data_dir = cond_backend["config"]["instance_data_dir"]
+        cond_relpath = self._image_path.replace(cond_data_dir, training_data_dir, 1)
+        if not cond_relpath:
+            raise ValueError(
+                "Cannot determine training sample path: no image path provided."
+            )
+        training_sample_path = training_backend["data_backend"].get_abs_path(
+            cond_relpath
+        )
+
+        return training_sample_path
 
     def _validate_image_metadata(self) -> bool:
         """
@@ -681,7 +704,6 @@ class TrainingSample:
         """
         if not self.crop_enabled:
             return self
-        # Too-big of an image, resize before we crop.
         self.calculate_target_size()
         self._downsample_before_crop()
         self.save_debug_image(f"images/{time.time()}-0.5-downsampled.png")

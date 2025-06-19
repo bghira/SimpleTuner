@@ -485,44 +485,45 @@ def collate_fn(batch):
         )
 
         if model.requires_conditioning_dataset():
-            # Kontext / other latent-conditioned models / adapters
-            debug_log("Compute conditioning latents")
-            conditioning_latents = compute_latents(
-                conditioning_filepaths,
-                conditioning_data_backend_id,
-                model,
-            )
-            debug_log(
-                f"Conditioning latents computed: {len(conditioning_latents)} items."
-            )
+            if model.requires_conditioning_latents():
+                # Kontext / other latent-conditioned models / adapters
+                debug_log("Compute conditioning latents")
+                conditioning_latents = compute_latents(
+                    conditioning_filepaths,
+                    conditioning_data_backend_id,
+                    model,
+                )
+                debug_log(
+                    f"Conditioning latents computed: {len(conditioning_latents)} items."
+                )
 
-            # unpack from dicts (vae-cache style) & shape-check
-            if isinstance(conditioning_latents[0], dict):
-                conditioning_latents = [v["latents"] for v in conditioning_latents]
+                # unpack from dicts (vae-cache style) & shape-check
+                if isinstance(conditioning_latents[0], dict):
+                    conditioning_latents = [v["latents"] for v in conditioning_latents]
 
-            conditioning_latents = check_latent_shapes(
-                conditioning_latents,
-                conditioning_filepaths,
-                conditioning_data_backend_id,
-                conditioning_examples,
-            )
-        else:
-            debug_log("Model may require conditioning pixels.")
-            conditioning_pixel_values = conditioning_pixels(
-                conditioning_filepaths,
-                training_filepaths,
-                conditioning_data_backend_id,
-                data_backend_id,
-            )
-            debug_log(
-                f"Found {len(conditioning_pixel_values)} conditioning pixel values."
-            )
-            conditioning_pixel_values = torch.stack(
-                [
-                    latent.to(StateTracker.get_accelerator().device)
-                    for latent in conditioning_pixel_values
-                ]
-            )
+                conditioning_latents = check_latent_shapes(
+                    conditioning_latents,
+                    conditioning_filepaths,
+                    conditioning_data_backend_id,
+                    conditioning_examples,
+                )
+            else:
+                debug_log("Model may require conditioning pixels.")
+                conditioning_pixel_values = conditioning_pixels(
+                    conditioning_filepaths,
+                    training_filepaths,
+                    conditioning_data_backend_id,
+                    data_backend_id,
+                )
+                debug_log(
+                    f"Found {len(conditioning_pixel_values)} conditioning pixel values."
+                )
+                conditioning_pixel_values = torch.stack(
+                    [
+                        latent.to(StateTracker.get_accelerator().device)
+                        for latent in conditioning_pixel_values
+                    ]
+                )
 
     # Compute embeddings and handle dropped conditionings
     debug_log("Extract captions")

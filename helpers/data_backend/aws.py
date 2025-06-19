@@ -90,6 +90,17 @@ class S3DataBackend(BaseDataBackend):
             **extra_args,
         )
 
+    def get_abs_path(self, sample_path: str) -> tuple:
+        """
+        Given a relative path of a sample, return the absolute path.
+        For S3, this is just the S3 key.
+        """
+        if not sample_path:
+            return (self.bucket_name, "")
+        if sample_path.startswith("/"):
+            sample_path = sample_path[1:]
+        return (self.bucket_name, sample_path)
+
     def exists(self, s3_key):
         """Check if the key exists in S3, with retries for transient errors."""
         for i in range(self.read_retry_limit):

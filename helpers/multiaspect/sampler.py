@@ -84,6 +84,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             if conditioning_type not in [
                 "controlnet",
                 "mask",
+                "segmentation",
                 "reference_strict",
                 "reference_loose",
             ]:
@@ -533,7 +534,10 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         outputs = list(samples)
         for sample in samples:
             sample_path = sample["image_path"]
-            if self.metadata_backend.instance_data_dir is not None and self.metadata_backend.instance_data_dir != "":
+            if (
+                self.metadata_backend.instance_data_dir is not None
+                and self.metadata_backend.instance_data_dir != ""
+            ):
                 sample_path = sample_path.split(
                     self.metadata_backend.instance_data_dir
                 )[-1]

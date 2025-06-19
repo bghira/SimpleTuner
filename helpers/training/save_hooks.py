@@ -135,7 +135,22 @@ class SaveHookManager:
         lora_save_parameters = {}
         # TODO: Make this less shitty.
         for model in models:
-            if isinstance(
+            if self.args.controlnet and isinstance(
+                model,
+                type(
+                    unwrap_model(self.accelerator, self.model.get_trained_component())
+                ),
+            ):
+                # controlnet_lora_layers
+                if self.model.MODEL_TYPE.value == "unet":
+                    # unet uses LoHa and it does not need the state dict conversion.
+                    controlnet_layers = get_peft_model_state_dict(model)
+                else:
+                    controlnet_layers = convert_state_dict_to_diffusers(
+                        get_peft_model_state_dict(model)
+                    )
+                lora_save_parameters[f"controlnet_lora_layers"] = controlnet_layers
+            elif isinstance(
                 model,
                 type(
                     unwrap_model(self.accelerator, self.model.get_trained_component())
