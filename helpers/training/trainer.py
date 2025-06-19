@@ -619,6 +619,13 @@ class Trainer:
                 self.model.model.to(
                     quantization_device, dtype=self.config.base_weight_dtype
                 )
+                if self.config.controlnet:
+                    logger.info(
+                        f"Moving ControlNet to dtype={self.config.base_weight_dtype}, device={quantization_device}"
+                    )
+                    self.model.controlnet.to(
+                        quantization_device, dtype=self.config.base_weight_dtype
+                    )
         if self.config.is_quanto:
             with self.accelerator.local_main_process_first():
                 if ema_only:
