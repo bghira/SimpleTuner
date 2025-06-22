@@ -158,8 +158,9 @@ class HiDreamControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
     ):
         config = dict(transformer.config)
         config["joint_attention_dim"] = 4096
-        config["num_layers"] = num_layers or 13
-        config["num_single_layers"] = num_single_layers or 13
+        config["num_layers"] = num_layers if num_layers is not None else 13
+        config["num_single_layers"] = num_single_layers if num_single_layers is not None else 13
+        logger.info(f"ControlNet will have {config['num_layers']} double stream and {config['num_single_layers']} single stream layers.")
         controlnet = cls.from_config(config)
 
         if load_weights_from_transformer:
