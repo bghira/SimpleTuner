@@ -58,6 +58,7 @@ def safety_check(args, accelerator):
             "pixart_sigma",
             "auraflow",
             "sd3",
+            "hidream",
         ]:
             raise ValueError(
                 f"ControlNet is not yet supported with {args.model_family} models. Please disable --controlnet, or switch model types."
