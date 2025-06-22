@@ -37,7 +37,7 @@ torchsde = "^0.2.6"
 torchmetrics = "^1.1.1"
 colorama = "^0.4.6"
 numpy = "^2.2.0"
-peft = "^0.14.0"
+peft = "^0.15.2"
 tensorboard = "^2.18.0"
 triton = {version = "^3.1.0", source = "pytorch"}
 sentencepiece = "^0.2.0"
