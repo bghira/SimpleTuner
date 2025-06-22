@@ -1346,7 +1346,9 @@ class HiDreamImageTransformer2DModel(
             processed_llama_embeddings = []
             for i, llama_emb in enumerate(extracted_llama_states):
                 if i < len(self.caption_projection) - 1:  # Reserve last one for T5
-                    processed_emb = self.caption_projection[i](llama_emb)
+                    processed_emb = self.caption_projection[i](
+                        llama_emb.to(hidden_states.dtype)
+                    )
                     processed_emb = processed_emb.view(
                         batch_size, -1, hidden_states.shape[-1]
                     )
@@ -1464,14 +1466,18 @@ class HiDreamImageTransformer2DModel(
             initial_encoder_hidden_states = initial_encoder_hidden_states[
                 :, :initial_encoder_hidden_states_seq_len
             ]
-            
+
             # Add ControlNet residual for double stream blocks
             if controlnet_block_samples is not None:
-                interval_control = len(self.double_stream_blocks) / len(controlnet_block_samples)
+                interval_control = len(self.double_stream_blocks) / len(
+                    controlnet_block_samples
+                )
                 interval_control = int(np.ceil(interval_control))
-                control_idx = min(bid // interval_control, len(controlnet_block_samples) - 1)
+                control_idx = min(
+                    bid // interval_control, len(controlnet_block_samples) - 1
+                )
                 hidden_states = hidden_states + controlnet_block_samples[control_idx]
-            
+
             block_id += 1
 
         # 6. Prepare for single stream blocks
@@ -1538,18 +1544,22 @@ class HiDreamImageTransformer2DModel(
 
             # Maintain consistent hidden state length
             hidden_states = hidden_states[:, :hidden_states_seq_len]
-            
+
             # Add ControlNet residual for single stream blocks
             if controlnet_single_block_samples is not None:
-                interval_control = len(self.single_stream_blocks) / len(controlnet_single_block_samples)
+                interval_control = len(self.single_stream_blocks) / len(
+                    controlnet_single_block_samples
+                )
                 interval_control = int(np.ceil(interval_control))
-                control_idx = min(bid // interval_control, len(controlnet_single_block_samples) - 1)
+                control_idx = min(
+                    bid // interval_control, len(controlnet_single_block_samples) - 1
+                )
                 # Only apply to image tokens portion
                 hidden_states[:, :image_tokens_seq_len] = (
-                    hidden_states[:, :image_tokens_seq_len] + 
-                    controlnet_single_block_samples[control_idx]
+                    hidden_states[:, :image_tokens_seq_len]
+                    + controlnet_single_block_samples[control_idx]
                 )
-            
+
             block_id += 1
 
         # 8. Final processing with optional checkpointing
