@@ -153,9 +153,13 @@ class HiDreamControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         cls,
         transformer,
         load_weights_from_transformer: bool = True,
+        num_layers: Optional[int] = None,
+        num_single_layers: Optional[int] = None,
     ):
         config = dict(transformer.config)
         config["joint_attention_dim"] = 4096
+        config["num_layers"] = num_layers or 13
+        config["num_single_layers"] = num_single_layers or 13
         controlnet = cls.from_config(config)
 
         if load_weights_from_transformer:
@@ -489,7 +493,7 @@ class HiDreamControlNetPipeline(
             scheduler=scheduler,
             controlnet=controlnet,
         )
-
+        self.default_sample_size = None # automatically scale sample size by control input.
         self.vae_scale_factor = (
             2 ** (len(self.vae.config.block_out_channels) - 1)
             if getattr(self, "vae", None)
@@ -500,10 +504,24 @@ class HiDreamControlNetPipeline(
         self.image_processor = VaeImageProcessor(
             vae_scale_factor=self.vae_scale_factor * 2
         )
-        self.default_sample_size = 128
         self.tokenizer_4.pad_token = getattr(
             self.tokenizer_4, "eos_token", "<|eot_id|>"
         )
+
+    def _nearest_sample_size(self, h: int, w: int) -> tuple[int, int]:
+        """
+        Round an (h, w) RGB resolution *down* to the nearest values compatible with:
+            • VAE down-sampling by `vae_scale_factor` (e.g. 8×)
+            • 2 × 2 latent-patch packing (`patch_size = 2`)
+        """
+        div = self.vae_scale_factor * self.transformer.config.patch_size   # 8*2 = 16
+        h = (h // div) * div
+        w = (w // div) * div
+        if h == 0 or w == 0:
+            raise ValueError(
+                f"Resolution below minimum {div}×{div} (got {h}×{w})."
+            )
+        return h, w
 
     def _get_t5_prompt_embeds(
         self,
@@ -1146,17 +1164,25 @@ class HiDreamControlNetPipeline(
             [`~pipelines.hidream.HiDreamControlNetPipelineOutput`] or `tuple`
         """
         # 1. Set up image dimensions and scales
-        height = height or self.default_sample_size * self.vae_scale_factor
-        width = width or self.default_sample_size * self.vae_scale_factor
+        if height is None or width is None:
+            if control_image is None:
+                raise ValueError("height/width or control_image must be supplied")
+            h0, w0 = control_image.shape[-2:]
+        else:
+            h0, w0 = height, width                       # explicit user request
 
-        division = self.vae_scale_factor * 2
-        S_max = (self.default_sample_size * self.vae_scale_factor) ** 2
-        scale = S_max / (width * height)
-        scale = math.sqrt(scale)
-        width, height = (
-            int(width * scale // division * division),
-            int(height * scale // division * division),
-        )
+        height, width = self._nearest_sample_size(h0, w0)            # final RGB dims
+
+        pH = height // (self.vae_scale_factor * 2)        # latent tokens per side
+        pW = width  // (self.vae_scale_factor * 2)
+        if pH * pW > self.transformer.max_seq:
+            raise ValueError(
+                f"Resolution too large: needs {pH*pW} tokens, "
+                f"but transformer.max_seq is {self.transformer.max_seq}"
+            )
+
+        # store so scheduler / helpers can see them
+        self.latent_h, self.latent_w = pH, pW
 
         # Handle control guidance scheduling
         if not isinstance(control_guidance_start, list) and isinstance(
