@@ -846,12 +846,22 @@ class ModelFoundation(ABC):
     ):
         """
         Loads the pipeline class for the model.
-        This is a stub and should be implemented in subclasses.
         """
-        # active_pipelines = getattr(self, "pipelines", {})
-        # if pipeline_type in active_pipelines:
-        #     setattr(active_pipelines[pipeline_type], self.MODEL_TYPE.value, self.unwrap_model())
-        #     return active_pipelines[pipeline_type]
+        active_pipelines = getattr(self, "pipelines", {})
+        if pipeline_type in active_pipelines:
+            setattr(
+                active_pipelines[pipeline_type],
+                self.MODEL_TYPE.value,
+                self.unwrap_model(model=self.model),
+            )
+            if self.config.controlnet:
+                setattr(
+                    active_pipelines[pipeline_type],
+                    "controlnet",
+                    self.unwrap_model(self.get_trained_component()),
+                )
+            return active_pipelines[pipeline_type]
+
         pipeline_kwargs = {
             "pretrained_model_name_or_path": self._model_config_path(),
         }
@@ -903,9 +913,7 @@ class ModelFoundation(ABC):
             text_encoder_idx += 1
 
         if self.config.controlnet and pipeline_type is PipelineTypes.CONTROLNET:
-            pipeline_kwargs["controlnet"] = self.unwrap_model(
-                self.get_trained_component()
-            )
+            pipeline_kwargs["controlnet"] = self.unwrap_model()
 
         logger.debug(
             f"Initialising {pipeline_class.__name__} with components: {pipeline_kwargs}"
@@ -924,7 +932,9 @@ class ModelFoundation(ABC):
             self.model is not None
             and getattr(possibly_cached_pipeline, self.MODEL_TYPE.value, None) is None
         ):
+            # if the transformer or unet aren't in the cached pipeline, we'll add it.
             setattr(possibly_cached_pipeline, self.MODEL_TYPE.value, self.model)
+        # attach the vae to the cached pipeline.
         setattr(possibly_cached_pipeline, "vae", self.get_vae())
         if self.text_encoders is not None:
             for (
@@ -934,6 +944,7 @@ class ModelFoundation(ABC):
                 if getattr(possibly_cached_pipeline, text_encoder_attr, None) is None:
                     text_encoder_attr_number = 1
                     if "encoder_" in text_encoder_attr:
+                        # support multi-encoder model pipelines
                         text_encoder_attr_number = text_encoder_attr.split("_")[-1]
                     setattr(
                         possibly_cached_pipeline,
