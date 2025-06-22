@@ -111,8 +111,9 @@ class HiDream(ImageModelFoundation):
             )
         else:
             logger.info("Initializing controlnet weights from base model")
+            cn_custom_config = self.config.controlnet_custom_config or {}
             self.controlnet = HiDreamControlNetModel.from_transformer(
-                self.unwrap_model(self.model)
+                self.unwrap_model(self.model), **cn_custom_config
             )
         self.controlnet.train()
 
@@ -150,8 +151,14 @@ class HiDream(ImageModelFoundation):
             setattr(
                 active_pipelines[pipeline_type],
                 self.MODEL_TYPE.value,
-                self.unwrap_model(),
+                self.unwrap_model(model=self.model),
             )
+            if self.config.controlnet:
+                setattr(
+                    active_pipelines[pipeline_type],
+                    "controlnet",
+                    self.unwrap_model(self.get_trained_component()),
+                )
             return active_pipelines[pipeline_type]
         pipeline_kwargs = {
             "pretrained_model_name_or_path": self._model_config_path(),
@@ -173,7 +180,7 @@ class HiDream(ImageModelFoundation):
         if "watermark" in signature.parameters:
             pipeline_kwargs["watermark"] = None
         if load_base_model:
-            pipeline_kwargs[self.MODEL_TYPE.value] = self.unwrap_model()
+            pipeline_kwargs[self.MODEL_TYPE.value] = self.unwrap_model(model=self.model)
         else:
             pipeline_kwargs[self.MODEL_TYPE.value] = None
 
