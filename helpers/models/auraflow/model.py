@@ -421,27 +421,7 @@ class Auraflow(ImageModelFoundation):
             self.config.controlnet or self.config.control
         ):
             controlnet_block_modules = [f"controlnet_blocks.{i}" for i in range(36)]
-            return [
-                # Base attention layers
-                "to_q",
-                "to_k",
-                "to_v",
-                "to_out.0",
-                # Additional attention projections (for joint blocks)
-                "add_k_proj",
-                "add_v_proj",
-                "add_q_proj",
-                "to_add_out",
-                # Feed-forward layers
-                "linear_1",
-                "linear_2",
-                "out_projection",
-                # Context embedder
-                "context_embedder",
-                # Time step projection
-                "time_step_proj.linear_1",
-                "time_step_proj.linear_2",
-            ] + controlnet_block_modules
+            return controlnet_block_modules
 
         if self.config.lora_type.lower() == "standard":
             return self.DEFAULT_LORA_TARGET
