@@ -1468,7 +1468,7 @@ class HiDreamImageTransformer2DModel(
             ]
 
             # Add ControlNet residual for double stream blocks
-            if controlnet_block_samples is not None:
+            if controlnet_block_samples is not None and len(controlnet_block_samples) > 0:
                 interval_control = len(self.double_stream_blocks) / len(
                     controlnet_block_samples
                 )
@@ -1546,7 +1546,7 @@ class HiDreamImageTransformer2DModel(
             hidden_states = hidden_states[:, :hidden_states_seq_len]
 
             # Add ControlNet residual for single stream blocks
-            if controlnet_single_block_samples is not None:
+            if controlnet_single_block_samples is not None and len(controlnet_single_block_samples) > 0:
                 interval_control = len(self.single_stream_blocks) / len(
                     controlnet_single_block_samples
                 )
