@@ -922,17 +922,18 @@ class Validation:
                 float(getattr(self.config, "validation_lycoris_strength", 1.0))
             )
 
-        if getattr(self.model, "pipeline", None) is None:
+        pipeline_type = (
+            PipelineTypes.CONTROLNET
+            if self.config.controlnet
+            else (
+                PipelineTypes.CONTROL
+                if self.config.control
+                else self.model.DEFAULT_PIPELINE_TYPE
+            )
+        )
+        if getattr(self.model, "pipeline", None) is None or (type(self.model.pipeline) is not self._pipeline_cls()):
             self.model.pipeline = self.model.get_pipeline(
-                pipeline_type=(
-                    PipelineTypes.CONTROLNET
-                    if self.config.controlnet
-                    else (
-                        PipelineTypes.CONTROL
-                        if self.config.control
-                        else self.model.DEFAULT_PIPELINE_TYPE
-                    )
-                ),
+                pipeline_type=pipeline_type,
                 load_base_model=False,
             )
 
