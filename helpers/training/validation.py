@@ -933,6 +933,7 @@ class Validation:
                         else self.model.DEFAULT_PIPELINE_TYPE
                     )
                 ),
+                load_base_model=False,
             )
 
         self.model.move_models(self.accelerator.device)
