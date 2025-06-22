@@ -430,6 +430,15 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--controlnet_custom_config",
+        type=str,
+        default=None,
+        help=(
+            "When training certain ControlNet models (eg. HiDream) you may set a config containing keys like num_layers or num_single_layers"
+            " to adjust the resulting ControlNet size. This is not supported by most models, and may be ignored if the model does not support it."
+        )
+    )
+    parser.add_argument(
         "--controlnet_model_name_or_path",
         type=str,
         default=None,
@@ -2289,6 +2298,16 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
 
     if args is None and exit_on_error:
         sys.exit(1)
+
+    if args.controlnet_custom_config is not None:
+        if args.controlnet_custom_config.startswith("{"):
+            try:
+                import ast
+
+                args.controlnet_custom_config = ast.literal_eval(args.controlnet_custom_config)
+            except Exception as e:
+                logger.error(f"Could not load controlnet_custom_config: {e}")
+                raise
 
     if args.optimizer == "adam_bfloat16" and args.mixed_precision != "bf16":
         if not torch.backends.mps.is_available():
