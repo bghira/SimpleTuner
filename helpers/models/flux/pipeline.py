@@ -32,23 +32,23 @@ from diffusers.models.autoencoders import AutoencoderKL
 from diffusers.models.transformers import FluxTransformer2DModel
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from diffusers.utils import (
-    USE_PEFT_BACKEND,
-    is_torch_xla_available,
-    replace_example_docstring,
-    scale_lora_layers,
-    unscale_lora_layers,
-    is_peft_available,
-    is_peft_version,
-    is_torch_version,
-    is_transformers_available,
-    is_transformers_version,
-    get_peft_kwargs,
-    get_adapter_name,
-    convert_unet_state_dict_to_peft,
-    convert_state_dict_to_diffusers,
-    convert_state_dict_to_peft,
-    logging,
-)
+        USE_PEFT_BACKEND,
+        is_torch_xla_available,
+        replace_example_docstring,
+        scale_lora_layers,
+        unscale_lora_layers,
+        is_peft_available,
+        is_peft_version,
+        is_torch_version,
+        is_transformers_available,
+        is_transformers_version,
+        get_peft_kwargs,
+        get_adapter_name,
+        convert_unet_state_dict_to_peft,
+        convert_state_dict_to_diffusers,
+        convert_state_dict_to_peft,
+        logging,
+    )
 from diffusers.models.lora import (
     text_encoder_attn_modules,
     text_encoder_mlp_modules,
@@ -287,7 +287,7 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
             "framework": "pytorch",
         }
 
-        state_dict = cls._fetch_state_dict(
+        state_dict, metadata = cls._fetch_state_dict(
             pretrained_model_name_or_path_or_dict=pretrained_model_name_or_path_or_dict,
             weight_name=weight_name,
             use_safetensors=use_safetensors,
