@@ -109,6 +109,7 @@ class ModelFoundation(ABC):
     """
 
     MODEL_LICENSE = "other"
+    CONTROLNET_LORA_STATE_DICT_PREFIX = "controlnet"
 
     def __init__(self, config: dict, accelerator):
         self.config = config
@@ -372,7 +373,7 @@ class ModelFoundation(ABC):
         # 3. Extract keys for the main model (which uses self.MODEL_TYPE.value as the prefix)
         #    For example, "transformer." or "unet." is stripped out.
         key_to_replace = (
-            "controlnet" if self.config.controlnet else self.MODEL_TYPE.value
+            self.CONTROLNET_LORA_STATE_DICT_PREFIX if self.config.controlnet else self.MODEL_TYPE.value
         )
         prefix = f"{key_to_replace}."
         denoiser_sd = {}
@@ -837,6 +838,10 @@ class ModelFoundation(ABC):
                 self.model.requires_grad_(False)
         if self.config.controlnet and self.controlnet is not None:
             self.controlnet.train()
+
+    def uses_shared_modules(self):
+        # shared modules may be when ControlNet reuses base model layers, eg. HiDream.
+        return False
 
     def get_trained_component(self, base_model: bool = False):
         return self.unwrap_model(model=self.model if base_model else None)
@@ -1339,7 +1344,7 @@ class ImageModelFoundation(ModelFoundation):
         "controlnet_down_blocks.8",
         "controlnet_mid_block",
     ]
-
+    SHARED_MODULE_PREFIXES = None  # No shared modules by default, but can be overridden in subclasses.
     # A bit more than the default, but some will need to override this to just Attention layers, like SD3.
     DEFAULT_LYCORIS_TARGET = ["Attention", "FeedForward"]
     DEFAULT_PIPELINE_TYPE = PipelineTypes.TEXT2IMG
