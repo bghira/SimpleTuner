@@ -50,6 +50,16 @@ class HiDream(ImageModelFoundation):
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     # Only training the Attention blocks by default seems to help more with HiDream.
     DEFAULT_LYCORIS_TARGET = ["Attention"]
+    # Layers used from base in ControlNet model.
+    SHARED_MODULE_PREFIXES = [
+        "double_stream_blocks.",
+        "single_stream_blocks.",
+        "x_embedder.",
+        "t_embedder.",
+        "p_embedder.",
+        "pe_embedder.",
+    ]
+
 
     MODEL_CLASS = HiDreamImageTransformer2DModel
     PIPELINE_CLASSES = {
@@ -126,6 +136,13 @@ class HiDream(ImageModelFoundation):
     def requires_conditioning_validation_inputs(self) -> bool:
         """Whether this model requires conditioning inputs during validation."""
         if self.config.controlnet:
+            return True
+        return False
+
+    def uses_shared_modules(self) -> bool:
+        if self.config.controlnet and self.config.controlnet_custom_config.get(
+            "use_shared_modules", False
+        ):
             return True
         return False
 
