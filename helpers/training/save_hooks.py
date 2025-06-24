@@ -1,3 +1,5 @@
+import types
+from contextlib import contextmanager
 from helpers.training.ema import EMAModel
 from helpers.training.wrappers import unwrap_model
 from helpers.training.multi_process import _get_rank as get_rank
@@ -61,7 +63,6 @@ def merge_safetensors_files(directory):
             os.remove(os.path.join(directory, file_name))
 
     logger.info(f"All tensors have been merged and saved into {output_file_path}")
-
 
 class SaveHookManager:
     def __init__(
@@ -142,13 +143,7 @@ class SaveHookManager:
                 ),
             ):
                 # controlnet_lora_layers
-                if self.model.MODEL_TYPE.value == "unet":
-                    # unet uses LoHa and it does not need the state dict conversion.
-                    controlnet_layers = get_peft_model_state_dict(model)
-                else:
-                    controlnet_layers = convert_state_dict_to_diffusers(
-                        get_peft_model_state_dict(model)
-                    )
+                controlnet_layers = get_peft_model_state_dict(model)
                 lora_save_parameters[f"controlnet_lora_layers"] = controlnet_layers
             elif isinstance(
                 model,
