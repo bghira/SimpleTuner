@@ -153,36 +153,41 @@ class HiDreamControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         cls,
         transformer,
         load_weights_from_transformer: bool = True,
+        use_shared_modules: bool = True,
         num_layers: Optional[int] = None,
         num_single_layers: Optional[int] = None,
     ):
         config = dict(transformer.config)
         config["joint_attention_dim"] = 4096
-        config["num_layers"] = num_layers if num_layers is not None else 13
-        config["num_single_layers"] = num_single_layers if num_single_layers is not None else 13
+        config["num_layers"] = num_layers if num_layers is not None else len(transformer.double_stream_blocks)
+        config["num_single_layers"] = num_single_layers if num_single_layers is not None else len(transformer.single_stream_blocks)
         logger.info(f"ControlNet will have {config['num_layers']} double stream and {config['num_single_layers']} single stream layers.")
         controlnet = cls.from_config(config)
 
         if load_weights_from_transformer:
-            controlnet.t_embedder.load_state_dict(transformer.t_embedder.state_dict())
-            controlnet.p_embedder.load_state_dict(transformer.p_embedder.state_dict())
-            controlnet.x_embedder.load_state_dict(transformer.x_embedder.state_dict())
+            if use_shared_modules:
+                ### We'll just apply shared references since its frozen:
+                controlnet.t_embedder = transformer.t_embedder
+                controlnet.p_embedder = transformer.p_embedder
+                controlnet.x_embedder = transformer.x_embedder
+                controlnet.pe_embedder = transformer.pe_embedder
+                controlnet.double_stream_blocks = transformer.double_stream_blocks
+                controlnet.single_stream_blocks = transformer.single_stream_blocks
+            else:
+                ### If we were to deepcopy instead:
+                controlnet.t_embedder.load_state_dict(transformer.t_embedder.state_dict())
+                controlnet.p_embedder.load_state_dict(transformer.p_embedder.state_dict())
+                controlnet.x_embedder.load_state_dict(transformer.x_embedder.state_dict())
 
-            if hasattr(transformer, "t5_embedder"):
-                controlnet.t5_embedder.load_state_dict(
-                    transformer.t5_embedder.state_dict()
+                controlnet.double_stream_blocks.load_state_dict(
+                    transformer.double_stream_blocks.state_dict(), strict=False
                 )
-            if hasattr(transformer, "llama_embedder"):
-                controlnet.llama_embedder.load_state_dict(
-                    transformer.llama_embedder.state_dict()
+                controlnet.single_stream_blocks.load_state_dict(
+                    transformer.single_stream_blocks.state_dict(), strict=False
                 )
-
-            controlnet.double_stream_blocks.load_state_dict(
-                transformer.double_stream_blocks.state_dict(), strict=False
-            )
-            controlnet.single_stream_blocks.load_state_dict(
-                transformer.single_stream_blocks.state_dict(), strict=False
-            )
+        cp = transformer.caption_projection
+        controlnet.t5_embedder = cp[-1]
+        controlnet.llama_embedder = cp[0]
 
         return controlnet
 
