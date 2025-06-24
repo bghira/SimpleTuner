@@ -931,16 +931,18 @@ class Validation:
                 else self.model.DEFAULT_PIPELINE_TYPE
             )
         )
-        if getattr(self.model, "pipeline", None) is None or (
-            type(self.model.pipeline) is not self._pipeline_cls()
-        ):
-            self.model.pipeline = self.model.get_pipeline(
-                pipeline_type=pipeline_type,
-                load_base_model=False,
-            )
+        self.model.pipeline = self.model.get_pipeline(
+            pipeline_type=pipeline_type,
+            load_base_model=False,
+        )
 
         self.model.move_models(self.accelerator.device)
-        # self.model = self.model.pipeline.to(self.inference_device)
+        for attr in ["text_encoder", "text_encoder_2", "text_encoder_3", "text_encoder_4"]:
+            if hasattr(self.model.pipeline, attr):
+                if getattr(self.model.pipeline, attr).device.type == "meta":
+                    # hackish workaround to eliminate meta tensor move errors with offloaded TEs
+                    setattr(self.model.pipeline, attr, None)
+        self.model.pipeline.to(self.accelerator.device)
         self.model.pipeline.set_progress_bar_config(disable=True)
 
     def clean_pipeline(self):
