@@ -937,11 +937,11 @@ class Validation:
         )
 
         self.model.move_models(self.accelerator.device)
+        # Remove text encoders on 'meta' device to avoid move errors
         for attr in ["text_encoder", "text_encoder_2", "text_encoder_3", "text_encoder_4"]:
-            if hasattr(self.model.pipeline, attr):
-                if getattr(self.model.pipeline, attr).device.type == "meta":
-                    # hackish workaround to eliminate meta tensor move errors with offloaded TEs
-                    setattr(self.model.pipeline, attr, None)
+            te = getattr(self.model.pipeline, attr, None)
+            if getattr(te, "device", None) and te.device.type == "meta":
+                setattr(self.model.pipeline, attr, None)
         self.model.pipeline.to(self.accelerator.device)
         self.model.pipeline.set_progress_bar_config(disable=True)
 
