@@ -436,7 +436,7 @@ def get_argument_parser():
         help=(
             "When training certain ControlNet models (eg. HiDream) you may set a config containing keys like num_layers or num_single_layers"
             " to adjust the resulting ControlNet size. This is not supported by most models, and may be ignored if the model does not support it."
-        )
+        ),
     )
     parser.add_argument(
         "--controlnet_model_name_or_path",
@@ -2304,7 +2304,9 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             try:
                 import ast
 
-                args.controlnet_custom_config = ast.literal_eval(args.controlnet_custom_config)
+                args.controlnet_custom_config = ast.literal_eval(
+                    args.controlnet_custom_config
+                )
             except Exception as e:
                 logger.error(f"Could not load controlnet_custom_config: {e}")
                 raise

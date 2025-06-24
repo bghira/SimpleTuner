@@ -159,9 +159,19 @@ class HiDreamControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
     ):
         config = dict(transformer.config)
         config["joint_attention_dim"] = 4096
-        config["num_layers"] = num_layers if num_layers is not None else len(transformer.double_stream_blocks)
-        config["num_single_layers"] = num_single_layers if num_single_layers is not None else len(transformer.single_stream_blocks)
-        logger.info(f"ControlNet will have {config['num_layers']} double stream and {config['num_single_layers']} single stream layers.")
+        config["num_layers"] = (
+            num_layers
+            if num_layers is not None
+            else len(transformer.double_stream_blocks)
+        )
+        config["num_single_layers"] = (
+            num_single_layers
+            if num_single_layers is not None
+            else len(transformer.single_stream_blocks)
+        )
+        logger.info(
+            f"ControlNet will have {config['num_layers']} double stream and {config['num_single_layers']} single stream layers."
+        )
         controlnet = cls.from_config(config)
 
         if load_weights_from_transformer:
@@ -175,9 +185,15 @@ class HiDreamControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                 controlnet.single_stream_blocks = transformer.single_stream_blocks
             else:
                 ### If we were to deepcopy instead:
-                controlnet.t_embedder.load_state_dict(transformer.t_embedder.state_dict())
-                controlnet.p_embedder.load_state_dict(transformer.p_embedder.state_dict())
-                controlnet.x_embedder.load_state_dict(transformer.x_embedder.state_dict())
+                controlnet.t_embedder.load_state_dict(
+                    transformer.t_embedder.state_dict()
+                )
+                controlnet.p_embedder.load_state_dict(
+                    transformer.p_embedder.state_dict()
+                )
+                controlnet.x_embedder.load_state_dict(
+                    transformer.x_embedder.state_dict()
+                )
 
                 controlnet.double_stream_blocks.load_state_dict(
                     transformer.double_stream_blocks.state_dict(), strict=False
@@ -499,7 +515,9 @@ class HiDreamControlNetPipeline(
             scheduler=scheduler,
             controlnet=controlnet,
         )
-        self.default_sample_size = None # automatically scale sample size by control input.
+        self.default_sample_size = (
+            None  # automatically scale sample size by control input.
+        )
         self.vae_scale_factor = (
             2 ** (len(self.vae.config.block_out_channels) - 1)
             if getattr(self, "vae", None)
@@ -520,13 +538,11 @@ class HiDreamControlNetPipeline(
             • VAE down-sampling by `vae_scale_factor` (e.g. 8×)
             • 2 × 2 latent-patch packing (`patch_size = 2`)
         """
-        div = self.vae_scale_factor * self.transformer.config.patch_size   # 8*2 = 16
+        div = self.vae_scale_factor * self.transformer.config.patch_size  # 8*2 = 16
         h = (h // div) * div
         w = (w // div) * div
         if h == 0 or w == 0:
-            raise ValueError(
-                f"Resolution below minimum {div}×{div} (got {h}×{w})."
-            )
+            raise ValueError(f"Resolution below minimum {div}×{div} (got {h}×{w}).")
         return h, w
 
     def _get_t5_prompt_embeds(
@@ -1175,12 +1191,12 @@ class HiDreamControlNetPipeline(
                 raise ValueError("height/width or control_image must be supplied")
             h0, w0 = control_image.shape[-2:]
         else:
-            h0, w0 = height, width                       # explicit user request
+            h0, w0 = height, width  # explicit user request
 
-        height, width = self._nearest_sample_size(h0, w0)            # final RGB dims
+        height, width = self._nearest_sample_size(h0, w0)  # final RGB dims
 
-        pH = height // (self.vae_scale_factor * 2)        # latent tokens per side
-        pW = width  // (self.vae_scale_factor * 2)
+        pH = height // (self.vae_scale_factor * 2)  # latent tokens per side
+        pW = width // (self.vae_scale_factor * 2)
         if pH * pW > self.transformer.max_seq:
             raise ValueError(
                 f"Resolution too large: needs {pH*pW} tokens, "

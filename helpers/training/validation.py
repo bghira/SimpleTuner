@@ -931,7 +931,9 @@ class Validation:
                 else self.model.DEFAULT_PIPELINE_TYPE
             )
         )
-        if getattr(self.model, "pipeline", None) is None or (type(self.model.pipeline) is not self._pipeline_cls()):
+        if getattr(self.model, "pipeline", None) is None or (
+            type(self.model.pipeline) is not self._pipeline_cls()
+        ):
             self.model.pipeline = self.model.get_pipeline(
                 pipeline_type=pipeline_type,
                 load_base_model=False,

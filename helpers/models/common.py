@@ -373,7 +373,9 @@ class ModelFoundation(ABC):
         # 3. Extract keys for the main model (which uses self.MODEL_TYPE.value as the prefix)
         #    For example, "transformer." or "unet." is stripped out.
         key_to_replace = (
-            self.CONTROLNET_LORA_STATE_DICT_PREFIX if self.config.controlnet else self.MODEL_TYPE.value
+            self.CONTROLNET_LORA_STATE_DICT_PREFIX
+            if self.config.controlnet
+            else self.MODEL_TYPE.value
         )
         prefix = f"{key_to_replace}."
         denoiser_sd = {}
@@ -1344,7 +1346,9 @@ class ImageModelFoundation(ModelFoundation):
         "controlnet_down_blocks.8",
         "controlnet_mid_block",
     ]
-    SHARED_MODULE_PREFIXES = None  # No shared modules by default, but can be overridden in subclasses.
+    SHARED_MODULE_PREFIXES = (
+        None  # No shared modules by default, but can be overridden in subclasses.
+    )
     # A bit more than the default, but some will need to override this to just Attention layers, like SD3.
     DEFAULT_LYCORIS_TARGET = ["Attention", "FeedForward"]
     DEFAULT_PIPELINE_TYPE = PipelineTypes.TEXT2IMG

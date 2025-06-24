@@ -64,6 +64,7 @@ def merge_safetensors_files(directory):
 
     logger.info(f"All tensors have been merged and saved into {output_file_path}")
 
+
 class SaveHookManager:
     def __init__(
         self,

@@ -60,7 +60,6 @@ class HiDream(ImageModelFoundation):
         "pe_embedder.",
     ]
 
-
     MODEL_CLASS = HiDreamImageTransformer2DModel
     PIPELINE_CLASSES = {
         PipelineTypes.TEXT2IMG: HiDreamImagePipeline,
