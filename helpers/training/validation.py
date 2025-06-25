@@ -351,7 +351,10 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                 ncols=125,
                 desc="Precomputing validation image embeds",
             ):
-                _, validation_prompt, _ = _validation_sample
+                if isinstance(_validation_sample, tuple) and len(_validation_sample) == 3:
+                    _, validation_prompt, _ = _validation_sample
+                elif isinstance(_validation_sample, tuple) and len(_validation_sample) == 4:
+                    _, validation_prompt, _, _ = _validation_sample
                 embed_cache.compute_embeddings_for_prompts(
                     [validation_prompt], load_from_cache=False
                 )
@@ -956,6 +959,8 @@ class Validation:
             if len(prompt) == 3 and isinstance(prompt[2], Image.Image):
                 # DeepFloyd stage II inputs.
                 shortname, prompt, validation_input_image = prompt
+            elif len(prompt) == 4 and isinstance(prompt[3], Image.Image):
+                shortname, prompt, validation_input_image_path, validation_input_image = prompt
             else:
                 shortname = self.validation_prompt_metadata["validation_shortnames"][
                     idx
@@ -1625,7 +1630,17 @@ class Evaluation:
         return sum(len(x["sampler"]) for _, x in eval_datasets.items())
 
     def get_timestep_schedule(self, noise_scheduler):
-        noise_scheduler.set_timesteps(self.config.eval_timesteps)
+        accept_mu = "mu" in set(
+            inspect.signature(scheduler.set_timesteps).parameters.keys()
+        )
+        scheduler_kwargs = {}
+        if accept_mu and self.config.flow_schedule_auto_shift:
+            from helpers.models.sd3.pipeline import calculate_shift
+            scheduler_kwargs["mu"] = calculate_shift(
+                StateTracker.get_model().get_trained_component().config.max_seq
+            )
+
+        noise_scheduler.set_timesteps(self.config.eval_timesteps, **scheduler_kwargs)
         timesteps = noise_scheduler.timesteps
         return timesteps
 

@@ -402,6 +402,8 @@ class Trainer:
             os.makedirs(self.config.output_dir, exist_ok=True)
         if self.config.preserve_data_backend_cache:
             return
+        if not self.accelerator.is_local_main_process:
+            return
         StateTracker.delete_cache_files(
             preserve_data_backend_cache=self.config.preserve_data_backend_cache
         )
@@ -1248,10 +1250,7 @@ class Trainer:
             path = os.path.basename(self.config.resume_from_checkpoint)
         else:
             # Get the most recent checkpoint
-            dirs = os.listdir(self.config.output_dir)
-            dirs = [d for d in dirs if d.startswith("checkpoint")]
-            dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
-            path = dirs[-1] if len(dirs) > 0 else None
+            path = self.checkpoint_state_latest(self.config.output_dir)
 
         if path is None:
             logger.info(
@@ -1853,6 +1852,182 @@ class Trainer:
     def get_prediction_target(self, prepared_batch: dict):
         return self.model.get_prediction_target(prepared_batch)
 
+    def _calculate_loss(
+        self,
+        prepared_batch: dict,
+        model_pred,
+        target,
+        apply_conditioning_mask: bool = True,
+    ):
+        # Compute the per-pixel loss without reducing over spatial dimensions
+        if self.config.flow_matching:
+            # For flow matching, compute the per-pixel squared differences
+            loss = (
+                model_pred.float() - target.float()
+            ) ** 2  # Shape: (batch_size, C, H, W)
+        elif self.config.snr_gamma is None or self.config.snr_gamma == 0:
+            training_logger.debug("Calculating loss")
+            loss = self.config.snr_weight * F.mse_loss(
+                model_pred.float(), target.float(), reduction="none"
+            )  # Shape: (batch_size, C, H, W)
+        else:
+            # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
+            # Since we predict the noise instead of x_0, the original formulation is slightly changed.
+            # This is discussed in Section 4.2 of the same paper.
+            training_logger.debug("Using min-SNR loss")
+            snr = compute_snr(prepared_batch["timesteps"], self.noise_scheduler)
+            snr_divisor = snr
+            if self.noise_scheduler.config.prediction_type == "v_prediction":
+                snr_divisor = snr + 1
+
+            training_logger.debug("Calculating MSE loss weights using SNR as divisor")
+            mse_loss_weights = (
+                torch.stack(
+                    [
+                        snr,
+                        self.config.snr_gamma
+                        * torch.ones_like(prepared_batch["timesteps"]),
+                    ],
+                    dim=1,
+                ).min(dim=1)[0]
+                / snr_divisor
+            )  # Shape: (batch_size,)
+
+            # Compute the per-pixel MSE loss without reduction
+            loss = F.mse_loss(
+                model_pred.float(), target.float(), reduction="none"
+            )  # Shape: (batch_size, C, H, W)
+
+            # Reshape mse_loss_weights for broadcasting and apply to loss
+            mse_loss_weights = mse_loss_weights.view(
+                -1, 1, 1, 1
+            )  # Shape: (batch_size, 1, 1, 1)
+            loss = loss * mse_loss_weights  # Shape: (batch_size, C, H, W)
+
+        # Mask the loss using any conditioning data
+        conditioning_type = prepared_batch.get("conditioning_type")
+        if conditioning_type == "mask" and apply_conditioning_mask:
+            # Adapted from:
+            # https://github.com/kohya-ss/sd-scripts/blob/main/library/custom_train_functions.py#L482
+            mask_image = (
+                prepared_batch["conditioning_pixel_values"]
+                .to(dtype=loss.dtype, device=loss.device)[:, 0]
+                .unsqueeze(1)
+            )  # Shape: (batch_size, 1, H', W')
+            mask_image = torch.nn.functional.interpolate(
+                mask_image, size=loss.shape[2:], mode="area"
+            )  # Resize to match loss spatial dimensions
+            mask_image = mask_image / 2 + 0.5  # Normalize to [0,1]
+            loss = loss * mask_image  # Element-wise multiplication
+
+        # Reduce the loss by averaging over channels and spatial dimensions
+        loss = loss.mean(dim=list(range(1, len(loss.shape))))  # Shape: (batch_size,)
+
+        # Further reduce the loss by averaging over the batch dimension
+        loss = loss.mean()  # Scalar value
+        return loss
+
+    def checkpoint_state_remove(self, output_dir, checkpoint):
+        removing_checkpoint = os.path.join(
+            output_dir, checkpoint
+        )
+        try:
+            logger.debug(f"Removing {removing_checkpoint}")
+            shutil.rmtree(
+                removing_checkpoint, ignore_errors=True
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to remove directory: {removing_checkpoint}"
+            )
+            print(e)
+
+    def checkpoint_state_filter(self, output_dir, suffix=None):
+        checkpoints_keep = []
+        checkpoints = os.listdir(output_dir)
+        for checkpoint in checkpoints:
+            cs = checkpoint.split("-")
+            base = cs[0]; sfx = None
+            if len(cs) < 2:
+                continue
+            elif len(cs) > 2:
+                sfx = cs[2]
+
+            if base != 'checkpoint':
+                continue
+            if suffix and sfx and suffix != sfx:
+                continue
+            if (suffix and not sfx) or (sfx and not suffix):
+                continue
+
+            checkpoints_keep.append(checkpoint)
+
+        return checkpoints_keep
+
+    def checkpoint_state_cleanup(self, output_dir, limit, suffix=None):
+        # remove any left over temp checkpoints (partially written, etc)
+        checkpoints = self.checkpoint_state_filter(output_dir, 'tmp')
+        for removing_checkpoint in checkpoints:
+            self.checkpoint_state_remove(output_dir, removing_checkpoint)
+
+        # now remove normal checkpoints past the limit
+        checkpoints = self.checkpoint_state_filter(output_dir, suffix)
+        checkpoints = sorted(
+            checkpoints, key=lambda x: int(x.split("-")[1])
+        )
+
+        # before we save the new checkpoint, we need to have at _most_ `limit - 1` checkpoints
+        if len(checkpoints) < limit:
+            return
+
+        num_to_remove = len(checkpoints) - limit + 1
+        removing_checkpoints = checkpoints[0:num_to_remove]
+        logger.debug(
+            f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints"
+        )
+        logger.debug(
+            f"removing checkpoints: {', '.join(removing_checkpoints)}"
+        )
+
+        for removing_checkpoint in removing_checkpoints:
+            self.checkpoint_state_remove(output_dir, removing_checkpoint)
+
+    def checkpoint_state_save(self, output_dir, suffix=None):
+        print("\n")
+
+        save_path = os.path.join(
+            output_dir,
+            f"checkpoint-{self.state['global_step']}",
+        )
+        if suffix:
+            save_path = f"{save_path}-{suffix}"
+
+        # A temporary directory should be used so that saving state is an atomic operation.
+        save_path_tmp = f"{save_path}-tmp" if self.config.checkpointing_use_tempdir else save_path
+
+        # schedulefree optim needs the optimizer to be in eval mode to save the state (and then back to train after)
+        self.mark_optimizer_eval()
+        self.accelerator.save_state(save_path_tmp)
+        self.mark_optimizer_train()
+        for _, backend in StateTracker.get_data_backends().items():
+            if "sampler" in backend:
+                logger.debug(f"Backend: {backend}")
+                backend["sampler"].save_state(
+                    state_path=os.path.join(
+                        save_path_tmp,
+                        self.model_hooks.training_state_path,
+                    ),
+                )
+        if save_path != save_path_tmp:
+            os.rename(save_path_tmp, save_path)
+
+    def checkpoint_state_latest(self, output_dir):
+        # both checkpoint-[0-9]+ and checkpoint-[0-9]-rolling are candidates
+        dirs = os.listdir(output_dir)
+        dirs = [d for d in dirs if d.startswith("checkpoint") and not d.endswith("tmp")]
+        dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
+        return dirs[-1] if len(dirs) > 0 else None
+
     def train(self):
         self.init_trackers()
         self._train_initial_msg()
@@ -2244,80 +2419,41 @@ class Trainer:
                         self._send_webhook_raw(
                             structured_data=structured_data, message_type="train"
                         )
-                    if self.state["global_step"] % self.config.checkpointing_steps == 0:
+
+                    if self.config.checkpointing_steps and self.state["global_step"] % self.config.checkpointing_steps == 0:
                         self._send_webhook_msg(
                             message=f"Checkpoint: `{webhook_pending_msg}`",
                             message_level="info",
                         )
-                        if self.accelerator.is_main_process:
+                        if (
+                            self.accelerator.is_main_process
+                            and self.config.checkpoints_total_limit is not None
+                        ):
                             # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
-                            if self.config.checkpoints_total_limit is not None:
-                                checkpoints = os.listdir(self.config.output_dir)
-                                checkpoints = [
-                                    d for d in checkpoints if d.startswith("checkpoint")
-                                ]
-                                checkpoints = sorted(
-                                    checkpoints, key=lambda x: int(x.split("-")[1])
-                                )
-
-                                # before we save the new checkpoint, we need to have at _most_ `checkpoints_total_limit - 1` checkpoints
-                                if (
-                                    len(checkpoints)
-                                    >= self.config.checkpoints_total_limit
-                                ):
-                                    num_to_remove = (
-                                        len(checkpoints)
-                                        - self.config.checkpoints_total_limit
-                                        + 1
-                                    )
-                                    removing_checkpoints = checkpoints[0:num_to_remove]
-                                    logger.debug(
-                                        f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints"
-                                    )
-                                    logger.debug(
-                                        f"removing checkpoints: {', '.join(removing_checkpoints)}"
-                                    )
-
-                                    for removing_checkpoint in removing_checkpoints:
-                                        removing_checkpoint = os.path.join(
-                                            self.config.output_dir, removing_checkpoint
-                                        )
-                                        try:
-                                            shutil.rmtree(
-                                                removing_checkpoint, ignore_errors=True
-                                            )
-                                        except Exception as e:
-                                            logger.error(
-                                                f"Failed to remove directory: {removing_checkpoint}"
-                                            )
-                                            print(e)
+                            self.checkpoint_state_cleanup(self.config.output_dir, self.config.checkpoints_total_limit)
 
                         if (
                             self.accelerator.is_main_process
                             or self.config.use_deepspeed_optimizer
                         ):
-                            save_path = os.path.join(
-                                self.config.output_dir,
-                                f"checkpoint-{self.state['global_step']}",
-                            )
-                            print("\n")
-                            # schedulefree optim needs the optimizer to be in eval mode to save the state (and then back to train after)
-                            self.mark_optimizer_eval()
-                            self.accelerator.save_state(save_path)
-                            if getattr(self, "distiller", None) is not None:
-                                self.distiller.on_save_checkpoint(
-                                    self.state["global_step"], save_path
-                                )
-                            self.mark_optimizer_train()
-                            for _, backend in StateTracker.get_data_backends().items():
-                                if "sampler" in backend:
-                                    logger.debug(f"Backend: {backend}")
-                                    backend["sampler"].save_state(
-                                        state_path=os.path.join(
-                                            save_path,
-                                            self.model_hooks.training_state_path,
-                                        ),
-                                    )
+                            self.checkpoint_state_save(self.config.output_dir)
+                    elif self.config.checkpointing_rolling_steps and self.state["global_step"] % self.config.checkpointing_rolling_steps == 0:
+                        self._send_webhook_msg(
+                            message=f"Checkpoint: `{webhook_pending_msg}`",
+                            message_level="info",
+                        )
+                        if (
+                            self.accelerator.is_main_process
+                            and self.config.checkpoints_rolling_total_limit is not None
+                        ):
+                            # _before_ saving state, check if this save would set us over the `checkpoints_rolling_total_limit`
+                            self.checkpoint_state_cleanup(self.config.output_dir, self.config.checkpoints_rolling_total_limit, 'rolling')
+
+                        if (
+                            self.accelerator.is_main_process
+                            or self.config.use_deepspeed_optimizer
+                        ):
+                            self.checkpoint_state_save(self.config.output_dir, 'rolling')
 
                     if (
                         self.config.accelerator_cache_clear_interval is not None

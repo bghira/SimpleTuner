@@ -1817,9 +1817,6 @@ class StableDiffusion3Img2ImgPipeline(
             init_latents = torch.cat([init_latents], dim=0)
 
         shape = init_latents.shape
-        noise = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
-
-        # get latents
         noise = randn_tensor(
             init_latents.shape,
             generator=generator,
