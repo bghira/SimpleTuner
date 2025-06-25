@@ -235,7 +235,6 @@ class Trainer:
             self.move_models(destination="accelerator")
             self._exit_on_signal()
             self.init_distillation()
-            self._exit_on_signal()
             self.init_validations()
             self._exit_on_signal()
             self.enable_sageattention_inference()
