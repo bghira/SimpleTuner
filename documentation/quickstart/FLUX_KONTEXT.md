@@ -23,7 +23,7 @@ Kontext keeps the Flux transformer backbone but introduces **paired‑reference 
   - Currently, the only (truly) supported mode. Images are scanned for metadata, aspect bucketed, and cropped independently of each other.
   - This may be an issue for setups where you'd like to ensure the alignment of the edit and reference images, such as in a dataloader that uses a single image per file name.
 * `reference_strict` (⚠️ experimental) – reference is pre‑transformed exactly like the edit crop.
-  - Currently, a bug prevents it from working because the VAE Cache is not generated, as the metadata is not available.
+  - Currently, requires `--vae_cache_ondemand` and some increased VRAM usage.
 
 Stick to **loose** for now unless you want to debug the dataloader.
 
