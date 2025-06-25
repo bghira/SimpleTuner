@@ -14,11 +14,12 @@ from transformers import (
 )
 from diffusers import AutoencoderKL
 from helpers.models.flux.transformer import FluxTransformer2DModelWithMasking
-from helpers.models.flux.pipeline import (
-    FluxPipeline,
+from helpers.models.flux.pipeline import FluxPipeline
+from helpers.models.flux.pipeline_controlnet import (
     FluxControlNetPipeline,
     FluxControlPipeline,
 )
+
 from helpers.training.multi_process import _get_rank
 from helpers.models.flux import (
     prepare_latent_image_ids,
