@@ -50,7 +50,7 @@ Below is the *smallest* set of changes you need in `config/config.json` compared
 
   // --- pretrained weights ---------------------------------------------------
   "pretrained_model_name_or_path":              "black-forest-labs/FLUX.1-Kontext-dev",
-  "pretrained_transformer_model_name_or_path":  "/runware/models/black-forest-labs/KONTEXT.1-dev/transformer", // if using a local version. note: CivitAI style safetensors are not currently supported.
+  "pretrained_transformer_model_name_or_path":  "/models/black-forest-labs/KONTEXT.1-dev/transformer", // if using a local version. note: CivitAI style safetensors are not currently supported.
 
   // --- precision & performance ---------------------------------------------
   "base_model_precision": "int8-quanto",   // fits on 24 G at 1024 px
