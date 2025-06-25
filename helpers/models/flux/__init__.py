@@ -69,3 +69,37 @@ def prepare_latent_image_ids(batch_size, height, width, device, dtype):
     )
 
     return latent_image_ids.to(device=device, dtype=dtype)[0]
+
+
+def build_kontext_inputs(
+    cond_latents: torch.Tensor,
+    dtype: torch.dtype,
+    device: torch.device,
+    latent_channels: int,
+):
+    """
+    Args
+    ----
+    cond_latents : (B, C, H, W)  – already VAE-encoded by VAECache
+    dtype        : dtype to use (match main latents)
+    device       : target device
+    latent_channels : self.latent_channels (16 for Flux)
+
+    Returns
+    -------
+    packed_cond : (B, S, C*4)   – flattened patch sequence
+    cond_ids    : (B, S, 3)     – seq-ids with id[...,0] == 1
+    """
+    B, C, H, W = cond_latents.shape  # (C should match latent_channels)
+    packed_cond = pack_latents(cond_latents, B, C, H, W).to(device=device, dtype=dtype)
+
+    # seq-ids: flag-channel==1, rest is y/x indices
+    idx_y = torch.arange(H // 2, device=device)
+    idx_x = torch.arange(W // 2, device=device)
+    ids = torch.stack(
+        torch.meshgrid(idx_y, idx_x, indexing="ij"), dim=-1
+    )  # (H/2,W/2,2)
+    ones = torch.ones_like(ids[..., :1])
+    ids = torch.cat([ones, ids], dim=-1).view(1, -1, 3).expand(B, -1, -1).to(dtype)
+
+    return packed_cond, ids

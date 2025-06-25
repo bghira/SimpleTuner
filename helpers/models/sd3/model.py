@@ -5,6 +5,7 @@ from helpers.models.common import (
     PipelineTypes,
     ModelTypes,
 )
+from diffusers import AutoencoderKL, SD3ControlNetModel
 from transformers import (
     T5TokenizerFast,
     T5EncoderModel,
@@ -16,7 +17,7 @@ from helpers.models.sd3.pipeline import (
     StableDiffusion3Pipeline,
     StableDiffusion3Img2ImgPipeline,
 )
-from diffusers import AutoencoderKL, SD3ControlNetModel
+
 
 logger = logging.getLogger(__name__)
 is_primary_process = True

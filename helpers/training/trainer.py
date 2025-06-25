@@ -116,9 +116,10 @@ logging.basicConfig(
     datefmt="%m/%d/%Y %H:%M:%S",
     level=logging.INFO,
 )
-
-transformers.utils.logging.set_verbosity_warning()
-diffusers.utils.logging.set_verbosity_warning()
+if hasattr(transformers.utils, "logging"):
+    transformers.utils.logging.set_verbosity_warning()
+if hasattr(diffusers.utils, "logging"):
+    diffusers.utils.logging.set_verbosity_warning()
 
 
 class Trainer:
@@ -233,6 +234,7 @@ class Trainer:
             # Model movement and validation setup
             self.move_models(destination="accelerator")
             self._exit_on_signal()
+            self.init_distillation()
             self.init_validations()
             self._exit_on_signal()
             self.enable_sageattention_inference()
@@ -760,6 +762,43 @@ class Trainer:
                 )
         self.enable_gradient_checkpointing()
 
+    def init_distillation(self):
+        self.distiller = None
+        if self.config.distillation_method is None:
+            return
+
+        if self.config.distillation_method == "dcm":
+            from helpers.distillation.dcm.distiller import DCMDistiller
+
+            # For LoRA with DCM regularization (single model)
+            dcm_config = {
+                "model_family": self.config.model_family,
+                "model_type": self.config.model_type,
+                "loss_type": self.model.PREDICTION_TYPE.value,
+                "pred_type": self.model.PREDICTION_TYPE.value,
+                # "windows": 16,
+                "is_regularisation_data": True,  # Use regularization approach
+            }
+            if self.config.distillation_config is not None:
+                if "dcm" in self.config.distillation_config:
+                    dcm_config.update(self.config.distillation_config["dcm"])
+                else:
+                    dcm_config.update(self.config.distillation_config)
+            logger.info(f"Distillation config: {dcm_config}")
+            if self.config.model_type == "lora":
+                logger.info(
+                    "Loading flow-matching distillation via low-rank adapter training."
+                )
+                self.distiller = DCMDistiller(
+                    teacher_model=self.model,
+                    noise_scheduler=self.noise_scheduler,
+                    config=dcm_config,
+                )
+            elif self.config.model_type == "full":
+                raise NotImplementedError(
+                    "Separate teacher/student models for distillation are not implemented yet."
+                )
+
     def enable_gradient_checkpointing(self):
         if self.config.gradient_checkpointing:
             logger.debug("Enabling gradient checkpointing.")
@@ -1155,6 +1194,7 @@ class Trainer:
             trainable_parameters=self._get_trainable_parameters,
             accelerator=self.accelerator,
             model=self.model,
+            distiller=self.distiller,
             args=self.config,
             validation_prompt_metadata=self.validation_prompt_metadata,
             vae_path=self.config.vae_path,
@@ -1225,8 +1265,12 @@ class Trainer:
             self.config.resume_from_checkpoint = None
             return lr_scheduler
 
-        logger.info(f"Resuming from checkpoint {path}")
-        self.accelerator.load_state(os.path.join(self.config.output_dir, path))
+        checkpoint_dir = os.path.join(self.config.output_dir, path)
+        logger.info(f"Resuming from checkpoint {checkpoint_dir}")
+        self.accelerator.load_state(checkpoint_dir)
+        if getattr(self, "distiller", None) is not None:
+            logger.info(f"Loading DCM checkpoint states..")
+            self.distiller.on_load_checkpoint(checkpoint_dir)
         try:
             if (
                 "constant" == self.config.lr_scheduler
@@ -1795,7 +1839,14 @@ class Trainer:
             )
             return batch
 
-        return self.model.prepare_batch(batch, state=self.state)
+        prepared_batch = self.model.prepare_batch(batch, state=self.state)
+
+        if getattr(self, "distiller", None) is not None:
+            prepared_batch = self.distiller.prepare_batch(
+                prepared_batch, self.model, self.state
+            )
+
+        return prepared_batch
 
     def get_prediction_target(self, prepared_batch: dict):
         return self.model.get_prediction_target(prepared_batch)
@@ -2092,6 +2143,8 @@ class Trainer:
                 if "batch_luminance" in prepared_batch:
                     training_luminance_values.append(prepared_batch["batch_luminance"])
 
+                if getattr(self, "distiller", None) is not None:
+                    self.distiller.pre_training_step(self.model, step)
                 with self.accelerator.accumulate(training_models):
                     bsz = prepared_batch["latents"].shape[0]
                     training_logger.debug("Sending latent batch to GPU.")
@@ -2148,7 +2201,7 @@ class Trainer:
                             else:
                                 self.model.get_trained_component().enable_lora()
 
-                    training_logger.debug("Predicting noise residual.")
+                    training_logger.debug("Predicting.")
                     model_pred = self.model_predict(
                         prepared_batch=prepared_batch,
                     )
@@ -2162,7 +2215,15 @@ class Trainer:
                         model_output=model_pred,
                         loss=loss,
                     )
-
+                    distill_logs = {}
+                    if self.config.distillation_method is not None:
+                        loss, distill_logs = self.distiller.compute_distill_loss(
+                            prepared_batch, model_pred, loss
+                        )
+                        loss, gen_logs = self.distiller.generator_loss_step(
+                            prepared_batch, model_pred, loss
+                        )
+                        distill_logs.update(gen_logs)
                     parent_loss = None
                     if is_regularisation_data:
                         parent_loss = loss
@@ -2231,6 +2292,14 @@ class Trainer:
                         self.optimizer.zero_grad(
                             set_to_none=self.config.set_grads_to_none
                         )
+                        if (
+                            getattr(self, "distiller", None) is not None
+                            and self.accelerator.sync_gradients  # run once per global step
+                        ):
+                            self.distiller.discriminator_step(
+                                prepared_batch=prepared_batch
+                            )
+                            self.distiller.post_training_step(self.model, step)
 
                 # Checks if the accelerator has performed an optimization step behind the scenes
                 wandb_logs = {}
@@ -2257,6 +2326,8 @@ class Trainer:
                             "epoch": epoch,
                         }
                     )
+                    if distill_logs is not None:
+                        wandb_logs.update(distill_logs)
                     if parent_loss is not None:
                         wandb_logs["regularisation_loss"] = parent_loss
                     if aux_loss_logs is not None:

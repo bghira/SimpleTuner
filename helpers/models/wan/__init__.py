@@ -46,7 +46,7 @@ def normalize_wan_latents(
 
     # Convert latents to float (if not already) and apply normalization:
     # Subtract the mean and then multiply by the standard deviation.
-    print(f"Shapes: {latents.shape}, {latents_mean.shape}, {latents_std.shape}")
+    # print(f"Shapes: {latents.shape}, {latents_mean.shape}, {latents_std.shape}")
     latents = ((latents.float() - latents_mean) * latents_std).to(latents)
 
     return latents

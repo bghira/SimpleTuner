@@ -682,9 +682,6 @@ class ModelFoundation(ABC):
         return pretrained_load_args
 
     def load_model(self, move_to_device: bool = True):
-        logger.info(
-            f"Loading diffusion model from {self.config.pretrained_model_name_or_path}"
-        )
         pretrained_load_args = {
             "revision": self.config.revision,
             "variant": self.config.variant,
