@@ -12,6 +12,7 @@ image_data
 """
 
 import os, argparse
+
 try:
     import pillow_jxl
 except ModuleNotFoundError:

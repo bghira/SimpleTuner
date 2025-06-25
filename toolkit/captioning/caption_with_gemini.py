@@ -9,6 +9,7 @@ import time
 import io
 import pandas as pd
 import google.generativeai as genai
+
 try:
     import pillow_jxl
 except ModuleNotFoundError:

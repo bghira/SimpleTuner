@@ -20,7 +20,6 @@ from safetensors import safe_open
 from safetensors.torch import save_file
 from tqdm import tqdm
 
-
 logger = logging.getLogger("SaveHookManager")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
 

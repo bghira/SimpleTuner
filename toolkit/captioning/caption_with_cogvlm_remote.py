@@ -3,6 +3,7 @@ import queue
 import requests
 import torch, base64, logging, io, time
 import argparse
+
 try:
     import pillow_jxl
 except ModuleNotFoundError:

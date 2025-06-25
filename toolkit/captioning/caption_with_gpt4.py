@@ -4,6 +4,7 @@ import requests
 import random
 import argparse
 import base64
+
 try:
     import pillow_jxl
 except ModuleNotFoundError:
