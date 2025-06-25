@@ -682,25 +682,25 @@ class Flux(ImageModelFoundation):
         return "conditioning"
 
     def requires_conditioning_dataset(self) -> bool:
-        if self.config.model_flavour == "kontext":
+        if self.config.model_flavour == "kontext" or self.config.controlnet:
             # Any flavour of “Kontext” always expects an extra image stream
             return True
         return False
 
     def requires_conditioning_validation_inputs(self) -> bool:
-        if self.config.model_flavour == "kontext":
+        if self.config.model_flavour == "kontext" or self.config.controlnet:
             # Any flavour of “Kontext” always expects an extra image stream
             return True
         return False
 
     def requires_validation_edit_captions(self) -> bool:
-        if self.config.model_flavour == "kontext":
+        if self.config.model_flavour == "kontext" or self.config.controlnet:
             # Kontext models require edit captions to be present.
             return True
         return False
 
     def requires_conditioning_latents(self) -> bool:
-        if self.config.model_flavour == "kontext":
+        if self.config.model_flavour == "kontext" or self.config.controlnet:
             # Any flavour of “Kontext” needs latent inputs for its conditioning data.
             return True
         return super().requires_conditioning_latents()
