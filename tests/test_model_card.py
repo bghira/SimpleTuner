@@ -66,10 +66,7 @@ class TestMetadataFunctions(unittest.TestCase):
         self.args.t5_padding = "unmodified"
         self.args.enable_xformers_memory_efficient_attention = False
         self.args.attention_mechanism = "diffusers"
-        self.mock_model = MagicMock(
-            MODEL_TYPE=MagicMock(value="unet")
-        )
-
+        self.mock_model = MagicMock(MODEL_TYPE=MagicMock(value="unet"))
 
     def test_model_imports(self):
         self.args.lora_type = "standard"
@@ -117,7 +114,7 @@ class TestMetadataFunctions(unittest.TestCase):
     def test_guidance_rescale(self):
         self.args.model_family = "sdxl"
         output = _guidance_rescale(self.mock_model)
-        self.assertNotEqual(output.strip(), '')
+        self.assertNotEqual(output.strip(), "")
 
     def test_skip_layers(self):
         self.args.model_family = "sd3"
@@ -244,7 +241,7 @@ class TestMetadataFunctions(unittest.TestCase):
                                             validation_prompts=["Test prompt"],
                                             validation_shortnames=["shortname"],
                                             repo_folder="test-folder",
-                                            model=MagicMock()
+                                            model=MagicMock(),
                                         )
                                         # Ensure the README.md was written
                                         mock_file.assert_called_with(
@@ -299,9 +296,8 @@ class TestMetadataFunctions(unittest.TestCase):
 
     def test_pipeline_quanto_hint_unet(self):
         from helpers.publishing.metadata import _pipeline_quanto
-        self.mock_model.MODEL_TYPE = MagicMock(
-            value="unet"
-        )
+
+        self.mock_model.MODEL_TYPE = MagicMock(value="unet")
         output = _pipeline_quanto(args=self.args, model=self.mock_model)
 
         self.assertIn("quantize", output)
@@ -312,9 +308,7 @@ class TestMetadataFunctions(unittest.TestCase):
         from helpers.publishing.metadata import _pipeline_quanto
 
         self.args.model_family = "flux"
-        self.mock_model.MODEL_TYPE = MagicMock(
-            value="transformer"
-        )
+        self.mock_model.MODEL_TYPE = MagicMock(value="transformer")
         output = _pipeline_quanto(args=self.args, model=self.mock_model)
         self.assertIn("quantize", output)
         self.assertIn("optimum.quanto", output)

@@ -1,6 +1,7 @@
 import unittest
 import pandas as pd
 from unittest.mock import patch, Mock, MagicMock
+
 try:
     import pillow_jxl
 except ModuleNotFoundError:

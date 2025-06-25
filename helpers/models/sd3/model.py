@@ -5,6 +5,7 @@ from helpers.models.common import (
     PipelineTypes,
     ModelTypes,
 )
+from diffusers import AutoencoderKL, SD3ControlNetModel
 from transformers import (
     T5TokenizerFast,
     T5EncoderModel,

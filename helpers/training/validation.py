@@ -478,6 +478,7 @@ class Validation:
         self,
         accelerator,
         model: ModelFoundation,
+        distiller,
         args,
         validation_prompt_metadata,
         vae_path,
@@ -493,6 +494,7 @@ class Validation:
         self.prompt_handler = None
         self.unet, self.transformer = None, None
         self.model = model
+        self.distiller = distiller
         if args.controlnet:
             self.controlnet = model.get_trained_component()
         elif "unet" in str(self.model.get_trained_component().__class__).lower():
@@ -861,6 +863,11 @@ class Validation:
         )
 
     def setup_scheduler(self):
+        if self.distiller is not None:
+            distillation_scheduler = self.distiller.get_scheduler()
+            if distillation_scheduler is not None:
+                self.model.pipeline.scheduler = distillation_scheduler
+                return distillation_scheduler
         scheduler_args = {
             "prediction_type": self.config.prediction_type,
         }

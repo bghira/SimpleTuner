@@ -36,6 +36,7 @@ from diffusers.models.embeddings import (
     FluxPosEmbed,
 )
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
+from diffusers import FluxTransformer2DModel as OriginalFluxTransformer2DModel
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -210,20 +211,6 @@ class FluxSingleTransformerBlock(nn.Module):
         self.proj_out = nn.Linear(dim + self.mlp_hidden_dim, dim)
 
         processor = FluxAttnProcessor2_0()
-        if torch.cuda.is_available():
-            # let's assume that the box only ever has H100s.
-            rank = 0
-            primary_device = torch.cuda.get_device_properties(rank)
-            if primary_device.major == 9 and primary_device.minor == 0:
-                if is_flash_attn_available:
-                    if rank == 0:
-                        print("Using FlashAttention3_0 for H100 GPU (Single block)")
-                    processor = FluxSingleAttnProcessor3_0()
-                else:
-                    if rank == 0:
-                        print(
-                            "FlashAttention3_0 is not available, using FlashAttention2_0 for H100 GPU (Single block). Install flash_attn to make use of it."
-                        )
         self.attn = Attention(
             query_dim=dim,
             cross_attention_dim=None,
@@ -297,18 +284,6 @@ class FluxTransformerBlock(nn.Module):
 
         if hasattr(F, "scaled_dot_product_attention"):
             processor = FluxAttnProcessor2_0()
-            if torch.cuda.is_available():
-                rank = (
-                    torch.distributed.get_rank()
-                    if torch.distributed.is_initialized()
-                    else 0
-                )
-                primary_device = torch.cuda.get_device_properties(rank)
-                if primary_device.major == 9 and primary_device.minor == 0:
-                    if is_flash_attn_available:
-                        if rank == 0:
-                            print("Using FlashAttention3_0 for H100 GPU (Double block)")
-                        processor = FluxAttnProcessor3_0()
         else:
             raise ValueError(
                 "The current PyTorch version does not support the `scaled_dot_product_attention` function."
@@ -410,7 +385,7 @@ class FluxTransformerBlock(nn.Module):
         return encoder_hidden_states, hidden_states
 
 
-class FluxTransformer2DModelWithMasking(
+class FluxTransformer2DModel(
     ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin
 ):
     """
@@ -521,7 +496,7 @@ class FluxTransformer2DModelWithMasking(
         controlnet_blocks_repeat: bool = False,
     ) -> Union[torch.FloatTensor, Transformer2DModelOutput]:
         """
-        The [`FluxTransformer2DModelWithMasking`] forward method.
+        The [`FluxTransformer2DModel`] forward method.
 
         Args:
             hidden_states (`torch.FloatTensor` of shape `(batch size, channel, height, width)`):
@@ -784,7 +759,7 @@ if __name__ == "__main__":
     img = _pack_latents(img, img.shape[0], 16, height, width)
 
     # Gotta go fast
-    transformer = FluxTransformer2DModelWithMasking.from_config(
+    transformer = FluxTransformer2DModel.from_config(
         {
             "attention_head_dim": 128,
             "guidance_embeds": True,
