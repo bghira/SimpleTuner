@@ -697,9 +697,7 @@ class Flux(ImageModelFoundation):
         if self.config.model_flavour == "kontext":
             # Kontext models require edit captions to be present.
             return True
-        raise NotImplementedError(
-            f"{self.NAME} does not support validation edit captions unless the Kontext flavour is being trained."
-        )
+        return False
 
     def requires_conditioning_latents(self) -> bool:
         if self.config.model_flavour == "kontext":
