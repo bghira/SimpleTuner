@@ -70,6 +70,7 @@ For multi-node distributed training, [this guide](/documentation/DISTRIBUTED.md)
 
 Full training support for HiDream is included:
 
+- Custom ControlNet implementation for training via full-rank, LoRA or Lycoris
 - Memory-efficient training for NVIDIA GPUs (AMD support is planned)
 - Dev and Full both functioning and trainable. Fast is untested.
 - Optional MoEGate loss augmentation
@@ -83,11 +84,8 @@ See [hardware requirements](#hidream) or the [quickstart guide](/documentation/q
 
 Full training support for Flux.1 is included:
 
-<<<<<<< HEAD
 - ControlNet training via full-rank, LoRA or Lycoris
-=======
 - Instruct fine-tuning for the Kontext \[dev] editing model implementation generously provided by [Runware](https://runware.ai).
->>>>>>> c78cf1d302ccabf31036c0192afac1c9f1c1ca37
 - Classifier-free guidance training
   - Leave it disabled and preserve the dev model's distillation qualities
   - Or, reintroduce CFG to the model and improve its creativity at the cost of inference speed and training time.
@@ -114,8 +112,8 @@ See the [Wan Video Quickstart](/documentation/quickstart/WAN.md) guide to start 
 
 SimpleTuner has preliminary training integration for LTX Video, efficiently training on less than 16G.
 
-- Text encoder training is not supported.
-- VAE training is not supported.
+- Text encoder training is not supported
+- VAE training is not supported
 - LyCORIS, PEFT, and full tuning all work as expected
 - ControlNet training is not yet supported
 
@@ -125,9 +123,9 @@ See the [LTX Video Quickstart](/documentation/quickstart/LTXVIDEO.md) guide to s
 
 SimpleTuner has extensive training integration with PixArt Sigma - both the 600M & 900M models load without modification.
 
-- Text encoder training is not supported.
+- Text encoder training is not supported
 - LyCORIS and full tuning both work as expected
-- ControlNet training is not yet supported
+- ControlNet training is supported for full and PEFT LoRA training
 - [Two-stage PixArt](https://huggingface.co/ptx0/pixart-900m-1024-ft-v0.7-stage1) training support (see: [MIXTURE_OF_EXPERTS](/documentation/MIXTURE_OF_EXPERTS.md))
 
 See the [PixArt Quickstart](/documentation/quickstart/SIGMA.md) guide to start training.
@@ -148,7 +146,7 @@ See the [NVLabs Sana Quickstart](/documentation/quickstart/SANA.md) guide to sta
 ### Stable Diffusion 3
 
 - LoRA and full finetuning are supported as usual.
-- ControlNet is not yet implemented.
+- ControlNet training via full-rank, PEFT LoRA, or Lycoris
 - Certain features such as segmented timestep selection and Compel long prompt weighting are not yet supported.
 - Parameters have been optimised to get the best results, validated through from-scratch training of SD3 models
 
@@ -190,7 +188,7 @@ LoRA and full-rank tuning are tested to work on an M3 Max with 128G memory, taki
 - A100-40G (LoRA, LoKr)
 - 3090 24G (LoRA, LoKr)
 
-HiDream has not been tested on 16G cards, but with aggressive quantisation and pre-caching of embeds, you might make it work.
+HiDream has not been tested on 16G cards, but with aggressive quantisation and pre-caching of embeds, you might make it work, though even 24G is pushing limits.
 
 
 ### Flux.1 [dev, schnell]
