@@ -206,6 +206,22 @@ class CSVDataBackend(BaseDataBackend):
         results += [("", [], filtered_ids - filtered_paths)]
         return results
 
+    def get_abs_path(self, sample_path: str) -> str:
+        """
+        Given a relative path of a sample, return the absolute path.
+        If the sample is not found, return None.
+        """
+        if sample_path in self.df.index:
+            abs_path = path_to_hashed_path(sample_path, self.hash_filenames)
+            if os.path.exists(abs_path):
+                return str(abs_path.resolve())
+            else:
+                logger.warning(f"File {abs_path} does not exist.")
+                return None
+        else:
+            logger.warning(f"Sample path {sample_path} not found in CSV.")
+            return None
+
     def read_image(self, filepath: str, delete_problematic_images: bool = False):
         """
         Read an image or video from the specified filepath.

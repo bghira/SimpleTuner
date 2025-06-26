@@ -1,3 +1,5 @@
+import types
+from contextlib import contextmanager
 from helpers.training.ema import EMAModel
 from helpers.training.wrappers import unwrap_model
 from helpers.training.multi_process import _get_rank as get_rank
@@ -134,7 +136,16 @@ class SaveHookManager:
         lora_save_parameters = {}
         # TODO: Make this less shitty.
         for model in models:
-            if isinstance(
+            if self.args.controlnet and isinstance(
+                model,
+                type(
+                    unwrap_model(self.accelerator, self.model.get_trained_component())
+                ),
+            ):
+                # controlnet_lora_layers
+                controlnet_layers = get_peft_model_state_dict(model)
+                lora_save_parameters[f"controlnet_lora_layers"] = controlnet_layers
+            elif isinstance(
                 model,
                 type(
                     unwrap_model(self.accelerator, self.model.get_trained_component())

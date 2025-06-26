@@ -154,6 +154,17 @@ class LocalDataBackend(BaseDataBackend):
         results = [(subdir, [], files) for subdir, files in path_dict.items()]
         return results
 
+    def get_abs_path(self, sample_path: str) -> str:
+        """
+        Given a relative path of a sample, return the absolute path.
+        If sample_path is None, return the current working directory.
+        """
+        if sample_path is None:
+            sample_path = os.getcwd()
+        abs_path = os.path.abspath(sample_path)
+
+        return abs_path
+
     def read_image(self, filepath: str, delete_problematic_images: bool = False) -> Any:
         """Read an image from the specified filepath."""
         filepath = filepath.replace("\x00", "")

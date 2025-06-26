@@ -580,7 +580,7 @@ class StateTracker:
         cls,
         filepath,
         data_backend_id: str,
-        search_dataset_types: list = ["image", "video"],
+        search_dataset_types: list = ["image", "video", "conditioning"],
     ):
         for _, data_backend in cls.get_data_backends(
             _types=search_dataset_types

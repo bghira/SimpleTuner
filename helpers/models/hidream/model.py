@@ -19,15 +19,14 @@ from transformers import (
 
 HiDreamImageTransformer2DModel = None
 HiDreamImagePipeline: object = None
-try:
-    from helpers.models.hidream.transformer import (
-        HiDreamImageTransformer2DModel,
-        get_load_balancing_loss,
-        clear_load_balancing_loss,
-    )
-    from helpers.models.hidream.pipeline import HiDreamImagePipeline
-except Exception as e:
-    print(f"HiDream not available: {e}")
+HiDreamControlNetPipeline: object = None
+from helpers.models.hidream.transformer import (
+    HiDreamImageTransformer2DModel,
+    get_load_balancing_loss,
+    clear_load_balancing_loss,
+)
+from helpers.models.hidream.pipeline import HiDreamImagePipeline
+from helpers.models.hidream.controlnet import HiDreamControlNetPipeline
 from diffusers import AutoencoderKL
 
 logger = logging.getLogger(__name__)
@@ -51,12 +50,21 @@ class HiDream(ImageModelFoundation):
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     # Only training the Attention blocks by default seems to help more with HiDream.
     DEFAULT_LYCORIS_TARGET = ["Attention"]
+    # Layers used from base in ControlNet model.
+    SHARED_MODULE_PREFIXES = [
+        "double_stream_blocks.",
+        "single_stream_blocks.",
+        "x_embedder.",
+        "t_embedder.",
+        "p_embedder.",
+        "pe_embedder.",
+    ]
 
     MODEL_CLASS = HiDreamImageTransformer2DModel
     PIPELINE_CLASSES = {
         PipelineTypes.TEXT2IMG: HiDreamImagePipeline,
         # PipelineTypes.IMG2IMG: None,
-        # PipelineTypes.CONTROLNET: None,
+        PipelineTypes.CONTROLNET: HiDreamControlNetPipeline,
     }
     MODEL_SUBFOLDER = "transformer"
     # The default model flavor to use when none is specified.
@@ -100,6 +108,43 @@ class HiDream(ImageModelFoundation):
         },
     }
 
+    def controlnet_init(self):
+        """Initialize HiDream ControlNet"""
+        logger.info("Creating the HiDream controlnet..")
+        from helpers.models.hidream.controlnet import HiDreamControlNetModel
+
+        if self.config.controlnet_model_name_or_path:
+            logger.info("Loading existing controlnet weights")
+            self.controlnet = HiDreamControlNetModel.from_pretrained(
+                self.config.controlnet_model_name_or_path
+            )
+        else:
+            logger.info("Initializing controlnet weights from base model")
+            cn_custom_config = self.config.controlnet_custom_config or {}
+            self.controlnet = HiDreamControlNetModel.from_transformer(
+                self.unwrap_model(self.model), **cn_custom_config
+            )
+        self.controlnet.train()
+
+    def requires_conditioning_latents(self) -> bool:
+        """HiDream ControlNet requires latent inputs instead of pixels."""
+        if self.config.controlnet:
+            return True
+        return False
+
+    def requires_conditioning_validation_inputs(self) -> bool:
+        """Whether this model requires conditioning inputs during validation."""
+        if self.config.controlnet:
+            return True
+        return False
+
+    def uses_shared_modules(self) -> bool:
+        if self.config.controlnet and self.config.controlnet_custom_config.get(
+            "use_shared_modules", False
+        ):
+            return True
+        return False
+
     def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
         if (
             self.config.hidream_load_balancing_loss_weight is not None
@@ -116,15 +161,20 @@ class HiDream(ImageModelFoundation):
     ):
         """
         Loads the pipeline class for the model.
-        This is a stub and should be implemented in subclasses.
         """
         active_pipelines = getattr(self, "pipelines", {})
         if pipeline_type in active_pipelines:
             setattr(
                 active_pipelines[pipeline_type],
                 self.MODEL_TYPE.value,
-                self.unwrap_model(),
+                self.unwrap_model(model=self.model),
             )
+            if self.config.controlnet:
+                setattr(
+                    active_pipelines[pipeline_type],
+                    "controlnet",
+                    self.unwrap_model(self.get_trained_component()),
+                )
             return active_pipelines[pipeline_type]
         pipeline_kwargs = {
             "pretrained_model_name_or_path": self._model_config_path(),
@@ -138,7 +188,7 @@ class HiDream(ImageModelFoundation):
         pipeline_class = self.PIPELINE_CLASSES[pipeline_type]
         if not hasattr(pipeline_class, "from_pretrained"):
             raise NotImplementedError(
-                f"Pipeline class {pipeline_class} does not have from_pretrained method."
+                f"Pipeline type {pipeline_type} class {pipeline_class} does not have from_pretrained method."
             )
         signature = inspect.signature(pipeline_class.from_pretrained)
         if "watermarker" in signature.parameters:
@@ -146,7 +196,7 @@ class HiDream(ImageModelFoundation):
         if "watermark" in signature.parameters:
             pipeline_kwargs["watermark"] = None
         if load_base_model:
-            pipeline_kwargs[self.MODEL_TYPE.value] = self.unwrap_model()
+            pipeline_kwargs[self.MODEL_TYPE.value] = self.unwrap_model(model=self.model)
         else:
             pipeline_kwargs[self.MODEL_TYPE.value] = None
 
@@ -160,6 +210,7 @@ class HiDream(ImageModelFoundation):
             text_encoder_attr,
             text_encoder_config,
         ) in self.TEXT_ENCODER_CONFIGURATION.items():
+            tokenizer_attr = text_encoder_attr.replace("text_encoder", "tokenizer")
             if (
                 self.text_encoders is not None
                 and len(self.text_encoders) >= text_encoder_idx
@@ -167,12 +218,14 @@ class HiDream(ImageModelFoundation):
                 pipeline_kwargs[text_encoder_attr] = self.unwrap_model(
                     self.text_encoders[text_encoder_idx]
                 )
-                pipeline_kwargs[
-                    text_encoder_attr.replace("text_encoder", "tokenizer")
-                ] = self.tokenizers[text_encoder_idx]
+                pipeline_kwargs[tokenizer_attr] = self.tokenizers[text_encoder_idx]
             else:
                 pipeline_kwargs[text_encoder_attr] = None
+                pipeline_kwargs[tokenizer_attr] = None
             text_encoder_idx += 1
+
+        self.load_text_tokenizer()
+        pipeline_kwargs["tokenizer_4"] = self.tokenizers[3]
 
         if self.config.controlnet:
             pipeline_kwargs["controlnet"] = self.unwrap_model(
@@ -378,6 +431,160 @@ class HiDream(ImageModelFoundation):
             )[0]
             * -1  # the model is trained with inverted velocity :(
         }
+
+    def controlnet_predict(self, prepared_batch: dict) -> dict:
+        """
+        Perform a forward pass with ControlNet for HiDream model.
+
+        Args:
+            prepared_batch: Dictionary containing the batch data including conditioning_latents
+
+        Returns:
+            Dictionary containing the model prediction
+        """
+        # ControlNet conditioning - HiDream uses latents instead of pixel values
+        controlnet_cond = prepared_batch["conditioning_latents"].to(
+            device=self.accelerator.device, dtype=self.config.weight_dtype
+        )
+
+        # Handle non-square images for noisy latents
+        if (
+            prepared_batch["noisy_latents"].shape[-2]
+            != prepared_batch["noisy_latents"].shape[-1]
+        ):
+            B, C, H, W = prepared_batch["noisy_latents"].shape
+            pH, pW = (
+                H // self.unwrap_model(model=self.model).config.patch_size,
+                W // self.unwrap_model(model=self.model).config.patch_size,
+            )
+
+            img_sizes = torch.tensor([pH, pW], dtype=torch.int64).reshape(-1)
+            img_ids = torch.zeros(pH, pW, 3)
+            img_ids[..., 1] = img_ids[..., 1] + torch.arange(pH)[:, None]
+            img_ids[..., 2] = img_ids[..., 2] + torch.arange(pW)[None, :]
+            img_ids = img_ids.reshape(pH * pW, -1)
+            img_ids_pad = torch.zeros(self.unwrap_model(model=self.model).max_seq, 3)
+            img_ids_pad[: pH * pW, :] = img_ids
+
+            img_sizes = img_sizes.unsqueeze(0).to(
+                prepared_batch["noisy_latents"].device
+            )
+            img_ids = img_ids_pad.unsqueeze(0).to(
+                prepared_batch["noisy_latents"].device
+            )
+            img_sizes = img_sizes.repeat(B, 1)
+            img_ids = img_ids.repeat(B, 1, 1)
+        else:
+            img_sizes = img_ids = None
+
+        # Prepare latent model input (for non-square handling)
+        latent_model_input = prepared_batch["noisy_latents"]
+        if latent_model_input.shape[-2] != latent_model_input.shape[-1]:
+            B, C, H, W = latent_model_input.shape
+            patch_size = self.unwrap_model(model=self.model).config.patch_size
+            pH, pW = H // patch_size, W // patch_size
+            out = torch.zeros(
+                (
+                    B,
+                    C,
+                    self.unwrap_model(model=self.model).max_seq,
+                    patch_size * patch_size,
+                ),
+                dtype=latent_model_input.dtype,
+                device=latent_model_input.device,
+            )
+            latent_model_input = einops.rearrange(
+                latent_model_input,
+                "B C (H p1) (W p2) -> B C (H W) (p1 p2)",
+                p1=patch_size,
+                p2=patch_size,
+            )
+            out[:, :, 0 : pH * pW] = latent_model_input
+            latent_model_input = out
+
+        # ControlNet forward pass - let the controlnet handle its own preprocessing
+        # Pass the raw latents without any special preprocessing
+        controlnet_block_samples, controlnet_single_block_samples = self.controlnet(
+            hidden_states=prepared_batch["noisy_latents"].to(
+                device=self.accelerator.device,
+                dtype=self.config.base_weight_dtype,
+            ),
+            controlnet_cond=controlnet_cond.to(
+                device=self.accelerator.device,
+                dtype=self.config.base_weight_dtype,
+            ),
+            timesteps=prepared_batch["timesteps"],
+            t5_hidden_states=prepared_batch["text_encoder_output"]["t5_prompt_embeds"],
+            llama_hidden_states=prepared_batch["text_encoder_output"][
+                "llama_prompt_embeds"
+            ],
+            pooled_embeds=prepared_batch["text_encoder_output"]["pooled_prompt_embeds"],
+            img_sizes=img_sizes,
+            img_ids=img_ids,
+            conditioning_scale=1.0,  # You might want to make this configurable
+            return_dict=False,
+        )
+
+        # Prepare kwargs for the main transformer using the preprocessed latent_model_input
+        hidream_transformer_kwargs = {
+            "hidden_states": latent_model_input.to(
+                device=self.accelerator.device,
+                dtype=self.config.base_weight_dtype,
+            ),
+            "timesteps": prepared_batch["timesteps"],
+            "t5_hidden_states": prepared_batch["text_encoder_output"][
+                "t5_prompt_embeds"
+            ],
+            "llama_hidden_states": prepared_batch["text_encoder_output"][
+                "llama_prompt_embeds"
+            ],
+            "pooled_embeds": prepared_batch["text_encoder_output"][
+                "pooled_prompt_embeds"
+            ],
+            "img_sizes": img_sizes,
+            "img_ids": img_ids,
+            "return_dict": False,
+        }
+
+        # Add ControlNet outputs to kwargs
+        if controlnet_block_samples is not None:
+            hidream_transformer_kwargs["controlnet_block_samples"] = [
+                sample.to(
+                    device=self.accelerator.device, dtype=self.config.weight_dtype
+                )
+                for sample in controlnet_block_samples
+            ]
+
+        if controlnet_single_block_samples is not None:
+            hidream_transformer_kwargs["controlnet_single_block_samples"] = [
+                sample.to(
+                    device=self.accelerator.device, dtype=self.config.weight_dtype
+                )
+                for sample in controlnet_single_block_samples
+            ]
+
+        # Forward pass through the transformer with ControlNet residuals
+        model_pred = self.get_trained_component(base_model=True)(
+            **hidream_transformer_kwargs
+        )[0]
+
+        return {
+            "model_prediction": model_pred
+            * -1  # the model is trained with inverted velocity :(
+        }
+
+    def get_lora_target_layers(self):
+        targets = [
+            "controlnet_x_embedder",
+        ]
+        for i in range(len(self.unwrap_model().controlnet_blocks)):
+            targets.extend(
+                [
+                    f"controlnet_blocks.{i}",
+                    f"controlnet_single_blocks.{i}",
+                ]
+            )
+        return targets
 
     def check_user_config(self):
         """

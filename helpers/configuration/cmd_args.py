@@ -150,6 +150,9 @@ def get_argument_parser():
             "ai-toolkit",
             "tiny",
             "nano",
+            # control / controlnet
+            "all+ffs+embedder",
+            "all+ffs+embedder+controlnet",
         ],
         default="all",
         help=(
@@ -411,11 +414,28 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--control",
+        action="store_true",
+        default=False,
+        help=(
+            "If set, channel-wise control style training will be used, where a conditioning input image is required alongside the training data."
+        ),
+    )
+    parser.add_argument(
         "--controlnet",
         action="store_true",
         default=False,
         help=(
             "If set, ControlNet style training will be used, where a conditioning input image is required alongside the training data."
+        ),
+    )
+    parser.add_argument(
+        "--controlnet_custom_config",
+        type=str,
+        default=None,
+        help=(
+            "When training certain ControlNet models (eg. HiDream) you may set a config containing keys like num_layers or num_single_layers"
+            " to adjust the resulting ControlNet size. This is not supported by most models, and may be ignored if the model does not support it."
         ),
     )
     parser.add_argument(
@@ -1988,6 +2008,11 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--masked_loss_probability",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
         "--validation_guidance",
         type=float,
         default=7.5,
@@ -2293,6 +2318,21 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if args is None and exit_on_error:
         sys.exit(1)
 
+    if (
+        args.controlnet_custom_config is not None
+        and type(args.controlnet_custom_config) is str
+    ):
+        if args.controlnet_custom_config.startswith("{"):
+            try:
+                import ast
+
+                args.controlnet_custom_config = ast.literal_eval(
+                    args.controlnet_custom_config
+                )
+            except Exception as e:
+                logger.error(f"Could not load controlnet_custom_config: {e}")
+                raise
+
     if args.optimizer == "adam_bfloat16" and args.mixed_precision != "bf16":
         if not torch.backends.mps.is_available():
             logging.error(
@@ -2492,9 +2532,6 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         info_log(f"{log_msg} {int(args.validation_resolution)}px")
     if args.timestep_bias_portion < 0.0 or args.timestep_bias_portion > 1.0:
         raise ValueError("Timestep bias portion must be between 0.0 and 1.0.")
-
-    if args.controlnet and "lora" in args.model_type:
-        raise ValueError("ControlNet is not supported for LoRA models.")
 
     if args.metadata_update_interval < 60:
         raise ValueError("Metadata update interval must be at least 60 seconds.")

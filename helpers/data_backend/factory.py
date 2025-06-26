@@ -263,6 +263,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     )
     output["config"]["maximum_image_size"] = maximum_image_size
     output["config"]["target_downsample_size"] = target_downsample_size
+    output["config"]["dataset_type"] = output["dataset_type"]
 
     if maximum_image_size and not target_downsample_size:
         raise ValueError(
@@ -1000,9 +1001,16 @@ def configure_multi_databackend(
             and "aspect" not in backend.get("skip_file_discovery", "")
             and conditioning_type
             not in [
+                # masks are just pulled inline in the training loop without encoding, and then applied pixel-wise to loss.
                 "mask",
-                "controlnet",
-                "reference_strict",
+                # controlnet uses pixel values for older Unets but encoded latents for newer models.
+                # when we require encoded latents, we also must scan for aspect ratio buckets here.
+                # it's stupid, because it effectively doubles the I/O to discover the conditioning dataset,
+                # and a more ideal implementation would simply reference the training dataset metadata buckets.
+                # but currently, there is no method to instruct a dataset to use a separate metadata instance with different paths.
+                "controlnet" if not model.requires_conditioning_latents() else -1,
+                # similar to controlnet, latent reference images require us to scan them so we can encode them for newer models.
+                "reference_strict" if not model.requires_conditioning_latents() else -1,
             ]  # strict kontext conditioning doesn't have its own bucket list.
         ):
             if accelerator.is_local_main_process:
@@ -1279,7 +1287,10 @@ def configure_multi_databackend(
             ):
                 if (
                     not args.controlnet or backend["dataset_type"] != "conditioning"
-                ) and not requires_conditioning_dataset:
+                ) or (
+                    model.requires_conditioning_latents()
+                    and requires_conditioning_dataset
+                ):
                     raise ValueError(
                         f"VAE image embed cache directory {backend.get('cache_dir_vae')} is not set. This is required for the VAE image embed cache."
                     )
@@ -1362,7 +1373,11 @@ def configure_multi_databackend(
             and accelerator.is_main_process
             and backend.get("scan_for_errors", False)
             and "deepfloyd" not in StateTracker.get_args().model_type
-            and conditioning_type not in ["mask", "controlnet", "reference_loose"]
+            and conditioning_type
+            not in [
+                "mask",
+                "controlnet" if not model.requires_conditioning_latents() else -1,
+            ]
         ):
             info_log(
                 f"Beginning error scan for dataset {init_backend['id']}. Set 'scan_for_errors' to False in the dataset config to disable this."
@@ -1389,8 +1404,8 @@ def configure_multi_databackend(
             and conditioning_type
             not in [
                 "mask",
-                "controlnet",
-            ]  # kontext conditioning is encoded into latents.
+                "controlnet" if not model.requires_conditioning_latents() else -1,
+            ]
         ):
             init_backend["vaecache"].discover_unprocessed_files()
             if not args.vae_cache_ondemand:

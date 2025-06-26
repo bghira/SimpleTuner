@@ -19,7 +19,7 @@ except:
     pass
 
 try:
-    from torchao.prototype.low_bit_optim import (
+    from torchao.optim import (
         AdamW8bit as AOAdamW8Bit,
         AdamW4bit as AOAdamW4Bit,
         AdamFp8 as AOAdamFp8,

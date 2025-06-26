@@ -15,6 +15,11 @@ from transformers import (
 from diffusers import AutoencoderKL
 from helpers.models.flux.transformer import FluxTransformer2DModel
 from helpers.models.flux.pipeline import FluxPipeline, FluxKontextPipeline
+from helpers.models.flux.pipeline_controlnet import (
+    FluxControlNetPipeline,
+    FluxControlPipeline,
+)
+
 from helpers.training.multi_process import _get_rank
 from helpers.models.flux import (
     prepare_latent_image_ids,
@@ -45,7 +50,8 @@ class Flux(ImageModelFoundation):
     PIPELINE_CLASSES = {
         PipelineTypes.TEXT2IMG: FluxPipeline,
         # PipelineTypes.IMG2IMG: None,
-        # PipelineTypes.CONTROLNET: None,
+        PipelineTypes.CONTROLNET: FluxControlNetPipeline,
+        PipelineTypes.CONTROL: FluxControlPipeline,
     }
 
     # The default model flavor to use when none is specified.
@@ -72,6 +78,95 @@ class Flux(ImageModelFoundation):
             "model": T5EncoderModel,
         },
     }
+
+    def control_init(self):
+        """
+        Initialize Flux Control parameters.
+        """
+        if (
+            self.config.control
+            and self.config.pretrained_transformer_model_name_or_path is None
+        ):
+            with torch.no_grad():
+                initial_input_channels = self.get_trained_component().config.in_channels
+                # new linear layer for x_embedder
+                new_linear = torch.nn.Linear(
+                    self.get_trained_component().x_embedder.in_features * 2,
+                    self.get_trained_component().x_embedder.out_features,
+                    bias=self.get_trained_component().x_embedder.bias is not None,
+                    dtype=self.get_trained_component().dtype,
+                    device=self.get_trained_component().device,
+                )
+                new_linear.weight.zero_()
+                new_linear.weight[:, :initial_input_channels].copy_(
+                    self.get_trained_component().x_embedder.weight
+                )
+                if self.get_trained_component().x_embedder.bias is not None:
+                    new_linear.bias.copy_(self.get_trained_component().x_embedder.bias)
+                self.get_trained_component().x_embedder = new_linear
+                # new projection layer for pos_embed
+                new_proj = torch.nn.Conv2d(
+                    in_channels=self.get_trained_component().pos_embed.proj.in_channels
+                    * 2,
+                    out_channels=self.get_trained_component().pos_embed.proj.out_channels,
+                    kernel_size=self.get_trained_component().pos_embed.proj.kernel_size,
+                    stride=self.get_trained_component().pos_embed.proj.stride,
+                    bias=self.get_trained_component().pos_embed.proj.bias is not None,
+                )
+                new_proj.weight.zero_()
+                new_proj.weight[:, :initial_input_channels].copy_(
+                    self.get_trained_component().pos_embed.proj.weight
+                )
+                if self.get_trained_component().pos_embed.proj.bias is not None:
+                    new_proj.bias.copy_(
+                        self.get_trained_component().pos_embed.proj.bias
+                    )
+                self.get_trained_component().pos_embed.proj = new_proj
+                self.get_trained_component().register_to_config(
+                    in_channels=initial_input_channels * 2,
+                    out_channels=initial_input_channels,
+                )
+
+            assert torch.all(
+                self.get_trained_component()
+                .x_embedder.weight[:, initial_input_channels:]
+                .data
+                == 0
+            )
+            assert torch.all(
+                self.get_trained_component()
+                .pos_embed.proj.weight[:, initial_input_channels:]
+                .data
+                == 0
+            )
+
+    def controlnet_init(self):
+        logger.info("Creating the controlnet..")
+        from diffusers import FluxControlNetModel
+
+        if self.config.controlnet_model_name_or_path:
+            logger.info("Loading existing controlnet weights")
+            self.controlnet = FluxControlNetModel.from_pretrained(
+                self.config.controlnet_model_name_or_path
+            )
+        else:
+            logger.info("Initializing controlnet weights from base model")
+            self.controlnet = FluxControlNetModel.from_transformer(
+                self.unwrap_model(self.model)
+            )
+        self.controlnet.to(self.accelerator.device, self.config.weight_dtype)
+
+    def requires_conditioning_latents(self) -> bool:
+        # Flux ControlNet requires latent inputs instead of pixels.
+        if self.config.controlnet or self.config.control:
+            return True
+        return False
+
+    def requires_conditioning_validation_inputs(self) -> bool:
+        # Whether this model / flavour requires conditioning inputs during validation.
+        if self.config.controlnet or self.config.control:
+            return True
+        return False
 
     def _format_text_embedding(self, text_embedding: torch.Tensor):
         """
@@ -331,6 +426,188 @@ class Flux(ImageModelFoundation):
             )
         }
 
+    def controlnet_predict(self, prepared_batch: dict) -> dict:
+        """
+        Perform a forward pass with ControlNet for Flux model.
+
+        Args:
+            prepared_batch: Dictionary containing the batch data including conditioning_latents
+
+        Returns:
+            Dictionary containing the model prediction
+        """
+        # ControlNet conditioning - Flux uses latents instead of pixel values
+        controlnet_cond = prepared_batch["conditioning_latents"].to(
+            device=self.accelerator.device, dtype=self.config.weight_dtype
+        )
+
+        # Pack the conditioning latents (same as noisy latents)
+        packed_controlnet_cond = pack_latents(
+            controlnet_cond,
+            batch_size=controlnet_cond.shape[0],
+            num_channels_latents=controlnet_cond.shape[1],
+            height=controlnet_cond.shape[2],
+            width=controlnet_cond.shape[3],
+        ).to(
+            dtype=self.config.base_weight_dtype,
+            device=self.accelerator.device,
+        )
+
+        # Pack noisy latents
+        packed_noisy_latents = pack_latents(
+            prepared_batch["noisy_latents"],
+            batch_size=prepared_batch["latents"].shape[0],
+            num_channels_latents=prepared_batch["latents"].shape[1],
+            height=prepared_batch["latents"].shape[2],
+            width=prepared_batch["latents"].shape[3],
+        ).to(
+            dtype=self.config.base_weight_dtype,
+            device=self.accelerator.device,
+        )
+
+        # Handle guidance
+        if self.config.flux_guidance_mode == "constant":
+            guidance_scales = [float(self.config.flux_guidance_value)] * prepared_batch[
+                "latents"
+            ].shape[0]
+        elif self.config.flux_guidance_mode == "random-range":
+            guidance_scales = [
+                random.uniform(
+                    self.config.flux_guidance_min,
+                    self.config.flux_guidance_max,
+                )
+                for _ in range(prepared_batch["latents"].shape[0])
+            ]
+
+        # Check if guidance embeds are enabled
+        transformer_config = None
+        if hasattr(self.get_trained_component(base_model=True), "module"):
+            transformer_config = self.get_trained_component(
+                base_model=True
+            ).module.config
+        elif hasattr(self.get_trained_component(base_model=True), "config"):
+            transformer_config = self.get_trained_component(base_model=True).config
+
+        if transformer_config is not None and getattr(
+            transformer_config, "guidance_embeds", False
+        ):
+            guidance = torch.tensor(guidance_scales, device=self.accelerator.device)
+        else:
+            guidance = None
+
+        # Prepare image IDs
+        img_ids = prepare_latent_image_ids(
+            prepared_batch["latents"].shape[0],
+            prepared_batch["latents"].shape[2],
+            prepared_batch["latents"].shape[3],
+            self.accelerator.device,
+            self.config.weight_dtype,
+        )
+
+        # Prepare timesteps
+        prepared_batch["timesteps"] = (
+            torch.tensor(prepared_batch["timesteps"])
+            .expand(prepared_batch["noisy_latents"].shape[0])
+            .to(device=self.accelerator.device)
+            / self.noise_schedule.config.num_train_timesteps
+        )
+
+        # Prepare text IDs
+        text_ids = torch.zeros(
+            prepared_batch["prompt_embeds"].shape[1],
+            3,
+        ).to(
+            device=self.accelerator.device,
+            dtype=self.config.base_weight_dtype,
+        )
+
+        # ControlNet forward pass
+        controlnet_block_samples, controlnet_single_block_samples = self.controlnet(
+            hidden_states=packed_noisy_latents,
+            controlnet_cond=packed_controlnet_cond,
+            controlnet_mode=None,  # Set this if using ControlNet-Union
+            conditioning_scale=1.0,  # You might want to make this configurable
+            encoder_hidden_states=prepared_batch["prompt_embeds"].to(
+                device=self.accelerator.device,
+                dtype=self.config.base_weight_dtype,
+            ),
+            pooled_projections=prepared_batch["add_text_embeds"].to(
+                device=self.accelerator.device,
+                dtype=self.config.base_weight_dtype,
+            ),
+            timestep=prepared_batch["timesteps"],
+            img_ids=img_ids,
+            txt_ids=text_ids,
+            guidance=guidance,
+            joint_attention_kwargs=None,
+            return_dict=False,
+        )
+
+        # Prepare kwargs for the main transformer
+        flux_transformer_kwargs = {
+            "hidden_states": packed_noisy_latents,
+            "timestep": prepared_batch["timesteps"],
+            "guidance": guidance,
+            "pooled_projections": prepared_batch["add_text_embeds"].to(
+                device=self.accelerator.device,
+                dtype=self.config.base_weight_dtype,
+            ),
+            "encoder_hidden_states": prepared_batch["prompt_embeds"].to(
+                device=self.accelerator.device,
+                dtype=self.config.base_weight_dtype,
+            ),
+            "txt_ids": text_ids.to(
+                device=self.accelerator.device,
+                dtype=self.config.base_weight_dtype,
+            ),
+            "img_ids": img_ids,
+            "joint_attention_kwargs": None,
+            "return_dict": False,
+        }
+
+        # Add ControlNet outputs to kwargs
+        if controlnet_block_samples is not None:
+            flux_transformer_kwargs["controlnet_block_samples"] = [
+                sample.to(
+                    device=self.accelerator.device, dtype=self.config.weight_dtype
+                )
+                for sample in controlnet_block_samples
+            ]
+
+        if controlnet_single_block_samples is not None:
+            flux_transformer_kwargs["controlnet_single_block_samples"] = [
+                sample.to(
+                    device=self.accelerator.device, dtype=self.config.weight_dtype
+                )
+                for sample in controlnet_single_block_samples
+            ]
+
+        # Add attention mask if using masked training
+        if self.config.flux_attention_masked_training:
+            flux_transformer_kwargs["attention_mask"] = prepared_batch[
+                "encoder_attention_mask"
+            ]
+            if flux_transformer_kwargs["attention_mask"] is None:
+                raise ValueError(
+                    "No attention mask was discovered when attempting validation - "
+                    "this means you need to recreate your text embed cache."
+                )
+
+        # Forward pass through the transformer with ControlNet residuals
+        model_pred = self.get_trained_component(base_model=True)(
+            **flux_transformer_kwargs
+        )[0]
+
+        # Unpack the latents back to original shape
+        return {
+            "model_prediction": unpack_latents(
+                model_pred,
+                height=prepared_batch["latents"].shape[2] * 8,
+                width=prepared_batch["latents"].shape[3] * 8,
+                vae_scale_factor=16,
+            )
+        }
+
     def check_user_config(self):
         """
         Checks self.config values against important issues. Optionally implemented in child class.
@@ -405,33 +682,39 @@ class Flux(ImageModelFoundation):
         return "conditioning"
 
     def requires_conditioning_dataset(self) -> bool:
-        if self.config.model_flavour == "kontext":
+        if self.config.model_flavour == "kontext" or self.config.controlnet:
             # Any flavour of “Kontext” always expects an extra image stream
             return True
         return False
 
     def requires_conditioning_validation_inputs(self) -> bool:
-        if self.config.model_flavour == "kontext":
+        if self.config.model_flavour == "kontext" or self.config.controlnet:
             # Any flavour of “Kontext” always expects an extra image stream
             return True
         return False
 
     def requires_validation_edit_captions(self) -> bool:
-        if self.config.model_flavour == "kontext":
+        if self.config.model_flavour == "kontext" or self.config.controlnet:
             # Kontext models require edit captions to be present.
             return True
-        raise NotImplementedError(
-            f"{self.NAME} does not support validation edit captions unless the Kontext flavour is being trained."
-        )
+        return False
 
     def requires_conditioning_latents(self) -> bool:
-        if self.config.model_flavour == "kontext":
+        if self.config.model_flavour == "kontext" or self.config.controlnet:
             # Any flavour of “Kontext” needs latent inputs for its conditioning data.
             return True
         return super().requires_conditioning_latents()
 
     def get_lora_target_layers(self):
         # Some models, eg. Flux should override this with more complex config-driven logic.
+        if self.config.model_type == "lora" and (
+            self.config.controlnet or self.config.control
+        ):
+            if "control" not in self.config.flux_lora_target.lower():
+                logger.warning(
+                    "ControlNet or Control is enabled, but the LoRA target does not include 'control'. Overriding to controlnet."
+                )
+            self.config.flux_lora_target = "controlnet"
         if self.config.lora_type.lower() == "standard":
             if self.config.flux_lora_target == "all":
                 # target_modules = mmdit layers here
@@ -480,6 +763,42 @@ class Flux(ImageModelFoundation):
                     "proj_mlp",
                     "proj_out",
                 ]
+            elif self.config.flux_lora_target == "controlnet":
+                return [
+                    "controlnet_x_embedder",
+                    "controlnet_blocks.0",
+                    "controlnet_blocks.1",
+                    "controlnet_blocks.2",
+                    "controlnet_blocks.3",
+                    "controlnet_single_blocks.0",
+                    "controlnet_single_blocks.1",
+                    "controlnet_single_blocks.2",
+                    "controlnet_single_blocks.3",
+                    "controlnet_single_blocks.4",
+                    "controlnet_single_blocks.5",
+                    "controlnet_single_blocks.6",
+                    "controlnet_single_blocks.7",
+                    "controlnet_single_blocks.8",
+                    "controlnet_single_blocks.9",
+                ]
+            elif self.config.flux_lora_target == "all+ffs+embedder":
+                return [
+                    "x_embedder",
+                    "to_k",
+                    "to_q",
+                    "to_v",
+                    "to_out.0",
+                    "add_k_proj",
+                    "add_q_proj",
+                    "add_v_proj",
+                    "to_add_out",
+                    "ff.net.0.proj",
+                    "ff.net.2",
+                    "ff_context.net.0.proj",
+                    "ff_context.net.2",
+                    "proj_mlp",
+                    "proj_out",
+                ]
             elif self.config.flux_lora_target == "ai-toolkit":
                 # from ostris' ai-toolkit, possibly required to continue finetuning one.
                 return [
@@ -514,6 +833,7 @@ class Flux(ImageModelFoundation):
                 return [
                     "single_transformer_blocks.7.proj_out",
                 ]
+
             return self.DEFAULT_LORA_TARGET
         elif self.config.lora_type.lower() == "lycoris":
             return self.DEFAULT_LYCORIS_TARGET
