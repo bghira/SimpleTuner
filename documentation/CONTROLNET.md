@@ -4,7 +4,7 @@
 
 ControlNet models are capable of many tasks, which depend on the conditioning data given at training time.
 
-Initially, they were very resource-intensive to train, but with the introduction of Control-LoRA, we can now use PEFT LoRA or Lycoris to train the same tasks with far fewer resources.
+Initially, they were very resource-intensive to train, but we can now use PEFT LoRA or Lycoris to train the same tasks with far fewer resources.
 
 Example (taken from the Diffusers ControlNet model card):
 
@@ -44,7 +44,7 @@ The dataloader configuration remains pretty close to a typical text-to-image dat
   - The name isn't important - adding `-data` and `-conditioning` is only done in this example for illustrative purposes.
   - The `dataset_type` should be set to `conditioning`, indicating to the trainer that this is to be used for evaluation and conditioned input training purposes.
 - When training SDXL, conditioning inputs are not VAE-encoded, but instead passed into the model directly during training time as pixel values. This means we don't spend any more time processing VAE embeds at the start of training!
-- When training Flux or other MMDiT models, the conditioning inputs are encoded into latents, and these will be computed on-demand during training.
+- When training Flux, SD3, Auraflow, HiDream, or other MMDiT models, the conditioning inputs are encoded into latents, and these will be computed on-demand during training.
 - Though everything is explicitly labeled as `-controlnet` here, you can reuse the same text embeds that you used for normal full/LoRA tuning. ControlNet inputs do not modify the prompt embeds.
 - When using aspect bucketing and random cropping, the conditioning samples will be cropped in the same way as the main image samples, so you don't have to worry about that.
 
@@ -154,6 +154,7 @@ Your configuration will look something like this in the end:
     "seed": 42,
     "train_batch_size": 1,
     "use_ema": false,
+    "vae_cache_ondemand": true,
     "validation_guidance": 4.2,
     "validation_guidance_rescale": 0.0,
     "validation_num_inference_steps": 20,
@@ -166,7 +167,7 @@ Your configuration will look something like this in the end:
 
 ## Inference on resulting ControlNet models
 
-An SDXL example is provided here for inferencing on a **full** ControlNet model (not Control-LoRA):
+An SDXL example is provided here for inferencing on a **full** ControlNet model (not ControlNet LoRA):
 
 ```py
 # Update these values:

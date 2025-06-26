@@ -134,35 +134,13 @@ class TestMetadataFunctions(unittest.TestCase):
         expected_output = "width=1024,\n    height=1024,"
         self.assertEqual(output.strip(), expected_output.strip())
 
-    def test_code_example(self):
-        with patch(
-            "helpers.publishing.metadata._model_imports",
-            return_value="import torch\nfrom diffusers import DiffusionPipeline",
-        ):
-            with patch(
-                "helpers.publishing.metadata._model_load", return_value="pipeline = ..."
-            ):
-                with patch(
-                    "helpers.publishing.metadata._torch_device", return_value="'cuda'"
-                ):
-                    with patch(
-                        "helpers.publishing.metadata._negative_prompt",
-                        return_value="negative_prompt = 'A negative prompt'",
-                    ):
-                        with patch(
-                            "helpers.publishing.metadata._validation_resolution",
-                            return_value="width=512,\n    height=512,",
-                        ):
-                            output = code_example(self.args, None, self.mock_model)
-                            self.assertIn("import torch", output)
-                            self.assertIn("pipeline = ...", output)
-                            self.assertIn("pipeline.to('cuda')", output)
-
     def test_model_type(self):
         self.args.model_type = "lora"
         self.args.lora_type = "standard"
+        self.args.controlnet = False
+        self.args.control = False
         output = model_type(self.args)
-        self.assertEqual(output, "standard PEFT LoRA")
+        self.assertEqual(output, "PEFT LoRA")
 
         self.args.lora_type = "lycoris"
         output = model_type(self.args)

@@ -2318,7 +2318,10 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if args is None and exit_on_error:
         sys.exit(1)
 
-    if args.controlnet_custom_config is not None:
+    if (
+        args.controlnet_custom_config is not None
+        and type(args.controlnet_custom_config) is str
+    ):
         if args.controlnet_custom_config.startswith("{"):
             try:
                 import ast
