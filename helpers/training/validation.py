@@ -1,3 +1,4 @@
+import inspect
 import torch
 import diffusers
 import os
@@ -945,7 +946,12 @@ class Validation:
 
         self.model.move_models(self.accelerator.device)
         # Remove text encoders on 'meta' device to avoid move errors
-        for attr in ["text_encoder", "text_encoder_2", "text_encoder_3", "text_encoder_4"]:
+        for attr in [
+            "text_encoder",
+            "text_encoder_2",
+            "text_encoder_3",
+            "text_encoder_4",
+        ]:
             te = getattr(self.model.pipeline, attr, None)
             if getattr(te, "device", None) and te.device.type == "meta":
                 setattr(self.model.pipeline, attr, None)
@@ -1270,7 +1276,6 @@ class Validation:
                         )
                         for k, v in pipeline_kwargs.items()
                     }
-                    import inspect
 
                     call_kwargs = inspect.signature(
                         self.model.pipeline.__call__
