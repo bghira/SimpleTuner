@@ -574,6 +574,9 @@ class HiDream(ImageModelFoundation):
         }
 
     def get_lora_target_layers(self):
+        if not self.config.controlnet:
+            # If no controlnet, return the default LoRA target layers.
+            return self.DEFAULT_LORA_TARGET
         targets = [
             "controlnet_x_embedder",
         ]
