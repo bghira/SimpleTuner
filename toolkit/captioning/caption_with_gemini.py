@@ -9,6 +9,11 @@ import time
 import io
 import pandas as pd
 import google.generativeai as genai
+
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 from PIL import Image
 from tqdm import tqdm
 import pyarrow.parquet as pq

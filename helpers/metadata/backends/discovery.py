@@ -253,20 +253,18 @@ class DiscoveryMetadataBackend(MetadataBackend):
                 data_backend_id=self.id,
                 image_metadata=image_metadata,
                 image_path=image_path_str,
+                model=StateTracker.get_model(),
             )
             prepared_sample = training_sample.prepare()
-            image_metadata.update(
-                {
-                    "crop_coordinates": prepared_sample.crop_coordinates,
-                    "target_size": prepared_sample.target_size,
-                    "intermediary_size": prepared_sample.intermediary_size,
-                    "aspect_ratio": prepared_sample.aspect_ratio,
-                    "luminance": calculate_luminance(image),
-                }
-            )
-            logger.debug(
-                f"Image {image_path_str} has aspect ratio {prepared_sample.aspect_ratio} and size {image.size}."
-            )
+            cur_image_metadata = {
+                "crop_coordinates": prepared_sample.crop_coordinates,
+                "target_size": prepared_sample.target_size,
+                "intermediary_size": prepared_sample.intermediary_size,
+                "aspect_ratio": prepared_sample.aspect_ratio,
+                "luminance": calculate_luminance(image),
+            }
+            image_metadata.update(cur_image_metadata)
+            logger.debug(f"Image {image_path_str} has metadata: {cur_image_metadata}")
 
             aspect_ratio_key = str(prepared_sample.aspect_ratio)
             if aspect_ratio_key not in aspect_ratio_bucket_indices:

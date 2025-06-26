@@ -121,7 +121,12 @@ class TestTrainingSample(unittest.TestCase):
         video_data = np.zeros((10, 720, 1280, 3), dtype=np.uint8)
         video_metadata = {"original_size": (1280, 720)}
 
-        sample = TrainingSample(video_data, self.data_backend_id, video_metadata)
+        sample = TrainingSample(
+            video_data,
+            self.data_backend_id,
+            video_metadata,
+            model=MagicMock(get_transforms=MagicMock()),
+        )
         self.assertEqual(sample.original_size, (1280, 720))
         # Confirm it doesn't crash
         sample.prepare()
@@ -149,7 +154,12 @@ class TestTrainingSample(unittest.TestCase):
         video_data = np.zeros((5, 1024, 1024, 3), dtype=np.uint8)
         video_metadata = {"original_size": (1024, 1024)}
 
-        sample = TrainingSample(video_data, self.data_backend_id, video_metadata)
+        sample = TrainingSample(
+            video_data,
+            self.data_backend_id,
+            video_metadata,
+            model=MagicMock(get_transforms=MagicMock(return_value=MagicMock())),
+        )
         sample.prepare()
         # The shape should reflect a final square dimension <= 512
         final_shape = sample.image.shape
@@ -177,7 +187,12 @@ class TestTrainingSample(unittest.TestCase):
         video_data = np.ones((3, 300, 400, 3), dtype=np.uint8)
         video_metadata = {"original_size": (400, 300)}
 
-        sample = TrainingSample(video_data, self.data_backend_id, video_metadata)
+        sample = TrainingSample(
+            video_data,
+            self.data_backend_id,
+            video_metadata,
+            model=MagicMock(get_transforms=MagicMock()),
+        )
         sample.prepare()
 
         # The final shape should be [3, 256, 256, 3] or smaller
@@ -202,7 +217,12 @@ class TestTrainingSample(unittest.TestCase):
         video_data = np.zeros((4, 240, 320, 3), dtype=np.uint8)
         video_metadata = {"original_size": (320, 240)}
 
-        sample = TrainingSample(video_data, self.data_backend_id, video_metadata)
+        sample = TrainingSample(
+            video_data,
+            self.data_backend_id,
+            video_metadata,
+            model=MagicMock(get_transforms=MagicMock()),
+        )
         sample.prepare()
         # Without crop, the pipeline might just do a direct resize to e.g. 128 px on the shorter edge
         final_shape = sample.image.shape
@@ -321,7 +341,12 @@ class TestTrainingSample(unittest.TestCase):
         video_data = np.zeros((5, 600, 1200, 3), dtype=np.uint8)
         video_metadata = {"original_size": (1200, 600)}
 
-        sample = TrainingSample(video_data, self.data_backend_id, video_metadata)
+        sample = TrainingSample(
+            video_data,
+            self.data_backend_id,
+            video_metadata,
+            model=MagicMock(get_transforms=MagicMock()),
+        )
         sample.prepare()
         final_frames, final_h, final_w, final_c = sample.image.shape
 

@@ -109,10 +109,10 @@ def _quanto_model(
             "context_embedder",
         ]
     if quantize_activations:
-        logger.info("Freezing model weights and activations")
+        logger.info("Quanto: Freezing model weights and activations")
         extra_quanto_args["activations"] = weight_quant
     else:
-        logger.info("Freezing model weights only")
+        logger.info("Quanto: Freezing model weights only")
 
     try:
         quantize(model, weights=weight_quant, **extra_quanto_args)
@@ -215,11 +215,8 @@ def get_quant_fn(base_model_precision):
 
 
 def quantise_model(
-    unet=None,
-    transformer=None,
-    text_encoder_1=None,
-    text_encoder_2=None,
-    text_encoder_3=None,
+    model=None,
+    text_encoders: list = None,
     controlnet=None,
     ema=None,
     args=None,
@@ -229,30 +226,35 @@ def quantise_model(
     Quantizes the provided models using the specified precision settings.
 
     Args:
-        unet: The UNet model to quantize.
-        transformer: The Transformer model to quantize.
-        text_encoder_1: The first text encoder to quantize.
-        text_encoder_2: The second text encoder to quantize.
-        text_encoder_3: The third text encoder to quantize.
+        model: The base model to quanti
+        text_encoders: A list of zero or more text encoders to quantize.
         controlnet: The ControlNet model to quantize.
         ema: An EMAModel to quantize.
         args: An object containing precision settings and other arguments.
 
     Returns:
         tuple: A tuple containing the quantized models in the order:
-               (unet, transformer, text_encoder_1, text_encoder_2, text_encoder_3, controlnet)
+               (model, text_encoders, controlnet)
     """
+    text_encoder_1, text_encoder_2, text_encoder_3, text_encoder_4 = (
+        None,
+        None,
+        None,
+        None,
+    )
+    if text_encoders is not None:
+        if len(text_encoders) > 0:
+            text_encoder_1 = text_encoders[0]
+        if len(text_encoders) > 1:
+            text_encoder_2 = text_encoders[1]
+        if len(text_encoders) > 2:
+            text_encoder_3 = text_encoders[2]
+        if len(text_encoders) > 3:
+            text_encoder_4 = text_encoders[3]
+
     models = [
         (
-            transformer,
-            {
-                "quant_fn": get_quant_fn(args.base_model_precision),
-                "model_precision": args.base_model_precision,
-                "quantize_activations": args.quantize_activations,
-            },
-        ),
-        (
-            unet,
+            model,
             {
                 "quant_fn": get_quant_fn(args.base_model_precision),
                 "model_precision": args.base_model_precision,
@@ -292,6 +294,14 @@ def quantise_model(
             },
         ),
         (
+            text_encoder_4,
+            {
+                "quant_fn": get_quant_fn(args.text_encoder_4_precision),
+                "model_precision": args.text_encoder_4_precision,
+                "base_model_precision": args.base_model_precision,
+            },
+        ),
+        (
             ema,
             {
                 "quant_fn": get_quant_fn(args.base_model_precision),
@@ -316,36 +326,46 @@ def quantise_model(
                     "quantize_activations", args.quantize_activations
                 ),
             }
+            logger.info(
+                f"Quantising {model.__class__.__name__} with {quant_args_combined}"
+            )
             models[i] = (quant_fn(model, **quant_args_combined), quant_args)
 
     # Unpack the quantized models
     (
-        transformer,
-        unet,
+        model,
         controlnet,
         text_encoder_1,
         text_encoder_2,
         text_encoder_3,
+        text_encoder_4,
         ema,
     ) = [model for model, _ in models]
 
+    # repack text encoders
+    text_encoders = []
+    if text_encoder_1 is not None:
+        text_encoders.append(text_encoder_1)
+    if text_encoder_2 is not None:
+        text_encoders.append(text_encoder_2)
+    if text_encoder_3 is not None:
+        text_encoders.append(text_encoder_3)
+    if text_encoder_4 is not None:
+        text_encoders.append(text_encoder_4)
+    if len(text_encoders) == 0:
+        text_encoders = None
+
     if return_dict:
         return {
-            "unet": unet,
-            "transformer": transformer,
-            "text_encoder_1": text_encoder_1,
-            "text_encoder_2": text_encoder_2,
-            "text_encoder_3": text_encoder_3,
+            "model": model,
+            "text_encoders": text_encoders,
             "controlnet": controlnet,
             "ema": ema,
         }
 
     return (
-        unet,
-        transformer,
-        text_encoder_1,
-        text_encoder_2,
-        text_encoder_3,
+        model,
+        text_encoders,
         controlnet,
         ema,
     )

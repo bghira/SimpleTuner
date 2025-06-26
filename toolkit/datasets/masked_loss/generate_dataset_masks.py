@@ -1,5 +1,10 @@
 import argparse
 import os
+
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 import PIL
 import cv2  # Import OpenCV for image processing
 import numpy as np

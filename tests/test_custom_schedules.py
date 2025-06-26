@@ -67,7 +67,15 @@ class TestPolynomialDecayWithWarmup(unittest.TestCase):
         ):
             weights = torch.ones(1000)  # Uniform weights
             selected_timesteps = segmented_timestep_selection(
-                1000, 10, weights, use_refiner_range=False
+                1000,
+                10,
+                weights,
+                config=MagicMock(
+                    refiner_training=True,
+                    refiner_training_invert_schedule=True,
+                    refiner_training_strength=0.35,
+                ),
+                use_refiner_range=False,
             )
             self.assertTrue(
                 all(350 <= t <= 999 for t in selected_timesteps),
@@ -85,7 +93,15 @@ class TestPolynomialDecayWithWarmup(unittest.TestCase):
         ):
             weights = torch.ones(1000)  # Uniform weights
             selected_timesteps = segmented_timestep_selection(
-                1000, 10, weights, use_refiner_range=False
+                1000,
+                10,
+                weights,
+                use_refiner_range=False,
+                config=MagicMock(
+                    refiner_training=True,
+                    refiner_training_invert_schedule=False,
+                    refiner_training_strength=0.35,
+                ),
             )
             self.assertTrue(all(0 <= t < 350 for t in selected_timesteps))
 

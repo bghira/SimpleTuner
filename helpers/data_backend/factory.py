@@ -13,6 +13,7 @@ from helpers.caching.vae import VAECache
 from helpers.training.multi_process import should_log, rank_info, _get_rank as get_rank
 from helpers.training.collate import collate_fn
 from helpers.training.state_tracker import StateTracker
+from helpers.models.common import ModelFoundation
 
 import json
 import os
@@ -26,6 +27,7 @@ import queue
 from math import sqrt
 import pandas as pd
 import numpy as np
+from typing import Union
 
 logger = logging.getLogger("DataBackendFactory")
 if should_log():
@@ -53,6 +55,11 @@ def info_log(message):
 def warning_log(message):
     if StateTracker.get_accelerator().is_main_process:
         logger.warning(message)
+
+
+def debug_log(message):
+    if StateTracker.get_accelerator().is_main_process:
+        logger.debug(message)
 
 
 def check_column_values(
@@ -256,6 +263,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     )
     output["config"]["maximum_image_size"] = maximum_image_size
     output["config"]["target_downsample_size"] = target_downsample_size
+    output["config"]["dataset_type"] = output["dataset_type"]
 
     if maximum_image_size and not target_downsample_size:
         raise ValueError(
@@ -275,7 +283,6 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         and output["config"]["resolution_type"] == "pixel"
         and maximum_image_size < 512
         and "deepfloyd" not in args.model_type
-        and args.model_family != "smoldit"
     ):
         raise ValueError(
             f"When a data backend is configured to use `'resolution_type':pixel`, `maximum_image_size` must be at least 512 pixels. You may have accidentally entered {maximum_image_size} megapixels, instead of pixels."
@@ -294,7 +301,6 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         and output["config"]["resolution_type"] == "pixel"
         and target_downsample_size < 512
         and "deepfloyd" not in args.model_type
-        and args.model_family != "smoldit"
     ):
         raise ValueError(
             f"When a data backend is configured to use `'resolution_type':pixel`, `target_downsample_size` must be at least 512 pixels. You may have accidentally entered {target_downsample_size} megapixels, instead of pixels."
@@ -448,13 +454,93 @@ def configure_parquet_database(backend: dict, args, data_backend: BaseDataBacken
     )
 
 
-def move_text_encoders(text_encoders: list, target_device: str):
+def move_text_encoders(
+    args, text_encoders: list, target_device: str, force_move: bool = False
+):
     """Move text encoders to the target device."""
-    logger.info(f"Moving text encoders to {target_device}")
-    return [encoder.to(target_device) for encoder in text_encoders]
+    if text_encoders is None or (not args.offload_during_startup and not force_move):
+        return
+    # we'll move text encoder only if their precision arg is no_change
+    # otherwise, we assume the user has already moved them to the correct device due to quantisation.
+    te_idx = -1  # these are 0-indexed, and we increment it immediately to 0.
+    te_attr_id = 0  # these are 1-indexed and we increment it immediately to 1.
+    for text_encoder in text_encoders:
+        te_idx += 1
+        te_attr_id += 1
+        # if (
+        #     getattr(args, f"text_encoder_{te_idx + 1}_precision", "no_change")
+        #     != "no_change"
+        # ):
+        #     logger.info(f"Not moving text encoder {te_idx + 1}")
+        #     continue
+        if text_encoder.device == target_device:
+            logger.info(f"Text encoder {te_idx + 1} already on target device")
+            continue
+        logger.info(
+            f"Moving text encoder {te_idx + 1} to {target_device} from {text_encoder.device}"
+        )
+        text_encoder.to(target_device)
+
+    return text_encoders
 
 
-def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenizers):
+def synchronize_conditioning_settings():
+    """
+    Synchronize resolution settings between main image datasets and their conditioning datasets
+    """
+    for (
+        main_dataset_id,
+        conditioning_dataset_id,
+    ) in StateTracker.get_conditioning_mappings().items():
+        main_config = StateTracker.get_data_backend_config(main_dataset_id)
+        conditioning_config = StateTracker.get_data_backend_config(
+            conditioning_dataset_id
+        )
+
+        # Copy resolution settings from main dataset to conditioning dataset
+        resolution_settings = [
+            "resolution",
+            "resolution_type",
+            "maximum_image_size",
+            "target_downsample_size",
+            "minimum_image_size",
+        ]
+
+        for setting in resolution_settings:
+            if setting in main_config:
+                # Log that we're overriding a setting
+                if (
+                    setting in conditioning_config
+                    and conditioning_config[setting] != main_config[setting]
+                ):
+                    info_log(
+                        f"Overriding {conditioning_dataset_id}'s {setting} ({conditioning_config[setting]}) "
+                        f"with value from {main_dataset_id} ({main_config[setting]})"
+                    )
+
+                # Update the conditioning dataset's configuration
+                conditioning_config[setting] = main_config[setting]
+
+                # Update both in-memory configs and backend objects
+                StateTracker.set_data_backend_config(
+                    conditioning_dataset_id, conditioning_config
+                )
+
+                # Also update the metadata_backend object if it exists
+                conditioning_backend = StateTracker.get_data_backend(
+                    conditioning_dataset_id
+                )
+                if "metadata_backend" in conditioning_backend:
+                    setattr(
+                        conditioning_backend["metadata_backend"],
+                        setting,
+                        main_config[setting],
+                    )
+
+
+def configure_multi_databackend(
+    args: dict, accelerator, text_encoders, tokenizers, model: ModelFoundation
+):
     """
     Configure a multiple dataloaders based on the provided commandline args.
     """
@@ -488,6 +574,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
     ###                                            ###
     default_text_embed_backend_id = None
     text_embed_cache_dir_paths = []
+    requires_conditioning_dataset = model.requires_conditioning_dataset()
     for backend in data_backend_config:
         dataset_type = backend.get("dataset_type", None)
         if dataset_type is None or dataset_type != "text_embeds":
@@ -551,7 +638,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
 
         # Generate a TextEmbeddingCache object
         logger.debug(f"rank {get_rank()} is creating TextEmbeddingCache")
-        move_text_encoders(text_encoders, accelerator.device)
+        move_text_encoders(args, text_encoders, accelerator.device, force_move=True)
         init_backend["text_embed_cache"] = TextEmbeddingCache(
             id=init_backend["id"],
             data_backend=init_backend["data_backend"],
@@ -561,6 +648,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             cache_dir=init_backend.get("cache_dir", args.cache_dir_text),
             model_type=StateTracker.get_model_family(),
             write_batch_size=backend.get("write_batch_size", args.write_batch_size),
+            model=model,
         )
         logger.debug(f"rank {get_rank()} completed creation of TextEmbeddingCache")
         init_backend["text_embed_cache"].set_webhook_handler(
@@ -581,6 +669,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             info_log("Pre-computing null embedding")
             logger.debug(f"rank {get_rank()} may skip computing the embedding..")
             with accelerator.main_process_first():
+                model.get_pipeline()
                 logger.debug(f"rank {get_rank()} is computing the null embed")
                 init_backend["text_embed_cache"].compute_embeddings_for_prompts(
                     [""], return_concat=False, load_from_cache=False
@@ -598,7 +687,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             )
 
         # We don't compute the text embeds at this time, because we do not really have any captions available yet.
-        # move_text_encoders(text_encoders, "cpu")
+        # move_text_encoders(args, text_encoders, "cpu")
         text_embed_backends[init_backend["id"]] = init_backend
 
     if not text_embed_backends:
@@ -757,7 +846,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
         )
 
         preserve_data_backend_cache = backend.get("preserve_data_backend_cache", False)
-        if not preserve_data_backend_cache:
+        if not preserve_data_backend_cache and accelerator.is_local_main_process:
             StateTracker.delete_cache_files(
                 data_backend_id=init_backend["id"],
                 preserve_data_backend_cache=preserve_data_backend_cache,
@@ -910,7 +999,19 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
         if (
             "aspect" not in args.skip_file_discovery
             and "aspect" not in backend.get("skip_file_discovery", "")
-            and conditioning_type not in ["mask", "controlnet"]
+            and conditioning_type
+            not in [
+                # masks are just pulled inline in the training loop without encoding, and then applied pixel-wise to loss.
+                "mask",
+                # controlnet uses pixel values for older Unets but encoded latents for newer models.
+                # when we require encoded latents, we also must scan for aspect ratio buckets here.
+                # it's stupid, because it effectively doubles the I/O to discover the conditioning dataset,
+                # and a more ideal implementation would simply reference the training dataset metadata buckets.
+                # but currently, there is no method to instruct a dataset to use a separate metadata instance with different paths.
+                "controlnet" if not model.requires_conditioning_latents() else -1,
+                # similar to controlnet, latent reference images require us to scan them so we can encode them for newer models.
+                "reference_strict" if not model.requires_conditioning_latents() else -1,
+            ]  # strict kontext conditioning doesn't have its own bucket list.
         ):
             if accelerator.is_local_main_process:
                 info_log(
@@ -929,9 +1030,20 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                 f"Cannot train using a dataset that has a single bucket with fewer than {args.train_batch_size} images."
                 f" You have to reduce your batch size, or increase your dataset size (id={init_backend['id']})."
             )
+
+        # In the case where max_train_steps is false and num_train_epochs is being used,
+        # padding should be applied so as to ensure each process is operating on the same
+        # number of images. If no padding is used the recalculated max_train_steps value
+        # may differ between processes resulting in training hanging near the end as each
+        # process ends up having their own idea of total steps.
+        apply_padding = (
+            True if not args.max_train_steps or args.max_train_steps == 0 else False
+        )
+
         # Now split the contents of these buckets between all processes
         init_backend["metadata_backend"].split_buckets_between_processes(
             gradient_accumulation_steps=args.gradient_accumulation_steps,
+            apply_padding=apply_padding,
         )
 
         # Check if there is an existing 'config' in the metadata_backend.config
@@ -945,6 +1057,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             "maximum_image_size",
             "target_downsample_size",
             "parquet",
+            "video",
         ]
         # we will set the latest version by default.
         current_config_version = latest_config_version()
@@ -986,7 +1099,13 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
 
         init_backend["config"]["config_version"] = current_config_version
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
-        info_log(f"Configured backend: {init_backend}")
+
+        init_backend_debug_info = {
+            k: v
+            for k, v in init_backend.items()
+            if isinstance(v, Union[list, int, float, str, dict, tuple])
+        }
+        info_log(f"Configured backend: {init_backend_debug_info}")
 
         if len(init_backend["metadata_backend"]) == 0 and conditioning_type is None:
             raise Exception(
@@ -1045,6 +1164,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             id=init_backend["id"],
             metadata_backend=init_backend["metadata_backend"],
             data_backend=init_backend["data_backend"],
+            model=model,
             accelerator=accelerator,
             batch_size=args.train_batch_size,
             debug_aspect_buckets=args.debug_aspect_buckets,
@@ -1118,7 +1238,8 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             info_log(
                 f"(id={init_backend['id']}) Initialise text embed pre-computation using the {caption_strategy} caption strategy. We have {len(captions)} captions to process."
             )
-            move_text_encoders(text_encoders, accelerator.device)
+            move_text_encoders(args, text_encoders, accelerator.device)
+            model.get_pipeline()
             init_backend["text_embed_cache"].compute_embeddings_for_prompts(
                 captions, return_concat=False, load_from_cache=False
             )
@@ -1137,10 +1258,14 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
         logger.debug(f"Hashing filenames: {hash_filenames}")
 
-        if (
-            "deepfloyd" not in StateTracker.get_args().model_type
-            and conditioning_type not in ["mask", "controlnet"]
-        ):
+        if getattr(
+            model, "AUTOENCODER_CLASS", None
+        ) is not None and conditioning_type not in [
+            "mask",
+            (
+                "controlnet" if not model.requires_conditioning_latents() else -1
+            ),  # hack to encode VAE latents when the model requires them.
+        ]:
             info_log(f"(id={init_backend['id']}) Creating VAE latent cache.")
             vae_cache_dir = backend.get("cache_dir_vae", None)
             if vae_cache_dir in vae_cache_dir_paths:
@@ -1160,13 +1285,20 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             if backend["type"] == "local" and (
                 vae_cache_dir is None or vae_cache_dir == ""
             ):
-                raise ValueError(
-                    f"VAE image embed cache directory {backend.get('cache_dir_vae')} is not set. This is required for the VAE image embed cache."
-                )
-            move_text_encoders(text_encoders, "cpu")
+                if (
+                    not args.controlnet or backend["dataset_type"] != "conditioning"
+                ) or (
+                    model.requires_conditioning_latents()
+                    and requires_conditioning_dataset
+                ):
+                    raise ValueError(
+                        f"VAE image embed cache directory {backend.get('cache_dir_vae')} is not set. This is required for the VAE image embed cache."
+                    )
+            move_text_encoders(args, text_encoders, "cpu")
             init_backend["vaecache"] = VAECache(
                 id=init_backend["id"],
                 dataset_type=init_backend["dataset_type"],
+                model=model,
                 vae=StateTracker.get_vae(),
                 accelerator=accelerator,
                 metadata_backend=init_backend["metadata_backend"],
@@ -1204,7 +1336,6 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                 vae_cache_ondemand=args.vae_cache_ondemand,
                 hash_filenames=hash_filenames,
             )
-            move_text_encoders(text_encoders, accelerator.device)
             init_backend["vaecache"].set_webhook_handler(
                 StateTracker.get_webhook_handler()
             )
@@ -1215,8 +1346,21 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                     init_backend["vaecache"].discover_all_files()
                 accelerator.wait_for_everyone()
             all_image_files = StateTracker.get_image_files(
-                data_backend_id=init_backend["id"]
+                data_backend_id=init_backend["id"],
+                retry_limit=3,  # some filesystems maybe take longer to make it available.
             )
+            if all_image_files is None:
+                from helpers.training import image_file_extensions
+
+                logger.debug("No image file cache available, retrieving fresh")
+                all_image_files = init_backend["data_backend"].list_files(
+                    instance_data_dir=init_backend["instance_data_dir"],
+                    file_extensions=image_file_extensions,
+                )
+                all_image_files = StateTracker.set_image_files(
+                    all_image_files, data_backend_id=init_backend["id"]
+                )
+
             init_backend["vaecache"].build_vae_cache_filename_map(
                 all_image_files=all_image_files
             )
@@ -1229,7 +1373,11 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             and accelerator.is_main_process
             and backend.get("scan_for_errors", False)
             and "deepfloyd" not in StateTracker.get_args().model_type
-            and conditioning_type not in ["mask", "controlnet"]
+            and conditioning_type
+            not in [
+                "mask",
+                "controlnet" if not model.requires_conditioning_latents() else -1,
+            ]
         ):
             info_log(
                 f"Beginning error scan for dataset {init_backend['id']}. Set 'scan_for_errors' to False in the dataset config to disable this."
@@ -1253,7 +1401,11 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             and "vae" not in args.skip_file_discovery
             and "vae" not in backend.get("skip_file_discovery", "")
             and "deepfloyd" not in StateTracker.get_args().model_type
-            and conditioning_type not in ["mask", "controlnet"]
+            and conditioning_type
+            not in [
+                "mask",
+                "controlnet" if not model.requires_conditioning_latents() else -1,
+            ]
         ):
             init_backend["vaecache"].discover_unprocessed_files()
             if not args.vae_cache_ondemand:
@@ -1261,12 +1413,19 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             logger.debug(f"Encoding images during training: {args.vae_cache_ondemand}")
             accelerator.wait_for_everyone()
 
-        info_log(f"Configured backend: {init_backend}")
+        move_text_encoders(args, text_encoders, accelerator.device)
+        init_backend_debug_info = {
+            k: v
+            for k, v in init_backend.items()
+            if isinstance(v, Union[list, int, float, str, dict, tuple])
+        }
+        info_log(f"Configured backend: {init_backend_debug_info}")
 
         StateTracker.register_data_backend(init_backend)
         init_backend["metadata_backend"].save_cache()
 
     # For each image backend, connect it to its conditioning backend.
+    has_conditioning_dataset = False
     for backend in data_backend_config:
         dataset_type = backend.get("dataset_type", "image")
         if dataset_type is not None and dataset_type != "image":
@@ -1284,6 +1443,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                 f"Conditioning data backend {backend['conditioning_data']} not found in data backend list: {StateTracker.get_data_backends(_type='conditionin')}."
             )
         if "conditioning_data" in backend:
+            has_conditioning_dataset = True
             StateTracker.set_conditioning_dataset(
                 backend["id"], backend["conditioning_data"]
             )
@@ -1294,6 +1454,13 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
     if len(StateTracker.get_data_backends(_types=["image", "video"])) == 0:
         raise ValueError(
             "Must provide at least one data backend in the data backend config file."
+        )
+    # Connect the conditioning resolution settings to the root dataset.
+    synchronize_conditioning_settings()
+
+    if not has_conditioning_dataset and requires_conditioning_dataset:
+        raise ValueError(
+            "Model requires a conditioning dataset, but none was found in the data backend config file."
         )
     return StateTracker.get_data_backends(_types=["image", "video"])
 

@@ -5,6 +5,11 @@
 from diffusers import AutoPipelineForText2Image
 from torch import manual_seed, float16
 import os
+
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 from PIL import Image, ImageDraw, ImageFont
 from helpers.prompts import prompts
 
@@ -153,7 +158,6 @@ for shortname, prompt in prompts.items():
         image.save(image_path, format="PNG")
 
         images_info.append((image, pipeline_info["label"]))
-
 
     # Combine and label images
     combine_and_label_images(images_info, f"{target_dir}/combined_image.png")

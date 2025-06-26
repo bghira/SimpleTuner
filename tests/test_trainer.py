@@ -11,10 +11,6 @@ from helpers.training.trainer import Trainer
 class TestTrainer(unittest.TestCase):
     @patch("helpers.training.trainer.load_config")
     @patch("helpers.training.trainer.safety_check")
-    @patch(
-        "helpers.training.trainer.load_scheduler_from_args",
-        return_value=(Mock(), None, Mock()),
-    )
     @patch("helpers.training.state_tracker.StateTracker")
     @patch(
         "helpers.training.state_tracker.StateTracker.set_model_family",
@@ -32,11 +28,11 @@ class TestTrainer(unittest.TestCase):
         mock_set_num_threads,
         mock_set_model_family,
         mock_state_tracker,
-        mock_load_scheduler_from_args,
         mock_safety_check,
         mock_load_config,
     ):
         trainer = Trainer()
+        trainer.model = Mock()
         config_dict = {"a": 1, "b": 2}
         config_obj = trainer._config_to_obj(config_dict)
         self.assertEqual(config_obj.a, 1)
@@ -50,6 +46,7 @@ class TestTrainer(unittest.TestCase):
     @patch("helpers.training.trainer.set_seed")
     def test_init_seed_with_value(self, mock_set_seed, mock_parse_args, mock_misc_init):
         trainer = Trainer()
+        trainer.model = Mock()
         trainer.config = Mock(seed=42, seed_for_each_device=False)
         trainer.init_seed()
         mock_set_seed.assert_called_with(42, False)
@@ -59,6 +56,7 @@ class TestTrainer(unittest.TestCase):
     @patch("helpers.training.trainer.set_seed")
     def test_init_seed_none(self, mock_set_seed, mock_parse_args, mock_misc_init):
         trainer = Trainer()
+        trainer.model = Mock()
         trainer.config = Mock(seed=None, seed_for_each_device=False)
         trainer.init_seed()
         mock_set_seed.assert_not_called()
@@ -71,6 +69,7 @@ class TestTrainer(unittest.TestCase):
         self, mock_memory_allocated, mock_is_available, mock_parse_args, mock_misc_init
     ):
         trainer = Trainer()
+        trainer.model = Mock()
         memory_used = trainer.stats_memory_used()
         self.assertEqual(memory_used, 1.0)
 
@@ -88,6 +87,7 @@ class TestTrainer(unittest.TestCase):
         mock_misc_init,
     ):
         trainer = Trainer()
+        trainer.model = Mock()
         memory_used = trainer.stats_memory_used()
         self.assertEqual(memory_used, 1.0)
 
@@ -105,6 +105,7 @@ class TestTrainer(unittest.TestCase):
         mock_misc_init,
     ):
         trainer = Trainer()
+        trainer.model = Mock()
         memory_used = trainer.stats_memory_used()
         self.assertEqual(memory_used, 0)
         mock_logger.warning.assert_called_with(
@@ -150,17 +151,12 @@ class TestTrainer(unittest.TestCase):
             pretrained_vae_model_name_or_path="some/other/path",
             base_model_precision="no_change",
             gradient_checkpointing_interval=None,
-            # deprecated options
-            flux_beta_schedule_alpha=None,
-            flux_beta_schedule_beta=None,
-            flux_use_beta_schedule=None,
-            flux_use_uniform_schedule=None,
             validation_num_video_frames=None,
-            flux_schedule_shift=None,
-            flux_schedule_auto_shift=None,
-            flow_matching_sigmoid_scale=None,
             eval_steps_interval=None,
             controlnet=False,
+            text_encoder_4_precision="no_change",
+            attention_mechanism="diffusers",
+            distillation_config=None,
         ),
     )
     def test_misc_init(
@@ -176,6 +172,7 @@ class TestTrainer(unittest.TestCase):
         mock_set_num_threads,
     ):
         trainer = Trainer(disable_accelerator=True)
+        trainer.model = Mock()
         trainer._misc_init()
         mock_set_num_threads.assert_called_with(2)
         self.assertEqual(
@@ -193,22 +190,6 @@ class TestTrainer(unittest.TestCase):
         mock_set_weight_dtype.assert_called_with(trainer.config.weight_dtype)
         mock_set_model_family.assert_called()
         mock_init_noise_schedule.assert_called()
-
-    @patch("helpers.training.trainer.Trainer._misc_init", return_value=Mock())
-    @patch("helpers.training.trainer.Trainer.parse_arguments", return_value=Mock())
-    @patch(
-        "helpers.training.trainer.load_scheduler_from_args",
-        return_value=(Mock(), "flow_matching_value", "noise_scheduler_value"),
-    )
-    def test_init_noise_schedule(
-        self, mock_load_scheduler_from_args, mock_parse_args, mock_misc_init
-    ):
-        trainer = Trainer()
-        trainer.config = Mock()
-        trainer.init_noise_schedule()
-        self.assertEqual(trainer.config.flow_matching, "flow_matching_value")
-        self.assertEqual(trainer.noise_scheduler, "noise_scheduler_value")
-        self.assertEqual(trainer.lr, 0.0)
 
     @patch("helpers.training.trainer.logger")
     @patch(
@@ -230,21 +211,21 @@ class TestTrainer(unittest.TestCase):
         trainer.config.text_encoder_path = None
         trainer.config.text_encoder_subfolder = None
         trainer.config.model_family = "sdxl"
+        trainer.model = Mock()
 
-        with patch.object(trainer, "_set_model_paths") as mock_set_model_paths:
-            with patch(
-                "helpers.training.state_tracker.StateTracker.is_sdxl_refiner",
-                return_value=False,
-            ):
-                trainer.set_model_family()
-                self.assertEqual(trainer.config.model_type_label, "SDXL")
-                mock_logger.warning.assert_not_called()
-                mock_set_model_paths.assert_called()
+        with patch(
+            "helpers.training.state_tracker.StateTracker.is_sdxl_refiner",
+            return_value=False,
+        ):
+            trainer.set_model_family()
+            self.assertEqual(trainer.config.model_type_label, "Stable Diffusion XL")
+            mock_logger.warning.assert_not_called()
 
     @patch("helpers.training.trainer.Trainer._misc_init", return_value=Mock())
     @patch("helpers.training.trainer.Trainer.parse_arguments", return_value=Mock())
     def test_set_model_family_invalid(self, mock_parse_args, mock_misc_init):
         trainer = Trainer()
+        trainer.model = Mock()
         trainer.config = Mock(model_family="invalid_model_family")
         trainer.config.pretrained_model_name_or_path = "some/path"
         with self.assertRaises(ValueError) as context:
@@ -262,6 +243,7 @@ class TestTrainer(unittest.TestCase):
         self, mock_state_tracker, mock_logger, mock_parse_args, mock_misc_init
     ):
         trainer = Trainer()
+        trainer.model = Mock()
         trainer.state = {"first_epoch": 1, "current_epoch": 1}
         trainer.config = Mock(
             num_train_epochs=5,
@@ -288,6 +270,7 @@ class TestTrainer(unittest.TestCase):
                 "--pretrained_model_name_or_path": "some/path",
             }
         )
+        trainer.model = Mock()
         trainer.state = {"first_epoch": 1, "current_epoch": 1}
         trainer._epoch_rollover(1)
         self.assertEqual(trainer.state["current_epoch"], 1)
@@ -300,6 +283,7 @@ class TestTrainer(unittest.TestCase):
         self, mock_delete_cache_files, mock_makedirs, mock_parse_args, mock_misc_init
     ):
         trainer = Trainer()
+        trainer.model = Mock()
         trainer.config = Mock(
             output_dir="/path/to/output", preserve_data_backend_cache=True
         )
@@ -315,36 +299,16 @@ class TestTrainer(unittest.TestCase):
         self, mock_delete_cache_files, mock_makedirs, mock_parse_args, mock_misc_init
     ):
         trainer = Trainer()
+        trainer.accelerator = MagicMock(
+            is_local_main_process=True
+        )
+        trainer.model = Mock()
         trainer.config = Mock(
             output_dir="/path/to/output", preserve_data_backend_cache=False
         )
         trainer.init_clear_backend_cache()
         mock_makedirs.assert_called_with("/path/to/output", exist_ok=True)
         mock_delete_cache_files.assert_called_with(preserve_data_backend_cache=False)
-
-    @patch("helpers.training.trainer.Trainer._misc_init", return_value=Mock())
-    @patch("helpers.training.trainer.Trainer.parse_arguments", return_value=Mock())
-    @patch("helpers.training.trainer.huggingface_hub")
-    @patch("helpers.training.trainer.HubManager")
-    @patch("helpers.training.state_tracker.StateTracker")
-    @patch("accelerate.logging.MultiProcessAdapter.log")
-    def test_init_huggingface_hub(
-        self,
-        mock_logger,
-        mock_state_tracker,
-        mock_hub_manager_class,
-        mock_hf_hub,
-        mock_parse_args,
-        mock_misc_init,
-    ):
-        trainer = Trainer()
-        trainer.config = Mock(push_to_hub=True, huggingface_token="fake_token")
-        trainer.accelerator = Mock(is_main_process=True)
-        mock_hf_hub.whoami = Mock(return_value={"id": "fake_id", "name": "foobar"})
-        trainer.init_huggingface_hub(access_token="fake_token")
-        mock_hf_hub.login.assert_called_with(token="fake_token")
-        mock_hub_manager_class.assert_called_with(config=trainer.config)
-        mock_hf_hub.whoami.assert_called()
 
     @patch("helpers.training.trainer.Trainer._misc_init", return_value=Mock())
     @patch("helpers.training.trainer.Trainer.parse_arguments", return_value=Mock())
@@ -374,6 +338,7 @@ class TestTrainer(unittest.TestCase):
         mock_misc_init,
     ):
         trainer = Trainer()
+        trainer.model = Mock()
         trainer.config = Mock(
             output_dir="/path/to/output",
             resume_from_checkpoint="latest",

@@ -4,12 +4,16 @@ import concurrent.futures
 import numpy as np
 from os import environ
 from helpers.training.state_tracker import StateTracker
-from helpers.training.multi_process import rank_info
+from helpers.training.multi_process import rank_info, _get_rank
 from helpers.image_manipulation.training_sample import TrainingSample
 from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger("collate_fn")
-logger.setLevel(environ.get("SIMPLETUNER_COLLATE_LOG_LEVEL", "INFO"))
+logger.setLevel(
+    environ.get("SIMPLETUNER_COLLATE_LOG_LEVEL", "INFO")
+    if _get_rank() == 0
+    else "ERROR"
+)
 rank_text = rank_info()
 from torchvision.transforms import ToTensor
 
@@ -82,7 +86,7 @@ def extract_filepaths(examples):
     return filepaths
 
 
-def fetch_pixel_values(fp, data_backend_id: str):
+def fetch_pixel_values(fp, data_backend_id: str, model):
     """Worker method to fetch pixel values for a single image."""
     debug_log(
         f" -> pull pixels for fp {fp} from cache via data backend {data_backend_id}"
@@ -90,8 +94,7 @@ def fetch_pixel_values(fp, data_backend_id: str):
     data_backend = StateTracker.get_data_backend(data_backend_id)
     image = data_backend["data_backend"].read_image(fp)
     training_sample = TrainingSample(
-        image=image,
-        data_backend_id=data_backend_id,
+        image=image, data_backend_id=data_backend_id, model=model
     )
     return training_sample.prepare(return_tensor=True).image
 
@@ -113,14 +116,17 @@ def fetch_latent(fp, data_backend_id: str):
     return latent
 
 
-def deepfloyd_pixels(filepaths, data_backend_id: str):
+def deepfloyd_pixels(filepaths, data_backend_id: str, model):
     """DeepFloyd doesn't use the VAE. We retrieve, normalise, and stack the pixel tensors directly."""
     # Use a thread pool to fetch latents concurrently
     try:
         with concurrent.futures.ThreadPoolExecutor() as executor:
             pixels = list(
                 executor.map(
-                    fetch_pixel_values, filepaths, [data_backend_id] * len(filepaths)
+                    fetch_pixel_values,
+                    filepaths,
+                    [data_backend_id] * len(filepaths),
+                    [model] * len(filepaths),
                 )
             )
     except Exception as e:
@@ -190,11 +196,11 @@ def conditioning_pixels(
     return pixels
 
 
-def compute_latents(filepaths, data_backend_id: str):
+def compute_latents(filepaths, data_backend_id: str, model):
     # Use a thread pool to fetch latents concurrently
     try:
-        if "deepfloyd" in StateTracker.get_args().model_type:
-            latents = deepfloyd_pixels(filepaths, data_backend_id)
+        if "deepfloyd" in StateTracker.get_args().model_family:
+            latents = deepfloyd_pixels(filepaths, data_backend_id, model)
 
             return latents
         if StateTracker.get_args().vae_cache_ondemand:
@@ -215,9 +221,7 @@ def compute_latents(filepaths, data_backend_id: str):
     return latents
 
 
-def compute_single_embedding(
-    caption, text_embed_cache, is_sdxl, is_sd3: bool = False, is_flux: bool = False
-):
+def compute_single_embedding(caption, text_embed_cache):
     """Worker function to compute embedding for a single caption."""
     if caption == "" or not caption:
         # Grab the default text embed backend for null caption.
@@ -225,50 +229,19 @@ def compute_single_embedding(
         debug_log(
             f"Hashing caption '{caption}' on text embed cache: {text_embed_cache.id} using data backend {text_embed_cache.data_backend.id}"
         )
-    if is_sdxl:
-        (
-            prompt_embeds,
-            pooled_prompt_embeds,
-        ) = text_embed_cache.compute_embeddings_for_sdxl_prompts([caption])
-        return (
-            prompt_embeds[0],
-            pooled_prompt_embeds[0],
-        )  # Unpack the first (and only) element
-    elif is_sd3:
-        prompt_embeds, pooled_prompt_embeds = (
-            text_embed_cache.compute_embeddings_for_sd3_prompts(prompts=[caption])
-        )
-        return prompt_embeds[0], pooled_prompt_embeds[0]
-    elif is_flux:
-        prompt_embeds, pooled_prompt_embeds, time_ids, masks = (
-            text_embed_cache.compute_embeddings_for_flux_prompts(prompts=[caption])
-        )
-        return (
-            prompt_embeds[0],
-            pooled_prompt_embeds[0],
-            time_ids[0],
-            masks[0] if masks is not None else None,
-        )
-    else:
-        prompt_embeds = text_embed_cache.compute_embeddings_for_legacy_prompts(
-            [caption]
-        )
-        if type(prompt_embeds) == tuple:
-            if StateTracker.get_model_family() in ["pixart_sigma", "smoldit"]:
-                # PixArt requires the attn mask be returned, too.
-                prompt_embeds, attn_mask = prompt_embeds
-
-                return prompt_embeds, attn_mask
-            elif "deepfloyd" in StateTracker.get_args().model_type:
-                # DeepFloyd doesn't use the attn mask on the unet inputs, we discard it
-                prompt_embeds = prompt_embeds[0]
-            prompt_embeds = prompt_embeds[0]
-        result = torch.squeeze(prompt_embeds[0])
-        debug_log(f"Torch shape: {result}")
-        return result, None  # Unpack and return None for the second element
+    text_encoder_output = text_embed_cache.compute_prompt_embeddings_with_model(
+        prompts=[caption]
+    )
+    logger.debug(f"Keys: {text_encoder_output.keys()}")
+    for key, val in text_encoder_output.items():
+        if isinstance(val, torch.Tensor):
+            logger.debug(f"{key} shape: {val.shape}")
+        else:
+            logger.debug(f"Value type: {type(val)}")
+    return text_encoder_output
 
 
-def compute_prompt_embeddings(captions, text_embed_cache):
+def compute_prompt_embeddings(captions, text_embed_cache, model):
     """
     Retrieve / compute text embeds in parallel.
     Args:
@@ -280,64 +253,43 @@ def compute_prompt_embeddings(captions, text_embed_cache):
         add_text_embeds_all: Tensor of shape (batch_size, 512)
     """
     debug_log(" -> get embed from cache")
-    is_sdxl = (
-        text_embed_cache.model_type == "sdxl" or text_embed_cache.model_type == "kolors"
-    )
-    is_sd3 = text_embed_cache.model_type == "sd3"
-    is_pixart_sigma = text_embed_cache.model_type == "pixart_sigma"
-    is_smoldit = text_embed_cache.model_type == "smoldit"
-    is_flux = text_embed_cache.model_type == "flux"
-
     # Use a thread pool to compute embeddings concurrently
     with ThreadPoolExecutor() as executor:
-        embeddings = list(
+        text_encoder_output = list(
             executor.map(
                 compute_single_embedding,
                 captions,
                 [text_embed_cache] * len(captions),
-                [is_sdxl] * len(captions),
-                [is_sd3] * len(captions),
-                [is_flux] * len(captions),
             )
         )
+    prompt_embeds, pooled_prompt_embeds, attn_masks, time_ids = [], [], [], []
+    # Is there a better way to do this?
+    transformed_encoder_output = model.collate_prompt_embeds(text_encoder_output)
+    if transformed_encoder_output == {}:
+        if "prompt_embeds" in text_encoder_output[0]:
+            transformed_encoder_output["prompt_embeds"] = torch.stack(
+                [t["prompt_embeds"] for t in text_encoder_output]
+            )
+        if "pooled_prompt_embeds" in text_encoder_output[0]:
+            transformed_encoder_output["pooled_prompt_embeds"] = torch.stack(
+                [t["pooled_prompt_embeds"] for t in text_encoder_output]
+            )
+        if "attention_mask" in text_encoder_output[0]:
+            transformed_encoder_output["attention_masks"] = torch.stack(
+                [t["attention_mask"] for t in text_encoder_output]
+            )
+        if "time_ids" in text_encoder_output[0]:
+            transformed_encoder_output["time_ids"] = torch.stack(
+                [t["time_ids"] for t in text_encoder_output]
+            )
 
-    debug_log(f"Got embeddings: {embeddings}")
-    if is_sdxl:
-        # Separate the tuples
-        prompt_embeds = [t[0] for t in embeddings]
-        add_text_embeds = [t[1] for t in embeddings]
-        return (torch.stack(prompt_embeds), torch.stack(add_text_embeds))
-    elif is_sd3:
-        # Separate the tuples
-        prompt_embeds = [t[0] for t in embeddings]
-        add_text_embeds = [t[1] for t in embeddings]
-        return (torch.stack(prompt_embeds), torch.stack(add_text_embeds))
-    elif is_pixart_sigma or is_smoldit:
-        # the tuples here are the text encoder hidden states and the attention masks
-        prompt_embeds, attn_masks = [], []
-        for embed in embeddings:
-            prompt_embeds.append(embed[0][0])
-            attn_masks.append(embed[1][0])
-        if len(prompt_embeds[0].shape) == 3:
-            # some tensors are already expanded due to the way they were saved
-            prompt_embeds = [t.squeeze(0) for t in prompt_embeds]
-        return (torch.stack(prompt_embeds), torch.stack(attn_masks))
-    elif is_flux:
-        # Separate the tuples
-        prompt_embeds = [t[0] for t in embeddings]
-        add_text_embeds = [t[1] for t in embeddings]
-        time_ids = [t[2] for t in embeddings]
-        masks = [t[3] for t in embeddings]
-        return (
-            torch.stack(prompt_embeds),
-            torch.stack(add_text_embeds),
-            torch.stack(time_ids),
-            torch.stack(masks) if None not in masks else None,
-        )
-    else:
-        # Separate the tuples
-        prompt_embeds = [t[0] for t in embeddings]
-        return (torch.stack(prompt_embeds), None)
+    if transformed_encoder_output == {}:
+        raise Exception(f"Could not compute text encoder output: {text_encoder_output}")
+
+    logger.debug(
+        f"Transformed text encoder output: {transformed_encoder_output.keys()}"
+    )
+    return transformed_encoder_output
 
 
 def gather_conditional_pixart_size_features(examples, latents, weight_dtype):
@@ -394,9 +346,16 @@ def check_latent_shapes(latents, filepaths, data_backend_id, batch):
     if len(test_shape) == 5:
         test_shape = test_shape[1:]
     # Check all "aspect_ratio" values and raise error if any differ, with the two differing values:
+    first_aspect_ratio = None
     for example in batch:
-        if example["aspect_ratio"] != batch[0]["aspect_ratio"]:
-            error_msg = f"(id=({data_backend_id}) Aspect ratio mismatch: {example['aspect_ratio']} != {batch[0][0]['aspect_ratio']}"
+        if isinstance(example, dict):
+            aspect_ratio = example["aspect_ratio"]
+        elif isinstance(example, TrainingSample):
+            aspect_ratio = example.aspect_ratio
+        if first_aspect_ratio is None:
+            first_aspect_ratio = aspect_ratio
+        if aspect_ratio != first_aspect_ratio:
+            error_msg = f"(id=({data_backend_id}) Aspect ratio mismatch: {aspect_ratio} != {first_aspect_ratio}"
             logger.error(error_msg)
             logger.error(f"Erroneous batch: {batch}")
             raise ValueError(error_msg)
@@ -477,12 +436,13 @@ def collate_fn(batch):
     debug_log("Extract filepaths")
     filepaths = extract_filepaths(examples)
     debug_log("Compute latents")
-    batch_data = compute_latents(filepaths, data_backend_id)
+    model = StateTracker.get_model()
+    batch_data = compute_latents(filepaths, data_backend_id, model)
     if isinstance(batch_data[0], dict):
         latent_batch = [v["latents"] for v in batch_data]
     else:
         latent_batch = batch_data
-    if "deepfloyd" not in StateTracker.get_args().model_type:
+    if "deepfloyd" not in StateTracker.get_args().model_family:
         debug_log("Check latents")
         latent_batch = check_latent_shapes(
             latent_batch, filepaths, data_backend_id, examples
@@ -492,8 +452,10 @@ def collate_fn(batch):
     training_filepaths = []
     conditioning_type = None
     conditioning_pixel_values = None
+    conditioning_latents = None
 
     if len(conditioning_examples) > 0:
+        logger.debug(f"Found {len(conditioning_examples)} conditioning examples.")
         if len(conditioning_examples) != len(examples):
             raise ValueError(
                 "The number of conditioning examples must match the number of training examples."
@@ -518,21 +480,50 @@ def collate_fn(batch):
             # Collect conditioning and training file paths
             conditioning_filepaths.append(cond_example.image_path(basename_only=False))
             training_filepaths.append(train_example["image_path"])
-
-        # Pass both file paths to `conditioning_pixels`
-        conditioning_pixel_values = conditioning_pixels(
-            conditioning_filepaths,
-            training_filepaths,
-            conditioning_data_backend_id,
-            data_backend_id,
+        debug_log(
+            f"Counted {len(conditioning_filepaths)} conditioning filepaths and {len(training_filepaths)} training filepaths."
         )
 
-        conditioning_pixel_values = torch.stack(
-            [
-                latent.to(StateTracker.get_accelerator().device)
-                for latent in conditioning_pixel_values
-            ]
-        )
+        if model.requires_conditioning_dataset():
+            if model.requires_conditioning_latents():
+                # Kontext / other latent-conditioned models / adapters
+                debug_log("Compute conditioning latents")
+                conditioning_latents = compute_latents(
+                    conditioning_filepaths,
+                    conditioning_data_backend_id,
+                    model,
+                )
+                debug_log(
+                    f"Conditioning latents computed: {len(conditioning_latents)} items."
+                )
+
+                # unpack from dicts (vae-cache style) & shape-check
+                if isinstance(conditioning_latents[0], dict):
+                    conditioning_latents = [v["latents"] for v in conditioning_latents]
+
+                conditioning_latents = check_latent_shapes(
+                    conditioning_latents,
+                    conditioning_filepaths,
+                    conditioning_data_backend_id,
+                    conditioning_examples,
+                )
+            else:
+                debug_log("Model may require conditioning pixels.")
+                conditioning_pixel_values = conditioning_pixels(
+                    conditioning_filepaths,
+                    training_filepaths,
+                    conditioning_data_backend_id,
+                    data_backend_id,
+                )
+                debug_log(
+                    f"Found {len(conditioning_pixel_values)} conditioning pixel values."
+                )
+                conditioning_pixel_values = torch.stack(
+                    [
+                        latent.to(StateTracker.get_accelerator().device)
+                        for latent in conditioning_pixel_values
+                    ]
+                )
 
     # Compute embeddings and handle dropped conditionings
     debug_log("Extract captions")
@@ -542,44 +533,42 @@ def collate_fn(batch):
         "text_embed_cache"
     ]
 
-    attn_mask = None
-    batch_time_ids = None
-    if StateTracker.get_model_family() == "flux":
-        debug_log("Compute and stack Flux time ids")
-        prompt_embeds_all, add_text_embeds_all, batch_time_ids, attn_mask = (
-            compute_prompt_embeddings(captions, text_embed_cache)
+    if not text_embed_cache.disabled:
+        all_text_encoder_outputs = compute_prompt_embeddings(
+            captions, text_embed_cache, StateTracker.get_model()
         )
     else:
-        prompt_embeds_all, add_text_embeds_all = compute_prompt_embeddings(
-            captions, text_embed_cache
-        )
-
-    if (
-        StateTracker.get_model_family() == "sdxl"
-        or StateTracker.get_model_family() == "kolors"
-    ):
+        all_text_encoder_outputs = {}
+    # TODO: Remove model-specific logic from collate.
+    if StateTracker.get_model_family() in ["sdxl", "kolors"]:
         debug_log("Compute and stack SDXL time ids")
-        batch_time_ids = gather_conditional_sdxl_size_features(
-            examples, latent_batch, StateTracker.get_weight_dtype()
+        all_text_encoder_outputs["batch_time_ids"] = (
+            gather_conditional_sdxl_size_features(
+                examples, latent_batch, StateTracker.get_weight_dtype()
+            )
         )
-        debug_log(f"Time ids stacked to {batch_time_ids.shape}: {batch_time_ids}")
+        debug_log(
+            f"Time ids stacked to {all_text_encoder_outputs['batch_time_ids'].shape}: {all_text_encoder_outputs['batch_time_ids']}"
+        )
     elif StateTracker.get_model_family() == "pixart_sigma":
         debug_log("Compute and stack PixArt time ids")
-        batch_time_ids = gather_conditional_pixart_size_features(
-            examples, latent_batch, StateTracker.get_weight_dtype()
+        all_text_encoder_outputs["batch_time_ids"] = (
+            gather_conditional_pixart_size_features(
+                examples, latent_batch, StateTracker.get_weight_dtype()
+            )
         )
-        attn_mask = add_text_embeds_all
-    elif StateTracker.get_model_family() == "smoldit":
-        attn_mask = add_text_embeds_all
 
     return {
         "latent_batch": latent_batch,
-        "prompt_embeds": prompt_embeds_all,
-        "add_text_embeds": add_text_embeds_all,
-        "batch_time_ids": batch_time_ids,
+        "prompts": captions,
+        "text_encoder_output": all_text_encoder_outputs,
+        "prompt_embeds": all_text_encoder_outputs.get("prompt_embeds"),
+        "add_text_embeds": all_text_encoder_outputs.get("pooled_prompt_embeds"),
+        "batch_time_ids": all_text_encoder_outputs.get("batch_time_ids"),
         "batch_luminance": batch_luminance,
         "conditioning_pixel_values": conditioning_pixel_values,
-        "encoder_attention_mask": attn_mask,
+        "conditioning_latents": conditioning_latents,
+        "encoder_attention_mask": all_text_encoder_outputs.get("attention_masks"),
         "is_regularisation_data": is_regularisation_data,
         "is_i2v_data": is_i2v_data,
         "conditioning_type": conditioning_type,

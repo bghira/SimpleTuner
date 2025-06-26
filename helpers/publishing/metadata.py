@@ -7,18 +7,19 @@ from typing import Union
 import numpy as np
 from PIL import Image
 from diffusers.utils.export_utils import export_to_gif
+from helpers.models.common import ModelFoundation
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 licenses = {
-    "flux": "flux-1-dev-non-commercial-license",
+    "sd1x": "openrail++",
+    "sd2x": "openrail++",
+    "sd3": "stabilityai-ai-community",
     "sdxl": "creativeml-openrail-m",
-    "legacy": "openrail++",
+    "flux": "flux-1-dev-non-commercial-license",
     "pixart_sigma": "openrail++",
     "kolors": "apache-2.0",
-    "smoldit": "apache-2.0",
-    "sd3": "stabilityai-ai-community",
 }
 allowed_licenses = [
     "apache-2.0",
@@ -146,16 +147,14 @@ def download_adapter(repo_id: str):
     return output_fn
 
 
-def _model_component_name(args):
-    model_component_name = "pipeline.transformer"
-    if args.model_family in ["sdxl", "kolors", "legacy", "deepfloyd"]:
-        model_component_name = "pipeline.unet"
+def _model_component_name(model):
+    model_component_name = f"pipeline.{model.MODEL_TYPE.value}"
 
     return model_component_name
 
 
-def _model_load(args, repo_id: str = None):
-    model_component_name = _model_component_name(args)
+def _model_load(args, repo_id: str = None, model=None):
+    model_component_name = _model_component_name(model)
     hf_user_name = StateTracker.get_hf_username()
     if hf_user_name is not None:
         repo_id = f"{hf_user_name}/{repo_id}" if hf_user_name else repo_id
@@ -201,18 +200,15 @@ def _negative_prompt(args, in_call: bool = False):
     return "\n    negative_prompt=negative_prompt,"
 
 
-def _guidance_rescale(args):
+def _guidance_rescale(model):
     # only these model families support zsnr sampling
-    if args.model_family.lower() not in ["sdxl", "legacy", "kolors"]:
+    if model.MODEL_TYPE.value != "unet":
         return ""
-    return f"\n    guidance_rescale={args.validation_guidance_rescale},"
+    return f"\n    guidance_rescale={model.config.validation_guidance_rescale},"
 
 
 def _skip_layers(args):
-    if (
-        args.model_family.lower() not in ["sd3", "wan"]
-        or args.validation_guidance_skip_layers is None
-    ):
+    if args.validation_guidance_skip_layers is None:
         return ""
     return f"\n    skip_guidance_layers={args.validation_guidance_skip_layers},"
 
@@ -223,11 +219,11 @@ def _pipeline_move_to(args):
     return output
 
 
-def _pipeline_quanto(args):
+def _pipeline_quanto(args, model):
     # return some optional lines to run Quanto on the model pipeline
     if args.model_type == "full":
         return ""
-    model_component_name = _model_component_name(args)
+    model_component_name = _model_component_name(model)
     comment_character = ""
     was_quantised = "The model was quantised during training, and so it is recommended to do the same during inference time."
     if args.base_model_precision == "no_change":
@@ -260,8 +256,8 @@ def _validation_resolution(args):
         return f"width={resolution},\n" f"    height={resolution},"
 
 
-def _output_attribute(args):
-    if args.model_family in ["ltxvideo", "wan"]:
+def _output_attribute(args, model):
+    if "Video" in str(type(model)):
         return "frames[0]"
     return "images[0]"
 
@@ -277,25 +273,30 @@ model_output.save("output.png", format="PNG")
 """
 
 
-def code_example(args, repo_id: str = None):
+def code_example(args, repo_id: str = None, model=None):
     """Return a string with the code example."""
+    # Check if model provides custom code example
+    if model and hasattr(model, "custom_model_card_code_example"):
+        custom_example = model.custom_model_card_code_example(repo_id)
+        if custom_example:
+            return custom_example
     code_example = f"""
 ```python
 {_model_imports(args)}
 
-{_model_load(args, repo_id)}
+{_model_load(args, repo_id, model=model)}
 
 prompt = "{args.validation_prompt if args.validation_prompt else 'An astronaut is riding a horse through the jungles of Thailand.'}"
 {_negative_prompt(args)}
-{_pipeline_quanto(args)}
+{_pipeline_quanto(args, model)}
 {_pipeline_move_to(args)}
 model_output = pipeline(
     prompt=prompt,{_negative_prompt(args, in_call=True) if args.model_family.lower() != 'flux' else ''}
     num_inference_steps={args.validation_num_inference_steps},
     generator=torch.Generator(device={_torch_device()}).manual_seed({args.validation_seed or args.seed or 42}),
     {_validation_resolution(args)}
-    guidance_scale={args.validation_guidance},{_guidance_rescale(args)}{_skip_layers(args)}
-).{_output_attribute(args)}
+    guidance_scale={args.validation_guidance},{_guidance_rescale(model)}{_skip_layers(args)}
+).{_output_attribute(args, model)}
 {_output_save_call(args)}
 ```
 """
@@ -303,13 +304,20 @@ model_output = pipeline(
 
 
 def model_type(args):
+    prefix = "ControlNet " if args.controlnet or args.control else ""
     if "lora" in args.model_type:
         if "standard" == args.lora_type.lower():
-            return "standard PEFT LoRA"
+            if (
+                StateTracker.get_model() is not None
+                and StateTracker.get_model().MODEL_TYPE.value == "unet"
+            ):
+                # SDXL and SD1x use LoHa for ControlNet adapters.
+                return f"{prefix}PEFT LoHa"
+            return f"{prefix}PEFT LoRA"
         if "lycoris" == args.lora_type.lower():
-            return "LyCORIS adapter"
+            return f"{prefix}LyCORIS adapter"
     else:
-        return "full rank finetune"
+        return f"{prefix}full rank finetune"
 
 
 def lora_info(args):
@@ -341,112 +349,6 @@ def model_card_note(args):
     if note_contents is None or note_contents == "":
         return ""
     return f"\n**Note:** {note_contents}\n"
-
-
-def flux_schedule_info(args):
-    if args.model_family.lower() != "flux":
-        return ""
-    output_args = []
-    if args.flux_fast_schedule:
-        output_args.append("flux_fast_schedule")
-    if args.flow_schedule_auto_shift:
-        output_args.append("flow_schedule_auto_shift")
-    if args.flow_schedule_shift is not None:
-        output_args.append(f"shift={args.flow_schedule_shift}")
-    output_args.append(f"flux_guidance_mode={args.flux_guidance_mode}")
-    if args.flux_guidance_value:
-        output_args.append(f"flux_guidance_value={args.flux_guidance_value}")
-    if args.flux_guidance_min:
-        output_args.append(f"flux_guidance_min={args.flux_guidance_min}")
-    if args.flux_guidance_mode == "random-range":
-        output_args.append(f"flux_guidance_max={args.flux_guidance_max}")
-        output_args.append(f"flux_guidance_min={args.flux_guidance_min}")
-    if args.flow_use_beta_schedule:
-        output_args.append(f"flow_beta_schedule_alpha={args.flow_beta_schedule_alpha}")
-        output_args.append(f"flow_beta_schedule_beta={args.flow_beta_schedule_beta}")
-    if args.flux_attention_masked_training:
-        output_args.append("flux_attention_masked_training")
-    if args.t5_padding != "unmodified":
-        output_args.append(f"t5_padding={args.t5_padding}")
-    output_args.append(f"flow_matching_loss={args.flow_matching_loss}")
-    if (
-        args.model_type == "lora"
-        and args.lora_type == "standard"
-        and args.flux_lora_target is not None
-    ):
-        output_args.append(f"flux_lora_target={args.flux_lora_target}")
-    output_str = (
-        f" (extra parameters={output_args})"
-        if output_args
-        else " (no special parameters set)"
-    )
-
-    return output_str
-
-
-def sd3_schedule_info(args):
-    if args.model_family.lower() != "sd3":
-        return ""
-    output_args = []
-    if args.flow_schedule_auto_shift:
-        output_args.append("flow_schedule_auto_shift")
-    if args.flow_schedule_shift is not None:
-        output_args.append(f"shift={args.flow_schedule_shift}")
-    if args.flow_use_beta_schedule:
-        output_args.append(f"flow_beta_schedule_alpha={args.flow_beta_schedule_alpha}")
-        output_args.append(f"flow_beta_schedule_beta={args.flow_beta_schedule_beta}")
-    if args.flow_use_uniform_schedule:
-        output_args.append(f"flow_use_uniform_schedule")
-    # if args.model_type == "lora" and args.lora_type == "standard":
-    #     output_args.append(f"flux_lora_target={args.flux_lora_target}")
-    output_str = (
-        f" (extra parameters={output_args})"
-        if output_args
-        else " (no special parameters set)"
-    )
-
-    return output_str
-
-
-def ddpm_schedule_info(args):
-    """Information about DDPM schedules, eg. rescaled betas or offset noise"""
-    output_args = []
-    if args.snr_gamma:
-        output_args.append(f"snr_gamma={args.snr_gamma}")
-    if args.use_soft_min_snr:
-        output_args.append(f"use_soft_min_snr")
-        if args.soft_min_snr_sigma_data:
-            output_args.append(
-                f"soft_min_snr_sigma_data={args.soft_min_snr_sigma_data}"
-            )
-    if args.rescale_betas_zero_snr:
-        output_args.append(f"rescale_betas_zero_snr")
-    if args.offset_noise:
-        output_args.append(f"offset_noise")
-        output_args.append(f"noise_offset={args.noise_offset}")
-        output_args.append(f"noise_offset_probability={args.noise_offset_probability}")
-    output_args.append(
-        f"training_scheduler_timestep_spacing={args.training_scheduler_timestep_spacing}"
-    )
-    output_args.append(
-        f"inference_scheduler_timestep_spacing={args.inference_scheduler_timestep_spacing}"
-    )
-    output_str = (
-        f" (extra parameters={output_args})"
-        if output_args
-        else " (no special parameters set)"
-    )
-
-    return output_str
-
-
-def model_schedule_info(args):
-    if args.model_family == "flux":
-        return flux_schedule_info(args)
-    if args.model_family == "sd3":
-        return sd3_schedule_info(args)
-    else:
-        return ddpm_schedule_info(args)
 
 
 def save_metadata_sample(
@@ -485,6 +387,7 @@ def _pipeline_tag(args):
 
 
 def save_model_card(
+    model: ModelFoundation,
     repo_id: str,
     images=None,
     base_model: str = "",
@@ -496,10 +399,6 @@ def save_model_card(
 ):
     if repo_folder is None:
         raise ValueError("The repo_folder must be specified and not be None.")
-    if type(validation_prompts) is not list:
-        raise ValueError(
-            f"The validation_prompts must be a list. Received {validation_prompts}"
-        )
     # if we have more than one '/' in the base_model, we will turn it into unknown/model
     model_family = StateTracker.get_model_family()
     if base_model.count("/") > 1:
@@ -557,7 +456,7 @@ def save_model_card(
             shortname_idx += 1
     args = StateTracker.get_args()
     yaml_content = f"""---
-license: {licenses.get(model_family, "other")}
+license: {model.MODEL_LICENSE}
 base_model: "{base_model}"
 tags:
   - {_model_card_family_tag(model_family)}
@@ -568,6 +467,7 @@ tags:
   - simpletuner
   - {'not-for-all-audiences' if not args.model_card_safe_for_work else 'safe-for-work'}
   - {args.model_type}
+{'  - controlnet' if args.controlnet or args.control else ''}
 {'  - template:sd-lora' if 'lora' in args.model_type else ''}
 {f'  - {args.lora_type}' if 'lora' in args.model_type else ''}
 pipeline_tag: {_pipeline_tag(args)}
@@ -580,7 +480,6 @@ inference: true
 
 This is a {model_type(args)} derived from [{base_model}](https://huggingface.co/{base_model}).
 
-{'This is a **diffusion** model trained using DDPM objective instead of Flow matching. **Be sure to set the appropriate scheduler configuration.**' if args.model_family == "sd3" and args.flow_matching_loss == "diffusion" else ''}
 {'The main validation prompt used during training was:' if prompt else 'Validation used ground-truth images as an input for partial denoising (img2img).' if args.validation_using_datasets else 'No validation prompt was used during training.'}
 {'```' if prompt else ''}
 {prompt}
@@ -591,7 +490,7 @@ This is a {model_type(args)} derived from [{base_model}](https://huggingface.co/
 - CFG: `{StateTracker.get_args().validation_guidance}`
 - CFG Rescale: `{StateTracker.get_args().validation_guidance_rescale}`
 - Steps: `{StateTracker.get_args().validation_num_inference_steps}`
-- Sampler: `{'FlowMatchEulerDiscreteScheduler' if args.model_family in ['sd3', 'flux', 'sana', 'ltxvideo', 'wan'] else StateTracker.get_args().validation_noise_scheduler}`
+- Sampler: `{'FlowMatchEulerDiscreteScheduler' if model.PREDICTION_TYPE.value == "flow_matching" else StateTracker.get_args().validation_noise_scheduler}`
 - Seed: `{StateTracker.get_args().validation_seed}`
 - Resolution{'s' if ',' in StateTracker.get_args().validation_resolution else ''}: `{StateTracker.get_args().validation_resolution}`
 {f"- Skip-layer guidance: {_skip_layers(args)}" if args.model_family in ['sd3', 'flux'] else ''}
@@ -619,11 +518,11 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
   - Gradient accumulation steps: {StateTracker.get_args().gradient_accumulation_steps}
   - Number of GPUs: {StateTracker.get_accelerator().num_processes}
 - Gradient checkpointing: {StateTracker.get_args().gradient_checkpointing}
-- Prediction type: {'flow-matching' if (StateTracker.get_args().model_family in ["sd3", "flux", "sana", "ltxvideo", "wan"]) else StateTracker.get_args().prediction_type}{model_schedule_info(args=StateTracker.get_args())}
+- Prediction type: {model.PREDICTION_TYPE.value}{model.custom_model_card_schedule_info()}
 - Optimizer: {StateTracker.get_args().optimizer}{optimizer_config if optimizer_config is not None else ''}
 - Trainable parameter precision: {'Pure BF16' if torch.backends.mps.is_available() or StateTracker.get_args().mixed_precision == "bf16" else 'FP32'}
 - Base model precision: `{args.base_model_precision}`
-- Caption dropout probability: {StateTracker.get_args().caption_dropout_probability * 100}%
+- Caption dropout probability: {StateTracker.get_args().caption_dropout_probability or 0.0 * 100}%
 {'- Xformers: Enabled' if StateTracker.get_args().attention_mechanism == 'xformers' else ''}
 {f'- SageAttention: Enabled {StateTracker.get_args().sageattention_usage}' if StateTracker.get_args().attention_mechanism == 'sageattention' else ''}
 {lora_info(args=StateTracker.get_args())}
@@ -634,7 +533,7 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 
 ## Inference
 
-{code_example(args=StateTracker.get_args(), repo_id=repo_id)}
+{code_example(args=StateTracker.get_args(), repo_id=repo_id, model=model)}
 
 {ema_info(args=StateTracker.get_args())}
 """

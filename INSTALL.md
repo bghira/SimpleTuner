@@ -41,6 +41,8 @@ poetry install
 poetry install -C install/rocm
 ```
 
+**Note:** When you want to use JPEG XL images, you have to install the optional `jxl` dependency by running `poetry install --with jxl`.
+
 #### NVIDIA Hopper / Blackwell follow-up steps
 
 Optionally, Hopper (or newer) equipment can make use of FlashAttention3 for improved inference and training performance when making use of `torch.compile`

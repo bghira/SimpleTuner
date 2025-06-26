@@ -5,6 +5,7 @@ import os
 import numpy as np
 from math import sqrt
 from helpers.training.state_tracker import StateTracker
+from helpers.models.common import VideoModelFoundation, ImageModelFoundation
 
 logger = logging.getLogger("MultiaspectImage")
 logger.setLevel(os.environ.get("SIMPLETUNER_IMAGE_PREP_LOG_LEVEL", "INFO"))
@@ -15,71 +16,7 @@ from PIL import Image
 import numpy as np
 
 
-class VideoToTensor:
-    def __call__(self, video):
-        """
-        Converts a video (numpy array of shape (num_frames, height, width, channels))
-        to a tensor of shape (num_frames, channels, height, width) by applying the
-        standard ToTensor conversion to each frame.
-        """
-        if isinstance(video, np.ndarray):
-            frames = []
-            for frame in video:
-                # Convert frame to PIL Image if not already.
-                if not isinstance(frame, Image.Image):
-                    frame = Image.fromarray(frame)
-                # Apply the standard ToTensor transform.
-                frame_tensor = transforms.functional.to_tensor(frame)
-                frames.append(frame_tensor)
-            return torch.stack(frames)
-        elif isinstance(video, list):
-            # If video is a list of frames, process similarly.
-            frames = []
-            for frame in video:
-                if not isinstance(frame, Image.Image):
-                    frame = Image.fromarray(frame)
-                frames.append(transforms.functional.to_tensor(frame))
-            return torch.stack(frames)
-        else:
-            raise TypeError("Input video must be a numpy array or a list of frames.")
-
-    def __repr__(self):
-        return self.__class__.__name__ + "()"
-
-
 class MultiaspectImage:
-    @staticmethod
-    def get_video_transforms():
-        if not StateTracker.get_model_family() in ["ltxvideo", "wan"]:
-            raise ValueError(
-                f"Cannot transform videos for {StateTracker.get_model_family()}."
-            )
-        # For videos, use the custom VideoToTensor transform.
-        # Note: LTX Video applies its own normalisation later on.
-        return transforms.Compose(
-            [
-                VideoToTensor(),
-            ]
-        )
-
-    @staticmethod
-    def get_image_transforms():
-        if StateTracker.get_model_family() in ["ltxvideo", "wan"]:
-            # LTX Video has its own normalisation, later on.
-            return transforms.Compose(
-                [
-                    transforms.ToTensor(),
-                ]
-            )
-
-        # default stable diffusion style latent normalisation.
-        return transforms.Compose(
-            [
-                transforms.ToTensor(),
-                transforms.Normalize([0.5], [0.5]),
-            ]
-        )
-
     @staticmethod
     def _round_to_nearest_multiple(value, override_value: int = None):
         """Round a value to the nearest multiple."""

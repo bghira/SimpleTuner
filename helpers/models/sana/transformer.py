@@ -18,6 +18,7 @@ import torch
 from torch import nn
 
 from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.loaders import PeftAdapterMixin
 from diffusers.utils import (
     USE_PEFT_BACKEND,
     is_torch_version,
@@ -201,7 +202,7 @@ class SanaTransformerBlock(nn.Module):
         return hidden_states
 
 
-class SanaTransformer2DModel(ModelMixin, ConfigMixin):
+class SanaTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
     r"""
     A 2D Transformer model introduced in [Sana](https://huggingface.co/papers/2410.10629) family of models.
 
@@ -242,6 +243,7 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin):
 
     _supports_gradient_checkpointing = True
     _no_split_modules = ["SanaTransformerBlock", "PatchEmbed"]
+    _skip_layerwise_casting_patterns = ["patch_embed", "norm"]
 
     @register_to_config
     def __init__(
@@ -467,33 +469,47 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin):
 
         # 2. Transformer blocks
         use_reentrant = is_torch_version("<=", "1.11.0")
+        ckpt_kwargs = (
+            {"use_reentrant": use_reentrant} if is_torch_version(">=", "1.11.0") else {}
+        )
 
-        def create_block_forward(block):
+        for i, block in enumerate(self.transformer_blocks):
             if (
-                self.gradient_checkpointing_interval is not None
-                and self.gradient_checkpointing_interval > 0
+                self.training
                 and self.gradient_checkpointing
-            ):
-                self._set_gradient_checkpointing(
-                    block, timestep % self.gradient_checkpointing_interval == 0
+                and (
+                    self.gradient_checkpointing_interval is None
+                    or i % self.gradient_checkpointing_interval == 0
                 )
-            if torch.is_grad_enabled() and self.gradient_checkpointing:
-                return lambda *inputs: torch.utils.checkpoint.checkpoint(
-                    lambda *x: block(*x), *inputs, use_reentrant=use_reentrant
+            ):
+
+                def create_custom_forward(module):
+                    def custom_forward(*inputs):
+                        return module(*inputs)
+
+                    return custom_forward
+
+                hidden_states = torch.utils.checkpoint.checkpoint(
+                    create_custom_forward(block),
+                    hidden_states,
+                    attention_mask,
+                    encoder_hidden_states,
+                    encoder_attention_mask,
+                    timestep,
+                    post_patch_height,
+                    post_patch_width,
+                    **ckpt_kwargs,
                 )
             else:
-                return block
-
-        for block in self.transformer_blocks:
-            hidden_states = create_block_forward(block)(
-                hidden_states,
-                attention_mask,
-                encoder_hidden_states,
-                encoder_attention_mask,
-                timestep,
-                post_patch_height,
-                post_patch_width,
-            )
+                hidden_states = block(
+                    hidden_states,
+                    attention_mask,
+                    encoder_hidden_states,
+                    encoder_attention_mask,
+                    timestep,
+                    post_patch_height,
+                    post_patch_width,
+                )
 
         # 3. Normalization
         shift, scale = (

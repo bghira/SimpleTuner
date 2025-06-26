@@ -109,68 +109,11 @@ class PromptHandler:
         text_encoders: list,
         tokenizers: list,
         accelerator,
-        model_type: str = "sdxl",
+        model_type: str,
     ):
-        if args.disable_compel:
-            raise Exception(
-                "--disable_compel was provided, but the Compel engine was still attempted to be initialised."
-            )
-
-        from compel import Compel, ReturnedEmbeddingsType
-
         self.accelerator = accelerator
         self.encoder_style = model_type
         self.compel = None
-        if model_type in ["sdxl", "legacy"]:
-            if (
-                len(text_encoders) == 2
-                and text_encoders[1] is not None
-                and text_encoders[0] is not None
-            ):
-                # SDXL Refiner and Base can both use the 2nd tokenizer/encoder.
-                logger.debug(
-                    "Initialising Compel prompt manager with dual text encoders."
-                )
-                self.compel = Compel(
-                    tokenizer=tokenizers,
-                    text_encoder=text_encoders,
-                    truncate_long_prompts=False,
-                    returned_embeddings_type=ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED,
-                    requires_pooled=[
-                        False,  # CLIP-L does not produce pooled embeds.
-                        True,  # CLIP-G produces pooled embeds.
-                    ],
-                    device=accelerator.device,
-                )
-            elif len(text_encoders) == 2 and text_encoders[0] is None:
-                # SDXL Refiner has ONLY the 2nd tokenizer/encoder, which needs to be the only one in Compel.
-                logger.debug(
-                    "Initialising Compel prompt manager with just the 2nd text encoder."
-                )
-                self.compel = Compel(
-                    tokenizer=tokenizers[1],
-                    text_encoder=text_encoders[1],
-                    truncate_long_prompts=False,
-                    returned_embeddings_type=ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED,
-                    requires_pooled=True,
-                    device=accelerator.device,
-                )
-                self.encoder_style = "sdxl-refiner"
-            elif model_type == "legacy":
-                # Any other pipeline uses the first tokenizer/encoder.
-                logger.debug(
-                    "Initialising the Compel prompt manager with a single text encoder."
-                )
-                pipe_tokenizer = tokenizers[0]
-                pipe_text_encoder = text_encoders[0]
-                self.compel = Compel(
-                    tokenizer=pipe_tokenizer,
-                    text_encoder=pipe_text_encoder,
-                    truncate_long_prompts=False,
-                    returned_embeddings_type=ReturnedEmbeddingsType.LAST_HIDDEN_STATES_NORMALIZED,
-                    device=accelerator.device,
-                )
-                self.encoder_style = "legacy"
         self.text_encoders = text_encoders
         self.tokenizers = tokenizers
 

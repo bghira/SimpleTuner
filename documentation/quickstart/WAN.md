@@ -45,10 +45,10 @@ You can check this by running:
 python --version
 ```
 
-If you don't have python 3.11 installed on Ubuntu, you can try the following:
+If you don't have python 3.12 installed on Ubuntu, you can try the following:
 
 ```bash
-apt -y install python3.11 python3.11-venv
+apt -y install python3.12 python3.12-venv
 ```
 
 #### Container image dependencies
@@ -86,11 +86,11 @@ poetry config virtualenvs.create false
 Depending on your system, you will run one of 3 commands:
 
 ```bash
+# Linux with NVIDIA
+poetry install
+
 # MacOS
 poetry install -C install/apple
-
-# Linux
-poetry install
 
 # Linux with ROCM
 poetry install -C install/rocm
@@ -161,6 +161,7 @@ Your config at the end will look like mine:
   "aspect_bucket_rounding": 2,
   "seed": 42,
   "minimum_image_size": 0,
+  "offload_during_startup": true,
   "disable_benchmark": false,
   "output_dir": "output/wan",
   "lora_type": "standard",
@@ -271,7 +272,7 @@ This should not be enabled for video model training, at the present time.
 
 # Stable evaluation loss
 
-This should not be enabled for video model training, at the present time.
+If you wish to use stable MSE loss to score the model's performance, see [this document](/documentation/evaluation/EVAL_LOSS.md) for information on configuring and interpreting evaluation loss.
 
 #### Flow-matching schedule shift
 
@@ -299,11 +300,7 @@ When using a `--flow_schedule_shift` value of 4.0 (a very high value), the large
 
 Tested on Apple and NVIDIA systems, Hugging Face Optimum-Quanto can be used to reduce the precision and VRAM requirements, training on just 16GB.
 
-Inside your SimpleTuner venv:
 
-```bash
-pip install optimum-quanto
-```
 
 For `config.json` users:
 ```json
@@ -456,7 +453,7 @@ Wan 2.1 is sensitive to quantisation, and cannot be used with NF4 or INT4 curren
 - Be sure to enable `--gradient_checkpointing` or nothing you do will stop it from OOMing
 - Only train on images, or set `num_frames` to 1 for your video dataset
 
-**NOTE**: Pre-caching of VAE embeds and text encoder outputs may use more memory and still OOM. If so, text encoder quantisation and VAE tiling can be enabled. (Wan does not currently support VAE tiling/slicing)
+**NOTE**: Pre-caching of VAE embeds and text encoder outputs may use more memory and still OOM. As a result, `--offload_during_startup=true` is basically required. If so, text encoder quantisation and VAE tiling can be enabled. (Wan does not currently support VAE tiling/slicing)
 
 Speeds:
 - 665.8 sec/iter on an M3 Max Macbook Pro

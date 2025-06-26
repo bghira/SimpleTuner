@@ -1,7 +1,10 @@
 from os import environ
 from pathlib import Path
 import json
+import time, os
+import fcntl
 import logging
+from helpers.models.all import model_families
 
 logger = logging.getLogger("StateTracker")
 logger.setLevel(environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -17,6 +20,7 @@ class StateTracker:
     config_path = None
     # Class variables
     model_type = ""
+    model = None
     # Job ID for FastAPI. None if local.
     job_id = None
 
@@ -77,31 +81,64 @@ class StateTracker:
             cache_path = (
                 Path(cls.args.output_dir) / f"{cache_name}{data_backend_id_suffix}.json"
             )
-            if cache_path.exists():
+            if not cache_path.exists():
+                continue
+
+            with cache_path.open("w") as f:
+                fcntl.flock(f, fcntl.LOCK_EX)
                 try:
                     cache_path.unlink()
+                    logger.warning(
+                        f"(rank={os.environ.get('RANK')}) Deleted cache file: {cache_path}"
+                    )
                 except:
                     pass
+                fcntl.flock(f, fcntl.LOCK_UN)
 
     @classmethod
-    def _load_from_disk(cls, cache_name):
+    def _load_from_disk(cls, cache_name, retry_limit: int = 0):
         cache_path = Path(cls.args.output_dir) / f"{cache_name}.json"
-        if cache_path.exists():
-            try:
-                with cache_path.open("r") as f:
-                    return json.load(f)
-            except Exception as e:
-                logger.error(
-                    f"Invalidating cache: error loading {cache_name} from disk. {e}"
-                )
-                return None
-        return None
+        retry_count = 0
+        results = None
+        while retry_count < retry_limit and (
+            not cache_path.exists() or results is None
+        ):
+            if cache_path.exists():
+                try:
+                    with cache_path.open("r") as f:
+                        fcntl.flock(f, fcntl.LOCK_SH)
+                        results = json.load(f)
+                        fcntl.flock(f, fcntl.LOCK_UN)
+                except Exception as e:
+                    logger.error(
+                        f"Invalidating cache: error loading {cache_name} from disk. {e}"
+                    )
+                    return None
+            else:
+                retry_count += 1
+                if retry_count < retry_limit:
+                    logger.debug(
+                        f"Cache file {cache_name} does not exist. Retry {retry_count}/{retry_limit}."
+                    )
+                    time.sleep(1)
+                else:
+                    logger.warning(f"No cache file was found: {cache_path}")
+        logger.debug(f"Returning: {type(results)}")
+        return results
 
     @classmethod
     def _save_to_disk(cls, cache_name, data):
         cache_path = Path(cls.args.output_dir) / f"{cache_name}.json"
+        logger.debug(
+            f"(rank={os.environ.get('RANK')}) Saving {cache_name} to disk: {cache_path}"
+        )
         with cache_path.open("w") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
             json.dump(data, f)
+            fcntl.flock(f, fcntl.LOCK_UN)
+        logger.debug(
+            f"(rank={os.environ.get('RANK')}) Save complete {cache_name} to disk: {cache_path}"
+        )
 
     @classmethod
     def set_config_path(cls, config_path: str):
@@ -113,24 +150,21 @@ class StateTracker:
 
     @classmethod
     def set_model_family(cls, model_type: str):
-        if model_type not in [
-            "legacy",
-            "ltxvideo",
-            "wan",
-            "sdxl",
-            "sd3",
-            "pixart_sigma",
-            "kolors",
-            "smoldit",
-            "flux",
-            "sana",
-        ]:
+        if model_type not in model_families.keys():
             raise ValueError(f"Unknown model type: {model_type}")
         cls.model_type = model_type
 
     @classmethod
     def get_model_family(cls):
         return cls.model_type
+
+    @classmethod
+    def set_model(cls, model):
+        cls.model = model
+
+    @classmethod
+    def get_model(cls):
+        return cls.model
 
     @classmethod
     def get_hf_user(cls):
@@ -181,11 +215,31 @@ class StateTracker:
         return cls.all_image_files[data_backend_id]
 
     @classmethod
-    def get_image_files(cls, data_backend_id: str):
-        if data_backend_id not in cls.all_image_files:
-            cls.all_image_files[data_backend_id] = cls._load_from_disk(
-                "all_image_files_{}".format(data_backend_id)
+    def get_image_files(cls, data_backend_id: str, retry_limit: int = 0):
+        if (
+            data_backend_id in cls.all_image_files
+            and cls.all_image_files[data_backend_id] is None
+        ):
+            # we should probaby try to reload it from disk if it failed earlier.
+            logger.debug(
+                f"(rank={os.environ.get('RANK')}) Clearing out invalid pre-loaded cache entry for {data_backend_id}"
             )
+            del cls.all_image_files[data_backend_id]
+        if data_backend_id not in cls.all_image_files:
+            logger.debug(
+                f"(rank={os.environ.get('RANK')}) Attempting to load from disk: {data_backend_id}"
+            )
+            cls.all_image_files[data_backend_id] = cls._load_from_disk(
+                "all_image_files_{}".format(data_backend_id), retry_limit=retry_limit
+            )
+            logger.debug(
+                f"(rank={os.environ.get('RANK')}) Completed load from disk: {data_backend_id}: {type(cls.all_image_files[data_backend_id])}"
+            )
+        else:
+            logger.debug(f"()")
+        logger.debug(
+            f"(rank={os.environ.get('RANK')}) Returning {type(cls.all_image_files[data_backend_id])} for {data_backend_id}"
+        )
         return cls.all_image_files[data_backend_id]
 
     @classmethod
@@ -331,7 +385,7 @@ class StateTracker:
         )
 
     @classmethod
-    def get_vae_cache_files(cls: list, data_backend_id: str):
+    def get_vae_cache_files(cls: list, data_backend_id: str, retry_limit: int = 0):
         if (
             data_backend_id not in cls.all_vae_cache_files
             or cls.all_vae_cache_files.get(data_backend_id) is None
@@ -360,10 +414,11 @@ class StateTracker:
         )
 
     @classmethod
-    def get_text_cache_files(cls: list, data_backend_id: str):
+    def get_text_cache_files(cls: list, data_backend_id: str, retry_limit: int = 0):
         if data_backend_id not in cls.all_text_cache_files:
             cls.all_text_cache_files[data_backend_id] = cls._load_from_disk(
-                "all_text_cache_files_{}".format(data_backend_id)
+                "all_text_cache_files_{}".format(data_backend_id),
+                retry_limit=retry_limit,
             )
         return cls.all_text_cache_files[data_backend_id]
 
@@ -373,9 +428,11 @@ class StateTracker:
         cls._save_to_disk("all_caption_files", cls.all_caption_files)
 
     @classmethod
-    def get_caption_files(cls):
+    def get_caption_files(cls, retry_limit: int = 0):
         if not cls.all_caption_files:
-            cls.all_caption_files = cls._load_from_disk("all_caption_files")
+            cls.all_caption_files = cls._load_from_disk(
+                "all_caption_files", retry_limit=retry_limit
+            )
         return cls.all_caption_files
 
     @classmethod
@@ -421,6 +478,16 @@ class StateTracker:
         if data_backend_id not in cls.data_backends:
             cls.data_backends[data_backend_id] = {}
         cls.data_backends[data_backend_id]["config"] = config
+
+    @classmethod
+    def get_conditioning_mappings(cls):
+        conditioning_mappings = {}
+        for data_backend_id, data_backend in cls.data_backends.items():
+            if "conditioning_data" in data_backend:
+                conditioning_mappings[data_backend_id] = data_backend[
+                    "conditioning_data"
+                ]["id"]
+        return conditioning_mappings
 
     @classmethod
     def clear_data_backends(cls):
@@ -494,7 +561,7 @@ class StateTracker:
 
     @classmethod
     def get_vaecache(cls, id: str):
-        return cls.data_backends[id]["vaecache"]
+        return cls.data_backends[id].get("vaecache", None)
 
     @classmethod
     def set_default_text_embed_cache(cls, default_text_embed_cache):
@@ -509,8 +576,15 @@ class StateTracker:
         return cls.data_backends[data_backend_id]["text_embed_cache"]
 
     @classmethod
-    def get_metadata_by_filepath(cls, filepath, data_backend_id: str):
-        for _, data_backend in cls.get_data_backends(_types=["image", "video"]).items():
+    def get_metadata_by_filepath(
+        cls,
+        filepath,
+        data_backend_id: str,
+        search_dataset_types: list = ["image", "video", "conditioning"],
+    ):
+        for _, data_backend in cls.get_data_backends(
+            _types=search_dataset_types
+        ).items():
             if "metadata_backend" not in data_backend:
                 continue
             if data_backend_id != data_backend["metadata_backend"].id:
@@ -551,12 +625,18 @@ class StateTracker:
         )
 
     @classmethod
-    def load_aspect_resolution_map(cls, dataloader_resolution: float):
+    def load_aspect_resolution_map(
+        cls, dataloader_resolution: float, retry_limit: int = 0
+    ):
         if dataloader_resolution not in cls.aspect_resolution_map:
             cls.aspect_resolution_map = {dataloader_resolution: {}}
 
         cls.aspect_resolution_map[dataloader_resolution] = (
-            cls._load_from_disk(f"aspect_resolution_map-{dataloader_resolution}") or {}
+            cls._load_from_disk(
+                f"aspect_resolution_map-{dataloader_resolution}",
+                retry_limit=retry_limit,
+            )
+            or {}
         )
         logger.debug(
             f"Aspect resolution map: {cls.aspect_resolution_map[dataloader_resolution]}"

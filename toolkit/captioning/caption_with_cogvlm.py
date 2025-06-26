@@ -1,5 +1,10 @@
 import os, torch, logging, accelerate, re, random, argparse, io
 from tqdm.auto import tqdm
+
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 from PIL import Image
 import requests, boto3
 from botocore.config import Config

@@ -5,15 +5,14 @@ description = "Stable Diffusion 2.x and XL tuner."
 authors = ["bghira"]
 license = "AGPLv3"
 readme = "README.md"
-package-mode = false
+#package-mode = false
 
 [tool.poetry.dependencies]
-python = ">=3.10,<3.13"
-torch = {version = "^2.4.1+rocm6.0", source = "pytorch-rocm"}
-torchaudio = {version = "^2.4.1+rocm6.0", source = "pytorch-rocm"}
-torchmetrics = {version = "^1", source = "pytorch-rocm"}
-torchvision = {version = "^0.19.1+rocm6.0", source = "pytorch-rocm"}
-pytorch-triton-rocm = {version = "*", source = "pytorch-rocm"}
+python = "^3.12"
+torch = { url = "https://download.pytorch.org/whl/rocm6.3/torch-2.7.0%2Brocm6.3-cp312-cp312-manylinux_2_28_x86_64.whl" }
+torchvision = {version = "^0.22.0+rocm6.3", source = "pytorch-rocm"}
+torchaudio = "*"
+pytorch_triton_rocm = {version = "^3.3.0", source = "pytorch-rocm"}
 accelerate = "^1.2.1"
 boto3 = "^1.35.83"
 botocore = "^1.35.83"
@@ -22,20 +21,20 @@ colorama = "^0.4.6"
 compel = "^2"
 datasets = "^3.0.0"
 deepspeed = "^0.16.1"
-diffusers = "^0.32.2"
+diffusers = {git = "https://github.com/huggingface/diffusers"}
 iterutils = "^0.1.6"
 numpy = "^2.2.0"
 open-clip-torch = "^2.26.1"
 opencv-python = "^4.10.0.84"
 pandas = "^2.2.3"
-peft = "^0.14.0"
+peft = "^0.15.2"
 pillow = "^11.0.0"
 requests = "^2.32.3"
 safetensors = "^0.4.5"
 scipy = "^1"
 tensorboard = "^2.18.0"
 torchsde = "^0.2.6"
-transformers = "^4.49.0"
+transformers = "^4.52.4"
 urllib3 = "<1.27"
 wandb = "^0.19.1"
 sentencepiece = "^0.2.0"
@@ -43,21 +42,26 @@ optimum-quanto = {git = "https://github.com/huggingface/optimum-quanto"}
 lycoris-lora = {git = "https://github.com/kohakublueleaf/lycoris", rev = "dev"}
 torch-optimi = "^0.2.1"
 fastapi = {extras = ["standard"], version = "^0.115.0"}
-bitsandbytes = "^0.44.1"
 atomicwrites = "^1.4.1"
-torchao = "^0.7.0"
+torchao = "^0.11.0"
 beautifulsoup4 = "^4.12.3"
 prodigy-plus-schedule-free = "^1.9.0"
-huggingface-hub = "^0.29.1"
+huggingface-hub = "^0.33.1"
 imageio-ffmpeg = "^0.6.0"
 imageio = {extras = ["pyav"], version = "^2.37.0"}
+torchmetrics = "^1.7.1"
 
+[tool.poetry.group.jxl.dependencies]
+pillow-jxl-plugin = "^1.3.1"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.source]]
-priority = "explicit"
+# for newer poetry versions
+#priority = "supplemental"
+# for 1.3.1
+secondary = true
 name = "pytorch-rocm"
-url = "https://download.pytorch.org/whl/rocm6.0"
+url = "https://download.pytorch.org/whl/rocm6.3"

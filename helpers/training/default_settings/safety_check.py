@@ -50,13 +50,19 @@ def safety_check(args, accelerator):
     ):
         validate_deepspeed_compat_from_args(accelerator, args)
     if args.controlnet:
-        if args.model_family not in ["legacy" "sdxl"]:
+        if args.model_family not in [
+            "sd1x",
+            "sd2x",
+            "sdxl",
+            "flux",
+            "pixart_sigma",
+            "auraflow",
+            "sd3",
+            "hidream",
+        ]:
             raise ValueError(
                 f"ControlNet is not yet supported with {args.model_family} models. Please disable --controlnet, or switch model types."
             )
-    if "lora" in args.model_type and "standard" == args.lora_type.lower():
-        if args.model_family == "pixart_sigma":
-            raise Exception(f"{args.model_type} does not support LoRA model training.")
 
     if "lora" in args.model_type and args.train_text_encoder:
         if args.lora_type.lower() == "lycoris":
@@ -125,21 +131,11 @@ def safety_check(args, accelerator):
             logger.error(
                 f"SageAttention usage is set to '{args.sageattention_usage}' instead of 'inference'. This is not an officially supported configuration, please be sure you understand the implications. It is recommended to set this value to 'inference' for safety."
             )
-        if args.enable_xformers_memory_efficient_attention:
-            logger.error(
-                f"--enable_xformers_memory_efficient_attention is only compatible with --attention_mechanism=diffusers. Please set --attention_mechanism=diffusers to enable this feature or disable xformers to use alternative attention mechanisms."
-            )
-            sys.exit(1)
         if "nf4" in args.base_model_precision:
             logger.error(
                 f"{args.base_model_precision} is not supported with SageAttention. Please select from int8 or fp8, or, disable quantisation to use SageAttention."
             )
             sys.exit(1)
-        if args.model_family == "sana":
-            logger.error(
-                f"{args.model_family} is not supported with SageAttention at this point. Disabling SageAttention."
-            )
-            args.attention_mechanism = "diffusers"
 
     gradient_checkpointing_interval_supported_models = ["flux", "sana", "sdxl", "sd3"]
     if args.gradient_checkpointing_interval is not None:

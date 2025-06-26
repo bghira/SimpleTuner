@@ -28,7 +28,10 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 def prepare_sample(
-    image: Image.Image = None, data_backend_id: str = None, filepath: str = None
+    image: Image.Image = None,
+    data_backend_id: str = None,
+    filepath: str = None,
+    model=None,
 ):
     metadata = StateTracker.get_metadata_by_filepath(
         filepath, data_backend_id=data_backend_id
@@ -43,8 +46,49 @@ def prepare_sample(
         data_backend_id=data_backend_id,
         image_metadata=metadata,
         image_path=filepath,
+        model=model,
     )
-    prepared_sample = training_sample.prepare()
+    is_cond = data_backend_id in StateTracker.get_conditioning_mappings().values()
+
+    if is_cond:
+        # On-demand VAE caching for conditioning inputs can get complicated.
+        if data_backend_id in StateTracker.get_conditioning_mappings().values():
+            conditioning_sample_path = training_sample.image_path()
+            # locate the partner backend id
+            for train_id, cond_id in StateTracker.get_conditioning_mappings().items():
+                if cond_id == data_backend_id:
+                    # We found a conditioning dataset.
+                    train_data_backend = StateTracker.get_data_backend(train_id)
+                    train_sample_path = training_sample.training_sample_path(
+                        training_dataset_id=train_id
+                    )
+                    cond_meta = StateTracker.get_metadata_by_filepath(
+                        conditioning_sample_path, data_backend_id=cond_id
+                    )
+                    if not cond_meta:
+                        train_meta = train_data_backend[
+                            "metadata_backend"
+                        ].get_metadata_by_filepath(train_sample_path)
+                        prepared_sample = training_sample.prepare_like(
+                            TrainingSample(
+                                image=None,
+                                data_backend_id=train_id,
+                                image_metadata=train_meta,
+                                image_path=train_sample_path,
+                                model=model,
+                            )
+                        )
+                    else:
+                        # prepare the sample independently of the training sample,
+                        # since the metadata scan built an element for this.
+                        # a metadata object will exist for conditioning samples that
+                        # have their dataset configured to operate somewhat independently.
+                        prepared_sample = training_sample.prepare()
+    else:
+        # If this VAECache is attached to a *training* dataset, we prepare the
+        # sample for training, which includes cropping and resizing.
+        prepared_sample = training_sample.prepare()
+
     return (
         prepared_sample.image,
         prepared_sample.crop_coordinates,
@@ -56,6 +100,7 @@ class VAECache(WebhookMixin):
     def __init__(
         self,
         id: str,
+        model,
         vae,
         accelerator,
         metadata_backend: MetadataBackend,
@@ -110,12 +155,11 @@ class VAECache(WebhookMixin):
         self.process_queue_size = process_queue_size
         self.vae_batch_size = vae_batch_size
         self.instance_data_dir = instance_data_dir
-        self.transform_image = MultiaspectImage.get_image_transforms()
-        self.transform_video = None
+        self.model = model
+        self.transform_sample = model.get_transforms(dataset_type=dataset_type)
         self.num_video_frames = None
         if self.dataset_type == "video":
             self.num_video_frames = num_video_frames
-            self.transform_video = MultiaspectImage.get_video_transforms()
         self.rank_info = rank_info()
         self.metadata_backend = metadata_backend
         if self.metadata_backend and not self.metadata_backend.image_metadata_loaded:
@@ -284,16 +328,7 @@ class VAECache(WebhookMixin):
             if args.pretrained_vae_model_name_or_path is None
             else args.pretrained_vae_model_name_or_path
         )
-        precached_vae = StateTracker.get_vae()
-        self.vae = precached_vae or AutoencoderClass.from_pretrained(
-            vae_path,
-            subfolder="vae" if args.pretrained_vae_model_name_or_path is None else None,
-            revision=args.revision,
-            force_upcast=False,
-        ).to(self.accelerator.device)
-        if self.vae.device != self.accelerator.device:
-            self.vae = self.vae.to(self.accelerator.device)
-        StateTracker.set_vae(self.vae)
+        self.vae = self.model.get_vae()
 
     def rebuild_cache(self):
         """
@@ -449,18 +484,25 @@ class VAECache(WebhookMixin):
     def prepare_video_latents(self, samples):
         if StateTracker.get_model_family() in ["ltxvideo", "wan"]:
             if samples.ndim == 4:
-                logger.debug("PROCESSING IMAGE to VIDEO LATENTS CONVERSION")
-                logger.debug(f"Unsqueeze from dim {samples.shape}")
+                original_shape = samples.shape
                 samples = samples.unsqueeze(2)
-                logger.debug(f"New dim: {samples.shape}")
+                logger.debug(
+                    "PROCESSING IMAGE to VIDEO LATENTS CONVERSION ({original_shape} to {samples.shape})"
+                )
             assert samples.ndim == 5, f"Expected 5D tensor, got {samples.ndim}D tensor"
             logger.debug(
                 f"PROCESSING VIDEO to VIDEO LATENTS CONVERSION ({samples.shape})"
             )
-            # images are torch.Size([1, 3, 1, 640, 448]) (B, C, F, H, W) but videos are torch.Size([2, 600, 3, 384, 395])
+            # images are torch.Size([1, 3, 1, 640, 448]) (B, C, F, H, W) but videos are torch.Size([1, 600, 3, 384, 395]) (B, F, C, H, W)
             # we have to permute the video latent samples to match the image latent samples
+            num_frames = samples.shape[1]
             if samples.shape[2] == 3:
-                samples = samples.permute(0, 2, 1, 3, 4)
+                original_shape = samples.shape
+                samples = samples.permute(0, 2, 1, 3, 4)  # (B, C, F, H, W)
+                num_frames = samples.shape[2]
+                logger.debug(
+                    f"Found video latent of shape: {original_shape} (B, F, C, H, W) to (B, C, F, H, W) {samples.shape}"
+                )
 
             num_frames = samples.shape[1]
             if (
@@ -469,13 +511,10 @@ class VAECache(WebhookMixin):
             ):
                 # we'll discard along dim2 after num_video_frames
                 samples = samples[:, :, : self.num_video_frames, :, :]
-                logger.debug(f"Sliced to {samples.shape}")
         elif StateTracker.get_model_family() in ["hunyuan-video", "mochi"]:
             raise Exception(
                 f"{StateTracker.get_model_family()} not supported for VAE Caching yet."
             )
-
-        logger.debug(f"Permute to: {samples.shape}")
         logger.debug(f"Final samples shape: {samples.shape}")
         return samples
 
@@ -608,11 +647,12 @@ class VAECache(WebhookMixin):
                     self.accelerator.device, dtype=StateTracker.get_vae_dtype()
                 )
                 processed_images = self.prepare_video_latents(processed_images)
-                logger.debug(f"Encoding: {processed_images.shape}")
                 latents_uncached = self.vae.encode(processed_images)
 
                 if hasattr(latents_uncached, "latent_dist"):
                     latents_uncached = latents_uncached.latent_dist.sample()
+                elif hasattr(latents_uncached, "sample"):
+                    latents_uncached = latents_uncached.sample()
                 latents_uncached = self.process_video_latents(latents_uncached)
                 if (
                     hasattr(self.vae, "config")
@@ -621,18 +661,26 @@ class VAECache(WebhookMixin):
                 ):
                     latents_uncached = (
                         latents_uncached - self.vae.config.shift_factor
-                    ) * self.vae.config.scaling_factor
+                    ) * getattr(
+                        self.model,
+                        "AUTOENCODER_SCALING_FACTOR",
+                        self.vae.config.scaling_factor,
+                    )
                 elif isinstance(latents_uncached, torch.Tensor) and hasattr(
                     self.vae.config, "scaling_factor"
                 ):
-                    latents_uncached = (
-                        getattr(latents_uncached, "latent", latents_uncached)
-                        * self.vae.config.scaling_factor
+                    latents_uncached = getattr(
+                        latents_uncached, "latent", latents_uncached
+                    ) * getattr(
+                        self.model,
+                        "AUTOENCODER_SCALING_FACTOR",
+                        self.vae.config.scaling_factor,
                     )
                     logger.debug(f"Latents shape: {latents_uncached.shape}")
 
             # Prepare final latents list by combining cached and newly computed latents
-            if isinstance(latents_uncached, dict):
+            if isinstance(latents_uncached, dict) and "latents" in latents_uncached:
+                # video models tend to return a dict with latents.
                 raw_latents = latents_uncached["latents"]
                 num_samples = raw_latents.shape[0]
                 for i in range(num_samples):
@@ -645,15 +693,32 @@ class VAECache(WebhookMixin):
                         "width": latents_uncached["width"],
                     }
                     latents.append(chunk)
-            else:
+            elif hasattr(latents_uncached, "latent"):
+                # this one happens with sana really, so far.
+                raw_latents = latents_uncached["latent"]
+                num_samples = raw_latents.shape[0]
+                for i in range(num_samples):
+                    # Each sub-dict is shape [b, c, H, W], we want just 1 b at a time
+                    single_latent = raw_latents[i : i + 1].squeeze(0)
+                    logger.debug(f"Adding shape: {single_latent.shape}")
+                    latents.append(single_latent)
+            elif isinstance(latents_uncached, torch.Tensor):
+                # it seems like sdxl and some others end up here
                 cached_idx, uncached_idx = 0, 0
                 for i in range(batch_size):
                     if i in uncached_image_indices:
+                        # logger.info(
+                        #     f"Adding latent {uncached_idx} of ({len(latents_uncached)}: {latents_uncached})"
+                        # )
                         latents.append(latents_uncached[uncached_idx])
                         uncached_idx += 1
                     else:
                         latents.append(self._read_from_storage(full_filenames[i]))
                         cached_idx += 1
+            else:
+                raise ValueError(
+                    f"Unknown handler for latent encoding type: {type(latents_uncached)}"
+                )
         return latents
 
     def _write_latents_in_batch(self, input_latents: list = None):
@@ -744,6 +809,7 @@ class VAECache(WebhookMixin):
                         prepare_sample,
                         data_backend_id=self.id,
                         filepath=data[0],
+                        model=self.model,
                     )
                     for data in initial_data
                 ]
@@ -798,15 +864,9 @@ class VAECache(WebhookMixin):
                 filepath, _, aspect_bucket = initial_data[idx]
                 filepaths.append(filepath)
 
-                if self.transform_video is not None:
-                    logger.debug(f"Running video transformations on {image.shape}")
-                    pixel_values = self.transform_video(image).to(
-                        self.accelerator.device, dtype=self.vae.dtype
-                    )
-                else:
-                    pixel_values = self.transform_image(image).to(
-                        self.accelerator.device, dtype=self.vae.dtype
-                    )
+                pixel_values = self.transform_sample(image).to(
+                    self.accelerator.device, dtype=self.vae.dtype
+                )
                 output_value = (pixel_values, filepath, aspect_bucket, is_final_sample)
                 output_values.append(output_value)
                 if not disable_queue:
@@ -824,7 +884,9 @@ class VAECache(WebhookMixin):
                             attribute="crop_coordinates",
                         )
                     )
-                    if tuple(current_crop_coordinates) != tuple(crop_coordinates):
+                    if current_crop_coordinates is not None and tuple(
+                        current_crop_coordinates
+                    ) != tuple(crop_coordinates):
                         logger.debug(
                             f"Should be updating crop_coordinates for {filepath} from {current_crop_coordinates} to {crop_coordinates}. But we won't.."
                         )
@@ -865,13 +927,19 @@ class VAECache(WebhookMixin):
                 count_to_process = min(qlen, self.vae_batch_size)
                 for idx in range(0, count_to_process):
                     if image_pixel_values:
-                        pixel_values, filepath, aspect_bucket, is_final_sample = (
-                            image_pixel_values.pop()
-                        )
+                        (
+                            pixel_values,
+                            filepath,
+                            aspect_bucket,
+                            is_final_sample,
+                        ) = image_pixel_values.pop()
                     else:
-                        pixel_values, filepath, aspect_bucket, is_final_sample = (
-                            self.vae_input_queue.get()
-                        )
+                        (
+                            pixel_values,
+                            filepath,
+                            aspect_bucket,
+                            is_final_sample,
+                        ) = self.vae_input_queue.get()
 
                     if batch_aspect_bucket is None:
                         batch_aspect_bucket = aspect_bucket

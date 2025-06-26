@@ -21,13 +21,30 @@ model_classes = {
         "pixart_sigma",
         "kolors",
         "sd3",
-        "legacy",
+        "sd1x",
+        "sd2x",
         "ltxvideo",
         "wan",
         "sana",
+        "deepfloyd",
+        "omnigen",
+        "hidream",
+        "auraflow",
     ],
-    "lora": ["flux", "sdxl", "kolors", "sd3", "legacy", "ltxvideo", "wan"],
-    "controlnet": ["sdxl", "legacy"],
+    "lora": [
+        "flux",
+        "sdxl",
+        "kolors",
+        "sd3",
+        "sd1x",
+        "sd2x",
+        "ltxvideo",
+        "wan",
+        "deepfloyd",
+        "auraflow",
+        "hidream",
+    ],
+    "controlnet": ["sdxl", "sd1x", "sd2x"],
 }
 
 default_models = {
@@ -37,10 +54,15 @@ default_models = {
     "kolors": "kwai-kolors/kolors-diffusers",
     "terminus": "ptx0/terminus-xl-velocity-v2",
     "sd3": "stabilityai/stable-diffusion-3.5-large",
-    "legacy": "stabilityai/stable-diffusion-2-1-base",
+    "sd2x": "stabilityai/stable-diffusion-2-1-base",
+    "sd1x": "stable-diffusion-v1-5/stable-diffusion-v1-5",
     "sana": "terminusresearch/sana-1.6b-1024px",
     "ltxvideo": "Lightricks/LTX-Video",
     "wan": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+    "hidream": "HiDream-ai/HiDream-I1-Full",
+    "auraflow": "terminusresearch/auraflow-v0.3",
+    "deepfloyd": "DeepFloyd/DeepFloyd-IF-I-XL-v1.0",
+    "omnigen": "Shitao/OmniGen-v1-diffusers",
 }
 
 default_cfg = {
@@ -51,20 +73,27 @@ default_cfg = {
     "terminus": 8.0,
     "sd3": 5.0,
     "ltxvideo": 4.0,
+    "hidream": 2.5,
     "wan": 4.0,
     "sana": 3.8,
+    "omnigen": 3.2,
+    "deepfloyd": 6.0,
+    "sd2x": 7.0,
+    "sd1x": 6.0,
 }
 
 model_labels = {
-    "sd3": "Stable Diffusion 3",
     "flux": "FLUX",
     "pixart_sigma": "PixArt Sigma",
     "kolors": "Kwai Kolors",
     "terminus": "Terminus",
     "sdxl": "Stable Diffusion XL",
-    "legacy": "Stable Diffusion",
+    "sd3": "Stable Diffusion 3",
+    "sd2x": "Stable Diffusion 2",
+    "sd1x": "Stable Diffusion",
     "ltxvideo": "LTX Video",
     "wan": "WanX",
+    "hidream": "HiDream I1",
     "sana": "Sana",
 }
 
@@ -761,6 +790,9 @@ def configure_env():
 
     # dataloader configuration
     resolution_configs = {
+        64: {"resolution": 64, "minimum_image_size": 48},
+        96: {"resolution": 96, "minimum_image_size": 64},
+        128: {"resolution": 128, "minimum_image_size": 96},
         256: {"resolution": 256, "minimum_image_size": 128},
         512: {"resolution": 512, "minimum_image_size": 256},
         768: {"resolution": 768, "minimum_image_size": 512},
@@ -924,7 +956,12 @@ def configure_env():
     # Now we'll modify the default json and if has_very_large_images is true, we will add two keys to each image dataset, 'maximum_image_size' and 'target_downsample_size' equal to the dataset's resolution value
     def create_dataset_config(resolution, default_config):
         dataset = default_config.copy()
-        dataset.update(resolution_configs[resolution])
+        dataset.update(
+            resolution_configs.get(
+                resolution,
+                {"resolution": resolution}
+            )
+        )
         dataset["id"] = f"{dataset['id']}-{resolution}"
         dataset["instance_data_dir"] = os.path.abspath(dataset_path)
         dataset["repeats"] = dataset_repeats

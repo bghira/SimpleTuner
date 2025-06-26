@@ -24,10 +24,10 @@ You can check this by running:
 python --version
 ```
 
-If you don't have python 3.11 installed on Ubuntu, you can try the following:
+If you don't have python 3.12 installed on Ubuntu, you can try the following:
 
 ```bash
-apt -y install python3.11 python3.11-venv
+apt -y install python3.12 python3.12-venv
 ```
 
 #### Container image dependencies
@@ -65,11 +65,11 @@ poetry config virtualenvs.create false
 Depending on your system, you will run one of 3 commands:
 
 ```bash
+# Linux with NVIDIA
+poetry install
+
 # MacOS
 poetry install -C install/apple
-
-# Linux
-poetry install
 
 # Linux with ROCM
 poetry install -C install/rocm
@@ -148,6 +148,7 @@ At the end, your config should resemble mine:
   "seed": 42,
   "minimum_image_size": 0,
   "disable_benchmark": false,
+  "offload_during_startup": true,
   "output_dir": "output/ltxvideo",
   "lora_type": "lycoris",
   "lycoris_config": "config/ltxvideo/lycoris_config.json",
@@ -250,7 +251,8 @@ This should not be enabled for video model training, at the present time.
 
 # Stable evaluation loss
 
-This should not be enabled for video model training, at the present time.
+If you wish to use stable MSE loss to score the model's performance, see [this document](/documentation/evaluation/EVAL_LOSS.md) for information on configuring and interpreting evaluation loss.
+
 
 #### Flow-matching schedule shift
 
@@ -278,11 +280,7 @@ When using a `--flow_schedule_shift` value of 4.0 (a very high value), the large
 
 Tested on Apple and NVIDIA systems, Hugging Face Optimum-Quanto can be used to reduce the precision and VRAM requirements, training on just 16GB.
 
-Inside your SimpleTuner venv:
 
-```bash
-pip install optimum-quanto
-```
 
 For `config.json` users:
 ```json
@@ -414,7 +412,7 @@ Like other models, it is possible that the lowest VRAM utilisation can be attain
 - PyTorch: 2.6
 - Be sure to enable `--gradient_checkpointing` or nothing you do will stop it from OOMing
 
-**NOTE**: Pre-caching of VAE embeds and text encoder outputs may use more memory and still OOM. If so, text encoder quantisation and VAE tiling can be enabled.
+**NOTE**: Pre-caching of VAE embeds and text encoder outputs may use more memory and still OOM. If so, text encoder quantisation and VAE tiling can be enabled. Beyond these options, `--offload_during_startup=true` will help avoid competition between VAE and text encoder memory use.
 
 Speed was approximately 0.8 iterations per second on an M3 Max Macbook Pro.
 

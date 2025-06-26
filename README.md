@@ -4,6 +4,9 @@
 
 **SimpleTuner** is geared towards simplicity, with a focus on making the code easily understood. This codebase serves as a shared academic exercise, and contributions are welcome.
 
+If you'd like to join our community, we can be found [on Discord](https://discord.gg/uRZPwbPEGG) via Terminus Research Group.
+If you have any questions, please feel free to reach out to us there.
+
 ## Table of Contents
 
 - [Design Philosophy](#design-philosophy)
@@ -56,23 +59,41 @@ For multi-node distributed training, [this guide](/documentation/DISTRIBUTED.md)
 - Quantised NF4/INT8/FP8 LoRA training, using low-precision base model to reduce VRAM consumption.
 - Optional EMA (Exponential moving average) weight network to counteract model overfitting and improve training stability.
 - Train directly from an S3-compatible storage provider, eliminating the requirement for expensive local storage. (Tested with Cloudflare R2 and Wasabi S3)
-- For only SDXL and SD 1.x/2.x, full [ControlNet model training](/documentation/CONTROLNET.md) (not ControlLoRA or ControlLite)
+- For SDXL, SD 1.x/2.x, and Flux, full or LoRA based [ControlNet model training](/documentation/CONTROLNET.md) (not ControlLite)
 - Training [Mixture of Experts](/documentation/MIXTURE_OF_EXPERTS.md) for lightweight, high-quality diffusion models
 - [Masked loss training](/documentation/DREAMBOOTH.md#masked-loss) for superior convergence and reduced overfitting on any model
 - Strong [prior regularisation](/documentation/DATALOADER.md#is_regularisation_data) training support for LyCORIS models
 - Webhook support for updating eg. Discord channels with your training progress, validations, and errors
 - Integration with the [Hugging Face Hub](https://huggingface.co) for seamless model upload and nice automatically-generated model cards.
 
+### HiDream
+
+Full training support for HiDream is included:
+
+- Memory-efficient training for NVIDIA GPUs (AMD support is planned)
+- Dev and Full both functioning and trainable. Fast is untested.
+- Optional MoEGate loss augmentation
+- Lycoris or full tuning via DeepSpeed ZeRO on a single GPU
+- Quantise the base model using `--base_model_precision` to `int8-quanto` or `fp8-quanto` for major memory savings
+- Quantise Llama LLM using `--text_encoder_4_precision` set to `int4-quanto` or `int8-quanto` to run on 24G cards.
+
+See [hardware requirements](#hidream) or the [quickstart guide](/documentation/quickstart/HIDREAM.md).
+
 ### Flux.1
 
 Full training support for Flux.1 is included:
 
+<<<<<<< HEAD
+- ControlNet training via full-rank, LoRA or Lycoris
+=======
+- Instruct fine-tuning for the Kontext \[dev] editing model implementation generously provided by [Runware](https://runware.ai).
+>>>>>>> c78cf1d302ccabf31036c0192afac1c9f1c1ca37
 - Classifier-free guidance training
   - Leave it disabled and preserve the dev model's distillation qualities
   - Or, reintroduce CFG to the model and improve its creativity at the cost of inference speed and training time.
 - (optional) T5 attention masked training for superior fine details and generalisation capabilities
 - LoRA or full tuning via DeepSpeed ZeRO on a single GPU
-- Quantise the base model using `--base_model_precision` to `int8-quanto` or `fp8-quanto` for major memory savings
+- Quantise the base model using `--base_model_precision` to `int8-quanto` or `fp8-torchao` for major memory savings
 
 See [hardware requirements](#flux1-dev-schnell) or the [quickstart guide](/documentation/quickstart/FLUX.md).
 
@@ -163,6 +184,15 @@ LoRA and full-rank tuning are tested to work on an M3 Max with 128G memory, taki
   - You likely need a 24G or greater machine for machine learning with M-series hardware due to the lack of memory-efficient attention.
   - Subscribing to Pytorch issues for MPS is probably a good idea, as random bugs will make training stop working.
 
+### HiDream [dev, full]
+
+- A100-80G (Full tune with DeepSpeed)
+- A100-40G (LoRA, LoKr)
+- 3090 24G (LoRA, LoKr)
+
+HiDream has not been tested on 16G cards, but with aggressive quantisation and pre-caching of embeds, you might make it work.
+
+
 ### Flux.1 [dev, schnell]
 
 - A100-80G (Full tune with DeepSpeed)
@@ -172,6 +202,16 @@ LoRA and full-rank tuning are tested to work on an M3 Max with 128G memory, taki
 - 4070 Super 12G, 3080 10G, 3060 12GB (nf4, LoRA, LoKr)
 
 Flux prefers being trained with multiple large GPUs but a single 16G card should be able to do it with quantisation of the transformer and text encoders.
+
+Kontext requires a bit beefier compute and memory allocation; a 4090 will go from ~3 to ~6 seconds per step when it is enabled.
+
+### Auraflow
+
+- A100-80G (Full tune with DeepSpeed)
+- A100-40G (LoRA, LoKr)
+- 3090 24G (LoRA, LoKr)
+- 4060 Ti 16G, 4070 Ti 16G, 3080 16G (int8, LoRA, LoKr)
+- 4070 Super 12G, 3080 10G, 3060 12GB (nf4, LoRA, LoKr)
 
 ### SDXL, 1024px
 

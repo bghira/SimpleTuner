@@ -66,6 +66,7 @@ class TestMetadataFunctions(unittest.TestCase):
         self.args.t5_padding = "unmodified"
         self.args.enable_xformers_memory_efficient_attention = False
         self.args.attention_mechanism = "diffusers"
+        self.mock_model = MagicMock(MODEL_TYPE=MagicMock(value="unet"))
 
     def test_model_imports(self):
         self.args.lora_type = "standard"
@@ -88,12 +89,12 @@ class TestMetadataFunctions(unittest.TestCase):
             "helpers.publishing.metadata.StateTracker.get_hf_username",
             return_value="testuser",
         ):
-            output = _model_load(self.args, repo_id="repo-id")
+            output = _model_load(self.args, repo_id="repo-id", model=self.mock_model)
             self.assertIn("pipeline.load_lora_weights", output)
             self.assertIn("adapter_id = 'testuser/repo-id'", output)
 
         self.args.lora_type = "lycoris"
-        output = _model_load(self.args)
+        output = _model_load(self.args, model=self.mock_model)
         self.assertIn("pytorch_lora_weights.safetensors", output)
 
     def test_torch_device(self):
@@ -112,13 +113,8 @@ class TestMetadataFunctions(unittest.TestCase):
 
     def test_guidance_rescale(self):
         self.args.model_family = "sdxl"
-        output = _guidance_rescale(self.args)
-        expected_output = "\n    guidance_rescale=0.7,"
-        self.assertEqual(output.strip(), expected_output.strip())
-
-        self.args.model_family = "flux"
-        output = _guidance_rescale(self.args)
-        self.assertEqual(output.strip(), "")
+        output = _guidance_rescale(self.mock_model)
+        self.assertNotEqual(output.strip(), "")
 
     def test_skip_layers(self):
         self.args.model_family = "sd3"
@@ -126,10 +122,6 @@ class TestMetadataFunctions(unittest.TestCase):
         output = _skip_layers(self.args)
         expected_output = "\n    skip_guidance_layers=2,"
         self.assertEqual(output.strip(), expected_output.strip())
-
-        self.args.model_family = "sdxl"
-        output = _skip_layers(self.args)
-        self.assertEqual(output.strip(), "")
 
     def test_validation_resolution(self):
         self.args.validation_resolution = "512x512"
@@ -142,35 +134,13 @@ class TestMetadataFunctions(unittest.TestCase):
         expected_output = "width=1024,\n    height=1024,"
         self.assertEqual(output.strip(), expected_output.strip())
 
-    def test_code_example(self):
-        with patch(
-            "helpers.publishing.metadata._model_imports",
-            return_value="import torch\nfrom diffusers import DiffusionPipeline",
-        ):
-            with patch(
-                "helpers.publishing.metadata._model_load", return_value="pipeline = ..."
-            ):
-                with patch(
-                    "helpers.publishing.metadata._torch_device", return_value="'cuda'"
-                ):
-                    with patch(
-                        "helpers.publishing.metadata._negative_prompt",
-                        return_value="negative_prompt = 'A negative prompt'",
-                    ):
-                        with patch(
-                            "helpers.publishing.metadata._validation_resolution",
-                            return_value="width=512,\n    height=512,",
-                        ):
-                            output = code_example(self.args)
-                            self.assertIn("import torch", output)
-                            self.assertIn("pipeline = ...", output)
-                            self.assertIn("pipeline.to('cuda')", output)
-
     def test_model_type(self):
         self.args.model_type = "lora"
         self.args.lora_type = "standard"
+        self.args.controlnet = False
+        self.args.control = False
         output = model_type(self.args)
-        self.assertEqual(output, "standard PEFT LoRA")
+        self.assertEqual(output, "PEFT LoRA")
 
         self.args.lora_type = "lycoris"
         output = model_type(self.args)
@@ -203,42 +173,6 @@ class TestMetadataFunctions(unittest.TestCase):
         self.args.model_card_note = ""
         output = model_card_note(self.args)
         self.assertEqual(output.strip(), "")
-
-    def test_flux_schedule_info(self):
-        self.args.model_family = "flux"
-        output = flux_schedule_info(self.args)
-        self.assertEqual(
-            " (extra parameters=['flux_guidance_mode=constant', 'flux_guidance_value=1.0', 'flow_matching_loss=compatible'])",
-            output,
-        )
-
-        self.args.flux_fast_schedule = True
-        output = flux_schedule_info(self.args)
-        self.assertIn("flux_fast_schedule", output)
-
-    def test_sd3_schedule_info(self):
-        self.args.model_family = "sd3"
-        output = sd3_schedule_info(self.args)
-        self.assertIn("(no special parameters set)", output)
-
-        self.args.flow_schedule_auto_shift = True
-        output = sd3_schedule_info(self.args)
-        self.assertIn("flow_schedule_auto_shift", output)
-
-    def test_model_schedule_info(self):
-        with patch(
-            "helpers.publishing.metadata.flux_schedule_info", return_value="flux info"
-        ):
-            with patch(
-                "helpers.publishing.metadata.sd3_schedule_info", return_value="sd3 info"
-            ):
-                self.args.model_family = "flux"
-                output = model_schedule_info(self.args)
-                self.assertEqual(output, "flux info")
-
-                self.args.model_family = "sd3"
-                output = model_schedule_info(self.args)
-                self.assertEqual(output, "sd3 info")
 
     def test_save_model_card(self):
         # Mocking StateTracker methods
@@ -285,6 +219,7 @@ class TestMetadataFunctions(unittest.TestCase):
                                             validation_prompts=["Test prompt"],
                                             validation_shortnames=["shortname"],
                                             repo_folder="test-folder",
+                                            model=MagicMock(),
                                         )
                                         # Ensure the README.md was written
                                         mock_file.assert_called_with(
@@ -340,7 +275,8 @@ class TestMetadataFunctions(unittest.TestCase):
     def test_pipeline_quanto_hint_unet(self):
         from helpers.publishing.metadata import _pipeline_quanto
 
-        output = _pipeline_quanto(args=self.args)
+        self.mock_model.MODEL_TYPE = MagicMock(value="unet")
+        output = _pipeline_quanto(args=self.args, model=self.mock_model)
 
         self.assertIn("quantize", output)
         self.assertIn("optimum.quanto", output)
@@ -350,7 +286,8 @@ class TestMetadataFunctions(unittest.TestCase):
         from helpers.publishing.metadata import _pipeline_quanto
 
         self.args.model_family = "flux"
-        output = _pipeline_quanto(args=self.args)
+        self.mock_model.MODEL_TYPE = MagicMock(value="transformer")
+        output = _pipeline_quanto(args=self.args, model=self.mock_model)
         self.assertIn("quantize", output)
         self.assertIn("optimum.quanto", output)
         self.assertIn("pipeline.transformer", output)

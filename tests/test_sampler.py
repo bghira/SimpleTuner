@@ -1,5 +1,10 @@
 import unittest, os, logging
 from math import ceil
+
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 from PIL import Image
 from unittest import skip
 from unittest.mock import Mock, MagicMock, patch
@@ -35,6 +40,7 @@ class TestMultiAspectSampler(unittest.TestCase):
             accelerator=self.accelerator,
             batch_size=self.batch_size,
             minimum_image_size=0,
+            model=MagicMock(),
         )
 
         self.sampler.state_manager = Mock(spec=BucketStateManager)

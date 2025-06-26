@@ -1,3 +1,7 @@
+try:
+    import pillow_jxl
+except ModuleNotFoundError:
+    pass
 from PIL import Image
 from PIL.ImageOps import exif_transpose
 from helpers.multiaspect.image import MultiaspectImage, resize_helpers
@@ -29,6 +33,7 @@ class TrainingSample:
         image_metadata: dict = None,
         image_path: str = None,
         conditioning_type: str = None,
+        model=None,
     ):
         """
         Initializes a new TrainingSample instance with a provided PIL.Image object and a data backend identifier.
@@ -38,6 +43,13 @@ class TrainingSample:
             data_backend_id (str): Identifier for the data backend used for additional operations.
             metadata (dict): Optional metadata associated with the image.
         """
+        # Torchvision transforms turn the pixels into a Tensor and normalize them for the VAE.
+        self.model = model
+        self.transforms = None
+        if model is None:
+            self.model = StateTracker.get_model()
+        if self.model is not None:
+            self.transforms = self.model.get_transforms()
         self.image = image
         self.target_size = None
         self.intermediary_size = None
@@ -52,7 +64,10 @@ class TrainingSample:
         if isinstance(image, np.ndarray):
             if len(image.shape) == 4:
                 logger.debug(f"Received 4D Shape: {image.shape}")
-                self.original_size = (image.shape[2], image.shape[1])
+                self.original_size = (
+                    image.shape[2],
+                    image.shape[1],
+                )  # mapping image.shape (F, H, W, C) to (W, H)
             elif len(image.shape) == 5:
                 raise ValueError(
                     f"Received invalid shape: {image.shape}, expected 4D item instead"
@@ -77,10 +92,7 @@ class TrainingSample:
         self.current_size = self.original_size
 
         if not self.original_size:
-            raise Exception("Original size not found in metadata.")
-
-        # Torchvision transforms turn the pixels into a Tensor and normalize them for the VAE.
-        self.transforms = MultiaspectImage.get_image_transforms()
+            raise Exception(f"Original size not found in metadata: {image_metadata}")
 
         # Backend config details
         self.data_backend_config = StateTracker.get_data_backend_config(data_backend_id)
@@ -159,6 +171,84 @@ class TrainingSample:
         data_backend = StateTracker.get_data_backend(data_backend_id)
         image = data_backend["data_backend"].read_image(image_path)
         return TrainingSample(image, data_backend_id, image_path=image_path)
+
+    @classmethod
+    def for_conditioning(
+        cls,
+        training_path: str,
+        training_backend_id: str,
+        *,
+        model=None,
+    ) -> "TrainingSample":
+        """
+        Build a *conditioning* `TrainingSample` that is aligned with the
+        *training* image at `training_path`.
+
+        The method
+        1.   looks up the *conditioning* dataset that was previously
+             registered for `training_backend_id`;
+        2.   infers the partner image’s path by replacing the root directory
+             of the training dataset with the root of the conditioning
+             dataset **and keeping the relative path unchanged**;
+        3.   loads both images, runs `prepare_like()` so crop/resize are
+             identical, and returns the prepared conditioning sample.
+        """
+
+        conditioning_backend = StateTracker.get_conditioning_dataset(
+            training_backend_id
+        )
+        if conditioning_backend is None:
+            raise ValueError(
+                f"No conditioning dataset registered for backend “{training_backend_id}”."
+            )
+
+        cond_backend_id = conditioning_backend["id"]
+        cond_data_dir = conditioning_backend["config"]["instance_data_dir"]
+        train_data_dir = StateTracker.get_data_backend(training_backend_id)[
+            "data_backend"
+        ].instance_data_dir
+
+        rel_path = os.path.relpath(training_path, start=train_data_dir)
+        cond_path = os.path.join(cond_data_dir, rel_path)
+
+        if not conditioning_backend["data_backend"].exists(cond_path):
+            raise FileNotFoundError(
+                f"Expected conditioning file “{cond_path}” (paired with “{training_path}”) "
+                "but it was not found."
+            )
+
+        train_sample = cls.from_image_path(training_path, training_backend_id)
+        cond_sample = cls.from_image_path(
+            cond_path,
+            cond_backend_id,
+        )
+
+        cond_sample.prepare_like(train_sample, return_tensor=False)
+        cond_sample.conditioning_type = conditioning_backend.get("conditioning_type")
+        return cond_sample
+
+    def training_sample_path(self, training_dataset_id: str) -> str:
+        """
+        For a conditioning sample, this will return the primary training sample counterpart path inside training_dataset_id dataset.
+        """
+        training_backend = StateTracker.get_data_backend(training_dataset_id)
+        cond_backend = StateTracker.get_data_backend(self.data_backend_id)
+        if training_backend is None:
+            raise ValueError(
+                f"No training dataset registered for backend “{training_dataset_id}”."
+            )
+        training_data_dir = training_backend["config"]["instance_data_dir"]
+        cond_data_dir = cond_backend["config"]["instance_data_dir"]
+        cond_relpath = self._image_path.replace(cond_data_dir, training_data_dir, 1)
+        if not cond_relpath:
+            raise ValueError(
+                "Cannot determine training sample path: no image path provided."
+            )
+        training_sample_path = training_backend["data_backend"].get_abs_path(
+            cond_relpath
+        )
+
+        return training_sample_path
 
     def _validate_image_metadata(self) -> bool:
         """
@@ -360,13 +450,16 @@ class TrainingSample:
         Returns:
             PreparedSample: The prepared sample.
         """
-        # Copy over the image metadata from the other sample
-        self.image_metadata = (
-            other_sample.image_metadata.copy() if other_sample.image_metadata else {}
-        )
-        # Validate the metadata to set internal attributes
+        if other_sample.image_metadata:
+            self.image_metadata = other_sample.image_metadata.copy()
+        # copy derived geometry so prepare() skips recalculation
+        self.original_size = other_sample.original_size
+        self.intermediary_size = other_sample.intermediary_size
+        self.target_size = other_sample.target_size
+        self.crop_coordinates = other_sample.crop_coordinates
+        self.aspect_ratio = other_sample.aspect_ratio
         self._validate_image_metadata()
-        # Proceed to prepare the image
+
         return self.prepare(return_tensor=return_tensor)
 
     def prepare(self, return_tensor: bool = False):
@@ -390,7 +483,7 @@ class TrainingSample:
             self.save_debug_image(f"images/{time.time()}-2-final-output.png")
 
         image = self.image
-        if return_tensor:
+        if return_tensor and self.transforms is not None:
             # Return normalised tensor.
             image = self.transforms(image)
         webhook_handler = StateTracker.get_webhook_handler()
@@ -419,7 +512,17 @@ class TrainingSample:
             int: The area of the image.
         """
         if self.image is not None:
-            return self.image.size[0] * self.image.size[1]
+            if isinstance(self.image, np.ndarray):
+                # it's a numpy array of frames, probably?
+                if len(self.image.shape) == 4:
+                    # frames, height, width, channels (195, 360, 640, 3) as an example
+                    return self.image.shape[2] * self.image.shape[1]
+                else:
+                    raise NotImplementedError(
+                        f"NumPy array shape not supported: {self.image.shape}"
+                    )
+            elif hasattr(self.image, "size") and isinstance(self.image.size, tuple):
+                return self.image.size[0] * self.image.size[1]
         if self.original_size:
             return self.original_size[0] * self.original_size[1]
 
@@ -601,12 +704,13 @@ class TrainingSample:
         """
         if not self.crop_enabled:
             return self
-        # Too-big of an image, resize before we crop.
         self.calculate_target_size()
         self._downsample_before_crop()
         self.save_debug_image(f"images/{time.time()}-0.5-downsampled.png")
         if self.image is not None:
-            logger.debug(f"setting image: {self.image.size}")
+            logger.debug(
+                f"setting image: {self.image.size if not isinstance(self.image, np.ndarray) else self.image.shape}"
+            )
             self.cropper.set_image(self.image)
         logger.debug(f"Cropper size updating to {self.current_size}")
         self.cropper.set_intermediary_size(self.current_size[0], self.current_size[1])
@@ -656,7 +760,10 @@ class TrainingSample:
                             self.image,
                             (self.intermediary_size[0], self.intermediary_size[1]),
                         )
-                        width, height = self.image.shape[2], self.image.shape[1]
+                        width, height = (
+                            self.image.shape[2],
+                            self.image.shape[1],
+                        )  # shape (F, H, W, C)
                         self.current_size = (width, height)
                         logger.debug(
                             f"Post resize: {self.current_size} / {self.image.shape}"
@@ -686,7 +793,9 @@ class TrainingSample:
             elif isinstance(self.image, np.ndarray):
                 # we have a video to resize
                 logger.debug(f"Resizing {self.image.shape} to {size}, ")
-                self.image = resize_video_frames(self.image, (size[1], size[0]))
+                self.image = resize_video_frames(self.image, (size[0], size[1]))
+                width, height = self.image.shape[2], self.image.shape[1]
+                self.current_size = (width, height)
                 self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(size)
                 logger.debug(f"Now {self.image.shape} @ {self.aspect_ratio}")
         self.current_size = size

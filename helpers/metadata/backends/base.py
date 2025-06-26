@@ -70,6 +70,7 @@ class MetadataBackend:
         self.image_metadata = {}  # Store image metadata
         self.seen_images = {}
         self.config = {}
+        self.dataset_config = StateTracker.get_data_backend_config(self.id)
         self.reload_cache()
         self.resolution = float(resolution)
         self.resolution_type = resolution_type
@@ -273,7 +274,7 @@ class MetadataBackend:
             desc="Generating aspect bucket cache",
             total=len(new_files),
             leave=False,
-            ncols=100,
+            ncols=125,
             miniters=int(len(new_files) / 100),
         ) as pbar:
             if self.should_abort:
@@ -340,7 +341,9 @@ class MetadataBackend:
         self.save_cache(enforce_constraints=True)
         logger.info("Completed aspect bucket update.")
 
-    def split_buckets_between_processes(self, gradient_accumulation_steps=1):
+    def split_buckets_between_processes(
+        self, gradient_accumulation_steps=1, apply_padding=False
+    ):
         """
         Splits the contents of each bucket in aspect_ratio_bucket_indices between the available processes.
         """
@@ -368,7 +371,7 @@ class MetadataBackend:
                 )
 
             with self.accelerator.split_between_processes(
-                trimmed_images, apply_padding=False
+                trimmed_images, apply_padding=apply_padding
             ) as images_split:
                 # Now images_split contains only the part of the images list that this process should handle
                 new_aspect_ratio_bucket_indices[bucket] = images_split
@@ -587,6 +590,9 @@ class MetadataBackend:
         """
         Check if an image meets the resolution requirements.
         """
+        if self.dataset_config.get("dataset_type", None) in ["conditioning"]:
+            # Conditioning datasets do not have resolution requirements.
+            return True
         if image is None and (image_path is not None and image_metadata is None):
             metadata = self.get_metadata_by_filepath(image_path)
             if metadata is None:
@@ -788,18 +794,34 @@ class MetadataBackend:
         Returns:
             dict: Metadata for the image. Returns None if not found.
         """
+        if type(filepath) not in [tuple, list]:
+            filepath = [filepath]
         if type(filepath) is tuple or type(filepath) is list:
             for path in filepath:
+                abs_path = self.data_backend.get_abs_path(path)
                 if path in self.image_metadata:
+                    # Maybe we got the correct path at first.
                     result = self.image_metadata.get(path, None)
                     logger.debug(
                         f"Retrieving metadata for path: {filepath}, result: {result}"
                     )
                     if result is not None:
                         return result
+                elif abs_path in self.image_metadata:
+                    # If we got a relative path, we'll try abs path.
+                    filepath = abs_path
+                    result = self.image_metadata.get(filepath, None)
+                    logger.debug(
+                        f"Retrieving metadata for path: {filepath}, result: {result}"
+                    )
+                    if result is not None:
+                        return result
+
             return None
 
-        return self.image_metadata.get(filepath, None)
+        meta = self.image_metadata.get(filepath, None)
+
+        return meta
 
     def scan_for_metadata(self):
         """
@@ -850,7 +872,7 @@ class MetadataBackend:
             desc="Scanning image metadata",
             total=len(new_files),
             leave=False,
-            ncols=100,
+            ncols=125,
         ) as pbar:
             while any(worker.is_alive() for worker in workers):
                 while not tqdm_queue.empty():
