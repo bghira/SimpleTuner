@@ -247,7 +247,7 @@ def retrieve_validation_edit_images() -> list[tuple[str, str, Image.Image]]:
     • loop over *image* datasets that have a sampler
     • for every deterministic validation sample returned by the sampler
       – grab its original file path from metadata
-      – ask the dataset’s *registered* conditioning backend for the
+      – ask the dataset's *registered* conditioning backend for the
         counterpart via `get_conditioning_sample()`
       – add the trio to output
     """
@@ -256,10 +256,26 @@ def retrieve_validation_edit_images() -> list[tuple[str, str, Image.Image]]:
         return []  # no-op for ordinary models
 
     args = StateTracker.get_args()
+    # Respect the user's selected validation dataset via --eval_dataset_id and
+    # honour any `disable_validation: true` flags in the backend configuration.
+    validation_data_backend_id = args.eval_dataset_id
     validation_set = []
 
     # ---------- iterate over IMAGE datasets ---------------------------------
     for backend_id, backend in StateTracker.get_data_backends(_type="image").items():
+        backend_config = backend.get("config", {})
+        should_skip_dataset = backend_config.get("disable_validation", False)
+
+        # Skip datasets that the user has explicitly disabled for validation or
+        # that do not match the requested `--eval_dataset_id`.
+        if (
+            validation_data_backend_id is not None
+            and backend.get("id") != validation_data_backend_id
+        ) or should_skip_dataset:
+            logger.debug(
+                f"Not collecting edit-validation images from {backend.get('id', backend_id)}"
+            )
+            continue
         sampler = backend.get("sampler")
         if sampler is None:  # nothing to iterate over
             continue
