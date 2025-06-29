@@ -7,6 +7,7 @@ from helpers.training.state_tracker import StateTracker
 from helpers.training.multi_process import rank_info, _get_rank
 from helpers.image_manipulation.training_sample import TrainingSample
 from concurrent.futures import ThreadPoolExecutor
+from collections import defaultdict
 
 logger = logging.getLogger("collate_fn")
 logger.setLevel(
@@ -414,6 +415,7 @@ def collate_fn(batch):
         )
 
     # Randomly drop captions/conditioning based on dropout_probability
+    data_backend_id = None
     for example in examples:
         data_backend_id = example["data_backend_id"]
         if (
@@ -426,6 +428,7 @@ def collate_fn(batch):
         else:
             example["drop_conditioning"] = False
 
+    assert isinstance(data_backend_id, str)
     debug_log("Collect luminance values")
     if "luminance" in examples[0]:
         batch_luminance = [example["luminance"] for example in examples]
@@ -437,6 +440,7 @@ def collate_fn(batch):
     filepaths = extract_filepaths(examples)
     debug_log("Compute latents")
     model = StateTracker.get_model()
+    assert model is not None
     batch_data = compute_latents(filepaths, data_backend_id, model)
     if isinstance(batch_data[0], dict):
         latent_batch = [v["latents"] for v in batch_data]
@@ -448,82 +452,96 @@ def collate_fn(batch):
             latent_batch, filepaths, data_backend_id, examples
         )
 
-    conditioning_filepaths = []
     training_filepaths = []
     conditioning_type = None
     conditioning_pixel_values = None
     conditioning_latents = None
 
     if len(conditioning_examples) > 0:
+        # check the # of conditioning backends
         logger.debug(f"Found {len(conditioning_examples)} conditioning examples.")
-        if len(conditioning_examples) != len(examples):
+
+        # get multiple backend ids
+        data_backend = StateTracker.get_data_backend(data_backend_id)
+        conditioning_backends = data_backend.get("conditioning_data", [])
+
+        if len(conditioning_examples) != len(examples) * len(conditioning_backends):
             raise ValueError(
-                "The number of conditioning examples must match the number of training examples."
+                "The number of conditioning examples must be divisible by the number of training samples."
             )
 
-        data_backend = StateTracker.get_data_backend(data_backend_id)
-        conditioning_data_backend_id = data_backend.get("conditioning_data", {}).get(
-            "id"
-        )
 
-        for cond_example, train_example in zip(conditioning_examples, examples):
+        conditioning_map = defaultdict(list)
+        for i, cond_example in enumerate(conditioning_examples):
+            train_example = examples[i % len(conditioning_backends)]
+            cond_backend = conditioning_backends[i // len(conditioning_backends)]
             # Ensure conditioning types match
             cond_type = cond_example.get_conditioning_type()
             if conditioning_type is None:
                 conditioning_type = cond_type
             elif cond_type != conditioning_type:
+                # todo: allow each cond backend to have a different type?
                 raise ValueError(
                     f"Conditioning type mismatch: {conditioning_type} != {cond_type}"
                     "\n-> Ensure all conditioning samples are of the same type."
                 )
 
             # Collect conditioning and training file paths
-            conditioning_filepaths.append(cond_example.image_path(basename_only=False))
+            conditioning_map[cond_backend["id"]].append(cond_example)
             training_filepaths.append(train_example["image_path"])
         debug_log(
-            f"Counted {len(conditioning_filepaths)} conditioning filepaths and {len(training_filepaths)} training filepaths."
+            f"Counted {len(conditioning_map)} conditioning filepaths and {len(training_filepaths)} training filepaths."
         )
 
         if model.requires_conditioning_dataset():
             if model.requires_conditioning_latents():
+                conditioning_latents = []
                 # Kontext / other latent-conditioned models / adapters
                 debug_log("Compute conditioning latents")
-                conditioning_latents = compute_latents(
-                    conditioning_filepaths,
-                    conditioning_data_backend_id,
-                    model,
-                )
-                debug_log(
-                    f"Conditioning latents computed: {len(conditioning_latents)} items."
-                )
+                for _backend_id, _examples in conditioning_map.items():
+                    _filepaths = [cond_example.image_path(basename_only=False) for cond_example in _examples]
+                    _latents = compute_latents(
+                        _filepaths,
+                        _backend_id,
+                        model,
+                    )
+                    debug_log(
+                        f"Conditioning latents computed: {len(_latents)} items."
+                    )
 
-                # unpack from dicts (vae-cache style) & shape-check
-                if isinstance(conditioning_latents[0], dict):
-                    conditioning_latents = [v["latents"] for v in conditioning_latents]
+                    # unpack from dicts (vae-cache style) & shape-check
+                    if isinstance(_latents[0], dict):
+                        _latents = [v["latents"] for v in _latents]
 
-                conditioning_latents = check_latent_shapes(
-                    conditioning_latents,
-                    conditioning_filepaths,
-                    conditioning_data_backend_id,
-                    conditioning_examples,
-                )
+                    _latents = check_latent_shapes(
+                        _latents,
+                        _filepaths,
+                        _backend_id,
+                        _examples,
+                    )
+                    conditioning_latents.append(_latents)
             else:
                 debug_log("Model may require conditioning pixels.")
-                conditioning_pixel_values = conditioning_pixels(
-                    conditioning_filepaths,
-                    training_filepaths,
-                    conditioning_data_backend_id,
-                    data_backend_id,
-                )
-                debug_log(
-                    f"Found {len(conditioning_pixel_values)} conditioning pixel values."
-                )
-                conditioning_pixel_values = torch.stack(
-                    [
-                        latent.to(StateTracker.get_accelerator().device)
-                        for latent in conditioning_pixel_values
-                    ]
-                )
+                conditioning_pixel_values = []
+                for _backend_id, _examples in conditioning_map.items():
+                    _filepaths = [cond_example.image_path(basename_only=False) for cond_example in _examples]
+                    _pixel_values = conditioning_pixels(
+                        _filepaths,
+                        training_filepaths,
+                        _backend_id,
+                        data_backend_id,
+                    )
+                    debug_log(
+                        f"Found {len(_pixel_values)} conditioning pixel values."
+                    )
+                    # stack up that pixel values list
+                    conditioning_pixel_values.append(torch.stack(
+                        [
+                            pixels.to(StateTracker.get_accelerator().device)
+                            for pixels in _pixel_values
+                        ]
+                    )
+                    )
 
     # Compute embeddings and handle dropped conditionings
     debug_log("Extract captions")

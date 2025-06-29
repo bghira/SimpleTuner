@@ -493,7 +493,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
     def _clear_batch_accumulator(self):
         self.batch_accumulator = []
 
-    def get_conditioning_sample(self, original_sample_path: str) -> str:
+    def get_conditioning_sample(self, original_sample_path: str) -> TrainingSample|None:
         """
         Given an original dataset sample path, return a TrainingSample
         """
@@ -509,7 +509,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             conditioning_sample_data = self.data_backend.read_image(full_path)
         except Exception as e:
             self.logger.error(f"Could not fetch conditioning sample: {e}")
-
             return None
         if not conditioning_sample_data:
             self.debug_log(f"Could not fetch conditioning sample from {full_path}.")
@@ -527,22 +526,24 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
     def connect_conditioning_samples(self, samples: tuple):
         # Locate the conditioning data
-        conditioning_dataset = StateTracker.get_conditioning_dataset(self.id)
-        if conditioning_dataset is None:
+        conditioning_datasets = StateTracker.get_conditioning_datasets(self.id)
+        if not len(conditioning_datasets):
             return samples
-        sampler = conditioning_dataset["sampler"]
         outputs = list(samples)
-        for sample in samples:
-            sample_path = sample["image_path"]
-            if (
-                self.metadata_backend.instance_data_dir is not None
-                and self.metadata_backend.instance_data_dir != ""
-            ):
-                sample_path = sample_path.split(
-                    self.metadata_backend.instance_data_dir
-                )[-1]
-            conditioning_sample = sampler.get_conditioning_sample(sample_path)
-            outputs.append(conditioning_sample)
+        for dataset in conditioning_datasets:
+            sampler = dataset["sampler"]
+            for sample in samples:
+                sample_path: str
+                sample_path = sample["image_path"]
+                if (
+                    self.metadata_backend.instance_data_dir is not None
+                    and self.metadata_backend.instance_data_dir != ""
+                ):
+                    sample_path = sample_path.split(
+                        self.metadata_backend.instance_data_dir
+                    )[-1]
+                conditioning_sample = sampler.get_conditioning_sample(sample_path)
+                outputs.append(conditioning_sample)
         return tuple(outputs)
 
     def __iter__(self):

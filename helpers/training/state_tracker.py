@@ -458,16 +458,14 @@ class StateTracker:
         return 0
 
     @classmethod
-    def set_conditioning_dataset(
-        cls, data_backend_id: str, conditioning_backend_id: str
+    def set_conditioning_datasets(
+        cls, data_backend_id: str, conditioning_backend_ids: list[str]
     ):
-        cls.data_backends[data_backend_id]["conditioning_data"] = cls.data_backends[
-            conditioning_backend_id
-        ]
+        cls.data_backends[data_backend_id]["conditioning_data"] = [cls.data_backends[x] for x in conditioning_backend_ids]
 
     @classmethod
-    def get_conditioning_dataset(cls, data_backend_id: str):
-        return cls.data_backends[data_backend_id].get("conditioning_data", None)
+    def get_conditioning_datasets(cls, data_backend_id: str) -> list[dict]:
+        return cls.data_backends[data_backend_id].get("conditioning_data", [])
 
     @classmethod
     def get_data_backend_config(cls, data_backend_id: str):
@@ -480,13 +478,11 @@ class StateTracker:
         cls.data_backends[data_backend_id]["config"] = config
 
     @classmethod
-    def get_conditioning_mappings(cls):
-        conditioning_mappings = {}
+    def get_conditioning_mappings(cls) -> list[tuple[str, str]]:
+        conditioning_mappings = []
         for data_backend_id, data_backend in cls.data_backends.items():
-            if "conditioning_data" in data_backend:
-                conditioning_mappings[data_backend_id] = data_backend[
-                    "conditioning_data"
-                ]["id"]
+            conds = data_backend.get("conditioning_data", [])
+            conditioning_mappings.extend((data_backend_id, x["id"]) for x in conds)
         return conditioning_mappings
 
     @classmethod

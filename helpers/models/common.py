@@ -1036,6 +1036,11 @@ class ModelFoundation(ABC):
         return target
 
     def prepare_batch_conditions(self, batch: dict, state: dict) -> dict:
+        # it's a list, but most models will expect it to be a length-1 list containing a tensor, which is what they actually want
+        if batch.get("conditioning_pixel_values") is not None:
+            batch["conditioning_pixel_values"] = batch["conditioning_pixel_values"][0]
+        if batch.get("conditioning_latents") is not None:
+            batch["conditioning_latents"] = batch["conditioning_latents"][0]
         return batch
 
     def prepare_batch(self, batch: dict, state: dict) -> dict:

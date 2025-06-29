@@ -172,61 +172,6 @@ class TrainingSample:
         image = data_backend["data_backend"].read_image(image_path)
         return TrainingSample(image, data_backend_id, image_path=image_path)
 
-    @classmethod
-    def for_conditioning(
-        cls,
-        training_path: str,
-        training_backend_id: str,
-        *,
-        model=None,
-    ) -> "TrainingSample":
-        """
-        Build a *conditioning* `TrainingSample` that is aligned with the
-        *training* image at `training_path`.
-
-        The method
-        1.   looks up the *conditioning* dataset that was previously
-             registered for `training_backend_id`;
-        2.   infers the partner image’s path by replacing the root directory
-             of the training dataset with the root of the conditioning
-             dataset **and keeping the relative path unchanged**;
-        3.   loads both images, runs `prepare_like()` so crop/resize are
-             identical, and returns the prepared conditioning sample.
-        """
-
-        conditioning_backend = StateTracker.get_conditioning_dataset(
-            training_backend_id
-        )
-        if conditioning_backend is None:
-            raise ValueError(
-                f"No conditioning dataset registered for backend “{training_backend_id}”."
-            )
-
-        cond_backend_id = conditioning_backend["id"]
-        cond_data_dir = conditioning_backend["config"]["instance_data_dir"]
-        train_data_dir = StateTracker.get_data_backend(training_backend_id)[
-            "data_backend"
-        ].instance_data_dir
-
-        rel_path = os.path.relpath(training_path, start=train_data_dir)
-        cond_path = os.path.join(cond_data_dir, rel_path)
-
-        if not conditioning_backend["data_backend"].exists(cond_path):
-            raise FileNotFoundError(
-                f"Expected conditioning file “{cond_path}” (paired with “{training_path}”) "
-                "but it was not found."
-            )
-
-        train_sample = cls.from_image_path(training_path, training_backend_id)
-        cond_sample = cls.from_image_path(
-            cond_path,
-            cond_backend_id,
-        )
-
-        cond_sample.prepare_like(train_sample, return_tensor=False)
-        cond_sample.conditioning_type = conditioning_backend.get("conditioning_type")
-        return cond_sample
-
     def training_sample_path(self, training_dataset_id: str) -> str:
         """
         For a conditioning sample, this will return the primary training sample counterpart path inside training_dataset_id dataset.
