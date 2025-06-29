@@ -1057,18 +1057,130 @@ class Validation:
 
     def stitch_conditioning_images(self, validation_image_results, conditioning_image):
         """
-        For each image, make a new canvas and place it side by side with its equivalent from {self.validation_image_inputs}
+        For each image, make a new canvas and place conditioning image on the LEFT side.
         """
         stitched_validation_images = []
+        separator_width = 5
+
         for idx, image in enumerate(validation_image_results):
-            new_width = image.size[0] * 2
-            new_height = image.size[1]
-            new_image = Image.new("RGB", (new_width, new_height))
-            new_image.paste(image, (0, 0))
-            new_image.paste(conditioning_image, (image.size[0], 0))
+            cond_width, cond_height = conditioning_image.size
+            out_width, out_height = image.size
+
+            # Calculate new canvas dimensions
+            new_width = cond_width + separator_width + out_width
+            new_height = max(cond_height, out_height)
+
+            # Create new image with white background
+            new_image = Image.new("RGB", (new_width, new_height), color="white")
+
+            # Calculate vertical positions for centering if heights differ
+            cond_y_offset = (
+                (new_height - cond_height) // 2 if cond_height < new_height else 0
+            )
+            out_y_offset = (
+                (new_height - out_height) // 2 if out_height < new_height else 0
+            )
+
+            # Paste conditioning image on the LEFT
+            new_image.paste(conditioning_image, (0, cond_y_offset))
+
+            # Paste output image on the right
+            new_image.paste(image, (cond_width + separator_width, out_y_offset))
+
+            # Draw separator line
+            draw = ImageDraw.Draw(new_image)
+            line_color = (200, 200, 200)  # Light gray
+            for i in range(separator_width):
+                x = cond_width + i
+                draw.line([(x, 0), (x, new_height)], fill=line_color)
+
             stitched_validation_images.append(new_image)
 
         return stitched_validation_images
+
+    def stitch_validation_input_image(
+        self,
+        validation_image_result,
+        validation_input_image,
+        separator_width=5,
+        labels=["input", "output"],
+    ):
+        """
+        Stitch validation input image to the left of the validation output.
+        Handles different sizes by centering vertically when heights differ.
+
+        Args:
+            validation_image_result: The generated validation image
+            validation_input_image: The input/context image used for validation
+            separator_width: Width of separator between images
+            labels: Text labels for [left, right] images
+        """
+        if validation_input_image is None:
+            return validation_image_result
+
+        input_width, input_height = validation_input_image.size
+        output_width, output_height = validation_image_result.size
+
+        # Calculate new canvas dimensions
+        new_width = input_width + separator_width + output_width
+        new_height = max(input_height, output_height)
+
+        # Create new image with white background
+        new_image = Image.new("RGB", (new_width, new_height), color="white")
+
+        # Calculate vertical positions for centering if heights differ
+        input_y_offset = (
+            (new_height - input_height) // 2 if input_height < new_height else 0
+        )
+        output_y_offset = (
+            (new_height - output_height) // 2 if output_height < new_height else 0
+        )
+
+        # Paste input image on the left
+        new_image.paste(validation_input_image, (0, input_y_offset))
+
+        # Paste output image on the right
+        new_image.paste(
+            validation_image_result, (input_width + separator_width, output_y_offset)
+        )
+
+        # Create drawing object for text and separator
+        draw = ImageDraw.Draw(new_image)
+
+        # Use a default font
+        try:
+            font = ImageFont.truetype("arial.ttf", 36)
+        except IOError:
+            font = ImageFont.load_default()
+
+        # Add text labels if provided
+        if labels[0] is not None:
+            draw.text(
+                (10, 10),
+                labels[0],
+                fill=(255, 255, 255),
+                font=font,
+                stroke_width=2,
+                stroke_fill=(0, 0, 0),
+            )
+
+        if labels[1] is not None:
+            draw.text(
+                (input_width + separator_width + 10, 10),
+                labels[1],
+                fill=(255, 255, 255),
+                font=font,
+                stroke_width=2,
+                stroke_fill=(0, 0, 0),
+            )
+
+        # Draw vertical separator line
+        line_color = (200, 200, 200)  # Light gray
+        for i in range(separator_width):
+            x = input_width + i
+            draw.line([(x, 0), (x, new_height)], fill=line_color)
+
+        return new_image
 
     def _validation_types(self):
         types = ["checkpoint"]
@@ -1329,19 +1441,38 @@ class Validation:
                     if current_validation_type == "ema":
                         self.disable_ema_for_inference()
 
-                # retrieve the default image result for stitching to controlnet inputs.
+                # Retrieve the default image result for stitching
                 ema_image_results = all_validation_type_results.get("ema")
                 validation_image_results = all_validation_type_results.get(
                     "checkpoint", ema_image_results
                 )
                 original_validation_image_results = validation_image_results
-                benchmark_image = None
-                if any([self.config.controlnet, self.config.control]):
+
+                # First, apply validation input stitching if configured
+                if (
+                    hasattr(self.config, "validation_stitch_input_location")
+                    and self.config.validation_stitch_input_location == "left"
+                    and validation_input_image is not None
+                ):
+                    validation_image_results = [
+                        self.stitch_validation_input_image(
+                            validation_image_result=img,
+                            validation_input_image=validation_input_image,
+                            labels=["input", None],
+                        )
+                        for img in validation_image_results
+                    ]
+
+                # Then apply controlnet stitching if needed
+                elif any([self.config.controlnet, self.config.control]):
                     validation_image_results = self.stitch_conditioning_images(
                         original_validation_image_results,
                         extra_validation_kwargs["control_image"],
                     )
-                elif not self.config.disable_benchmark and self.benchmark_exists(
+
+                # Finally apply benchmark stitching if enabled
+                # Note: If validation input stitching was applied, benchmark will be stitched to the right of that
+                if not self.config.disable_benchmark and self.benchmark_exists(
                     "base_model"
                 ):
                     benchmark_image = self._benchmark_image(
@@ -1354,8 +1485,17 @@ class Validation:
                             validation_image_results[idx] = self.stitch_benchmark_image(
                                 validation_image_result=validation_image,
                                 benchmark_image=benchmark_image,
+                                labels=(
+                                    ["checkpoint", "base model"]
+                                    if not (
+                                        hasattr(
+                                            self.config, "validation_stitch_input_left"
+                                        )
+                                        and self.config.validation_stitch_input_left
+                                    )
+                                    else [None, "base model"]
+                                ),
                             )
-
                 checkpoint_validation_images[validation_shortname].extend(
                     original_validation_image_results
                 )
