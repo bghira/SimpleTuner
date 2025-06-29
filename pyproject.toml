@@ -9,7 +9,7 @@ package-mode = false
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.13"
-torch = "^2.7.0"
+torch = { version = "2.7.0+cu128", source = "pytorch" }
 torchvision = "^0.22.0"
 diffusers = {git = "https://github.com/huggingface/diffusers"}
 transformers = "^4.51.1"
@@ -68,4 +68,4 @@ build-backend = "poetry.core.masonry.api"
 [[tool.poetry.source]]
 priority = "supplemental"
 name = "pytorch"
-url = "https://download.pytorch.org/whl/cu124"
+url = "https://download.pytorch.org/whl/cu128"

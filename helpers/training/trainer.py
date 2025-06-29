@@ -25,6 +25,7 @@ from helpers.training.state_tracker import StateTracker
 from helpers.training.custom_schedule import get_lr_scheduler
 from helpers.training.optimizer_param import (
     determine_optimizer_class_with_config,
+    create_optimizer_with_param_groups,
     determine_params_to_optimize,
     is_lr_scheduler_disabled,
     is_lr_schedulefree,
@@ -985,7 +986,17 @@ class Trainer:
             logger.info(
                 f"DeepSpeed Optimizer arguments, weight_decay={self.config.adam_weight_decay} eps={self.config.adam_epsilon}, extra_arguments={extra_optimizer_args}"
             )
-            self.optimizer = optimizer_class(self.params_to_optimize)
+            self.optimizer = create_optimizer_with_param_groups(
+                self.model.get_trained_component(),
+                optimizer_class,
+                self.params_to_optimize,
+                use_parameter_groups=True,  # Enable weight decay separation
+                cpu_offload_config=(
+                    {"offload_mechanism": self.config.optimizer_offload_mechanism}
+                    if self.config.optimizer_offload_mechanism
+                    else None
+                ),
+            )
         else:
             logger.info(f"Optimizer arguments={extra_optimizer_args}")
             if self.config.train_text_encoder and self.config.text_encoder_lr:
