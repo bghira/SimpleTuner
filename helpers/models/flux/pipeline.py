@@ -1709,6 +1709,8 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                 extra_transformer_args = {}
                 if prompt_mask is not None:
                     # Expand attention mask to match the actual batch size
+                    if prompt_mask.dim() == 3 and prompt_mask.size(1) == 1:
+                        prompt_mask = prompt_mask.squeeze(1)  # [1, 1, 512] -> [1, 512]
                     if prompt_mask.size(0) == 1 and latents.size(0) > 1:
                         prompt_mask = prompt_mask.expand(latents.size(0), -1, -1)
                     extra_transformer_args["attention_mask"] = prompt_mask.to(
@@ -1738,6 +1740,10 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                 # TODO optionally use batch prediction to speed this up.
                 if guidance_scale_real > 1.0 and i >= no_cfg_until_timestep:
                     if negative_mask is not None:
+                        if negative_mask.dim() == 3 and negative_mask.size(1) == 1:
+                            negative_mask = negative_mask.squeeze(
+                                1
+                            )  # [1, 1, 512] -> [1, 512]
                         if negative_mask.size(0) == 1 and latents.size(0) > 1:
                             negative_mask = negative_mask.expand(
                                 latents.size(0), -1, -1
