@@ -274,10 +274,17 @@ def compute_prompt_embeddings(captions, text_embed_cache, model):
             transformed_encoder_output["pooled_prompt_embeds"] = torch.stack(
                 [t["pooled_prompt_embeds"] for t in text_encoder_output]
             )
+        # compatibility for old style
         if "attention_mask" in text_encoder_output[0]:
             transformed_encoder_output["attention_masks"] = torch.stack(
                 [t["attention_mask"] for t in text_encoder_output]
             )
+        # new style
+        if "attention_masks" in text_encoder_output[0]:
+            transformed_encoder_output["attention_masks"] = torch.stack(
+                [t["attention_masks"] for t in text_encoder_output]
+            )
+
         if "time_ids" in text_encoder_output[0]:
             transformed_encoder_output["time_ids"] = torch.stack(
                 [t["time_ids"] for t in text_encoder_output]
