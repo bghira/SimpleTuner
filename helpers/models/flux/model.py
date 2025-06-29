@@ -210,13 +210,15 @@ class Flux(ImageModelFoundation):
 
     def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
+        # Only unsqueeze if it's missing the batch dimension
+        attention_mask = text_embedding.get("attention_masks", None)
+        if attention_mask.dim() == 1:  # Shape: [512]
+            attention_mask = attention_mask.unsqueeze(0)  # Shape: [1, 512]
         return {
             "prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
             "pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0),
             "prompt_mask": (
-                text_embedding["attention_masks"].unsqueeze(0)
-                if self.config.flux_attention_masked_training
-                else None
+                attention_mask if self.config.flux_attention_masked_training else None
             ),
         }
 
@@ -230,15 +232,17 @@ class Flux(ImageModelFoundation):
         ):
             # CFG is disabled, no negative prompts.
             return {}
+        # Only unsqueeze if it's missing the batch dimension
+        attention_mask = text_embedding.get("attention_masks", None)
+        if attention_mask.dim() == 1:  # Shape: [512]
+            attention_mask = attention_mask.unsqueeze(0)  # Shape: [1, 512]
         return {
             "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
             "negative_pooled_prompt_embeds": text_embedding[
                 "pooled_prompt_embeds"
             ].unsqueeze(0),
             "negative_mask": (
-                text_embedding["attention_masks"].unsqueeze(0)
-                if self.config.flux_attention_masked_training
-                else None
+                attention_mask if self.config.flux_attention_masked_training else None
             ),
             "guidance_scale_real": float(self.config.validation_guidance_real),
             "no_cfg_until_timestep": int(self.config.validation_no_cfg_until_timestep),
@@ -401,14 +405,15 @@ class Flux(ImageModelFoundation):
             "return_dict": False,
         }
         if self.config.flux_attention_masked_training:
-            flux_transformer_kwargs["attention_mask"] = prepared_batch[
-                "encoder_attention_mask"
-            ]
-            if flux_transformer_kwargs["attention_mask"] is None:
+            attention_mask = prepared_batch["encoder_attention_mask"]
+            if attention_mask is None:
                 raise ValueError(
                     "No attention mask was discovered when attempting validation - this means you need to recreate your text embed cache."
                 )
-
+            # Squeeze out the extra dimension if present
+            if attention_mask.dim() == 3 and attention_mask.size(1) == 1:
+                attention_mask = attention_mask.squeeze(1)  # [B, 1, S] -> [B, S]
+        flux_transformer_kwargs["attention_mask"] = attention_mask
         model_pred = self.get_trained_component()(**flux_transformer_kwargs)[0]
         # Drop the reference-image tokens before unpacking
         if use_cond and self.config.model_flavour == "kontext":
