@@ -75,6 +75,7 @@ def build_kontext_inputs(
     cond_latents: list[torch.Tensor],
     dtype: torch.dtype,
     device: torch.device,
+    latent_channels: int,
 ):
     """
     Args
@@ -82,6 +83,7 @@ def build_kontext_inputs(
     cond_latents : (B, C, H, W)  – already VAE-encoded by VAECache
     dtype        : dtype to use (match main latents)
     device       : target device
+    latent_channels: number of channels in the latent (16 for Flux)
 
     Returns
     -------
