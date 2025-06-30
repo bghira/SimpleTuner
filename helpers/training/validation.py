@@ -688,11 +688,28 @@ class Validation:
         # Create a drawing object
         draw = ImageDraw.Draw(new_image)
 
-        # Use a default font
-        try:
-            font = ImageFont.truetype("arial.ttf", 36)
-        except IOError:
-            font = ImageFont.load_default()
+        # Try to use a larger, more universally available font
+        font = None
+        font_candidates = [
+            "DejaVuSans-Bold.ttf",
+            "DejaVuSans.ttf",
+            "LiberationSans-Regular.ttf",
+            "Arial.ttf",
+            "arial.ttf",
+            "FreeSans.ttf",
+            "NotoSans-Regular.ttf",
+        ]
+        for font_name in font_candidates:
+            try:
+                font = ImageFont.truetype(font_name, 28)
+                break
+            except IOError:
+                continue
+        if font is None:
+            try:
+                font = ImageFont.load_default()
+            except Exception:
+                font = None  # Last resort, will error if used
 
         # Add text to the left image
         if labels[0] is not None:
@@ -857,7 +874,7 @@ class Validation:
                 self.validation_images = None
                 return self
             self.setup_scheduler()
-            self.process_prompts()
+            self.process_prompts(validation_type=validation_type)
             self.finalize_validation(validation_type)
             if self.evaluation_result is not None:
                 logger.info(f"Evaluation result: {self.evaluation_result}")
@@ -982,7 +999,7 @@ class Validation:
             del self.model.pipeline
             self.model.pipeline = None
 
-    def process_prompts(self):
+    def process_prompts(self, validation_type: str = None):
         """Processes each validation prompt and logs the result."""
         self.validation_prompt_dict = {}
         self.evaluation_result = None
@@ -1030,7 +1047,9 @@ class Validation:
                 stitched_validation_images,
                 checkpoint_validation_images,
                 ema_validation_images,
-            ) = self.validate_prompt(prompt, shortname, validation_input_image)
+            ) = self.validate_prompt(
+                prompt, shortname, validation_input_image, validation_type
+            )
             validation_images.update(stitched_validation_images)
             if isinstance(self.model, VideoModelFoundation):
                 self._save_videos(validation_images, shortname, prompt)
@@ -1054,6 +1073,125 @@ class Validation:
 
     def clear_eval_result(self):
         self.evaluation_result = None
+
+    def stitch_three_images(
+        self,
+        left_image,
+        middle_image,
+        right_image,
+        separator_width=5,
+        labels=[None, None, None],
+    ):
+        """
+        Stitch three images horizontally with proper spacing and optional labels.
+        Handles different sizes by centering vertically.
+
+        Args:
+            left_image: First image (e.g., input)
+            middle_image: Second image (e.g., output)
+            right_image: Third image (e.g., benchmark)
+            separator_width: Width of separator between images
+            labels: Text labels for [left, middle, right] images
+        """
+        left_width, left_height = left_image.size
+        middle_width, middle_height = middle_image.size
+        right_width, right_height = right_image.size
+
+        # Calculate new canvas dimensions
+        new_width = (
+            left_width + separator_width + middle_width + separator_width + right_width
+        )
+        new_height = max(left_height, middle_height, right_height)
+
+        # Create new image with white background
+        new_image = Image.new("RGB", (new_width, new_height), color="white")
+
+        # Calculate vertical positions for centering
+        left_y = (new_height - left_height) // 2
+        middle_y = (new_height - middle_height) // 2
+        right_y = (new_height - right_height) // 2
+
+        # Calculate horizontal positions
+        left_x = 0
+        middle_x = left_width + separator_width
+        right_x = middle_x + middle_width + separator_width
+
+        # Paste all three images
+        new_image.paste(left_image, (left_x, left_y))
+        new_image.paste(middle_image, (middle_x, middle_y))
+        new_image.paste(right_image, (right_x, right_y))
+
+        # Create drawing object
+        draw = ImageDraw.Draw(new_image)
+
+        # Draw separators
+        line_color = (200, 200, 200)  # Light gray
+        # First separator
+        for i in range(separator_width):
+            x = left_width + i
+            draw.line([(x, 0), (x, new_height)], fill=line_color)
+        # Second separator
+        for i in range(separator_width):
+            x = middle_x + middle_width + i
+            draw.line([(x, 0), (x, new_height)], fill=line_color)
+
+        # Add labels if provided
+        # Try to use a larger, more universally available font
+        font = None
+        font_candidates = [
+            "DejaVuSans-Bold.ttf",
+            "DejaVuSans.ttf",
+            "LiberationSans-Regular.ttf",
+            "Arial.ttf",
+            "arial.ttf",
+            "FreeSans.ttf",
+            "NotoSans-Regular.ttf",
+        ]
+        for font_name in font_candidates:
+            try:
+                font = ImageFont.truetype(font_name, 28)
+                break
+            except IOError:
+                continue
+        if font is None:
+            # As a fallback, create a simple default font with a larger size
+            try:
+                # Try to use PIL's default font but scale it up
+                font = ImageFont.load_default()
+            except Exception:
+                font = None  # Last resort, will error if used
+
+        if labels[0] is not None:
+            draw.text(
+                (left_x + 10, 10),
+                labels[0],
+                fill=(255, 255, 255),
+                font=font,
+                stroke_width=2,
+                stroke_fill=(0, 0, 0),
+            )
+
+        if labels[1] is not None:
+            draw.text(
+                (middle_x + 10, 10),
+                labels[1],
+                fill=(255, 255, 255),
+                font=font,
+                stroke_width=2,
+                stroke_fill=(0, 0, 0),
+            )
+
+        if labels[2] is not None:
+            draw.text(
+                (right_x + 10, 10),
+                labels[2],
+                fill=(255, 255, 255),
+                font=font,
+                stroke_width=2,
+                stroke_fill=(0, 0, 0),
+            )
+
+        return new_image
 
     def stitch_conditioning_images(self, validation_image_results, conditioning_image):
         """
@@ -1196,7 +1334,11 @@ class Validation:
         return types
 
     def validate_prompt(
-        self, prompt, validation_shortname, validation_input_image=None
+        self,
+        prompt,
+        validation_shortname,
+        validation_input_image=None,
+        validation_type=None,
     ):
         """Generate validation images for a single prompt."""
         # Placeholder for actual image generation and logging
@@ -1441,66 +1583,99 @@ class Validation:
                     if current_validation_type == "ema":
                         self.disable_ema_for_inference()
 
+                # Keep the original unstitched results for checkpoint storage and benchmark comparison
                 # Retrieve the default image result for stitching
                 ema_image_results = all_validation_type_results.get("ema")
                 validation_image_results = all_validation_type_results.get(
                     "checkpoint", ema_image_results
                 )
                 original_validation_image_results = validation_image_results
+                display_validation_results = validation_image_results.copy()
+                if validation_type != "base_model":
+                    # The logic flow is:
+                    # 1. If controlnet/control: stitch conditioning image to the left
+                    # 2. Otherwise check for input stitching + benchmark:
+                    #    - Both: create [input | output | benchmark] with labels only on outer images
+                    #    - Input only: create [input | output] with labels
+                    #    - Benchmark only: create [output | benchmark] with labels
+                    # 3. Original images are always preserved for checkpoint storage
 
-                # First, apply validation input stitching if configured
-                if (
-                    hasattr(self.config, "validation_stitch_input_location")
-                    and self.config.validation_stitch_input_location == "left"
-                    and validation_input_image is not None
-                ):
-                    validation_image_results = [
-                        self.stitch_validation_input_image(
-                            validation_image_result=img,
-                            validation_input_image=validation_input_image,
-                            labels=["input", None],
+                    # First, check if we need validation input stitching
+                    has_input_stitching = (
+                        hasattr(self.config, "validation_stitch_input_location")
+                        and self.config.validation_stitch_input_location == "left"
+                        and validation_input_image is not None
+                    )
+
+                    # Check if we'll be adding benchmark
+                    will_add_benchmark = False
+                    benchmark_image = None
+                    if not self.config.disable_benchmark and self.benchmark_exists(
+                        "base_model"
+                    ):
+                        benchmark_image = self._benchmark_image(
+                            validation_shortname, resolution
                         )
-                        for img in validation_image_results
-                    ]
+                        will_add_benchmark = benchmark_image is not None
 
-                # Then apply controlnet stitching if needed
-                elif any([self.config.controlnet, self.config.control]):
-                    validation_image_results = self.stitch_conditioning_images(
-                        original_validation_image_results,
-                        extra_validation_kwargs["control_image"],
-                    )
-
-                # Finally apply benchmark stitching if enabled
-                # Note: If validation input stitching was applied, benchmark will be stitched to the right of that
-                if not self.config.disable_benchmark and self.benchmark_exists(
-                    "base_model"
-                ):
-                    benchmark_image = self._benchmark_image(
-                        validation_shortname, resolution
-                    )
-                    if benchmark_image is not None:
-                        for idx, validation_image in enumerate(
-                            validation_image_results
-                        ):
-                            validation_image_results[idx] = self.stitch_benchmark_image(
-                                validation_image_result=validation_image,
-                                benchmark_image=benchmark_image,
-                                labels=(
-                                    ["checkpoint", "base model"]
-                                    if not (
-                                        hasattr(
-                                            self.config, "validation_stitch_input_left"
-                                        )
-                                        and self.config.validation_stitch_input_left
-                                    )
-                                    else [None, "base model"]
-                                ),
+                    if has_input_stitching and not will_add_benchmark:
+                        # Only input stitching, no benchmark
+                        display_validation_results = [
+                            self.stitch_validation_input_image(
+                                validation_image_result=img,
+                                validation_input_image=validation_input_image,
+                                labels=(["input", "output"]),
                             )
+                            for img in display_validation_results
+                        ]
+
+                    # Apply controlnet stitching if needed (using original results)
+                    if any([self.config.controlnet, self.config.control]):
+                        # For controlnet, we stitch to the original results
+                        display_validation_results = self.stitch_conditioning_images(
+                            original_validation_image_results,
+                            extra_validation_kwargs["control_image"],
+                        )
+
+                    # Apply benchmark stitching if we determined we have a benchmark
+                    if will_add_benchmark:
+                        if has_input_stitching:
+                            # Three-way stitch: input | output | benchmark
+                            for idx, original_img in enumerate(
+                                original_validation_image_results
+                            ):
+                                labels_to_use = [
+                                    "input",
+                                    "base weights",
+                                    f"step {StateTracker.get_global_step()}",
+                                ]
+
+                                display_validation_results[idx] = (
+                                    self.stitch_three_images(
+                                        left_image=validation_input_image,
+                                        middle_image=original_img,
+                                        right_image=benchmark_image,
+                                        labels=labels_to_use,
+                                    )
+                                )
+                        else:
+                            # No input stitching, just stitch benchmark to output
+                            for idx, original_img in enumerate(
+                                original_validation_image_results
+                            ):
+                                display_validation_results[idx] = (
+                                    self.stitch_benchmark_image(
+                                        validation_image_result=original_img,
+                                        benchmark_image=benchmark_image,
+                                    )
+                                )
+
+                # Use original results for checkpoint storage, display results for viewing
                 checkpoint_validation_images[validation_shortname].extend(
                     original_validation_image_results
                 )
                 stitched_validation_images[validation_shortname].extend(
-                    validation_image_results
+                    display_validation_results
                 )
                 if self.config.use_ema:
                     if (
