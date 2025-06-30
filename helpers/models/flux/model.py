@@ -413,7 +413,7 @@ class Flux(ImageModelFoundation):
             # Squeeze out the extra dimension if present
             if attention_mask.dim() == 3 and attention_mask.size(1) == 1:
                 attention_mask = attention_mask.squeeze(1)  # [B, 1, S] -> [B, S]
-        flux_transformer_kwargs["attention_mask"] = attention_mask
+            flux_transformer_kwargs["attention_mask"] = attention_mask
         model_pred = self.get_trained_component()(**flux_transformer_kwargs)[0]
         # Drop the reference-image tokens before unpacking
         if use_cond and self.config.model_flavour == "kontext":
