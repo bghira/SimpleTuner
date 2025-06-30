@@ -5038,31 +5038,6 @@ tests = ["autopep8", "isort", "llnl-hatchet", "numpy", "pytest", "pytest-forked"
 tutorials = ["matplotlib", "pandas", "tabulate"]
 
 [[package]]
-name = "triton-library"
-version = "1.0.0rc4"
-description = "Triton is a dynamic binary analysis library"
-optional = false
-python-versions = ">=3.6"
-groups = ["main"]
-files = [
-    {file = "triton_library-1.0.0rc4-cp310-cp310-macosx_12_0_x86_64.whl", hash = "sha256:cc5ef22807e5f46daeef4ee2acc620d10139f223af0fc3b9780445cd545983f0"},
-    {file = "triton_library-1.0.0rc4-cp310-cp310-manylinux_2_31_x86_64.whl", hash = "sha256:09bf0d93a35898335871b4df1a8a9d8cfceecb23c8e19348d78f8919dff4625d"},
-    {file = "triton_library-1.0.0rc4-cp310-cp310-win_amd64.whl", hash = "sha256:a817c8b272ad8c6229bf60b36d807dbdc0033b9012abfa57c0f18fd35a1c3ca4"},
-    {file = "triton_library-1.0.0rc4-cp311-cp311-manylinux_2_31_x86_64.whl", hash = "sha256:f4f650cb5492e5986df547317b81fa08af283fbc768db94df0b2e367755bff80"},
-    {file = "triton_library-1.0.0rc4-cp311-cp311-win_amd64.whl", hash = "sha256:f1bdfb91116afa83e0a2a24618797117f691bf7ae5b1e117193dc05815fcf905"},
-    {file = "triton_library-1.0.0rc4-cp312-cp312-manylinux_2_34_x86_64.whl", hash = "sha256:e0f828c8c1c037ccf8881d1b9e2a8565791e31d1594bd548b168bbfddcc653a5"},
-    {file = "triton_library-1.0.0rc4-cp312-cp312-win_amd64.whl", hash = "sha256:fad5f5727a560ce5cffa59e0a8bbae2bcfbe63e81caec20a36bc11a72599d3fc"},
-    {file = "triton_library-1.0.0rc4-cp313-cp313-manylinux_2_34_x86_64.whl", hash = "sha256:f3599dd7ec00d2f782a26b32d4e08cde32014958a437ad96ad812f8b75cf1906"},
-    {file = "triton_library-1.0.0rc4-cp313-cp313-win_amd64.whl", hash = "sha256:0ebca4aa755b9bf3080e99fc594797c7ddd9c72b751b11e2b2c0068ae199ee15"},
-    {file = "triton_library-1.0.0rc4-cp38-cp38-macosx_12_0_x86_64.whl", hash = "sha256:704ceaefb6b68130d7c0d9fafd31f4993aae9b5bbc07be3d5e09cc691c4f9584"},
-    {file = "triton_library-1.0.0rc4-cp38-cp38-manylinux_2_31_x86_64.whl", hash = "sha256:d57684be51b32c79c8773ee570f88af44422e3581c1d3cc17a027c10de07d2a5"},
-    {file = "triton_library-1.0.0rc4-cp38-cp38-win_amd64.whl", hash = "sha256:454fe2bc137642a8b57ad7d2ba16cf6775359e7255e676a0b6f6e42544bbeb6e"},
-    {file = "triton_library-1.0.0rc4-cp39-cp39-macosx_12_0_x86_64.whl", hash = "sha256:898f1501ecbe5cfd806842c0b013576a74ea64e2eae1d71431ab3fa2dcc0dbcf"},
-    {file = "triton_library-1.0.0rc4-cp39-cp39-manylinux_2_31_x86_64.whl", hash = "sha256:7008acf585f52b590f816bb0c4e3bfb591785dea6925b4a23b08cad4d3d4032e"},
-    {file = "triton_library-1.0.0rc4-cp39-cp39-win_amd64.whl", hash = "sha256:1b7737ed37f5a8150d4fb4ee3b9be543697ada71050a01c63b7ef09aa49c5b20"},
-]
-
-[[package]]
 name = "typepy"
 version = "1.3.4"
 description = "typepy is a Python library for variable type checker/validator/converter at a run time."
@@ -5862,4 +5837,4 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<3.13"
-content-hash = "a5b9e64316ab3117fd8ec007f649a8b2a06bd7cf1682eff99210ecc72b7ccba6"
+content-hash = "5568cbd30515ea10a82a3aa36742fafe2d0dab1d10c01334edc7335521487f53"
