@@ -1513,13 +1513,6 @@ class Validation:
                 logger.debug(
                     f"Image being generated with parameters: {pipeline_kwargs}"
                 )
-                # Print the device attr of any parameters that have one
-                # for key, value in pipeline_kwargs.items():
-                #     if hasattr(value, "device"):
-                #         logger.debug(f"Device for {key}: {value.device}")
-                # for key, value in self.model.pipeline.components.items():
-                #     if hasattr(value, "device"):
-                #         logger.debug(f"Device for {key}: {value.device}")
                 if self.config.model_family == "sana":
                     pipeline_kwargs["complex_human_instruction"] = (
                         self.config.sana_complex_human_instruction
@@ -1591,6 +1584,15 @@ class Validation:
                 )
                 original_validation_image_results = validation_image_results
                 display_validation_results = validation_image_results.copy()
+
+                # Store EMA results separately
+                if self.config.use_ema and ema_image_results is not None:
+                    if ema_validation_images[validation_shortname] is None:
+                        ema_validation_images[validation_shortname] = []
+                    ema_validation_images[validation_shortname].extend(
+                        ema_image_results
+                    )
+
                 if validation_type != "base_model":
                     # The logic flow is:
                     # 1. If controlnet/control: stitch conditioning image to the left
@@ -1653,8 +1655,8 @@ class Validation:
                                 display_validation_results[idx] = (
                                     self.stitch_three_images(
                                         left_image=validation_input_image,
-                                        middle_image=original_img,
-                                        right_image=benchmark_image,
+                                        middle_image=benchmark_image,
+                                        right_image=original_img,
                                         labels=labels_to_use,
                                     )
                                 )
@@ -1665,10 +1667,85 @@ class Validation:
                             ):
                                 display_validation_results[idx] = (
                                     self.stitch_benchmark_image(
-                                        validation_image_result=original_img,
-                                        benchmark_image=benchmark_image,
+                                        validation_image_result=benchmark_image,
+                                        benchmark_image=original_img,
                                     )
                                 )
+
+                    # Handle EMA comparison stitching
+                    if (
+                        self.config.use_ema
+                        and self.config.ema_validation == "comparison"
+                        and ema_image_results is not None
+                    ):
+                        # Create new display results that include EMA comparison
+                        ema_display_results = []
+                        for idx, display_img in enumerate(display_validation_results):
+                            # Get the original EMA result
+                            ema_img = ema_image_results[idx]
+
+                            # Stitch EMA to the already-stitched display image
+                            ema_stitched = self.stitch_benchmark_image(
+                                validation_image_result=ema_img,
+                                benchmark_image=display_img,
+                                labels=[None, "EMA"],
+                            )
+                            ema_display_results.append(ema_stitched)
+
+                        # Replace display results with EMA comparison results
+                        display_validation_results = ema_display_results
+
+                    # Add the validation prompt to the bottom of the entire image using a decent looking font, in a margin, centred width-wise.
+                    # Scan for fonts to use available.
+                    font = None
+                    font_candidates = [
+                        "DejaVuSans-Bold.ttf",
+                        "DejaVuSans.ttf",
+                        "LiberationSans-Regular.ttf",
+                        "Arial.ttf",
+                        "arial.ttf",
+                        "FreeSans.ttf",
+                        "NotoSans-Regular.ttf",
+                    ]
+                    for font_name in font_candidates:
+                        try:
+                            font = ImageFont.truetype(font_name, 36)
+                            break
+                        except IOError:
+                            continue
+                    if font is None:
+                        # As a fallback, create a simple default font with a larger size
+                        try:
+                            # Try to use PIL's default font but scale it up
+                            font = ImageFont.load_default()
+                        except Exception:
+                            font = None
+                    if font is not None:
+                        # Add the validation prompt text to the bottom of each image
+                        for idx, validation_image in enumerate(
+                            display_validation_results
+                        ):
+                            draw = ImageDraw.Draw(validation_image)
+                            text = f"Prompt: {prompt}"
+                            # Use textbbox if available (Pillow >=8.0), else fallback to font.getsize
+                            try:
+                                bbox = draw.textbbox((0, 0), text, font=font)
+                                text_width = bbox[2] - bbox[0]
+                                text_height = bbox[3] - bbox[1]
+                            except AttributeError:
+                                text_width, text_height = font.getsize(text)
+                            margin = 10
+                            # Calculate position to center the text
+                            x = (validation_image.width - text_width) // 2
+                            y = validation_image.height - text_height - margin
+                            draw.text(
+                                (x, y),
+                                text,
+                                fill=(255, 255, 255),
+                                font=font,
+                                stroke_width=2,
+                                stroke_fill=(0, 0, 0),
+                            )
 
                 # Use original results for checkpoint storage, display results for viewing
                 checkpoint_validation_images[validation_shortname].extend(
@@ -1677,21 +1754,6 @@ class Validation:
                 stitched_validation_images[validation_shortname].extend(
                     display_validation_results
                 )
-                if self.config.use_ema:
-                    if (
-                        validation_shortname in ema_validation_images
-                        and ema_image_results is not None
-                    ):
-                        if ema_validation_images[validation_shortname] is None:
-                            # init the value
-                            ema_validation_images[validation_shortname] = []
-                        if isinstance(
-                            ema_validation_images[validation_shortname], list
-                        ):
-                            # if we have a list of images, we can stitch them.
-                            ema_validation_images[validation_shortname].extend(
-                                ema_image_results
-                            )
 
             except Exception as e:
                 import traceback
@@ -1700,25 +1762,6 @@ class Validation:
                     f"Error generating validation image: {e}, {traceback.format_exc()}"
                 )
                 continue
-        if (
-            self.config.use_ema
-            and self.config.ema_validation == "comparison"
-            and benchmark_image is not None
-        ):
-            for idx, validation_image in enumerate(
-                stitched_validation_images[validation_shortname]
-            ):
-                stitched_validation_images[validation_shortname][idx] = (
-                    self.stitch_benchmark_image(
-                        validation_image_result=ema_validation_images[
-                            validation_shortname
-                        ][idx],
-                        benchmark_image=stitched_validation_images[
-                            validation_shortname
-                        ][idx],
-                        labels=[None, "EMA"],
-                    )
-                )
 
         return (
             stitched_validation_images,
