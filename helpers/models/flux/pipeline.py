@@ -2213,6 +2213,8 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         with torch.no_grad():
             z = self.vae.encode(img).latent_dist.sample().to(dtype)  # (1,C,H/8,W/8)
 
+        z = (z - self.vae.config.shift_factor) * self.vae.config.scaling_factor
+
         # CRITICAL: Pack the latents properly!
         z = z.view(1, self.latent_channels, H // 2, 2, W // 2, 2)
         z = z.permute(0, 2, 4, 1, 3, 5).reshape(
@@ -2557,6 +2559,7 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         latent_image_ids = latent_image_ids.to(device)[0]
         # expand to include batch dim
         latent_image_ids = latent_image_ids.unsqueeze(0)
+
         timesteps = timesteps.to(device)
         text_ids = text_ids.to(device)[0]
 
