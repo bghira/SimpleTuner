@@ -1653,8 +1653,8 @@ class Validation:
                                 display_validation_results[idx] = (
                                     self.stitch_three_images(
                                         left_image=validation_input_image,
-                                        middle_image=original_img,
-                                        right_image=benchmark_image,
+                                        middle_image=benchmark_image,
+                                        right_image=original_img,
                                         labels=labels_to_use,
                                     )
                                 )
