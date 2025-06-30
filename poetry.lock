@@ -1827,7 +1827,7 @@ source = ["Cython (>=3.0.11,<3.1.0)"]
 
 [[package]]
 name = "lycoris_lora"
-version = "3.2.0.dev2"
+version = "3.2.0.post2"
 description = "Lora beYond Conventional methods, Other Rank adaptation Implementations for Stable diffusion"
 optional = false
 python-versions = ">=3.10"
