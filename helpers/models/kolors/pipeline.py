@@ -19,7 +19,7 @@ import torch
 
 from diffusers.callbacks import MultiPipelineCallbacks, PipelineCallback
 from diffusers.image_processor import PipelineImageInput, VaeImageProcessor
-from diffusers.loaders import StableDiffusionXLLoraLoaderMixin
+from helpers.models.sdxl.pipeline import StableDiffusionXLLoraLoaderMixin
 from diffusers.models import AutoencoderKL, UNet2DConditionModel
 from diffusers.models.attention_processor import (
     AttnProcessor2_0,
