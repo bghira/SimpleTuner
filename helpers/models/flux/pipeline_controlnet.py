@@ -104,7 +104,13 @@ TRANSFORMER_NAME = "transformer"
 
 _MODULE_NAME_TO_ATTRIBUTE_MAP_FLUX = {"x_embedder": "in_channels"}
 
-from helpers.models.flux.pipeline import calculate_shift, retrieve_latents, retrieve_timesteps, FluxLoraLoaderMixin, FluxPipelineOutput
+from helpers.models.flux.pipeline import (
+    calculate_shift,
+    retrieve_latents,
+    retrieve_timesteps,
+    FluxLoraLoaderMixin,
+    FluxPipelineOutput,
+)
 
 EXAMPLE_DOC_STRING = """
     Examples:
@@ -135,6 +141,7 @@ EXAMPLE_DOC_STRING = """
         >>> image.save("flux.png")
         ```
 """
+
 
 class FluxControlNetPipeline(
     DiffusionPipeline, FluxLoraLoaderMixin, FromSingleFileMixin, FluxIPAdapterMixin

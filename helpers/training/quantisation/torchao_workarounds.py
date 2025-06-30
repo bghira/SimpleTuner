@@ -4,6 +4,7 @@ from torch import Tensor
 from typing import Optional
 from torchao.prototype.quantized_training.int8 import Int8QuantizedTrainingLinearWeight
 
+
 class _Int8WeightOnlyLinear(torch.autograd.Function):
     @staticmethod
     def forward(
@@ -32,7 +33,9 @@ class _Int8WeightOnlyLinear(torch.autograd.Function):
         grad_weight = grad_output.reshape(-1, weight.shape[0]).T @ input.to(
             grad_output.dtype
         ).reshape(-1, weight.shape[1])
-        grad_bias = grad_output.reshape(-1, weight.shape[0]).sum(0) if ctx.bias else None
+        grad_bias = (
+            grad_output.reshape(-1, weight.shape[0]).sum(0) if ctx.bias else None
+        )
         return grad_input, grad_weight, grad_bias
 
 
