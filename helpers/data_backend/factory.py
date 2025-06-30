@@ -618,6 +618,7 @@ def configure_multi_databackend(
                 max_pool_connections=backend.get(
                     "max_pool_connections", args.aws_max_pool_connections
                 ),
+                compress_cache=args.compress_disk_cache,
             )
             # S3 buckets use the aws_data_prefix as their prefix/ for all data.
             # Ensure we have a trailing slash on the prefix:
@@ -749,6 +750,7 @@ def configure_multi_databackend(
                 max_pool_connections=backend.get(
                     "max_pool_connections", args.aws_max_pool_connections
                 ),
+                compress_cache=args.compress_disk_cache,
             )
             # S3 buckets use the aws_data_prefix as their prefix/ for all data.
             # Ensure we have a trailing slash on the prefix:
