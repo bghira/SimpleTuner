@@ -1089,8 +1089,6 @@ class StableDiffusionPipeline(
             else None
         )
 
-        self.do_classifier_free_guidance = True if guidance_scale > 1.0 else False
-
         prompt_embeds, negative_prompt_embeds = self.encode_prompt(
             prompt,
             device,
