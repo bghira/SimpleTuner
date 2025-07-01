@@ -13,6 +13,7 @@ from transformers import (
     T5EncoderModel,
 )
 from diffusers import AutoencoderKL
+from diffusers.models.attention_processor import Attention
 from helpers.models.flux.transformer import FluxTransformer2DModel
 from helpers.models.flux.pipeline import FluxPipeline, FluxKontextPipeline
 from helpers.models.flux.pipeline_controlnet import (
@@ -158,7 +159,6 @@ class Flux(ImageModelFoundation):
 
     def fuse_qkv_projections(self):
         if self.config.fuse_qkv_projections:
-            from diffusers.models.attention_processor import Attention
             from helpers.models.flux.attention import FluxFusedFlashAttnProcessor3
 
             if self.model is not None:
@@ -184,8 +184,6 @@ class Flux(ImageModelFoundation):
         """
         if not self.config.fuse_qkv_projections:
             return
-        from diffusers.models.attention_processor import Attention
-        from helpers.models.flux.attention import FluxFusedFlashAttnProcessor3
 
         if self.model is not None:
             logger.info("Temporarily unfusing QKV projections in the model..")
