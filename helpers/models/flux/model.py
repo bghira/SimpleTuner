@@ -178,7 +178,7 @@ class Flux(ImageModelFoundation):
                 self.controlnet.set_attn_processor(FluxFusedFlashAttnProcessor3())
             elif self.config.controlnet:
                 logger.warning(
-                    "Model does not support QKV projection fusing. Skipping."
+                    "ControlNet does not support QKV projection fusing. Skipping."
                 )
 
 
