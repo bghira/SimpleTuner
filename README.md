@@ -84,6 +84,7 @@ See [hardware requirements](#hidream) or the [quickstart guide](/documentation/q
 
 Full training support for Flux.1 is included:
 
+- Double the training speed of Flux.1 with the new `--fuse_qkv_projections` option, taking advantage of Flash Attention 3 on Hopper systems
 - ControlNet training via full-rank, LoRA or Lycoris
 - Instruct fine-tuning for the Kontext \[dev] editing model implementation generously provided by [Runware](https://runware.ai).
 - Classifier-free guidance training
