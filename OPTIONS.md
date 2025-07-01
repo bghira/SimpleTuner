@@ -30,6 +30,11 @@ The script `configure.py` in the project root can be used via `python configure.
 - **What**: Determines which model architecture is being trained.
 - **Choices**: pixart_sigma, flux, sd3, sdxl, kolors, legacy
 
+### `--fused_qkv_projections`
+
+- **What**: Fuses the QKV projections in the model's attention blocks to make more efficient use of hardware.
+- **Note**: Only available with NVIDIA H100 or H200 with Flash Attention 3 installed manually.
+
 ### `--offload_during_startup`
 
 - **What**: Offloads text encoder weights to CPU when VAE caching is going.
@@ -405,10 +410,10 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
                 --model_family
                 {sd1x,sd2x,sd3,deepfloyd,sana,sdxl,kolors,flux,wan,ltxvideo,pixart_sigma,omnigen,hidream,auraflow}
-                [--model_flavour {1.5,1.4,dreamshaper,realvis,digitaldiffusion,pseudoflex-v2,pseudojourney,2.1,2.0,medium,large,i-medium-400m,i-large-900m,i-xlarge-4.3b,ii-medium-450m,ii-large-1.2b,sana1.5-4.8b-1024,sana1.5-1.6b-1024,sana1.0-1.6b-2048,sana1.0-1.6b-1024,sana1.0-600m-1024,sana1.0-600m-512,base-1.0,refiner-1.0,base-0.9,refiner-0.9,1.0,dev,schnell,t2v-480p-1.3b-2.1,t2v-480p-14b-2.1,0.9.5,0.9.0,900M-1024-v0.6,900M-1024-v0.7-stage1,900M-1024-v0.7-stage2,600M-512,600M-1024,600M-2048,v1,dev,full,fast,v0.3,v0.2,v0.1}]
+                [--model_flavour {1.5,1.4,dreamshaper,realvis,digitaldiffusion,pseudoflex-v2,pseudojourney,2.1,2.0,medium,large,i-medium-400m,i-large-900m,i-xlarge-4.3b,ii-medium-450m,ii-large-1.2b,sana1.5-4.8b-1024,sana1.5-1.6b-1024,sana1.0-1.6b-2048,sana1.0-1.6b-1024,sana1.0-600m-1024,sana1.0-600m-512,base-1.0,refiner-1.0,base-0.9,refiner-0.9,1.0,dev,schnell,kontext,t2v-480p-1.3b-2.1,t2v-480p-14b-2.1,0.9.5,0.9.0,900M-1024-v0.6,900M-1024-v0.7-stage1,900M-1024-v0.7-stage2,600M-512,600M-1024,600M-2048,v1,dev,full,fast,v0.3,v0.2,v0.1}]
                 [--model_type {full,lora}] [--hidream_use_load_balancing_loss]
                 [--hidream_load_balancing_loss_weight HIDREAM_LOAD_BALANCING_LOSS_WEIGHT]
-                [--flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,nano}]
+                [--flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,nano,all+ffs+embedder,all+ffs+embedder+controlnet}]
                 [--flow_sigmoid_scale FLOW_SIGMOID_SCALE]
                 [--flux_fast_schedule] [--flow_use_uniform_schedule]
                 [--flow_use_beta_schedule]
@@ -432,8 +437,9 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--init_lora INIT_LORA] [--lora_rank LORA_RANK]
                 [--lora_alpha LORA_ALPHA] [--lora_dropout LORA_DROPOUT]
                 [--lycoris_config LYCORIS_CONFIG]
-                [--init_lokr_norm INIT_LOKR_NORM] [--controlnet]
-                [--controlnet_model_name_or_path]
+                [--init_lokr_norm INIT_LOKR_NORM] [--control] [--controlnet]
+                [--controlnet_custom_config CONTROLNET_CUSTOM_CONFIG]
+                [--controlnet_model_name_or_path CONTROLNET_MODEL_NAME_OR_PATH]
                 [--pretrained_model_name_or_path PRETRAINED_MODEL_NAME_OR_PATH]
                 [--pretrained_transformer_model_name_or_path PRETRAINED_TRANSFORMER_MODEL_NAME_OR_PATH]
                 [--pretrained_transformer_subfolder PRETRAINED_TRANSFORMER_SUBFOLDER]
@@ -495,7 +501,10 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--num_train_epochs NUM_TRAIN_EPOCHS]
                 [--max_train_steps MAX_TRAIN_STEPS] [--ignore_final_epochs]
                 [--checkpointing_steps CHECKPOINTING_STEPS]
+                [--checkpointing_rolling_steps CHECKPOINTING_ROLLING_STEPS]
+                [--checkpointing_use_tempdir]
                 [--checkpoints_total_limit CHECKPOINTS_TOTAL_LIMIT]
+                [--checkpoints_rolling_total_limit CHECKPOINTS_ROLLING_TOTAL_LIMIT]
                 [--resume_from_checkpoint RESUME_FROM_CHECKPOINT]
                 [--gradient_accumulation_steps GRADIENT_ACCUMULATION_STEPS]
                 [--gradient_checkpointing]
@@ -506,7 +515,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--lr_scheduler {linear,sine,cosine,cosine_with_restarts,polynomial,constant,constant_with_warmup}]
                 [--lr_warmup_steps LR_WARMUP_STEPS]
                 [--lr_num_cycles LR_NUM_CYCLES] [--lr_power LR_POWER]
-                [--distillation_method {perflow}]
+                [--distillation_method {dcm}]
                 [--distillation_config DISTILLATION_CONFIG] [--use_ema]
                 [--ema_device {cpu,accelerator}]
                 [--ema_validation {none,ema_only,comparison}] [--ema_cpu_only]
@@ -554,6 +563,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--validation_negative_prompt VALIDATION_NEGATIVE_PROMPT]
                 [--num_validation_images NUM_VALIDATION_IMAGES]
                 [--validation_disable] [--validation_steps VALIDATION_STEPS]
+                [--validation_stitch_input_location {left,right}]
                 [--eval_steps_interval EVAL_STEPS_INTERVAL]
                 [--eval_timesteps EVAL_TIMESTEPS]
                 [--num_eval_images NUM_EVAL_IMAGES]
@@ -573,11 +583,12 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--text_encoder_2_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,fp8-quanto,fp8uz-quanto,fp8-torchao}]
                 [--text_encoder_3_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,fp8-quanto,fp8uz-quanto,fp8-torchao}]
                 [--text_encoder_4_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,fp8-quanto,fp8uz-quanto,fp8-torchao}]
-                [--local_rank LOCAL_RANK]
+                [--local_rank LOCAL_RANK] [--fuse_qkv_projections]
                 [--attention_mechanism {diffusers,xformers,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}]
                 [--sageattention_usage {training,inference,training+inference}]
                 [--set_grads_to_none] [--noise_offset NOISE_OFFSET]
                 [--noise_offset_probability NOISE_OFFSET_PROBABILITY]
+                [--masked_loss_probability MASKED_LOSS_PROBABILITY]
                 [--validation_guidance VALIDATION_GUIDANCE]
                 [--validation_guidance_real VALIDATION_GUIDANCE_REAL]
                 [--validation_no_cfg_until_timestep VALIDATION_NO_CFG_UNTIL_TIMESTEP]
@@ -622,7 +633,7 @@ options:
                         soft min SNR calculation method.
   --model_family {sd1x,sd2x,sd3,deepfloyd,sana,sdxl,kolors,flux,wan,ltxvideo,pixart_sigma,omnigen,hidream,auraflow}
                         The model family to train. This option is required.
-  --model_flavour {1.5,1.4,dreamshaper,realvis,digitaldiffusion,pseudoflex-v2,pseudojourney,2.1,2.0,medium,large,i-medium-400m,i-large-900m,i-xlarge-4.3b,ii-medium-450m,ii-large-1.2b,sana1.5-4.8b-1024,sana1.5-1.6b-1024,sana1.0-1.6b-2048,sana1.0-1.6b-1024,sana1.0-600m-1024,sana1.0-600m-512,base-1.0,refiner-1.0,base-0.9,refiner-0.9,1.0,dev,schnell,t2v-480p-1.3b-2.1,t2v-480p-14b-2.1,0.9.5,0.9.0,900M-1024-v0.6,900M-1024-v0.7-stage1,900M-1024-v0.7-stage2,600M-512,600M-1024,600M-2048,v1,dev,full,fast,v0.3,v0.2,v0.1}
+  --model_flavour {1.5,1.4,dreamshaper,realvis,digitaldiffusion,pseudoflex-v2,pseudojourney,2.1,2.0,medium,large,i-medium-400m,i-large-900m,i-xlarge-4.3b,ii-medium-450m,ii-large-1.2b,sana1.5-4.8b-1024,sana1.5-1.6b-1024,sana1.0-1.6b-2048,sana1.0-1.6b-1024,sana1.0-600m-1024,sana1.0-600m-512,base-1.0,refiner-1.0,base-0.9,refiner-0.9,1.0,dev,schnell,kontext,t2v-480p-1.3b-2.1,t2v-480p-14b-2.1,0.9.5,0.9.0,900M-1024-v0.6,900M-1024-v0.7-stage1,900M-1024-v0.7-stage2,600M-512,600M-1024,600M-2048,v1,dev,full,fast,v0.3,v0.2,v0.1}
                         Certain models require designating a given flavour to
                         reference configurations from. The value for this
                         depends on the model that is selected. Currently
@@ -635,13 +646,13 @@ options:
                         'sana1.0-1.6b-2048', 'sana1.0-1.6b-1024',
                         'sana1.0-600m-1024', 'sana1.0-600m-512'] sdxl:
                         ['base-1.0', 'refiner-1.0', 'base-0.9', 'refiner-0.9']
-                        kolors: ['1.0'] flux: ['dev', 'schnell'] wan:
-                        ['t2v-480p-1.3b-2.1', 't2v-480p-14b-2.1'] ltxvideo:
-                        ['0.9.5', '0.9.0'] pixart_sigma: ['900M-1024-v0.6',
-                        '900M-1024-v0.7-stage1', '900M-1024-v0.7-stage2',
-                        '600M-512', '600M-1024', '600M-2048'] omnigen: ['v1']
-                        hidream: ['dev', 'full', 'fast'] auraflow: ['v0.3',
-                        'v0.2', 'v0.1']
+                        kolors: ['1.0'] flux: ['dev', 'schnell', 'kontext']
+                        wan: ['t2v-480p-1.3b-2.1', 't2v-480p-14b-2.1']
+                        ltxvideo: ['0.9.5', '0.9.0'] pixart_sigma:
+                        ['900M-1024-v0.6', '900M-1024-v0.7-stage1',
+                        '900M-1024-v0.7-stage2', '600M-512', '600M-1024',
+                        '600M-2048'] omnigen: ['v1'] hidream: ['dev', 'full',
+                        'fast'] auraflow: ['v0.3', 'v0.2', 'v0.1']
   --model_type {full,lora}
                         The training type to use. 'full' will train the full
                         model, while 'lora' will train the LoRA model. LoRA is
@@ -653,7 +664,7 @@ options:
                         When set, will use augment the load balancing loss for
                         HiDream training. This is an experimental
                         implementation.
-  --flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,nano}
+  --flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,nano,all+ffs+embedder,all+ffs+embedder+controlnet}
                         This option only applies to Standard LoRA, not
                         Lycoris. Flux has single and joint attention blocks.
                         By default, all attention layers are trained, but not
@@ -808,10 +819,19 @@ options:
                         Setting this turns on perturbed normal initialization
                         of the LyCORIS LoKr PEFT layers. A good value is
                         between 1e-4 and 1e-2.
+  --control             If set, channel-wise control style training will be
+                        used, where a conditioning input image is required
+                        alongside the training data.
   --controlnet          If set, ControlNet style training will be used, where
                         a conditioning input image is required alongside the
                         training data.
-  --controlnet_model_name_or_path
+  --controlnet_custom_config CONTROLNET_CUSTOM_CONFIG
+                        When training certain ControlNet models (eg. HiDream)
+                        you may set a config containing keys like num_layers
+                        or num_single_layers to adjust the resulting
+                        ControlNet size. This is not supported by most models,
+                        and may be ignored if the model does not support it.
+  --controlnet_model_name_or_path CONTROLNET_MODEL_NAME_OR_PATH
                         When provided alongside --controlnet, this will
                         specify ControlNet model weights to preload from the
                         hub.
@@ -1229,8 +1249,35 @@ options:
                         model components.See https://huggingface.co/docs/diffu
                         sers/main/en/training/dreambooth#performing-inference-
                         using-a-saved-checkpoint for step by stepinstructions.
+  --checkpointing_rolling_steps CHECKPOINTING_ROLLING_STEPS
+                        Functions similarly to --checkpointing_steps, but only
+                        a single rolling checkpoint is ever saved and this
+                        checkpoint does not count towards the value of
+                        --checkpoints_total_limit. Useful for when the
+                        underlying runtime environment may be prone to
+                        spontaneous interruption (e.g. spot instances,
+                        unreliable hardware, etc) and saving state more
+                        frequently is beneficial. This allows one to save
+                        normal checkpoints at a reasonable cadence but save a
+                        rolling checkpoint more frequently so as to avoid
+                        losing progress.
+  --checkpointing_use_tempdir
+                        Write saved checkpoint directories to a temporary name
+                        and atomically rename after successfully writing all
+                        state. This ensures that a given checkpoint will never
+                        be considered for resuming if it wasn't fully written
+                        out - as the state cannot be guaranteed. Useful for
+                        when the underlying runtime environment may be prone
+                        to spontaneous interruption (e.g. spot instances,
+                        unreliable hardware, etc).
   --checkpoints_total_limit CHECKPOINTS_TOTAL_LIMIT
                         Max number of checkpoints to store.
+  --checkpoints_rolling_total_limit CHECKPOINTS_ROLLING_TOTAL_LIMIT
+                        Max number of rolling checkpoints to store. One almost
+                        always wants this to be 1, but there could be a
+                        usecase where one desires to run a shorter window of
+                        more frequent checkpoints alongside a normal
+                        checkpointing interval done at less frequent steps.
   --resume_from_checkpoint RESUME_FROM_CHECKPOINT
                         Whether training should be resumed from a previous
                         checkpoint. Use a path saved by
@@ -1266,14 +1313,14 @@ options:
                         Number of hard resets of the lr in
                         cosine_with_restarts scheduler.
   --lr_power LR_POWER   Power factor of the polynomial scheduler.
-  --distillation_method {perflow}
-                        The distillation method to use. Currently, only
-                        'perflow' is supported via LoRA. This will apply the
-                        perflow distillation method to the model.
+  --distillation_method {dcm}
+                        The distillation method to use. Currently, only 'dcm'
+                        is supported via LoRA. This will apply the selected
+                        distillation method to the model.
   --distillation_config DISTILLATION_CONFIG
-                        The distillation method to use. Currently, only
-                        'perflow' is supported via LoRA. This will apply the
-                        perflow distillation method to the model.
+                        The config for your selected distillation method. If
+                        passing it via config.json, simply provide the JSON
+                        object directly.
   --use_ema             Whether to use EMA (exponential moving average) model.
                         Works with LoRA, Lycoris, and full training.
   --ema_device {cpu,accelerator}
@@ -1533,6 +1580,11 @@ options:
                         running the prompt `args.validation_prompt` multiple
                         times: `args.num_validation_images` and logging the
                         images.
+  --validation_stitch_input_location {left,right}
+                        When set, the input image will be stitched to the left
+                        of the generated image during validation. This is
+                        useful for img2img models, such as DeepFloyd Stage II,
+                        where the input image is used as a reference.
   --eval_steps_interval EVAL_STEPS_INTERVAL
                         When set, the model will be evaluated every X steps.
                         This is useful for monitoring the model's progress
@@ -1668,6 +1720,11 @@ options:
                         quantisation (Apple Silicon, NVIDIA, AMD).
   --local_rank LOCAL_RANK
                         For distributed training: local_rank
+  --fuse_qkv_projections
+                        QKV projections can be fused into a single linear
+                        layer. This can save memory and speed up training, but
+                        may not work with all models. If you encounter issues,
+                        disable this option. It is considered experimental.
   --attention_mechanism {diffusers,xformers,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}
                         On NVIDIA CUDA devices, alternative flash attention
                         implementations are offered, with the default being
@@ -1703,6 +1760,7 @@ options:
                         --noise_offset will only be applied probabilistically.
                         The default behaviour is for offset noise (if enabled)
                         to be applied 25 percent of the time.
+  --masked_loss_probability MASKED_LOSS_PROBABILITY
   --validation_guidance VALIDATION_GUIDANCE
                         CFG value for validation images. Default: 7.5
   --validation_guidance_real VALIDATION_GUIDANCE_REAL
