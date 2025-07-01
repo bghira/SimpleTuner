@@ -192,13 +192,13 @@ class Flux(ImageModelFoundation):
             for module in self.model.modules():
                 if isinstance(module, Attention):
                     module.fuse_projections(fuse=False)
-            self.model.set_attn_processor(FluxFusedFlashAttnProcessor3())
+            self.unwrap_model(model=self.model).set_attn_processor(FluxFusedFlashAttnProcessor3())
             if self.controlnet is not None:
                 logger.info("Unfusing QKV projections in the ControlNet..")
                 for module in self.controlnet.modules():
                     if isinstance(module, Attention):
                         module.fuse_projections(fuse=False)
-                self.controlnet.set_attn_processor(FluxFusedFlashAttnProcessor3())
+                self.unwrap_model(model=self.controlnet).set_attn_processor(FluxFusedFlashAttnProcessor3())
 
     def requires_conditioning_latents(self) -> bool:
         # Flux ControlNet requires latent inputs instead of pixels.
