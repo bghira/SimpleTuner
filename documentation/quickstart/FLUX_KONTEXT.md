@@ -33,7 +33,7 @@ Stick to **loose** for now unless you want to debug the dataloader.
 
 * **System RAM**: quantisation still needs 50 GB.
 * **GPU**: 3090 (24 G) is the realistic minimum for 1024 px training **with int8‑quanto**.
-  * Hopper H100/H200 systems with Flash Attention 3 can enable `--fused_qkv_projections` to greatly speed up training.
+  * Hopper H100/H200 systems with Flash Attention 3 can enable `--fuse_qkv_projections` to greatly speed up training.
   * If you train at 512 px you can squeeze into a 12 G card, but expect slow batches (sequence length remains large).
 
 
