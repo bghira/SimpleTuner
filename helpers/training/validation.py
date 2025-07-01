@@ -237,7 +237,7 @@ def retrieve_validation_images():
     return validation_set
 
 
-def retrieve_validation_edit_images() -> list[tuple[str, str, Image.Image]]:
+def retrieve_validation_edit_images() -> list[tuple[str, str, list[Image.Image]]]:
     """
     Returns [(shortname, *edited-scene caption*, reference_image), ...]
     for models that need **edit** validation.
@@ -281,17 +281,10 @@ def retrieve_validation_edit_images() -> list[tuple[str, str, Image.Image]]:
             continue
 
         # each backend should know which conditioning dataset is linked to it
-        cond_backend = backend.get("conditioning_data")
-        cond_backend_id = cond_backend.get("id") if cond_backend else None
-        if cond_backend_id is None:
+        cond_backends = StateTracker.get_conditioning_datasets(backend_id)
+        if not cond_backends:
             logger.debug("No conditioning backend configured for this image dataset.")
             continue
-
-        logger.debug(f"Backend id: {backend_id}, cond_backend_id: {cond_backend_id}")
-        cond_backend = StateTracker.get_data_backend(cond_backend_id)
-        if cond_backend is None:
-            logger.debug(f"Conditioning backend {cond_backend_id} not found.")
-            continue  # mis-configuration → skip
 
         # deterministic slice for validation
         for sample in sampler.retrieve_validation_set(batch_size=args.num_eval_images):
@@ -315,24 +308,23 @@ def retrieve_validation_edit_images() -> list[tuple[str, str, Image.Image]]:
                     rel_path = rel_path.lstrip("/")
                     logger.debug(f"Removed prefix, got relative path: {rel_path}")
                 logger.debug(f"Metadata: {meta}")
-            except Exception as e:
+            except Exception:
                 continue  # metadata missing → skip
 
-            conditioning_dir_prefix = cond_backend[
-                "sampler"
-            ].metadata_backend.instance_data_dir
-            cond_sample_path = os.path.join(conditioning_dir_prefix, rel_path)
-            cond_sample = cond_backend["sampler"].get_conditioning_sample(rel_path)
+            reference_imgs = []
+            for cond_backend in cond_backends:
+                cond_sample = cond_backend["sampler"].get_conditioning_sample(rel_path)
 
-            if cond_sample is None:
+                if cond_sample is None:
+                    continue
+
+                reference_imgs.append(cond_sample.image)
+            if len(reference_imgs) != len(cond_backends):
                 logger.warning(
-                    f"Conditioning sample for {rel_path} not found in {cond_backend_id}."
+                    f"Didn't find enough conditioning samples for {rel_path}."
                 )
                 continue
-
-            reference_img = cond_sample.image
-            logger.debug(f"Validation sample path: {cond_sample_path}")
-            validation_set.append((shortname, edited_prompt, reference_img))
+            validation_set.append((shortname, edited_prompt, reference_imgs))
 
     logger.info(f"Collected {len(validation_set)} edit-validation samples.")
     return validation_set

@@ -470,11 +470,10 @@ def collate_fn(batch):
                 "The number of conditioning examples must be divisible by the number of training samples."
             )
 
-
         conditioning_map = defaultdict(list)
         for i, cond_example in enumerate(conditioning_examples):
-            train_example = examples[i % len(conditioning_backends)]
-            cond_backend = conditioning_backends[i // len(conditioning_backends)]
+            train_example = examples[i % len(examples)]
+            cond_backend = conditioning_backends[i // len(examples)]
             # Ensure conditioning types match
             cond_type = cond_example.get_conditioning_type()
             if conditioning_type is None:

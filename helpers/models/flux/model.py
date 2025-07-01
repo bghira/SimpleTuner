@@ -284,6 +284,7 @@ class Flux(ImageModelFoundation):
             cond,
             dtype=self.config.weight_dtype,
             device=self.accelerator.device,
+            latent_channels=self.LATENT_CHANNEL_COUNT
         )
 
         batch["conditioning_packed_latents"] = packed_cond

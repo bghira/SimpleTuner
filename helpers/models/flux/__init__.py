@@ -115,7 +115,8 @@ def build_kontext_inputs(
             torch.meshgrid(idx_y, idx_x, indexing="ij"), dim=-1
         )  # (H/2,W/2,2)
         ones = torch.ones_like(ids[..., :1])
-        ids = torch.cat([ones, ids], dim=-1).view(1, -1, 3).expand(B, -1, -1).to(dtype)
+        packed_ids.append(torch.cat([ones, ids], dim=-1).view(1, -1, 3).expand(B, -1, -1).to(dtype))
+
         x0 = max(x0, W + x)
         y0 = max(y0, H + y)
 

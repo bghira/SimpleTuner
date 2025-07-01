@@ -1439,11 +1439,11 @@ def configure_multi_databackend(
         backend_conditionings = backend.get("conditioning_data", [])
         if isinstance(backend_conditionings, str):
             backend_conditionings = [backend_conditionings]
-        if any(x not in StateTracker.get_data_backends(_type="conditioning") for x in backend_conditionings):
-            # todo: better error message here
-            raise ValueError(
-                f"Conditioning data backend {backend['conditioning_data']} not found in data backend list: {StateTracker.get_data_backends(_type='conditionin')}."
-            )
+        for x in backend_conditionings:
+            if x not in StateTracker.get_data_backends(_type="conditioning"):
+                raise ValueError(
+                    f"Conditioning data backend {x} not found in data backend list: {StateTracker.get_data_backends(_type='conditioning')}."
+                )
 
         if backend_conditionings:
             has_conditioning_dataset = True
