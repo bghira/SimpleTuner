@@ -167,11 +167,28 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         Returns:
             list: a list of tuples(validation_shortname, validation_prompt, validation_sample)
         """
-        results = (
-            []
-        )  # [tuple(validation_shortname, validation_prompt, validation_sample)]
-        for img_idx in range(batch_size):
+        results = []
+        seen_paths = set()
+
+        # Don't try to get more images than we have
+        available_count = len(self._val_master_list)
+        actual_batch_size = min(batch_size, available_count)
+
+        if actual_batch_size < batch_size:
+            self.logger.warning(
+                f"Requested {batch_size} validation images but only {available_count} available. "
+                f"Returning {actual_batch_size} unique images."
+            )
+
+        for img_idx in range(actual_batch_size):
             image_path = self._yield_sequential_image()
+
+            # Skip if we've already seen this path (in case of wraparound)
+            if image_path in seen_paths:
+                continue
+
+            seen_paths.add(image_path)
+
             image_data = self.data_backend.read_image(image_path)
             image_metadata = self.metadata_backend.get_metadata_by_filepath(image_path)
             training_sample = TrainingSample(
