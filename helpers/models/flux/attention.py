@@ -219,17 +219,18 @@ class FluxFusedFlashAttnProcessor3(object):
     True fused QKV Flash Attention 3 processor for Flux models.
     Keeps QKV tensors packed through the entire attention computation.
     """
-    
+
     def __init__(self):
         try:
             from flash_attn_interface import flash_attn_qkvpacked_func
+
             self.flash_attn_qkvpacked_func = flash_attn_qkvpacked_func
         except ImportError:
             raise ImportError(
                 "FluxFusedFlashAttnProcessor3 requires flash-attn library. "
                 "Install with: pip install flash-attn --no-build-isolation"
             )
-    
+
     def __call__(
         self,
         attn,
@@ -241,92 +242,105 @@ class FluxFusedFlashAttnProcessor3(object):
         input_ndim = hidden_states.ndim
         if input_ndim == 4:
             batch_size, channel, height, width = hidden_states.shape
-            hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
-        
-        context_input_ndim = encoder_hidden_states.ndim if encoder_hidden_states is not None else None
+            hidden_states = hidden_states.view(
+                batch_size, channel, height * width
+            ).transpose(1, 2)
+
+        context_input_ndim = (
+            encoder_hidden_states.ndim if encoder_hidden_states is not None else None
+        )
         if context_input_ndim == 4:
             batch_size, channel, height, width = encoder_hidden_states.shape
-            encoder_hidden_states = encoder_hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
-        
-        batch_size = encoder_hidden_states.shape[0] if encoder_hidden_states is not None else hidden_states.shape[0]
+            encoder_hidden_states = encoder_hidden_states.view(
+                batch_size, channel, height * width
+            ).transpose(1, 2)
+
+        batch_size = (
+            encoder_hidden_states.shape[0]
+            if encoder_hidden_states is not None
+            else hidden_states.shape[0]
+        )
         seq_len = hidden_states.shape[1]
-        
+
         # Fused QKV projection
         qkv = attn.to_qkv(hidden_states)  # (batch, seq_len, 3 * inner_dim)
         inner_dim = qkv.shape[-1] // 3
         head_dim = inner_dim // attn.heads
-        
+
         # Reshape to packed format: (batch, seq_len, 3, heads, head_dim)
         qkv = qkv.view(batch_size, seq_len, 3, attn.heads, head_dim)
-        
+
         # Apply norms if needed (requires temporary unpacking)
         if attn.norm_q is not None or attn.norm_k is not None:
             q, k, v = qkv.unbind(dim=2)  # Each is (batch, seq_len, heads, head_dim)
             q = q.transpose(1, 2)  # (batch, heads, seq_len, head_dim)
             k = k.transpose(1, 2)
             v = v.transpose(1, 2)
-            
+
             if attn.norm_q is not None:
                 q = attn.norm_q(q)
             if attn.norm_k is not None:
                 k = attn.norm_k(k)
-            
+
             # Repack: back to (batch, seq_len, 3, heads, head_dim)
-            qkv = torch.stack([
-                q.transpose(1, 2),
-                k.transpose(1, 2), 
-                v.transpose(1, 2)
-            ], dim=2)
-        
+            qkv = torch.stack(
+                [q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)], dim=2
+            )
+
         # Handle encoder states if present
         if encoder_hidden_states is not None:
             encoder_seq_len = encoder_hidden_states.shape[1]
-            
+
             # Fused encoder QKV
             encoder_qkv = attn.to_added_qkv(encoder_hidden_states)
-            encoder_qkv = encoder_qkv.view(batch_size, encoder_seq_len, 3, attn.heads, head_dim)
-            
+            encoder_qkv = encoder_qkv.view(
+                batch_size, encoder_seq_len, 3, attn.heads, head_dim
+            )
+
             # Apply norms if needed
             if attn.norm_added_q is not None or attn.norm_added_k is not None:
                 enc_q, enc_k, enc_v = encoder_qkv.unbind(dim=2)
                 enc_q = enc_q.transpose(1, 2)
                 enc_k = enc_k.transpose(1, 2)
                 enc_v = enc_v.transpose(1, 2)
-                
+
                 if attn.norm_added_q is not None:
                     enc_q = attn.norm_added_q(enc_q)
                 if attn.norm_added_k is not None:
                     enc_k = attn.norm_added_k(enc_k)
-                
-                encoder_qkv = torch.stack([
-                    enc_q.transpose(1, 2),
-                    enc_k.transpose(1, 2),
-                    enc_v.transpose(1, 2)
-                ], dim=2)
-            
+
+                encoder_qkv = torch.stack(
+                    [
+                        enc_q.transpose(1, 2),
+                        enc_k.transpose(1, 2),
+                        enc_v.transpose(1, 2),
+                    ],
+                    dim=2,
+                )
+
             # Concatenate along sequence dimension
-            qkv = torch.cat([encoder_qkv, qkv], dim=1)  # (batch, encoder_seq + seq, 3, heads, head_dim)
-        
+            qkv = torch.cat(
+                [encoder_qkv, qkv], dim=1
+            )  # (batch, encoder_seq + seq, 3, heads, head_dim)
+
         # Apply RoPE if needed
         if image_rotary_emb is not None:
             q, k, v = qkv.unbind(dim=2)  # Each is (batch, seq_len, heads, head_dim)
-            
+
             # Transpose to (batch, heads, seq_len, head_dim) for RoPE
             q = q.transpose(1, 2)
             k = k.transpose(1, 2)
             v = v.transpose(1, 2)
-            
+
             # Apply RoPE to q and k
             q = apply_rotary_emb(q, image_rotary_emb)
             k = apply_rotary_emb(k, image_rotary_emb)
-            
+
             # Transpose back and repack
-            qkv = torch.stack([
-                q.transpose(1, 2),
-                k.transpose(1, 2),
-                v.transpose(1, 2)
-            ], dim=2)
-        
+            qkv = torch.stack(
+                [q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)], dim=2
+            )
+
         # Flash Attention 3 with packed QKV
         # Input shape: (batch, seq_len, 3, heads, head_dim)
         # Output shape: (batch, seq_len, heads, head_dim)
@@ -335,30 +349,36 @@ class FluxFusedFlashAttnProcessor3(object):
             causal=False,
             # Don't pass num_heads_q for standard MHA
         )
-        
+
         # Reshape output: (batch, seq_len, heads, head_dim) -> (batch, seq_len, heads * head_dim)
         hidden_states = hidden_states.reshape(batch_size, -1, attn.heads * head_dim)
         hidden_states = hidden_states.to(qkv.dtype)
-        
+
         # Split and process outputs
         if encoder_hidden_states is not None:
             encoder_seq_len = encoder_hidden_states.shape[1]
             encoder_hidden_states = hidden_states[:, :encoder_seq_len]
             hidden_states = hidden_states[:, encoder_seq_len:]
-            
+
             # Output projections
             hidden_states = attn.to_out[0](hidden_states)
             hidden_states = attn.to_out[1](hidden_states)  # dropout
             encoder_hidden_states = attn.to_add_out(encoder_hidden_states)
-            
+
             # Reshape if needed
             if input_ndim == 4:
-                hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
+                hidden_states = hidden_states.transpose(-1, -2).reshape(
+                    batch_size, channel, height, width
+                )
             if context_input_ndim == 4:
-                encoder_hidden_states = encoder_hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
-            
+                encoder_hidden_states = encoder_hidden_states.transpose(-1, -2).reshape(
+                    batch_size, channel, height, width
+                )
+
             return hidden_states, encoder_hidden_states
         else:
             if input_ndim == 4:
-                hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
+                hidden_states = hidden_states.transpose(-1, -2).reshape(
+                    batch_size, channel, height, width
+                )
             return hidden_states
