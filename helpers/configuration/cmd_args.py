@@ -1960,6 +1960,16 @@ def get_argument_parser():
         help="For distributed training: local_rank",
     )
     parser.add_argument(
+        "--fuse_qkv_projections",
+        action="store_true",
+        default=False,
+        help=(
+            "QKV projections can be fused into a single linear layer."
+            " This can save memory and speed up training, but may not work with all models."
+            " If you encounter issues, disable this option. It is considered experimental."
+        ),
+    )
+    parser.add_argument(
         "--attention_mechanism",
         type=str,
         choices=[

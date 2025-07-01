@@ -805,7 +805,7 @@ class ModelFoundation(ABC):
                 self.model.set_gradient_checkpointing_interval(
                     int(self.config.gradient_checkpointing_interval)
                 )
-
+        self.fuse_qkv_projections()
         self.post_model_load_setup()
 
     def post_model_load_setup(self):
@@ -817,6 +817,10 @@ class ModelFoundation(ABC):
 
         """
         pass
+
+    def fuse_qkv_projections(self):
+        if self.config.fuse_qkv_projections:
+            logger.warning(f"{self.__class__.__name__} does not support fused QKV projection yet, please open a feature request on the issue tracker.")
 
     def set_prepared_model(self, model, base_model: bool = False):
         # after accelerate prepare, we'll set the model again.
