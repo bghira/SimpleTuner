@@ -601,7 +601,9 @@ SimpleTuner now supports loading datasets directly from Hugging Face Hub without
 - Datasets with built-in metadata and quality assessments
 - Quick experimentation without local storage requirements
 
-To use a Hugging Face dataset, set `"type": "huggingface"` in your dataloader configuration:
+For thorough documentation on this feature, refer to [this document](/documentation/HUGGINGFACE_DATASETS.md).
+
+For a basic example of how to use a Hugging Face dataset, set `"type": "huggingface"` in your dataloader configuration:
 
 ```json
 {
