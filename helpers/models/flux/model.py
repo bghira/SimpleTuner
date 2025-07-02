@@ -160,6 +160,7 @@ class Flux(ImageModelFoundation):
         if self.config.fuse_qkv_projections:
             from diffusers.models.attention_processor import Attention
             from helpers.models.flux.attention import FluxFusedFlashAttnProcessor3
+
             if self.model is not None:
                 logger.info("Fusing QKV projections in the model..")
                 for module in self.model.modules():
@@ -180,8 +181,6 @@ class Flux(ImageModelFoundation):
                 logger.warning(
                     "ControlNet does not support QKV projection fusing. Skipping."
                 )
-
-
 
     def requires_conditioning_latents(self) -> bool:
         # Flux ControlNet requires latent inputs instead of pixels.
