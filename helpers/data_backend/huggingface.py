@@ -134,7 +134,26 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             return None
 
     def read(self, location, as_byteIO: bool = False):
-        """Read and return the content of the file (image from dataset)."""
+        """Read and return the content of the file (image from dataset or cache file)."""
+        if isinstance(location, Path):
+            location = str(location)
+
+        # Handle cache files
+        if location.endswith(".json"):
+            cache_dir = Path("cache") / "huggingface_metadata" / self.id
+            cache_path = cache_dir / Path(location).name
+
+            if cache_path.exists():
+                with open(cache_path, "rb") as f:
+                    data = f.read()
+                if as_byteIO:
+                    return BytesIO(data)
+                return data
+            else:
+                logger.error(f"Cache file not found: {cache_path}")
+                return None
+
+        # Handle virtual dataset files
         index = self._get_index_from_path(location)
         if index is None:
             logger.error(f"Invalid path: {location}")
@@ -180,10 +199,37 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
 
     def write(self, filepath: Union[str, Path], data: Any) -> None:
         """
-        Write operation - not supported for HF datasets (read-only).
+        Write operation - only supported for cache files (JSON).
         """
-        logger.warning("Write operations are not supported for Hugging Face datasets")
-        raise NotImplementedError("Hugging Face datasets are read-only")
+        if isinstance(filepath, Path):
+            filepath = str(filepath)
+
+        # Only allow writing cache files
+        if filepath.endswith(".json"):
+            # For cache files, we'll write to a local directory
+            cache_dir = Path("cache") / "huggingface_metadata" / self.id
+            cache_dir.mkdir(parents=True, exist_ok=True)
+
+            cache_path = cache_dir / Path(filepath).name
+
+            if isinstance(data, (dict, list)):
+                import json
+
+                data = json.dumps(data)
+            elif isinstance(data, str):
+                pass  # Already a string
+            else:
+                data = str(data)
+
+            with open(cache_path, "w") as f:
+                f.write(data)
+
+            logger.debug(f"Wrote cache file to {cache_path}")
+        else:
+            logger.warning("Write operations are only supported for JSON cache files")
+            raise NotImplementedError(
+                "Hugging Face datasets are read-only except for cache files"
+            )
 
     def delete(self, filepath):
         """Delete operation - not supported for HF datasets."""
@@ -192,6 +238,16 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
 
     def exists(self, filepath):
         """Check if the virtual file exists (i.e., valid index)."""
+        if isinstance(filepath, Path):
+            filepath = str(filepath)
+
+        # Check for cache files first
+        if filepath.endswith(".json"):
+            cache_dir = Path("cache") / "huggingface_metadata" / self.id
+            cache_path = cache_dir / Path(filepath).name
+            return cache_path.exists()
+
+        # For virtual files, check index
         index = self._get_index_from_path(filepath)
         if index is None:
             return False
@@ -210,7 +266,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
 
     def list_files(
         self, file_extensions: list = None, instance_data_dir: str = None
-    ) -> tuple:
+    ) -> list:
         """
         List all virtual files in the dataset.
         Returns format compatible with os.walk: [(root, dirs, files), ...]
@@ -233,7 +289,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
 
             files.append(virtual_path)
 
-        # Return in os.walk format: (directory, subdirs, files)
+        # Return in os.walk format: [(directory, subdirs, files)]
         return [("", [], files)]
 
     def get_abs_path(self, sample_path: str) -> str:
@@ -303,3 +359,10 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         if not self.streaming and (index < 0 or index >= len(self.dataset)):
             return None
         return self.dataset[index]
+
+    def __len__(self):
+        """Return the number of items in the dataset."""
+        if self.streaming:
+            logger.warning("Cannot get length of streaming dataset")
+            return 0
+        return len(self.dataset)
