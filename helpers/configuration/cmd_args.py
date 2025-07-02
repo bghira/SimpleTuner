@@ -150,6 +150,10 @@ def get_argument_parser():
             "ai-toolkit",
             "tiny",
             "nano",
+            "fal",
+            "daisy",
+            "daisy-tiny",
+            "daisy-nano",
             # control / controlnet
             "all+ffs+embedder",
             "all+ffs+embedder+controlnet",

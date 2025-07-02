@@ -77,6 +77,72 @@ def determine_adapter_target_modules(args, unet, transformer):
                 "proj_mlp",
                 "proj_out",
             ]
+        elif args.flux_lora_target == "fal":
+            # from fal-ai, possibly required to continue finetuning one.
+            target_modules = [
+                "to_q",
+                "to_k",
+                "to_v",
+                "add_q_proj",
+                "add_k_proj",
+                "add_v_proj",
+                "to_out.0",
+                "to_add_out",
+                "ff.net.0.proj",
+                "ff.net.2",
+                "ff_context.net.0.proj",
+                "ff_context.net.2",
+            ]
+        elif args.flux_lora_target == "daisy":
+            # from fal-ai, possibly required to continue finetuning one.
+            target_modules = [
+                "single_transformer_blocks.9.attn.to_q",
+                "single_transformer_blocks.9.attn.to_k",
+                "single_transformer_blocks.9.attn.to_v",
+                "single_transformer_blocks.12.attn.to_q",
+                "single_transformer_blocks.12.attn.to_k",
+                "single_transformer_blocks.12.attn.to_v",
+                "single_transformer_blocks.16.attn.to_q",
+                "single_transformer_blocks.16.attn.to_k",
+                "single_transformer_blocks.16.attn.to_v",
+                "single_transformer_blocks.20.attn.to_q",
+                "single_transformer_blocks.20.attn.to_k",
+                "single_transformer_blocks.20.attn.to_v",
+                "single_transformer_blocks.25.attn.to_q",
+                "single_transformer_blocks.25.attn.to_k",
+                "single_transformer_blocks.25.attn.to_v",
+                "add_q_proj",
+                "add_k_proj",
+                "add_v_proj",
+                "to_out.0",
+                "to_add_out",
+                "ff.net.0.proj",
+                "ff.net.2",
+                "ff_context.net.0.proj",
+                "ff_context.net.2",
+            ]
+        elif args.flux_lora_target == "daisy-tiny":
+            # from fal-ai, possibly required to continue finetuning one.
+            target_modules = [
+                "single_transformer_blocks.9.attn.to_q",
+                "single_transformer_blocks.9.attn.to_k",
+                "single_transformer_blocks.9.attn.to_v",
+                "single_transformer_blocks.20.attn.to_q",
+                "single_transformer_blocks.20.attn.to_k",
+                "single_transformer_blocks.20.attn.to_v",
+                "single_transformer_blocks.25.attn.to_q",
+                "single_transformer_blocks.25.attn.to_k",
+                "single_transformer_blocks.25.attn.to_v",
+                "add_q_proj",
+                "add_k_proj",
+                "add_v_proj",
+                "to_out.0",
+                "to_add_out",
+                "ff.net.0.proj",
+                "ff.net.2",
+                "ff_context.net.0.proj",
+                "ff_context.net.2",
+            ]      
         elif args.flux_lora_target == "tiny":
             # From TheLastBen
             # https://www.reddit.com/r/StableDiffusion/comments/1f523bd/good_flux_loras_can_be_less_than_45mb_128_dim/
@@ -113,6 +179,9 @@ def load_lora_weights(dictionary, filename, loraKey="default", use_dora=False):
             else []
         )
     )
+     # b_up_factor for certain B weights (e.g. in ff and ff_context blocks)
+    b_up_factor = 3
+
     for k, v in state_dict.items():
         if "lora_A" in k:
             kk = k.replace(".lora_A.weight", "")
@@ -124,7 +193,13 @@ def load_lora_weights(dictionary, filename, loraKey="default", use_dora=False):
         elif "lora_B" in k:
             kk = k.replace(".lora_B.weight", "")
             if kk in lora_layers:
-                lora_layers[kk].lora_B[loraKey].weight.copy_(v)
+                # If the parameter belongs to the ff (or ff_context) blocks,
+                # scale up the loaded B weight by b_up_factor.
+                if ("ff.net." in kk) or ("ff_context.net." in kk):
+                    scaled_v = v * b_up_factor
+                else:
+                    scaled_v = v
+                lora_layers[kk].lora_B[loraKey].weight.copy_(scaled_v)
                 missing_keys.remove(k)
             else:
                 additional_keys.add(k)
