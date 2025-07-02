@@ -33,6 +33,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         streaming: bool = False,
         filter_func: Optional[callable] = None,
         num_proc: int = 16,
+        composite_config: dict = {},
     ):
         """
         Initialize the Hugging Face datasets backend.
@@ -62,6 +63,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         self.streaming = streaming
         self.filter_func = filter_func
         self.num_proc = num_proc
+        self.composite_config = composite_config
 
         # Virtual file system mapping: index -> virtual path
         self._path_to_index = {}
@@ -73,28 +75,49 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
     def _load_dataset(self):
         """Load the Hugging Face dataset."""
         try:
-            from datasets import load_dataset
+            from datasets import load_dataset, load_dataset_builder
         except ImportError:
             raise ImportError("Please install datasets: pip install datasets")
 
+        # First, inspect the dataset structure
+        logger.info(f"Inspecting dataset {self.dataset_name}")
+        builder = load_dataset_builder(self.dataset_name, cache_dir=self.cache_dir)
+        logger.info(f"Dataset info: {builder.info}")
+        logger.info(f"Available splits: {list(builder.info.splits.keys())}")
+
         logger.info(f"Loading dataset {self.dataset_name} (split: {self.split})")
 
+        # Load with explicit parameters to ensure all data is loaded
         self.dataset = load_dataset(
             self.dataset_name,
             split=self.split,
             revision=self.revision,
             cache_dir=self.cache_dir,
             streaming=self.streaming,
+            download_mode="reuse_dataset_if_exists",  # or "force_redownload" if needed
         )
+
+        # Log the initial size
+        if not self.streaming:
+            logger.info(f"Loaded dataset with {len(self.dataset)} items")
+
+            # Check if this looks like a subset
+            if len(self.dataset) == 8200:
+                logger.warning(
+                    "Dataset has exactly 8200 items - this might be a single shard!"
+                )
 
         # Apply filter if provided
         if self.filter_func and not self.streaming:
             logger.info("Applying filter to dataset...")
+            original_size = len(self.dataset)
             self.dataset = self.dataset.filter(
                 self.filter_func,
                 num_proc=self.num_proc,
             )
-            logger.info(f"Dataset filtered to {len(self.dataset)} items")
+            logger.info(
+                f"Dataset filtered from {original_size} to {len(self.dataset)} items"
+            )
 
         # Build virtual path mapping
         self._build_path_mapping()
@@ -103,11 +126,30 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         """Build mapping between indices and virtual file paths."""
         if not self.streaming:
             dataset_len = len(self.dataset)
+
+            # Check composite configuration
+            is_composite = (
+                self.composite_config.get("enabled", False)
+                if hasattr(self, "composite_config")
+                else False
+            )
+            select_index = (
+                self.composite_config.get("select_index", None)
+                if hasattr(self, "composite_config")
+                else None
+            )
+
             for idx in range(dataset_len):
-                # Create a virtual path like "0.jpg", "1.jpg", etc.
+                # Create virtual paths based on composite configuration
                 virtual_path = f"{idx}.jpg"
+
                 self._path_to_index[virtual_path] = idx
                 self._index_to_path[idx] = virtual_path
+
+                # Also map the simple format for backwards compatibility
+                simple_path = f"{idx}.jpg"
+                if simple_path != virtual_path:
+                    self._path_to_index[simple_path] = idx
         else:
             logger.warning(
                 "Streaming mode enabled - path mapping will be built on demand"
@@ -125,21 +167,22 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         if basename in self._path_to_index:
             return self._path_to_index[basename]
 
-        # Try to extract index from filename (e.g., "123.jpg" -> 123)
+        # Handle simple format (e.g., "123.jpg" -> 123)
         try:
             index = int(os.path.splitext(basename)[0])
             return index
         except ValueError:
             logger.error(f"Could not extract index from path: {filepath}")
-            return None
+            raise
 
     def read(self, location, as_byteIO: bool = False):
         """Read and return the content of the file (image from dataset or cache file)."""
         if isinstance(location, Path):
             location = str(location)
 
-        # Handle cache files
-        if location.endswith(".json"):
+        # Handle cache files (.json, .pt, etc.) - these should be read from local filesystem
+        cache_extensions = [".json", ".pt", ".msgpack", ".safetensors"]
+        if any(location.endswith(ext) for ext in cache_extensions):
             cache_dir = Path("cache") / "huggingface_metadata" / self.id
             cache_path = cache_dir / Path(location).name
 
@@ -150,10 +193,21 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                     return BytesIO(data)
                 return data
             else:
-                logger.error(f"Cache file not found: {cache_path}")
+                # Try alternate cache locations (e.g., VAE cache)
+                # The location might be a full path already
+                location_path = Path(location)
+                if location_path.exists():
+                    with open(location_path, "rb") as f:
+                        data = f.read()
+                    if as_byteIO:
+                        return BytesIO(data)
+                    logger.info(f"Read data from {location_path}")
+                    return data
+
+                logger.error(f"Cache file not found: {cache_path} or {location_path}")
                 return None
 
-        # Handle virtual dataset files
+        # Handle virtual dataset files (the existing logic)
         index = self._get_index_from_path(location)
         if index is None:
             logger.error(f"Invalid path: {location}")
@@ -169,6 +223,131 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                     f"No image found in column '{self.image_column}' for index {index}"
                 )
                 return None
+            # Handle composite images if configured
+            if hasattr(self, "composite_config") and self.composite_config.get(
+                "enabled"
+            ):
+                image_count = self.composite_config.get("image_count", 1)
+                select_index = self.composite_config.get("select_index", 0)
+
+                if isinstance(image, Image.Image):
+                    width, height = image.size
+                    slice_width = width // image_count
+
+                    # Calculate crop box for the selected index
+                    left = select_index * slice_width
+                    right = (select_index + 1) * slice_width
+
+                    # Crop the image
+                    image = image.crop((left, 0, right, height))
+            # Handle different image types
+            if isinstance(image, Image.Image):
+                # PIL Image - convert to bytes
+                buffer = BytesIO()
+                image.save(buffer, format="PNG")
+                data = buffer.getvalue()
+            elif isinstance(image, np.ndarray):
+                # NumPy array - convert to PIL then bytes
+                pil_image = Image.fromarray(image)
+                buffer = BytesIO()
+                pil_image.save(buffer, format="PNG")
+                data = buffer.getvalue()
+            elif isinstance(image, bytes):
+                # Already bytes
+                data = image
+            else:
+                logger.error(f"Unsupported image type: {type(image)}")
+                return None
+
+            if as_byteIO:
+                return BytesIO(data)
+            return data
+
+        except Exception as e:
+            logger.error(f"Error reading from dataset at index {index}: {e}")
+            raise
+
+    def read(self, location, as_byteIO: bool = False):
+        """Read and return the content of the file (image from dataset or cache file)."""
+        if isinstance(location, Path):
+            location = str(location)
+
+        # Handle cache files (.json, .pt, etc.) - these should be read from local filesystem
+        cache_extensions = [".json", ".pt", ".msgpack", ".safetensors"]
+        if any(location.endswith(ext) for ext in cache_extensions):
+            # Try location as-is first (in case it's already a full path)
+            location_path = Path(location)
+            if location_path.exists():
+                with open(location_path, "rb") as f:
+                    data = f.read()
+                if as_byteIO:
+                    return BytesIO(data)
+                return data
+
+            # Otherwise, check standard cache directories based on file type
+            if hasattr(self, "cache_dir") and self.cache_dir:
+                filename = Path(location).name
+
+                # Determine cache directory based on file type (matching write logic)
+                if location.endswith(".json"):
+                    cache_path = (
+                        Path(self.cache_dir)
+                        / "huggingface_metadata"
+                        / self.id
+                        / filename
+                    )
+                elif any(location.endswith(ext) for ext in [".pt", ".safetensors"]):
+                    cache_path = Path(self.cache_dir) / "vae" / self.id / filename
+                else:
+                    cache_path = Path(self.cache_dir) / "cache" / self.id / filename
+
+                if cache_path.exists():
+                    logger.debug(f"Reading from location: {cache_path}")
+                    with open(cache_path, "rb") as f:
+                        data = f.read()
+                    if as_byteIO:
+                        return BytesIO(data)
+                    return data
+                else:
+                    logger.warning(f"Could not read from location: {cache_path}")
+
+            logger.error(f"Cache file not found: {location}")
+            return None
+
+        # Handle virtual dataset files (the existing logic)
+        index = self._get_index_from_path(location)
+        if index is None:
+            logger.error(f"Invalid path: {location}")
+            return None
+
+        try:
+            # Get the item from dataset
+            item = self.dataset[index]
+            image = item.get(self.image_column)
+
+            if image is None:
+                logger.error(
+                    f"No image found in column '{self.image_column}' for index {index}"
+                )
+                return None
+
+            # Handle composite images if configured
+            if hasattr(self, "composite_config") and self.composite_config.get(
+                "enabled"
+            ):
+                image_count = self.composite_config.get("image_count", 1)
+                select_index = self.composite_config.get("select_index", 0)
+
+                if isinstance(image, Image.Image):
+                    width, height = image.size
+                    slice_width = width // image_count
+
+                    # Calculate crop box for the selected index
+                    left = select_index * slice_width
+                    right = (select_index + 1) * slice_width
+
+                    # Crop the image
+                    image = image.crop((left, 0, right, height))
 
             # Handle different image types
             if isinstance(image, Image.Image):
@@ -195,57 +374,115 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
 
         except Exception as e:
             logger.error(f"Error reading from dataset at index {index}: {e}")
-            return None
+            raise
 
     def write(self, filepath: Union[str, Path], data: Any) -> None:
         """
-        Write operation - only supported for cache files (JSON).
+        Write operation - supported for cache files.
         """
         if isinstance(filepath, Path):
             filepath = str(filepath)
 
-        # Only allow writing cache files
-        if filepath.endswith(".json"):
-            # For cache files, we'll write to a local directory
-            cache_dir = Path("cache") / "huggingface_metadata" / self.id
-            cache_dir.mkdir(parents=True, exist_ok=True)
+        # Allow writing cache files
+        cache_extensions = [".json", ".pt", ".msgpack", ".safetensors"]
+        if any(filepath.endswith(ext) for ext in cache_extensions):
+            # Determine cache directory based on file path
+            filepath_path = Path(filepath)
 
-            cache_path = cache_dir / Path(filepath).name
-
-            if isinstance(data, (dict, list)):
-                import json
-
-                data = json.dumps(data)
-            elif isinstance(data, str):
-                pass  # Already a string
+            # If it's already an absolute path with a directory, use it
+            if filepath_path.is_absolute() and filepath_path.parent.exists():
+                cache_path = filepath_path
             else:
-                data = str(data)
+                # Otherwise, create a cache directory structure
+                if not hasattr(self, "cache_dir") or not self.cache_dir:
+                    raise ValueError(
+                        f"Cannot write cache file {filepath} - no cache_dir configured for HuggingFace backend"
+                    )
 
-            with open(cache_path, "w") as f:
-                f.write(data)
+                # Determine subdirectory based on file type
+                if filepath.endswith(".json"):
+                    cache_subdir = (
+                        Path(self.cache_dir) / "huggingface_metadata" / self.id
+                    )
+                elif any(filepath.endswith(ext) for ext in [".pt", ".safetensors"]):
+                    # VAE cache files
+                    cache_subdir = Path(self.cache_dir) / "vae" / self.id
+                else:
+                    # Other cache files
+                    cache_subdir = Path(self.cache_dir) / "cache" / self.id
+
+                cache_subdir.mkdir(parents=True, exist_ok=True)
+                cache_path = cache_subdir / Path(filepath).name
+
+            # Write the file
+            if filepath.endswith(".json"):
+                if isinstance(data, (dict, list)):
+                    import json
+
+                    data = json.dumps(data)
+                elif not isinstance(data, str):
+                    data = str(data)
+
+                with open(cache_path, "w") as f:
+                    f.write(data)
+            else:
+                # Binary data
+                with open(cache_path, "wb") as f:
+                    if isinstance(data, bytes):
+                        f.write(data)
+                    elif hasattr(data, "save"):
+                        # For torch tensors or similar objects with save method
+                        data.save(f)
+                    else:
+                        # Fallback to torch.save
+                        import torch
+
+                        torch.save(data, f)
 
             logger.debug(f"Wrote cache file to {cache_path}")
         else:
-            logger.warning("Write operations are only supported for JSON cache files")
+            logger.warning(
+                f"Write operations are only supported for cache files, not {filepath}"
+            )
             raise NotImplementedError(
                 "Hugging Face datasets are read-only except for cache files"
             )
 
-    def delete(self, filepath):
-        """Delete operation - not supported for HF datasets."""
-        logger.warning("Delete operations are not supported for Hugging Face datasets")
-        raise NotImplementedError("Hugging Face datasets are read-only")
-
     def exists(self, filepath):
-        """Check if the virtual file exists (i.e., valid index)."""
+        """Check if the file exists (cache file or valid dataset index)."""
         if isinstance(filepath, Path):
             filepath = str(filepath)
 
         # Check for cache files first
-        if filepath.endswith(".json"):
-            cache_dir = Path("cache") / "huggingface_metadata" / self.id
-            cache_path = cache_dir / Path(filepath).name
-            return cache_path.exists()
+        cache_extensions = [".json", ".pt", ".msgpack", ".safetensors"]
+        if any(filepath.endswith(ext) for ext in cache_extensions):
+            # Check if it's already a full path
+            filepath_path = Path(filepath)
+            if filepath_path.exists():
+                return True
+
+            # Check standard cache directories based on file type
+            if hasattr(self, "cache_dir") and self.cache_dir:
+                filename = Path(filepath).name
+
+                # Determine cache directory based on file type (matching write logic)
+                if filepath.endswith(".json"):
+                    cache_path = (
+                        Path(self.cache_dir)
+                        / "huggingface_metadata"
+                        / self.id
+                        / filename
+                    )
+                elif any(filepath.endswith(ext) for ext in [".pt", ".safetensors"]):
+                    cache_path = Path(self.cache_dir) / "vae" / self.id / filename
+                else:
+                    cache_path = Path(self.cache_dir) / "cache" / self.id / filename
+
+                if cache_path.exists():
+                    logger.debug(f"Cache file exists: {cache_path}")
+                    return True
+
+            return False
 
         # For virtual files, check index
         index = self._get_index_from_path(filepath)
@@ -257,6 +494,11 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         else:
             # For streaming, we can't easily check bounds
             return True
+
+    def delete(self, filepath):
+        """Delete operation - not supported for HF datasets."""
+        logger.warning("Delete operations are not supported for Hugging Face datasets")
+        raise NotImplementedError("Hugging Face datasets are read-only")
 
     def open_file(self, filepath, mode):
         """Open the file in the specified mode."""
@@ -334,22 +576,6 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
 
         return (available_keys, output_images)
 
-    def create_directory(self, directory_path):
-        """No-op for HF datasets."""
-        pass
-
-    def torch_load(self, filename):
-        """Load a torch tensor - not typically used with HF datasets."""
-        raise NotImplementedError("Torch load not supported for HF datasets")
-
-    def torch_save(self, data, location: Union[str, Path, BytesIO]):
-        """Save a torch tensor - not supported for HF datasets."""
-        raise NotImplementedError("Torch save not supported for HF datasets")
-
-    def write_batch(self, filepaths: list, data_list: list) -> None:
-        """Write batch - not supported for HF datasets."""
-        raise NotImplementedError("Write operations not supported for HF datasets")
-
     def save_state(self):
         """No state to save for HF datasets."""
         pass
@@ -366,3 +592,37 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             logger.warning("Cannot get length of streaming dataset")
             return 0
         return len(self.dataset)
+
+    def write_batch(self, filepaths: list, data_list: list) -> None:
+        """Write batch - supported for cache files."""
+        if len(filepaths) != len(data_list):
+            raise ValueError("Number of filepaths must match number of data items")
+
+        for filepath, data in zip(filepaths, data_list):
+            self.write(filepath, data)
+
+    def torch_load(self, filename):
+        """Load a torch tensor from cache."""
+        if isinstance(filename, Path):
+            filename = str(filename)
+
+        # Try to read the file
+        data = self.read(filename, as_byteIO=True)
+        if data is None:
+            raise FileNotFoundError(f"Could not find file: {filename}")
+
+        import torch
+
+        return torch.load(data)
+
+    def torch_save(self, data, location: Union[str, Path, BytesIO]):
+        """Save a torch tensor to cache."""
+        if isinstance(location, BytesIO):
+            import torch
+
+            torch.save(data, location)
+        else:
+            self.write(location, data)
+
+    def create_directory(self, directory_path):
+        os.makedirs(directory_path, exist_ok=True)
