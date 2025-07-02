@@ -264,6 +264,21 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             raise ValueError(
                 f"(id={backend['id']}) caption_strategy='huggingface' can only be used with type='huggingface' backends"
             )
+    if backend.get("type") == "huggingface":
+        # huggingface must use metadata backend. if the user defined something else, we'll error. if they are not using anything, we'll override it.
+        if backend.get("metadata_backend", None) is None:
+            backend["metadata_backend"] = "huggingface"
+        elif backend["metadata_backend"] != "huggingface":
+            raise ValueError(
+                f"(id={backend['id']}) When using a huggingface data backend, metadata_backend must be set to 'huggingface'."
+            )
+        # same goes for caption strategy. there's no way to do any other implementation.
+        if backend.get("caption_strategy", None) is None:
+            backend["caption_strategy"] = "huggingface"
+        elif backend["caption_strategy"] != "huggingface":
+            raise ValueError(
+                f"(id={backend['id']}) When using a huggingface data backend, caption_strategy must be set to 'huggingface'."
+            )
 
     maximum_image_size = backend.get("maximum_image_size", args.maximum_image_size)
     target_downsample_size = backend.get(
