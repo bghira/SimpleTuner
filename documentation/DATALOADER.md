@@ -593,6 +593,28 @@ In this example configuration:
 
 **Note:** The `image_embeds` dataset does not have any options to set for data paths. Those are configured via `cache_dir_vae` on the image backend.
 
+### Hugging Face Datasets Support
+
+SimpleTuner now supports loading datasets directly from Hugging Face Hub without downloading the entire dataset locally. This experimental feature is ideal for:
+
+- Large-scale datasets hosted on Hugging Face
+- Datasets with built-in metadata and quality assessments
+- Quick experimentation without local storage requirements
+
+To use a Hugging Face dataset, set `"type": "huggingface"` in your dataloader configuration:
+
+```json
+{
+  "id": "my-hf-dataset",
+  "type": "huggingface",
+  "dataset_name": "username/dataset-name",
+  "caption_strategy": "huggingface",
+  "metadata_backend": "huggingface",
+  "caption_column": "caption",
+  "image_column": "image"
+}
+```
+
 ## Custom aspect ratio-to-resolution mapping
 
 When SimpleTuner first launches, it generates resolution-specific aspect mapping lists that link a decimal aspect-ratio value to its target pixel size.
