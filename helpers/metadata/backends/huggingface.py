@@ -38,6 +38,10 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         minimum_image_size: int = None,
         minimum_aspect_ratio: float = None,
         maximum_aspect_ratio: float = None,
+        # Video-related parameters
+        minimum_num_frames: int = None,
+        maximum_num_frames: int = None,
+        num_frames: int = None,
         cache_file_suffix: str = None,
         repeats: int = 0,
         # HF-specific parameters
@@ -56,6 +60,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                 - height_column: Column for image height (optional)
                 - quality_column: Column containing quality assessments
                 - description_column: Column for descriptions
+                - composite_image_config: Configuration for handling composite images
             split_composite_images: Whether to split composite images
             composite_image_column: Column containing composite images
             quality_filter: Dict of quality thresholds to filter by
@@ -72,6 +77,12 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         self.height_column = hf_config.get("height_column", None)
         self.quality_column = hf_config.get("quality_column", "quality_assessment")
         self.description_column = hf_config.get("description_column", "description")
+        # Video-specific columns
+        self.num_frames_column = hf_config.get("num_frames_column", None)
+        self.fps_column = hf_config.get("fps_column", None)
+
+        # Composite image configuration
+        self.composite_config = hf_config.get("composite_image_config", {})
 
         super().__init__(
             id=id,
@@ -89,6 +100,9 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             minimum_image_size=minimum_image_size,
             minimum_aspect_ratio=minimum_aspect_ratio,
             maximum_aspect_ratio=maximum_aspect_ratio,
+            minimum_num_frames=minimum_num_frames,
+            maximum_num_frames=maximum_num_frames,
+            num_frames=num_frames,
             cache_file_suffix=cache_file_suffix,
             repeats=repeats,
         )
@@ -99,7 +113,6 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                 "HuggingfaceMetadataBackend requires HuggingfaceDatasetsBackend"
             )
 
-        self.dataset = data_backend.dataset
         self.caption_cache = self._extract_captions_to_dict()
 
     def _extract_captions_to_dict(self) -> Dict[str, Union[str, List[str]]]:
@@ -108,9 +121,15 @@ class HuggingfaceMetadataBackend(MetadataBackend):
 
         logger.info("Extracting captions from Hugging Face dataset...")
 
+        # Check composite configuration
+        is_composite = self.composite_config.get("enabled", False)
+        select_index = self.composite_config.get("select_index", None)
+
         # Iterate through dataset
-        for idx in range(len(self.dataset)):
-            item = self.dataset[idx]
+        for idx in range(len(self.data_backend.dataset)):
+            item = self.data_backend.dataset[idx]
+
+            # Generate appropriate virtual path
             virtual_path = f"{idx}.jpg"
 
             # Apply quality filter if specified
@@ -135,19 +154,22 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         if isinstance(self.caption_column, list):
             caption_values = []
             for col in self.caption_column:
-                if col in item and item[col]:
-                    caption_values.append(str(item[col]))
+                value = self._get_nested_value(item, col)
+                if value:
+                    caption_values.append(str(value))
             if caption_values:
                 caption = caption_values
         else:
-            # Single caption column
-            if self.caption_column in item:
-                caption = item.get(self.caption_column)
+            # Single caption column (might be nested)
+            caption = self._get_nested_value(item, self.caption_column)
+            if caption:
+                caption = str(caption)
 
         # Try fallback if no caption found
         if not caption and self.fallback_caption_column:
-            if self.fallback_caption_column in item:
-                caption = item.get(self.fallback_caption_column)
+            fallback = self._get_nested_value(item, self.fallback_caption_column)
+            if fallback:
+                caption = str(fallback)
 
         # Handle description column if specified
         if not caption and self.description_column in item:
@@ -172,6 +194,113 @@ class HuggingfaceMetadataBackend(MetadataBackend):
 
         return caption if caption else None
 
+    def _get_nested_value(self, item: Dict, key_path: str) -> Any:
+        """Get a value from a nested dictionary using dot notation."""
+        if "." in key_path:
+            keys = key_path.split(".")
+            current_value = item
+            for key in keys:
+                if isinstance(current_value, dict) and key in current_value:
+                    current_value = current_value[key]
+                else:
+                    return None
+            return current_value
+        else:
+            return item.get(key_path)
+
+    def reload_cache(self, set_config: bool = True):
+        """
+        Load cache data from a JSON file on the data_backend.
+        """
+        if self.data_backend.exists(self.cache_file):
+            try:
+                cache_data_raw = self.data_backend.read(self.cache_file)
+                cache_data = json.loads(cache_data_raw)
+                logger.debug("Loaded existing aspect ratio cache.")
+            except Exception as e:
+                logger.warning(
+                    f"Error loading aspect ratio bucket cache, creating new one: {e}"
+                )
+                cache_data = {}
+            self.aspect_ratio_bucket_indices = cache_data.get(
+                "aspect_ratio_bucket_indices", {}
+            )
+            if set_config:
+                self.config = cache_data.get("config", {})
+                if self.config != {}:
+                    logger.debug(f"Setting config to {self.config}")
+                    StateTracker.set_data_backend_config(
+                        data_backend_id=self.id,
+                        config=self.config,
+                    )
+        else:
+            logger.debug("No cache file found, starting fresh.")
+
+    def save_cache(self, enforce_constraints: bool = False):
+        """
+        Save cache data as JSON to the data_backend.
+        """
+        if enforce_constraints:
+            self._enforce_min_bucket_size()
+        self._enforce_min_aspect_ratio()
+        self._enforce_max_aspect_ratio()
+
+        if self.read_only:
+            logger.debug("Metadata backend is read-only. Skipping save.")
+            return
+
+        aspect_ratio_bucket_indices_str = {
+            key: [str(path) for path in value]
+            for key, value in self.aspect_ratio_bucket_indices.items()
+        }
+        cache_data = {
+            "config": StateTracker.get_data_backend_config(
+                data_backend_id=self.data_backend.id
+            ),
+            "aspect_ratio_bucket_indices": aspect_ratio_bucket_indices_str,
+        }
+        cache_data_str = json.dumps(cache_data)
+        self.data_backend.write(self.cache_file, cache_data_str)
+        logger.debug("Aspect ratio cache saved.")
+
+    def save_image_metadata(self):
+        """Save metadata to file."""
+        # Make sure we're using the full path
+        full_metadata_path = self.metadata_file
+        if not str(self.metadata_file).endswith(".json"):
+            full_metadata_path = f"{self.metadata_file}_{self.id}.json"
+
+        self.data_backend.write(full_metadata_path, json.dumps(self.image_metadata))
+        logger.debug(f"Metadata file saved to {full_metadata_path}")
+
+    def load_image_metadata(self):
+        """Load metadata from file."""
+        # Use the same full path as save
+        full_metadata_path = self.metadata_file
+        if not str(self.metadata_file).endswith(".json"):
+            full_metadata_path = f"{self.metadata_file}_{self.id}.json"
+        logger.debug(f"Loading metadata from {full_metadata_path}")
+        self.image_metadata = {}
+        self.image_metadata_loaded = False
+
+        if self.data_backend.exists(full_metadata_path):
+            try:
+                raw = self.data_backend.read(full_metadata_path)
+                if raw:
+                    self.image_metadata = json.loads(raw)
+                    self.image_metadata_loaded = True
+                    logger.info(
+                        f"Loaded {len(self.image_metadata)} metadata entries from {full_metadata_path}"
+                    )
+                else:
+                    logger.warning(
+                        f"Metadata file exists but is empty: {full_metadata_path}"
+                    )
+            except Exception as e:
+                logger.error(f"Error loading metadata: {e}")
+        else:
+            logger.debug(f"Metadata file does not exist: {full_metadata_path}")
+
     def _passes_quality_filter(self, quality_assessment: Dict) -> bool:
         """Check if an item passes the quality filter."""
         if not self.quality_filter or not quality_assessment:
@@ -186,6 +315,44 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         """Get caption for a virtual path."""
         return self.caption_cache.get(str(index), None)
 
+    def _discover_new_files(
+        self, for_metadata: bool = False, ignore_existing_cache: bool = False
+    ):
+        """
+        Discover new files that have not been processed yet.
+        For HuggingFace datasets, this returns virtual paths.
+        """
+        # For HF datasets, we process all items
+        if hasattr(self.data_backend, "streaming") and self.data_backend.streaming:
+            logger.warning("Cannot discover files in streaming mode")
+            return []
+
+        total_items = len(self.data_backend.dataset)
+        # Check composite configuration
+        is_composite = self.composite_config.get("enabled", False)
+        select_index = self.composite_config.get("select_index", None)
+
+        # Generate virtual paths based on configuration
+        all_files = []
+        for idx in range(total_items):
+            virtual_path = f"{idx}.jpg"
+            all_files.append(virtual_path)
+
+        if ignore_existing_cache:
+            logger.debug("Ignoring existing cache, returning all files")
+            return all_files
+
+        # Get already processed files
+        processed_files = set()
+        for paths in self.aspect_ratio_bucket_indices.values():
+            processed_files.update(paths)
+
+        # Return only unprocessed files
+        new_files = [f for f in all_files if f not in processed_files]
+        logger.debug(f"Found {len(new_files)} new files out of {len(all_files)} total")
+
+        return new_files
+
     def _get_image_metadata_from_item(self, item: Dict) -> Dict[str, Any]:
         """Extract image metadata from dataset item."""
         metadata = {}
@@ -193,18 +360,52 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         # Get image to extract dimensions
         image = item.get(self.data_backend.image_column)
         if image is not None:
+            # Check if we need to handle composite image
+            is_composite = self.composite_config.get("enabled", False)
+            image_count = self.composite_config.get("image_count", 1)
+            select_index = self.composite_config.get("select_index", None)
+
             if isinstance(image, Image.Image):
-                metadata["original_size"] = image.size
+                width, height = image.size
+
+                # Handle composite image dimensions
+                if is_composite and image_count > 1:
+                    # Calculate dimensions for the selected segment
+                    segment_width = width // image_count
+                    metadata["original_size"] = (segment_width, height)
+                else:
+                    metadata["original_size"] = (width, height)
+
             elif isinstance(image, np.ndarray):
                 h, w = image.shape[:2]
-                metadata["original_size"] = (w, h)
+
+                # Handle composite image dimensions
+                if is_composite and image_count > 1:
+                    segment_width = w // image_count
+                    metadata["original_size"] = (segment_width, h)
+                else:
+                    metadata["original_size"] = (w, h)
 
         # Override with explicit width/height columns if available
         if self.width_column and self.height_column:
             if self.width_column in item and self.height_column in item:
                 w = item[self.width_column]
                 h = item[self.height_column]
+
+                # Handle composite dimensions if needed
+                is_composite = self.composite_config.get("enabled", False)
+                image_count = self.composite_config.get("image_count", 1)
+                if is_composite and image_count > 1:
+                    w = int(w) // image_count
+
                 metadata["original_size"] = (int(w), int(h))
+
+        # Extract video metadata if available
+        if self.num_frames_column and self.num_frames_column in item:
+            metadata["num_frames"] = int(item[self.num_frames_column])
+
+        if self.fps_column and self.fps_column in item:
+            metadata["fps"] = float(item[self.fps_column])
 
         return metadata
 
@@ -215,7 +416,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         metadata_updates: Optional[Dict] = None,
         delete_problematic_images: bool = False,
         statistics: dict = {},
-        aspect_ratio_rounding: int = 3,
+        aspect_ratio_rounding: int = 2,
     ) -> Dict:
         """Process an image for aspect ratio bucketing."""
         try:
@@ -243,7 +444,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                     statistics["skipped"]["quality"] += 1
                     return aspect_ratio_bucket_indices
 
-            # Get image metadata
+            # Get image metadata (will handle composite images)
             image_metadata = self._get_image_metadata_from_item(item)
 
             if "original_size" not in image_metadata:
@@ -251,6 +452,28 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                 statistics.setdefault("skipped", {}).setdefault("metadata_missing", 0)
                 statistics["skipped"]["metadata_missing"] += 1
                 return aspect_ratio_bucket_indices
+
+            # Check video frame constraints if this is a video dataset
+            if "num_frames" in image_metadata:
+                num_frames = image_metadata["num_frames"]
+
+                if self.minimum_num_frames and num_frames < self.minimum_num_frames:
+                    logger.debug(
+                        f"Video {image_path_str} has {num_frames} frames, below minimum {self.minimum_num_frames}"
+                    )
+                    statistics.setdefault("skipped", {}).setdefault("too_few_frames", 0)
+                    statistics["skipped"]["too_few_frames"] += 1
+                    return aspect_ratio_bucket_indices
+
+                if self.maximum_num_frames and num_frames > self.maximum_num_frames:
+                    logger.debug(
+                        f"Video {image_path_str} has {num_frames} frames, above maximum {self.maximum_num_frames}"
+                    )
+                    statistics.setdefault("skipped", {}).setdefault(
+                        "too_many_frames", 0
+                    )
+                    statistics["skipped"]["too_many_frames"] += 1
+                    return aspect_ratio_bucket_indices
 
             # Check resolution requirements
             if not self.meets_resolution_requirements(image_metadata=image_metadata):
@@ -311,7 +534,10 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             logger.warning("Cannot build aspect ratio buckets in streaming mode")
             return
 
-        total_items = len(self.dataset)
+        # Check if we have composite image configuration
+        is_composite = self.composite_config.get("enabled", False)
+        select_index = self.composite_config.get("select_index", None)
+        # Use the filtered dataset length, otherwise we'll try accessing elements we've filtered
         statistics = {
             "total_processed": 0,
             "skipped": {
@@ -320,6 +546,8 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                 "metadata_missing": 0,
                 "not_found": 0,
                 "too_small": 0,
+                "too_few_frames": 0,
+                "too_many_frames": 0,
                 "error": 0,
             },
         }
@@ -338,6 +566,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         aspect_ratio_bucket_updates = {}
         metadata_updates = {}
 
+        total_items = len(self.data_backend.dataset)
         for idx in tqdm(
             range(total_items),
             desc="Processing HF dataset items",
@@ -345,6 +574,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             leave=False,
             ncols=100,
         ):
+            # Generate virtual path based on composite configuration
             virtual_path = f"{idx}.jpg"
 
             # Skip if already processed
@@ -401,3 +631,38 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             for bucket in self.aspect_ratio_bucket_indices.values()
             if repeat_len(bucket) >= self.batch_size
         )
+
+    def remove_images(self, image_paths: List[str]):
+        """Remove images from all aspect ratio buckets."""
+        if not isinstance(image_paths, list):
+            image_paths = [image_paths]
+
+        for image_path in image_paths:
+            # Remove from caption cache
+            if image_path in self.caption_cache:
+                del self.caption_cache[image_path]
+
+            # Remove from all buckets
+            for bucket, images in self.aspect_ratio_bucket_indices.items():
+                if image_path in images:
+                    self.aspect_ratio_bucket_indices[bucket].remove(image_path)
+                    logger.debug(f"Removed {image_path} from bucket {bucket}")
+
+    def refresh_buckets(self, rank: int = None):
+        """
+        Override refresh_buckets for HuggingFace datasets.
+        Since HF datasets use virtual paths, we don't need to check for missing files.
+        """
+        logger.debug(f"Refreshing buckets for HuggingFace backend {self.id}")
+        # Just run the bucket computation
+        self.compute_aspect_ratio_bucket_indices()
+        return
+
+    def update_buckets_with_existing_files(self, existing_files: set):
+        """
+        Override for HuggingFace - all virtual files always "exist".
+        """
+        # For HF datasets, we don't need to remove non-existing files
+        # since all files are virtual references to dataset indices
+        logger.debug(f"Skipping file existence check for HuggingFace backend {self.id}")
+        return
