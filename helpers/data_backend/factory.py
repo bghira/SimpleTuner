@@ -937,11 +937,12 @@ def configure_multi_databackend(
                 split=backend.get("split", "train"),
                 revision=backend.get("revision", None),
                 image_column=backend.get("image_column", "image"),
-                cache_dir=backend.get("cache_dir", None),
+                cache_dir=backend.get("cache_dir", f"cache/{init_backend['id']}"),
                 compress_cache=args.compress_disk_cache,
                 streaming=backend.get("streaming", False),
                 filter_config=filter_config,
                 num_proc=backend.get("num_proc", 16),
+                backend=backend,
             )
 
             # HF datasets use virtual paths, no instance_data_dir needed
@@ -1674,6 +1675,7 @@ def get_huggingface_backend(
     streaming: bool = False,
     filter_config: dict = None,
     num_proc: int = 16,
+    backend: dict = {},
 ) -> HuggingfaceDatasetsBackend:
     """
     Get a Hugging Face datasets backend.
@@ -1716,6 +1718,11 @@ def get_huggingface_backend(
 
             return True
 
+    composite_config = None
+    if filter_config and "composite_image_config" in backend.get("huggingface", {}):
+        composite_config = backend["huggingface"]["composite_image_config"]
+    logger.info(f"Image composition config: {composite_config}")
+
     return HuggingfaceDatasetsBackend(
         accelerator=accelerator,
         id=identifier,
@@ -1728,6 +1735,7 @@ def get_huggingface_backend(
         streaming=streaming,
         filter_func=filter_func,
         num_proc=num_proc,
+        composite_config=composite_config,
     )
 
 
