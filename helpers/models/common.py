@@ -317,6 +317,8 @@ class ModelFoundation(ABC):
         3) Convert & load them into the unwrapped PyTorch modules with set_peft_model_state_dict().
         4) Optionally handle text_encoder_x using the diffusers _set_state_dict_into_text_encoder() helper.
         """
+        # Ensure QKV is unfused before loading
+        self.unfuse_qkv_projections()
 
         # We'll track whichever sub-model is our 'denoiser' (UNet or Transformer).
         denoiser = None
@@ -428,8 +430,12 @@ class ModelFoundation(ABC):
                 )
 
         logger.info("Finished loading LoRA weights successfully.")
+        # Re-fuse after loading
+        self.fuse_qkv_projections()
 
     def save_lora_weights(self, *args, **kwargs):
+        # Unfuse QKV projections before saving
+        self.unfuse_qkv_projections()
         self.PIPELINE_CLASSES[
             (
                 PipelineTypes.TEXT2IMG
@@ -437,6 +443,8 @@ class ModelFoundation(ABC):
                 else PipelineTypes.CONTROLNET
             )
         ].save_lora_weights(*args, **kwargs)
+        # Re-fuse after saving if you want to continue training
+        self.fuse_qkv_projections()
 
     def check_user_config(self):
         """
@@ -805,7 +813,7 @@ class ModelFoundation(ABC):
                 self.model.set_gradient_checkpointing_interval(
                     int(self.config.gradient_checkpointing_interval)
                 )
-
+        self.fuse_qkv_projections()
         self.post_model_load_setup()
 
     def post_model_load_setup(self):
@@ -815,6 +823,25 @@ class ModelFoundation(ABC):
         This is a stub and can be optionally implemented in subclasses for eg. updating configuration settings
         based on the loaded model weights. SDXL uses this to update the user config to reflect refiner training.
 
+        """
+        pass
+
+    def fuse_qkv_projections(self):
+        if self.config.fuse_qkv_projections:
+            logger.warning(
+                f"{self.__class__.__name__} does not support fused QKV projection yet, please open a feature request on the issue tracker."
+            )
+
+    def unfuse_qkv_projections(self):
+        """
+        Unfuse QKV projections before critical operations like saving.
+        This is a no-op by default, but subclasses can override to implement
+        proper unfusing when using fused QKV projections.
+
+        Should be called before:
+        - Saving LoRA weights
+        - Saving full model checkpoints
+        - Any operation that expects separate Q, K, V projections
         """
         pass
 

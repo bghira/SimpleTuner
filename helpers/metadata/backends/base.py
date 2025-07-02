@@ -820,7 +820,6 @@ class MetadataBackend:
             return None
 
         meta = self.image_metadata.get(filepath, None)
-
         return meta
 
     def scan_for_metadata(self):
