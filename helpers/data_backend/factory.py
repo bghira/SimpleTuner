@@ -937,7 +937,7 @@ def configure_multi_databackend(
                 split=backend.get("split", "train"),
                 revision=backend.get("revision", None),
                 image_column=backend.get("image_column", "image"),
-                cache_dir=backend.get("cache_dir", f"cache/{init_backend['id']}"),
+                cache_dir=backend.get("cache_dir", args.cache_dir),
                 compress_cache=args.compress_disk_cache,
                 streaming=backend.get("streaming", False),
                 filter_config=filter_config,
