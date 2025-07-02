@@ -13,6 +13,7 @@ from transformers import (
     T5EncoderModel,
 )
 from diffusers import AutoencoderKL
+from diffusers.models.attention_processor import Attention
 from helpers.models.flux.transformer import FluxTransformer2DModel
 from helpers.models.flux.pipeline import FluxPipeline, FluxKontextPipeline
 from helpers.models.flux.pipeline_controlnet import (
@@ -158,7 +159,6 @@ class Flux(ImageModelFoundation):
 
     def fuse_qkv_projections(self):
         if self.config.fuse_qkv_projections:
-            from diffusers.models.attention_processor import Attention
             from helpers.models.flux.attention import FluxFusedFlashAttnProcessor3
 
             if self.model is not None:
@@ -181,6 +181,24 @@ class Flux(ImageModelFoundation):
                 logger.warning(
                     "ControlNet does not support QKV projection fusing. Skipping."
                 )
+
+    def unfuse_qkv_projections(self):
+        """
+        Unfuse QKV projections in the model and ControlNet if they were fused.
+        """
+        if not self.config.fuse_qkv_projections:
+            return
+
+        if self.model is not None:
+            logger.info("Temporarily unfusing QKV projections in the model..")
+            for module in self.model.modules():
+                if isinstance(module, Attention):
+                    module.fuse_projections(fuse=False)
+            if self.controlnet is not None:
+                logger.info("Tempoarily unfusing QKV projections in the ControlNet..")
+                for module in self.controlnet.modules():
+                    if isinstance(module, Attention):
+                        module.fuse_projections(fuse=False)
 
     def requires_conditioning_latents(self) -> bool:
         # Flux ControlNet requires latent inputs instead of pixels.
