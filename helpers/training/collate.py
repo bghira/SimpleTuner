@@ -440,7 +440,6 @@ def collate_fn(batch):
     filepaths = extract_filepaths(examples)
     debug_log("Compute latents")
     model = StateTracker.get_model()
-    assert model is not None
     batch_data = compute_latents(filepaths, data_backend_id, model)
     if isinstance(batch_data[0], dict):
         latent_batch = [v["latents"] for v in batch_data]
@@ -492,6 +491,7 @@ def collate_fn(batch):
             f"Counted {len(conditioning_map)} conditioning filepaths and {len(training_filepaths)} training filepaths."
         )
 
+        assert model is not None
         if model.requires_conditioning_dataset():
             if model.requires_conditioning_latents():
                 conditioning_latents = []
