@@ -1,6 +1,7 @@
 from helpers.data_backend.local import LocalDataBackend
 from helpers.data_backend.aws import S3DataBackend
 from helpers.data_backend.csv_url_list import CSVDataBackend
+from helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
 from helpers.data_backend.base import BaseDataBackend
 from helpers.training.default_settings import default, latest_config_version
 from helpers.caching.text_embeds import TextEmbeddingCache
@@ -155,6 +156,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         raise ValueError(
             "Image datasets require a corresponding conditioning_data set configured in your dataloader."
         )
+
     if output["dataset_type"] not in choices:
         raise ValueError(f"(id={backend['id']}) dataset_type must be one of {choices}.")
     if "vae_cache_clear_each_epoch" in backend:
@@ -256,6 +258,12 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         raise ValueError(
             f"(id={backend['id']}) Cannot use caption_strategy=parquet with metadata_backend={current_metadata_backend_type}. Instead, it is recommended to use the textfile strategy and extract your captions into txt files."
         )
+    if output["config"]["caption_strategy"] == "huggingface":
+        # Ensure we're using a huggingface backend
+        if backend.get("type") != "huggingface":
+            raise ValueError(
+                f"(id={backend['id']}) caption_strategy='huggingface' can only be used with type='huggingface' backends"
+            )
 
     maximum_image_size = backend.get("maximum_image_size", args.maximum_image_size)
     target_downsample_size = backend.get(
@@ -915,6 +923,29 @@ def configure_multi_databackend(
                 init_backend["instance_data_dir"] = init_backend["instance_data_dir"][
                     :-1
                 ]
+        elif backend["type"] == "huggingface":
+            check_huggingface_config(backend)
+
+            # Extract HF-specific config
+            hf_config = backend.get("huggingface", {})
+            filter_config = hf_config.get("filter_func", None)
+
+            init_backend["data_backend"] = get_huggingface_backend(
+                accelerator=accelerator,
+                identifier=init_backend["id"],
+                dataset_name=backend["dataset_name"],
+                split=backend.get("split", "train"),
+                revision=backend.get("revision", None),
+                image_column=backend.get("image_column", "image"),
+                cache_dir=backend.get("cache_dir", None),
+                compress_cache=args.compress_disk_cache,
+                streaming=backend.get("streaming", False),
+                filter_config=filter_config,
+                num_proc=backend.get("num_proc", 16),
+            )
+
+            # HF datasets use virtual paths, no instance_data_dir needed
+            init_backend["instance_data_dir"] = ""
         else:
             raise ValueError(f"Unknown data backend type: {backend['type']}")
 
@@ -952,6 +983,30 @@ def configure_multi_databackend(
                 raise ValueError(
                     "Parquet metadata backend requires a 'parquet' field in the backend config containing required fields for configuration."
                 )
+        elif metadata_backend == "huggingface":
+            from helpers.metadata.backends.huggingface import HuggingfaceMetadataBackend
+
+            MetadataBackendCls = HuggingfaceMetadataBackend
+
+            # Extract HF-specific metadata config
+            hf_config = backend.get("huggingface", {})
+            metadata_backend_args["hf_config"] = hf_config
+
+            # Extract quality filter if present
+            quality_filter = None
+            if (
+                "filter_func" in hf_config
+                and "quality_thresholds" in hf_config["filter_func"]
+            ):
+                quality_filter = hf_config["filter_func"]["quality_thresholds"]
+
+            metadata_backend_args["quality_filter"] = quality_filter
+            metadata_backend_args["split_composite_images"] = backend.get(
+                "split_composite_images", False
+            )
+            metadata_backend_args["composite_image_column"] = backend.get(
+                "composite_image_column", "image"
+            )
         else:
             raise ValueError(f"Unknown metadata backend type: {metadata_backend}")
 
@@ -1573,6 +1628,106 @@ def get_aws_backend(
         aws_secret_access_key=aws_secret_access_key,
         compress_cache=compress_cache,
         max_pool_connections=max_pool_connections,
+    )
+
+
+def check_huggingface_config(backend: dict) -> None:
+    """
+    Check the configuration for a Hugging Face backend.
+
+    Args:
+        backend (dict): A dictionary of the backend configuration.
+    Returns:
+        None
+    """
+    required_keys = ["dataset_name"]
+    for key in required_keys:
+        if key not in backend:
+            raise ValueError(
+                f"Missing required key '{key}' in Hugging Face backend config."
+            )
+
+    # Check metadata backend compatibility
+    metadata_backend = backend.get("metadata_backend", "huggingface")
+    if metadata_backend not in ["huggingface"]:
+        raise ValueError(
+            f"Hugging Face datasets should use metadata_backend='huggingface', not '{metadata_backend}'"
+        )
+
+    # Check caption strategy compatibility
+    caption_strategy = backend.get("caption_strategy", "huggingface")
+    if caption_strategy not in ["huggingface"]:
+        raise ValueError(
+            f"Hugging Face datasets should use caption_strategy='huggingface', not '{caption_strategy}'"
+        )
+
+
+def get_huggingface_backend(
+    accelerator,
+    identifier: str,
+    dataset_name: str,
+    split: str = "train",
+    revision: str = None,
+    image_column: str = "image",
+    cache_dir: str = None,
+    compress_cache: bool = False,
+    streaming: bool = False,
+    filter_config: dict = None,
+    num_proc: int = 16,
+) -> HuggingfaceDatasetsBackend:
+    """
+    Get a Hugging Face datasets backend.
+    """
+    # Create filter function from config if needed
+    filter_func = None
+    if filter_config:
+        # Simple inline filter creation
+        def filter_func(item):
+            # Collection filter
+            if "collection" in filter_config:
+                required_collections = filter_config["collection"]
+                if isinstance(required_collections, str):
+                    required_collections = [required_collections]
+                if item.get("collection") not in required_collections:
+                    return False
+
+            # Quality thresholds
+            if "quality_thresholds" in filter_config:
+                quality = item.get(
+                    filter_config.get("quality_column", "quality_assessment"), {}
+                )
+                if not quality:
+                    return False
+                for metric, threshold in filter_config["quality_thresholds"].items():
+                    if quality.get(metric, 0) < threshold:
+                        return False
+
+            # Dimension filters
+            if (
+                "min_width" in filter_config
+                and item.get("width", 0) < filter_config["min_width"]
+            ):
+                return False
+            if (
+                "min_height" in filter_config
+                and item.get("height", 0) < filter_config["min_height"]
+            ):
+                return False
+
+            return True
+
+    return HuggingfaceDatasetsBackend(
+        accelerator=accelerator,
+        id=identifier,
+        dataset_name=dataset_name,
+        split=split,
+        revision=revision,
+        image_column=image_column,
+        cache_dir=cache_dir,
+        compress_cache=compress_cache,
+        streaming=streaming,
+        filter_func=filter_func,
+        num_proc=num_proc,
     )
 
 
