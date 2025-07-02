@@ -114,6 +114,8 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             )
 
         self.caption_cache = self._extract_captions_to_dict()
+        self.reload_cache()
+        self.load_image_metadata()
 
     def _extract_captions_to_dict(self) -> Dict[str, Union[str, List[str]]]:
         """Extract captions from the dataset into a fast lookup dict."""
@@ -555,6 +557,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         # Load existing cache unless we're ignoring it
         if not ignore_existing_cache:
             self.reload_cache()
+            self.load_image_metadata()
             existing_files = set().union(*self.aspect_ratio_bucket_indices.values())
             statistics["skipped"]["already_exists"] = len(existing_files)
         else:
