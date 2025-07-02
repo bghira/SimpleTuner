@@ -45,7 +45,7 @@ To use a Hugging Face dataset, configure your dataloader with `"type": "huggingf
 - `image_column`: Column containing images (default: "image")
 - `caption_column`: Column(s) containing captions
 - `cache_dir`: Local cache directory for dataset files
-- `streaming`: ⚠️ **Currently not functional** - SimpleTuner requires full dataset access
+- `streaming`: ⚠️ **Currently not functional** - SimpleTuner tries to efficiently scan the dataset to build metadata and encoder caches.
 - `num_proc`: Number of processes for filtering (default: 16)
 
 ## Caption Configuration
