@@ -228,7 +228,7 @@ class FluxFusedFlashAttnProcessor3(object):
         except ImportError:
             raise ImportError(
                 "FluxFusedFlashAttnProcessor3 requires flash-attn library. "
-                "Install with: pip install flash-attn --no-build-isolation"
+                "Please see this link for Hopper and Blackwell instructions: https://github.com/bghira/SimpleTuner/blob/main/INSTALL.md#nvidia-hopper--blackwell-follow-up-steps"
             )
 
     def __call__(
