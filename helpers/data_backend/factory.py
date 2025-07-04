@@ -5,6 +5,7 @@ from helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
 from helpers.data_backend.base import BaseDataBackend
 from helpers.training.default_settings import default, latest_config_version
 from helpers.caching.text_embeds import TextEmbeddingCache
+from helpers.metadata.utils import DatasetDuplicator
 
 from helpers.training.exceptions import MultiDatasetExhausted
 from helpers.multiaspect.dataset import MultiAspectDataset
@@ -248,6 +249,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["hash_filenames"] = backend["hash_filenames"]
     if "hash_filenames" in backend and backend.get("type") == "csv":
         output["config"]["hash_filenames"] = backend["hash_filenames"]
+    if "conditioning_config" in backend:
+        output["config"]["conditioning_config"] = backend["conditioning_config"]
 
     # check if caption_strategy=parquet with metadata_backend=json
     current_metadata_backend_type = backend.get("metadata_backend", "discovery")
@@ -561,6 +564,30 @@ def synchronize_conditioning_settings():
                     )
 
 
+def from_instance_representation(representation: dict) -> "BaseDataBackend":
+    """
+    Create a new backend instance from a serialized representation.
+    This base implementation dispatches to the appropriate subclass.
+    """
+    backend_type = representation.get("backend_type")
+
+    if backend_type == "local":
+        from helpers.data_backend.local import LocalDataBackend
+
+        return LocalDataBackend.from_instance_representation(representation)
+    elif backend_type == "huggingface":
+        from helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
+
+        return HuggingfaceDatasetsBackend.from_instance_representation(representation)
+    elif backend_type == "aws":
+        from helpers.data_backend.aws import S3DataBackend
+
+        return S3DataBackend.from_instance_representation(representation)
+    # Add other backend types as needed
+    else:
+        raise ValueError(f"Unknown backend type: {backend_type}")
+
+
 def configure_multi_databackend(
     args: dict, accelerator, text_encoders, tokenizers, model: ModelFoundation
 ):
@@ -588,6 +615,29 @@ def configure_multi_databackend(
         raise ValueError(
             "Must provide at least one data backend in the data backend config file."
         )
+
+    ###                                                                          ###
+    #    we'll check for any auto-conditioning configurations and generate them.   #
+    conditioning_datasets = []
+    for backend_idx, backend in enumerate(data_backend_config):
+        if backend.get("conditioning", None) is not None:
+            info_log(
+                f"Found conditioning configuration for backend {backend['id']}. Generating conditioning dataset."
+            )
+            modified_backend, conditioning_datasets = (
+                DatasetDuplicator.generate_conditioning_datasets(
+                    global_config=args, source_backend_config=backend
+                )
+            )
+            # update the config with the new one that contains the conditioning dataset links.
+            data_backend_config[backend_idx] = modified_backend
+            for conditioning_dataset in conditioning_datasets:
+                info_log(
+                    f"Generated conditioning dataset {conditioning_dataset['id']} from backend {backend['id']}: {conditioning_dataset}"
+                )
+    # Synchronize resolution settings between main datasets and their conditioning datasets
+    if conditioning_datasets is not None:
+        data_backend_config.extend(conditioning_datasets)
 
     text_embed_backends = {}
     image_embed_backends = {}
@@ -1070,7 +1120,10 @@ def configure_multi_databackend(
         )
 
         if (
-            "aspect" not in args.skip_file_discovery
+            not backend.get(
+                "auto_generated", False
+            )  # auto-generated datasets have duplicate metadata.
+            and "aspect" not in args.skip_file_discovery
             and "aspect" not in backend.get("skip_file_discovery", "")
             and conditioning_type
             not in [
@@ -1091,18 +1144,21 @@ def configure_multi_databackend(
                     f"(id={init_backend['id']}) Refreshing aspect buckets on main process."
                 )
                 init_backend["metadata_backend"].refresh_buckets(rank_info())
+
         accelerator.wait_for_everyone()
-        if not accelerator.is_main_process:
-            info_log(
-                f"(id={init_backend['id']}) Reloading bucket manager cache on subprocesses."
-            )
-            init_backend["metadata_backend"].reload_cache()
-        accelerator.wait_for_everyone()
-        if init_backend["metadata_backend"].has_single_underfilled_bucket():
-            raise Exception(
-                f"Cannot train using a dataset that has a single bucket with fewer than {args.train_batch_size} images."
-                f" You have to reduce your batch size, or increase your dataset size (id={init_backend['id']})."
-            )
+        # auto-generated datasets will not have contents available just yet.
+        if not backend.get("auto_generated", False):
+            if not accelerator.is_main_process:
+                info_log(
+                    f"(id={init_backend['id']}) Reloading bucket manager cache on subprocesses."
+                )
+                init_backend["metadata_backend"].reload_cache()
+            accelerator.wait_for_everyone()
+            if init_backend["metadata_backend"].has_single_underfilled_bucket():
+                raise Exception(
+                    f"Cannot train using a dataset that has a single bucket with fewer than {args.train_batch_size} images."
+                    f" You have to reduce your batch size, or increase your dataset size (id={init_backend['id']})."
+                )
 
         # In the case where max_train_steps is false and num_train_epochs is being used,
         # padding should be applied so as to ensure each process is operating on the same
@@ -1113,11 +1169,23 @@ def configure_multi_databackend(
             True if not args.max_train_steps or args.max_train_steps == 0 else False
         )
 
-        # Now split the contents of these buckets between all processes
-        init_backend["metadata_backend"].split_buckets_between_processes(
-            gradient_accumulation_steps=args.gradient_accumulation_steps,
-            apply_padding=apply_padding,
-        )
+        if backend.get("auto_generated", False):
+            # when we're duplicating a metadata set, it's already split between processes.
+            info_log(
+                f"Duplicating metadata for auto-generated dataset from {backend.get('source_dataset_id', 'unknown_source_dataset_id')}"
+            )
+            DatasetDuplicator.copy_metadata(
+                source_backend=StateTracker.get_data_backend(
+                    backend.get("source_dataset_id", "unknown_source_dataset_id")
+                ),
+                target_backend=init_backend,
+            )
+        else:
+            # Now split the contents of these buckets between all processes
+            init_backend["metadata_backend"].split_buckets_between_processes(
+                gradient_accumulation_steps=args.gradient_accumulation_steps,
+                apply_padding=apply_padding,
+            )
 
         # Check if there is an existing 'config' in the metadata_backend.config
         excluded_keys = [
@@ -1288,6 +1356,7 @@ def configure_multi_databackend(
             conditioning_type != "mask"
             and "text" not in args.skip_file_discovery
             and "text" not in backend.get("skip_file_discovery", "")
+            and not backend.get("auto_generated", False)
         ):
             info_log(f"(id={init_backend['id']}) Collecting captions.")
             captions, images_missing_captions = PromptHandler.get_all_captions(
@@ -1330,6 +1399,26 @@ def configure_multi_databackend(
         init_backend["config"]["hash_filenames"] = hash_filenames
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
         logger.debug(f"Hashing filenames: {hash_filenames}")
+
+        if backend.get("auto_generated", False):
+            # we have to auto-generate the data for the reference images.
+            info_log(
+                f"(id={init_backend['id']}) Auto-generating reference images for conditioning."
+            )
+            from helpers.data_generation import DataGenerator, SampleGenerator
+
+            sample_generator = SampleGenerator.from_backend(backend)
+            generator = DataGenerator(
+                id=backend.get("id"),
+                source_backend=StateTracker.get_data_backend(
+                    backend.get("source_dataset_id", "unknown_source_dataset_id")
+                ),
+                target_backend=init_backend,
+                accelerator=accelerator,
+                hash_filenames=hash_filenames,
+                conditioning_type=backend.get("conditioning_type"),
+            )
+            generator.generate_dataset()
 
         if getattr(
             model, "AUTOENCODER_CLASS", None
