@@ -1,11 +1,12 @@
 import logging
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional, Type
+from typing import List, Dict, Any, Optional, Type, Tuple
 from PIL import Image, ImageFilter
 import numpy as np
 import torch
 import io
 from torchvision import transforms
+import random
 
 logger = logging.getLogger("SampleGenerator")
 
@@ -204,6 +205,186 @@ class SuperResolutionSampleGenerator(SampleGenerator):
         return Image.fromarray(noisy_array)
 
 
+class JPEGArtifactsSampleGenerator(SampleGenerator):
+    """
+    Creates images with JPEG compression artifacts for artifact removal training.
+    Supports various compression strategies including multiple compression rounds,
+    quality variation, and different subsampling modes.
+    """
+
+    def __init__(self, config: Dict[str, Any]):
+        super().__init__(config)
+
+        # Quality settings
+        self.quality_mode = config.get("quality_mode", "fixed")  # fixed, random, range
+        self.quality = config.get("quality", 25)  # For fixed mode
+        self.quality_range = config.get("quality_range", (10, 50))  # For range mode
+        self.quality_list = config.get(
+            "quality_list", [10, 20, 30, 40]
+        )  # For random mode
+
+        # Compression rounds (recompression artifacts)
+        self.compression_rounds = config.get("compression_rounds", 1)
+        self.round_quality_decay = config.get(
+            "round_quality_decay", 0.9
+        )  # Quality multiplier per round
+
+        # Advanced JPEG settings
+        self.subsampling = config.get(
+            "subsampling", None
+        )  # None, '4:4:4', '4:2:2', '4:2:0'
+        self.optimize = config.get("optimize", False)
+        self.progressive = config.get("progressive", False)
+
+        # Pre/post processing
+        self.pre_blur = config.get("pre_blur", False)  # Blur before compression
+        self.pre_blur_radius = config.get("pre_blur_radius", 0.5)
+        self.add_noise = config.get("add_noise", False)
+        self.noise_level = config.get("noise_level", 0.01)
+
+        # Block artifact enhancement (optional)
+        self.enhance_blocks = config.get("enhance_blocks", False)
+        self.block_noise_level = config.get("block_noise_level", 0.02)
+
+    def transform_batch(
+        self,
+        images: List[Image.Image],
+        source_paths: List[str],
+        metadata_list: List[Dict],
+        accelerator,
+    ) -> List[Image.Image]:
+        """Create JPEG artifact versions of input images."""
+
+        transformed_images = []
+
+        for img, path, metadata in zip(images, source_paths, metadata_list):
+            try:
+                # Convert to RGB if needed
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+
+                artifact_img = self._apply_jpeg_artifacts(img)
+                transformed_images.append(artifact_img)
+
+            except Exception as e:
+                logger.error(f"Error applying JPEG artifacts to {path}: {e}")
+                raise
+
+        return transformed_images
+
+    def _apply_jpeg_artifacts(self, img: Image.Image) -> Image.Image:
+        """Apply JPEG compression artifacts to image."""
+
+        result = img.copy()
+
+        # Pre-blur if requested (simulates camera/scanner blur)
+        if self.pre_blur:
+            result = result.filter(
+                ImageFilter.GaussianBlur(radius=self.pre_blur_radius)
+            )
+
+        # Pre-noise if requested
+        if self.add_noise and self.noise_level > 0:
+            result = self._add_gaussian_noise(result, self.noise_level)
+
+        # Apply compression rounds
+        for round_idx in range(self.compression_rounds):
+            quality = self._get_quality_for_round(round_idx)
+            result = self._compress_jpeg(result, quality)
+
+        # Enhance block artifacts if requested
+        if self.enhance_blocks:
+            result = self._enhance_block_artifacts(result)
+
+        return result
+
+    def _get_quality_for_round(self, round_idx: int) -> int:
+        """Get JPEG quality for specific compression round."""
+
+        base_quality = self._get_base_quality()
+
+        # Apply decay for multiple rounds
+        if round_idx > 0:
+            quality = int(base_quality * (self.round_quality_decay**round_idx))
+            quality = max(1, min(95, quality))  # Clamp to valid range
+        else:
+            quality = base_quality
+
+        return quality
+
+    def _get_base_quality(self) -> int:
+        """Get base JPEG quality based on mode."""
+
+        if self.quality_mode == "fixed":
+            return self.quality
+        elif self.quality_mode == "range":
+            return random.randint(self.quality_range[0], self.quality_range[1])
+        elif self.quality_mode == "random":
+            return random.choice(self.quality_list)
+        else:
+            return self.quality
+
+    def _compress_jpeg(self, img: Image.Image, quality: int) -> Image.Image:
+        """Apply JPEG compression with specified quality."""
+
+        buffer = io.BytesIO()
+
+        # Prepare save kwargs
+        save_kwargs = {
+            "format": "JPEG",
+            "quality": quality,
+            "optimize": self.optimize,
+            "progressive": self.progressive,
+        }
+
+        # Add subsampling if specified
+        if self.subsampling:
+            if self.subsampling == "4:4:4":
+                save_kwargs["subsampling"] = 0
+            elif self.subsampling == "4:2:2":
+                save_kwargs["subsampling"] = 1
+            elif self.subsampling == "4:2:0":
+                save_kwargs["subsampling"] = 2
+
+        # Save and reload
+        img.save(buffer, **save_kwargs)
+        buffer.seek(0)
+        compressed = Image.open(buffer)
+
+        # Ensure RGB mode
+        return compressed.convert("RGB")
+
+    def _add_gaussian_noise(self, img: Image.Image, noise_level: float) -> Image.Image:
+        """Add Gaussian noise to image."""
+        img_array = np.array(img).astype(np.float32) / 255.0
+        noise = np.random.normal(0, noise_level, img_array.shape)
+        noisy_array = np.clip(img_array + noise, 0, 1)
+        return Image.fromarray((noisy_array * 255).astype(np.uint8))
+
+    def _enhance_block_artifacts(self, img: Image.Image) -> Image.Image:
+        """Enhance JPEG block artifacts by adding noise to block boundaries."""
+
+        img_array = np.array(img).astype(np.float32) / 255.0
+        h, w, c = img_array.shape
+
+        # Create block mask (8x8 JPEG blocks)
+        block_mask = np.zeros((h, w), dtype=np.float32)
+        for i in range(0, h, 8):
+            block_mask[i, :] = 1.0
+        for j in range(0, w, 8):
+            block_mask[:, j] = 1.0
+
+        # Add noise to block boundaries
+        block_noise = np.random.normal(0, self.block_noise_level, (h, w, c))
+        block_noise *= block_mask[:, :, np.newaxis]
+
+        # Apply noise
+        enhanced = img_array + block_noise
+        enhanced = np.clip(enhanced, 0, 1)
+
+        return Image.fromarray((enhanced * 255).astype(np.uint8))
+
+
 class CannyEdgeSampleGenerator(SampleGenerator):
     """Creates Canny edge detection images for ControlNet training."""
 
@@ -352,6 +533,9 @@ GENERATOR_REGISTRY: Dict[str, Type[SampleGenerator]] = {
     "superresolution": SuperResolutionSampleGenerator,
     "super_resolution": SuperResolutionSampleGenerator,  # Alias
     "lowres": SuperResolutionSampleGenerator,  # Alias
+    "jpeg_artifacts": JPEGArtifactsSampleGenerator,
+    "jpeg": JPEGArtifactsSampleGenerator,  # Alias
+    "compression": JPEGArtifactsSampleGenerator,  # Alias
     "canny": CannyEdgeSampleGenerator,
     "edges": CannyEdgeSampleGenerator,  # Alias
     "depth": DepthMapSampleGenerator,
