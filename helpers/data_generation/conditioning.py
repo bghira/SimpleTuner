@@ -773,35 +773,6 @@ class DataGenerator:
 
         # Process all buckets
         self.process_buckets()
-
-        # Update target metadata with processed files
-        if self.accelerator.is_local_main_process and self.target_metadata_backend:
-            self.debug_log("Updating target metadata")
-            from helpers.training import image_file_extensions
-
-            # Scan target directory and update metadata for new files
-            target_files = self.target_data_backend.list_files(
-                instance_data_dir=self.target_instance_dir,
-                file_extensions=image_file_extensions,
-            )
-            for target_file in target_files:
-                source_file = self.target_to_source_path.get(target_file, None)
-                if source_file:
-                    source_metadata = (
-                        self.source_metadata_backend.get_metadata_by_filepath(
-                            source_file
-                        )
-                    )
-                    if source_metadata:
-                        # Copy metadata with source reference
-                        target_metadata = source_metadata.copy()
-                        target_metadata["original_source"] = source_file
-                        self.target_metadata_backend.update_metadata_by_filepath(
-                            target_file, target_metadata
-                        )
-
-            self.target_metadata_backend.save_metadata()
-
         self.accelerator.wait_for_everyone()
         self.debug_log("Dataset generation complete")
 
