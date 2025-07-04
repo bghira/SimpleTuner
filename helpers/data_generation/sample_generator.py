@@ -432,6 +432,344 @@ class CannyEdgeSampleGenerator(SampleGenerator):
         return transformed_images
 
 
+class RandomMasksSampleGenerator(SampleGenerator):
+    """
+    Creates random masks for inpainting training.
+    Generates various types of masks including rectangles, circles, brush strokes, and irregular shapes.
+    """
+
+    def __init__(self, config: Dict[str, Any]):
+        super().__init__(config)
+
+        # Mask type settings
+        self.mask_types = config.get(
+            "mask_types", ["rectangle", "circle", "brush", "irregular"]
+        )
+        self.mask_type_weights = config.get(
+            "mask_type_weights", None
+        )  # For weighted random selection
+
+        # Coverage settings
+        self.min_coverage = config.get("min_coverage", 0.1)  # Minimum mask coverage
+        self.max_coverage = config.get("max_coverage", 0.5)  # Maximum mask coverage
+
+        # Per-type settings
+        self.min_masks = config.get("min_masks", 1)  # Minimum number of mask regions
+        self.max_masks = config.get("max_masks", 5)  # Maximum number of mask regions
+
+        # Rectangle settings
+        self.rect_min_size = config.get(
+            "rect_min_size", 0.1
+        )  # Min size as fraction of image
+        self.rect_max_size = config.get("rect_max_size", 0.4)
+
+        # Circle settings
+        self.circle_min_radius = config.get("circle_min_radius", 0.05)
+        self.circle_max_radius = config.get("circle_max_radius", 0.2)
+
+        # Brush stroke settings
+        self.brush_min_width = config.get("brush_min_width", 5)
+        self.brush_max_width = config.get("brush_max_width", 40)
+        self.brush_min_length = config.get("brush_min_length", 0.1)
+        self.brush_max_length = config.get("brush_max_length", 0.5)
+
+        # Irregular mask settings
+        self.irregular_min_points = config.get("irregular_min_points", 5)
+        self.irregular_max_points = config.get("irregular_max_points", 20)
+
+        # Edge settings
+        self.edge_blur = config.get("edge_blur", True)
+        self.edge_blur_radius = config.get("edge_blur_radius", 2.0)
+        self.edge_feather = config.get("edge_feather", True)
+
+        # Output settings
+        self.output_mode = config.get("output_mode", "mask")  # "mask" or "masked_image"
+        self.mask_value = config.get("mask_value", 255)  # Value for masked areas
+        self.invert_mask = config.get("invert_mask", False)
+
+    def transform_batch(
+        self,
+        images: List[Image.Image],
+        source_paths: List[str],
+        metadata_list: List[Dict],
+        accelerator,
+    ) -> List[Image.Image]:
+        """Create mask images or masked versions of input images."""
+
+        transformed_images = []
+
+        for img, path, metadata in zip(images, source_paths, metadata_list):
+            try:
+                # Convert to RGB if needed
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+
+                # Generate mask
+                mask = self._generate_random_mask(img.size)
+
+                # Apply based on output mode
+                if self.output_mode == "mask":
+                    # Return mask as RGB image
+                    mask_rgb = mask.convert("RGB")
+                    transformed_images.append(mask_rgb)
+                else:
+                    # Return masked image
+                    masked_img = self._apply_mask_to_image(img, mask)
+                    transformed_images.append(masked_img)
+
+            except Exception as e:
+                logger.error(f"Error creating mask for {path}: {e}")
+                raise
+
+        return transformed_images
+
+    def _generate_random_mask(self, size: Tuple[int, int]) -> Image.Image:
+        """Generate a random mask of specified size."""
+
+        width, height = size
+        mask = Image.new("L", size, 0)
+
+        # Determine number of mask regions
+        num_masks = random.randint(self.min_masks, self.max_masks)
+
+        # Track coverage
+        mask_array = np.array(mask)
+        target_coverage = random.uniform(self.min_coverage, self.max_coverage)
+
+        for _ in range(num_masks):
+            # Check current coverage
+            current_coverage = np.sum(mask_array > 0) / (width * height)
+            if current_coverage >= target_coverage:
+                break
+
+            # Select mask type
+            if self.mask_type_weights:
+                mask_type = random.choices(
+                    self.mask_types, weights=self.mask_type_weights
+                )[0]
+            else:
+                mask_type = random.choice(self.mask_types)
+
+            # Generate mask region
+            if mask_type == "rectangle":
+                mask = self._add_rectangle_mask(mask)
+            elif mask_type == "circle":
+                mask = self._add_circle_mask(mask)
+            elif mask_type == "brush":
+                mask = self._add_brush_stroke(mask)
+            elif mask_type == "irregular":
+                mask = self._add_irregular_mask(mask)
+
+            mask_array = np.array(mask)
+
+        # Post-process mask
+        if self.edge_blur:
+            mask = mask.filter(ImageFilter.GaussianBlur(radius=self.edge_blur_radius))
+
+        if self.edge_feather:
+            mask = self._feather_edges(mask)
+
+        if self.invert_mask:
+            mask = Image.eval(mask, lambda x: 255 - x)
+
+        return mask
+
+    def _add_rectangle_mask(self, mask: Image.Image) -> Image.Image:
+        """Add a rectangular mask region."""
+        from PIL import ImageDraw
+
+        draw = ImageDraw.Draw(mask)
+        width, height = mask.size
+
+        # Random rectangle size
+        rect_width = int(width * random.uniform(self.rect_min_size, self.rect_max_size))
+        rect_height = int(
+            height * random.uniform(self.rect_min_size, self.rect_max_size)
+        )
+
+        # Random position
+        x = random.randint(0, width - rect_width)
+        y = random.randint(0, height - rect_height)
+
+        # Draw rectangle
+        draw.rectangle([x, y, x + rect_width, y + rect_height], fill=self.mask_value)
+
+        return mask
+
+    def _add_circle_mask(self, mask: Image.Image) -> Image.Image:
+        """Add a circular mask region."""
+        from PIL import ImageDraw
+
+        draw = ImageDraw.Draw(mask)
+        width, height = mask.size
+
+        # Random radius
+        min_dim = min(width, height)
+        radius = int(
+            min_dim * random.uniform(self.circle_min_radius, self.circle_max_radius)
+        )
+
+        # Random center
+        cx = random.randint(radius, width - radius)
+        cy = random.randint(radius, height - radius)
+
+        # Draw circle
+        draw.ellipse(
+            [cx - radius, cy - radius, cx + radius, cy + radius], fill=self.mask_value
+        )
+
+        return mask
+
+    def _add_brush_stroke(self, mask: Image.Image) -> Image.Image:
+        """Add a brush stroke-like mask."""
+        from PIL import ImageDraw
+
+        draw = ImageDraw.Draw(mask)
+        width, height = mask.size
+
+        # Random brush width
+        brush_width = random.randint(self.brush_min_width, self.brush_max_width)
+
+        # Random path length
+        path_length = int(
+            min(width, height)
+            * random.uniform(self.brush_min_length, self.brush_max_length)
+        )
+        num_points = max(2, path_length // 20)
+
+        # Generate random path
+        points = []
+        start_x = random.randint(brush_width, width - brush_width)
+        start_y = random.randint(brush_width, height - brush_width)
+        points.append((start_x, start_y))
+
+        for _ in range(num_points - 1):
+            # Random walk
+            prev_x, prev_y = points[-1]
+            angle = random.uniform(0, 2 * np.pi)
+            distance = random.uniform(20, 50)
+
+            new_x = int(prev_x + distance * np.cos(angle))
+            new_y = int(prev_y + distance * np.sin(angle))
+
+            # Keep within bounds
+            new_x = max(brush_width, min(width - brush_width, new_x))
+            new_y = max(brush_width, min(height - brush_width, new_y))
+
+            points.append((new_x, new_y))
+
+        # Draw thick line along path
+        for i in range(len(points) - 1):
+            draw.line(
+                [points[i], points[i + 1]], fill=self.mask_value, width=brush_width
+            )
+
+        # Draw circles at joints for smoother appearance
+        for point in points:
+            x, y = point
+            draw.ellipse(
+                [
+                    x - brush_width // 2,
+                    y - brush_width // 2,
+                    x + brush_width // 2,
+                    y + brush_width // 2,
+                ],
+                fill=self.mask_value,
+            )
+
+        return mask
+
+    def _add_irregular_mask(self, mask: Image.Image) -> Image.Image:
+        """Add an irregular polygon mask."""
+        from PIL import ImageDraw
+
+        draw = ImageDraw.Draw(mask)
+        width, height = mask.size
+
+        # Generate random polygon points
+        num_points = random.randint(
+            self.irregular_min_points, self.irregular_max_points
+        )
+
+        # Start from random center
+        cx = random.randint(width // 4, 3 * width // 4)
+        cy = random.randint(height // 4, 3 * height // 4)
+
+        # Generate points in polar coordinates for smoother shape
+        points = []
+        for i in range(num_points):
+            angle = (2 * np.pi * i) / num_points + random.uniform(-0.3, 0.3)
+            radius = random.uniform(0.1, 0.3) * min(width, height)
+
+            x = int(cx + radius * np.cos(angle))
+            y = int(cy + radius * np.sin(angle))
+
+            # Keep within bounds
+            x = max(0, min(width - 1, x))
+            y = max(0, min(height - 1, y))
+
+            points.append((x, y))
+
+        # Draw polygon
+        draw.polygon(points, fill=self.mask_value)
+
+        return mask
+
+    def _feather_edges(self, mask: Image.Image) -> Image.Image:
+        """Feather the edges of the mask for smoother blending."""
+        try:
+            from scipy import ndimage
+
+            # Convert to numpy for processing
+            mask_array = np.array(mask).astype(np.float32) / 255.0
+
+            # Binary mask
+            binary_mask = mask_array > 0.5
+
+            # Distance from edge
+            dist_outside = ndimage.distance_transform_edt(~binary_mask)
+            dist_inside = ndimage.distance_transform_edt(binary_mask)
+
+            # Feather width
+            feather_width = 10
+
+            # Create feathered mask
+            feathered = np.ones_like(mask_array)
+            feathered[~binary_mask] = np.clip(
+                dist_outside[~binary_mask] / feather_width, 0, 1
+            )
+            feathered[binary_mask] = np.clip(
+                1 - (dist_inside[binary_mask] - feather_width) / feather_width, 0, 1
+            )
+
+            # Convert back to PIL
+            feathered = (feathered * 255).astype(np.uint8)
+            return Image.fromarray(feathered, mode="L")
+
+        except ImportError:
+            # Fallback to simple Gaussian blur if scipy not available
+            return mask.filter(
+                ImageFilter.GaussianBlur(radius=self.edge_blur_radius * 2)
+            )
+
+    def _apply_mask_to_image(self, img: Image.Image, mask: Image.Image) -> Image.Image:
+        """Apply mask to image (set masked areas to white or black)."""
+        img_array = np.array(img)
+        mask_array = np.array(mask)
+
+        # Normalize mask
+        mask_normalized = mask_array.astype(np.float32) / 255.0
+
+        # Apply mask (white fill for masked areas)
+        masked_array = img_array.copy()
+        for c in range(3):
+            masked_array[:, :, c] = (
+                img_array[:, :, c] * (1 - mask_normalized) + 255 * mask_normalized
+            ).astype(np.uint8)
+
+        return Image.fromarray(masked_array)
+
+
 class DepthMapSampleGenerator(SampleGenerator):
     """Creates depth map images for ControlNet training."""
 
@@ -536,6 +874,9 @@ GENERATOR_REGISTRY: Dict[str, Type[SampleGenerator]] = {
     "jpeg_artifacts": JPEGArtifactsSampleGenerator,
     "jpeg": JPEGArtifactsSampleGenerator,  # Alias
     "compression": JPEGArtifactsSampleGenerator,  # Alias
+    "random_masks": RandomMasksSampleGenerator,
+    "masks": RandomMasksSampleGenerator,  # Alias
+    "inpainting": RandomMasksSampleGenerator,  # Alias
     "canny": CannyEdgeSampleGenerator,
     "edges": CannyEdgeSampleGenerator,  # Alias
     "depth": DepthMapSampleGenerator,
