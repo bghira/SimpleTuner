@@ -1,7 +1,22 @@
+"""
+DataGenerator - Efficient multiprocessing pipeline for dataset transformations.
+
+Architecture Overview:
+1. Main process orchestrates the pipeline and manages queues
+2. Thread pool handles I/O-bound operations (reading source files)
+3. Process pool handles CPU-bound operations (image transformations)
+4. Worker processes write directly to target backend to avoid pickling overhead
+
+The key insight is that CPU-intensive image processing cannot use threads in Python
+due to the GIL, so we use separate processes. To avoid the overhead of pickling
+transformed images back to the main process, workers write directly to the target.
+"""
+
 import os
 import logging
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from multiprocessing import Process, Manager
 from random import shuffle
 from tqdm import tqdm
 from pathlib import Path
@@ -10,15 +25,164 @@ from numpy import str_ as numpy_str
 from queue import Queue
 from hashlib import sha256
 from typing import List, Dict, Tuple, Any, Optional
+import multiprocessing as mp
+import time
 
 logger = logging.getLogger("DataGenerator")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
+def transform_worker_process(
+    work_queue,
+    done_queue,
+    source_backend_repr: Dict,
+    target_backend_repr: Dict,
+    sample_generator_config: Dict,
+    accelerator_device: str,
+    worker_id: int,
+    delete_problematic_images: bool = False,
+):
+    """
+    Worker process that pulls items from queue, transforms them, and writes directly.
+    This runs in a separate process to avoid GIL limitations.
+    """
+    import os
+    import io
+    import logging
+    from PIL import Image
+    from helpers.data_backend.factory import from_instance_representation
+    from helpers.data_generation.sample_generator import SampleGenerator
+
+    # Set up logging for this worker
+    logger = logging.getLogger(f"TransformWorker-{worker_id}")
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+
+    # Reconstruct backends in the subprocess
+    try:
+        source_data_backend = from_instance_representation(source_backend_repr)
+        target_data_backend = from_instance_representation(target_backend_repr)
+
+        # Create sample generator
+        sample_generator = SampleGenerator.from_backend(
+            {"conditioning_config": sample_generator_config}
+        )
+
+        # Set up minimal accelerator info
+        class MinimalAccelerator:
+            def __init__(self, device):
+                self.device = device
+
+        accelerator = MinimalAccelerator(accelerator_device)
+
+        logger.info(f"Transform worker {worker_id} started")
+    except Exception as e:
+        logger.error(f"Worker {worker_id} failed to initialize: {e}")
+        return
+
+    while True:
+        try:
+            # Get work item with timeout
+            work_item = work_queue.get(timeout=30.0)
+
+            if work_item is None:  # Poison pill
+                logger.info(f"Transform worker {worker_id} shutting down")
+                break
+
+            batch_items = work_item["batch_items"]
+            batch_id = work_item.get("batch_id", 0)
+
+            # Extract components
+            source_paths = [item[0] for item in batch_items]
+            target_paths = [item[1] for item in batch_items]
+            images = [item[2] for item in batch_items]
+            metadata_list = [item[3] for item in batch_items]
+
+            # Apply transformation
+            try:
+                transformed_data = sample_generator.transform_batch(
+                    images=images,
+                    source_paths=source_paths,
+                    metadata_list=metadata_list,
+                    accelerator=accelerator,
+                )
+
+                # Write directly from the worker process
+                filepaths = []
+                data_items = []
+                successful_paths = []
+
+                for target_path, transformed_img in zip(target_paths, transformed_data):
+                    # Convert image to bytes
+                    buffer = io.BytesIO()
+
+                    # Determine format from file extension
+                    ext = os.path.splitext(target_path)[1].lower()
+                    format_map = {
+                        ".jpg": "JPEG",
+                        ".jpeg": "JPEG",
+                        ".png": "PNG",
+                        ".webp": "WEBP",
+                        ".bmp": "BMP",
+                    }
+                    save_format = format_map.get(ext, "PNG")
+
+                    # Save to buffer
+                    if isinstance(transformed_img, Image.Image):
+                        try:
+                            transformed_img.save(buffer, format=save_format)
+                            data_items.append(buffer.getvalue())
+                            filepaths.append(target_path)
+                            successful_paths.append(target_path)
+                        except Exception as e:
+                            logger.error(f"Failed to save image {target_path}: {e}")
+                    else:
+                        logger.error(
+                            f"Unexpected transformed data type: {type(transformed_img)}"
+                        )
+
+                # Write batch
+                if filepaths:
+                    target_data_backend.write_batch(filepaths, data_items)
+                    logger.debug(f"Worker {worker_id} wrote {len(filepaths)} files")
+
+                # Report completion
+                done_queue.put(
+                    {
+                        "batch_id": batch_id,
+                        "worker_id": worker_id,
+                        "successful": len(successful_paths),
+                        "total": len(batch_items),
+                        "paths": successful_paths,
+                    }
+                )
+
+            except Exception as e:
+                logger.error(f"Worker {worker_id} transform error: {e}")
+                # Report failure
+                done_queue.put(
+                    {
+                        "batch_id": batch_id,
+                        "worker_id": worker_id,
+                        "successful": 0,
+                        "total": len(batch_items),
+                        "error": str(e),
+                    }
+                )
+
+        except Exception as e:
+            if "Empty" not in str(e) and "timeout" not in str(e).lower():
+                logger.error(f"Worker {worker_id} error: {e}")
+
+
 class DataGenerator:
     """
     A data generator that reads from source backend, applies transformations via SampleGenerator,
-    and writes to target backend. Mirrors VAECache's efficient multi-GPU batch processing.
+    and writes to target backend. Uses multiprocessing for CPU-bound transforms.
+
+    Architecture:
+    - Thread pool handles I/O operations (reading source files)
+    - Process pool handles CPU-intensive transforms and writes directly to avoid pickling
+    - Worker processes reconstruct backends from serialized representations
 
     Output files preserve the same extension as input files (e.g., .png -> .png, .jpg -> .jpg).
     """
@@ -28,14 +192,13 @@ class DataGenerator:
         id: str,
         source_backend: Dict,
         target_backend: Dict,
-        sample_generator,  # SampleGenerator object
         accelerator,
         webhook_progress_interval: int = 100,
-        write_batch_size: int = 25,
         read_batch_size: int = 25,
         process_queue_size: int = 16,
         transform_batch_size: int = 4,
         max_workers: int = 32,
+        num_transform_workers: int = None,
         delete_problematic_images: bool = False,
         hash_filenames: bool = False,
         conditioning_type: str = None,
@@ -43,7 +206,6 @@ class DataGenerator:
         self.id = id
         self.source_backend = source_backend
         self.target_backend = target_backend
-        self.sample_generator = sample_generator
         self.accelerator = accelerator
 
         # Get data backends
@@ -56,7 +218,6 @@ class DataGenerator:
 
         # Processing parameters
         self.webhook_progress_interval = webhook_progress_interval
-        self.write_batch_size = write_batch_size
         self.read_batch_size = read_batch_size
         self.process_queue_size = process_queue_size
         self.transform_batch_size = transform_batch_size
@@ -79,11 +240,21 @@ class DataGenerator:
         self.rank_info = rank_info()
         self.rank = _get_rank()
 
-        # Processing queues
+        # Processing queues - use regular Queue for thread operations
         self.read_queue = Queue()
         self.process_queue = Queue()
-        self.write_queue = Queue()
-        self.transform_queue = Queue()
+
+        # Multiprocessing components for transforms
+        self.manager = Manager()
+        self.transform_queue = self.manager.Queue()  # Work queue
+        self.done_queue = self.manager.Queue()  # Completion queue
+        self.transform_workers = []
+
+        # Set number of transform workers
+        if num_transform_workers is None:
+            self.num_transform_workers = max(1, min(mp.cpu_count() - 2, 8))  # Cap at 8
+        else:
+            self.num_transform_workers = num_transform_workers
 
         # File mappings
         self.source_to_target_path = {}
@@ -229,11 +400,13 @@ class DataGenerator:
     def read_images_in_batch(self):
         """Read a batch of images from the read queue."""
         filepaths = []
+        metadata_map = {}
         qlen = self.read_queue.qsize()
 
         for _ in range(qlen):
             filepath, metadata = self.read_queue.get()
             filepaths.append(filepath)
+            metadata_map[filepath] = metadata
 
         # Read batch from backend
         available_filepaths, batch_output = self.source_data_backend.read_image_batch(
@@ -249,25 +422,71 @@ class DataGenerator:
 
         # Add to process queue
         for filepath, image_data in zip(available_filepaths, batch_output):
-            metadata = self.source_metadata_backend.get_metadata_by_filepath(filepath)
+            metadata = metadata_map.get(filepath, None)
+            if metadata is None:
+                metadata = self.source_metadata_backend.get_metadata_by_filepath(
+                    filepath
+                )
             self.process_queue.put((filepath, image_data, metadata))
 
-    def _process_images_in_batch(
-        self, batch_data: List = None, disable_queue: bool = False
-    ) -> List:
+    def _start_transform_workers(self):
+        """Start the transform worker processes."""
+        # Get serializable representations of backends
+        source_backend_repr = self.source_data_backend.get_instance_representation()
+        target_backend_repr = self.target_data_backend.get_instance_representation()
+
+        # Get sample generator config
+        sample_generator_config = self.target_backend["config"].get(
+            "conditioning_config", {}
+        )
+
+        # Start worker processes
+        for i in range(self.num_transform_workers):
+            worker = Process(
+                target=transform_worker_process,
+                args=(
+                    self.transform_queue,
+                    self.done_queue,
+                    source_backend_repr,
+                    target_backend_repr,
+                    sample_generator_config,
+                    str(self.accelerator.device) if self.accelerator else "cpu",
+                    i,
+                    self.delete_problematic_images,
+                ),
+            )
+            worker.start()
+            self.transform_workers.append(worker)
+
+        self.debug_log(f"Started {self.num_transform_workers} transform workers")
+
+    def _stop_transform_workers(self):
+        """Stop all transform worker processes."""
+        # Send poison pills
+        for _ in self.transform_workers:
+            self.transform_queue.put(None)
+
+        # Wait for workers to finish
+        for worker in self.transform_workers:
+            worker.join(timeout=30)
+            if worker.is_alive():
+                logger.warning(f"Force terminating worker {worker.pid}")
+                worker.terminate()
+                worker.join()
+
+        self.transform_workers = []
+        self.debug_log("All transform workers stopped")
+
+    def _process_images_in_batch(self, batch_id: int) -> int:
         """Process a batch of images for transformation."""
         try:
-            if batch_data is not None:
-                qlen = len(batch_data)
-            else:
-                qlen = self.process_queue.qsize()
+            qlen = self.process_queue.qsize()
+            if qlen == 0:
+                return 0
 
-            processed_items = []
-            for _ in range(qlen):
-                if batch_data:
-                    filepath, image, metadata = batch_data.pop()
-                else:
-                    filepath, image, metadata = self.process_queue.get()
+            batch_items = []
+            for _ in range(min(qlen, self.transform_batch_size)):
+                filepath, image, metadata = self.process_queue.get()
 
                 # Skip if doesn't meet requirements
                 if hasattr(
@@ -283,117 +502,19 @@ class DataGenerator:
                 # Prepare item for transformation
                 target_filepath = self.source_to_target_path[filepath]
                 item = (filepath, target_filepath, image, metadata)
-                processed_items.append(item)
+                batch_items.append(item)
 
-                if not disable_queue:
-                    self.transform_queue.put(item)
+            if batch_items:
+                # Send to transform workers
+                work_item = {"batch_items": batch_items, "batch_id": batch_id}
+                self.transform_queue.put(work_item)
+                return len(batch_items)
 
-            return processed_items
+            return 0
 
         except Exception as e:
             logger.error(f"Error processing images: {e}")
             raise e
-
-    def _transform_images_in_batch(
-        self, transform_items: List = None, disable_queue: bool = False
-    ) -> List:
-        """Apply transformations to a batch of images."""
-        try:
-            if transform_items is not None:
-                qlen = len(transform_items)
-            else:
-                qlen = self.transform_queue.qsize()
-
-            if qlen == 0:
-                return []
-
-            output_items = []
-            batch_items = []
-
-            # Collect batch
-            for _ in range(min(qlen, self.transform_batch_size)):
-                if transform_items:
-                    item = transform_items.pop()
-                else:
-                    item = self.transform_queue.get()
-                batch_items.append(item)
-
-            # Extract components
-            source_paths = [item[0] for item in batch_items]
-            target_paths = [item[1] for item in batch_items]
-            images = [item[2] for item in batch_items]
-            metadata_list = [item[3] for item in batch_items]
-
-            # Apply transformation
-            try:
-                transformed_data = self.sample_generator.transform_batch(
-                    images=images,
-                    source_paths=source_paths,
-                    metadata_list=metadata_list,
-                    accelerator=self.accelerator,
-                )
-
-                # Prepare output
-                for idx, (target_path, data) in enumerate(
-                    zip(target_paths, transformed_data)
-                ):
-                    output_item = (target_path, data, metadata_list[idx])
-                    output_items.append(output_item)
-
-                    if not disable_queue:
-                        self.write_queue.put(output_item)
-
-            except Exception as e:
-                logger.error(f"Error during transformation: {e}")
-                # Remove problematic images
-                for source_path in source_paths:
-                    if self.delete_problematic_images:
-                        self.source_metadata_backend.remove_image(source_path)
-                raise e
-
-            return output_items
-
-        except Exception as e:
-            logger.error(f"Error in transform batch: {e}")
-            raise e
-
-    def _write_data_in_batch(self, write_items: List = None) -> List:
-        """Write transformed data to target backend in batches."""
-        if write_items is not None:
-            qlen = len(write_items)
-        else:
-            qlen = self.write_queue.qsize()
-
-        filepaths = []
-        data_items = []
-        metadata_items = []
-
-        for _ in range(qlen):
-            if write_items:
-                filepath, data, metadata = write_items.pop()
-            else:
-                filepath, data, metadata = self.write_queue.get()
-
-            filepaths.append(filepath)
-            data_items.append(data)
-            metadata_items.append(metadata)
-
-        # Write batch to target backend
-        self.target_data_backend.write_batch(filepaths, data_items)
-
-        # Update target metadata if needed
-        if self.target_metadata_backend:
-            for filepath, metadata in zip(filepaths, metadata_items):
-                # Update metadata with target path
-                metadata = metadata.copy() if metadata else {}
-                metadata["original_source"] = self.target_to_source_path.get(
-                    filepath, None
-                )
-                self.target_metadata_backend.update_metadata_by_filepath(
-                    filepath, metadata
-                )
-
-        return data_items
 
     def _process_futures(self, futures: List, executor: ThreadPoolExecutor) -> List:
         """Process completed futures and return remaining ones."""
@@ -409,192 +530,235 @@ class DataGenerator:
                 completed_futures.append(future)
         return [f for f in futures if f not in completed_futures]
 
+    def _check_completion_queue(self) -> int:
+        """Check the completion queue and return number of successfully processed items."""
+        processed = 0
+        while not self.done_queue.empty():
+            try:
+                result = self.done_queue.get_nowait()
+                if "error" not in result:
+                    processed += result["successful"]
+                    self.debug_log(
+                        f"Batch {result['batch_id']} completed by worker {result['worker_id']}: {result['successful']}/{result['total']}"
+                    )
+                else:
+                    logger.error(
+                        f"Batch {result['batch_id']} failed: {result['error']}"
+                    )
+            except:
+                break
+        return processed
+
     def process_buckets(self):
         """Main processing loop that handles all unprocessed files."""
-        futures = []
+        # Start transform workers
+        self._start_transform_workers()
 
-        # Get aspect buckets from metadata
-        aspect_bucket_cache = self.source_metadata_backend.read_cache().copy()
+        try:
+            futures = []
+            batch_id_counter = 0
 
-        # Shuffle if needed
-        do_shuffle = (
-            os.environ.get("SIMPLETUNER_SHUFFLE_ASPECTS", "true").lower() == "true"
-        )
-        if do_shuffle:
-            shuffled_keys = list(aspect_bucket_cache.keys())
-            shuffle(shuffled_keys)
-        else:
-            shuffled_keys = aspect_bucket_cache.keys()
+            # Get aspect buckets from metadata
+            aspect_bucket_cache = self.source_metadata_backend.read_cache().copy()
 
-        # Send initial webhook if configured
-        if hasattr(self, "webhook_handler") and self.webhook_handler is not None:
-            total_count = len(
-                [item for sublist in aspect_bucket_cache.values() for item in sublist]
+            # Shuffle if needed
+            do_shuffle = (
+                os.environ.get("SIMPLETUNER_SHUFFLE_ASPECTS", "true").lower() == "true"
             )
-            processed_count = total_count - len(self.local_unprocessed_files)
-            self.send_progress_update(
-                type="init_data_generation_started",
-                progress=int(processed_count / total_count * 100),
-                total=total_count,
-                current=processed_count,
-            )
+            if do_shuffle:
+                shuffled_keys = list(aspect_bucket_cache.keys())
+                shuffle(shuffled_keys)
+            else:
+                shuffled_keys = aspect_bucket_cache.keys()
 
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            for bucket in shuffled_keys:
-                # Get files for this bucket that need processing
-                bucket_files = []
-                for filepath in aspect_bucket_cache[bucket]:
-                    if filepath in self.local_unprocessed_files:
-                        bucket_files.append(filepath)
+            # Send initial webhook if configured
+            if hasattr(self, "webhook_handler") and self.webhook_handler is not None:
+                total_count = len(
+                    [
+                        item
+                        for sublist in aspect_bucket_cache.values()
+                        for item in sublist
+                    ]
+                )
+                processed_count = total_count - len(self.local_unprocessed_files)
+                self.send_progress_update(
+                    type="init_data_generation_started",
+                    progress=int(processed_count / total_count * 100),
+                    total=total_count,
+                    current=processed_count,
+                )
 
-                if not bucket_files:
-                    continue
+            # Use thread pool for I/O operations only
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                for bucket in shuffled_keys:
+                    # Get files for this bucket that need processing
+                    bucket_files = []
+                    for filepath in aspect_bucket_cache[bucket]:
+                        if filepath in self.local_unprocessed_files:
+                            bucket_files.append(filepath)
 
-                if do_shuffle:
-                    shuffle(bucket_files)
+                    if not bucket_files:
+                        continue
 
-                statistics = {
-                    "processed": 0,
-                    "skipped": 0,
-                    "errors": 0,
-                    "total": len(bucket_files),
-                }
+                    if do_shuffle:
+                        shuffle(bucket_files)
 
-                last_reported_index = 0
+                    statistics = {
+                        "processed": 0,
+                        "skipped": 0,
+                        "errors": 0,
+                        "total": len(bucket_files),
+                    }
 
-                for filepath in tqdm(
-                    bucket_files,
-                    desc=f"Processing bucket {bucket}",
-                    position=self.rank,
-                    ncols=125,
-                    leave=False,
-                ):
-                    try:
-                        # Skip if already processed
-                        if self.already_processed(filepath):
-                            statistics["skipped"] += 1
-                            continue
+                    last_reported_index = 0
 
-                        # Get metadata
-                        metadata = (
-                            self.source_metadata_backend.get_metadata_by_filepath(
-                                filepath
+                    for filepath in tqdm(
+                        bucket_files,
+                        desc=f"Processing bucket {bucket}",
+                        position=self.rank,
+                        ncols=125,
+                        leave=False,
+                    ):
+                        try:
+                            # Skip if already processed
+                            if self.already_processed(filepath):
+                                statistics["skipped"] += 1
+                                continue
+
+                            # Get metadata
+                            metadata = (
+                                self.source_metadata_backend.get_metadata_by_filepath(
+                                    filepath
+                                )
                             )
-                        )
 
-                        # Add to read queue
-                        self.read_queue.put((filepath, metadata))
+                            # Add to read queue
+                            self.read_queue.put((filepath, metadata))
 
-                        # Process read queue when ready
-                        if self.read_queue.qsize() >= self.read_batch_size:
+                            # Process read queue when ready (I/O bound - use threads)
+                            if self.read_queue.qsize() >= self.read_batch_size:
+                                future = executor.submit(self.read_images_in_batch)
+                                futures.append(future)
+
+                            # Process image queue when ready (sends to transform workers)
+                            if self.process_queue.qsize() >= self.process_queue_size:
+                                batch_id_counter += 1
+                                items_sent = self._process_images_in_batch(
+                                    batch_id_counter
+                                )
+                                if items_sent > 0:
+                                    self.debug_log(
+                                        f"Sent batch {batch_id_counter} with {items_sent} items to workers"
+                                    )
+
+                            # Check for completed work
+                            completed = self._check_completion_queue()
+                            if completed > 0:
+                                statistics["processed"] += completed
+
+                                # Send progress update
+                                if (
+                                    hasattr(self, "webhook_handler")
+                                    and self.webhook_handler is not None
+                                    and int(
+                                        statistics["processed"]
+                                        // self.webhook_progress_interval
+                                    )
+                                    > last_reported_index
+                                ):
+                                    last_reported_index = (
+                                        statistics["processed"]
+                                        // self.webhook_progress_interval
+                                    )
+                                    self.send_progress_update(
+                                        type="data_generation",
+                                        progress=int(
+                                            statistics["processed"]
+                                            / statistics["total"]
+                                            * 100
+                                        ),
+                                        total=statistics["total"],
+                                        current=statistics["processed"],
+                                    )
+
+                            # Process completed futures
+                            futures = self._process_futures(futures, executor)
+
+                        except Exception as e:
+                            logger.error(f"Error processing {filepath}: {e}")
+                            statistics["errors"] += 1
+                            if "out of memory" in str(e).lower():
+                                import sys
+
+                                sys.exit(1)
+
+                    # Process remaining items in queues
+                    try:
+                        # Read remaining
+                        if self.read_queue.qsize() > 0:
                             future = executor.submit(self.read_images_in_batch)
                             futures.append(future)
 
-                        # Process image queue when ready
-                        if self.process_queue.qsize() >= self.process_queue_size:
-                            future = executor.submit(self._process_images_in_batch)
-                            futures.append(future)
-
-                        # Transform when ready
-                        if self.transform_queue.qsize() >= self.transform_batch_size:
-                            future = executor.submit(self._transform_images_in_batch)
-                            futures.append(future)
-                            statistics["processed"] += 1
-
-                            # Send progress update
-                            if (
-                                hasattr(self, "webhook_handler")
-                                and self.webhook_handler is not None
-                                and int(
-                                    statistics["processed"]
-                                    // self.webhook_progress_interval
-                                )
-                                > last_reported_index
-                            ):
-                                last_reported_index = (
-                                    statistics["processed"]
-                                    // self.webhook_progress_interval
-                                )
-                                self.send_progress_update(
-                                    type="data_generation",
-                                    progress=int(
-                                        statistics["processed"]
-                                        / statistics["total"]
-                                        * 100
-                                    ),
-                                    total=statistics["total"],
-                                    current=statistics["processed"],
-                                )
-
-                        # Write when ready
-                        if self.write_queue.qsize() >= self.write_batch_size:
-                            future = executor.submit(self._write_data_in_batch)
-                            futures.append(future)
-
-                        # Process completed futures
                         futures = self._process_futures(futures, executor)
 
+                        # Process remaining
+                        while self.process_queue.qsize() > 0:
+                            batch_id_counter += 1
+                            items_sent = self._process_images_in_batch(batch_id_counter)
+                            if items_sent > 0:
+                                self.debug_log(
+                                    f"Sent final batch {batch_id_counter} with {items_sent} items"
+                                )
+
+                        # Wait for all workers to finish processing
+                        timeout = 30  # seconds
+                        start_time = time.time()
+                        while (
+                            self.transform_queue.qsize() > 0
+                            or not self.done_queue.empty()
+                        ):
+                            completed = self._check_completion_queue()
+                            if completed > 0:
+                                statistics["processed"] += completed
+                            time.sleep(0.1)
+                            if time.time() - start_time > timeout:
+                                logger.warning("Timeout waiting for workers to finish")
+                                break
+
+                        # Final check for completed work
+                        completed = self._check_completion_queue()
+                        if completed > 0:
+                            statistics["processed"] += completed
+
+                        # Log statistics
+                        log_msg = f"(id={self.id}) Bucket {bucket} processing results: {statistics}"
+                        if self.rank == 0:
+                            logger.info(log_msg)
+                            tqdm.write(log_msg)
+
+                        # Send final progress update
+                        if (
+                            hasattr(self, "webhook_handler")
+                            and self.webhook_handler is not None
+                        ):
+                            self.send_progress_update(
+                                type="data_generation_bucket_complete",
+                                progress=100,
+                                total=statistics["total"],
+                                current=statistics["processed"],
+                            )
+
                     except Exception as e:
-                        logger.error(f"Error processing {filepath}: {e}")
-                        statistics["errors"] += 1
-                        if "out of memory" in str(e).lower():
-                            import sys
-
-                            sys.exit(1)
-
-                # Process remaining items in queues
-                try:
-                    # Read remaining
-                    if self.read_queue.qsize() > 0:
-                        future = executor.submit(self.read_images_in_batch)
-                        futures.append(future)
-
-                    futures = self._process_futures(futures, executor)
-
-                    # Process remaining
-                    if self.process_queue.qsize() > 0:
-                        future = executor.submit(self._process_images_in_batch)
-                        futures.append(future)
-
-                    futures = self._process_futures(futures, executor)
-
-                    # Transform remaining
-                    if self.transform_queue.qsize() > 0:
-                        future = executor.submit(self._transform_images_in_batch)
-                        futures.append(future)
-
-                    futures = self._process_futures(futures, executor)
-
-                    # Write remaining
-                    if self.write_queue.qsize() > 0:
-                        future = executor.submit(self._write_data_in_batch)
-                        futures.append(future)
-
-                    futures = self._process_futures(futures, executor)
-
-                    # Log statistics
-                    log_msg = f"(id={self.id}) Bucket {bucket} processing results: {statistics}"
-                    if self.rank == 0:
-                        logger.info(log_msg)
-                        tqdm.write(log_msg)
-
-                    # Send final progress update
-                    if (
-                        hasattr(self, "webhook_handler")
-                        and self.webhook_handler is not None
-                    ):
-                        self.send_progress_update(
-                            type="data_generation_bucket_complete",
-                            progress=100,
-                            total=statistics["total"],
-                            current=statistics["processed"],
+                        logger.error(
+                            f"Error processing bucket {bucket} remainders: {e}"
                         )
+                        continue
 
-                except Exception as e:
-                    logger.error(f"Error processing bucket {bucket} remainders: {e}")
-                    continue
+            self.debug_log("Completed process_buckets, all futures have been returned.")
 
-        self.debug_log("Completed process_buckets, all futures have been returned.")
+        finally:
+            # Always stop workers
+            self._stop_transform_workers()
 
     def generate_dataset(self):
         """Main entry point to generate the dataset."""
@@ -610,9 +774,32 @@ class DataGenerator:
         # Process all buckets
         self.process_buckets()
 
-        # Update metadata
+        # Update target metadata with processed files
         if self.accelerator.is_local_main_process and self.target_metadata_backend:
             self.debug_log("Updating target metadata")
+            from helpers.training import image_file_extensions
+
+            # Scan target directory and update metadata for new files
+            target_files = self.target_data_backend.list_files(
+                instance_data_dir=self.target_instance_dir,
+                file_extensions=image_file_extensions,
+            )
+            for target_file in target_files:
+                source_file = self.target_to_source_path.get(target_file, None)
+                if source_file:
+                    source_metadata = (
+                        self.source_metadata_backend.get_metadata_by_filepath(
+                            source_file
+                        )
+                    )
+                    if source_metadata:
+                        # Copy metadata with source reference
+                        target_metadata = source_metadata.copy()
+                        target_metadata["original_source"] = source_file
+                        self.target_metadata_backend.update_metadata_by_filepath(
+                            target_file, target_metadata
+                        )
+
             self.target_metadata_backend.save_metadata()
 
         self.accelerator.wait_for_everyone()
@@ -622,3 +809,41 @@ class DataGenerator:
         """Send progress update via webhook if configured."""
         if hasattr(self, "webhook_handler") and self.webhook_handler is not None:
             self.webhook_handler.send_progress_update(**kwargs)
+
+
+# Key Architecture Points:
+#
+# 1. **Separation of I/O and CPU work**:
+#    - Threads handle file reading (I/O bound)
+#    - Processes handle transformations (CPU bound)
+#
+# 2. **Direct writing from workers**:
+#    - Avoids pickling large image data back to main process
+#    - Workers reconstruct backends using serialization methods
+#
+# 3. **Backend serialization**:
+#    - Uses backend.get_instance_representation() to serialize
+#    - Uses BaseDataBackend.from_instance_representation() to deserialize
+#
+# 4. **Automatic worker management**:
+#    - Number of transform workers based on CPU count
+#    - Graceful shutdown with poison pills
+#
+# 5. **Queue-based coordination**:
+#    - Thread-safe Queue for I/O operations
+#    - Manager.Queue for inter-process communication
+
+# Example usage:
+#
+# generator = DataGenerator(
+#     id=target_backend["id"],
+#     source_backend=source_backend_config,
+#     target_backend=target_backend,  # Contains conditioning_config
+#     accelerator=accelerator,
+#     transform_batch_size=8,  # Images per batch sent to workers
+#     read_batch_size=32,      # Files to read at once (I/O bound)
+#     max_workers=16,          # Thread pool workers for I/O operations
+#     num_transform_workers=4, # Process workers for transforms (optional)
+# )
+#
+# generator.generate_dataset()
