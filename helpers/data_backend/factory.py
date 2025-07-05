@@ -1356,7 +1356,7 @@ def configure_multi_databackend(
             conditioning_type != "mask"
             and "text" not in args.skip_file_discovery
             and "text" not in backend.get("skip_file_discovery", "")
-            and not backend.get("auto_generated", False)
+            and backend.get("caption_strategy", None) is not None
         ):
             info_log(f"(id={init_backend['id']}) Collecting captions.")
             captions, images_missing_captions = PromptHandler.get_all_captions(
