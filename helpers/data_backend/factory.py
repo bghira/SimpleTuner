@@ -620,6 +620,9 @@ def configure_multi_databackend(
     #    we'll check for any auto-conditioning configurations and generate them.   #
     conditioning_datasets = []
     for backend_idx, backend in enumerate(data_backend_config):
+        if backend.get("disabled", False) or backend.get("disable", False):
+            info_log(f"Skipping disabled data backend {backend['id']} in config file.")
+            continue
         if backend.get("conditioning", None) is not None:
             info_log(
                 f"Found conditioning configuration for backend {backend['id']}. Generating conditioning dataset."
@@ -1415,7 +1418,6 @@ def configure_multi_databackend(
                 ),
                 target_backend=init_backend,
                 accelerator=accelerator,
-                hash_filenames=hash_filenames,
                 conditioning_type=backend.get("conditioning_type"),
             )
             generator.generate_dataset()
