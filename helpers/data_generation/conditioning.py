@@ -105,7 +105,6 @@ def transform_worker_process(
                     metadata_list=metadata_list,
                     accelerator=accelerator,
                 )
-
                 # Write directly from the worker process
                 filepaths = []
                 data_items = []
@@ -240,21 +239,42 @@ class DataGenerator:
         self.rank_info = rank_info()
         self.rank = _get_rank()
 
+        # Create sample generator to check if it requires GPU
+        from helpers.data_generation.sample_generator import SampleGenerator
+
+        sample_generator_config = self.target_backend["config"].get(
+            "conditioning_config", {}
+        )
+        self.sample_generator = SampleGenerator.from_backend(
+            {"conditioning_config": sample_generator_config}
+        )
+
+        # Determine if we need GPU mode
+        self.gpu_mode = getattr(self.sample_generator, "requires_gpu", False)
+
         # Processing queues - use regular Queue for thread operations
         self.read_queue = Queue()
         self.process_queue = Queue()
 
-        # Multiprocessing components for transforms
-        self.manager = Manager()
-        self.transform_queue = self.manager.Queue()  # Work queue
-        self.done_queue = self.manager.Queue()  # Completion queue
-        self.transform_workers = []
+        # Multiprocessing components for transforms (only for CPU mode)
+        if not self.gpu_mode:
+            self.manager = Manager()
+            self.transform_queue = self.manager.Queue()  # Work queue
+            self.done_queue = self.manager.Queue()  # Completion queue
+            self.transform_workers = []
 
-        # Set number of transform workers
-        if num_transform_workers is None:
-            self.num_transform_workers = max(1, min(mp.cpu_count() - 2, 8))  # Cap at 8
+            # Set number of transform workers
+            if num_transform_workers is None:
+                self.num_transform_workers = max(1, min(mp.cpu_count() - 2, 8))
+            else:
+                self.num_transform_workers = num_transform_workers
         else:
-            self.num_transform_workers = num_transform_workers
+            # GPU mode: no multiprocessing workers
+            self.num_transform_workers = 0
+            self.transform_workers = []
+            logger.info(
+                f"GPU mode enabled for {self.conditioning_type} - running in main process"
+            )
 
         # File mappings
         self.source_to_target_path = {}
@@ -271,6 +291,445 @@ class DataGenerator:
             and not self.target_metadata_backend.image_metadata_loaded
         ):
             self.target_metadata_backend.load_image_metadata()
+
+    def _process_images_gpu_mode(self, batch_items: List) -> int:
+        """Process images in GPU mode (main process)."""
+        import io
+
+        if not batch_items:
+            return 0
+
+        # Extract components
+        source_paths = [item[0] for item in batch_items]
+        target_paths = [item[1] for item in batch_items]
+        images = [item[2] for item in batch_items]
+        metadata_list = [item[3] for item in batch_items]
+
+        try:
+            # Apply transformation using the main process GPU context
+            transformed_data = self.sample_generator.transform_batch(
+                images=images,
+                source_paths=source_paths,
+                metadata_list=metadata_list,
+                accelerator=self.accelerator,
+            )
+
+            # Write directly from main process
+            filepaths = []
+            data_items = []
+            successful_count = 0
+
+            for target_path, transformed_img in zip(target_paths, transformed_data):
+                # Convert image to bytes
+                buffer = io.BytesIO()
+
+                # Determine format from file extension
+                ext = os.path.splitext(target_path)[1].lower()
+                format_map = {
+                    ".jpg": "JPEG",
+                    ".jpeg": "JPEG",
+                    ".png": "PNG",
+                    ".webp": "WEBP",
+                    ".bmp": "BMP",
+                }
+                save_format = format_map.get(ext, "PNG")
+
+                # Save to buffer
+                if isinstance(transformed_img, Image.Image):
+                    try:
+                        transformed_img.save(buffer, format=save_format)
+                        data_items.append(buffer.getvalue())
+                        filepaths.append(target_path)
+                        successful_count += 1
+                    except Exception as e:
+                        logger.error(f"Failed to save image {target_path}: {e}")
+                else:
+                    logger.error(
+                        f"Unexpected transformed data type: {type(transformed_img)}"
+                    )
+
+            # Write batch
+            if filepaths:
+                self.target_data_backend.write_batch(filepaths, data_items)
+                logger.debug(f"GPU mode: wrote {len(filepaths)} files")
+
+            return successful_count
+
+        except Exception as e:
+            logger.error(f"GPU mode transform error: {e}")
+            raise e
+
+    def _process_images_in_batch(self, batch_id: int) -> int:
+        """Process a batch of images for transformation."""
+        try:
+            qlen = self.process_queue.qsize()
+            if qlen == 0:
+                return 0
+
+            batch_items = []
+            for _ in range(min(qlen, self.transform_batch_size)):
+                filepath, image, metadata = self.process_queue.get()
+
+                # Skip if doesn't meet requirements
+                if hasattr(
+                    self.source_metadata_backend, "meets_resolution_requirements"
+                ) and not self.source_metadata_backend.meets_resolution_requirements(
+                    image_path=filepath
+                ):
+                    self.debug_log(
+                        f"Skipping {filepath} - doesn't meet resolution requirements"
+                    )
+                    continue
+
+                # Prepare item for transformation
+                target_filepath = self.source_to_target_path[filepath]
+                item = (filepath, target_filepath, image, metadata)
+                batch_items.append(item)
+
+            if not batch_items:
+                return 0
+
+            # GPU mode: process in main thread
+            if self.gpu_mode:
+                return self._process_images_gpu_mode(batch_items)
+
+            # CPU mode: send to transform workers
+            work_item = {"batch_items": batch_items, "batch_id": batch_id}
+            self.transform_queue.put(work_item)
+            return len(batch_items)
+
+        except Exception as e:
+            logger.error(f"Error processing images: {e}")
+            raise e
+
+    def _start_transform_workers(self):
+        """Start the transform worker processes."""
+        # Skip if in GPU mode
+        if self.gpu_mode:
+            return
+
+        # Get serializable representations of backends
+        source_backend_repr = self.source_data_backend.get_instance_representation()
+        target_backend_repr = self.target_data_backend.get_instance_representation()
+
+        # Get sample generator config
+        sample_generator_config = self.target_backend["config"].get(
+            "conditioning_config", {}
+        )
+
+        # Start worker processes
+        for i in range(self.num_transform_workers):
+            worker = Process(
+                target=transform_worker_process,
+                args=(
+                    self.transform_queue,
+                    self.done_queue,
+                    source_backend_repr,
+                    target_backend_repr,
+                    sample_generator_config,
+                    str(self.accelerator.device) if self.accelerator else "cpu",
+                    i,
+                    self.delete_problematic_images,
+                ),
+            )
+            worker.start()
+            self.transform_workers.append(worker)
+
+        self.debug_log(f"Started {self.num_transform_workers} transform workers")
+
+    def _stop_transform_workers(self):
+        """Stop all transform worker processes."""
+        # Skip if in GPU mode
+        if self.gpu_mode:
+            return
+
+        # Send poison pills
+        for _ in self.transform_workers:
+            self.transform_queue.put(None)
+
+        # Wait for workers to finish
+        for worker in self.transform_workers:
+            worker.join(timeout=30)
+            if worker.is_alive():
+                logger.warning(f"Force terminating worker {worker.pid}")
+                worker.terminate()
+                worker.join()
+
+        self.transform_workers = []
+        self.debug_log("All transform workers stopped")
+
+    def _check_completion_queue(self) -> int:
+        """Check the completion queue and return number of successfully processed items."""
+        # In GPU mode, we don't use the completion queue
+        if self.gpu_mode:
+            return 0
+
+        processed = 0
+        while not self.done_queue.empty():
+            try:
+                result = self.done_queue.get_nowait()
+                if "error" not in result:
+                    processed += result["successful"]
+                    self.debug_log(
+                        f"Batch {result['batch_id']} completed by worker {result['worker_id']}: {result['successful']}/{result['total']}"
+                    )
+                else:
+                    logger.error(
+                        f"Batch {result['batch_id']} failed: {result['error']}"
+                    )
+            except:
+                break
+        return processed
+
+    def process_buckets(self):
+        """Main processing loop that handles all unprocessed files."""
+        # Start transform workers (only in CPU mode)
+        self._start_transform_workers()
+
+        try:
+            futures = []
+            batch_id_counter = 0
+
+            # Get aspect buckets from metadata
+            aspect_bucket_cache = self.source_metadata_backend.read_cache().copy()
+
+            # Shuffle if needed
+            do_shuffle = (
+                os.environ.get("SIMPLETUNER_SHUFFLE_ASPECTS", "true").lower() == "true"
+            )
+            if do_shuffle:
+                shuffled_keys = list(aspect_bucket_cache.keys())
+                shuffle(shuffled_keys)
+            else:
+                shuffled_keys = aspect_bucket_cache.keys()
+
+            # Send initial webhook if configured
+            if hasattr(self, "webhook_handler") and self.webhook_handler is not None:
+                total_count = len(
+                    [
+                        item
+                        for sublist in aspect_bucket_cache.values()
+                        for item in sublist
+                    ]
+                )
+                processed_count = total_count - len(self.local_unprocessed_files)
+                self.send_progress_update(
+                    type="init_data_generation_started",
+                    progress=int(processed_count / total_count * 100),
+                    total=total_count,
+                    current=processed_count,
+                )
+
+            # Use thread pool for I/O operations only
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                for bucket in shuffled_keys:
+                    # Get files for this bucket that need processing
+                    bucket_files = []
+                    for filepath in aspect_bucket_cache[bucket]:
+                        if filepath in self.local_unprocessed_files:
+                            bucket_files.append(filepath)
+
+                    if not bucket_files:
+                        continue
+
+                    if do_shuffle:
+                        shuffle(bucket_files)
+
+                    statistics = {
+                        "processed": 0,
+                        "skipped": 0,
+                        "errors": 0,
+                        "total": len(bucket_files),
+                    }
+
+                    last_reported_index = 0
+
+                    for filepath in tqdm(
+                        bucket_files,
+                        desc=f"Processing bucket {bucket}",
+                        position=self.rank,
+                        ncols=125,
+                        leave=False,
+                    ):
+                        try:
+                            # Skip if already processed
+                            if self.already_processed(filepath):
+                                statistics["skipped"] += 1
+                                continue
+
+                            # Get metadata
+                            metadata = (
+                                self.source_metadata_backend.get_metadata_by_filepath(
+                                    filepath
+                                )
+                            )
+
+                            # Add to read queue
+                            self.read_queue.put((filepath, metadata))
+
+                            # Process read queue when ready (I/O bound - use threads)
+                            if self.read_queue.qsize() >= self.read_batch_size:
+                                future = executor.submit(self.read_images_in_batch)
+                                futures.append(future)
+
+                            # Process image queue when ready
+                            if self.process_queue.qsize() >= self.process_queue_size:
+                                batch_id_counter += 1
+                                items_sent = self._process_images_in_batch(
+                                    batch_id_counter
+                                )
+
+                                if self.gpu_mode and items_sent > 0:
+                                    # In GPU mode, processing is synchronous
+                                    statistics["processed"] += items_sent
+                                    self.debug_log(
+                                        f"GPU mode: processed {items_sent} items"
+                                    )
+                                elif items_sent > 0:
+                                    self.debug_log(
+                                        f"Sent batch {batch_id_counter} with {items_sent} items to workers"
+                                    )
+
+                            # Check for completed work (CPU mode only)
+                            if not self.gpu_mode:
+                                completed = self._check_completion_queue()
+                                if completed > 0:
+                                    statistics["processed"] += completed
+
+                            # Send progress update
+                            if (
+                                hasattr(self, "webhook_handler")
+                                and self.webhook_handler is not None
+                                and statistics["processed"] > 0
+                                and int(
+                                    statistics["processed"]
+                                    // self.webhook_progress_interval
+                                )
+                                > last_reported_index
+                            ):
+                                last_reported_index = (
+                                    statistics["processed"]
+                                    // self.webhook_progress_interval
+                                )
+                                self.send_progress_update(
+                                    type="data_generation",
+                                    progress=int(
+                                        statistics["processed"]
+                                        / statistics["total"]
+                                        * 100
+                                    ),
+                                    total=statistics["total"],
+                                    current=statistics["processed"],
+                                )
+
+                            # Process completed futures
+                            futures = self._process_futures(futures, executor)
+
+                        except Exception as e:
+                            logger.error(f"Error processing {filepath}: {e}")
+                            statistics["errors"] += 1
+                            if "out of memory" in str(e).lower():
+                                import sys
+
+                                sys.exit(1)
+
+                    # Process remaining items in queues
+                    try:
+                        # Read remaining
+                        if self.read_queue.qsize() > 0:
+                            future = executor.submit(self.read_images_in_batch)
+                            futures.append(future)
+
+                        futures = self._process_futures(futures, executor)
+
+                        # Process remaining
+                        while self.process_queue.qsize() > 0:
+                            batch_id_counter += 1
+                            items_sent = self._process_images_in_batch(batch_id_counter)
+
+                            if self.gpu_mode and items_sent > 0:
+                                statistics["processed"] += items_sent
+                                self.debug_log(
+                                    f"GPU mode: processed final batch with {items_sent} items"
+                                )
+                            elif items_sent > 0:
+                                self.debug_log(
+                                    f"Sent final batch {batch_id_counter} with {items_sent} items"
+                                )
+
+                        # Wait for all workers to finish processing (CPU mode only)
+                        if not self.gpu_mode:
+                            timeout = 30  # seconds
+                            start_time = time.time()
+                            while (
+                                self.transform_queue.qsize() > 0
+                                or not self.done_queue.empty()
+                            ):
+                                completed = self._check_completion_queue()
+                                if completed > 0:
+                                    statistics["processed"] += completed
+                                time.sleep(0.1)
+                                if time.time() - start_time > timeout:
+                                    logger.warning(
+                                        "Timeout waiting for workers to finish"
+                                    )
+                                    break
+
+                            # Final check for completed work
+                            completed = self._check_completion_queue()
+                            if completed > 0:
+                                statistics["processed"] += completed
+
+                        # Log statistics
+                        log_msg = f"(id={self.id}) Bucket {bucket} processing results: {statistics}"
+                        if self.rank == 0:
+                            logger.info(log_msg)
+                            tqdm.write(log_msg)
+
+                        # Send final progress update
+                        if (
+                            hasattr(self, "webhook_handler")
+                            and self.webhook_handler is not None
+                        ):
+                            self.send_progress_update(
+                                type="data_generation_bucket_complete",
+                                progress=100,
+                                total=statistics["total"],
+                                current=statistics["processed"],
+                            )
+
+                    except Exception as e:
+                        logger.error(
+                            f"Error processing bucket {bucket} remainders: {e}"
+                        )
+                        continue
+
+            self.debug_log("Completed process_buckets, all futures have been returned.")
+
+        finally:
+            # Always stop workers (if any)
+            self._stop_transform_workers()
+
+    def generate_dataset(self):
+        """Main entry point to generate the dataset."""
+        self.debug_log("Starting dataset generation")
+
+        # Discover files to process
+        self.discover_all_files()
+
+        if len(self.local_unprocessed_files) == 0:
+            self.debug_log("No files to process")
+            return
+
+        # Process all buckets
+        self.process_buckets()
+        self.accelerator.wait_for_everyone()
+        self.debug_log("Dataset generation complete")
+
+    def send_progress_update(self, **kwargs):
+        """Send progress update via webhook if configured."""
+        if hasattr(self, "webhook_handler") and self.webhook_handler is not None:
+            self.webhook_handler.send_progress_update(**kwargs)
 
     def debug_log(self, msg: str):
         logger.debug(f"{self.rank_info}{msg}")
@@ -383,7 +842,7 @@ class DataGenerator:
             try:
                 return path, self._read_from_storage(path, hide_errors=hide_errors)
             except Exception as e:
-                logger.error(f"Error reading {path}: {e}")
+                print(f"Error reading {path}: {e}")
                 if self.delete_problematic_images:
                     self.source_metadata_backend.remove_image(path)
                     self.source_data_backend.delete(path)
@@ -395,7 +854,7 @@ class DataGenerator:
                 try:
                     yield future.result()
                 except Exception as exc:
-                    logger.error(f"Exception during read: {exc}")
+                    print(f"Exception during read: {exc}")
 
     def read_images_in_batch(self):
         """Read a batch of images from the read queue."""
@@ -429,93 +888,6 @@ class DataGenerator:
                 )
             self.process_queue.put((filepath, image_data, metadata))
 
-    def _start_transform_workers(self):
-        """Start the transform worker processes."""
-        # Get serializable representations of backends
-        source_backend_repr = self.source_data_backend.get_instance_representation()
-        target_backend_repr = self.target_data_backend.get_instance_representation()
-
-        # Get sample generator config
-        sample_generator_config = self.target_backend["config"].get(
-            "conditioning_config", {}
-        )
-
-        # Start worker processes
-        for i in range(self.num_transform_workers):
-            worker = Process(
-                target=transform_worker_process,
-                args=(
-                    self.transform_queue,
-                    self.done_queue,
-                    source_backend_repr,
-                    target_backend_repr,
-                    sample_generator_config,
-                    str(self.accelerator.device) if self.accelerator else "cpu",
-                    i,
-                    self.delete_problematic_images,
-                ),
-            )
-            worker.start()
-            self.transform_workers.append(worker)
-
-        self.debug_log(f"Started {self.num_transform_workers} transform workers")
-
-    def _stop_transform_workers(self):
-        """Stop all transform worker processes."""
-        # Send poison pills
-        for _ in self.transform_workers:
-            self.transform_queue.put(None)
-
-        # Wait for workers to finish
-        for worker in self.transform_workers:
-            worker.join(timeout=30)
-            if worker.is_alive():
-                logger.warning(f"Force terminating worker {worker.pid}")
-                worker.terminate()
-                worker.join()
-
-        self.transform_workers = []
-        self.debug_log("All transform workers stopped")
-
-    def _process_images_in_batch(self, batch_id: int) -> int:
-        """Process a batch of images for transformation."""
-        try:
-            qlen = self.process_queue.qsize()
-            if qlen == 0:
-                return 0
-
-            batch_items = []
-            for _ in range(min(qlen, self.transform_batch_size)):
-                filepath, image, metadata = self.process_queue.get()
-
-                # Skip if doesn't meet requirements
-                if hasattr(
-                    self.source_metadata_backend, "meets_resolution_requirements"
-                ) and not self.source_metadata_backend.meets_resolution_requirements(
-                    image_path=filepath
-                ):
-                    self.debug_log(
-                        f"Skipping {filepath} - doesn't meet resolution requirements"
-                    )
-                    continue
-
-                # Prepare item for transformation
-                target_filepath = self.source_to_target_path[filepath]
-                item = (filepath, target_filepath, image, metadata)
-                batch_items.append(item)
-
-            if batch_items:
-                # Send to transform workers
-                work_item = {"batch_items": batch_items, "batch_id": batch_id}
-                self.transform_queue.put(work_item)
-                return len(batch_items)
-
-            return 0
-
-        except Exception as e:
-            logger.error(f"Error processing images: {e}")
-            raise e
-
     def _process_futures(self, futures: List, executor: ThreadPoolExecutor) -> List:
         """Process completed futures and return remaining ones."""
         completed_futures = []
@@ -524,262 +896,9 @@ class DataGenerator:
                 future.result()
                 completed_futures.append(future)
             except Exception as e:
-                logger.error(
-                    f"Error in future: {e}, traceback: {traceback.format_exc()}"
-                )
+                print(f"Error in future: {e}, traceback: {traceback.format_exc()}")
                 completed_futures.append(future)
         return [f for f in futures if f not in completed_futures]
-
-    def _check_completion_queue(self) -> int:
-        """Check the completion queue and return number of successfully processed items."""
-        processed = 0
-        while not self.done_queue.empty():
-            try:
-                result = self.done_queue.get_nowait()
-                if "error" not in result:
-                    processed += result["successful"]
-                    self.debug_log(
-                        f"Batch {result['batch_id']} completed by worker {result['worker_id']}: {result['successful']}/{result['total']}"
-                    )
-                else:
-                    logger.error(
-                        f"Batch {result['batch_id']} failed: {result['error']}"
-                    )
-            except:
-                break
-        return processed
-
-    def process_buckets(self):
-        """Main processing loop that handles all unprocessed files."""
-        # Start transform workers
-        self._start_transform_workers()
-
-        try:
-            futures = []
-            batch_id_counter = 0
-
-            # Get aspect buckets from metadata
-            aspect_bucket_cache = self.source_metadata_backend.read_cache().copy()
-
-            # Shuffle if needed
-            do_shuffle = (
-                os.environ.get("SIMPLETUNER_SHUFFLE_ASPECTS", "true").lower() == "true"
-            )
-            if do_shuffle:
-                shuffled_keys = list(aspect_bucket_cache.keys())
-                shuffle(shuffled_keys)
-            else:
-                shuffled_keys = aspect_bucket_cache.keys()
-
-            # Send initial webhook if configured
-            if hasattr(self, "webhook_handler") and self.webhook_handler is not None:
-                total_count = len(
-                    [
-                        item
-                        for sublist in aspect_bucket_cache.values()
-                        for item in sublist
-                    ]
-                )
-                processed_count = total_count - len(self.local_unprocessed_files)
-                self.send_progress_update(
-                    type="init_data_generation_started",
-                    progress=int(processed_count / total_count * 100),
-                    total=total_count,
-                    current=processed_count,
-                )
-
-            # Use thread pool for I/O operations only
-            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                for bucket in shuffled_keys:
-                    # Get files for this bucket that need processing
-                    bucket_files = []
-                    for filepath in aspect_bucket_cache[bucket]:
-                        if filepath in self.local_unprocessed_files:
-                            bucket_files.append(filepath)
-
-                    if not bucket_files:
-                        continue
-
-                    if do_shuffle:
-                        shuffle(bucket_files)
-
-                    statistics = {
-                        "processed": 0,
-                        "skipped": 0,
-                        "errors": 0,
-                        "total": len(bucket_files),
-                    }
-
-                    last_reported_index = 0
-
-                    for filepath in tqdm(
-                        bucket_files,
-                        desc=f"Processing bucket {bucket}",
-                        position=self.rank,
-                        ncols=125,
-                        leave=False,
-                    ):
-                        try:
-                            # Skip if already processed
-                            if self.already_processed(filepath):
-                                statistics["skipped"] += 1
-                                continue
-
-                            # Get metadata
-                            metadata = (
-                                self.source_metadata_backend.get_metadata_by_filepath(
-                                    filepath
-                                )
-                            )
-
-                            # Add to read queue
-                            self.read_queue.put((filepath, metadata))
-
-                            # Process read queue when ready (I/O bound - use threads)
-                            if self.read_queue.qsize() >= self.read_batch_size:
-                                future = executor.submit(self.read_images_in_batch)
-                                futures.append(future)
-
-                            # Process image queue when ready (sends to transform workers)
-                            if self.process_queue.qsize() >= self.process_queue_size:
-                                batch_id_counter += 1
-                                items_sent = self._process_images_in_batch(
-                                    batch_id_counter
-                                )
-                                if items_sent > 0:
-                                    self.debug_log(
-                                        f"Sent batch {batch_id_counter} with {items_sent} items to workers"
-                                    )
-
-                            # Check for completed work
-                            completed = self._check_completion_queue()
-                            if completed > 0:
-                                statistics["processed"] += completed
-
-                                # Send progress update
-                                if (
-                                    hasattr(self, "webhook_handler")
-                                    and self.webhook_handler is not None
-                                    and int(
-                                        statistics["processed"]
-                                        // self.webhook_progress_interval
-                                    )
-                                    > last_reported_index
-                                ):
-                                    last_reported_index = (
-                                        statistics["processed"]
-                                        // self.webhook_progress_interval
-                                    )
-                                    self.send_progress_update(
-                                        type="data_generation",
-                                        progress=int(
-                                            statistics["processed"]
-                                            / statistics["total"]
-                                            * 100
-                                        ),
-                                        total=statistics["total"],
-                                        current=statistics["processed"],
-                                    )
-
-                            # Process completed futures
-                            futures = self._process_futures(futures, executor)
-
-                        except Exception as e:
-                            logger.error(f"Error processing {filepath}: {e}")
-                            statistics["errors"] += 1
-                            if "out of memory" in str(e).lower():
-                                import sys
-
-                                sys.exit(1)
-
-                    # Process remaining items in queues
-                    try:
-                        # Read remaining
-                        if self.read_queue.qsize() > 0:
-                            future = executor.submit(self.read_images_in_batch)
-                            futures.append(future)
-
-                        futures = self._process_futures(futures, executor)
-
-                        # Process remaining
-                        while self.process_queue.qsize() > 0:
-                            batch_id_counter += 1
-                            items_sent = self._process_images_in_batch(batch_id_counter)
-                            if items_sent > 0:
-                                self.debug_log(
-                                    f"Sent final batch {batch_id_counter} with {items_sent} items"
-                                )
-
-                        # Wait for all workers to finish processing
-                        timeout = 30  # seconds
-                        start_time = time.time()
-                        while (
-                            self.transform_queue.qsize() > 0
-                            or not self.done_queue.empty()
-                        ):
-                            completed = self._check_completion_queue()
-                            if completed > 0:
-                                statistics["processed"] += completed
-                            time.sleep(0.1)
-                            if time.time() - start_time > timeout:
-                                logger.warning("Timeout waiting for workers to finish")
-                                break
-
-                        # Final check for completed work
-                        completed = self._check_completion_queue()
-                        if completed > 0:
-                            statistics["processed"] += completed
-
-                        # Log statistics
-                        log_msg = f"(id={self.id}) Bucket {bucket} processing results: {statistics}"
-                        if self.rank == 0:
-                            logger.info(log_msg)
-                            tqdm.write(log_msg)
-
-                        # Send final progress update
-                        if (
-                            hasattr(self, "webhook_handler")
-                            and self.webhook_handler is not None
-                        ):
-                            self.send_progress_update(
-                                type="data_generation_bucket_complete",
-                                progress=100,
-                                total=statistics["total"],
-                                current=statistics["processed"],
-                            )
-
-                    except Exception as e:
-                        logger.error(
-                            f"Error processing bucket {bucket} remainders: {e}"
-                        )
-                        continue
-
-            self.debug_log("Completed process_buckets, all futures have been returned.")
-
-        finally:
-            # Always stop workers
-            self._stop_transform_workers()
-
-    def generate_dataset(self):
-        """Main entry point to generate the dataset."""
-        self.debug_log("Starting dataset generation")
-
-        # Discover files to process
-        self.discover_all_files()
-
-        if len(self.local_unprocessed_files) == 0:
-            self.debug_log("No files to process")
-            return
-
-        # Process all buckets
-        self.process_buckets()
-        self.accelerator.wait_for_everyone()
-        self.debug_log("Dataset generation complete")
-
-    def send_progress_update(self, **kwargs):
-        """Send progress update via webhook if configured."""
-        if hasattr(self, "webhook_handler") and self.webhook_handler is not None:
-            self.webhook_handler.send_progress_update(**kwargs)
 
 
 # Key Architecture Points:
