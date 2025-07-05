@@ -17,6 +17,7 @@ class SampleGenerator(ABC):
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.conditioning_type = config.get("type", "unknown")
+        self.max_worker_count = None
 
     @abstractmethod
     def transform_batch(
@@ -775,36 +776,35 @@ class DepthMapSampleGenerator(SampleGenerator):
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        self.model_type = config.get("model_type", "DPT")  # DPT or MiDaS
+        self.model_type = config.get("model_type", "DPT")
         self._model = None
         self._transform = None
+        self.max_worker_count = 1
+
+    @property
+    def requires_gpu(self) -> bool:
+        """Depth models require GPU and must run in main process."""
+        return True
+
+    @property
+    def is_thread_safe(self) -> bool:
+        """GPU models are not thread-safe across processes."""
+        return False
 
     def _load_model(self, device):
         """Lazy load the depth estimation model."""
-        if self._model is None:
-            if self.model_type == "DPT":
-                from transformers import DPTForDepthEstimation, DPTImageProcessor
+        try:
+            if self._model is None:
+                logger.info("Loading DPT depth estimation model")
+                from transformers import pipeline, DPTImageProcessor
 
-                self._model = DPTForDepthEstimation.from_pretrained("Intel/dpt-large")
-                self._transform = DPTImageProcessor.from_pretrained("Intel/dpt-large")
-            else:
-                # MiDaS implementation
-                import torchvision.transforms as transforms
-                from midas.dpt_depth import DPTDepthModel
-
-                self._model = DPTDepthModel(path="weights/dpt_large-midas-2f21e586.pt")
-                self._transform = transforms.Compose(
-                    [
-                        transforms.Resize((384, 384)),
-                        transforms.ToTensor(),
-                        transforms.Normalize(
-                            mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-                        ),
-                    ]
+                self._model = pipeline(
+                    task="depth-estimation", model="Intel/dpt-large", device=device
                 )
-
-            self._model = self._model.to(device)
-            self._model.eval()
+                logger.info("Loaded DPT model successfully")
+        except Exception as e:
+            logger.error(f"Error loading depth estimation model: {e}")
+            raise
 
     def transform_batch(
         self,
@@ -813,7 +813,7 @@ class DepthMapSampleGenerator(SampleGenerator):
         metadata_list: List[Dict],
         accelerator,
     ) -> List[Image.Image]:
-        """Create depth map images."""
+        """Create depth map images with minimal processing."""
 
         device = (
             accelerator.device
@@ -822,7 +822,249 @@ class DepthMapSampleGenerator(SampleGenerator):
         )
         self._load_model(device)
 
+        # Ensure all images are RGB
+        rgb_images = []
+        original_sizes = []
+
+        for img in images:
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            rgb_images.append(img)
+            original_sizes.append(img.size)
+
+        try:
+            # Process entire batch at once
+            with torch.no_grad():
+                depth_outputs = self._model(rgb_images)
+
+            # Extract and format depth maps
+            depth_images = []
+            for depth_output, original_size in zip(depth_outputs, original_sizes):
+                depth_img = (
+                    depth_output["depth"]
+                    if isinstance(depth_output, dict)
+                    else depth_output
+                )
+
+                # Resize if needed
+                if depth_img.size != original_size:
+                    depth_img = depth_img.resize(
+                        original_size, Image.Resampling.LANCZOS
+                    )
+
+                # Ensure RGB
+                if depth_img.mode != "RGB":
+                    depth_img = depth_img.convert("RGB")
+
+                depth_images.append(depth_img)
+
+            return depth_images
+
+        except Exception as e:
+            logger.error(f"Batch processing failed: {e}, falling back to black images")
+            # Return all black images on complete failure
+            return [Image.new("RGB", size, (0, 0, 0)) for size in original_sizes]
+
+
+class SegmentationSampleGenerator(SampleGenerator):
+    """
+    Example of a GPU-enabled generator that creates segmentation masks.
+    This demonstrates proper GPU handling in the DataGenerator pipeline.
+    """
+
+    def __init__(self, config: Dict[str, Any]):
+        super().__init__(config)
+        self.model_name = config.get(
+            "model_name", "facebook/mask2former-swin-large-cityscapes-semantic"
+        )
+        self._model = None
+        self._processor = None
+        self.max_worker_count = 1  # Signal single-threaded execution
+
+    @property
+    def requires_gpu(self) -> bool:
+        """This generator requires GPU for the segmentation model."""
+        return True
+
+    @property
+    def is_thread_safe(self) -> bool:
+        """GPU models are not safe to use across process boundaries."""
+        return False
+
+    def _load_model(self, device):
+        """Lazy load the segmentation model on the specified device."""
+        if self._model is None:
+            try:
+                from transformers import (
+                    AutoImageProcessor,
+                    Mask2FormerForUniversalSegmentation,
+                )
+
+                logger.info(f"Loading segmentation model {self.model_name} on {device}")
+
+                # Load processor and model
+                self._processor = AutoImageProcessor.from_pretrained(self.model_name)
+                self._model = Mask2FormerForUniversalSegmentation.from_pretrained(
+                    self.model_name
+                ).to(device)
+
+                # Set to eval mode
+                self._model.eval()
+
+                logger.info("Segmentation model loaded successfully")
+
+            except Exception as e:
+                logger.error(f"Failed to load segmentation model: {e}")
+                raise
+
+    def transform_batch(
+        self,
+        images: List[Image.Image],
+        source_paths: List[str],
+        metadata_list: List[Dict],
+        accelerator,
+    ) -> List[Image.Image]:
+        """Create segmentation mask images."""
+
+        # Determine device
+        device = (
+            accelerator.device
+            if accelerator
+            else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        )
+
+        # Load model on first use
+        self._load_model(device)
+
         transformed_images = []
+
+        # Process in eval mode with no grad
+        with torch.no_grad():
+            for img, path, metadata in zip(images, source_paths, metadata_list):
+                try:
+                    # Ensure RGB
+                    if img.mode != "RGB":
+                        img = img.convert("RGB")
+
+                    original_size = img.size
+
+                    # Preprocess image
+                    inputs = self._processor(images=img, return_tensors="pt")
+                    inputs = {k: v.to(device) for k, v in inputs.items()}
+
+                    # Run inference
+                    outputs = self._model(**inputs)
+
+                    # Post-process to get segmentation mask
+                    predicted_segmentation = (
+                        self._processor.post_process_semantic_segmentation(
+                            outputs,
+                            target_sizes=[original_size[::-1]],  # (height, width)
+                        )[0]
+                    )
+
+                    # Convert to numpy and normalize
+                    seg_array = predicted_segmentation.cpu().numpy()
+
+                    # Convert to color map or grayscale
+                    seg_image = self._segmentation_to_image(seg_array)
+
+                    # Resize back to original if needed
+                    if seg_image.size != original_size:
+                        seg_image = seg_image.resize(
+                            original_size, Image.Resampling.NEAREST
+                        )
+
+                    transformed_images.append(seg_image)
+
+                except Exception as e:
+                    logger.error(f"Error creating segmentation for {path}: {e}")
+                    # Return black image on error
+                    transformed_images.append(Image.new("RGB", img.size, (0, 0, 0)))
+
+        return transformed_images
+
+    def _segmentation_to_image(self, seg_array: np.ndarray) -> Image.Image:
+        """Convert segmentation array to RGB image."""
+        # Simple grayscale visualization
+        # You could implement a color map here for better visualization
+
+        # Normalize to 0-255 range
+        unique_classes = np.unique(seg_array)
+        normalized = np.zeros_like(seg_array, dtype=np.uint8)
+
+        for i, class_id in enumerate(unique_classes):
+            # Map each class to a gray level
+            gray_value = int((i / len(unique_classes)) * 255)
+            normalized[seg_array == class_id] = gray_value
+
+        # Convert to RGB
+        seg_rgb = np.stack([normalized] * 3, axis=-1)
+
+        return Image.fromarray(seg_rgb)
+
+
+class OpticalFlowSampleGenerator(SampleGenerator):
+    """
+    GPU-enabled generator that creates optical flow visualizations.
+    Requires pairs of consecutive frames.
+    """
+
+    def __init__(self, config: Dict[str, Any]):
+        super().__init__(config)
+        self.model_type = config.get("model_type", "raft")  # raft, flownet, etc.
+        self._model = None
+        self.max_worker_count = 1
+
+    @property
+    def requires_gpu(self) -> bool:
+        return True
+
+    @property
+    def is_thread_safe(self) -> bool:
+        return False
+
+    def _load_model(self, device):
+        """Load optical flow model."""
+        if self._model is None:
+            try:
+                # Example with RAFT model
+                from torchvision.models.optical_flow import raft_large
+
+                logger.info(f"Loading RAFT optical flow model on {device}")
+
+                self._model = raft_large(pretrained=True)
+                self._model = self._model.to(device)
+                self._model.eval()
+
+                logger.info("Optical flow model loaded successfully")
+
+            except Exception as e:
+                logger.error(f"Failed to load optical flow model: {e}")
+                raise
+
+    def transform_batch(
+        self,
+        images: List[Image.Image],
+        source_paths: List[str],
+        metadata_list: List[Dict],
+        accelerator,
+    ) -> List[Image.Image]:
+        """Create optical flow visualizations."""
+
+        device = (
+            accelerator.device
+            if accelerator
+            else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        )
+
+        self._load_model(device)
+
+        transformed_images = []
+
+        # Process pairs of images
+        # For simplicity, we'll create synthetic motion by warping the same image
+        # In practice, you'd use consecutive video frames
 
         with torch.no_grad():
             for img, path, metadata in zip(images, source_paths, metadata_list):
@@ -830,40 +1072,77 @@ class DepthMapSampleGenerator(SampleGenerator):
                     if img.mode != "RGB":
                         img = img.convert("RGB")
 
-                    original_size = img.size
+                    # Create a slightly transformed version for flow calculation
+                    img2 = self._create_synthetic_motion(img)
 
-                    if self.model_type == "DPT":
-                        # DPT processing
-                        inputs = self._transform(images=img, return_tensors="pt")
-                        inputs = {k: v.to(device) for k, v in inputs.items()}
-                        outputs = self._model(**inputs)
-                        depth = outputs.predicted_depth
-                    else:
-                        # MiDaS processing
-                        input_tensor = self._transform(img).unsqueeze(0).to(device)
-                        depth = self._model(input_tensor)
+                    # Convert to tensors
+                    img1_tensor = self._image_to_tensor(img).to(device)
+                    img2_tensor = self._image_to_tensor(img2).to(device)
 
-                    # Normalize depth map
-                    depth = depth.squeeze().cpu().numpy()
-                    depth = (depth - depth.min()) / (depth.max() - depth.min())
-                    depth = (depth * 255).astype(np.uint8)
+                    # Calculate optical flow
+                    flow = self._model(img1_tensor, img2_tensor)[-1]
 
-                    # Convert to PIL and resize back to original
-                    depth_img = Image.fromarray(depth)
-                    depth_img = depth_img.resize(
-                        original_size, Image.Resampling.BILINEAR
-                    )
+                    # Visualize flow
+                    flow_vis = self._visualize_flow(flow[0].cpu().numpy())
 
-                    # Convert to RGB
-                    depth_rgb = depth_img.convert("RGB")
-                    transformed_images.append(depth_rgb)
+                    # Convert to PIL Image
+                    flow_image = Image.fromarray(flow_vis)
+
+                    # Resize to match original
+                    if flow_image.size != img.size:
+                        flow_image = flow_image.resize(
+                            img.size, Image.Resampling.BILINEAR
+                        )
+
+                    transformed_images.append(flow_image)
 
                 except Exception as e:
-                    logger.error(f"Error creating depth map for {path}: {e}")
-                    # Return black image on error
+                    logger.error(f"Error creating optical flow for {path}: {e}")
                     transformed_images.append(Image.new("RGB", img.size, (0, 0, 0)))
 
         return transformed_images
+
+    def _create_synthetic_motion(self, img: Image.Image) -> Image.Image:
+        """Create synthetic motion for demonstration."""
+        # Simple translation for demo
+        from PIL import ImageChops
+
+        return ImageChops.offset(img, 5, 5)
+
+    def _image_to_tensor(self, img: Image.Image) -> torch.Tensor:
+        """Convert PIL image to tensor."""
+        transform = transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                ),
+            ]
+        )
+        return transform(img).unsqueeze(0)
+
+    def _visualize_flow(self, flow: np.ndarray) -> np.ndarray:
+        """Visualize optical flow as RGB image."""
+        # Simple flow visualization using HSV color space
+        h, w = flow.shape[1:3]
+
+        # Calculate magnitude and angle
+        u, v = flow[0], flow[1]
+        mag = np.sqrt(u**2 + v**2)
+        ang = np.arctan2(v, u)
+
+        # Normalize
+        hsv = np.zeros((h, w, 3), dtype=np.uint8)
+        hsv[..., 0] = ang * 180 / np.pi / 2  # Hue from angle
+        hsv[..., 1] = 255  # Full saturation
+        hsv[..., 2] = np.minimum(mag * 20, 255).astype(np.uint8)  # Value from magnitude
+
+        # Convert to RGB
+        import cv2
+
+        rgb = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
+
+        return rgb
 
 
 # Registry of available generators
@@ -882,6 +1161,10 @@ GENERATOR_REGISTRY: Dict[str, Type[SampleGenerator]] = {
     "depth": DepthMapSampleGenerator,
     "depth_map": DepthMapSampleGenerator,  # Alias
     "depth_midas": DepthMapSampleGenerator,  # Alias
+    "optical_flow": OpticalFlowSampleGenerator,
+    "flow": OpticalFlowSampleGenerator,  # Alias
+    "segmentation": SegmentationSampleGenerator,
+    "semantic_segmentation": SegmentationSampleGenerator,  # Alias
 }
 
 
