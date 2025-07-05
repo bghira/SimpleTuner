@@ -437,7 +437,11 @@ class PromptHandler:
         backend_config = StateTracker.get_data_backend_config(
             data_backend_id=data_backend.id
         )
-        if type(all_image_files) == list and type(all_image_files[0]) == tuple:
+        if (
+            type(all_image_files) == list
+            and len(all_image_files) > 0
+            and type(all_image_files[0]) == tuple
+        ):
             all_image_files = all_image_files[0][2]
         from tqdm import tqdm
 
