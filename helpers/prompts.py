@@ -438,9 +438,9 @@ class PromptHandler:
             data_backend_id=data_backend.id
         )
         if (
-            type(all_image_files) == list
+            isinstance(all_image_files, list)
             and len(all_image_files) > 0
-            and type(all_image_files[0]) == tuple
+            and isinstance(all_image_files[0], tuple)
         ):
             all_image_files = all_image_files[0][2]
         from tqdm import tqdm
