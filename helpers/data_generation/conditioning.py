@@ -842,7 +842,7 @@ class DataGenerator:
             try:
                 return path, self._read_from_storage(path, hide_errors=hide_errors)
             except Exception as e:
-                print(f"Error reading {path}: {e}")
+                logger.error(f"Error reading {path}: {e}")
                 if self.delete_problematic_images:
                     self.source_metadata_backend.remove_image(path)
                     self.source_data_backend.delete(path)
@@ -854,7 +854,7 @@ class DataGenerator:
                 try:
                     yield future.result()
                 except Exception as exc:
-                    print(f"Exception during read: {exc}")
+                    logger.error(f"Exception during read: {exc}")
 
     def read_images_in_batch(self):
         """Read a batch of images from the read queue."""
@@ -896,7 +896,9 @@ class DataGenerator:
                 future.result()
                 completed_futures.append(future)
             except Exception as e:
-                print(f"Error in future: {e}, traceback: {traceback.format_exc()}")
+                logger.error(
+                    f"Error in future: {e}, traceback: {traceback.format_exc()}"
+                )
                 completed_futures.append(future)
         return [f for f in futures if f not in completed_futures]
 
