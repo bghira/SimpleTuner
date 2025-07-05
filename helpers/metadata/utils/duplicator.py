@@ -67,6 +67,9 @@ class DatasetDuplicator:
             target_backend_config = source_backend_config.copy()
             target_dataset_path = conditioning_config.get("instance_data_dir", None)
             conditioning_data_type = conditioning_config.get("type", None)
+            target_backend_config["id"] = (
+                f"{source_dataset_id}_conditioning_{conditioning_data_type}"
+            )
             if conditioning_data_type is None:
                 raise ValueError(
                     "Conditioning config must have a 'type' field containing a value like 'canny', 'depth_midas', etc."
@@ -85,11 +88,12 @@ class DatasetDuplicator:
             target_backend_config["instance_data_dir"] = (
                 target_dataset_path  # where the generated conditioning data will be stored
             )
+            target_backend_config["conditioning_type"] = conditioning_config.get(
+                "conditioning_type", "reference_strict"
+            )
+
             if global_config.controlnet:
                 target_backend_config["conditioning_type"] = "controlnet"
-            target_backend_config["id"] = (
-                f"{source_dataset_id}_conditioning_{conditioning_data_type}"
-            )
             source_vae_path = source_backend_config.get("cache_dir_vae", None)
             if source_vae_path is not None:
                 target_vae_path = os.path.join(
@@ -110,6 +114,20 @@ class DatasetDuplicator:
                 target_backend_config["instance_data_dir"] = os.path.abspath(
                     target_backend_config["instance_data_dir"]
                 )
+            target_backend_config["caption_strategy"] = conditioning_config.get(
+                "caption_strategy", "instanceprompt"
+            )
+            target_backend_config["instance_prompt"] = None
+            if conditioning_config.get(
+                "captions", False
+            ) is not False and conditioning_config.get("caption_strategy", None) in [
+                None,
+                "instanceprompt",
+            ]:
+                # if there's some captions defined, use them as instance prompts
+                target_backend_config["instance_prompt"] = conditioning_config[
+                    "captions"
+                ]
 
             target_backend_configs.append(target_backend_config)
             target_backend_ids.append(target_backend_config["id"])
