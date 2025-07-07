@@ -131,7 +131,11 @@ class BaseDataBackend(ABC):
             gzip_data = BytesIO(gzip_data)
         gzip_data.seek(0)
         with gzip.GzipFile(fileobj=gzip_data, mode="rb") as file:
-            decompressed_data = file.read()
+            try:
+                decompressed_data = file.read()
+            except Exception as e:
+                # Handle decompression errors
+                return gzip_data
         return BytesIO(decompressed_data)
 
     def _compress_torch(self, data):
