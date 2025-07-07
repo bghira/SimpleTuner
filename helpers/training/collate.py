@@ -491,7 +491,7 @@ def collate_fn(batch):
             f"Counted {len(conditioning_filepaths)} conditioning filepaths and {len(training_filepaths)} training filepaths."
         )
 
-        if model.requires_conditioning_dataset():
+        if conditioning_type is not None or model.requires_conditioning_dataset():
             if model.requires_conditioning_latents():
                 # Kontext / other latent-conditioned models / adapters
                 debug_log("Compute conditioning latents")

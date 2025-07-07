@@ -869,7 +869,9 @@ class ModelFoundation(ABC):
         # shared modules may be when ControlNet reuses base model layers, eg. HiDream.
         return False
 
-    def get_trained_component(self, base_model: bool = False):
+    def get_trained_component(self, base_model: bool = False, unwrap_model: bool = False):
+        if not unwrap_model:
+            return self.model
         return self.unwrap_model(model=self.model if base_model else None)
 
     def _load_pipeline(
@@ -879,7 +881,7 @@ class ModelFoundation(ABC):
         Loads the pipeline class for the model.
         """
         active_pipelines = getattr(self, "pipelines", {})
-        if pipeline_type in active_pipelines:
+        if pipeline_type in active_pipelines and self.model is not None:
             setattr(
                 active_pipelines[pipeline_type],
                 self.MODEL_TYPE.value,
@@ -912,8 +914,11 @@ class ModelFoundation(ABC):
             pipeline_kwargs["watermarker"] = None
         if "watermark" in signature.parameters:
             pipeline_kwargs["watermark"] = None
-        if load_base_model:
-            pipeline_kwargs[self.MODEL_TYPE.value] = self.unwrap_model(model=self.model)
+        if load_base_model and self.model is not None:
+            if self.unwrap_model(model=self.model) is None:
+                pipeline_kwargs[self.MODEL_TYPE.value] = self.model
+            else:
+                pipeline_kwargs[self.MODEL_TYPE.value] = self.unwrap_model(model=self.model)
         else:
             pipeline_kwargs[self.MODEL_TYPE.value] = None
 
