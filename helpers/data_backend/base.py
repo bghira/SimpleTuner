@@ -105,7 +105,11 @@ class BaseDataBackend(ABC):
             gzip_data = BytesIO(gzip_data)
         gzip_data.seek(0)
         with gzip.GzipFile(fileobj=gzip_data, mode="rb") as file:
-            decompressed_data = file.read()
+            try:
+                decompressed_data = file.read()
+            except Exception as e:
+                # Handle decompression errors
+                return gzip_data
         return BytesIO(decompressed_data)
 
     def _compress_torch(self, data):
@@ -115,7 +119,6 @@ class BaseDataBackend(ABC):
         output_data_container = BytesIO()
         torch.save(data, output_data_container)
         output_data_container.seek(0)
-
         with BytesIO() as compressed_output:
             with gzip.GzipFile(fileobj=compressed_output, mode="wb") as file:
                 file.write(output_data_container.getvalue())
