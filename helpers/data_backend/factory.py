@@ -1157,7 +1157,7 @@ def configure_multi_databackend(
                 init_backend["metadata_backend"].refresh_buckets(rank_info())
 
         accelerator.wait_for_everyone()
-        # auto-generated datasets will not have contents available just yet.
+        # Auto-generated datasets will not have contents available just yet.
         if not backend.get("auto_generated", False):
             if not accelerator.is_main_process:
                 info_log(
