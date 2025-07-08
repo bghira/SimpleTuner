@@ -158,7 +158,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         )
     ):
         raise ValueError(
-            f"Image datasets require a corresponding conditioning_data set configured in your dataloader: {backend}"
+            f"When training ControlNet, a conditioning block or conditioning_data string should be configured in your dataloader. See this link for more information: https://github.com/bghira/SimpleTuner/blob/main/documentation/CONTROLNET.md"
         )
 
     if output["dataset_type"] not in choices:
