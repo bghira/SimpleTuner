@@ -218,7 +218,7 @@ images[0].save(f"hug_lab.png")
 (_Demo code lifted from the [Hugging Face SDXL ControlNet example](https://huggingface.co/diffusers/controlnet-canny-sdxl-1.0)_)
 
 
-### Automatic Data Augmentation and Conditioning Generation
+## Automatic Data Augmentation and Conditioning Generation
 
 SimpleTuner can automatically generate conditioning datasets during startup, eliminating the need for manual preprocessing. This is particularly useful for:
 - Super-resolution training
@@ -226,14 +226,14 @@ SimpleTuner can automatically generate conditioning datasets during startup, eli
 - Depth-guided generation
 - Edge detection (Canny)
 
-#### How It Works
+### How It Works
 
 Instead of manually creating conditioning datasets, you can specify a `conditioning` array in your main dataset configuration. SimpleTuner will:
 1. Generate the conditioning images on startup
 2. Create separate datasets with appropriate metadata
 3. Automatically link them to your main dataset
 
-#### Performance Considerations
+### Performance Considerations
 
 Some generators will run more slowly if they are CPU-bound and your system struggles with CPU taks, while others may require GPU resources and thus run in the main process, which can increase startup time.
 
@@ -250,7 +250,7 @@ Some generators will run more slowly if they are CPU-bound and your system strug
 
 GPU-based generators run in the main process and may significantly increase startup time for large datasets.
 
-#### Example: Multi-Task Conditioning Dataset
+### Example: Multi-Task Conditioning Dataset
 
 Here's a complete example that generates multiple conditioning types from a single source dataset:
 
@@ -306,13 +306,14 @@ You have two options for captioning generated conditioning data:
 
 For task-specific training (like "enhance" or "remove artifacts"), custom captions often work better than the original image descriptions.
 
-#### Startup Time Optimization
+### Startup Time Optimization
 
 For large datasets, conditioning generation can be time-consuming. To optimize:
 
 1. **Generate once**: Conditioning data is cached and won't regenerate if already present
 2. **Use CPU generators**: These can utilize multiple processes for faster generation
 3. **Disable unused types**: Only generate what you need for your training
-4. **Pre-generate**: You can run with `--skip_file_discovery=vae` to only generate conditioning data without starting training
+4. **Pre-generate**: You can run with `--skip_file_discovery=true` to skip the discovery and generation conditioning data
+5. **Avoid disk scans**: You can use `preserve_data_backend_cache=True` on any large dataset configuration to avoid rescanning the disk for existing conditioning data. This will speed up startup time significantly, especially for large datasets.
 
 The generation process shows progress bars and supports resumption if interrupted.
