@@ -256,6 +256,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["hash_filenames"] = backend["hash_filenames"]
     if "conditioning" in backend:
         output["config"]["conditioning"] = backend["conditioning"]
+    if "conditioning_config" in backend:
+        output["config"]["conditioning_config"] = backend["conditioning_config"]
 
     # check if caption_strategy=parquet with metadata_backend=json
     current_metadata_backend_type = backend.get("metadata_backend", "discovery")
