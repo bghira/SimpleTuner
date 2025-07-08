@@ -115,16 +115,12 @@ class DatasetDuplicator:
                     target_backend_config["instance_data_dir"]
                 )
             target_backend_config["caption_strategy"] = conditioning_config.get(
-                "caption_strategy", "instanceprompt"
+                "caption_strategy", None
             )
             target_backend_config["instance_prompt"] = None
-            if conditioning_config.get(
-                "captions", False
-            ) is not False and conditioning_config.get("caption_strategy", None) in [
-                None,
-                "instanceprompt",
-            ]:
+            if conditioning_config.get("captions", False) not in [False, None]:
                 # if there's some captions defined, use them as instance prompts
+                target_backend_config["caption_strategy"] = "instanceprompt"
                 target_backend_config["instance_prompt"] = conditioning_config[
                     "captions"
                 ]
