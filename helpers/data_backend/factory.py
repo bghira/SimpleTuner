@@ -231,6 +231,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     else:
         output["config"]["crop_style"] = "random"
     output["config"]["disable_validation"] = backend.get("disable_validation", False)
+    if "source_dataset_id" in backend:
+        output["config"]["source_dataset_id"] = backend["source_dataset_id"]
     if "resolution" in backend:
         output["config"]["resolution"] = backend["resolution"]
     else:
@@ -1330,6 +1332,7 @@ def configure_multi_databackend(
             conditioning_type=conditioning_type,
             is_regularisation_data=is_regularisation_data,
             dataset_type=backend.get("dataset_type"),
+            source_dataset_id=init_backend["config"].get("source_dataset_id", None),
         )
         if init_backend["sampler"].caption_strategy == "parquet":
             configure_parquet_database(backend, args, init_backend["data_backend"])
