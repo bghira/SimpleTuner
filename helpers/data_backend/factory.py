@@ -152,10 +152,13 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     if (
         StateTracker.get_args().controlnet
         and output["dataset_type"] == "image"
-        and backend.get("conditioning_data", None) is None
+        and (
+            backend.get("conditioning_data", None) is None
+            and backend.get("conditioning", None) is None
+        )
     ):
         raise ValueError(
-            "Image datasets require a corresponding conditioning_data set configured in your dataloader."
+            f"Image datasets require a corresponding conditioning_data set configured in your dataloader: {backend}"
         )
 
     if output["dataset_type"] not in choices:
@@ -633,7 +636,8 @@ def configure_multi_databackend(
                 )
             )
             # update the config with the new one that contains the conditioning dataset links.
-            data_backend_config[backend_idx] = modified_backend
+            backend = data_backend_config[backend_idx] = modified_backend
+            logger.debug(f"Current backend list: {data_backend_config}")
             for conditioning_dataset in conditioning_datasets:
                 info_log(
                     f"Generated conditioning dataset {conditioning_dataset['id']} from backend {backend['id']}: {conditioning_dataset}"
@@ -1369,9 +1373,6 @@ def configure_multi_databackend(
                 instance_prompt=instance_prompt,
                 use_captions=use_captions,
                 caption_strategy=backend.get("caption_strategy", args.caption_strategy),
-            )
-            logger.debug(
-                f"Pre-computing text embeds / updating cache. We have {len(captions)} captions to process, though these will be filtered next."
             )
             logger.debug(f"Data missing captions: {images_missing_captions}")
             if len(images_missing_captions) > 0 and hasattr(
