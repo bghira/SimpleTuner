@@ -148,4 +148,4 @@ class BaseDataBackend(ABC):
         with BytesIO() as compressed_output:
             with gzip.GzipFile(fileobj=compressed_output, mode="wb") as file:
                 file.write(output_data_container.getvalue())
-        return compressed_output.getvalue()
+            return compressed_output.getvalue()
