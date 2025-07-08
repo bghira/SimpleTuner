@@ -93,11 +93,95 @@ Below is the *smallest* set of changes you need in `config/config.json` compared
 ]
 ```
 
-> **Note:** Square inputs are recommended for now, unless you wish to live on the forefront of bleeding edge research. The model is trained on specific resolutions, and it simply does not work outside of those without extensive tuning.
-
-*Every edit image **must** have a 1‑to‑1 matching file name in `reference-images/`.*  SimpleTuner will automatically staple the reference embedding to the edit’s conditioning.
+*Every edit image **must** have 1‑to‑1 matching file names and extensions in `reference-images/`.*  SimpleTuner will automatically staple the reference embedding to the edit’s conditioning.
 
 If you'd like a demo dataset of how to set this up, you can use this [Kontext Max derived option](https://huggingface.co/datasets/terminusresearch/KontextMax-Edit-smol) which contains reference and edit images along with their caption textfiles.
+
+### Automatic Reference-Edit Pair Generation
+
+If you don't have pre-existing reference-edit pairs, SimpleTuner can automatically generate them from a single dataset. This is particularly useful for training models for:
+- Image enhancement / super-resolution
+- JPEG artifact removal
+- Deblurring
+- Other restoration tasks
+
+#### Example: Deblurring Training Dataset
+
+```jsonc
+[
+  {
+    "id": "high-quality-images",
+    "type": "local",
+    "instance_data_dir": "/path/to/sharp-images",
+    "conditioning_data": "high-quality-images_conditioning_superresolution",
+    "resolution": 1024,
+    "caption_strategy": "textfile",
+    "conditioning": [
+      {
+        "type": "superresolution",
+        "blur_radius": 3.0,
+        "blur_type": "gaussian",
+        "add_noise": true,
+        "noise_level": 0.02,
+        "captions": ["enhance sharpness", "deblur", "increase clarity", "sharpen image"]
+      }
+    ]
+  },
+  {
+    "id": "text-embeds",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "type": "local",
+    "cache_dir": "cache/text/kontext"
+  }
+]
+```
+
+This configuration will:
+1. Take your high-quality sharp images and create blurred versions (these become the "edit" images)
+2. Use the originals as reference images
+3. Train Kontext to enhance/deblur based on the reference
+
+#### Example: JPEG Artifact Removal
+
+```jsonc
+[
+  {
+    "id": "pristine-images",
+    "type": "local",
+    "instance_data_dir": "/path/to/pristine-images",
+    "conditioning_data": "pristine-images_conditioning_jpeg_artifacts",
+    "resolution": 1024,
+    "caption_strategy": "textfile",
+    "conditioning": [
+      {
+        "type": "jpeg_artifacts",
+        "quality_mode": "range",
+        "quality_range": [10, 30],
+        "compression_rounds": 2,
+        "captions": ["remove compression artifacts", "restore quality", "fix jpeg artifacts"]
+      }
+    ]
+  },
+  {
+    "id": "text-embeds",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "type": "local",
+    "cache_dir": "cache/text/kontext"
+  }
+]
+```
+
+#### Important Notes
+
+1. **Generation happens at startup**: The degraded versions are created automatically when training begins
+2. **Caching**: Generated images are saved, so subsequent runs won't regenerate them
+3. **Caption strategy**: The `captions` field in the conditioning config provides task-specific prompts that work better than generic image descriptions
+4. **Performance**: These CPU-based generators (blur, JPEG) are fast and use multiple processes
+5. **Disk space**: Ensure you have enough disk space for the generated images, as they can be large! Unfortunately, there is no ability to create them on-demand yet.
+
+For more conditioning types and advanced configurations, see the [ControlNet documentation](/documentation/CONTROLNET.md).
 
 ---
 
