@@ -46,6 +46,7 @@ class TrainingSample:
         # Torchvision transforms turn the pixels into a Tensor and normalize them for the VAE.
         self.model = model
         self.transforms = None
+        self.caption = None
         if model is None:
             self.model = StateTracker.get_model()
         if self.model is not None:
@@ -290,6 +291,9 @@ class TrainingSample:
             self.original_size = self.image.size
 
         return self.valid_metadata
+
+    def set_caption(self, caption: str) -> None:
+        self.caption = caption
 
     def _set_resolution(self):
         if self.resolution_type == "pixel":
