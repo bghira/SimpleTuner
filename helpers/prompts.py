@@ -372,6 +372,8 @@ class PromptHandler:
         Returns:
             _type_: _description_
         """
+        if caption_strategy is None:
+            return None
         if caption_strategy == "filename":
             instance_prompt = PromptHandler.prepare_instance_prompt_from_filename(
                 image_path=image_path,
@@ -411,7 +413,7 @@ class PromptHandler:
             return instance_prompt
         elif caption_strategy == "csv":
             return data_backend.get_caption(image_path)
-        else:
+        elif caption_strategy is not None:
             raise ValueError(
                 f"Unsupported caption strategy: {caption_strategy}. Supported: 'filename', 'textfile', 'parquet', 'instanceprompt', 'csv', 'huggingface'"
             )
