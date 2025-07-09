@@ -333,10 +333,9 @@ class Flux(ImageModelFoundation):
         return prompt_embeds, pooled_prompt_embeds, time_ids, masks
 
     def prepare_batch_conditions(self, batch: dict, state: dict):
-        batch = super().prepare_batch_conditions(batch, state)
-
-        # For Flux, conditioning_latents should remain as a list
-        # if we're in combined mode with multiple datasets
+        if cond is None:
+            logger.debug(f"No conditioning latents found :(")
+            return batch  # nothing to do
         cond = batch.get("conditioning_latents")
         if cond is not None:
             # Check sampling mode
