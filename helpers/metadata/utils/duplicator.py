@@ -9,23 +9,74 @@ logger.setLevel(logging.INFO if _get_rank() == 0 else logging.WARNING)
 class DatasetDuplicator:
     @staticmethod
     def copy_metadata(source_backend, target_backend):
-        """Copy metadata from source backend to target backend."""
-        source_meta = source_backend.get("metadata_backend", None)
-        target_meta = target_backend.get("metadata_backend", None)
+        """Copy metadata from source backend to target backend with path updates."""
+        source_meta = source_backend.get("metadata_backend")
+        target_meta = target_backend.get("metadata_backend")
 
-        if source_meta is None or target_meta is None:
-            raise ValueError(
-                "Both source and target backends must have metadata_backend defined."
-                f" Received {type(source_meta)} and {type(target_meta)}."
-            )
+        if not (source_meta and target_meta):
+            raise ValueError("Both backends must have metadata_backend defined.")
 
-        logger.info("Reloading source metadata caches...")
+        logger.info("Reloading metadata caches...")
         source_meta.reload_cache(set_config=False)
-        logger.info("Reloading target metadata caches...")
         target_meta.reload_cache(set_config=False)
 
-        logger.info("Copying metadata from source to target backend...")
-        target_meta.set_metadata(metadata_backend=source_meta, update_json=True)
+        # Get the instance directories for path translation
+        source_dir = source_backend.get("instance_data_dir", "")
+        target_dir = target_backend.get("instance_data_dir", "")
+
+        # Check if we need to update paths (for conditioning datasets)
+        needs_path_update = (
+            source_dir != target_dir
+            and target_backend.get("dataset_type") == "conditioning"
+        )
+
+        if needs_path_update:
+            logger.info(
+                f"Copying metadata with path translation: '{source_dir}' -> '{target_dir}'"
+            )
+
+            # Copy and update bucket indices
+            target_meta.aspect_ratio_bucket_indices = {}
+            for bucket, paths in source_meta.aspect_ratio_bucket_indices.items():
+                updated_paths = []
+                for path in paths:
+                    # Update the path to point to the target directory
+                    # Handle both absolute and relative paths
+                    if os.path.isabs(path):
+                        # For absolute paths, replace the directory
+                        rel_path = os.path.relpath(path, source_dir)
+                        new_path = os.path.join(target_dir, rel_path)
+                    else:
+                        # For relative paths, just prepend the new directory
+                        new_path = os.path.join(target_dir, os.path.basename(path))
+                    updated_paths.append(new_path)
+                target_meta.aspect_ratio_bucket_indices[bucket] = updated_paths
+
+            # Copy other metadata
+            target_meta.config = source_meta.config.copy()
+            if hasattr(source_meta, "image_metadata") and source_meta.image_metadata:
+                target_meta.image_metadata = {}
+                for path, metadata in source_meta.image_metadata.items():
+                    # Update paths in image metadata too
+                    if os.path.isabs(path):
+                        rel_path = os.path.relpath(path, source_dir)
+                        new_path = os.path.join(target_dir, rel_path)
+                    else:
+                        new_path = os.path.join(target_dir, os.path.basename(path))
+                    target_meta.image_metadata[new_path] = metadata
+
+            # Copy any other attributes that need to be preserved
+            for attr in ["metadata_update_interval", "cache_file_suffix"]:
+                if hasattr(source_meta, attr):
+                    setattr(target_meta, attr, getattr(source_meta, attr))
+
+        else:
+            # Regular copy without path translation
+            logger.info("Copying metadata without path translation")
+            target_meta.set_metadata(metadata_backend=source_meta, update_json=True)
+
+        # Save the updated metadata
+        target_meta.save_cache()
 
         logger.info("Metadata copied successfully.")
         source_meta.print_debug_info()
