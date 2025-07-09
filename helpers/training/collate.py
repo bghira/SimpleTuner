@@ -507,17 +507,6 @@ def collate_fn(batch):
                 debug_log(
                     f"Conditioning latents computed: {len(conditioning_latents)} items."
                 )
-
-                # unpack from dicts (vae-cache style) & shape-check
-                if isinstance(conditioning_latents[0], dict):
-                    conditioning_latents = [v["latents"] for v in conditioning_latents]
-
-                conditioning_latents = check_latent_shapes(
-                    conditioning_latents,
-                    conditioning_filepaths,
-                    conditioning_data_backend_id,
-                    conditioning_examples,
-                )
             else:
                 debug_log("Model may require conditioning pixels.")
                 conditioning_pixel_values = conditioning_pixels(
@@ -548,14 +537,16 @@ def collate_fn(batch):
             caption if caption else example["instance_prompt_text"]
             for caption, example in zip(captions, examples)
         ]
-        debug_log(f"Pull cached text embeds. Captions: {captions}")
+        debug_log(f"Pull cached text embeds. conditioning captions: {captions}")
         text_embed_cache = StateTracker.get_data_backend(conditioning_data_backend_id)[
             "text_embed_cache"
         ]
 
     else:
         captions = [example["instance_prompt_text"] for example in examples]
-        debug_log(f"Pull cached text embeds. Captions: {captions}")
+        debug_log(
+            f"Pull cached text embeds. no conditioning captions found: {captions}"
+        )
         text_embed_cache = StateTracker.get_data_backend(data_backend_id)[
             "text_embed_cache"
         ]
