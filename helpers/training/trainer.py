@@ -1076,6 +1076,8 @@ class Trainer:
         self.ema_model = None
         if not self.config.use_ema:
             return
+        # this runs on all processes to ensure shapes are aligned.
+        self.model.pre_ema_creation()
         if self.accelerator.is_main_process:
             logger.info("Using EMA. Creating EMAModel.")
 
@@ -1092,7 +1094,6 @@ class Trainer:
                     f"Please open a bug report or disable EMA. Unknown EMA model family: {self.config.model_family}"
                 )
 
-            self.model.pre_ema_creation()
             self.ema_model = EMAModel(
                 self.config,
                 self.accelerator,
@@ -1102,12 +1103,13 @@ class Trainer:
                 decay=self.config.ema_decay,
                 foreach=not self.config.ema_foreach_disable,
             )
-            self.model.post_ema_creation()
             logger.info(
                 f"EMA model creation completed with {self.ema_model.parameter_count():,} parameters"
             )
 
         self.accelerator.wait_for_everyone()
+        # same about running on all processes to ensure alignment.
+        self.model.post_ema_creation()
 
     def init_hooks(self):
         from helpers.training.save_hooks import SaveHookManager
