@@ -90,6 +90,9 @@ def build_kontext_inputs(
     packed_cond : (B, S, C*4)   – flattened patch sequence
     cond_ids    : (B, S, 3)     – seq-ids with id[...,0] == 1
     """
+    if len(cond_latents.shape) == 3 and cond_latents.shape[0] == 16:
+        # This is a single patch, expand to batch size 1
+        cond_latents = cond_latents.unsqueeze(0)
     B, C, H, W = cond_latents.shape  # (C should match latent_channels)
     packed_cond = pack_latents(cond_latents, B, C, H, W).to(device=device, dtype=dtype)
 
