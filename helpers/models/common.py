@@ -460,7 +460,7 @@ class ModelFoundation(ABC):
         """
         A hook that can be overridden in the subclass to perform actions after EMA creation.
         """
-        pass
+        self.unfuse_qkv_projections()
 
     def check_user_config(self):
         """
