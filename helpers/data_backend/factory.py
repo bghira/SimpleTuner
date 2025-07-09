@@ -595,6 +595,112 @@ def from_instance_representation(representation: dict) -> "BaseDataBackend":
         raise ValueError(f"Unknown backend type: {backend_type}")
 
 
+def sort_dataset_configs_by_dependencies(data_backend_config):
+    """
+    Sort dataset configurations to ensure source datasets are configured before
+    their conditioning datasets (especially for reference_strict).
+
+    Args:
+        data_backend_config: List of dataset configuration dictionaries
+
+    Returns:
+        List of sorted dataset configurations
+    """
+    # Build dependency graph
+    # Key: dataset id, Value: list of datasets that depend on it
+    dependencies = {}
+    dataset_by_id = {}
+
+    # First pass: index datasets by ID and identify disabled ones
+    enabled_configs = []
+    for config in data_backend_config:
+        if config.get("disabled", False) or config.get("disable", False):
+            continue
+        enabled_configs.append(config)
+        dataset_id = config.get("id")
+        if dataset_id:
+            dataset_by_id[dataset_id] = config
+
+    # Second pass: build dependency relationships
+    for config in enabled_configs:
+        dataset_id = config.get("id")
+        if not dataset_id:
+            continue
+
+        # Check if this dataset depends on another (is a conditioning dataset)
+        source_id = None
+
+        # Method 1: Explicit source_dataset_id (auto-generated style)
+        if config.get("source_dataset_id"):
+            source_id = config["source_dataset_id"]
+
+        # Method 2: Find which dataset references this as conditioning_data
+        elif config.get("conditioning_type") == "reference_strict":
+            # Look for the dataset that points to this one
+            for other_config in enabled_configs:
+                if other_config.get("conditioning_data") == dataset_id:
+                    source_id = other_config.get("id")
+                    break
+
+        # Add to dependency graph
+        if source_id and source_id in dataset_by_id:
+            if source_id not in dependencies:
+                dependencies[source_id] = []
+            dependencies[source_id].append(dataset_id)
+
+    # Topological sort using DFS
+    visited = set()
+    temp_visited = set()
+    sorted_ids = []
+
+    def visit(dataset_id):
+        if dataset_id in temp_visited:
+            raise ValueError(
+                f"Circular dependency detected involving dataset '{dataset_id}'"
+            )
+        if dataset_id in visited:
+            return
+
+        temp_visited.add(dataset_id)
+
+        # Visit all datasets that depend on this one
+        if dataset_id in dependencies:
+            for dependent_id in dependencies[dataset_id]:
+                if dependent_id in dataset_by_id:  # Only visit if it exists
+                    visit(dependent_id)
+
+        temp_visited.remove(dataset_id)
+        visited.add(dataset_id)
+        sorted_ids.append(dataset_id)
+
+    # Visit all datasets
+    for dataset_id in dataset_by_id:
+        if dataset_id not in visited:
+            visit(dataset_id)
+
+    # Build the final sorted list
+    sorted_configs = []
+    seen_ids = set()
+
+    # Add in reverse order (dependencies first)
+    for dataset_id in reversed(sorted_ids):
+        if dataset_id not in seen_ids:
+            sorted_configs.append(dataset_by_id[dataset_id])
+            seen_ids.add(dataset_id)
+
+    # Add any configs without IDs (shouldn't happen but just in case)
+    for config in enabled_configs:
+        if not config.get("id") or config.get("id") not in seen_ids:
+            sorted_configs.append(config)
+
+    # Add disabled configs at the end (they'll be skipped anyway)
+    for config in data_backend_config:
+        if config.get("disabled", False) or config.get("disable", False):
+            sorted_configs.append(config)
+
+    return sorted_configs
+
+
 def configure_multi_databackend(
     args: dict, accelerator, text_encoders, tokenizers, model: ModelFoundation
 ):
@@ -622,6 +728,8 @@ def configure_multi_databackend(
         raise ValueError(
             "Must provide at least one data backend in the data backend config file."
         )
+    # sort things so that reference datasets are configured last.
+    data_backend_config = sort_dataset_configs_by_dependencies(data_backend_config)
 
     ###                                                                          ###
     #    we'll check for any auto-conditioning configurations and generate them.   #
@@ -1195,13 +1303,16 @@ def configure_multi_databackend(
             # special case where strict conditioning alignment allows us to duplicate metadata from the source dataset.
             # we'll search for the source dataset by id and copy metadata from it:
             source_dataset_id = backend.get("source_dataset_id", None)
+            target_dataset_id = backend.get("id")
             if source_dataset_id is None:
                 # other configuration style where the *source* dataset config has conditioning_data defined
                 for source_backend in data_backend_config:
-                    if (
-                        source_backend.get("conditioning_type", None)
-                        == "reference_strict"
-                        and source_backend.get("id", None) is not None
+                    source_conditioning_data_config = source_backend.get(
+                        "conditioning_data", None
+                    )
+                    if source_conditioning_data_config == target_dataset_id or (
+                        isinstance(source_conditioning_data_config, list)
+                        and target_dataset_id in source_conditioning_data_config
                     ):
                         source_dataset_id = source_backend["id"]
                         break
