@@ -318,9 +318,6 @@ class ModelFoundation(ABC):
         3) Convert & load them into the unwrapped PyTorch modules with set_peft_model_state_dict().
         4) Optionally handle text_encoder_x using the diffusers _set_state_dict_into_text_encoder() helper.
         """
-        # Ensure QKV is unfused before loading
-        self.unfuse_qkv_projections()
-
         # We'll track whichever sub-model is our 'denoiser' (UNet or Transformer).
         denoiser = None
         text_encoder_one_ = None
@@ -431,12 +428,8 @@ class ModelFoundation(ABC):
                 )
 
         logger.info("Finished loading LoRA weights successfully.")
-        # Re-fuse after loading
-        self.fuse_qkv_projections()
 
     def save_lora_weights(self, *args, **kwargs):
-        # Unfuse QKV projections before saving
-        self.unfuse_qkv_projections()
         self.PIPELINE_CLASSES[
             (
                 PipelineTypes.TEXT2IMG
@@ -444,24 +437,18 @@ class ModelFoundation(ABC):
                 else PipelineTypes.CONTROLNET
             )
         ].save_lora_weights(*args, **kwargs)
-        # Re-fuse after saving if you want to continue training
-        self.fuse_qkv_projections()
 
     def pre_ema_creation(self):
         """
         A hook that can be overridden in the subclass to perform actions before EMA creation.
         """
-        if self.config.fuse_qkv_projections:
-            logger.info(
-                "Fusing QKV projections before EMA creation. This is required for some models."
-            )
-            self.fuse_qkv_projections()
+        self.fuse_qkv_projections()
 
     def post_ema_creation(self):
         """
         A hook that can be overridden in the subclass to perform actions after EMA creation.
         """
-        self.unfuse_qkv_projections()
+        pass
 
     def check_user_config(self):
         """
@@ -1598,41 +1585,3 @@ class VideoModelFoundation(ImageModelFoundation):
         # B, F, C, H, W = tensor.shape
         # return tensor.view(B * F, C, H, W)
         return tensor
-
-
-# if self.args.controlnet:
-#     # ControlNet training has an additional adapter thingy.
-#     extra_pipeline_kwargs["controlnet"] = unwrap_model(
-#         self.accelerator, self.controlnet
-#     )
-
-# if self.args.validation_torch_compile:
-#     if self.deepspeed:
-#         logger.warning(
-#             "DeepSpeed does not support torch compile. Disabling. Set --validation_torch_compile=False to suppress this warning."
-#         )
-#     elif self.args.lora_type.lower() == "lycoris":
-#         logger.warning(
-#             "LyCORIS does not support torch compile for validation due to graph compile breaks. Disabling. Set --validation_torch_compile=False to suppress this warning."
-#         )
-#     else:
-#         if self.unet is not None and not is_compiled_module(self.unet):
-#             logger.warning(
-#                 f"Compiling the UNet for validation ({self.args.validation_torch_compile})"
-#             )
-#             self.pipeline.unet = torch.compile(
-#                 self.pipeline.unet,
-#                 mode=self.args.validation_torch_compile_mode,
-#                 fullgraph=False,
-#             )
-#         if self.transformer is not None and not is_compiled_module(
-#             self.transformer
-#         ):
-#             logger.warning(
-#                 f"Compiling the transformer for validation ({self.args.validation_torch_compile})"
-#             )
-#             self.pipeline.transformer = torch.compile(
-#                 self.pipeline.transformer,
-#                 mode=self.args.validation_torch_compile_mode,
-#                 fullgraph=False,
-#             )
