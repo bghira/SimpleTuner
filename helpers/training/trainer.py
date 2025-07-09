@@ -1076,6 +1076,8 @@ class Trainer:
         self.ema_model = None
         if not self.config.use_ema:
             return
+        # this runs on all processes to ensure shapes are aligned.
+        self.model.pre_ema_creation()
         if self.accelerator.is_main_process:
             logger.info("Using EMA. Creating EMAModel.")
 
@@ -1106,6 +1108,8 @@ class Trainer:
             )
 
         self.accelerator.wait_for_everyone()
+        # same about running on all processes to ensure alignment.
+        self.model.post_ema_creation()
 
     def init_hooks(self):
         from helpers.training.save_hooks import SaveHookManager

@@ -221,6 +221,7 @@ class FluxFusedFlashAttnProcessor3(object):
     """
 
     def __init__(self):
+        self.flash_attn_qkvpacked_func = None
         try:
             from flash_attn_interface import flash_attn_qkvpacked_func
 
@@ -382,3 +383,254 @@ class FluxFusedFlashAttnProcessor3(object):
                     batch_size, channel, height, width
                 )
             return hidden_states
+
+
+class FluxFusedSDPAProcessor:
+    """
+    Fused QKV processor using PyTorch's scaled_dot_product_attention.
+    Uses fused projections but splits for attention computation.
+    """
+
+    def __init__(self):
+        if not hasattr(F, "scaled_dot_product_attention"):
+            raise ImportError(
+                "FluxFusedSDPAProcessor requires PyTorch 2.0+ for scaled_dot_product_attention"
+            )
+
+    def __call__(
+        self,
+        attn,
+        hidden_states: FloatTensor,
+        encoder_hidden_states: FloatTensor = None,
+        attention_mask: FloatTensor = None,
+        image_rotary_emb: Tensor = None,
+    ) -> FloatTensor:
+        input_ndim = hidden_states.ndim
+        if input_ndim == 4:
+            batch_size, channel, height, width = hidden_states.shape
+            hidden_states = hidden_states.view(
+                batch_size, channel, height * width
+            ).transpose(1, 2)
+
+        context_input_ndim = (
+            encoder_hidden_states.ndim if encoder_hidden_states is not None else None
+        )
+        if context_input_ndim == 4:
+            batch_size, channel, height, width = encoder_hidden_states.shape
+            encoder_hidden_states = encoder_hidden_states.view(
+                batch_size, channel, height * width
+            ).transpose(1, 2)
+
+        batch_size = (
+            encoder_hidden_states.shape[0]
+            if encoder_hidden_states is not None
+            else hidden_states.shape[0]
+        )
+
+        # Single attention case (no encoder states)
+        if encoder_hidden_states is None:
+            # Use fused QKV projection
+            qkv = attn.to_qkv(hidden_states)  # (batch, seq_len, 3 * inner_dim)
+            inner_dim = qkv.shape[-1] // 3
+            head_dim = inner_dim // attn.heads
+            seq_len = hidden_states.shape[1]
+
+            # Split and reshape
+            qkv = qkv.view(batch_size, seq_len, 3, attn.heads, head_dim)
+            query, key, value = qkv.unbind(
+                dim=2
+            )  # Each is (batch, seq_len, heads, head_dim)
+
+            # Transpose to (batch, heads, seq_len, head_dim)
+            query = query.transpose(1, 2)
+            key = key.transpose(1, 2)
+            value = value.transpose(1, 2)
+
+            # Apply norms if needed
+            if attn.norm_q is not None:
+                query = attn.norm_q(query)
+            if attn.norm_k is not None:
+                key = attn.norm_k(key)
+
+            # Apply RoPE if needed
+            if image_rotary_emb is not None:
+                query = apply_rotary_emb(query, image_rotary_emb)
+                key = apply_rotary_emb(key, image_rotary_emb)
+
+            # SDPA
+            hidden_states = F.scaled_dot_product_attention(
+                query,
+                key,
+                value,
+                attn_mask=attention_mask,
+                dropout_p=0.0,
+                is_causal=False,
+            )
+
+            # Reshape back
+            hidden_states = hidden_states.transpose(1, 2).reshape(
+                batch_size, -1, attn.heads * head_dim
+            )
+            hidden_states = hidden_states.to(query.dtype)
+
+            if input_ndim == 4:
+                hidden_states = hidden_states.transpose(-1, -2).reshape(
+                    batch_size, channel, height, width
+                )
+
+            return hidden_states
+
+        # Joint attention case (with encoder states)
+        else:
+            # Process self-attention QKV
+            qkv = attn.to_qkv(hidden_states)
+            inner_dim = qkv.shape[-1] // 3
+            head_dim = inner_dim // attn.heads
+            seq_len = hidden_states.shape[1]
+
+            qkv = qkv.view(batch_size, seq_len, 3, attn.heads, head_dim)
+            query, key, value = qkv.unbind(dim=2)
+
+            # Transpose to (batch, heads, seq_len, head_dim)
+            query = query.transpose(1, 2)
+            key = key.transpose(1, 2)
+            value = value.transpose(1, 2)
+
+            # Apply norms if needed
+            if attn.norm_q is not None:
+                query = attn.norm_q(query)
+            if attn.norm_k is not None:
+                key = attn.norm_k(key)
+
+            # Process encoder QKV
+            encoder_seq_len = encoder_hidden_states.shape[1]
+            encoder_qkv = attn.to_added_qkv(encoder_hidden_states)
+            encoder_qkv = encoder_qkv.view(
+                batch_size, encoder_seq_len, 3, attn.heads, head_dim
+            )
+            encoder_query, encoder_key, encoder_value = encoder_qkv.unbind(dim=2)
+
+            # Transpose to (batch, heads, seq_len, head_dim)
+            encoder_query = encoder_query.transpose(1, 2)
+            encoder_key = encoder_key.transpose(1, 2)
+            encoder_value = encoder_value.transpose(1, 2)
+
+            # Apply encoder norms if needed
+            if attn.norm_added_q is not None:
+                encoder_query = attn.norm_added_q(encoder_query)
+            if attn.norm_added_k is not None:
+                encoder_key = attn.norm_added_k(encoder_key)
+
+            # Concatenate encoder and self-attention
+            query = torch.cat([encoder_query, query], dim=2)
+            key = torch.cat([encoder_key, key], dim=2)
+            value = torch.cat([encoder_value, value], dim=2)
+
+            # Apply RoPE if needed
+            if image_rotary_emb is not None:
+                query = apply_rotary_emb(query, image_rotary_emb)
+                key = apply_rotary_emb(key, image_rotary_emb)
+
+            # SDPA
+            hidden_states = F.scaled_dot_product_attention(
+                query,
+                key,
+                value,
+                attn_mask=attention_mask,
+                dropout_p=0.0,
+                is_causal=False,
+            )
+
+            # Reshape: (batch, heads, seq_len, head_dim) -> (batch, seq_len, heads * head_dim)
+            hidden_states = hidden_states.transpose(1, 2).reshape(
+                batch_size, -1, attn.heads * head_dim
+            )
+            hidden_states = hidden_states.to(query.dtype)
+
+            # Split encoder and self outputs
+            encoder_hidden_states = hidden_states[:, :encoder_seq_len]
+            hidden_states = hidden_states[:, encoder_seq_len:]
+
+            # Output projections
+            hidden_states = attn.to_out[0](hidden_states)
+            hidden_states = attn.to_out[1](hidden_states)  # dropout
+            encoder_hidden_states = attn.to_add_out(encoder_hidden_states)
+
+            # Reshape if needed
+            if input_ndim == 4:
+                hidden_states = hidden_states.transpose(-1, -2).reshape(
+                    batch_size, channel, height, width
+                )
+            if context_input_ndim == 4:
+                encoder_hidden_states = encoder_hidden_states.transpose(-1, -2).reshape(
+                    batch_size, channel, height, width
+                )
+
+            return hidden_states, encoder_hidden_states
+
+
+class FluxSingleFusedSDPAProcessor:
+    """
+    Fused QKV processor for single attention (no encoder states).
+    Simpler version for self-attention only blocks.
+    """
+
+    def __init__(self):
+        if not hasattr(F, "scaled_dot_product_attention"):
+            raise ImportError(
+                "FluxSingleFusedSDPAProcessor requires PyTorch 2.0+ for scaled_dot_product_attention"
+            )
+
+    def __call__(
+        self,
+        attn,
+        hidden_states: Tensor,
+        encoder_hidden_states: Tensor = None,
+        attention_mask: FloatTensor = None,
+        image_rotary_emb: Tensor = None,
+    ) -> Tensor:
+        input_ndim = hidden_states.ndim
+        if input_ndim == 4:
+            batch_size, channel, height, width = hidden_states.shape
+            hidden_states = hidden_states.view(
+                batch_size, channel, height * width
+            ).transpose(1, 2)
+
+        batch_size, seq_len, _ = hidden_states.shape
+
+        # Use fused QKV projection
+        qkv = attn.to_qkv(hidden_states)  # (batch, seq_len, 3 * inner_dim)
+        inner_dim = qkv.shape[-1] // 3
+        head_dim = inner_dim // attn.heads
+
+        # Split and reshape in one go
+        qkv = qkv.view(batch_size, seq_len, 3, attn.heads, head_dim)
+        query, key, value = qkv.permute(2, 0, 3, 1, 4).unbind(0)
+        # Now each is (batch, heads, seq_len, head_dim)
+
+        # Apply norms if needed
+        if attn.norm_q is not None:
+            query = attn.norm_q(query)
+        if attn.norm_k is not None:
+            key = attn.norm_k(key)
+
+        # Apply RoPE if needed
+        if image_rotary_emb is not None:
+            query = apply_rotary_emb(query, image_rotary_emb)
+            key = apply_rotary_emb(key, image_rotary_emb)
+
+        # SDPA
+        hidden_states = F.scaled_dot_product_attention(
+            query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
+        )
+
+        # Reshape back
+        hidden_states = rearrange(hidden_states, "B H L D -> B L (H D)")
+        hidden_states = hidden_states.to(query.dtype)
+
+        if input_ndim == 4:
+            hidden_states = hidden_states.transpose(-1, -2).reshape(
+                batch_size, channel, height, width
+            )
+
+        return hidden_states
