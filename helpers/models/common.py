@@ -116,6 +116,7 @@ class ModelFoundation(ABC):
         self.accelerator = accelerator
         self.noise_schedule = None
         self.pipelines = {}
+        self._qkv_projections_fused = False
         self.setup_model_flavour()
         self.setup_training_noise_schedule()
 
