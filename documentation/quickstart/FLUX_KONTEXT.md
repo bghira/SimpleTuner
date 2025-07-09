@@ -22,10 +22,11 @@ Kontext keeps the Flux transformer backbone but introduces **paired‑reference 
 * `reference_loose` (✅ stable, default) – reference can differ in aspect‐ratio/size from the edit.
   - Currently, the only (truly) supported mode. Images are scanned for metadata, aspect bucketed, and cropped independently of each other.
   - This may be an issue for setups where you'd like to ensure the alignment of the edit and reference images, such as in a dataloader that uses a single image per file name.
-* `reference_strict` (⚠️ experimental) – reference is pre‑transformed exactly like the edit crop.
-  - Currently, requires `--vae_cache_ondemand` and some increased VRAM usage.
+* `reference_strict` (✅ stable) – reference is pre‑transformed exactly like the edit crop.
+  - This is how you should configure your datasets if you need perfect alignment between crops / aspect bucketing between your edit and reference images.
+  - Originally required `--vae_cache_ondemand` and some increased VRAM usage, but no longer does.
+  - Duplicates the crop / aspect bucket metadata from the source dataset at startup, so you don't have to.
 
-Stick to **loose** for now unless you want to debug the dataloader.
 
 ---
 
@@ -45,57 +46,50 @@ Below is the *smallest* set of changes you need in `config/config.json` compared
 
 ```jsonc
 {
-  // --- model family / flavour ----------------------------------------------
   "model_family":   "flux",
-  "model_flavour": "kontext",     // <‑‑ change
-
-  // --- pretrained weights ---------------------------------------------------
-  "pretrained_model_name_or_path":              "black-forest-labs/FLUX.1-Kontext-dev",
-  "pretrained_transformer_model_name_or_path":  "/models/black-forest-labs/KONTEXT.1-dev/transformer", // if using a local version. note: CivitAI style safetensors are not currently supported.
-
-  // --- precision & performance ---------------------------------------------
-  "base_model_precision": "int8-quanto",   // fits on 24 G at 1024 px
+  "model_flavour": "kontext",               // <‑‑ change
+  "base_model_precision": "int8-quanto",    // fits on 24 G at 1024 px
   "gradient_checkpointing": true,
-  "fuse_qkv_projections": false,          // <‑‑ use this to speed up training on Hopper H100/H200 systems
-
-  // --- training recipe ------------------------------------------------------
+  "fuse_qkv_projections": false,            // <‑‑ use this to speed up training on Hopper H100/H200 systems. WARNING: requires flash-attn manually installed.
   "lora_rank": 16,
   "learning_rate": 1e-5,
-  "optimizer": "optimi-lion",
+  "optimizer": "optimi-lion",               // <‑‑ use Lion for faster results, and adamw_bf16 for slower but possibly more stable results.
   "max_train_steps": 10000,
-
-  // --- validation -----------------------------------------------------------
-  "validation_guidance": 3.0,
+  "validation_guidance": 2.5,               // <‑‑ kontext really does best with a guidance value of 2.5
   "validation_resolution": "1024x1024"
 }
 ```
 
 ### Dataloader snippet (multi‑data‑backend)
 
+If you've manually curated an image-pair dataset, you can configure it using two separate directories: one for the edit images and one for the reference images.
+
+The `conditioning_data` field in the edit dataset should point to the reference dataset's `id`.
+
 ```jsonc
 [
   {
     "id": "edited-images",
     "type": "local",
-    "instance_data_dir": "/path/to/datasets/edited-images", // <-- use absolute paths
-    "conditioning_data": "reference-images",   // <‑‑ pair with refs
+    "instance_data_dir": "/path/to/datasets/edited-images",     // <-- use absolute paths
+    "conditioning_data": "reference-images",                    // <‑‑ this should be your "id" of the reference set
     "resolution": 1024,
-    "caption_strategy": "textfile"
+    "caption_strategy": "textfile"                              // <-- these captions should contain the edit instructions
   },
   {
     "id": "reference-images",
     "type": "local",
-    "instance_data_dir": "/path/to/datasets/reference-images", // <-- use absolute paths
-    "conditioning_type": "reference_loose",      // <‑‑ IMPORTANT
+    "instance_data_dir": "/path/to/datasets/reference-images",  // <-- use absolute paths
+    "conditioning_type": "reference_strict",                    // <‑‑ if this is set to reference_loose, the images are cropped independently of the edit images
     "resolution": 1024,
-    "caption_strategy": "textfile"
+    "caption_strategy": null,                                   // <‑‑ no captions needed for references, but if available, will be used INSTEAD of the edit captions
   }
 ]
 ```
 
 *Every edit image **must** have 1‑to‑1 matching file names and extensions in `reference-images/`.*  SimpleTuner will automatically staple the reference embedding to the edit’s conditioning.
 
-If you'd like a demo dataset of how to set this up, you can use this [Kontext Max derived option](https://huggingface.co/datasets/terminusresearch/KontextMax-Edit-smol) which contains reference and edit images along with their caption textfiles.
+If you'd like a demo dataset of how to set this up, you can use this [Kontext Max derived demo dataset](https://huggingface.co/datasets/terminusresearch/KontextMax-Edit-smol) which contains reference and edit images along with their caption textfiles.
 
 ### Automatic Reference-Edit Pair Generation
 
