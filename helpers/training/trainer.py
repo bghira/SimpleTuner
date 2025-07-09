@@ -509,7 +509,8 @@ class Trainer:
             self.init_validation_prompts()
         except Exception as e:
             logger.error("Could not generate validation prompts.")
-            logger.error(e)
+
+            logger.exception("Could not generate validation prompts")
             raise e
 
         # We calculate the number of steps per epoch by dividing the number of images by the effective batch divisor.

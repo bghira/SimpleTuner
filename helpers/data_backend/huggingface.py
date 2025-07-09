@@ -175,6 +175,59 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             logger.error(f"Could not extract index from path: {filepath}")
             raise
 
+    def get_instance_representation(self) -> dict:
+        """Get a serializable representation of this backend instance."""
+        return {
+            "backend_type": "huggingface",
+            "id": self.id,
+            "dataset_name": self.dataset_name,
+            "split": self.split,
+            "revision": self.revision,
+            "image_column": self.image_column,
+            "cache_dir": self.cache_dir,
+            "compress_cache": self.compress_cache,
+            "streaming": self.streaming,
+            # Note: filter_func is not serializable
+            "filter_func_name": self.filter_func.__name__ if self.filter_func else None,
+            "num_proc": self.num_proc,
+            "composite_config": self.composite_config,
+        }
+
+    @staticmethod
+    def from_instance_representation(
+        representation: dict,
+    ) -> "HuggingfaceDatasetsBackend":
+        """Create a new HuggingfaceDatasetsBackend instance from a serialized representation."""
+        if representation.get("backend_type") != "huggingface":
+            raise ValueError(
+                f"Expected backend_type 'huggingface', got {representation.get('backend_type')}"
+            )
+
+        # Note: filter_func cannot be serialized/deserialized automatically
+        # If needed, you'd have to implement a registry of filter functions
+        filter_func = None
+        if representation.get("filter_func_name"):
+            import logging
+
+            logger = logging.getLogger("HuggingfaceDatasetsBackend")
+            logger.warning(
+                f"Filter function '{representation['filter_func_name']}' cannot be automatically restored in subprocess"
+            )
+
+        return HuggingfaceDatasetsBackend(
+            accelerator=None,  # Will be set by subprocess if needed
+            id=representation["id"],
+            dataset_name=representation["dataset_name"],
+            split=representation.get("split", "train"),
+            revision=representation.get("revision"),
+            image_column=representation.get("image_column", "image"),
+            cache_dir=representation.get("cache_dir"),
+            compress_cache=representation.get("compress_cache", False),
+            streaming=representation.get("streaming", False),
+            filter_func=filter_func,  # Would need special handling
+            num_proc=representation.get("num_proc", 16),
+            composite_config=representation.get("composite_config", {}),
+        )
 
     def read(self, location, as_byteIO: bool = False):
         """Read and return the content of the file (image from dataset or cache file)."""

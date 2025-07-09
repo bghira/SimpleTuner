@@ -5,6 +5,7 @@ from helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
 from helpers.data_backend.base import BaseDataBackend
 from helpers.training.default_settings import default, latest_config_version
 from helpers.caching.text_embeds import TextEmbeddingCache
+from helpers.metadata.utils import DatasetDuplicator
 
 from helpers.training.exceptions import MultiDatasetExhausted
 from helpers.multiaspect.dataset import MultiAspectDataset
@@ -151,10 +152,13 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     if (
         StateTracker.get_args().controlnet
         and output["dataset_type"] == "image"
-        and backend.get("conditioning_data", None) is None
+        and (
+            backend.get("conditioning_data", None) is None
+            and backend.get("conditioning", None) is None
+        )
     ):
         raise ValueError(
-            "Image datasets require a corresponding conditioning_data set configured in your dataloader."
+            f"When training ControlNet, a conditioning block or conditioning_data string should be configured in your dataloader. See this link for more information: https://github.com/bghira/SimpleTuner/blob/main/documentation/CONTROLNET.md"
         )
 
     if output["dataset_type"] not in choices:
@@ -227,6 +231,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     else:
         output["config"]["crop_style"] = "random"
     output["config"]["disable_validation"] = backend.get("disable_validation", False)
+    if "source_dataset_id" in backend:
+        output["config"]["source_dataset_id"] = backend["source_dataset_id"]
     if "resolution" in backend:
         output["config"]["resolution"] = backend["resolution"]
     else:
@@ -248,6 +254,10 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["hash_filenames"] = backend["hash_filenames"]
     if "hash_filenames" in backend and backend.get("type") == "csv":
         output["config"]["hash_filenames"] = backend["hash_filenames"]
+    if "conditioning" in backend:
+        output["config"]["conditioning"] = backend["conditioning"]
+    if "conditioning_config" in backend:
+        output["config"]["conditioning_config"] = backend["conditioning_config"]
 
     # check if caption_strategy=parquet with metadata_backend=json
     current_metadata_backend_type = backend.get("metadata_backend", "discovery")
@@ -561,6 +571,136 @@ def synchronize_conditioning_settings():
                     )
 
 
+def from_instance_representation(representation: dict) -> "BaseDataBackend":
+    """
+    Create a new backend instance from a serialized representation.
+    This base implementation dispatches to the appropriate subclass.
+    """
+    backend_type = representation.get("backend_type")
+
+    if backend_type == "local":
+        from helpers.data_backend.local import LocalDataBackend
+
+        return LocalDataBackend.from_instance_representation(representation)
+    elif backend_type == "huggingface":
+        from helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
+
+        return HuggingfaceDatasetsBackend.from_instance_representation(representation)
+    elif backend_type == "aws":
+        from helpers.data_backend.aws import S3DataBackend
+
+        return S3DataBackend.from_instance_representation(representation)
+    # Add other backend types as needed
+    else:
+        raise ValueError(f"Unknown backend type: {backend_type}")
+
+
+def sort_dataset_configs_by_dependencies(data_backend_config):
+    """
+    Sort dataset configurations to ensure source datasets are configured before
+    their conditioning datasets (especially for reference_strict).
+
+    Args:
+        data_backend_config: List of dataset configuration dictionaries
+
+    Returns:
+        List of sorted dataset configurations
+    """
+    # Build dependency graph
+    # Key: dataset id, Value: list of datasets that depend on it
+    dependencies = {}
+    dataset_by_id = {}
+
+    # First pass: index datasets by ID and identify disabled ones
+    enabled_configs = []
+    for config in data_backend_config:
+        if config.get("disabled", False) or config.get("disable", False):
+            continue
+        enabled_configs.append(config)
+        dataset_id = config.get("id")
+        if dataset_id:
+            dataset_by_id[dataset_id] = config
+
+    # Second pass: build dependency relationships
+    for config in enabled_configs:
+        dataset_id = config.get("id")
+        if not dataset_id:
+            continue
+
+        # Check if this dataset depends on another (is a conditioning dataset)
+        source_id = None
+
+        # Method 1: Explicit source_dataset_id (auto-generated style)
+        if config.get("source_dataset_id"):
+            source_id = config["source_dataset_id"]
+
+        # Method 2: Find which dataset references this as conditioning_data
+        elif config.get("conditioning_type") == "reference_strict":
+            # Look for the dataset that points to this one
+            for other_config in enabled_configs:
+                if other_config.get("conditioning_data") == dataset_id:
+                    source_id = other_config.get("id")
+                    break
+
+        # Add to dependency graph
+        if source_id and source_id in dataset_by_id:
+            if source_id not in dependencies:
+                dependencies[source_id] = []
+            dependencies[source_id].append(dataset_id)
+
+    # Topological sort using DFS
+    visited = set()
+    temp_visited = set()
+    sorted_ids = []
+
+    def visit(dataset_id):
+        if dataset_id in temp_visited:
+            raise ValueError(
+                f"Circular dependency detected involving dataset '{dataset_id}'"
+            )
+        if dataset_id in visited:
+            return
+
+        temp_visited.add(dataset_id)
+
+        # Visit all datasets that depend on this one
+        if dataset_id in dependencies:
+            for dependent_id in dependencies[dataset_id]:
+                if dependent_id in dataset_by_id:  # Only visit if it exists
+                    visit(dependent_id)
+
+        temp_visited.remove(dataset_id)
+        visited.add(dataset_id)
+        sorted_ids.append(dataset_id)
+
+    # Visit all datasets
+    for dataset_id in dataset_by_id:
+        if dataset_id not in visited:
+            visit(dataset_id)
+
+    # Build the final sorted list
+    sorted_configs = []
+    seen_ids = set()
+
+    # Add in reverse order (dependencies first)
+    for dataset_id in reversed(sorted_ids):
+        if dataset_id not in seen_ids:
+            sorted_configs.append(dataset_by_id[dataset_id])
+            seen_ids.add(dataset_id)
+
+    # Add any configs without IDs (shouldn't happen but just in case)
+    for config in enabled_configs:
+        if not config.get("id") or config.get("id") not in seen_ids:
+            sorted_configs.append(config)
+
+    # Add disabled configs at the end (they'll be skipped anyway)
+    for config in data_backend_config:
+        if config.get("disabled", False) or config.get("disable", False):
+            sorted_configs.append(config)
+
+    return sorted_configs
+
+
 def configure_multi_databackend(
     args: dict, accelerator, text_encoders, tokenizers, model: ModelFoundation
 ):
@@ -588,6 +728,35 @@ def configure_multi_databackend(
         raise ValueError(
             "Must provide at least one data backend in the data backend config file."
         )
+    # sort things so that reference datasets are configured last.
+    data_backend_config = sort_dataset_configs_by_dependencies(data_backend_config)
+
+    ###                                                                          ###
+    #    we'll check for any auto-conditioning configurations and generate them.   #
+    conditioning_datasets = []
+    for backend_idx, backend in enumerate(data_backend_config):
+        if backend.get("disabled", False) or backend.get("disable", False):
+            info_log(f"Skipping disabled data backend {backend['id']} in config file.")
+            continue
+        if backend.get("conditioning", None) is not None:
+            info_log(
+                f"Found conditioning configuration for backend {backend['id']}. Generating conditioning dataset."
+            )
+            modified_backend, conditioning_datasets = (
+                DatasetDuplicator.generate_conditioning_datasets(
+                    global_config=args, source_backend_config=backend
+                )
+            )
+            # update the config with the new one that contains the conditioning dataset links.
+            backend = data_backend_config[backend_idx] = modified_backend
+            logger.debug(f"Current backend list: {data_backend_config}")
+            for conditioning_dataset in conditioning_datasets:
+                info_log(
+                    f"Generated conditioning dataset {conditioning_dataset['id']} from backend {backend['id']}: {conditioning_dataset}"
+                )
+    # Synchronize resolution settings between main datasets and their conditioning datasets
+    if conditioning_datasets is not None:
+        data_backend_config.extend(conditioning_datasets)
 
     text_embed_backends = {}
     image_embed_backends = {}
@@ -1070,7 +1239,10 @@ def configure_multi_databackend(
         )
 
         if (
-            "aspect" not in args.skip_file_discovery
+            not backend.get(
+                "auto_generated", False
+            )  # auto-generated datasets have duplicate metadata.
+            and "aspect" not in args.skip_file_discovery
             and "aspect" not in backend.get("skip_file_discovery", "")
             and conditioning_type
             not in [
@@ -1082,27 +1254,37 @@ def configure_multi_databackend(
                 # and a more ideal implementation would simply reference the training dataset metadata buckets.
                 # but currently, there is no method to instruct a dataset to use a separate metadata instance with different paths.
                 "controlnet" if not model.requires_conditioning_latents() else -1,
-                # similar to controlnet, latent reference images require us to scan them so we can encode them for newer models.
-                "reference_strict" if not model.requires_conditioning_latents() else -1,
-            ]  # strict kontext conditioning doesn't have its own bucket list.
+                "reference_strict",
+            ]
         ):
             if accelerator.is_local_main_process:
                 info_log(
                     f"(id={init_backend['id']}) Refreshing aspect buckets on main process."
                 )
                 init_backend["metadata_backend"].refresh_buckets(rank_info())
+
         accelerator.wait_for_everyone()
-        if not accelerator.is_main_process:
-            info_log(
-                f"(id={init_backend['id']}) Reloading bucket manager cache on subprocesses."
-            )
-            init_backend["metadata_backend"].reload_cache()
-        accelerator.wait_for_everyone()
-        if init_backend["metadata_backend"].has_single_underfilled_bucket():
-            raise Exception(
-                f"Cannot train using a dataset that has a single bucket with fewer than {args.train_batch_size} images."
-                f" You have to reduce your batch size, or increase your dataset size (id={init_backend['id']})."
-            )
+        # Auto-generated datasets will not have contents available just yet.
+        if (
+            not backend.get("auto_generated", False)
+            and backend.get("conditioning_type", None) is not None
+            and backend.get("conditioning_type")
+            not in [
+                "mask",
+                "reference_strict",
+            ]
+        ):
+            if not accelerator.is_main_process:
+                info_log(
+                    f"(id={init_backend['id']}) Reloading bucket manager cache on subprocesses."
+                )
+                init_backend["metadata_backend"].reload_cache()
+            accelerator.wait_for_everyone()
+            if init_backend["metadata_backend"].has_single_underfilled_bucket():
+                raise Exception(
+                    f"Cannot train using a dataset that has a single bucket with fewer than {args.train_batch_size} images."
+                    f" You have to reduce your batch size, or increase your dataset size (id={init_backend['id']})."
+                )
 
         # In the case where max_train_steps is false and num_train_epochs is being used,
         # padding should be applied so as to ensure each process is operating on the same
@@ -1113,11 +1295,54 @@ def configure_multi_databackend(
             True if not args.max_train_steps or args.max_train_steps == 0 else False
         )
 
-        # Now split the contents of these buckets between all processes
-        init_backend["metadata_backend"].split_buckets_between_processes(
-            gradient_accumulation_steps=args.gradient_accumulation_steps,
-            apply_padding=apply_padding,
-        )
+        if backend.get("auto_generated", False):
+            # when we're duplicating a metadata set, it's already split between processes.
+            info_log(
+                f"Duplicating metadata for auto-generated dataset from {backend.get('source_dataset_id', 'unknown_source_dataset_id')}"
+            )
+            DatasetDuplicator.copy_metadata(
+                source_backend=StateTracker.get_data_backend(
+                    backend.get("source_dataset_id", "unknown_source_dataset_id")
+                ),
+                target_backend=init_backend,
+            )
+        elif backend.get("conditioning_type", None) == "reference_strict":
+            # special case where strict conditioning alignment allows us to duplicate metadata from the source dataset.
+            # we'll search for the source dataset by id and copy metadata from it:
+            source_dataset_id = backend.get("source_dataset_id", None)
+            target_dataset_id = backend.get("id")
+            if source_dataset_id is None:
+                # other configuration style where the *source* dataset config has conditioning_data defined
+                for source_backend in data_backend_config:
+                    source_conditioning_data_config = source_backend.get(
+                        "conditioning_data", None
+                    )
+                    if (
+                        isinstance(source_conditioning_data_config, str)
+                        and source_conditioning_data_config == target_dataset_id
+                    ) or (
+                        isinstance(source_conditioning_data_config, list)
+                        and target_dataset_id in source_conditioning_data_config
+                    ):
+                        source_dataset_id = source_backend["id"]
+                        break
+            if source_dataset_id is None:
+                raise ValueError(
+                    "Could not find source dataset for strict conditioning alignment. Please set 'source_dataset_id' in the backend config."
+                )
+            info_log(
+                f"Duplicating metadata for strict conditioning dataset from {source_dataset_id}"
+            )
+            DatasetDuplicator.copy_metadata(
+                source_backend=StateTracker.get_data_backend(source_dataset_id),
+                target_backend=init_backend,
+            )
+        else:
+            # Now split the contents of these buckets between all processes
+            init_backend["metadata_backend"].split_buckets_between_processes(
+                gradient_accumulation_steps=args.gradient_accumulation_steps,
+                apply_padding=apply_padding,
+            )
 
         # Check if there is an existing 'config' in the metadata_backend.config
         excluded_keys = [
@@ -1255,6 +1480,7 @@ def configure_multi_databackend(
             conditioning_type=conditioning_type,
             is_regularisation_data=is_regularisation_data,
             dataset_type=backend.get("dataset_type"),
+            source_dataset_id=init_backend["config"].get("source_dataset_id", None),
         )
         if init_backend["sampler"].caption_strategy == "parquet":
             configure_parquet_database(backend, args, init_backend["data_backend"])
@@ -1288,6 +1514,7 @@ def configure_multi_databackend(
             conditioning_type != "mask"
             and "text" not in args.skip_file_discovery
             and "text" not in backend.get("skip_file_discovery", "")
+            and backend.get("caption_strategy", None) is not None
         ):
             info_log(f"(id={init_backend['id']}) Collecting captions.")
             captions, images_missing_captions = PromptHandler.get_all_captions(
@@ -1297,9 +1524,6 @@ def configure_multi_databackend(
                 instance_prompt=instance_prompt,
                 use_captions=use_captions,
                 caption_strategy=backend.get("caption_strategy", args.caption_strategy),
-            )
-            logger.debug(
-                f"Pre-computing text embeds / updating cache. We have {len(captions)} captions to process, though these will be filtered next."
             )
             logger.debug(f"Data missing captions: {images_missing_captions}")
             if len(images_missing_captions) > 0 and hasattr(
@@ -1330,6 +1554,25 @@ def configure_multi_databackend(
         init_backend["config"]["hash_filenames"] = hash_filenames
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
         logger.debug(f"Hashing filenames: {hash_filenames}")
+
+        if backend.get("auto_generated", False):
+            # we have to auto-generate the data for the reference images.
+            info_log(
+                f"(id={init_backend['id']}) Auto-generating reference images for conditioning."
+            )
+            from helpers.data_generation import DataGenerator, SampleGenerator
+
+            sample_generator = SampleGenerator.from_backend(backend)
+            generator = DataGenerator(
+                id=backend.get("id"),
+                source_backend=StateTracker.get_data_backend(
+                    backend.get("source_dataset_id", "unknown_source_dataset_id")
+                ),
+                target_backend=init_backend,
+                accelerator=accelerator,
+                conditioning_type=backend.get("conditioning_type"),
+            )
+            generator.generate_dataset()
 
         if getattr(
             model, "AUTOENCODER_CLASS", None
@@ -1480,8 +1723,10 @@ def configure_multi_databackend(
                 "controlnet" if not model.requires_conditioning_latents() else -1,
             ]
         ):
-            init_backend["vaecache"].discover_unprocessed_files()
+            unprocessed_files = init_backend["vaecache"].discover_unprocessed_files()
+            logger.info(f"VAECache has {len(unprocessed_files)} unprocessed files.")
             if not args.vae_cache_ondemand:
+                logger.info(f"Executing VAE cache update..")
                 init_backend["vaecache"].process_buckets()
             logger.debug(f"Encoding images during training: {args.vae_cache_ondemand}")
             accelerator.wait_for_everyone()
