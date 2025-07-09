@@ -1765,9 +1765,7 @@ def configure_multi_databackend(
 
         if backend_conditionings:
             has_conditioning_dataset = True
-            StateTracker.set_conditioning_datasets(
-                backend["id"], backend_conditionings
-            )
+            StateTracker.set_conditioning_datasets(backend["id"], backend_conditionings)
             info_log(
                 f"Successfully configured conditioning image dataset for {backend['id']}"
             )

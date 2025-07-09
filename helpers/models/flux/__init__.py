@@ -109,8 +109,10 @@ def build_kontext_inputs(
     y0 = 0
     for latent in cond_latents:
         B, C, H, W = latent.shape  # (C should match latent_channels)
-        packed_cond.append(pack_latents(latent, B, C, H, W).to(device=device, dtype=dtype))
-        
+        packed_cond.append(
+            pack_latents(latent, B, C, H, W).to(device=device, dtype=dtype)
+        )
+
         x = 0
         y = 0
         if H + y0 > W + x0:
@@ -118,13 +120,15 @@ def build_kontext_inputs(
         else:
             y = y0
         # seq-ids: flag-channel==1, rest is y/x indices
-        idx_y = torch.arange(H // 2, device=device) + y//2
-        idx_x = torch.arange(W // 2, device=device) + x//2
+        idx_y = torch.arange(H // 2, device=device) + y // 2
+        idx_x = torch.arange(W // 2, device=device) + x // 2
         ids = torch.stack(
             torch.meshgrid(idx_y, idx_x, indexing="ij"), dim=-1
         )  # (H/2,W/2,2)
         ones = torch.ones_like(ids[..., :1])
-        packed_ids.append(torch.cat([ones, ids], dim=-1).view(1, -1, 3).expand(B, -1, -1).to(dtype))
+        packed_ids.append(
+            torch.cat([ones, ids], dim=-1).view(1, -1, 3).expand(B, -1, -1).to(dtype)
+        )
 
         x0 = max(x0, W + x)
         y0 = max(y0, H + y)
@@ -133,4 +137,3 @@ def build_kontext_inputs(
     packed_ids = torch.cat(packed_ids, dim=1)
 
     return packed_cond, packed_ids
-

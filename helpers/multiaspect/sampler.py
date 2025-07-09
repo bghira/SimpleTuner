@@ -534,7 +534,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
     def _clear_batch_accumulator(self):
         self.batch_accumulator = []
 
-    def get_conditioning_sample(self, original_sample_path: str) -> TrainingSample|None:
+    def get_conditioning_sample(
+        self, original_sample_path: str
+    ) -> TrainingSample | None:
         """
         Given an original dataset sample path, return a TrainingSample
         """
@@ -609,12 +611,24 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         conditioning_datasets = StateTracker.get_conditioning_datasets(self.id)
         if not len(conditioning_datasets):
             return samples
+
+        # Get sampling mode from args
+        sampling_mode = getattr(
+            StateTracker.get_args(), "conditioning_multidataset_sampling", "combined"
+        )
+
+        # Override to combined mode for validation to ensure consistency
+        is_validation = getattr(self, "_is_validation_pass", False)
+        if is_validation and sampling_mode == "random":
+            self.debug_log("Using 'combined' mode for validation consistency")
+            sampling_mode = "combined"
+
         outputs = list(samples)
-        for dataset in conditioning_datasets:
-            sampler = dataset["sampler"]
+
+        if sampling_mode == "random" and len(conditioning_datasets) > 1:
+            # Random mode: select one conditioning dataset per training sample
             for sample in samples:
-                sample_path: str
-                sample_path = sample["image_path"]
+                sample_path: str = sample["image_path"]
                 if (
                     self.metadata_backend.instance_data_dir is not None
                     and self.metadata_backend.instance_data_dir != ""
@@ -622,8 +636,125 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     sample_path = sample_path.split(
                         self.metadata_backend.instance_data_dir
                     )[-1]
+
+                # Deterministic selection based on hash of image path and current epoch
+                # This ensures the same image gets the same conditioning dataset within an epoch
+                # but different datasets across epochs
+                path_hash = hash(f"{sample_path}_{self.current_epoch}")
+                selected_idx = path_hash % len(conditioning_datasets)
+                selected_dataset = conditioning_datasets[selected_idx]
+                sampler = selected_dataset["sampler"]
+
+                self.debug_log(
+                    f"Selected conditioning dataset {selected_dataset['id']} "
+                    f"for sample {sample_path} (epoch {self.current_epoch})"
+                )
+
+                # Get the conditioning sample from the selected dataset
                 conditioning_sample = sampler.get_conditioning_sample(sample_path)
-                outputs.append(conditioning_sample)
+                if conditioning_sample is not None:
+                    # Tag the sample with which dataset it came from for debugging
+                    conditioning_sample._source_dataset_id = selected_dataset["id"]
+                    outputs.append(conditioning_sample)
+                else:
+                    # Try other datasets if the selected one doesn't have this sample
+                    found = False
+                    for fallback_idx, fallback_dataset in enumerate(
+                        conditioning_datasets
+                    ):
+                        if fallback_idx == selected_idx:
+                            continue  # Skip the one we already tried
+
+                        fallback_sampler = fallback_dataset["sampler"]
+                        conditioning_sample = fallback_sampler.get_conditioning_sample(
+                            sample_path
+                        )
+                        if conditioning_sample is not None:
+                            self.logger.warning(
+                                f"Sample {sample_path} not found in {selected_dataset['id']}, "
+                                f"using fallback from {fallback_dataset['id']}"
+                            )
+                            conditioning_sample._source_dataset_id = fallback_dataset[
+                                "id"
+                            ]
+                            outputs.append(conditioning_sample)
+                            found = True
+                            break
+
+                    if not found:
+                        self.logger.error(
+                            f"Could not find conditioning sample for {sample_path} "
+                            f"in any conditioning dataset"
+                        )
+
+        elif sampling_mode == "combined" or len(conditioning_datasets) == 1:
+            # Combined mode: append conditioning samples from all datasets (current behavior)
+            missing_samples = []
+
+            for dataset in conditioning_datasets:
+                sampler = dataset["sampler"]
+                dataset_samples_added = 0
+
+                for sample in samples:
+                    sample_path: str = sample["image_path"]
+                    if (
+                        self.metadata_backend.instance_data_dir is not None
+                        and self.metadata_backend.instance_data_dir != ""
+                    ):
+                        sample_path = sample_path.split(
+                            self.metadata_backend.instance_data_dir
+                        )[-1]
+
+                    conditioning_sample = sampler.get_conditioning_sample(sample_path)
+                    if conditioning_sample is not None:
+                        # Tag the sample with which dataset it came from
+                        conditioning_sample._source_dataset_id = dataset["id"]
+                        outputs.append(conditioning_sample)
+                        dataset_samples_added += 1
+                    else:
+                        missing_samples.append((sample_path, dataset["id"]))
+
+                self.debug_log(
+                    f"Added {dataset_samples_added}/{len(samples)} conditioning samples "
+                    f"from dataset {dataset['id']}"
+                )
+
+            # Report missing samples in batch if there are any
+            if missing_samples:
+                self.logger.warning(
+                    f"Missing {len(missing_samples)} conditioning samples: "
+                    f"{missing_samples[:3]}{'...' if len(missing_samples) > 3 else ''}"
+                )
+
+        else:
+            raise ValueError(
+                f"Unknown conditioning_multidataset_sampling mode: {sampling_mode}. "
+                "Must be 'random' or 'combined'."
+            )
+
+        # Validate output count
+        expected_conditioning_count = len(samples) * (
+            1 if sampling_mode == "random" else len(conditioning_datasets)
+        )
+        actual_conditioning_count = len(outputs) - len(samples)
+
+        if actual_conditioning_count != expected_conditioning_count:
+            self.logger.warning(
+                f"Expected {expected_conditioning_count} conditioning samples but got "
+                f"{actual_conditioning_count} (mode: {sampling_mode}, "
+                f"datasets: {len(conditioning_datasets)})"
+            )
+
+        # Log summary for debugging (only early in training to avoid spam)
+        if (
+            len(conditioning_datasets) > 1
+            and len(self.metadata_backend.seen_images) < 10
+        ):
+            self.logger.info(
+                f"Connected {actual_conditioning_count} conditioning samples using '{sampling_mode}' mode "
+                f"from {len(conditioning_datasets)} datasets for {len(samples)} training samples"
+            )
+
         return tuple(outputs)
 
     def __iter__(self):

@@ -333,24 +333,31 @@ class Flux(ImageModelFoundation):
         return prompt_embeds, pooled_prompt_embeds, time_ids, masks
 
     def prepare_batch_conditions(self, batch: dict, state: dict):
-        """
-        If collate gave us `conditioning_latents`, turn them into packed
-        sequence + ids that model_predict expects.
-        """
+        batch = super().prepare_batch_conditions(batch, state)
+
+        # For Flux, conditioning_latents should remain as a list
+        # if we're in combined mode with multiple datasets
         cond = batch.get("conditioning_latents")
-        if cond is None:
-            logger.debug(f"No conditioning latents found :(")
-            return batch  # nothing to do
+        if cond is not None:
+            # Check sampling mode
+            sampling_mode = getattr(
+                state.get("args", {}), "conditioning_multidataset_sampling", "combined"
+            )
 
-        packed_cond, cond_ids = build_kontext_inputs(
-            cond,
-            dtype=self.config.weight_dtype,
-            device=self.accelerator.device,
-            latent_channels=self.LATENT_CHANNEL_COUNT,
-        )
+            if sampling_mode == "random" and isinstance(cond, list) and len(cond) == 1:
+                # Random mode should have selected just one
+                cond = cond[0]
 
-        batch["conditioning_packed_latents"] = packed_cond
-        batch["conditioning_ids"] = cond_ids
+            # Build Kontext inputs
+            packed_cond, cond_ids = build_kontext_inputs(
+                cond if isinstance(cond, list) else [cond],
+                dtype=self.config.weight_dtype,
+                device=self.accelerator.device,
+                latent_channels=self.LATENT_CHANNEL_COUNT,
+            )
+
+            batch["conditioning_packed_latents"] = packed_cond
+            batch["conditioning_seq_ids"] = cond_ids
 
         return batch
 

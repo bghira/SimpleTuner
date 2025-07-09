@@ -36,7 +36,7 @@ class MultiAspectDataset(Dataset):
         # Sum the length of all data backends:
         return sum([len(dataset) for dataset in self.datasets])
 
-    def __getitem__(self, image_tuple: list[dict[str, Any]|TrainingSample]):
+    def __getitem__(self, image_tuple: list[dict[str, Any] | TrainingSample]):
         output_data = {
             "training_samples": [],
             "conditioning_samples": [],
@@ -53,10 +53,8 @@ class MultiAspectDataset(Dataset):
 
             image_metadata = sample
             if "target_size" in image_metadata:
-                calculated_aspect_ratio = (
-                    MultiaspectImage.calculate_image_aspect_ratio(
-                        image_metadata["target_size"]
-                    )
+                calculated_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+                    image_metadata["target_size"]
                 )
                 if first_aspect_ratio is None:
                     first_aspect_ratio = calculated_aspect_ratio

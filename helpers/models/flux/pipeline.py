@@ -2203,7 +2203,8 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             w, h = image.size
             aspect = w / h
             _, W, H = min(
-                (abs(aspect - w0 / h0), w0, h0) for w0, h0 in PREFERED_KONTEXT_RESOLUTIONS
+                (abs(aspect - w0 / h0), w0, h0)
+                for w0, h0 in PREFERED_KONTEXT_RESOLUTIONS
             )
             W, H = 2 * (W // 16), 2 * (H // 16)  # multiple of 16
             image = image.resize((8 * W, 8 * H), Image.Resampling.LANCZOS)
@@ -2236,7 +2237,7 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             ids[..., 1] = torch.arange(H // 2, device=device)[:, None] + x // 2
             ids[..., 2] = torch.arange(W // 2, device=device)[None, :] + y // 2
             ids = ids.view(1, -1, 3)
-            
+
             packed_latents.append(z)
             packed_ids.append(ids)
         return torch.cat(packed_latents, dim=1), torch.cat(packed_ids, dim=1)
@@ -2333,7 +2334,9 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             Union[torch.FloatTensor, List[torch.FloatTensor]]
         ] = None,
         prompt_2: Optional[Union[str, List[str]]] = None,
-        conditioning_image: Union[None, str, Image.Image, list[str], list[Image.Image]] = None,
+        conditioning_image: Union[
+            None, str, Image.Image, list[str], list[Image.Image]
+        ] = None,
         cond_start_step: int = 0,
         cond_end_step: Optional[int] = None,
         height: Optional[int] = None,
@@ -2533,8 +2536,15 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         cond_seq = None
         cond_seq_ids = None
         if conditioning_image is not None:
-            conditioning_images = conditioning_image if isinstance(conditioning_image, list) else [conditioning_image]
-            conditioning_images =  [Image.open(x).convert("RGB") if isinstance(x, (str, Path)) else x for x in conditioning_images]
+            conditioning_images = (
+                conditioning_image
+                if isinstance(conditioning_image, list)
+                else [conditioning_image]
+            )
+            conditioning_images = [
+                Image.open(x).convert("RGB") if isinstance(x, (str, Path)) else x
+                for x in conditioning_images
+            ]
             cond_seq, cond_seq_ids = self._encode_conditioning_image(
                 conditioning_images, device=device, dtype=latents.dtype
             )

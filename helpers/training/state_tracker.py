@@ -464,7 +464,9 @@ class StateTracker:
     def set_conditioning_datasets(
         cls, data_backend_id: str, conditioning_backend_ids: list[str]
     ):
-        cls.data_backends[data_backend_id]["conditioning_data"] = [cls.data_backends[x] for x in conditioning_backend_ids]
+        cls.data_backends[data_backend_id]["conditioning_data"] = [
+            cls.data_backends[x] for x in conditioning_backend_ids
+        ]
 
     @classmethod
     def get_conditioning_datasets(cls, data_backend_id: str) -> list[dict]:

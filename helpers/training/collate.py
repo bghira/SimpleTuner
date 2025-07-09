@@ -520,23 +520,25 @@ def collate_fn(batch):
                 debug_log("Model may require conditioning pixels.")
                 conditioning_pixel_values = []
                 for _backend_id, _examples in conditioning_map.items():
-                    _filepaths = [cond_example.image_path(basename_only=False) for cond_example in _examples]
+                    _filepaths = [
+                        cond_example.image_path(basename_only=False)
+                        for cond_example in _examples
+                    ]
                     _pixel_values = conditioning_pixels(
                         _filepaths,
                         training_filepaths,
                         _backend_id,
                         data_backend_id,
                     )
-                    debug_log(
-                        f"Found {len(_pixel_values)} conditioning pixel values."
-                    )
+                    debug_log(f"Found {len(_pixel_values)} conditioning pixel values.")
                     # stack up that pixel values list
-                    conditioning_pixel_values.append(torch.stack(
-                        [
-                            pixels.to(StateTracker.get_accelerator().device)
-                            for pixels in _pixel_values
-                        ]
-                    )
+                    conditioning_pixel_values.append(
+                        torch.stack(
+                            [
+                                pixels.to(StateTracker.get_accelerator().device)
+                                for pixels in _pixel_values
+                            ]
+                        )
                     )
 
     # Compute embeddings and handle dropped conditionings
