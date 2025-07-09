@@ -355,7 +355,7 @@ class Flux(ImageModelFoundation):
         )
 
         batch["conditioning_packed_latents"] = packed_cond
-        batch["conditioning_seq_ids"] = cond_ids
+        batch["conditioning_ids"] = cond_ids
 
         return batch
 
