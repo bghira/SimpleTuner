@@ -16,6 +16,7 @@ class DatasetDuplicator:
         if source_meta is None or target_meta is None:
             raise ValueError(
                 "Both source and target backends must have metadata_backend defined."
+                f" Received {type(source_meta)} and {type(target_meta)}."
             )
 
         logger.info("Reloading source metadata caches...")
