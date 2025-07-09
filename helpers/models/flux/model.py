@@ -1,5 +1,6 @@
 import torch, os, logging
 import random
+from helpers.training import diffusers_overrides
 from helpers.models.common import (
     ImageModelFoundation,
     PredictionTypes,
@@ -161,31 +162,57 @@ class Flux(ImageModelFoundation):
         if not self.config.fuse_qkv_projections or self._qkv_projections_fused:
             return
 
-        from helpers.models.flux.attention import FluxFusedFlashAttnProcessor3
+        try:
+            from helpers.models.flux.attention import FluxFusedFlashAttnProcessor3
+
+            attn_processor = FluxFusedFlashAttnProcessor3()
+        except:
+            from helpers.models.flux.attention import FluxFusedSDPAProcessor
+
+            attn_processor = FluxFusedSDPAProcessor()
 
         if self.model is not None:
-            logger.info("Fusing QKV projections in the model..")
+            logger.debug("Fusing QKV projections in the model..")
             for module in self.model.modules():
                 if isinstance(module, Attention):
                     module.fuse_projections(fuse=True)
         else:
             logger.warning("Model does not support QKV projection fusing. Skipping.")
-        self.unwrap_model(model=self.model).set_attn_processor(
-            FluxFusedFlashAttnProcessor3()
-        )
+
+        self.unwrap_model(model=self.model).set_attn_processor(attn_processor)
         if self.controlnet is not None:
-            logger.info("Fusing QKV projections in the ControlNet..")
+            logger.debug("Fusing QKV projections in the ControlNet..")
             for module in self.controlnet.modules():
                 if isinstance(module, Attention):
                     module.fuse_projections(fuse=True)
-            self.unwrap_model(model=self.controlnet).set_attn_processor(
-                FluxFusedFlashAttnProcessor3()
+            logger.debug(
+                "Setting ControlNet attention processor to FluxFusedFlashAttnProcessor3"
             )
+            self.unwrap_model(model=self.controlnet).set_attn_processor(attn_processor)
         elif self.config.controlnet:
             logger.warning(
                 "ControlNet does not support QKV projection fusing. Skipping."
             )
         self._qkv_projections_fused = True
+
+    def unfuse_qkv_projections(self):
+        """
+        Unfuse QKV projections in the model and ControlNet if they were fused.
+        """
+        if not self.config.fuse_qkv_projections or not self._qkv_projections_fused:
+            return
+        self._qkv_projections_fused = False
+
+        if self.model is not None:
+            logger.debug("Temporarily unfusing QKV projections in the model..")
+            for module in self.model.modules():
+                if isinstance(module, Attention):
+                    module.fuse_projections(fuse=False)
+            if self.controlnet is not None:
+                logger.debug("Tempoarily unfusing QKV projections in the ControlNet..")
+                for module in self.controlnet.modules():
+                    if isinstance(module, Attention):
+                        module.fuse_projections(fuse=False)
 
     def requires_conditioning_latents(self) -> bool:
         # Flux ControlNet requires latent inputs instead of pixels.
@@ -758,6 +785,8 @@ class Flux(ImageModelFoundation):
                     "to_k",
                     "to_q",
                     "to_v",
+                    "to_qkv",
+                    "add_qkv_proj",
                     "add_k_proj",
                     "add_q_proj",
                     "add_v_proj",
@@ -787,6 +816,8 @@ class Flux(ImageModelFoundation):
                     "to_k",
                     "to_q",
                     "to_v",
+                    "to_qkv",
+                    "add_qkv_proj",
                     "add_k_proj",
                     "add_q_proj",
                     "add_v_proj",
@@ -823,6 +854,8 @@ class Flux(ImageModelFoundation):
                     "to_k",
                     "to_q",
                     "to_v",
+                    "to_qkv",
+                    "add_qkv_proj",
                     "to_out.0",
                     "add_k_proj",
                     "add_q_proj",
@@ -840,6 +873,8 @@ class Flux(ImageModelFoundation):
                 return [
                     "to_q",
                     "to_k",
+                    "to_qkv",
+                    "add_qkv_proj",
                     "to_v",
                     "add_q_proj",
                     "add_k_proj",
