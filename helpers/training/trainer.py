@@ -1092,6 +1092,7 @@ class Trainer:
                     f"Please open a bug report or disable EMA. Unknown EMA model family: {self.config.model_family}"
                 )
 
+            self.model.pre_ema_creation()
             self.ema_model = EMAModel(
                 self.config,
                 self.accelerator,
@@ -1101,6 +1102,7 @@ class Trainer:
                 decay=self.config.ema_decay,
                 foreach=not self.config.ema_foreach_disable,
             )
+            self.model.post_ema_creation()
             logger.info(
                 f"EMA model creation completed with {self.ema_model.parameter_count():,} parameters"
             )

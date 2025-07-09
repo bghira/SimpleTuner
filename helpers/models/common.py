@@ -446,6 +446,22 @@ class ModelFoundation(ABC):
         # Re-fuse after saving if you want to continue training
         self.fuse_qkv_projections()
 
+    def pre_ema_creation(self):
+        """
+        A hook that can be overridden in the subclass to perform actions before EMA creation.
+        """
+        if self.config.fuse_qkv_projections:
+            logger.info(
+                "Fusing QKV projections before EMA creation. This is required for some models."
+            )
+            self.fuse_qkv_projections()
+
+    def post_ema_creation(self):
+        """
+        A hook that can be overridden in the subclass to perform actions after EMA creation.
+        """
+        pass
+
     def check_user_config(self):
         """
         Checks self.config values against important issues. Optionally implemented in child class.
