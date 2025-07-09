@@ -116,6 +116,7 @@ class ModelFoundation(ABC):
         self.accelerator = accelerator
         self.noise_schedule = None
         self.pipelines = {}
+        self._qkv_projections_fused = False
         self.setup_model_flavour()
         self.setup_training_noise_schedule()
 
@@ -317,7 +318,6 @@ class ModelFoundation(ABC):
         3) Convert & load them into the unwrapped PyTorch modules with set_peft_model_state_dict().
         4) Optionally handle text_encoder_x using the diffusers _set_state_dict_into_text_encoder() helper.
         """
-
         # We'll track whichever sub-model is our 'denoiser' (UNet or Transformer).
         denoiser = None
         text_encoder_one_ = None
@@ -437,6 +437,18 @@ class ModelFoundation(ABC):
                 else PipelineTypes.CONTROLNET
             )
         ].save_lora_weights(*args, **kwargs)
+
+    def pre_ema_creation(self):
+        """
+        A hook that can be overridden in the subclass to perform actions before EMA creation.
+        """
+        self.fuse_qkv_projections()
+
+    def post_ema_creation(self):
+        """
+        A hook that can be overridden in the subclass to perform actions after EMA creation.
+        """
+        pass
 
     def check_user_config(self):
         """
@@ -805,7 +817,7 @@ class ModelFoundation(ABC):
                 self.model.set_gradient_checkpointing_interval(
                     int(self.config.gradient_checkpointing_interval)
                 )
-
+        self.fuse_qkv_projections()
         self.post_model_load_setup()
 
     def post_model_load_setup(self):
@@ -815,6 +827,25 @@ class ModelFoundation(ABC):
         This is a stub and can be optionally implemented in subclasses for eg. updating configuration settings
         based on the loaded model weights. SDXL uses this to update the user config to reflect refiner training.
 
+        """
+        pass
+
+    def fuse_qkv_projections(self):
+        if self.config.fuse_qkv_projections:
+            logger.warning(
+                f"{self.__class__.__name__} does not support fused QKV projection yet, please open a feature request on the issue tracker."
+            )
+
+    def unfuse_qkv_projections(self):
+        """
+        Unfuse QKV projections before critical operations like saving.
+        This is a no-op by default, but subclasses can override to implement
+        proper unfusing when using fused QKV projections.
+
+        Should be called before:
+        - Saving LoRA weights
+        - Saving full model checkpoints
+        - Any operation that expects separate Q, K, V projections
         """
         pass
 
@@ -1036,6 +1067,11 @@ class ModelFoundation(ABC):
         return target
 
     def prepare_batch_conditions(self, batch: dict, state: dict) -> dict:
+        # it's a list, but most models will expect it to be a length-1 list containing a tensor, which is what they actually want
+        if batch.get("conditioning_pixel_values") is not None:
+            batch["conditioning_pixel_values"] = batch["conditioning_pixel_values"][0]
+        if batch.get("conditioning_latents") is not None:
+            batch["conditioning_latents"] = batch["conditioning_latents"][0]
         return batch
 
     def prepare_batch(self, batch: dict, state: dict) -> dict:
@@ -1554,41 +1590,3 @@ class VideoModelFoundation(ImageModelFoundation):
         # B, F, C, H, W = tensor.shape
         # return tensor.view(B * F, C, H, W)
         return tensor
-
-
-# if self.args.controlnet:
-#     # ControlNet training has an additional adapter thingy.
-#     extra_pipeline_kwargs["controlnet"] = unwrap_model(
-#         self.accelerator, self.controlnet
-#     )
-
-# if self.args.validation_torch_compile:
-#     if self.deepspeed:
-#         logger.warning(
-#             "DeepSpeed does not support torch compile. Disabling. Set --validation_torch_compile=False to suppress this warning."
-#         )
-#     elif self.args.lora_type.lower() == "lycoris":
-#         logger.warning(
-#             "LyCORIS does not support torch compile for validation due to graph compile breaks. Disabling. Set --validation_torch_compile=False to suppress this warning."
-#         )
-#     else:
-#         if self.unet is not None and not is_compiled_module(self.unet):
-#             logger.warning(
-#                 f"Compiling the UNet for validation ({self.args.validation_torch_compile})"
-#             )
-#             self.pipeline.unet = torch.compile(
-#                 self.pipeline.unet,
-#                 mode=self.args.validation_torch_compile_mode,
-#                 fullgraph=False,
-#             )
-#         if self.transformer is not None and not is_compiled_module(
-#             self.transformer
-#         ):
-#             logger.warning(
-#                 f"Compiling the transformer for validation ({self.args.validation_torch_compile})"
-#             )
-#             self.pipeline.transformer = torch.compile(
-#                 self.pipeline.transformer,
-#                 mode=self.args.validation_torch_compile_mode,
-#                 fullgraph=False,
-#             )

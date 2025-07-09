@@ -4,7 +4,7 @@
 
 **SimpleTuner** is geared towards simplicity, with a focus on making the code easily understood. This codebase serves as a shared academic exercise, and contributions are welcome.
 
-If you'd like to join our community, we can be found [on Discord](https://discord.gg/uRZPwbPEGG) via Terminus Research Group.
+If you'd like to join our community, we can be found [on Discord](https://discord.com/invite/eq3cAMZtCC) via Terminus Research Group.
 If you have any questions, please feel free to reach out to us there.
 
 ## Table of Contents
@@ -65,6 +65,7 @@ For multi-node distributed training, [this guide](/documentation/DISTRIBUTED.md)
 - Strong [prior regularisation](/documentation/DATALOADER.md#is_regularisation_data) training support for LyCORIS models
 - Webhook support for updating eg. Discord channels with your training progress, validations, and errors
 - Integration with the [Hugging Face Hub](https://huggingface.co) for seamless model upload and nice automatically-generated model cards.
+  - Use the [datasets library](/documentation/data_presets/preset_subjects200k.md) ([more info](/documentation/HUGGINGFACE_DATASETS.md)) to load compatible datasets directly from the hub
 
 ### HiDream
 
@@ -84,6 +85,7 @@ See [hardware requirements](#hidream) or the [quickstart guide](/documentation/q
 
 Full training support for Flux.1 is included:
 
+- Double the training speed of Flux.1 with the new `--fuse_qkv_projections` option, taking advantage of Flash Attention 3 on Hopper systems
 - ControlNet training via full-rank, LoRA or Lycoris
 - Instruct fine-tuning for the Kontext \[dev] editing model implementation generously provided by [Runware](https://runware.ai).
 - Classifier-free guidance training

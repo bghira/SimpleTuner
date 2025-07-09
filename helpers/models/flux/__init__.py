@@ -72,7 +72,7 @@ def prepare_latent_image_ids(batch_size, height, width, device, dtype):
 
 
 def build_kontext_inputs(
-    cond_latents: torch.Tensor,
+    cond_latents: list[torch.Tensor],
     dtype: torch.dtype,
     device: torch.device,
     latent_channels: int,
@@ -83,23 +83,54 @@ def build_kontext_inputs(
     cond_latents : (B, C, H, W)  – already VAE-encoded by VAECache
     dtype        : dtype to use (match main latents)
     device       : target device
-    latent_channels : self.latent_channels (16 for Flux)
+    latent_channels: number of channels in the latent (16 for Flux)
 
     Returns
     -------
     packed_cond : (B, S, C*4)   – flattened patch sequence
     cond_ids    : (B, S, 3)     – seq-ids with id[...,0] == 1
     """
-    B, C, H, W = cond_latents.shape  # (C should match latent_channels)
-    packed_cond = pack_latents(cond_latents, B, C, H, W).to(device=device, dtype=dtype)
+    # if it's a list, we'll stack all of them to one tensor.
+    if isinstance(cond_latents, list):
+        if len(cond_latents) == 1:
+            cond_latents = cond_latents[0]
+        else:
+            cond_latents = torch.stack(cond_latents, dim=0)
+    if len(cond_latents.shape) == 3 and cond_latents.shape[0] == 16:
+        # This is a single patch, expand to batch size 1
+        cond_latents = cond_latents.unsqueeze(0)
+    packed_cond = []
+    packed_ids = []
 
-    # seq-ids: flag-channel==1, rest is y/x indices
-    idx_y = torch.arange(H // 2, device=device)
-    idx_x = torch.arange(W // 2, device=device)
-    ids = torch.stack(
-        torch.meshgrid(idx_y, idx_x, indexing="ij"), dim=-1
-    )  # (H/2,W/2,2)
-    ones = torch.ones_like(ids[..., :1])
-    ids = torch.cat([ones, ids], dim=-1).view(1, -1, 3).expand(B, -1, -1).to(dtype)
+    # this coordinate offsetting algorithm follows the comfyui implementation
+    # so that multi-image loras will behave the same there
+    # this indexing scheme minimizes max(max_x, max_y)
+    x0 = 0
+    y0 = 0
+    for latent in cond_latents:
+        B, C, H, W = latent.shape  # (C should match latent_channels)
+        packed_cond.append(pack_latents(latent, B, C, H, W).to(device=device, dtype=dtype))
+        
+        x = 0
+        y = 0
+        if H + y0 > W + x0:
+            x = x0
+        else:
+            y = y0
+        # seq-ids: flag-channel==1, rest is y/x indices
+        idx_y = torch.arange(H // 2, device=device) + y//2
+        idx_x = torch.arange(W // 2, device=device) + x//2
+        ids = torch.stack(
+            torch.meshgrid(idx_y, idx_x, indexing="ij"), dim=-1
+        )  # (H/2,W/2,2)
+        ones = torch.ones_like(ids[..., :1])
+        packed_ids.append(torch.cat([ones, ids], dim=-1).view(1, -1, 3).expand(B, -1, -1).to(dtype))
 
-    return packed_cond, ids
+        x0 = max(x0, W + x)
+        y0 = max(y0, H + y)
+
+    packed_cond = torch.cat(packed_cond, dim=1)
+    packed_ids = torch.cat(packed_ids, dim=1)
+
+    return packed_cond, packed_ids
+

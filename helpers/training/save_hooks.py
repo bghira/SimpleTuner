@@ -375,6 +375,7 @@ class SaveHookManager:
             )
         if self.args.use_ema and self.accelerator.is_main_process:
             try:
+                self.model.fuse_qkv_projections()  # if we don't fuse first, we might never load.
                 self.ema_model.load_state_dict(
                     os.path.join(input_dir, self.ema_model_subdir, "ema_model.pt")
                 )

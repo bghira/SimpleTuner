@@ -42,6 +42,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         conditioning_type: str = None,
         is_regularisation_data: bool = False,
         dataset_type: str = "image",
+        source_dataset_id: str = None,
     ):
         """
         Initializes the sampler with provided settings.
@@ -92,6 +93,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     f"Unknown conditioning image type: {conditioning_type}"
                 )
         self.data_backend = data_backend
+        self.source_dataset_id = source_dataset_id
         self.current_bucket = None
         self.current_epoch = 1
         self.batch_size = batch_size
@@ -167,11 +169,28 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         Returns:
             list: a list of tuples(validation_shortname, validation_prompt, validation_sample)
         """
-        results = (
-            []
-        )  # [tuple(validation_shortname, validation_prompt, validation_sample)]
-        for img_idx in range(batch_size):
+        results = []
+        seen_paths = set()
+
+        # Don't try to get more images than we have
+        available_count = len(self._val_master_list)
+        actual_batch_size = min(batch_size, available_count)
+
+        if actual_batch_size < batch_size:
+            self.logger.warning(
+                f"Requested {batch_size} validation images but only {available_count} available. "
+                f"Returning {actual_batch_size} unique images."
+            )
+
+        for img_idx in range(actual_batch_size):
             image_path = self._yield_sequential_image()
+
+            # Skip if we've already seen this path (in case of wraparound)
+            if image_path in seen_paths:
+                continue
+
+            seen_paths.add(image_path)
+
             image_data = self.data_backend.read_image(image_path)
             image_metadata = self.metadata_backend.get_metadata_by_filepath(image_path)
             training_sample = TrainingSample(
@@ -183,15 +202,37 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             )
             training_sample.prepare()
             validation_shortname = f"{self.id}_{img_idx}"
-            validation_prompt = PromptHandler.magic_prompt(
-                sampler_backend_id=self.id,
-                data_backend=self.data_backend,
-                image_path=image_path,
-                caption_strategy=self.caption_strategy,
-                use_captions=self.use_captions,
-                prepend_instance_prompt=self.prepend_instance_prompt,
-                instance_prompt=self.instance_prompt,
-            )
+            # Use the magic prompt handler to retrieve the captions.
+            prompt_kwargs = {
+                "caption_strategy": self.caption_strategy,
+                "instance_prompt": self.instance_prompt,
+                "data_backend": self.data_backend,
+                "sampler_backend_id": self.id,
+                "prepend_instance_prompt": self.prepend_instance_prompt,
+                "use_captions": self.use_captions,
+                "image_path": image_path,
+            }
+            if self.source_dataset_id is not None:
+                # we'll retrieve captions from the source dataset.
+                training_sample_path = training_sample.training_sample_path(
+                    training_dataset_id=self.source_dataset_id
+                )
+                source_dataset: "MultiAspectSampler" = StateTracker.get_data_backend(
+                    self.source_dataset_id
+                )["sampler"]
+                prompt_kwargs.update(
+                    {
+                        "caption_strategy": source_dataset.caption_strategy,
+                        "instance_prompt": source_dataset.instance_prompt,
+                        "data_backend": source_dataset.data_backend,
+                        "sampler_backend_id": source_dataset.id,
+                        "prepend_instance_prompt": source_dataset.prepend_instance_prompt,
+                        "use_captions": source_dataset.use_captions,
+                        "image_path": training_sample_path,
+                    }
+                )
+            self.logger.debug(f"Using prompt kwargs: {prompt_kwargs}")
+            validation_prompt = PromptHandler.magic_prompt(**prompt_kwargs)
             if type(validation_prompt) == list:
                 self.debug_log(
                     f"Selecting random prompt from list: {validation_prompt}"
@@ -493,7 +534,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
     def _clear_batch_accumulator(self):
         self.batch_accumulator = []
 
-    def get_conditioning_sample(self, original_sample_path: str) -> str:
+    def get_conditioning_sample(self, original_sample_path: str) -> TrainingSample|None:
         """
         Given an original dataset sample path, return a TrainingSample
         """
@@ -509,40 +550,80 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             conditioning_sample_data = self.data_backend.read_image(full_path)
         except Exception as e:
             self.logger.error(f"Could not fetch conditioning sample: {e}")
-
             return None
         if not conditioning_sample_data:
             self.debug_log(f"Could not fetch conditioning sample from {full_path}.")
             return None
 
+        conditioning_sample_metadata = self.metadata_backend.get_metadata_by_filepath(
+            full_path
+        )
         conditioning_sample = TrainingSample(
             image=conditioning_sample_data,
             data_backend_id=self.id,
-            image_metadata=self.metadata_backend.get_metadata_by_filepath(full_path),
+            image_metadata=conditioning_sample_metadata,
             image_path=full_path,
             conditioning_type=self.conditioning_type,
             model=self.model,
         )
+        # Use the magic prompt handler to retrieve the captions.
+        prompt_kwargs = {
+            "caption_strategy": self.caption_strategy,
+            "instance_prompt": self.instance_prompt,
+            "data_backend": self.data_backend,
+            "sampler_backend_id": self.id,
+            "prepend_instance_prompt": self.prepend_instance_prompt,
+            "use_captions": self.use_captions,
+            "image_path": full_path,
+        }
+        if self.source_dataset_id is not None and self.caption_strategy is None:
+            # we'll retrieve captions from the source dataset.
+            training_sample_path = conditioning_sample.training_sample_path(
+                training_dataset_id=self.source_dataset_id
+            )
+            source_dataset: "MultiAspectSampler" = StateTracker.get_data_backend(
+                self.source_dataset_id
+            )["sampler"]
+            prompt_kwargs.update(
+                {
+                    "caption_strategy": source_dataset.caption_strategy,
+                    "instance_prompt": source_dataset.instance_prompt,
+                    "data_backend": source_dataset.data_backend,
+                    "sampler_backend_id": source_dataset.id,
+                    "prepend_instance_prompt": source_dataset.prepend_instance_prompt,
+                    "use_captions": source_dataset.use_captions,
+                    "image_path": training_sample_path,
+                }
+            )
+        self.logger.debug(f"Using prompt kwargs: {prompt_kwargs}")
+        instance_prompt = PromptHandler.magic_prompt(**prompt_kwargs)
+        if type(instance_prompt) == list:
+            instance_prompt = random.choice(instance_prompt)
+            self.debug_log(f"Selecting random prompt from list: {instance_prompt}")
+        conditioning_sample.set_caption(instance_prompt)
+
         return conditioning_sample
 
     def connect_conditioning_samples(self, samples: tuple):
         # Locate the conditioning data
-        conditioning_dataset = StateTracker.get_conditioning_dataset(self.id)
-        if conditioning_dataset is None:
+        conditioning_datasets = StateTracker.get_conditioning_datasets(self.id)
+        if not len(conditioning_datasets):
             return samples
-        sampler = conditioning_dataset["sampler"]
         outputs = list(samples)
-        for sample in samples:
-            sample_path = sample["image_path"]
-            if (
-                self.metadata_backend.instance_data_dir is not None
-                and self.metadata_backend.instance_data_dir != ""
-            ):
-                sample_path = sample_path.split(
-                    self.metadata_backend.instance_data_dir
-                )[-1]
-            conditioning_sample = sampler.get_conditioning_sample(sample_path)
-            outputs.append(conditioning_sample)
+        for dataset in conditioning_datasets:
+            sampler = dataset["sampler"]
+            for sample in samples:
+                sample_path: str
+                sample_path = sample["image_path"]
+                if (
+                    self.metadata_backend.instance_data_dir is not None
+                    and self.metadata_backend.instance_data_dir != ""
+                ):
+                    sample_path = sample_path.split(
+                        self.metadata_backend.instance_data_dir
+                    )[-1]
+                conditioning_sample = sampler.get_conditioning_sample(sample_path)
+                outputs.append(conditioning_sample)
         return tuple(outputs)
 
     def __iter__(self):

@@ -147,7 +147,6 @@ class Wan(VideoModelFoundation):
             encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(
                 self.config.weight_dtype
             ),
-            # encoder_attention_mask=prepared_batch["encoder_attention_mask"],
             timestep=prepared_batch["timesteps"],
             return_dict=False,
         )[0]

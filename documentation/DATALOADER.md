@@ -136,6 +136,82 @@ Both `textfile` and `parquet` support multi-captions:
 
 > **Note**: Once the aspect and metadata lists are built for your dataset, using `skip_file_discovery="vae aspect metadata"` will prevent the trainer from scanning the dataset on startup, saving a lot of time.
 
+### `conditioning`
+
+- **Values:** Array of conditioning configuration objects
+- **Description:** Automatically generates conditioning datasets from your source images. Each conditioning type creates a separate dataset that can be used for ControlNet training or other conditioning tasks.
+- **Note:** When specified, SimpleTuner will automatically create conditioning datasets with IDs like `{source_id}_conditioning_{type}`
+
+Each conditioning object can contain:
+- `type`: The type of conditioning to generate (required)
+- `params`: Type-specific parameters (optional)
+- `captions`: Caption strategy for the generated dataset (optional)
+  - Can be `false` (no captions)
+  - A single string (used as instance prompt for all images)
+  - An array of strings (randomly selected for each image)
+  - If omitted, captions from the source dataset are used
+
+#### Available Conditioning Types
+
+##### `superresolution`
+Generates low-quality versions of images for super-resolution training:
+```json
+{
+  "type": "superresolution",
+  "blur_radius": 2.5,
+  "blur_type": "gaussian",
+  "add_noise": true,
+  "noise_level": 0.03,
+  "jpeg_quality": 85,
+  "downscale_factor": 2
+}
+```
+
+##### `jpeg_artifacts`
+Creates JPEG compression artifacts for artifact removal training:
+```json
+{
+  "type": "jpeg_artifacts",
+  "quality_mode": "range",
+  "quality_range": [10, 30],
+  "compression_rounds": 1,
+  "enhance_blocks": false
+}
+```
+
+##### `depth` / `depth_midas`
+Generates depth maps using DPT models:
+```json
+{
+  "type": "depth_midas",
+  "model_type": "DPT"
+}
+```
+**Note:** Depth generation requires GPU and runs in the main process, which may be slower than CPU-based generators.
+
+##### `random_masks` / `inpainting`
+Creates random masks for inpainting training:
+```json
+{
+  "type": "random_masks",
+  "mask_types": ["rectangle", "circle", "brush", "irregular"],
+  "min_coverage": 0.1,
+  "max_coverage": 0.5,
+  "output_mode": "mask"
+}
+```
+
+##### `canny` / `edges`
+Generates Canny edge detection maps:
+```json
+{
+  "type": "canny",
+  "low_threshold": 100,
+  "high_threshold": 200
+}
+```
+
+See [the ControlNet guide](/documentation/CONTROLNET.md) for more details on how to use these conditioning datasets.
 
 #### Examples
 
@@ -592,6 +668,30 @@ In this example configuration:
 ```
 
 **Note:** The `image_embeds` dataset does not have any options to set for data paths. Those are configured via `cache_dir_vae` on the image backend.
+
+### Hugging Face Datasets Support
+
+SimpleTuner now supports loading datasets directly from Hugging Face Hub without downloading the entire dataset locally. This experimental feature is ideal for:
+
+- Large-scale datasets hosted on Hugging Face
+- Datasets with built-in metadata and quality assessments
+- Quick experimentation without local storage requirements
+
+For thorough documentation on this feature, refer to [this document](/documentation/HUGGINGFACE_DATASETS.md).
+
+For a basic example of how to use a Hugging Face dataset, set `"type": "huggingface"` in your dataloader configuration:
+
+```json
+{
+  "id": "my-hf-dataset",
+  "type": "huggingface",
+  "dataset_name": "username/dataset-name",
+  "caption_strategy": "huggingface",
+  "metadata_backend": "huggingface",
+  "caption_column": "caption",
+  "image_column": "image"
+}
+```
 
 ## Custom aspect ratio-to-resolution mapping
 

@@ -8,3 +8,4 @@ To add a new preset, use [this template](/documentation/data_presets/preset.md) 
 - [ptx0/photo-concept-bucket](/documentation/data_presets/preset_pexels.md)
 - [Midjourney v6 520k](/documentation/data_presets/preset_midjourney.md)
 - [Nijijourney v6 520k](/documentation/data_presets/preset_nijijourney.md)
+- [Subjects200K](/documentation/data_presets/preset_subjects200k.md), an example on using the `datasets` library

@@ -7,6 +7,7 @@ from helpers.training.state_tracker import StateTracker
 from helpers.training.multi_process import rank_info, _get_rank
 from helpers.image_manipulation.training_sample import TrainingSample
 from concurrent.futures import ThreadPoolExecutor
+from collections import defaultdict
 
 logger = logging.getLogger("collate_fn")
 logger.setLevel(
@@ -409,6 +410,10 @@ def collate_fn(batch):
     batch = batch[0]
     examples = batch["training_samples"]
     conditioning_examples = batch["conditioning_samples"]
+    has_conditioning_captions = False
+    if any([sample.caption is not None for sample in conditioning_examples]):
+        # we can use the conditioning captions instead of the principle captions, since they're available.
+        has_conditioning_captions = True
     is_regularisation_data = batch.get("is_regularisation_data", False)
     is_i2v_data = batch.get("is_i2v_data", False)
     if StateTracker.get_args().controlnet and len(examples) != len(
@@ -421,6 +426,7 @@ def collate_fn(batch):
         )
 
     # Randomly drop captions/conditioning based on dropout_probability
+    data_backend_id = None
     for example in examples:
         data_backend_id = example["data_backend_id"]
         if (
@@ -433,6 +439,7 @@ def collate_fn(batch):
         else:
             example["drop_conditioning"] = False
 
+    assert isinstance(data_backend_id, str)
     debug_log("Collect luminance values")
     if "luminance" in examples[0]:
         batch_luminance = [example["luminance"] for example in examples]
@@ -455,44 +462,50 @@ def collate_fn(batch):
             latent_batch, filepaths, data_backend_id, examples
         )
 
-    conditioning_filepaths = []
     training_filepaths = []
     conditioning_type = None
     conditioning_pixel_values = None
     conditioning_latents = None
 
     if len(conditioning_examples) > 0:
+        # check the # of conditioning backends
         logger.debug(f"Found {len(conditioning_examples)} conditioning examples.")
-        if len(conditioning_examples) != len(examples):
+
+        # get multiple backend ids
+        data_backend = StateTracker.get_data_backend(data_backend_id)
+        conditioning_backends = data_backend.get("conditioning_data", [])
+
+        if len(conditioning_examples) != len(examples) * len(conditioning_backends):
             raise ValueError(
-                "The number of conditioning examples must match the number of training examples."
+                "The number of conditioning examples must be divisible by the number of training samples."
             )
 
-        data_backend = StateTracker.get_data_backend(data_backend_id)
-        conditioning_data_backend_id = data_backend.get("conditioning_data", {}).get(
-            "id"
-        )
-
-        for cond_example, train_example in zip(conditioning_examples, examples):
+        conditioning_map = defaultdict(list)
+        for i, cond_example in enumerate(conditioning_examples):
+            train_example = examples[i % len(examples)]
+            cond_backend = conditioning_backends[i // len(examples)]
             # Ensure conditioning types match
             cond_type = cond_example.get_conditioning_type()
             if conditioning_type is None:
                 conditioning_type = cond_type
             elif cond_type != conditioning_type:
+                # todo: allow each cond backend to have a different type?
                 raise ValueError(
                     f"Conditioning type mismatch: {conditioning_type} != {cond_type}"
                     "\n-> Ensure all conditioning samples are of the same type."
                 )
 
             # Collect conditioning and training file paths
-            conditioning_filepaths.append(cond_example.image_path(basename_only=False))
+            conditioning_map[cond_backend["id"]].append(cond_example)
             training_filepaths.append(train_example["image_path"])
         debug_log(
-            f"Counted {len(conditioning_filepaths)} conditioning filepaths and {len(training_filepaths)} training filepaths."
+            f"Counted {len(conditioning_map)} conditioning filepaths and {len(training_filepaths)} training filepaths."
         )
 
+        assert model is not None
         if model.requires_conditioning_dataset():
             if model.requires_conditioning_latents():
+                conditioning_latents = []
                 # Kontext / other latent-conditioned models / adapters
                 debug_log("Compute conditioning latents")
                 conditioning_latents = compute_latents(
@@ -503,42 +516,54 @@ def collate_fn(batch):
                 debug_log(
                     f"Conditioning latents computed: {len(conditioning_latents)} items."
                 )
-
-                # unpack from dicts (vae-cache style) & shape-check
-                if isinstance(conditioning_latents[0], dict):
-                    conditioning_latents = [v["latents"] for v in conditioning_latents]
-
-                conditioning_latents = check_latent_shapes(
-                    conditioning_latents,
-                    conditioning_filepaths,
-                    conditioning_data_backend_id,
-                    conditioning_examples,
-                )
             else:
                 debug_log("Model may require conditioning pixels.")
-                conditioning_pixel_values = conditioning_pixels(
-                    conditioning_filepaths,
-                    training_filepaths,
-                    conditioning_data_backend_id,
-                    data_backend_id,
-                )
-                debug_log(
-                    f"Found {len(conditioning_pixel_values)} conditioning pixel values."
-                )
-                conditioning_pixel_values = torch.stack(
-                    [
-                        latent.to(StateTracker.get_accelerator().device)
-                        for latent in conditioning_pixel_values
-                    ]
-                )
+                conditioning_pixel_values = []
+                for _backend_id, _examples in conditioning_map.items():
+                    _filepaths = [cond_example.image_path(basename_only=False) for cond_example in _examples]
+                    _pixel_values = conditioning_pixels(
+                        _filepaths,
+                        training_filepaths,
+                        _backend_id,
+                        data_backend_id,
+                    )
+                    debug_log(
+                        f"Found {len(_pixel_values)} conditioning pixel values."
+                    )
+                    # stack up that pixel values list
+                    conditioning_pixel_values.append(torch.stack(
+                        [
+                            pixels.to(StateTracker.get_accelerator().device)
+                            for pixels in _pixel_values
+                        ]
+                    )
+                    )
 
     # Compute embeddings and handle dropped conditionings
     debug_log("Extract captions")
-    captions = [example["instance_prompt_text"] for example in examples]
-    debug_log("Pull cached text embeds")
-    text_embed_cache = StateTracker.get_data_backend(data_backend_id)[
-        "text_embed_cache"
-    ]
+    if has_conditioning_captions:
+        captions = [
+            example.caption if example.caption else example["instance_prompt_text"]
+            for example in conditioning_examples
+        ]
+        # If the caption is empty, we use the instance prompt text.
+        captions = [
+            caption if caption else example["instance_prompt_text"]
+            for caption, example in zip(captions, examples)
+        ]
+        debug_log(f"Pull cached text embeds. conditioning captions: {captions}")
+        text_embed_cache = StateTracker.get_data_backend(conditioning_data_backend_id)[
+            "text_embed_cache"
+        ]
+
+    else:
+        captions = [example["instance_prompt_text"] for example in examples]
+        debug_log(
+            f"Pull cached text embeds. no conditioning captions found: {captions}"
+        )
+        text_embed_cache = StateTracker.get_data_backend(data_backend_id)[
+            "text_embed_cache"
+        ]
 
     if not text_embed_cache.disabled:
         all_text_encoder_outputs = compute_prompt_embeddings(
