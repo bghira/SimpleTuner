@@ -118,6 +118,14 @@ class DatasetDuplicator:
                 "caption_strategy", None
             )
             target_backend_config["instance_prompt"] = None
+            if target_backend_config["caption_strategy"] not in [
+                None,
+                "instanceprompt",
+            ]:
+                logger.warning(
+                    f"Caption strategy {target_backend_config['caption_strategy']} in base model will be overridden by instanceprompt strategy in the conditioning config."
+                )
+                target_backend_config["caption_strategy"] = "instanceprompt"
             if conditioning_config.get("captions", False) not in [False, None]:
                 # if there's some captions defined, use them as instance prompts
                 target_backend_config["caption_strategy"] = "instanceprompt"
