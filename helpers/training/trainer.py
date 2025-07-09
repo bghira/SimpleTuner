@@ -25,6 +25,7 @@ from helpers.training.state_tracker import StateTracker
 from helpers.training.custom_schedule import get_lr_scheduler
 from helpers.training.optimizer_param import (
     determine_optimizer_class_with_config,
+    create_optimizer_with_param_groups,
     determine_params_to_optimize,
     is_lr_scheduler_disabled,
     is_lr_schedulefree,
@@ -508,7 +509,8 @@ class Trainer:
             self.init_validation_prompts()
         except Exception as e:
             logger.error("Could not generate validation prompts.")
-            logger.error(e)
+
+            logger.exception("Could not generate validation prompts")
             raise e
 
         # We calculate the number of steps per epoch by dividing the number of images by the effective batch divisor.
@@ -985,7 +987,17 @@ class Trainer:
             logger.info(
                 f"DeepSpeed Optimizer arguments, weight_decay={self.config.adam_weight_decay} eps={self.config.adam_epsilon}, extra_arguments={extra_optimizer_args}"
             )
-            self.optimizer = optimizer_class(self.params_to_optimize)
+            self.optimizer = create_optimizer_with_param_groups(
+                self.model.get_trained_component(),
+                optimizer_class,
+                self.params_to_optimize,
+                use_parameter_groups=True,  # Enable weight decay separation
+                cpu_offload_config=(
+                    {"offload_mechanism": self.config.optimizer_offload_mechanism}
+                    if self.config.optimizer_offload_mechanism
+                    else None
+                ),
+            )
         else:
             logger.info(f"Optimizer arguments={extra_optimizer_args}")
             if self.config.train_text_encoder and self.config.text_encoder_lr:
@@ -1064,6 +1076,8 @@ class Trainer:
         self.ema_model = None
         if not self.config.use_ema:
             return
+        # this runs on all processes to ensure shapes are aligned.
+        self.model.pre_ema_creation()
         if self.accelerator.is_main_process:
             logger.info("Using EMA. Creating EMAModel.")
 
@@ -1094,6 +1108,8 @@ class Trainer:
             )
 
         self.accelerator.wait_for_everyone()
+        # same about running on all processes to ensure alignment.
+        self.model.post_ema_creation()
 
     def init_hooks(self):
         from helpers.training.save_hooks import SaveHookManager

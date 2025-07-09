@@ -142,6 +142,7 @@ from dataclasses import dataclass
 from typing import List, Union
 import PIL.Image
 from diffusers.utils import BaseOutput
+
 PREFERED_KONTEXT_RESOLUTIONS = [
     (672, 1568),
     (688, 1504),
@@ -174,6 +175,7 @@ def calculate_shift(
     b = base_shift - m * base_seq_len
     mu = image_seq_len * m + b
     return mu
+
 
 def retrieve_timesteps(
     scheduler,
@@ -238,6 +240,7 @@ def retrieve_timesteps(
         scheduler.set_timesteps(num_inference_steps, device=device, **kwargs)
         timesteps = scheduler.timesteps
     return timesteps, num_inference_steps
+
 
 def retrieve_latents(
     encoder_output: torch.Tensor,
@@ -1705,6 +1708,11 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
 
                 extra_transformer_args = {}
                 if prompt_mask is not None:
+                    # Expand attention mask to match the actual batch size
+                    if prompt_mask.dim() == 3 and prompt_mask.size(1) == 1:
+                        prompt_mask = prompt_mask.squeeze(1)  # [1, 1, 512] -> [1, 512]
+                    if prompt_mask.size(0) == 1 and latents.size(0) > 1:
+                        prompt_mask = prompt_mask.expand(latents.size(0), -1, -1)
                     extra_transformer_args["attention_mask"] = prompt_mask.to(
                         device=self.transformer.device
                     )
@@ -1732,6 +1740,14 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                 # TODO optionally use batch prediction to speed this up.
                 if guidance_scale_real > 1.0 and i >= no_cfg_until_timestep:
                     if negative_mask is not None:
+                        if negative_mask.dim() == 3 and negative_mask.size(1) == 1:
+                            negative_mask = negative_mask.squeeze(
+                                1
+                            )  # [1, 1, 512] -> [1, 512]
+                        if negative_mask.size(0) == 1 and latents.size(0) > 1:
+                            negative_mask = negative_mask.expand(
+                                latents.size(0), -1, -1
+                            )
                         extra_transformer_args["attention_mask"] = negative_mask.to(
                             device=self.transformer.device
                         )
@@ -2555,6 +2571,7 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         latent_image_ids = latent_image_ids.to(device)[0]
         # expand to include batch dim
         latent_image_ids = latent_image_ids.unsqueeze(0)
+
         timesteps = timesteps.to(device)
         text_ids = text_ids.to(device)[0]
 
@@ -2598,10 +2615,14 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
 
                 extra_transformer_args = {}
                 if prompt_mask is not None:
+                    # Expand attention mask to match the actual batch size
+                    if prompt_mask.dim() == 3 and prompt_mask.size(1) == 1:
+                        prompt_mask = prompt_mask.squeeze(1)  # [1, 1, 512] -> [1, 512]
+                    if prompt_mask.size(0) == 1 and lat_in.size(0) > 1:
+                        prompt_mask = prompt_mask.expand(lat_in.size(0), -1, -1)
                     extra_transformer_args["attention_mask"] = prompt_mask.to(
                         device=self.transformer.device
                     )
-
                 noise_pred = self.transformer(
                     hidden_states=lat_in.to(
                         device=self.transformer.device  # , dtype=self.transformer.dtype     # can't cast dtype like this because of NF4
@@ -2625,6 +2646,12 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                 # TODO optionally use batch prediction to speed this up.
                 if guidance_scale_real > 1.0 and i >= no_cfg_until_timestep:
                     if negative_mask is not None:
+                        if negative_mask.dim() == 3 and negative_mask.size(1) == 1:
+                            negative_mask = negative_mask.squeeze(
+                                1
+                            )  # [1, 1, 512] -> [1, 512]
+                        if negative_mask.size(0) == 1 and lat_in.size(0) > 1:
+                            negative_mask = negative_mask.expand(lat_in.size(0), -1, -1)
                         extra_transformer_args["attention_mask"] = negative_mask.to(
                             device=self.transformer.device
                         )

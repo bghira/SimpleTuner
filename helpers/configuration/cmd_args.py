@@ -1768,6 +1768,15 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--validation_stitch_input_location",
+        default="left",
+        choices=["left", "right"],
+        help=(
+            "When set, the input image will be stitched to the left of the generated image during validation."
+            " This is useful for img2img models, such as DeepFloyd Stage II, where the input image is used as a reference."
+        ),
+    )
+    parser.add_argument(
         "--eval_steps_interval",
         type=int,
         default=None,
@@ -1949,6 +1958,16 @@ def get_argument_parser():
         type=int,
         default=-1,
         help="For distributed training: local_rank",
+    )
+    parser.add_argument(
+        "--fuse_qkv_projections",
+        action="store_true",
+        default=False,
+        help=(
+            "QKV projections can be fused into a single linear layer."
+            " This can save memory and speed up training, but may not work with all models."
+            " If you encounter issues, disable this option. It is considered experimental."
+        ),
     )
     parser.add_argument(
         "--attention_mechanism",

@@ -282,6 +282,73 @@ class PromptHandler:
             logger.error(f"Could not read caption file {caption_file}: {e}")
 
     @staticmethod
+    def prepare_instance_prompt_from_huggingface(
+        image_path: str,
+        use_captions: bool,
+        prepend_instance_prompt: bool,
+        data_backend: BaseDataBackend,
+        instance_prompt: str = None,
+        sampler_backend_id: str = None,
+    ) -> str:
+        """
+        Prepare prompt from HuggingFace dataset metadata.
+
+        Args:
+            image_path: Virtual path like "0.jpg"
+            use_captions: Whether to use captions
+            prepend_instance_prompt: Whether to prepend instance prompt
+            data_backend: The data backend
+            instance_prompt: Optional instance prompt
+            sampler_backend_id: Backend ID for metadata lookup
+
+        Returns:
+            str or list: The caption(s) for the image
+        """
+        if not use_captions:
+            if not instance_prompt:
+                raise ValueError(
+                    "Instance prompt is required when instance_prompt_only is enabled."
+                )
+            return instance_prompt
+
+        if sampler_backend_id is None:
+            sampler_backend_id = data_backend.id
+
+        # Get the metadata backend
+        backend_info = StateTracker.get_data_backend(sampler_backend_id)
+        if not backend_info or "metadata_backend" not in backend_info:
+            raise ValueError(
+                f"Could not find metadata backend for {sampler_backend_id}"
+            )
+
+        metadata_backend = backend_info["metadata_backend"]
+
+        # For HuggingFace, the image_path is already the virtual path like "0.jpg"
+        caption = metadata_backend.caption_cache_entry(image_path)
+
+        if caption is None:
+            raise CaptionNotFoundError(
+                f"Could not find caption for {image_path} in HuggingFace dataset"
+            )
+
+        # Process the caption
+        if isinstance(caption, bytes):
+            caption = caption.decode("utf-8")
+        if isinstance(caption, str):
+            caption = caption.strip()
+        if isinstance(caption, (list, tuple, numpy.ndarray, pd.Series)):
+            caption = [str(item).strip() for item in caption if item is not None]
+
+        # Prepend instance prompt if requested
+        if prepend_instance_prompt and instance_prompt:
+            if isinstance(caption, list):
+                caption = [instance_prompt + " " + c for c in caption]
+            else:
+                caption = instance_prompt + " " + caption
+
+        return caption
+
+    @staticmethod
     def magic_prompt(
         image_path: str,
         use_captions: bool,
@@ -305,6 +372,8 @@ class PromptHandler:
         Returns:
             _type_: _description_
         """
+        if caption_strategy is None:
+            return None
         if caption_strategy == "filename":
             instance_prompt = PromptHandler.prepare_instance_prompt_from_filename(
                 image_path=image_path,
@@ -331,15 +400,23 @@ class PromptHandler:
                 data_backend=data_backend,
                 sampler_backend_id=sampler_backend_id,
             )
+        elif caption_strategy == "huggingface":
+            instance_prompt = PromptHandler.prepare_instance_prompt_from_huggingface(
+                image_path,
+                use_captions=use_captions,
+                prepend_instance_prompt=prepend_instance_prompt,
+                instance_prompt=instance_prompt,
+                data_backend=data_backend,
+                sampler_backend_id=sampler_backend_id,
+            )
         elif caption_strategy == "instanceprompt":
             return instance_prompt
         elif caption_strategy == "csv":
             return data_backend.get_caption(image_path)
-        else:
+        elif caption_strategy is not None:
             raise ValueError(
-                f"Unsupported caption strategy: {caption_strategy}. Supported: 'filename', 'textfile', 'parquet', 'instanceprompt'"
+                f"Unsupported caption strategy: {caption_strategy}. Supported: 'filename', 'textfile', 'parquet', 'instanceprompt', 'csv', 'huggingface'"
             )
-
         return instance_prompt
 
     @staticmethod
@@ -351,6 +428,7 @@ class PromptHandler:
         caption_strategy: str,
         instance_prompt: str = None,
     ) -> list:
+
         captions = []
         images_missing_captions = []
         all_image_files = StateTracker.get_image_files(
@@ -361,7 +439,11 @@ class PromptHandler:
         backend_config = StateTracker.get_data_backend_config(
             data_backend_id=data_backend.id
         )
-        if type(all_image_files) == list and type(all_image_files[0]) == tuple:
+        if (
+            isinstance(all_image_files, list)
+            and len(all_image_files) > 0
+            and isinstance(all_image_files[0], tuple)
+        ):
             all_image_files = all_image_files[0][2]
         from tqdm import tqdm
 
@@ -403,13 +485,26 @@ class PromptHandler:
                         data_backend=data_backend,
                         sampler_backend_id=data_backend.id,
                     )
+                elif caption_strategy == "huggingface":
+                    caption = PromptHandler.prepare_instance_prompt_from_huggingface(
+                        image_path,
+                        use_captions=use_captions,
+                        prepend_instance_prompt=prepend_instance_prompt,
+                        instance_prompt=instance_prompt,
+                        data_backend=data_backend,
+                        sampler_backend_id=data_backend.id,
+                    )
                 elif caption_strategy == "instanceprompt":
-                    return [instance_prompt], []
+                    instance_prompts = instance_prompt
+                    if type(instance_prompt) == str:
+                        instance_prompt = instance_prompt.strip()
+                        instance_prompts = [instance_prompt]
+                    return instance_prompts, []
                 elif caption_strategy == "csv":
                     caption = data_backend.get_caption(image_path)
                 else:
                     raise ValueError(
-                        f"Unsupported caption strategy: {caption_strategy}. Supported: 'filename', 'textfile', 'parquet', 'instanceprompt'"
+                        f"Unsupported caption strategy: {caption_strategy}. Supported: 'filename', 'textfile', 'parquet', 'instanceprompt', 'csv', 'huggingface'"
                     )
             except CaptionNotFoundError as e:
                 logger.error(f"Could not load caption for image {image_path}: {e}")

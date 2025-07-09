@@ -90,6 +90,15 @@ def build_kontext_inputs(
     packed_cond : (B, S, C*4)   – flattened patch sequence
     cond_ids    : (B, S, 3)     – seq-ids with id[...,0] == 1
     """
+    # if it's a list, we'll stack all of them to one tensor.
+    if isinstance(cond_latents, list):
+        if len(cond_latents) == 1:
+            cond_latents = cond_latents[0]
+        else:
+            cond_latents = torch.stack(cond_latents, dim=0)
+    if len(cond_latents.shape) == 3 and cond_latents.shape[0] == 16:
+        # This is a single patch, expand to batch size 1
+        cond_latents = cond_latents.unsqueeze(0)
     packed_cond = []
     packed_ids = []
 
@@ -124,3 +133,4 @@ def build_kontext_inputs(
     packed_ids = torch.cat(packed_ids, dim=1)
 
     return packed_cond, packed_ids
+

@@ -717,3 +717,105 @@ def determine_params_to_optimize(
             )
 
     return params_to_optimize
+
+
+def create_optimizer_params_with_decay(model, weight_decay=0.01, learning_rate=None):
+    """
+    Separate model parameters into two groups:
+    - Parameters that will experience weight decay (most weights)
+    - Parameters that won't (biases, layernorm/embedding weights)
+
+    Args:
+        model: The model whose parameters to optimize
+        weight_decay: Weight decay value for regularization
+        learning_rate: Optional learning rate (if different per group)
+
+    Returns:
+        List of parameter group dictionaries for PyTorch optimizer
+    """
+    decay = []
+    no_decay = []
+
+    # Get all named parameters from the model
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+
+        # Parameters that should NOT have weight decay:
+        # - Anything with 'bias' in the name
+        # - LayerNorm weights (often named with 'norm', 'ln', or 'layernorm')
+        # - Embedding weights
+        # - Batch normalization parameters
+        if any(
+            nd in name.lower() for nd in ["bias", "norm", "embedding", "embed", "bn"]
+        ):
+            no_decay.append(param)
+        else:
+            decay.append(param)
+
+    # Create parameter groups
+    param_groups = [
+        {"params": decay, "weight_decay": weight_decay},
+        {"params": no_decay, "weight_decay": 0.0},
+    ]
+
+    # Add learning rate if specified
+    if learning_rate is not None:
+        for group in param_groups:
+            group["lr"] = learning_rate
+
+    # Log the parameter distribution
+    logger.info(
+        f"Parameter groups: {len(decay)} with weight decay, "
+        f"{len(no_decay)} without weight decay"
+    )
+
+    return param_groups
+
+
+def create_optimizer_with_param_groups(
+    model,
+    optimizer_class,
+    optimizer_parameters,
+    use_parameter_groups=True,
+    cpu_offload_config=None,
+):
+    """
+    Create an optimizer with proper parameter grouping for weight decay.
+
+    Args:
+        model: The model to optimize
+        optimizer_class: The optimizer class to use
+        optimizer_parameters: Dict of optimizer parameters
+        use_parameter_groups: Whether to use parameter groups for weight decay
+        cpu_offload_config: Optional CPU offload configuration
+
+    Returns:
+        Configured optimizer instance
+    """
+    # Extract weight decay from optimizer parameters
+    weight_decay = optimizer_parameters.pop("weight_decay", 0.01)
+    learning_rate = optimizer_parameters.get("lr", None)
+
+    if use_parameter_groups and weight_decay > 0:
+        # Create parameter groups with appropriate weight decay settings
+        param_groups = create_optimizer_params_with_decay(
+            model, weight_decay=weight_decay, learning_rate=learning_rate
+        )
+
+        # Remove lr from optimizer_parameters if it was set in param groups
+        if learning_rate is not None:
+            optimizer_parameters.pop("lr", None)
+    else:
+        # Use all parameters with the same weight decay
+        param_groups = filter(lambda p: p.requires_grad, model.parameters())
+        optimizer_parameters["weight_decay"] = weight_decay
+
+    # Handle CPU offload if configured
+    if cpu_offload_config:
+        return cpu_offload_optimizer(
+            param_groups, optimizer_class, optimizer_parameters, **cpu_offload_config
+        )
+
+    # Create and return the optimizer
+    return optimizer_class(param_groups, **optimizer_parameters)

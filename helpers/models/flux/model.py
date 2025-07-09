@@ -1,5 +1,6 @@
 import torch, os, logging
 import random
+from helpers.training import diffusers_overrides
 from helpers.models.common import (
     ImageModelFoundation,
     PredictionTypes,
@@ -13,6 +14,7 @@ from transformers import (
     T5EncoderModel,
 )
 from diffusers import AutoencoderKL
+from diffusers.models.attention_processor import Attention
 from helpers.models.flux.transformer import FluxTransformer2DModel
 from helpers.models.flux.pipeline import FluxPipeline, FluxKontextPipeline
 from helpers.models.flux.pipeline_controlnet import (
@@ -156,6 +158,62 @@ class Flux(ImageModelFoundation):
             )
         self.controlnet.to(self.accelerator.device, self.config.weight_dtype)
 
+    def fuse_qkv_projections(self):
+        if not self.config.fuse_qkv_projections or self._qkv_projections_fused:
+            return
+
+        try:
+            from helpers.models.flux.attention import FluxFusedFlashAttnProcessor3
+
+            attn_processor = FluxFusedFlashAttnProcessor3()
+        except:
+            from helpers.models.flux.attention import FluxFusedSDPAProcessor
+
+            attn_processor = FluxFusedSDPAProcessor()
+
+        if self.model is not None:
+            logger.debug("Fusing QKV projections in the model..")
+            for module in self.model.modules():
+                if isinstance(module, Attention):
+                    module.fuse_projections(fuse=True)
+        else:
+            logger.warning("Model does not support QKV projection fusing. Skipping.")
+
+        self.unwrap_model(model=self.model).set_attn_processor(attn_processor)
+        if self.controlnet is not None:
+            logger.debug("Fusing QKV projections in the ControlNet..")
+            for module in self.controlnet.modules():
+                if isinstance(module, Attention):
+                    module.fuse_projections(fuse=True)
+            logger.debug(
+                "Setting ControlNet attention processor to FluxFusedFlashAttnProcessor3"
+            )
+            self.unwrap_model(model=self.controlnet).set_attn_processor(attn_processor)
+        elif self.config.controlnet:
+            logger.warning(
+                "ControlNet does not support QKV projection fusing. Skipping."
+            )
+        self._qkv_projections_fused = True
+
+    def unfuse_qkv_projections(self):
+        """
+        Unfuse QKV projections in the model and ControlNet if they were fused.
+        """
+        if not self.config.fuse_qkv_projections or not self._qkv_projections_fused:
+            return
+        self._qkv_projections_fused = False
+
+        if self.model is not None:
+            logger.debug("Temporarily unfusing QKV projections in the model..")
+            for module in self.model.modules():
+                if isinstance(module, Attention):
+                    module.fuse_projections(fuse=False)
+            if self.controlnet is not None:
+                logger.debug("Tempoarily unfusing QKV projections in the ControlNet..")
+                for module in self.controlnet.modules():
+                    if isinstance(module, Attention):
+                        module.fuse_projections(fuse=False)
+
     def requires_conditioning_latents(self) -> bool:
         # Flux ControlNet requires latent inputs instead of pixels.
         if self.config.controlnet or self.config.control:
@@ -210,13 +268,15 @@ class Flux(ImageModelFoundation):
 
     def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
+        # Only unsqueeze if it's missing the batch dimension
+        attention_mask = text_embedding.get("attention_masks", None)
+        if attention_mask.dim() == 1:  # Shape: [512]
+            attention_mask = attention_mask.unsqueeze(0)  # Shape: [1, 512]
         return {
             "prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
             "pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0),
             "prompt_mask": (
-                text_embedding["attention_masks"].unsqueeze(0)
-                if self.config.flux_attention_masked_training
-                else None
+                attention_mask if self.config.flux_attention_masked_training else None
             ),
         }
 
@@ -230,15 +290,17 @@ class Flux(ImageModelFoundation):
         ):
             # CFG is disabled, no negative prompts.
             return {}
+        # Only unsqueeze if it's missing the batch dimension
+        attention_mask = text_embedding.get("attention_masks", None)
+        if attention_mask.dim() == 1:  # Shape: [512]
+            attention_mask = attention_mask.unsqueeze(0)  # Shape: [1, 512]
         return {
             "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
             "negative_pooled_prompt_embeds": text_embedding[
                 "pooled_prompt_embeds"
             ].unsqueeze(0),
             "negative_mask": (
-                text_embedding["attention_masks"].unsqueeze(0)
-                if self.config.flux_attention_masked_training
-                else None
+                attention_mask if self.config.flux_attention_masked_training else None
             ),
             "guidance_scale_real": float(self.config.validation_guidance_real),
             "no_cfg_until_timestep": int(self.config.validation_no_cfg_until_timestep),
@@ -401,14 +463,15 @@ class Flux(ImageModelFoundation):
             "return_dict": False,
         }
         if self.config.flux_attention_masked_training:
-            flux_transformer_kwargs["attention_mask"] = prepared_batch[
-                "encoder_attention_mask"
-            ]
-            if flux_transformer_kwargs["attention_mask"] is None:
+            attention_mask = prepared_batch["encoder_attention_mask"]
+            if attention_mask is None:
                 raise ValueError(
                     "No attention mask was discovered when attempting validation - this means you need to recreate your text embed cache."
                 )
-
+            # Squeeze out the extra dimension if present
+            if attention_mask.dim() == 3 and attention_mask.size(1) == 1:
+                attention_mask = attention_mask.squeeze(1)  # [B, 1, S] -> [B, S]
+            flux_transformer_kwargs["attention_mask"] = attention_mask
         model_pred = self.get_trained_component()(**flux_transformer_kwargs)[0]
         # Drop the reference-image tokens before unpacking
         if use_cond and self.config.model_flavour == "kontext":
@@ -722,6 +785,8 @@ class Flux(ImageModelFoundation):
                     "to_k",
                     "to_q",
                     "to_v",
+                    "to_qkv",
+                    "add_qkv_proj",
                     "add_k_proj",
                     "add_q_proj",
                     "add_v_proj",
@@ -751,6 +816,8 @@ class Flux(ImageModelFoundation):
                     "to_k",
                     "to_q",
                     "to_v",
+                    "to_qkv",
+                    "add_qkv_proj",
                     "add_k_proj",
                     "add_q_proj",
                     "add_v_proj",
@@ -787,6 +854,8 @@ class Flux(ImageModelFoundation):
                     "to_k",
                     "to_q",
                     "to_v",
+                    "to_qkv",
+                    "add_qkv_proj",
                     "to_out.0",
                     "add_k_proj",
                     "add_q_proj",
@@ -804,6 +873,8 @@ class Flux(ImageModelFoundation):
                 return [
                     "to_q",
                     "to_k",
+                    "to_qkv",
+                    "add_qkv_proj",
                     "to_v",
                     "add_q_proj",
                     "add_k_proj",

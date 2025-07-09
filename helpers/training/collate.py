@@ -275,10 +275,17 @@ def compute_prompt_embeddings(captions, text_embed_cache, model):
             transformed_encoder_output["pooled_prompt_embeds"] = torch.stack(
                 [t["pooled_prompt_embeds"] for t in text_encoder_output]
             )
+        # compatibility for old style
         if "attention_mask" in text_encoder_output[0]:
             transformed_encoder_output["attention_masks"] = torch.stack(
                 [t["attention_mask"] for t in text_encoder_output]
             )
+        # new style
+        if "attention_masks" in text_encoder_output[0]:
+            transformed_encoder_output["attention_masks"] = torch.stack(
+                [t["attention_masks"] for t in text_encoder_output]
+            )
+
         if "time_ids" in text_encoder_output[0]:
             transformed_encoder_output["time_ids"] = torch.stack(
                 [t["time_ids"] for t in text_encoder_output]
@@ -403,6 +410,10 @@ def collate_fn(batch):
     batch = batch[0]
     examples = batch["training_samples"]
     conditioning_examples = batch["conditioning_samples"]
+    has_conditioning_captions = False
+    if any([sample.caption is not None for sample in conditioning_examples]):
+        # we can use the conditioning captions instead of the principle captions, since they're available.
+        has_conditioning_captions = True
     is_regularisation_data = batch.get("is_regularisation_data", False)
     is_i2v_data = batch.get("is_i2v_data", False)
     if StateTracker.get_args().controlnet and len(examples) != len(
@@ -497,28 +508,14 @@ def collate_fn(batch):
                 conditioning_latents = []
                 # Kontext / other latent-conditioned models / adapters
                 debug_log("Compute conditioning latents")
-                for _backend_id, _examples in conditioning_map.items():
-                    _filepaths = [cond_example.image_path(basename_only=False) for cond_example in _examples]
-                    _latents = compute_latents(
-                        _filepaths,
-                        _backend_id,
-                        model,
-                    )
-                    debug_log(
-                        f"Conditioning latents computed: {len(_latents)} items."
-                    )
-
-                    # unpack from dicts (vae-cache style) & shape-check
-                    if isinstance(_latents[0], dict):
-                        _latents = [v["latents"] for v in _latents]
-
-                    _latents = check_latent_shapes(
-                        _latents,
-                        _filepaths,
-                        _backend_id,
-                        _examples,
-                    )
-                    conditioning_latents.append(_latents)
+                conditioning_latents = compute_latents(
+                    conditioning_filepaths,
+                    conditioning_data_backend_id,
+                    model,
+                )
+                debug_log(
+                    f"Conditioning latents computed: {len(conditioning_latents)} items."
+                )
             else:
                 debug_log("Model may require conditioning pixels.")
                 conditioning_pixel_values = []
@@ -544,11 +541,29 @@ def collate_fn(batch):
 
     # Compute embeddings and handle dropped conditionings
     debug_log("Extract captions")
-    captions = [example["instance_prompt_text"] for example in examples]
-    debug_log("Pull cached text embeds")
-    text_embed_cache = StateTracker.get_data_backend(data_backend_id)[
-        "text_embed_cache"
-    ]
+    if has_conditioning_captions:
+        captions = [
+            example.caption if example.caption else example["instance_prompt_text"]
+            for example in conditioning_examples
+        ]
+        # If the caption is empty, we use the instance prompt text.
+        captions = [
+            caption if caption else example["instance_prompt_text"]
+            for caption, example in zip(captions, examples)
+        ]
+        debug_log(f"Pull cached text embeds. conditioning captions: {captions}")
+        text_embed_cache = StateTracker.get_data_backend(conditioning_data_backend_id)[
+            "text_embed_cache"
+        ]
+
+    else:
+        captions = [example["instance_prompt_text"] for example in examples]
+        debug_log(
+            f"Pull cached text embeds. no conditioning captions found: {captions}"
+        )
+        text_embed_cache = StateTracker.get_data_backend(data_backend_id)[
+            "text_embed_cache"
+        ]
 
     if not text_embed_cache.disabled:
         all_text_encoder_outputs = compute_prompt_embeddings(

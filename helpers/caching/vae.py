@@ -541,9 +541,14 @@ class VAECache(WebhookMixin):
             logger.debug(
                 f"Shape for Wan VAE encode: {latents_uncached.shape} with latents_mean: {self.vae.latents_mean} and latents_std: {self.vae.latents_std}"
             )
-            latents_uncached = compute_wan_posterior(
+            posterior = compute_wan_posterior(
                 latents_uncached, self.vae.latents_mean, self.vae.latents_std
             )
+            # Sample from the posterior
+            latents_uncached = posterior.sample()
+
+            # For video, return just the tensor
+            output_cache_entry = latents_uncached
         elif StateTracker.get_model_family() in ["hunyuan-video", "mochi"]:
             raise Exception(
                 f"{StateTracker.get_model_family()} not supported for VAE Caching yet."
@@ -647,11 +652,24 @@ class VAECache(WebhookMixin):
                 processed_images = self.prepare_video_latents(processed_images)
                 latents_uncached = self.vae.encode(processed_images)
 
-                if hasattr(latents_uncached, "latent_dist"):
-                    latents_uncached = latents_uncached.latent_dist.sample()
-                elif hasattr(latents_uncached, "sample"):
-                    latents_uncached = latents_uncached.sample()
-                latents_uncached = self.process_video_latents(latents_uncached)
+                # For Wan, get the raw parameters (32 channels)
+                if StateTracker.get_model_family() in ["wan"]:
+                    if hasattr(latents_uncached, "latent_dist"):
+                        # This is 32 channels (mu + logvar)
+                        latents_uncached = latents_uncached.latent_dist.parameters
+                    # Process will normalize and sample, returning 16 channels
+                    latents_uncached = self.process_video_latents(latents_uncached)
+                else:
+                    # For other models, sample first
+                    if hasattr(latents_uncached, "latent_dist"):
+                        latents_uncached = latents_uncached.latent_dist.sample()
+                    elif hasattr(latents_uncached, "sample"):
+                        latents_uncached = latents_uncached.sample()
+                    # Then process
+                    latents_uncached = self.process_video_latents(latents_uncached)
+
+                # Now latents_uncached should be 16 channels for Wan
+                # Apply scaling factors
                 if (
                     hasattr(self.vae, "config")
                     and hasattr(self.vae.config, "shift_factor")
@@ -667,15 +685,14 @@ class VAECache(WebhookMixin):
                 elif isinstance(latents_uncached, torch.Tensor) and hasattr(
                     self.vae.config, "scaling_factor"
                 ):
-                    latents_uncached = getattr(
-                        latents_uncached, "latent", latents_uncached
-                    ) * getattr(
+                    latents_uncached = latents_uncached * getattr(
                         self.model,
                         "AUTOENCODER_SCALING_FACTOR",
                         self.vae.config.scaling_factor,
                     )
-                    logger.debug(f"Latents shape: {latents_uncached.shape}")
-
+                    logger.debug(
+                        f"Latents shape after scaling: {latents_uncached.shape}"
+                    )
             # Prepare final latents list by combining cached and newly computed latents
             if isinstance(latents_uncached, dict) and "latents" in latents_uncached:
                 # video models tend to return a dict with latents.
