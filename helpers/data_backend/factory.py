@@ -1254,9 +1254,8 @@ def configure_multi_databackend(
                 # and a more ideal implementation would simply reference the training dataset metadata buckets.
                 # but currently, there is no method to instruct a dataset to use a separate metadata instance with different paths.
                 "controlnet" if not model.requires_conditioning_latents() else -1,
-                # similar to controlnet, latent reference images require us to scan them so we can encode them for newer models.
                 "reference_strict",
-            ]  # strict kontext conditioning doesn't have its own bucket list.
+            ]
         ):
             if accelerator.is_local_main_process:
                 info_log(
@@ -1266,7 +1265,15 @@ def configure_multi_databackend(
 
         accelerator.wait_for_everyone()
         # Auto-generated datasets will not have contents available just yet.
-        if not backend.get("auto_generated", False):
+        if (
+            not backend.get("auto_generated", False)
+            and backend.get("conditioning_type", None) is not None
+            and backend.get("conditioning_type")
+            not in [
+                "mask",
+                "reference_strict",
+            ]
+        ):
             if not accelerator.is_main_process:
                 info_log(
                     f"(id={init_backend['id']}) Reloading bucket manager cache on subprocesses."
@@ -1310,7 +1317,10 @@ def configure_multi_databackend(
                     source_conditioning_data_config = source_backend.get(
                         "conditioning_data", None
                     )
-                    if source_conditioning_data_config == target_dataset_id or (
+                    if (
+                        isinstance(source_conditioning_data_config, str)
+                        and source_conditioning_data_config == target_dataset_id
+                    ) or (
                         isinstance(source_conditioning_data_config, list)
                         and target_dataset_id in source_conditioning_data_config
                     ):
@@ -1713,8 +1723,10 @@ def configure_multi_databackend(
                 "controlnet" if not model.requires_conditioning_latents() else -1,
             ]
         ):
-            init_backend["vaecache"].discover_unprocessed_files()
+            unprocessed_files = init_backend["vaecache"].discover_unprocessed_files()
+            logger.info(f"VAECache has {len(unprocessed_files)} unprocessed files.")
             if not args.vae_cache_ondemand:
+                logger.info(f"Executing VAE cache update..")
                 init_backend["vaecache"].process_buckets()
             logger.debug(f"Encoding images during training: {args.vae_cache_ondemand}")
             accelerator.wait_for_everyone()
