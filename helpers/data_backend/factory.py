@@ -1147,7 +1147,7 @@ def configure_multi_databackend(
                 # but currently, there is no method to instruct a dataset to use a separate metadata instance with different paths.
                 "controlnet" if not model.requires_conditioning_latents() else -1,
                 # similar to controlnet, latent reference images require us to scan them so we can encode them for newer models.
-                "reference_strict" if not model.requires_conditioning_latents() else -1,
+                "reference_strict",
             ]  # strict kontext conditioning doesn't have its own bucket list.
         ):
             if accelerator.is_local_main_process:
@@ -1189,6 +1189,31 @@ def configure_multi_databackend(
                 source_backend=StateTracker.get_data_backend(
                     backend.get("source_dataset_id", "unknown_source_dataset_id")
                 ),
+                target_backend=init_backend,
+            )
+        elif backend.get("conditioning_type", None) == "reference_strict":
+            # special case where strict conditioning alignment allows us to duplicate metadata from the source dataset.
+            # we'll search for the source dataset by id and copy metadata from it:
+            source_dataset_id = backend.get("source_dataset_id", None)
+            if source_dataset_id is None:
+                # other configuration style where the *source* dataset config has conditioning_data defined
+                for source_backend in data_backend_config:
+                    if (
+                        source_backend.get("conditioning_type", None)
+                        == "reference_strict"
+                        and source_backend.get("id", None) is not None
+                    ):
+                        source_dataset_id = source_backend["id"]
+                        break
+            if source_dataset_id is None:
+                raise ValueError(
+                    "Could not find source dataset for strict conditioning alignment. Please set 'source_dataset_id' in the backend config."
+                )
+            info_log(
+                f"Duplicating metadata for strict conditioning dataset from {source_dataset_id}"
+            )
+            DatasetDuplicator.copy_metadata(
+                source_backend=StateTracker.get_data_backend(source_dataset_id),
                 target_backend=init_backend,
             )
         else:
