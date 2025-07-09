@@ -185,7 +185,7 @@ class TextEmbeddingCache(WebhookMixin):
     def process_write_batch(self, batch):
         """Write a batch of embeddings to the cache."""
         logger.debug(f"Writing {len(batch)} items to disk")
-        logger.debug(f"Batch: {batch}")
+        # logger.debug(f"Batch: {batch}")
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = [
                 executor.submit(self.data_backend.torch_save, *args) for args in batch
