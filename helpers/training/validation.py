@@ -1895,8 +1895,8 @@ class Validation:
                             ):
                                 display_validation_results[idx] = (
                                     self.stitch_benchmark_image(
-                                        validation_image_result=benchmark_image,
-                                        benchmark_image=original_img,
+                                        validation_image_result=original_img,
+                                        benchmark_image=benchmark_image,
                                     )
                                 )
 
