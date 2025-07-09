@@ -577,7 +577,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             "use_captions": self.use_captions,
             "image_path": full_path,
         }
-        if self.source_dataset_id is not None:
+        if self.source_dataset_id is not None and self.caption_strategy is None:
             # we'll retrieve captions from the source dataset.
             training_sample_path = conditioning_sample.training_sample_path(
                 training_dataset_id=self.source_dataset_id
