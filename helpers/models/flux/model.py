@@ -333,8 +333,6 @@ class Flux(ImageModelFoundation):
         if cond is None:
             logger.debug(f"No conditioning latents found :(")
             return batch  # nothing to do
-        if isinstance(cond, (list, tuple)) and len(cond) == 1:
-            cond = cond[0]
 
         packed_cond, cond_ids = build_kontext_inputs(
             cond,
