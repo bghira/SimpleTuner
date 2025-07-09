@@ -550,11 +550,7 @@ class VAECache(WebhookMixin):
             latents_uncached = posterior.sample()
 
             # For video, return just the tensor
-            if latents_uncached.ndim == 5:
-                output_cache_entry = latents_uncached
-            else:
-                # For images or when not returning a dict format
-                output_cache_entry = latents_uncached
+            output_cache_entry = latents_uncached
         elif StateTracker.get_model_family() in ["hunyuan-video", "mochi"]:
             raise Exception(
                 f"{StateTracker.get_model_family()} not supported for VAE Caching yet."
