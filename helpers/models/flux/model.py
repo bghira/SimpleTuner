@@ -187,25 +187,6 @@ class Flux(ImageModelFoundation):
             )
         self._qkv_projections_fused = True
 
-    def unfuse_qkv_projections(self):
-        """
-        Unfuse QKV projections in the model and ControlNet if they were fused.
-        """
-        if not self.config.fuse_qkv_projections or not self._qkv_projections_fused:
-            return
-        self._qkv_projections_fused = False
-
-        if self.model is not None:
-            logger.info("Temporarily unfusing QKV projections in the model..")
-            for module in self.model.modules():
-                if isinstance(module, Attention):
-                    module.fuse_projections(fuse=False)
-            if self.controlnet is not None:
-                logger.info("Tempoarily unfusing QKV projections in the ControlNet..")
-                for module in self.controlnet.modules():
-                    if isinstance(module, Attention):
-                        module.fuse_projections(fuse=False)
-
     def requires_conditioning_latents(self) -> bool:
         # Flux ControlNet requires latent inputs instead of pixels.
         if self.config.controlnet or self.config.control:
