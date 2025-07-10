@@ -110,6 +110,15 @@ class DatasetDuplicator:
                 source_dataset_id,
                 global_config,
             )
+            # if the target cfg has captions defined and we're in conditioning_multidataset_sampling=combined mode, we error out.
+            if (
+                global_config.conditioning_multidataset_sampling == "combined"
+                and target_cfg.get("caption_strategy", None) is not None
+            ):
+                raise ValueError(
+                    f"Conditioning config {target_cfg['id']} has captions defined, but 'conditioning_multidataset_sampling' is set to 'combined'. "
+                    "Please remove captions from the conditioning config or change the sampling mode."
+                )
 
             target_backend_configs.append(target_cfg)
             target_backend_ids.append(target_cfg["id"])
