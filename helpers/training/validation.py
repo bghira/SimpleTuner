@@ -410,7 +410,7 @@ def prepare_validation_prompt_list(args, embed_cache, model):
             # move_text_encoders(embed_cache.text_encoders, "cpu")
             validation_prompts.append(prompt)
             validation_shortnames.append(shortname)
-    if args.validation_prompt is not None:
+    if args.validation_prompt is not None and args.validation_prompt != "None":
         # Use a single prompt for validation.
         # This will add a single prompt to the prompt library, if in use.
         validation_prompts = validation_prompts + [args.validation_prompt]
@@ -1079,15 +1079,21 @@ class Validation:
         skip_execution: bool = False,
     ):
         self._update_state()
-        would_do_intermediary_validation = self.should_perform_intermediary_validation(
-            step, self.validation_prompt_metadata, validation_type
-        ) or (step == 0 and validation_type == "base_model")
-        logger.debug(
-            f"Should evaluate: {would_do_intermediary_validation}, force evaluation: {force_evaluation}, skip execution: {skip_execution}"
+        content = self.validation_prompt_metadata.get("validation_prompts", None)
+        has_validation_prompts = content is not None and len(content) > 0
+        current_step_aligns_with_interval = (
+            self.should_perform_intermediary_validation(
+                step, self.validation_prompt_metadata, validation_type
+            )
         )
-        if not would_do_intermediary_validation and not force_evaluation:
+        is_base_model_benchmark = (step == 0 and validation_type == "base_model")
+        current_validation_will_execute = has_validation_prompts and (current_step_aligns_with_interval or is_base_model_benchmark)
+        logger.debug(
+            f"Should evaluate: {current_validation_will_execute}, force evaluation: {force_evaluation}, skip execution: {skip_execution}"
+        )
+        if (not current_validation_will_execute and not force_evaluation) or not has_validation_prompts:
             return self
-        if would_do_intermediary_validation and validation_type == "final":
+        if current_validation_will_execute and validation_type == "final":
             # If the validation would have fired off, we'll skip it.
             # This is useful at the end of training so we don't validate 2x.
             logger.debug(
@@ -1123,6 +1129,10 @@ class Validation:
     def should_perform_intermediary_validation(
         self, step, validation_prompts, validation_type
     ):
+        if validation_prompts is None or (
+            isinstance(validation_prompts, list) and len(validation_prompts) == 0
+        ):
+            return False
         should_do_intermediary_validation = (
             validation_prompts
             and self.global_step % self.config.validation_steps == 0
