@@ -48,42 +48,40 @@ def prepare_sample(
         image_path=filepath,
         model=model,
     )
-    is_cond = data_backend_id in StateTracker.get_conditioning_mappings().values()
+    # python will raise an error here if any cond_datasets are set to back multiple train_datasets
+    # this would be a problem since we wouldn't know how to prepare our sample
+    cond_mapping = {y: x for (x, y) in StateTracker.get_conditioning_mappings()}
 
-    if is_cond:
-        # On-demand VAE caching for conditioning inputs can get complicated.
-        if data_backend_id in StateTracker.get_conditioning_mappings().values():
-            conditioning_sample_path = training_sample.image_path()
-            # locate the partner backend id
-            for train_id, cond_id in StateTracker.get_conditioning_mappings().items():
-                if cond_id == data_backend_id:
-                    # We found a conditioning dataset.
-                    train_data_backend = StateTracker.get_data_backend(train_id)
-                    train_sample_path = training_sample.training_sample_path(
-                        training_dataset_id=train_id
-                    )
-                    cond_meta = StateTracker.get_metadata_by_filepath(
-                        conditioning_sample_path, data_backend_id=cond_id
-                    )
-                    if not cond_meta:
-                        train_meta = train_data_backend[
-                            "metadata_backend"
-                        ].get_metadata_by_filepath(train_sample_path)
-                        prepared_sample = training_sample.prepare_like(
-                            TrainingSample(
-                                image=None,
-                                data_backend_id=train_id,
-                                image_metadata=train_meta,
-                                image_path=train_sample_path,
-                                model=model,
-                            )
-                        )
-                    else:
-                        # prepare the sample independently of the training sample,
-                        # since the metadata scan built an element for this.
-                        # a metadata object will exist for conditioning samples that
-                        # have their dataset configured to operate somewhat independently.
-                        prepared_sample = training_sample.prepare()
+    if data_backend_id in cond_mapping:
+        conditioning_sample_path = training_sample.image_path()
+        # locate the partner backend id
+        train_id = cond_mapping[data_backend_id]
+        train_data_backend = StateTracker.get_data_backend(train_id)
+        train_sample_path = training_sample.training_sample_path(
+            training_dataset_id=train_id
+        )
+        cond_meta = StateTracker.get_metadata_by_filepath(
+            conditioning_sample_path, data_backend_id=data_backend_id
+        )
+        if not cond_meta:
+            train_meta = train_data_backend[
+                "metadata_backend"
+            ].get_metadata_by_filepath(train_sample_path)
+            prepared_sample = training_sample.prepare_like(
+                TrainingSample(
+                    image=None,
+                    data_backend_id=train_id,
+                    image_metadata=train_meta,
+                    image_path=train_sample_path,
+                    model=model,
+                )
+            )
+        else:
+            # prepare the sample independently of the training sample,
+            # since the metadata scan built an element for this.
+            # a metadata object will exist for conditioning samples that
+            # have their dataset configured to operate somewhat independently.
+            prepared_sample = training_sample.prepare()
     else:
         # If this VAECache is attached to a *training* dataset, we prepare the
         # sample for training, which includes cropping and resizing.

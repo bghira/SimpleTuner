@@ -414,6 +414,18 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--conditioning_multidataset_sampling",
+        type=str,
+        default="random",
+        choices=["combined", "random"],
+        help=(
+            "How to sample from multiple conditioning datasets:\n"
+            "- 'combined': Use all conditioning images from all datasets, increases VRAM requirements a lot.\n"
+            "- 'random': Randomly select one conditioning dataset per training sample (default)\n"
+            "Random mode uses deterministic selection based on image path and epoch."
+        ),
+    )
+    parser.add_argument(
         "--control",
         action="store_true",
         default=False,

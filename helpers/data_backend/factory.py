@@ -524,7 +524,7 @@ def synchronize_conditioning_settings():
     for (
         main_dataset_id,
         conditioning_dataset_id,
-    ) in StateTracker.get_conditioning_mappings().items():
+    ) in StateTracker.get_conditioning_mappings():
         main_config = StateTracker.get_data_backend_config(main_dataset_id)
         conditioning_config = StateTracker.get_data_backend_config(
             conditioning_dataset_id
@@ -1754,17 +1754,18 @@ def configure_multi_databackend(
         ):
             info_log(f"Skipping disabled data backend {backend['id']} in config file.")
             continue
-        if "conditioning_data" in backend and backend[
-            "conditioning_data"
-        ] not in StateTracker.get_data_backends(_type="conditioning"):
-            raise ValueError(
-                f"Conditioning data backend {backend['conditioning_data']} not found in data backend list: {StateTracker.get_data_backends(_type='conditionin')}."
-            )
-        if "conditioning_data" in backend:
+        backend_conditionings = backend.get("conditioning_data", [])
+        if isinstance(backend_conditionings, str):
+            backend_conditionings = [backend_conditionings]
+        for x in backend_conditionings:
+            if x not in StateTracker.get_data_backends(_type="conditioning"):
+                raise ValueError(
+                    f"Conditioning data backend {x} not found in data backend list: {StateTracker.get_data_backends(_type='conditioning')}."
+                )
+
+        if backend_conditionings:
             has_conditioning_dataset = True
-            StateTracker.set_conditioning_dataset(
-                backend["id"], backend["conditioning_data"]
-            )
+            StateTracker.set_conditioning_datasets(backend["id"], backend_conditionings)
             info_log(
                 f"Successfully configured conditioning image dataset for {backend['id']}"
             )

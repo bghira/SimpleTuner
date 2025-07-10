@@ -237,7 +237,7 @@ def retrieve_validation_images():
     return validation_set
 
 
-def retrieve_validation_edit_images() -> list[tuple[str, str, Image.Image]]:
+def retrieve_validation_edit_images() -> list[tuple[str, str, list[Image.Image]]]:
     """
     Returns [(shortname, *edited-scene caption*, reference_image), ...]
     for models that need **edit** validation.
@@ -281,17 +281,10 @@ def retrieve_validation_edit_images() -> list[tuple[str, str, Image.Image]]:
             continue
 
         # each backend should know which conditioning dataset is linked to it
-        cond_backend = backend.get("conditioning_data")
-        cond_backend_id = cond_backend.get("id") if cond_backend else None
-        if cond_backend_id is None:
+        cond_backends = StateTracker.get_conditioning_datasets(backend_id)
+        if not cond_backends:
             logger.debug("No conditioning backend configured for this image dataset.")
             continue
-
-        logger.debug(f"Backend id: {backend_id}, cond_backend_id: {cond_backend_id}")
-        cond_backend = StateTracker.get_data_backend(cond_backend_id)
-        if cond_backend is None:
-            logger.debug(f"Conditioning backend {cond_backend_id} not found.")
-            continue  # mis-configuration → skip
 
         # deterministic slice for validation
         for sample in sampler.retrieve_validation_set(batch_size=args.num_eval_images):
@@ -315,24 +308,23 @@ def retrieve_validation_edit_images() -> list[tuple[str, str, Image.Image]]:
                     rel_path = rel_path.lstrip("/")
                     logger.debug(f"Removed prefix, got relative path: {rel_path}")
                 logger.debug(f"Metadata: {meta}")
-            except Exception as e:
+            except Exception:
                 continue  # metadata missing → skip
 
-            conditioning_dir_prefix = cond_backend[
-                "sampler"
-            ].metadata_backend.instance_data_dir
-            cond_sample_path = os.path.join(conditioning_dir_prefix, rel_path)
-            cond_sample = cond_backend["sampler"].get_conditioning_sample(rel_path)
+            reference_imgs = []
+            for cond_backend in cond_backends:
+                cond_sample = cond_backend["sampler"].get_conditioning_sample(rel_path)
 
-            if cond_sample is None:
+                if cond_sample is None:
+                    continue
+
+                reference_imgs.append(cond_sample.image)
+            if len(reference_imgs) != len(cond_backends):
                 logger.warning(
-                    f"Conditioning sample for {rel_path} not found in {cond_backend_id}."
+                    f"Didn't find enough conditioning samples for {rel_path}."
                 )
                 continue
-
-            reference_img = cond_sample.image
-            logger.debug(f"Validation sample path: {cond_sample_path}")
-            validation_set.append((shortname, edited_prompt, reference_img))
+            validation_set.append((shortname, edited_prompt, reference_imgs))
 
     logger.info(f"Collected {len(validation_set)} edit-validation samples.")
     return validation_set
@@ -1271,7 +1263,13 @@ class Validation:
             position=1,
         ):
             validation_input_image = None
-            if len(prompt) == 3 and isinstance(prompt[2], Image.Image):
+            if len(prompt) == 3 and isinstance(prompt[2], list):
+                # list of conditioning inputs
+                shortname, prompt, validation_input_image = prompt
+                if len(validation_input_image) == 1:
+                    # for simplicity, we'll assume pipelines appreciate singletons.
+                    validation_input_image = validation_input_image[0]
+            elif len(prompt) == 3 and isinstance(prompt[2], Image.Image):
                 # DeepFloyd stage II inputs.
                 shortname, prompt, validation_input_image = prompt
             elif len(prompt) == 4 and isinstance(prompt[3], Image.Image):
@@ -1484,6 +1482,37 @@ class Validation:
         if validation_input_image is None:
             return validation_image_result
 
+        # Handle list of input images (for multi-input reference models)
+        if isinstance(validation_input_image, list):
+            # Create a composite image from the list - stack them horizontally
+            total_height = max(img.size[1] for img in validation_input_image)
+            total_width = sum(
+                img.size[0] for img in validation_input_image
+            ) + separator_width * (len(validation_input_image) - 1)
+
+            composite_input = Image.new(
+                "RGB", (total_width, total_height), color="white"
+            )
+            x_offset = 0
+            for i, img in enumerate(validation_input_image):
+                # Center each image vertically if needed
+                y_offset = (total_height - img.size[1]) // 2
+                composite_input.paste(img, (x_offset, y_offset))
+                x_offset += img.size[0]
+
+                # Add separator between images (except after last one)
+                if i < len(validation_input_image) - 1:
+                    draw = ImageDraw.Draw(composite_input)
+                    for j in range(separator_width):
+                        draw.line(
+                            [(x_offset + j, 0), (x_offset + j, total_height)],
+                            fill=(200, 200, 200),
+                        )
+                    x_offset += separator_width
+
+            validation_input_image = composite_input
+            labels[0] = "inputs" if labels[0] == "input" else labels[0]  # Pluralize
+
         input_width, input_height = validation_input_image.size
         output_width, output_height = validation_image_result.size
 
@@ -1617,9 +1646,16 @@ class Validation:
                             validation_resolution
                         )
                     else:
-                        validation_resolution_width, validation_resolution_height = (
-                            extra_validation_kwargs["image"].size
-                        )
+                        if isinstance(extra_validation_kwargs["image"], list):
+                            (
+                                validation_resolution_width,
+                                validation_resolution_height,
+                            ) = resolution
+                        else:
+                            (
+                                validation_resolution_width,
+                                validation_resolution_height,
+                            ) = extra_validation_kwargs["image"].size
                 else:
                     raise ValueError(
                         "Validation input images are not supported for this model type."

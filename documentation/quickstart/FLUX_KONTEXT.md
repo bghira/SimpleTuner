@@ -17,7 +17,9 @@
 | Typical 1024 px inference time<br>(4090 @ CFG 1)  | ≈ 20 s                  | **≈ 80 s**                                  |
 | VRAM for 1024 px LoRA @ int8‑quanto               | 18 G                   | **24 G**                                    |
 
-Kontext keeps the Flux transformer backbone but introduces **paired‑reference conditioning**.  Two operating modes exist:
+Kontext keeps the Flux transformer backbone but introduces **paired‑reference conditioning**.
+
+Two operating modes exist:
 
 * `reference_loose` (✅ stable, default) – reference can differ in aspect‐ratio/size from the edit.
   - Currently, the only (truly) supported mode. Images are scanned for metadata, aspect bucketed, and cropped independently of each other.
@@ -47,16 +49,17 @@ Below is the *smallest* set of changes you need in `config/config.json` compared
 ```jsonc
 {
   "model_family":   "flux",
-  "model_flavour": "kontext",               // <‑‑ change
-  "base_model_precision": "int8-quanto",    // fits on 24 G at 1024 px
+  "model_flavour": "kontext",                       // <‑‑ change this from "dev" to "kontext"
+  "base_model_precision": "int8-quanto",            // fits on 24 G at 1024 px
   "gradient_checkpointing": true,
-  "fuse_qkv_projections": false,            // <‑‑ use this to speed up training on Hopper H100/H200 systems. WARNING: requires flash-attn manually installed.
+  "fuse_qkv_projections": false,                    // <‑‑ use this to speed up training on Hopper H100/H200 systems. WARNING: requires flash-attn manually installed.
   "lora_rank": 16,
   "learning_rate": 1e-5,
-  "optimizer": "optimi-lion",               // <‑‑ use Lion for faster results, and adamw_bf16 for slower but possibly more stable results.
+  "optimizer": "optimi-lion",                       // <‑‑ use Lion for faster results, and adamw_bf16 for slower but possibly more stable results.
   "max_train_steps": 10000,
-  "validation_guidance": 2.5,               // <‑‑ kontext really does best with a guidance value of 2.5
-  "validation_resolution": "1024x1024"
+  "validation_guidance": 2.5,                       // <‑‑ kontext really does best with a guidance value of 2.5
+  "validation_resolution": "1024x1024",
+  "conditioning_multidataset_sampling": "random"    // <-- setting this to "combined" when you have two conditioning datasets defined will show them simultaneously instead of switching between them.
 }
 ```
 
@@ -69,20 +72,25 @@ The `conditioning_data` field in the edit dataset should point to the reference 
 ```jsonc
 [
   {
-    "id": "edited-images",
+    "id": "my-edited-images",
     "type": "local",
     "instance_data_dir": "/path/to/datasets/edited-images",     // <-- use absolute paths
-    "conditioning_data": "reference-images",                    // <‑‑ this should be your "id" of the reference set
+    "conditioning_data": [
+      "my-reference-images"                                        // <‑‑ this should be your "id" of the reference set
+                                                                // you could specify a second set to alternate between or combine them, e.g. ["reference-images", "reference-images2"]
+    ],
     "resolution": 1024,
     "caption_strategy": "textfile"                              // <-- these captions should contain the edit instructions
   },
   {
-    "id": "reference-images",
+    "id": "my-reference-images",
     "type": "local",
     "instance_data_dir": "/path/to/datasets/reference-images",  // <-- use absolute paths
     "conditioning_type": "reference_strict",                    // <‑‑ if this is set to reference_loose, the images are cropped independently of the edit images
     "resolution": 1024,
     "caption_strategy": null,                                   // <‑‑ no captions needed for references, but if available, will be used INSTEAD of the edit captions
+                                                                // NOTE: you cannot define separate conditioning captions when using conditioning_multidataset_sampling=combined.
+                                                                // Only the edit datasets' captions will be used.
   }
 ]
 ```
@@ -136,6 +144,8 @@ This configuration will:
 2. Use the originals as reference images
 3. Train Kontext to enhance/deblur based on the reference
 
+> **NOTE**: You can't define `captions` on a conditioning dataset when using `conditioning_multidataset_sampling=combined`. The edit dataset's captions will be used instead.
+
 #### Example: JPEG Artifact Removal
 
 ```jsonc
@@ -187,6 +197,7 @@ For more conditioning types and advanced configurations, see the [ControlNet doc
 4. **You can train it without reference images, but not currently via SimpleTuner.**  Currently, things are somewhat hardcoded toward requiring conditional images to be supplied, but you can provide normal datasets alongside your edit pairs to allow it to learn subjects and likeness.
 5. **Guidance re‑distillation.**  Like Flux‑dev, Kontext‑dev is CFG‑distilled; if you need diversity, retrain with `validation_guidance_real > 1` and use an Adaptive‑Guidance node at inference, though this will take a LOT longer to converge, and will require a large rank LoRA or a Lycoris LoKr to succeed.
 6. **Full-rank training is probably a waste of time.** Kontext is designed to be trained with low rank, and full rank training will likely not yield any better results than a Lycoris LoKr, which will typically outperform a Standard LoRA with less work chasing the best parameters.  If you want to try it anyway, you'll have to use DeepSpeed.
+7. **You can use two or more reference images for training.** As an example, if you have subject-subject-scene images for inserting the two subjects into a single scene, you can provide all relevant images as reference inputs. Simply ensure the filenames all match across folders.
 
 ---
 
