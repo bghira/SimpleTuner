@@ -437,7 +437,9 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--init_lora INIT_LORA] [--lora_rank LORA_RANK]
                 [--lora_alpha LORA_ALPHA] [--lora_dropout LORA_DROPOUT]
                 [--lycoris_config LYCORIS_CONFIG]
-                [--init_lokr_norm INIT_LOKR_NORM] [--control] [--controlnet]
+                [--init_lokr_norm INIT_LOKR_NORM]
+                [--conditioning_multidataset_sampling {combined,random}]
+                [--control] [--controlnet]
                 [--controlnet_custom_config CONTROLNET_CUSTOM_CONFIG]
                 [--controlnet_model_name_or_path CONTROLNET_MODEL_NAME_OR_PATH]
                 [--pretrained_model_name_or_path PRETRAINED_MODEL_NAME_OR_PATH]
@@ -819,6 +821,13 @@ options:
                         Setting this turns on perturbed normal initialization
                         of the LyCORIS LoKr PEFT layers. A good value is
                         between 1e-4 and 1e-2.
+  --conditioning_multidataset_sampling {combined,random}
+                        How to sample from multiple conditioning datasets: -
+                        'combined': Use all conditioning images from all
+                        datasets, increases VRAM requirements a lot. -
+                        'random': Randomly select one conditioning dataset per
+                        training sample (default) Random mode uses
+                        deterministic selection based on image path and epoch.
   --control             If set, channel-wise control style training will be
                         used, where a conditioning input image is required
                         alongside the training data.
