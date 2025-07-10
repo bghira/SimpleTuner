@@ -1482,6 +1482,37 @@ class Validation:
         if validation_input_image is None:
             return validation_image_result
 
+        # Handle list of input images (for multi-input reference models)
+        if isinstance(validation_input_image, list):
+            # Create a composite image from the list - stack them horizontally
+            total_height = max(img.size[1] for img in validation_input_image)
+            total_width = sum(
+                img.size[0] for img in validation_input_image
+            ) + separator_width * (len(validation_input_image) - 1)
+
+            composite_input = Image.new(
+                "RGB", (total_width, total_height), color="white"
+            )
+            x_offset = 0
+            for i, img in enumerate(validation_input_image):
+                # Center each image vertically if needed
+                y_offset = (total_height - img.size[1]) // 2
+                composite_input.paste(img, (x_offset, y_offset))
+                x_offset += img.size[0]
+
+                # Add separator between images (except after last one)
+                if i < len(validation_input_image) - 1:
+                    draw = ImageDraw.Draw(composite_input)
+                    for j in range(separator_width):
+                        draw.line(
+                            [(x_offset + j, 0), (x_offset + j, total_height)],
+                            fill=(200, 200, 200),
+                        )
+                    x_offset += separator_width
+
+            validation_input_image = composite_input
+            labels[0] = "inputs" if labels[0] == "input" else labels[0]  # Pluralize
+
         input_width, input_height = validation_input_image.size
         output_width, output_height = validation_image_result.size
 
@@ -1615,9 +1646,16 @@ class Validation:
                             validation_resolution
                         )
                     else:
-                        validation_resolution_width, validation_resolution_height = (
-                            extra_validation_kwargs["image"].size
-                        )
+                        if isinstance(extra_validation_kwargs["image"], list):
+                            (
+                                validation_resolution_width,
+                                validation_resolution_height,
+                            ) = resolution
+                        else:
+                            (
+                                validation_resolution_width,
+                                validation_resolution_height,
+                            ) = extra_validation_kwargs["image"].size
                 else:
                     raise ValueError(
                         "Validation input images are not supported for this model type."
