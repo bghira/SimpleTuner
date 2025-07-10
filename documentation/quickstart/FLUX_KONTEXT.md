@@ -140,9 +140,9 @@ If you don't have pre-existing reference-edit pairs, SimpleTuner can automatical
 ```
 
 This configuration will:
-1. Take your high-quality sharp images and create blurred versions (these become the "edit" images)
-2. Use the originals as reference images
-3. Train Kontext to enhance/deblur based on the reference
+1. Take your high-quality sharp images and create blurred versions (these become the "reference" images)
+2. Use the originals as target edit images
+3. Train Kontext to enhance/deblur based on the reference image's output matching the target edit image
 
 > **NOTE**: You can't define `captions` on a conditioning dataset when using `conditioning_multidataset_sampling=combined`. The edit dataset's captions will be used instead.
 
