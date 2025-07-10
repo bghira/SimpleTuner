@@ -474,13 +474,13 @@ def collate_fn(batch):
     conditioning_latents = None
 
 
+    # get multiple backend ids
+    data_backend = StateTracker.get_data_backend(data_backend_id)
     conditioning_backends = data_backend.get("conditioning_data", [])
     if len(conditioning_examples) > 0:
         # check the # of conditioning backends
         logger.debug(f"Found {len(conditioning_examples)} conditioning examples.")
 
-        # get multiple backend ids
-        data_backend = StateTracker.get_data_backend(data_backend_id)
 
         if len(conditioning_examples) != len(examples) * len(conditioning_backends):
             raise ValueError(
