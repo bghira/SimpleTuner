@@ -96,7 +96,7 @@ def build_kontext_inputs(
             cond_latents = cond_latents[0]
         else:
             cond_latents = torch.stack(cond_latents, dim=0)
-    if len(cond_latents.shape) == 3 and cond_latents.shape[0] == 16:
+    if len(cond_latents.shape) == 3 and cond_latents.shape[0] == latent_channels:
         # This is a single patch, expand to batch size 1
         cond_latents = cond_latents.unsqueeze(0)
     packed_cond = []
