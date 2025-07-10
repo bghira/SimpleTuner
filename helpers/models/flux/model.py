@@ -338,9 +338,7 @@ class Flux(ImageModelFoundation):
             logger.debug(f"No conditioning latents found :(")
             return batch  # nothing to do
         # Check sampling mode
-        sampling_mode = getattr(
-            state.get("args", {}), "conditioning_multidataset_sampling", "combined"
-        )
+        sampling_mode = state.get("args", {}).get("conditioning_multidataset_sampling", "random")
 
         if sampling_mode == "random" and isinstance(cond, list) and len(cond) == 1:
             # Random mode should have selected just one
