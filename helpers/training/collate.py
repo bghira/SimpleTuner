@@ -504,8 +504,8 @@ def collate_fn(batch):
 
         assert model is not None
         if model.requires_conditioning_dataset():
+            conditioning_latents = []
             if model.requires_conditioning_latents():
-                conditioning_latents = []
                 # Kontext / other latent-conditioned models / adapters
                 debug_log("Compute conditioning latents")
                 conditioning_latents = compute_latents(
