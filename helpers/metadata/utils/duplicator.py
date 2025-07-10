@@ -55,7 +55,6 @@ class DatasetDuplicator:
                 target_meta.aspect_ratio_bucket_indices[bucket] = updated_paths
 
             # Copy other metadata
-            target_meta.config = source_meta.config.copy()
             if hasattr(source_meta, "image_metadata") and source_meta.image_metadata:
                 target_meta.image_metadata = {}
                 for path, metadata in source_meta.image_metadata.items():
