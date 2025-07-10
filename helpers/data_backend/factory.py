@@ -1356,6 +1356,8 @@ def configure_multi_databackend(
             "target_downsample_size",
             "parquet",
             "video",
+            "conditioning_data",
+            "conditioning",
         ]
         # we will set the latest version by default.
         current_config_version = latest_config_version()
