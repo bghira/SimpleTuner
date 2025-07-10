@@ -34,7 +34,17 @@ class Auraflow(ImageModelFoundation):
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 4
     # The safe diffusers default value for LoRA training targets.
-    DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
+    DEFAULT_LORA_TARGET = [
+        "to_k",
+        "to_q",
+        "to_v",
+        # "to_out.0",
+        # "add_q_proj",
+        # "add_k_proj",
+        # "add_v_proj",
+        # "to_add_out",
+        # "to_qkv",
+    ]
     # Only training the Attention blocks by default seems to help more since this model is relatively unstable.
     DEFAULT_LYCORIS_TARGET = ["Attention"]
 
