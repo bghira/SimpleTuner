@@ -114,7 +114,7 @@ class S3DataBackend(BaseDataBackend):
             raise ValueError(
                 f"Expected backend_type 'aws', got {representation.get('backend_type')}"
             )
-        
+
         # Extract parameters from representation
         return S3DataBackend(
             id=representation["id"],

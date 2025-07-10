@@ -1081,17 +1081,19 @@ class Validation:
         self._update_state()
         content = self.validation_prompt_metadata.get("validation_prompts", None)
         has_validation_prompts = content is not None and len(content) > 0
-        current_step_aligns_with_interval = (
-            self.should_perform_intermediary_validation(
-                step, self.validation_prompt_metadata, validation_type
-            )
+        current_step_aligns_with_interval = self.should_perform_intermediary_validation(
+            step, self.validation_prompt_metadata, validation_type
         )
-        is_base_model_benchmark = (step == 0 and validation_type == "base_model")
-        current_validation_will_execute = has_validation_prompts and (current_step_aligns_with_interval or is_base_model_benchmark)
+        is_base_model_benchmark = step == 0 and validation_type == "base_model"
+        current_validation_will_execute = has_validation_prompts and (
+            current_step_aligns_with_interval or is_base_model_benchmark
+        )
         logger.debug(
             f"Should evaluate: {current_validation_will_execute}, force evaluation: {force_evaluation}, skip execution: {skip_execution}"
         )
-        if (not current_validation_will_execute and not force_evaluation) or not has_validation_prompts:
+        if (
+            not current_validation_will_execute and not force_evaluation
+        ) or not has_validation_prompts:
             return self
         if current_validation_will_execute and validation_type == "final":
             # If the validation would have fired off, we'll skip it.
