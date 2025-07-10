@@ -745,16 +745,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 f"datasets: {len(conditioning_datasets)})"
             )
 
-        # Log summary for debugging (only early in training to avoid spam)
-        if (
-            len(conditioning_datasets) > 1
-            and len(self.metadata_backend.seen_images) < 10
-        ):
-            self.logger.info(
-                f"Connected {actual_conditioning_count} conditioning samples using '{sampling_mode}' mode "
-                f"from {len(conditioning_datasets)} datasets for {len(samples)} training samples"
-            )
-
         return tuple(outputs)
 
     def __iter__(self):
