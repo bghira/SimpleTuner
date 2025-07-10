@@ -605,7 +605,10 @@ class FluxSingleFusedSDPAProcessor:
 
         # Split and reshape in one go
         qkv = qkv.view(batch_size, seq_len, 3, attn.heads, head_dim)
-        query, key, value = qkv.permute(2, 0, 3, 1, 4).unbind(0)
+        qkv = qkv.permute(2, 0, 3, 1, 4)  # (3, B, H, L, D) – still strided
+        query, key, value = [
+            t.contiguous() for t in qkv.unbind(0)  # make each view dense
+        ]
         # Now each is (batch, heads, seq_len, head_dim)
 
         # Apply norms if needed
