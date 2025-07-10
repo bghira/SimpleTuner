@@ -10,11 +10,13 @@ class DatasetDuplicator:
     @staticmethod
     def copy_metadata(source_backend, target_backend):
         """Copy metadata from source backend to target backend with path updates."""
-        source_meta = source_backend.get("metadata_backend")
-        target_meta = target_backend.get("metadata_backend")
+        source_meta = source_backend.get("metadata_backend", None)
+        target_meta = target_backend.get("metadata_backend", None)
 
-        if not (source_meta and target_meta):
-            raise ValueError("Both backends must have metadata_backend defined.")
+        if source_meta is None or target_meta is None:
+            raise ValueError(
+                f"Both backends must have metadata_backend defined. Received {source_meta} \n\n {target_meta}"
+            )
 
         logger.info("Reloading metadata caches...")
         source_meta.reload_cache(set_config=False)
@@ -114,8 +116,8 @@ class DatasetDuplicator:
 
         # Remove the conditioning config from the source backend config
         source_backend_config.pop("conditioning", None)
-        # Link first conditioning dataset to source (current limitation)
-        source_backend_config["conditioning_data"] = target_backend_ids[0]
+        # Link all conditioning datasets to source
+        source_backend_config["conditioning_data"] = target_backend_ids
 
         return source_backend_config, target_backend_configs
 
