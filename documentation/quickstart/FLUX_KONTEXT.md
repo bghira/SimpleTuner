@@ -154,7 +154,6 @@ This configuration will:
     "id": "pristine-images",
     "type": "local",
     "instance_data_dir": "/path/to/pristine-images",
-    "conditioning_data": "pristine-images_conditioning_jpeg_artifacts",
     "resolution": 1024,
     "caption_strategy": "textfile",
     "conditioning": [
