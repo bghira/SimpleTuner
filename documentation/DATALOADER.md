@@ -81,8 +81,9 @@ Here is the most basic example of a dataloader configuration file, as `multidata
 
 ### `conditioning_data`
 
-- **Values:** `id` value of conditioning dataset
+- **Values:** `id` value of conditioning dataset or an array of `id` values
 - **Description:** As described in [the ControlNet guide](/documentation/CONTROLNET.md), an `image` dataset can be paired to its ControlNet or image mask data via this option.
+- **Note:** If you have multiple conditioning datasets, you can specify them as an array of `id` values. When training Flux Kontext, this allows switching between conditions randomly or stitching inputs together to train in more advanced multi-image compositing tasks.
 
 ### `instance_data_dir` / `aws_data_prefix`
 
