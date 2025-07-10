@@ -38,12 +38,12 @@ class Auraflow(ImageModelFoundation):
         "to_k",
         "to_q",
         "to_v",
-        # "to_out.0",
-        # "add_q_proj",
-        # "add_k_proj",
-        # "add_v_proj",
-        # "to_add_out",
-        # "to_qkv",
+        "to_out.0",
+        "add_q_proj",
+        "add_k_proj",
+        "add_v_proj",
+        "to_add_out",
+        "to_qkv",
     ]
     # Only training the Attention blocks by default seems to help more since this model is relatively unstable.
     DEFAULT_LYCORIS_TARGET = ["Attention"]
@@ -156,6 +156,12 @@ class Auraflow(ImageModelFoundation):
                 f"Input latent height and width must be divisible by patch_size ({self.unwrap_model().config.patch_size})."
                 f" Got height={height}, width={width}."
             )
+        timesteps = (
+            prepared_batch["timesteps"].to(
+                device=self.accelerator.device, dtype=self.config.weight_dtype
+            )
+            / 1000.0
+        )  # Normalize to [0, 1]
 
         model_output = self.model(
             prepared_batch["noisy_latents"].to(
@@ -166,33 +172,9 @@ class Auraflow(ImageModelFoundation):
                 device=self.accelerator.device,
                 dtype=self.config.base_weight_dtype,
             ),
-            timestep=prepared_batch["timesteps"],
+            timestep=timesteps,
             return_dict=True,
         ).sample
-
-        # unpatchify model_output
-        height = height // self.unwrap_model().config.patch_size
-        width = width // self.unwrap_model().config.patch_size
-
-        model_output = model_output.reshape(
-            shape=(
-                model_output.shape[0],
-                height,
-                width,
-                self.unwrap_model().config.patch_size,
-                self.unwrap_model().config.patch_size,
-                self.unwrap_model().config.out_channels,
-            )
-        )
-        model_output = torch.einsum("nhwpqc->nchpwq", model_output)
-        model_output = model_output.reshape(
-            shape=(
-                model_output.shape[0],
-                self.unwrap_model().config.out_channels,
-                height * self.unwrap_model().config.patch_size,
-                width * self.unwrap_model().config.patch_size,
-            )
-        )
 
         return {"model_prediction": model_output}
 
@@ -357,7 +339,6 @@ class Auraflow(ImageModelFoundation):
         # Get conditioning scale (default to 1.0 if not specified)
         conditioning_scale = getattr(self.config, "controlnet_conditioning_scale", 1.0)
 
-        # Prepare timesteps - AuraFlow uses values between 0 and 1
         timesteps = (
             prepared_batch["timesteps"].to(
                 device=self.accelerator.device, dtype=self.config.weight_dtype
