@@ -47,16 +47,17 @@ Below is the *smallest* set of changes you need in `config/config.json` compared
 ```jsonc
 {
   "model_family":   "flux",
-  "model_flavour": "kontext",               // <‑‑ change
-  "base_model_precision": "int8-quanto",    // fits on 24 G at 1024 px
+  "model_flavour": "kontext",                       // <‑‑ change
+  "base_model_precision": "int8-quanto",            // fits on 24 G at 1024 px
   "gradient_checkpointing": true,
-  "fuse_qkv_projections": false,            // <‑‑ use this to speed up training on Hopper H100/H200 systems. WARNING: requires flash-attn manually installed.
+  "fuse_qkv_projections": false,                    // <‑‑ use this to speed up training on Hopper H100/H200 systems. WARNING: requires flash-attn manually installed.
   "lora_rank": 16,
   "learning_rate": 1e-5,
-  "optimizer": "optimi-lion",               // <‑‑ use Lion for faster results, and adamw_bf16 for slower but possibly more stable results.
+  "optimizer": "optimi-lion",                       // <‑‑ use Lion for faster results, and adamw_bf16 for slower but possibly more stable results.
   "max_train_steps": 10000,
-  "validation_guidance": 2.5,               // <‑‑ kontext really does best with a guidance value of 2.5
-  "validation_resolution": "1024x1024"
+  "validation_guidance": 2.5,                       // <‑‑ kontext really does best with a guidance value of 2.5
+  "validation_resolution": "1024x1024",
+  "conditioning_multidataset_sampling": "random"    // <-- setting this to "combined" when you have two conditioning datasets defined will show them simultaneously instead of switching between them.
 }
 ```
 
@@ -69,20 +70,25 @@ The `conditioning_data` field in the edit dataset should point to the reference 
 ```jsonc
 [
   {
-    "id": "edited-images",
+    "id": "my-edited-images",
     "type": "local",
     "instance_data_dir": "/path/to/datasets/edited-images",     // <-- use absolute paths
-    "conditioning_data": "reference-images",                    // <‑‑ this should be your "id" of the reference set
+    "conditioning_data": [
+      "my-reference-images"                                        // <‑‑ this should be your "id" of the reference set
+                                                                // you could specify a second set to alternate between or combine them, e.g. ["reference-images", "reference-images2"]
+    ],
     "resolution": 1024,
     "caption_strategy": "textfile"                              // <-- these captions should contain the edit instructions
   },
   {
-    "id": "reference-images",
+    "id": "my-reference-images",
     "type": "local",
     "instance_data_dir": "/path/to/datasets/reference-images",  // <-- use absolute paths
     "conditioning_type": "reference_strict",                    // <‑‑ if this is set to reference_loose, the images are cropped independently of the edit images
     "resolution": 1024,
     "caption_strategy": null,                                   // <‑‑ no captions needed for references, but if available, will be used INSTEAD of the edit captions
+                                                                // NOTE: you cannot define separate conditioning captions when using conditioning_multidataset_sampling=combined.
+                                                                // Only the edit datasets' captions will be used.
   }
 ]
 ```
@@ -135,6 +141,8 @@ This configuration will:
 1. Take your high-quality sharp images and create blurred versions (these become the "edit" images)
 2. Use the originals as reference images
 3. Train Kontext to enhance/deblur based on the reference
+
+> **NOTE**: You can't define `captions` on a conditioning dataset when using `conditioning_multidataset_sampling=combined`. The edit dataset's captions will be used instead.
 
 #### Example: JPEG Artifact Removal
 
