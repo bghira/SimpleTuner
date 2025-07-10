@@ -96,9 +96,6 @@ def build_kontext_inputs(
             cond_latents = cond_latents[0]
         else:
             cond_latents = torch.stack(cond_latents, dim=0)
-    if len(cond_latents.shape) == 3 and cond_latents.shape[0] == latent_channels:
-        # This is a single patch, expand to batch size 1
-        cond_latents = cond_latents.unsqueeze(0)
     packed_cond = []
     packed_ids = []
 
@@ -108,6 +105,10 @@ def build_kontext_inputs(
     x0 = 0
     y0 = 0
     for latent in cond_latents:
+        # logger.debug(f"latent shape: {latent.shape}, expected channels: {latent_channels}")
+        if len(latent.shape) == 3 and latent.shape[0] == latent_channels:
+            # This is a single patch, expand to batch size 1
+            latent = latent.unsqueeze(0)
         B, C, H, W = latent.shape  # (C should match latent_channels)
         packed_cond.append(
             pack_latents(latent, B, C, H, W).to(device=device, dtype=dtype)
