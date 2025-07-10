@@ -473,14 +473,12 @@ def collate_fn(batch):
     conditioning_pixel_values = None
     conditioning_latents = None
 
-
     # get multiple backend ids
     data_backend = StateTracker.get_data_backend(data_backend_id)
     conditioning_backends = data_backend.get("conditioning_data", [])
     if len(conditioning_examples) > 0:
         # check the # of conditioning backends
         logger.debug(f"Found {len(conditioning_examples)} conditioning examples.")
-
 
         if len(conditioning_examples) != len(examples) * len(conditioning_backends):
             raise ValueError(
@@ -510,7 +508,7 @@ def collate_fn(batch):
         )
 
         assert model is not None
-        if model.requires_conditioning_dataset():
+        if conditioning_type is not None or model.requires_conditioning_dataset():
             conditioning_latents = []
             if model.requires_conditioning_latents():
                 # Kontext / other latent-conditioned models / adapters

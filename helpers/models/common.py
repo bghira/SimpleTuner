@@ -1068,9 +1068,15 @@ class ModelFoundation(ABC):
 
     def prepare_batch_conditions(self, batch: dict, state: dict) -> dict:
         # it's a list, but most models will expect it to be a length-1 list containing a tensor, which is what they actually want
-        if batch.get("conditioning_pixel_values") is not None:
+        if (
+            isinstance(batch.get("conditioning_pixel_values"), list)
+            and len(batch["conditioning_pixel_values"]) > 0
+        ):
             batch["conditioning_pixel_values"] = batch["conditioning_pixel_values"][0]
-        if batch.get("conditioning_latents") is not None:
+        if (
+            isinstance(batch.get("conditioning_latents"), list)
+            and len(batch["conditioning_latents"]) > 0
+        ):
             batch["conditioning_latents"] = batch["conditioning_latents"][0]
         return batch
 
@@ -1299,6 +1305,7 @@ class ModelFoundation(ABC):
 
         conditioning_type = prepared_batch.get("conditioning_type")
         if conditioning_type == "mask" and apply_conditioning_mask:
+            logger.debug("Applying conditioning mask to loss.")
             mask_image = (
                 prepared_batch["conditioning_pixel_values"]
                 .to(dtype=loss.dtype, device=loss.device)[:, 0]
