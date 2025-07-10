@@ -867,9 +867,7 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
 
             text_inputs = {k: v.to(device) for k, v in text_inputs.items()}
             prompt_embeds = self.text_encoder(**text_inputs)[0]
-            prompt_attention_mask = (
-                text_inputs["attention_mask"].unsqueeze(-1)
-            )
+            prompt_attention_mask = text_inputs["attention_mask"].unsqueeze(-1)
             prompt_embeds = prompt_embeds * prompt_attention_mask
 
         if self.text_encoder is not None:
