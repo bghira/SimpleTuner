@@ -356,13 +356,15 @@ def check_latent_shapes(latents, filepaths, data_backend_id, batch):
     # Check all "aspect_ratio" values and raise error if any differ, with the two differing values:
     first_aspect_ratio = None
     for example in batch:
+        aspect_ratio = None
         if isinstance(example, dict):
             aspect_ratio = example["aspect_ratio"]
         elif isinstance(example, TrainingSample):
-            aspect_ratio = example.aspect_ratio
-        if first_aspect_ratio is None:
+            if hasattr(example, 'aspect_ratio'):
+                aspect_ratio = example.aspect_ratio
+        if first_aspect_ratio is None and aspect_ratio is not None:
             first_aspect_ratio = aspect_ratio
-        if aspect_ratio != first_aspect_ratio:
+        if aspect_ratio is not None and first_aspect_ratio is not None and aspect_ratio != first_aspect_ratio:
             error_msg = f"(id=({data_backend_id}) Aspect ratio mismatch: {aspect_ratio} != {first_aspect_ratio}"
             logger.error(error_msg)
             logger.error(f"Erroneous batch: {batch}")
@@ -508,14 +510,28 @@ def collate_fn(batch):
             if model.requires_conditioning_latents():
                 # Kontext / other latent-conditioned models / adapters
                 debug_log("Compute conditioning latents")
-                conditioning_latents = compute_latents(
-                    conditioning_filepaths,
-                    conditioning_data_backend_id,
-                    model,
-                )
-                debug_log(
-                    f"Conditioning latents computed: {len(conditioning_latents)} items."
-                )
+                for _backend_id, _examples in conditioning_map.items():
+                    _filepaths = [cond_example.image_path(basename_only=False) for cond_example in _examples]
+                    _latents = compute_latents(
+                        _filepaths,
+                        _backend_id,
+                        model,
+                    )
+                    debug_log(
+                        f"Conditioning latents computed: {len(_latents)} items."
+                    )
+
+                    # unpack from dicts (vae-cache style) & shape-check
+                    if isinstance(_latents[0], dict):
+                        _latents = [v["latents"] for v in _latents]
+
+                    _latents = check_latent_shapes(
+                        _latents,
+                        _filepaths,
+                        _backend_id,
+                        _examples,
+                    )
+                    conditioning_latents.append(_latents)
             else:
                 debug_log("Model may require conditioning pixels.")
                 conditioning_pixel_values = []
