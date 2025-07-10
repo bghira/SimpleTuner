@@ -42,6 +42,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         conditioning_type: str = None,
         is_regularisation_data: bool = False,
         dataset_type: str = "image",
+        source_dataset_id: str = None,
     ):
         """
         Initializes the sampler with provided settings.
@@ -92,6 +93,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     f"Unknown conditioning image type: {conditioning_type}"
                 )
         self.data_backend = data_backend
+        self.source_dataset_id = source_dataset_id
         self.current_bucket = None
         self.current_epoch = 1
         self.batch_size = batch_size
@@ -200,15 +202,37 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             )
             training_sample.prepare()
             validation_shortname = f"{self.id}_{img_idx}"
-            validation_prompt = PromptHandler.magic_prompt(
-                sampler_backend_id=self.id,
-                data_backend=self.data_backend,
-                image_path=image_path,
-                caption_strategy=self.caption_strategy,
-                use_captions=self.use_captions,
-                prepend_instance_prompt=self.prepend_instance_prompt,
-                instance_prompt=self.instance_prompt,
-            )
+            # Use the magic prompt handler to retrieve the captions.
+            prompt_kwargs = {
+                "caption_strategy": self.caption_strategy,
+                "instance_prompt": self.instance_prompt,
+                "data_backend": self.data_backend,
+                "sampler_backend_id": self.id,
+                "prepend_instance_prompt": self.prepend_instance_prompt,
+                "use_captions": self.use_captions,
+                "image_path": image_path,
+            }
+            if self.source_dataset_id is not None:
+                # we'll retrieve captions from the source dataset.
+                training_sample_path = training_sample.training_sample_path(
+                    training_dataset_id=self.source_dataset_id
+                )
+                source_dataset: "MultiAspectSampler" = StateTracker.get_data_backend(
+                    self.source_dataset_id
+                )["sampler"]
+                prompt_kwargs.update(
+                    {
+                        "caption_strategy": source_dataset.caption_strategy,
+                        "instance_prompt": source_dataset.instance_prompt,
+                        "data_backend": source_dataset.data_backend,
+                        "sampler_backend_id": source_dataset.id,
+                        "prepend_instance_prompt": source_dataset.prepend_instance_prompt,
+                        "use_captions": source_dataset.use_captions,
+                        "image_path": training_sample_path,
+                    }
+                )
+            self.logger.debug(f"Using prompt kwargs: {prompt_kwargs}")
+            validation_prompt = PromptHandler.magic_prompt(**prompt_kwargs)
             if type(validation_prompt) == list:
                 self.debug_log(
                     f"Selecting random prompt from list: {validation_prompt}"
@@ -510,7 +534,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
     def _clear_batch_accumulator(self):
         self.batch_accumulator = []
 
-    def get_conditioning_sample(self, original_sample_path: str) -> str:
+    def get_conditioning_sample(
+        self, original_sample_path: str
+    ) -> TrainingSample | None:
         """
         Given an original dataset sample path, return a TrainingSample
         """
@@ -526,40 +552,199 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             conditioning_sample_data = self.data_backend.read_image(full_path)
         except Exception as e:
             self.logger.error(f"Could not fetch conditioning sample: {e}")
-
             return None
         if not conditioning_sample_data:
             self.debug_log(f"Could not fetch conditioning sample from {full_path}.")
             return None
 
+        conditioning_sample_metadata = self.metadata_backend.get_metadata_by_filepath(
+            full_path
+        )
         conditioning_sample = TrainingSample(
             image=conditioning_sample_data,
             data_backend_id=self.id,
-            image_metadata=self.metadata_backend.get_metadata_by_filepath(full_path),
+            image_metadata=conditioning_sample_metadata,
             image_path=full_path,
             conditioning_type=self.conditioning_type,
             model=self.model,
         )
+        # Use the magic prompt handler to retrieve the captions.
+        prompt_kwargs = {
+            "caption_strategy": self.caption_strategy,
+            "instance_prompt": self.instance_prompt,
+            "data_backend": self.data_backend,
+            "sampler_backend_id": self.id,
+            "prepend_instance_prompt": self.prepend_instance_prompt,
+            "use_captions": self.use_captions,
+            "image_path": full_path,
+        }
+        if self.source_dataset_id is not None and self.caption_strategy is None:
+            # we'll retrieve captions from the source dataset.
+            training_sample_path = conditioning_sample.training_sample_path(
+                training_dataset_id=self.source_dataset_id
+            )
+            source_dataset: "MultiAspectSampler" = StateTracker.get_data_backend(
+                self.source_dataset_id
+            )["sampler"]
+            prompt_kwargs.update(
+                {
+                    "caption_strategy": source_dataset.caption_strategy,
+                    "instance_prompt": source_dataset.instance_prompt,
+                    "data_backend": source_dataset.data_backend,
+                    "sampler_backend_id": source_dataset.id,
+                    "prepend_instance_prompt": source_dataset.prepend_instance_prompt,
+                    "use_captions": source_dataset.use_captions,
+                    "image_path": training_sample_path,
+                }
+            )
+        self.logger.debug(f"Using prompt kwargs: {prompt_kwargs}")
+        instance_prompt = PromptHandler.magic_prompt(**prompt_kwargs)
+        if type(instance_prompt) == list:
+            instance_prompt = random.choice(instance_prompt)
+            self.debug_log(f"Selecting random prompt from list: {instance_prompt}")
+        conditioning_sample.set_caption(instance_prompt)
+
         return conditioning_sample
 
     def connect_conditioning_samples(self, samples: tuple):
         # Locate the conditioning data
-        conditioning_dataset = StateTracker.get_conditioning_dataset(self.id)
-        if conditioning_dataset is None:
+        conditioning_datasets = StateTracker.get_conditioning_datasets(self.id)
+        if not len(conditioning_datasets):
             return samples
-        sampler = conditioning_dataset["sampler"]
+
+        # Get sampling mode from args
+        sampling_mode = getattr(
+            StateTracker.get_args(), "conditioning_multidataset_sampling", "combined"
+        )
+
+        # Override to combined mode for validation to ensure consistency
+        is_validation = getattr(self, "_is_validation_pass", False)
+        if is_validation and sampling_mode == "random":
+            self.debug_log("Using 'combined' mode for validation consistency")
+            sampling_mode = "combined"
+
         outputs = list(samples)
-        for sample in samples:
-            sample_path = sample["image_path"]
-            if (
-                self.metadata_backend.instance_data_dir is not None
-                and self.metadata_backend.instance_data_dir != ""
-            ):
-                sample_path = sample_path.split(
-                    self.metadata_backend.instance_data_dir
-                )[-1]
-            conditioning_sample = sampler.get_conditioning_sample(sample_path)
-            outputs.append(conditioning_sample)
+
+        if sampling_mode == "random" and len(conditioning_datasets) > 1:
+            # Random mode: select one conditioning dataset per training sample
+            for sample in samples:
+                sample_path: str = sample["image_path"]
+                if (
+                    self.metadata_backend.instance_data_dir is not None
+                    and self.metadata_backend.instance_data_dir != ""
+                ):
+                    sample_path = sample_path.split(
+                        self.metadata_backend.instance_data_dir
+                    )[-1]
+
+                # Deterministic selection based on hash of image path and current epoch
+                # This ensures the same image gets the same conditioning dataset within an epoch
+                # but different datasets across epochs
+                path_hash = hash(f"{sample_path}_{self.current_epoch}")
+                selected_idx = path_hash % len(conditioning_datasets)
+                selected_dataset = conditioning_datasets[selected_idx]
+                sampler = selected_dataset["sampler"]
+
+                self.debug_log(
+                    f"Selected conditioning dataset {selected_dataset['id']} "
+                    f"for sample {sample_path} (epoch {self.current_epoch})"
+                )
+
+                # Get the conditioning sample from the selected dataset
+                conditioning_sample = sampler.get_conditioning_sample(sample_path)
+                if conditioning_sample is not None:
+                    # Tag the sample with which dataset it came from for debugging
+                    conditioning_sample._source_dataset_id = selected_dataset["id"]
+                    outputs.append(conditioning_sample)
+                else:
+                    # Try other datasets if the selected one doesn't have this sample
+                    found = False
+                    for fallback_idx, fallback_dataset in enumerate(
+                        conditioning_datasets
+                    ):
+                        if fallback_idx == selected_idx:
+                            continue  # Skip the one we already tried
+
+                        fallback_sampler = fallback_dataset["sampler"]
+                        conditioning_sample = fallback_sampler.get_conditioning_sample(
+                            sample_path
+                        )
+                        if conditioning_sample is not None:
+                            self.logger.warning(
+                                f"Sample {sample_path} not found in {selected_dataset['id']}, "
+                                f"using fallback from {fallback_dataset['id']}"
+                            )
+                            conditioning_sample._source_dataset_id = fallback_dataset[
+                                "id"
+                            ]
+                            outputs.append(conditioning_sample)
+                            found = True
+                            break
+
+                    if not found:
+                        self.logger.error(
+                            f"Could not find conditioning sample for {sample_path} "
+                            f"in any conditioning dataset"
+                        )
+
+        elif sampling_mode == "combined" or len(conditioning_datasets) == 1:
+            # Combined mode: append conditioning samples from all datasets (current behavior)
+            missing_samples = []
+
+            for dataset in conditioning_datasets:
+                sampler = dataset["sampler"]
+                dataset_samples_added = 0
+
+                for sample in samples:
+                    sample_path: str = sample["image_path"]
+                    if (
+                        self.metadata_backend.instance_data_dir is not None
+                        and self.metadata_backend.instance_data_dir != ""
+                    ):
+                        sample_path = sample_path.split(
+                            self.metadata_backend.instance_data_dir
+                        )[-1]
+
+                    conditioning_sample = sampler.get_conditioning_sample(sample_path)
+                    if conditioning_sample is not None:
+                        # Tag the sample with which dataset it came from
+                        conditioning_sample._source_dataset_id = dataset["id"]
+                        outputs.append(conditioning_sample)
+                        dataset_samples_added += 1
+                    else:
+                        missing_samples.append((sample_path, dataset["id"]))
+
+                self.debug_log(
+                    f"Added {dataset_samples_added}/{len(samples)} conditioning samples "
+                    f"from dataset {dataset['id']}"
+                )
+
+            # Report missing samples in batch if there are any
+            if missing_samples:
+                self.logger.warning(
+                    f"Missing {len(missing_samples)} conditioning samples: "
+                    f"{missing_samples[:3]}{'...' if len(missing_samples) > 3 else ''}"
+                )
+
+        else:
+            raise ValueError(
+                f"Unknown conditioning_multidataset_sampling mode: {sampling_mode}. "
+                "Must be 'random' or 'combined'."
+            )
+
+        # Validate output count
+        expected_conditioning_count = len(samples) * (
+            1 if sampling_mode == "random" else len(conditioning_datasets)
+        )
+        actual_conditioning_count = len(outputs) - len(samples)
+
+        if actual_conditioning_count != expected_conditioning_count:
+            self.logger.warning(
+                f"Expected {expected_conditioning_count} conditioning samples but got "
+                f"{actual_conditioning_count} (mode: {sampling_mode}, "
+                f"datasets: {len(conditioning_datasets)})"
+            )
+
         return tuple(outputs)
 
     def __iter__(self):

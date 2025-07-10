@@ -105,6 +105,67 @@ class MetadataBackend:
     def save_metadata(self):
         raise NotImplementedError
 
+    def clear_metadata(self):
+        """
+        Clear the metadata cache.
+        """
+        self.image_metadata = {}
+        self.image_metadata_loaded = False
+        if self.metadata_file.exists():
+            self.metadata_file.unlink()
+        logger.info(f"({self.id}) Cleared metadata cache.")
+
+    def set_metadata(self, metadata_backend, update_json: bool = True):
+        """
+        Set the metadata for the current instance.
+
+        Args:
+            metadata (dict): The metadata to set.
+            update_json (bool): Whether to update the JSON file.
+        """
+        if not isinstance(metadata_backend, MetadataBackend):
+            raise TypeError(
+                f"Expected MetadataBackend instance, got {type(metadata_backend)}."
+            )
+        self.image_metadata = metadata_backend.get_metadata()
+        self.aspect_ratio_bucket_indices = (
+            metadata_backend.aspect_ratio_bucket_indices.copy()
+        )
+
+        self.image_metadata_loaded = True
+        if update_json:
+            self.save_image_metadata()
+
+    def get_metadata(self):
+        """
+        Get the metadata for the current instance.
+
+        Returns:
+            dict: The metadata.
+        """
+        if not self.image_metadata_loaded:
+            self.load_image_metadata()
+        return self.image_metadata
+
+    def print_debug_info(self):
+        """
+        Print general debug information about the metadata backend.
+        """
+        logger.info(
+            f"\n-> MetadataBackend ID: {self.id}, "
+            f"\n-> Instance Data Dir: {self.instance_data_dir}, "
+            f"\n-> Cache File: {self.cache_file}, "
+            f"\n-> Metadata File: {self.metadata_file}, "
+            f"\n-> Aspect Ratio Buckets: {len(self.aspect_ratio_bucket_indices)}"
+        )
+
+    def set_readonly(self):
+        """
+        Set the metadata backend to read-only mode.
+        """
+        self.read_only = True
+        logger.info(f"MetadataBackend {self.id} is now read-only.")
+
     def _bucket_worker(
         self,
         tqdm_queue,

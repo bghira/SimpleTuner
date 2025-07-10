@@ -267,7 +267,7 @@ class AuraFlowLoraLoaderMixin(LoraBaseMixin):
             "framework": "pytorch",
         }
 
-        state_dict = _fetch_state_dict(
+        state_dict, metadata = _fetch_state_dict(
             pretrained_model_name_or_path_or_dict=pretrained_model_name_or_path_or_dict,
             weight_name=weight_name,
             use_safetensors=use_safetensors,
@@ -867,9 +867,7 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
 
             text_inputs = {k: v.to(device) for k, v in text_inputs.items()}
             prompt_embeds = self.text_encoder(**text_inputs)[0]
-            prompt_attention_mask = (
-                text_inputs["attention_mask"].unsqueeze(-1).expand(prompt_embeds.shape)
-            )
+            prompt_attention_mask = text_inputs["attention_mask"].unsqueeze(-1)
             prompt_embeds = prompt_embeds * prompt_attention_mask
 
         if self.text_encoder is not None:

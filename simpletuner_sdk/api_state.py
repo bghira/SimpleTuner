@@ -65,7 +65,7 @@ class APIState:
     def get_job(cls):
         return {
             "job_id": cls.get_state("current_job_id"),
-            "job": cls.get_state("job"),
+            "job": cls.get_state("current_job"),
         }
 
     @classmethod

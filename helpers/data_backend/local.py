@@ -4,6 +4,7 @@ from helpers.training import video_file_extensions, image_file_extensions
 from pathlib import Path
 from io import BytesIO
 import os
+from PIL import Image
 import logging
 import torch
 from typing import Any, List, Tuple, Union
@@ -19,6 +20,30 @@ class LocalDataBackend(BaseDataBackend):
         self.id = id
         self.type = "local"
         self.compress_cache = compress_cache
+
+    def get_instance_representation(self) -> dict:
+        """Get a serializable representation of this backend instance."""
+        return {
+            "backend_type": "local",
+            "id": self.id,
+            "compress_cache": self.compress_cache,
+            # Note: accelerator is not serializable, will be None in subprocess
+        }
+
+    @staticmethod
+    def from_instance_representation(representation: dict) -> "LocalDataBackend":
+        """Create a new LocalDataBackend instance from a serialized representation."""
+        if representation.get("backend_type") != "local":
+            raise ValueError(
+                f"Expected backend_type 'local', got {representation.get('backend_type')}"
+            )
+
+        # Create without accelerator - subprocess will set its own if needed
+        return LocalDataBackend(
+            accelerator=None,  # Will be set by subprocess if needed
+            id=representation["id"],
+            compress_cache=representation.get("compress_cache", False),
+        )
 
     def read(self, filepath: str, as_byteIO: bool = False) -> Any:
         """Read and return the content of the file."""
@@ -50,9 +75,14 @@ class LocalDataBackend(BaseDataBackend):
                     temp_file.write(data.encode("utf-8"))
                 elif isinstance(data, bytes):
                     temp_file.write(data)
+                elif isinstance(data, Image.Image):
+                    # If data is a PIL Image, save it as bytes.
+                    # This happens when the DataGenerator is creating PIL images.
+                    data_bytes = data.tobytes()
+                    temp_file.write(data_bytes)
                 else:
                     logger.debug(
-                        f"Received an unknown data type to write to disk. Attempting to write as bytes: {type(data)}"
+                        f"Received an unknown {type(data)} type to write to disk. Attempting to write as bytes: {type(data)}"
                     )
                     temp_file.write(data)
         except Exception as e:
