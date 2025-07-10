@@ -1263,7 +1263,13 @@ class Validation:
             position=1,
         ):
             validation_input_image = None
-            if len(prompt) == 3 and isinstance(prompt[2], Image.Image):
+            if len(prompt) == 3 and isinstance(prompt[2], list):
+                # list of conditioning inputs
+                shortname, prompt, validation_input_image = prompt
+                if len(validation_input_image) == 1:
+                    # for simplicity, we'll assume pipelines appreciate singletons.
+                    validation_input_image = validation_input_image[0]
+            elif len(prompt) == 3 and isinstance(prompt[2], Image.Image):
                 # DeepFloyd stage II inputs.
                 shortname, prompt, validation_input_image = prompt
             elif len(prompt) == 4 and isinstance(prompt[3], Image.Image):
