@@ -19,12 +19,12 @@
 
 Kontext keeps the Flux transformer backbone but introduces **paired‑reference conditioning**.
 
-Two operating modes exist:
+Two `conditioning_type` modes are available for Kontext:
 
-* `reference_loose` (✅ stable, default) – reference can differ in aspect‐ratio/size from the edit.
-  - Currently, the only (truly) supported mode. Images are scanned for metadata, aspect bucketed, and cropped independently of each other.
+* `conditioning_type=reference_loose` (✅ stable) – reference can differ in aspect‐ratio/size from the edit.
+  - Both datasets are scanned for metadata, aspect bucketed, and cropped independently of each other, which can substantially increase the startup time.
   - This may be an issue for setups where you'd like to ensure the alignment of the edit and reference images, such as in a dataloader that uses a single image per file name.
-* `reference_strict` (✅ stable) – reference is pre‑transformed exactly like the edit crop.
+* `conditioning_type=reference_strict` (✅ stable) – reference is pre‑transformed exactly like the edit crop.
   - This is how you should configure your datasets if you need perfect alignment between crops / aspect bucketing between your edit and reference images.
   - Originally required `--vae_cache_ondemand` and some increased VRAM usage, but no longer does.
   - Duplicates the crop / aspect bucket metadata from the source dataset at startup, so you don't have to.
@@ -76,7 +76,7 @@ The `conditioning_data` field in the edit dataset should point to the reference 
     "type": "local",
     "instance_data_dir": "/path/to/datasets/edited-images",     // <-- use absolute paths
     "conditioning_data": [
-      "my-reference-images"                                        // <‑‑ this should be your "id" of the reference set
+      "my-reference-images"                                     // <‑‑ this should be your "id" of the reference set
                                                                 // you could specify a second set to alternate between or combine them, e.g. ["reference-images", "reference-images2"]
     ],
     "resolution": 1024,
@@ -95,9 +95,9 @@ The `conditioning_data` field in the edit dataset should point to the reference 
 ]
 ```
 
-*Every edit image **must** have 1‑to‑1 matching file names and extensions in `reference-images/`.*  SimpleTuner will automatically staple the reference embedding to the edit’s conditioning.
+*Every edit image **must** have 1‑to‑1 matching file names and extensions in both dataset folders. SimpleTuner will automatically staple the reference embedding to the edit’s conditioning.
 
-If you'd like a demo dataset of how to set this up, you can use this [Kontext Max derived demo dataset](https://huggingface.co/datasets/terminusresearch/KontextMax-Edit-smol) which contains reference and edit images along with their caption textfiles.
+A prepared example [Kontext Max derived demo dataset](https://huggingface.co/datasets/terminusresearch/KontextMax-Edit-smol) which contains reference and edit images along with their caption textfiles is available for browsing to get a better idea of how to set it up.
 
 ### Automatic Reference-Edit Pair Generation
 
@@ -115,7 +115,6 @@ If you don't have pre-existing reference-edit pairs, SimpleTuner can automatical
     "id": "high-quality-images",
     "type": "local",
     "instance_data_dir": "/path/to/sharp-images",
-    "conditioning_data": "high-quality-images_conditioning_superresolution",
     "resolution": 1024,
     "caption_strategy": "textfile",
     "conditioning": [
@@ -140,9 +139,9 @@ If you don't have pre-existing reference-edit pairs, SimpleTuner can automatical
 ```
 
 This configuration will:
-1. Take your high-quality sharp images and create blurred versions (these become the "reference" images)
-2. Use the originals as target edit images
-3. Train Kontext to enhance/deblur based on the reference image's output matching the target edit image
+1. Create blurred versions (these become the "reference" images) from your high-quality sharp images
+2. Use the original high-quality images as the training loss target
+3. Train Kontext to enhance/deblur the poor-quality reference image
 
 > **NOTE**: You can't define `captions` on a conditioning dataset when using `conditioning_multidataset_sampling=combined`. The edit dataset's captions will be used instead.
 
