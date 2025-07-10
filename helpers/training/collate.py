@@ -564,7 +564,15 @@ def collate_fn(batch):
 
     # Compute embeddings and handle dropped conditionings
     debug_log("Extract captions")
-    if has_conditioning_captions:
+
+    # Check if we're in combined mode with multiple conditioning datasets
+    sampling_mode = getattr(
+        StateTracker.get_args(), "conditioning_multidataset_sampling", "combined"
+    )
+    is_combined_mode = sampling_mode == "combined" and len(conditioning_backends) > 1
+
+    if has_conditioning_captions and not is_combined_mode:
+        # Only use conditioning captions in random mode or with single conditioning dataset
         captions = [
             example.caption if example.caption else example["instance_prompt_text"]
             for example in conditioning_examples
@@ -575,19 +583,23 @@ def collate_fn(batch):
             for caption, example in zip(captions, examples)
         ]
         debug_log(f"Pull cached text embeds. conditioning captions: {captions}")
-        text_embed_cache = StateTracker.get_data_backend(conditioning_data_backend_id)[
-            "text_embed_cache"
-        ]
 
+        # Get the appropriate text_embed_cache
+        if conditioning_backends:
+            text_embed_cache = conditioning_backends[0]["text_embed_cache"]
+        else:
+            text_embed_cache = StateTracker.get_data_backend(data_backend_id)[
+                "text_embed_cache"
+            ]
     else:
+        # Use training captions (default behavior)
         captions = [example["instance_prompt_text"] for example in examples]
         debug_log(
-            f"Pull cached text embeds. no conditioning captions found: {captions}"
+            f"Pull cached text embeds. no conditioning captions found or combined mode: {captions}"
         )
         text_embed_cache = StateTracker.get_data_backend(data_backend_id)[
             "text_embed_cache"
         ]
-
     if not text_embed_cache.disabled:
         all_text_encoder_outputs = compute_prompt_embeddings(
             captions, text_embed_cache, StateTracker.get_model()
