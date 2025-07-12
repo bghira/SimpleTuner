@@ -43,7 +43,7 @@ class Flux(ImageModelFoundation):
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 16
     # The safe diffusers default value for LoRA training targets.
-    DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
+    DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0", "to_qkv"]
     # Only training the Attention blocks by default.
     DEFAULT_LYCORIS_TARGET = ["Attention"]
 
@@ -804,6 +804,7 @@ class Flux(ImageModelFoundation):
                     "add_k_proj",
                     "add_q_proj",
                     "add_v_proj",
+                    "add_qkv_proj",
                     "to_add_out",
                 ]
             elif self.config.flux_lora_target == "context+ffs":
@@ -812,6 +813,7 @@ class Flux(ImageModelFoundation):
                     "add_k_proj",
                     "add_q_proj",
                     "add_v_proj",
+                    "add_qkv_proj",
                     "to_add_out",
                     "ff_context.net.0.proj",
                     "ff_context.net.2",
