@@ -465,8 +465,8 @@ def set_tinygrad_attention_processors(model, use_tinygrad=True, verbose=True):
             sample_param = next(model.parameters())
             backend = detect_device_backend(sample_param)
             print(f"Detected tinygrad backend: {backend}")
-            if backend == "AMDGPU":
-                print("  ROCm/AMD GPU detected - using AMDGPU backend")
+            if backend == "HIP":
+                print("  ROCm/AMD GPU detected - using HIP backend")
         except StopIteration:
             print("Warning: No parameters found in model")
 
