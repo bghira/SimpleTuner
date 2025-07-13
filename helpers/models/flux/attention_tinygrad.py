@@ -77,7 +77,7 @@ def safe_from_torch_dtype(torch_dtype):
 
         return _from_torch_dtype(torch_dtype)
     except (KeyError, ImportError) as e:
-        print(
+        warnings.warn(
             f"Warning: Unsupported dtype {torch_dtype} for tinygrad, falling back to float32. Error: {e}"
         )
         return tinygrad_dtypes.float32
