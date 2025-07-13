@@ -21,7 +21,7 @@ from einops import rearrange
 from diffusers.models.embeddings import apply_rotary_emb
 from diffusers.models.attention_processor import Attention
 import numpy as np
-
+import warnings
 
 def detect_device_backend(tensor):
     """
