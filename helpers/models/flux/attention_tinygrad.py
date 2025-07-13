@@ -42,7 +42,7 @@ def detect_device_backend(tensor):
                 for amd_identifier in ["amd", "radeon", "vega", "navi", "rdna"]
             ):
                 return "HIP"
-        except:
+        except (AttributeError, RuntimeError):
             pass
         # Default to CUDA if not ROCm
         return "CUDA"
