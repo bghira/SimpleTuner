@@ -464,7 +464,11 @@ class ModelFoundation(ABC):
 
     def unwrap_model(self, model=None):
         if self.config.controlnet and model is None:
+            if self.controlnet is None:
+                return None
             return unwrap_model(self.accelerator, self.controlnet)
+        if self.model is None:
+            return None
         return unwrap_model(self.accelerator, model or self.model)
 
     def move_extra_models(self, target_device):
@@ -917,6 +921,7 @@ class ModelFoundation(ABC):
         if "watermark" in signature.parameters:
             pipeline_kwargs["watermark"] = None
         if load_base_model:
+            logger.info(f"Unwrapping {self.model}")
             pipeline_kwargs[self.MODEL_TYPE.value] = self.unwrap_model(model=self.model)
         else:
             pipeline_kwargs[self.MODEL_TYPE.value] = None
