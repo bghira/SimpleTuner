@@ -1987,6 +1987,7 @@ def get_argument_parser():
         choices=[
             "diffusers",
             "xformers",
+            "tinygrad",
             "sageattention",
             "sageattention-int8-fp16-triton",
             "sageattention-int8-fp16-cuda",
@@ -1994,7 +1995,8 @@ def get_argument_parser():
         ],
         default="diffusers",
         help=(
-            "On NVIDIA CUDA devices, alternative flash attention implementations are offered, with the default being native pytorch SDPA."
+            "For Apple MPS, tinygrad is offered as a speedy alternative to pytorch SDPA, though currently only on the Flux architecture."
+            " On NVIDIA CUDA devices, alternative flash attention implementations are offered, with the default being native pytorch SDPA."
             " SageAttention has multiple backends to select from."
             " The recommended value, 'sageattention', guesses what would be the 'best' option for SageAttention on your hardware"
             " (usually this is the int8-fp16-cuda backend). However, manually setting this value to int8-fp16-triton"
