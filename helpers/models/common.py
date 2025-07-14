@@ -877,8 +877,14 @@ class ModelFoundation(ABC):
         # shared modules may be when ControlNet reuses base model layers, eg. HiDream.
         return False
 
-    def get_trained_component(self, base_model: bool = False):
-        return self.unwrap_model(model=self.model if base_model else None)
+    def get_trained_component(
+        self, base_model: bool = False, unwrap_model: bool = True
+    ):
+        if unwrap_model:
+            return self.unwrap_model(model=self.model if base_model else None)
+        return (
+            self.controlnet if self.config.controlnet and not base_model else self.model
+        )
 
     def _load_pipeline(
         self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True
@@ -891,13 +897,13 @@ class ModelFoundation(ABC):
             setattr(
                 active_pipelines[pipeline_type],
                 self.MODEL_TYPE.value,
-                self.unwrap_model(model=self.model),
+                self.model,
             )
             if self.config.controlnet:
                 setattr(
                     active_pipelines[pipeline_type],
                     "controlnet",
-                    self.unwrap_model(self.get_trained_component()),
+                    self.controlnet,
                 )
             return active_pipelines[pipeline_type]
 
@@ -921,8 +927,7 @@ class ModelFoundation(ABC):
         if "watermark" in signature.parameters:
             pipeline_kwargs["watermark"] = None
         if load_base_model:
-            logger.info(f"Unwrapping {self.model}")
-            pipeline_kwargs[self.MODEL_TYPE.value] = self.unwrap_model(model=self.model)
+            pipeline_kwargs[self.MODEL_TYPE.value] = self.model
         else:
             pipeline_kwargs[self.MODEL_TYPE.value] = None
 
@@ -953,7 +958,7 @@ class ModelFoundation(ABC):
             text_encoder_idx += 1
 
         if self.config.controlnet and pipeline_type is PipelineTypes.CONTROLNET:
-            pipeline_kwargs["controlnet"] = self.unwrap_model()
+            pipeline_kwargs["controlnet"] = self.controlnet
 
         logger.debug(
             f"Initialising {pipeline_class.__name__} with components: {pipeline_kwargs}"
