@@ -174,16 +174,19 @@ class Trainer:
             None if self.config.report_to.lower() == "none" else self.config.report_to
         )
         if not disable_accelerator:
+            accelerator_custom_config = [self.config.process_group_kwargs]
+            if self.config.mixed_precision == "fp8":
+                # we'll set up a TorchAO config for Accelerator, since otherwise it uses MS-AMP which
+                # is clunky and proprietary third party accelerator that is typically unavailable.
+                from accelerate.utils import AORecipeKwargs
+                accelerator_custom_config.append(AORecipeKwargs())
+
             self.accelerator = Accelerator(
                 gradient_accumulation_steps=self.config.gradient_accumulation_steps,
-                mixed_precision=(
-                    self.config.mixed_precision
-                    if not torch.backends.mps.is_available()
-                    else None
-                ),
+                mixed_precision=self.config.mixed_precision,
                 log_with=report_to,
                 project_config=self.config.accelerator_project_config,
-                kwargs_handlers=[self.config.process_group_kwargs],
+                kwargs_handlers=accelerator_custom_config,
             )
         safety_check(args=self.config, accelerator=self.accelerator)
 

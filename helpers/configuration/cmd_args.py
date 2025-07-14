@@ -1889,13 +1889,14 @@ def get_argument_parser():
         "--mixed_precision",
         type=str,
         default="bf16",
-        choices=["bf16", "fp16", "no"],
+        choices=["bf16", "fp16", "fp8", "no"],
         help=(
             "SimpleTuner only supports bf16 training. Bf16 requires PyTorch >="
             " 1.10. on an Nvidia Ampere or later GPU, and PyTorch 2.3 or newer for Apple Silicon."
             " Default to the value of accelerate config of the current system or the"
             " flag passed with the `accelerate.launch` command. Use this argument to override the accelerate config."
             " fp16 is offered as an experimental option, but is not recommended as it is less-tested and you will likely encounter errors."
+            " fp8 is another experimental option that relies in TorchAO for mixed precision ops."
         ),
     )
     parser.add_argument(
@@ -2371,6 +2372,12 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             )
             sys.exit(1)
 
+    if args.mixed_precision == "fp8" and not torch.cuda.is_available():
+        logging.error(
+            "You cannot use --mixed_precision=fp8 without a CUDA device. Please use bf16 instead."
+        )
+        sys.exit(1)
+
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if env_local_rank != -1 and env_local_rank != args.local_rank:
         args.local_rank = env_local_rank
@@ -2437,6 +2444,10 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         and args.base_model_default_dtype == "bf16"
     )
     model_is_quantized = args.base_model_precision != "no_change"
+    if model_is_quantized and args.mixed_precision == "fp8" and args.base_model_precision != "fp8-torchao":
+        raise ValueError(
+            "You cannot use --mixed_precision=fp8 with a quantized base model. Please use bf16 or remove base_model_precision option from your configuration."
+        )
     # check optimiser validity
     chosen_optimizer = args.optimizer
     is_optimizer_deprecated(chosen_optimizer)
