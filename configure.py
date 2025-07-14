@@ -30,6 +30,7 @@ model_classes = {
         "omnigen",
         "hidream",
         "auraflow",
+        "lumina2",
     ],
     "lora": [
         "flux",
@@ -43,8 +44,9 @@ model_classes = {
         "deepfloyd",
         "auraflow",
         "hidream",
+        "lumina2",
     ],
-    "controlnet": ["sdxl", "sd1x", "sd2x"],
+    "controlnet": ["sdxl", "sd1x", "sd2x", "hidream", "auraflow", "flux", "pixart_sigma", "sd3", "kolors"],
 }
 
 default_models = {
