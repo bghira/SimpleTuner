@@ -23,6 +23,7 @@ from diffusers.models.attention_processor import Attention
 import numpy as np
 import warnings
 
+
 def detect_device_backend(tensor):
     """
     Detect the appropriate tinygrad backend based on the PyTorch tensor device.
@@ -88,16 +89,20 @@ class TinyGradAttentionFunction(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, query, key, value, scale, attention_mask=None):
+        print("[DEBUG] Entering forward method")
         original_dtype = query.dtype
         ctx.save_for_backward(query, key, value)
 
-        # Detect appropriate backend (handles ROCm properly)
+        print("[DEBUG] Detecting device backend")
         device = detect_device_backend(query)
+        print(f"[DEBUG] Detected device backend: {device}")
 
         # Synchronize before conversion
         if query.device.type == "mps":
+            print("[DEBUG] Synchronizing MPS device")
             torch.mps.synchronize()
         elif query.is_cuda:
+            print("[DEBUG] Synchronizing CUDA device")
             torch.cuda.synchronize()
 
         # Save context
@@ -107,7 +112,7 @@ class TinyGradAttentionFunction(torch.autograd.Function):
         ctx.original_dtype = original_dtype
         ctx.has_mask = attention_mask is not None
 
-        # Handle bfloat16 by converting to float16 for tinygrad
+        print("[DEBUG] Handling bfloat16 conversion if needed")
         if query.dtype == torch.bfloat16:
             query = query.to(torch.float16).contiguous()
             key = key.to(torch.float16).contiguous()
@@ -115,7 +120,7 @@ class TinyGradAttentionFunction(torch.autograd.Function):
             if attention_mask is not None:
                 attention_mask = attention_mask.to(torch.float16).contiguous()
 
-        # Convert to tinygrad
+        print("[DEBUG] Converting tensors to tinygrad")
         q_tiny = TinyTensor.from_blob(
             query.data_ptr(),
             query.shape,
@@ -135,17 +140,17 @@ class TinyGradAttentionFunction(torch.autograd.Function):
             device=device,
         )
 
-        # Enable gradients on tinygrad tensors
+        print("[DEBUG] Enabling gradients on tinygrad tensors")
         q_tiny.requires_grad = True
         k_tiny.requires_grad = True
         v_tiny.requires_grad = True
 
-        # Compute attention scores: Q @ K^T
+        print("[DEBUG] Computing attention scores")
         k_transposed = k_tiny.transpose(-2, -1)
         scores = (q_tiny @ k_transposed) * scale
 
-        # Apply attention mask if provided
         if attention_mask is not None:
+            print("[DEBUG] Applying attention mask")
             mask_tiny = TinyTensor.from_blob(
                 attention_mask.data_ptr(),
                 attention_mask.shape,
@@ -154,80 +159,83 @@ class TinyGradAttentionFunction(torch.autograd.Function):
             )
             scores = scores + mask_tiny
 
-        # Softmax with numerical stability
+        print("[DEBUG] Applying softmax with numerical stability")
         scores_max = scores.max(axis=-1, keepdim=True)
         scores_stable = scores - scores_max
         scores_exp = scores_stable.exp()
         scores_sum = scores_exp.sum(axis=-1, keepdim=True)
         attention_weights = scores_exp / scores_sum
 
-        # Apply attention to values
+        print("[DEBUG] Applying attention to values")
         output = attention_weights @ v_tiny
 
-        # Realize the computation
+        print("[DEBUG] Realizing the computation")
         output = output.realize()
 
-        # Store tinygrad tensors for backward
+        print("[DEBUG] Storing tinygrad tensors for backward")
         ctx.q_tiny = q_tiny
         ctx.k_tiny = k_tiny
         ctx.v_tiny = v_tiny
         ctx.output_tiny = output
         ctx.attention_weights = attention_weights
 
-        # Convert output back to PyTorch
+        print("[DEBUG] Converting output back to PyTorch")
         output_np = output.numpy()
         output_torch = torch.from_numpy(output_np).to(ctx.torch_device)
 
-        # Convert back to original dtype if needed
         if original_dtype == torch.bfloat16:
+            print("[DEBUG] Converting output back to original dtype")
             output_torch = output_torch.to(torch.bfloat16)
 
+        print("[DEBUG] Exiting forward method")
         return output_torch
 
     @staticmethod
     def backward(ctx, grad_output):
-        # Retrieve saved tensors
+        print("[DEBUG] Entering backward method")
         query, key, value = ctx.saved_tensors
         scale = ctx.scale
 
-        # Convert grad_output to tinygrad
+        print("[DEBUG] Converting grad_output to tinygrad")
         grad_tiny = TinyTensor(
             grad_output.cpu().numpy(), device=ctx.device, requires_grad=False
         )
 
-        # Get saved tinygrad tensors
+        print("[DEBUG] Retrieving saved tinygrad tensors")
         q_tiny = ctx.q_tiny
         k_tiny = ctx.k_tiny
         v_tiny = ctx.v_tiny
         attention_weights = ctx.attention_weights
 
-        # Backward through attention: grad_output @ V^T
+        print("[DEBUG] Backward through attention: grad_output @ V^T")
         v_transposed = v_tiny.transpose(-2, -1)
         grad_attention_weights = grad_tiny @ v_transposed
 
-        # Backward through values: attention_weights^T @ grad_output
+        print("[DEBUG] Backward through values: attention_weights^T @ grad_output")
         attention_weights_t = attention_weights.transpose(-2, -1)
         grad_v = attention_weights_t @ grad_tiny
 
-        # Backward through softmax (simplified for efficiency)
+        print("[DEBUG] Backward through softmax")
         softmax_grad_sum = (grad_attention_weights * attention_weights).sum(
             axis=-1, keepdim=True
         )
         grad_scores = (grad_attention_weights - softmax_grad_sum) * attention_weights
 
-        # Scale gradient
+        print("[DEBUG] Scaling gradient")
         grad_scores = grad_scores * scale
 
-        # Backward through Q @ K^T
-        grad_q = grad_scores @ k_tiny  # grad_scores @ K
-        grad_k = grad_scores.transpose(-2, -1) @ q_tiny  # grad_scores^T @ Q
+        print("[DEBUG] Backward through Q @ K^T")
+        grad_q = grad_scores @ k_tiny
+        grad_k = grad_scores.transpose(-2, -1) @ q_tiny
 
-        # Realize gradients
+        print("[DEBUG] Realizing gradients: q")
         grad_q = grad_q.realize()
+        print("[DEBUG] Realizing gradients: k")
         grad_k = grad_k.realize()
+        print("[DEBUG] Realizing gradients: v")
         grad_v = grad_v.realize()
 
-        # Convert gradients back to PyTorch
+        print("[DEBUG] Converting gradients back to PyTorch")
         grad_q_torch = torch.from_numpy(grad_q.numpy()).to(
             ctx.torch_device, dtype=ctx.original_dtype
         )
@@ -238,6 +246,7 @@ class TinyGradAttentionFunction(torch.autograd.Function):
             ctx.torch_device, dtype=ctx.original_dtype
         )
 
+        print("[DEBUG] Exiting backward method")
         return grad_q_torch, grad_k_torch, grad_v_torch, None, None
 
 
