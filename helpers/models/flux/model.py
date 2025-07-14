@@ -43,7 +43,7 @@ class Flux(ImageModelFoundation):
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 16
     # The safe diffusers default value for LoRA training targets.
-    DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
+    DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0", "to_qkv"]
     # Only training the Attention blocks by default.
     DEFAULT_LYCORIS_TARGET = ["Attention"]
 
@@ -477,7 +477,7 @@ class Flux(ImageModelFoundation):
             if attention_mask.dim() == 3 and attention_mask.size(1) == 1:
                 attention_mask = attention_mask.squeeze(1)  # [B, 1, S] -> [B, S]
             flux_transformer_kwargs["attention_mask"] = attention_mask
-        model_pred = self.get_trained_component()(**flux_transformer_kwargs)[0]
+        model_pred = self.model(**flux_transformer_kwargs)[0]
         # Drop the reference-image tokens before unpacking
         if use_cond and self.config.model_flavour == "kontext":
             scene_seq_len = packed_noisy_latents.shape[
@@ -683,7 +683,7 @@ class Flux(ImageModelFoundation):
         if self.config.unet_attention_slice:
             if torch.backends.mps.is_available():
                 logger.warning(
-                    "Using attention slicing when training {self.NAME} on MPS can result in NaN errors on the first backward pass. If you run into issues, disable this option and reduce your batch size instead to reduce memory consumption."
+                    f"Using attention slicing when training {self.NAME} on MPS can result in NaN errors on the first backward pass. If you run into issues, disable this option and reduce your batch size instead to reduce memory consumption."
                 )
             if self.get_trained_component() is not None:
                 self.get_trained_component().set_attention_slice("auto")
@@ -804,6 +804,7 @@ class Flux(ImageModelFoundation):
                     "add_k_proj",
                     "add_q_proj",
                     "add_v_proj",
+                    "add_qkv_proj",
                     "to_add_out",
                 ]
             elif self.config.flux_lora_target == "context+ffs":
@@ -812,6 +813,7 @@ class Flux(ImageModelFoundation):
                     "add_k_proj",
                     "add_q_proj",
                     "add_v_proj",
+                    "add_qkv_proj",
                     "to_add_out",
                     "ff_context.net.0.proj",
                     "ff_context.net.2",
