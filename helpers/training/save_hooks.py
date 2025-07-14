@@ -114,7 +114,9 @@ class SaveHookManager:
             logger.info("Saving EMA model to disk.")
             trainable_parameters = [
                 p
-                for p in self.model.get_trained_component().parameters()
+                for p in self.model.get_trained_component(
+                    unwrap_model=False
+                ).parameters()
                 if p.requires_grad
             ]
             self.ema_model.store(trainable_parameters)

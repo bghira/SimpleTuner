@@ -681,11 +681,11 @@ class Validation:
         self.model = model
         self.distiller = distiller
         if args.controlnet:
-            self.controlnet = model.get_trained_component()
+            self.controlnet = model.get_trained_component(unwrap_model=False)
         elif "unet" in str(self.model.get_trained_component().__class__).lower():
-            self.unet = self.model.get_trained_component()
+            self.unet = self.model.get_trained_component(unwrap_model=False)
         elif "transformer" in str(self.model.get_trained_component().__class__).lower():
-            self.transformer = self.model.get_trained_component()
+            self.transformer = self.model.get_trained_component(unwrap_model=False)
         self.config = args
         self.save_dir = os.path.join(args.output_dir, "validation_images")
         if not os.path.exists(self.save_dir):
@@ -2187,24 +2187,18 @@ class Validation:
                 elif self.config.lora_type.lower() == "standard":
                     _trainable_parameters = [
                         x
-                        for x in self.model.get_trained_component().parameters()
+                        for x in self.model.get_trained_component(
+                            unwrap_model=False
+                        ).parameters()
                         if x.requires_grad
                     ]
                     self.ema_model.store(_trainable_parameters)
                     self.ema_model.copy_to(_trainable_parameters)
             else:
-                # if self.config.ema_device != "accelerator":
-                #     logger.info("Moving checkpoint to CPU for storage.")
-                #     self.model.get_trained_component().to("cpu")
                 logger.debug("Storing EMA weights for later recovery.")
                 self.ema_model.store(self.trainable_parameters())
                 logger.debug("Storing the EMA weights into the model for inference.")
                 self.ema_model.copy_to(self.trainable_parameters())
-            # if self.config.ema_device != "accelerator":
-            #     logger.debug("Moving checkpoint to CPU for storage.")
-            #     self.model.get_trained_component().to("cpu")
-            #     logger.debug("Moving EMA weights to GPU for inference.")
-            #     self.ema_model.to(self.inference_device)
         else:
             logger.debug(
                 "Skipping EMA model setup for validation, as we are not using EMA."
@@ -2233,7 +2227,9 @@ class Validation:
             if self.config.ema_device != "accelerator":
                 logger.debug("Moving EMA weights to CPU for storage.")
                 self.ema_model.to(self.config.ema_device)
-                self.model.get_trained_component().to(self.inference_device)
+                self.model.get_trained_component(unwrap_model=False).to(
+                    self.inference_device
+                )
 
         else:
             logger.debug(
