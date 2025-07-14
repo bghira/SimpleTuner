@@ -179,6 +179,7 @@ class Trainer:
                 # we'll set up a TorchAO config for Accelerator, since otherwise it uses MS-AMP which
                 # is clunky and proprietary third party accelerator that is typically unavailable.
                 from accelerate.utils import AORecipeKwargs
+
                 accelerator_custom_config.append(AORecipeKwargs())
 
             self.accelerator = Accelerator(
