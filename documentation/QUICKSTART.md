@@ -13,9 +13,10 @@
 | [Flux.1](/documentation/quickstart/FLUX.md)      | ~8B-12B         |  ✓   |  ✓   |     ✓*    | optional (int8,  fp8,  nf4)  | bf16            | ✓+                   | ✓               | ✓         |
 | [Auraflow](/documentation/quickstart/AURAFLOW.md)| 6 B          |  ✓   |  ✓   |     ✓*    | optional (int8,  fp8,  nf4)  | bf16            | ✓+                   | ✓ (SLG)         | ✓         |
 | [HiDream I1](/documentation/quickstart/HIDREAM.md)| 17 B (8.5B MoE)|  ✓   |  ✓   |     ✓*    | optional (int8,  fp8,  nf4)  | bf16            | ✓                    | ✓               | ✓          |
-| [LTX Video](/documentation/quickstart/LTXVIDEO.md)| ~2.5 B      |  ✓   |  ✓   |     ✓     | optional (int8,  fp8)       | bf16            | ✓                    | ✓               |           |
 | [OmniGen](/documentation/quickstart/OMNIGEN.md)  | 3.8 B        |  ✓   |  ✓   |     ✓     | optional (int8,  fp8)       | bf16            | ✓                    | ✓               |           |
 | [Stable Diffusion XL](/documentation/quickstart/SDXL.md)| 2.6 B      |  ✓   |  ✓   |     ✓     | not recommended           | bf16            | ✓                    |                 | ✓         |
+| [Lumina2](/documentation/quickstart/LUMINA2.md)      | 2B   |  ✓   |  ✓   |     ✓    | optional (int8)           | bf16            | ✓                    | ✓               |           |
+| [LTX Video](/documentation/quickstart/LTXVIDEO.md)| ~2.5 B      |  ✓   |  ✓   |     ✓     | optional (int8,  fp8)       | bf16            | ✓                    | ✓               |           |
 | [Wan 2.1](/documentation/quickstart/WAN.md)      | 1.3B-14B   |  ✓   |  ✓   |     ✓*    | optional (int8)           | bf16            | ✓                    | ✓               |           |
 
 * _✓ = Supported_
