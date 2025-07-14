@@ -11,6 +11,7 @@ from helpers.models.pixart.model import PixartSigma
 from helpers.models.hidream.model import HiDream
 from helpers.models.omnigen.model import OmniGen
 from helpers.models.auraflow.model import Auraflow
+from helpers.models.lumina2.model import Lumina2
 
 model_families = {
     "sd1x": StableDiffusion1,
@@ -27,6 +28,7 @@ model_families = {
     "omnigen": OmniGen,
     "hidream": HiDream,
     "auraflow": Auraflow,
+    "lumina2": Lumina2,
 }
 
 

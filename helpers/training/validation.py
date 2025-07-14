@@ -1,5 +1,6 @@
 import inspect
 import torch
+from typing import Union
 import diffusers
 import os
 import wandb
@@ -1810,7 +1811,7 @@ class Validation:
                                 device=self.inference_device,
                                 dtype=self.config.weight_dtype,
                             )
-                            if hasattr(v, "to")
+                            if hasattr(v, "to") and v.dtype in (torch.bfloat16, torch.float16, torch.float32)
                             else v
                         )
                         for k, v in pipeline_kwargs.items()
