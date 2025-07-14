@@ -20,6 +20,7 @@ If you have any questions, please feel free to reach out to us there.
   - [Stable Diffusion 2.0/2.1](#stable-diffusion-20--21)
   - [Stable Diffusion 3.0](#stable-diffusion-3)
   - [Kwai Kolors](#kwai-kolors)
+  - [Lumina2](#lumina2)
 - [Hardware Requirements](#hardware-requirements)
   - [Flux](#flux1-dev-schnell)
   - [SDXL](#sdxl-1024px)
@@ -159,6 +160,16 @@ See the [Stable Diffusion 3 Quickstart](/documentation/quickstart/SD3.md) to get
 An SDXL-based model with ChatGLM (General Language Model) 6B as its text encoder, **doubling** the hidden dimension size and substantially increasing the level of local detail included in the prompt embeds.
 
 Kolors support is almost as deep as SDXL, minus ControlNet training support.
+
+
+### Lumina2
+
+A 2B parameter flow-matching model that uses the 16ch Flux VAE.
+
+- LoRA, Lycoris, and full finetuning are supported
+- ControlNet training is not yet supported
+
+A [Lumina2 Quickstart](/documentation/quickstart/LUMINA2.md) is available with example configurations.
 
 ### Legacy Stable Diffusion models
 
