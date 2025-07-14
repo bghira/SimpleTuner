@@ -167,13 +167,13 @@ class HiDream(ImageModelFoundation):
             setattr(
                 active_pipelines[pipeline_type],
                 self.MODEL_TYPE.value,
-                self.unwrap_model(model=self.model),
+                self.model,
             )
             if self.config.controlnet:
                 setattr(
                     active_pipelines[pipeline_type],
                     "controlnet",
-                    self.unwrap_model(self.get_trained_component()),
+                    self.controlnet,
                 )
             return active_pipelines[pipeline_type]
         pipeline_kwargs = {
@@ -228,9 +228,7 @@ class HiDream(ImageModelFoundation):
         pipeline_kwargs["tokenizer_4"] = self.tokenizers[3]
 
         if self.config.controlnet:
-            pipeline_kwargs["controlnet"] = self.unwrap_model(
-                self.get_trained_component()
-            )
+            pipeline_kwargs["controlnet"] = self.controlnet
 
         logger.debug(
             f"Initialising {pipeline_class.__name__} with components: {pipeline_kwargs}"
@@ -564,9 +562,7 @@ class HiDream(ImageModelFoundation):
             ]
 
         # Forward pass through the transformer with ControlNet residuals
-        model_pred = self.get_trained_component(base_model=True)(
-            **hidream_transformer_kwargs
-        )[0]
+        model_pred = self.model(**hidream_transformer_kwargs)[0]
 
         return {
             "model_prediction": model_pred

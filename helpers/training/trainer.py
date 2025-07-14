@@ -187,6 +187,7 @@ class Trainer:
                 log_with=report_to,
                 project_config=self.config.accelerator_project_config,
                 kwargs_handlers=accelerator_custom_config,
+                dynamo_backend=os.environ.get("TRAINING_DYNAMO_BACKEND", "no"),
             )
         safety_check(args=self.config, accelerator=self.accelerator)
 
@@ -890,7 +891,9 @@ class Trainer:
                 return self.lycoris_wrapped_network.parameters()
         return [
             param
-            for param in self.model.get_trained_component().parameters()
+            for param in self.model.get_trained_component(
+                unwrap_model=False
+            ).parameters()
             if param.requires_grad
         ]
 
@@ -991,7 +994,7 @@ class Trainer:
                 f"DeepSpeed Optimizer arguments, weight_decay={self.config.adam_weight_decay} eps={self.config.adam_epsilon}, extra_arguments={extra_optimizer_args}"
             )
             self.optimizer = create_optimizer_with_param_groups(
-                self.model.get_trained_component(),
+                self.model.get_trained_component(unwrap_model=False),
                 optimizer_class,
                 self.params_to_optimize,
                 use_parameter_groups=True,  # Enable weight decay separation
@@ -1154,7 +1157,7 @@ class Trainer:
             structured_data={"message": "Moving weights to GPU"},
             message_type="init_prepare_models_begin",
         )
-        primary_model = self.model.get_trained_component()
+        primary_model = self.model.get_trained_component(unwrap_model=False)
         results = self.accelerator.prepare(
             primary_model, lr_scheduler, self.optimizer, self.train_dataloaders[0]
         )
@@ -1472,6 +1475,7 @@ class Trainer:
                     logger.warning(
                         "WandB is disabled, and Accelerate was not quite happy about it."
                     )
+                    self.accelerator.trackers = []
                 else:
                     logger.error(f"Could not initialize trackers: {e}")
                     self._send_webhook_raw(
@@ -1624,9 +1628,9 @@ class Trainer:
         )
         if self.model.get_trained_component() is not None:
             if self.config.is_quantized:
-                self.model.get_trained_component().to(target_device)
+                self.model.get_trained_component(unwrap_model=False).to(target_device)
             else:
-                self.model.get_trained_component().to(
+                self.model.get_trained_component(unwrap_model=False).to(
                     target_device, dtype=self.config.weight_dtype
                 )
         if getattr(self.accelerator, "_lycoris_wrapped_network", None) is not None:
@@ -1668,7 +1672,7 @@ class Trainer:
                 )
 
         if self.config.controlnet:
-            self.model.get_trained_component().train()
+            self.model.get_trained_component(unwrap_model=False).train()
             self.model.unwrap_model(self.model.model).to(
                 device=target_device, dtype=self.config.weight_dtype
             )
@@ -2112,8 +2116,8 @@ class Trainer:
                 )
                 break
             self._epoch_rollover(epoch)
-            self.model.get_trained_component().train()
-            training_models = [self.model.get_trained_component()]
+            self.model.get_trained_component(unwrap_model=False).train()
+            training_models = [self.model.get_trained_component(unwrap_model=False)]
             if (
                 "lora" in self.config.model_type
                 and self.config.train_text_encoder

@@ -692,7 +692,10 @@ def determine_params_to_optimize(
     lycoris_wrapped_network,
 ):
     params_to_optimize = list(
-        filter(lambda p: p.requires_grad, model.get_trained_component().parameters())
+        filter(
+            lambda p: p.requires_grad,
+            model.get_trained_component(unwrap_model=False).parameters(),
+        )
     )
     if args.train_text_encoder:
         # add the first text encoder's parameters
