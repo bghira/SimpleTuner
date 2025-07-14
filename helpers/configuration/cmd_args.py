@@ -2444,7 +2444,11 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         and args.base_model_default_dtype == "bf16"
     )
     model_is_quantized = args.base_model_precision != "no_change"
-    if model_is_quantized and args.mixed_precision == "fp8" and args.base_model_precision != "fp8-torchao":
+    if (
+        model_is_quantized
+        and args.mixed_precision == "fp8"
+        and args.base_model_precision != "fp8-torchao"
+    ):
         raise ValueError(
             "You cannot use --mixed_precision=fp8 with a quantized base model. Please use bf16 or remove base_model_precision option from your configuration."
         )
