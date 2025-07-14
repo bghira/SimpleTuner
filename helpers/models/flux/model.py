@@ -345,13 +345,16 @@ class Flux(ImageModelFoundation):
         if sampling_mode == "random" and isinstance(cond, list) and len(cond) == 1:
             # Random mode should have selected just one
             cond = cond[0]
-
+        logger.debug(f"Inputs to kontext builder shapes: {cond.shape} {cond.dtype}")
         # Build Kontext inputs
         packed_cond, cond_ids = build_kontext_inputs(
             cond if isinstance(cond, list) else [cond],
             dtype=self.config.weight_dtype,
             device=self.accelerator.device,
             latent_channels=self.LATENT_CHANNEL_COUNT,
+        )
+        logger.debug(
+            f"Now we have kontext shapes: {packed_cond.shape} {packed_cond.dtype}"
         )
 
         batch["conditioning_packed_latents"] = packed_cond
@@ -426,6 +429,7 @@ class Flux(ImageModelFoundation):
             f"\n-> Timesteps shape: {prepared_batch['timesteps'].shape if hasattr(prepared_batch['timesteps'], 'shape') else None}, dtype: {prepared_batch['timesteps'].dtype if hasattr(prepared_batch['timesteps'], 'dtype') else None}"
             f"\n-> Guidance: {guidance}"
             f"\n-> Packed Noisy Latents shape: {packed_noisy_latents.shape if hasattr(packed_noisy_latents, 'shape') else None}, dtype: {packed_noisy_latents.dtype if hasattr(packed_noisy_latents, 'dtype') else None}"
+            f"\n-> Conditioning Packed Latents shape: {prepared_batch['conditioning_packed_latents'].shape if 'conditioning_packed_latents' in prepared_batch else 'N/A'}, dtype: {prepared_batch['conditioning_packed_latents'].dtype if 'conditioning_packed_latents' in prepared_batch else 'N/A'}"
         )
 
         if img_ids.dim() == 2:  # (S, 3)  -> (1, S, 3) -> (B, S, 3)
