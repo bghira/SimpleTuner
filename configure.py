@@ -673,7 +673,7 @@ def configure_env():
         )
         if not use_tf32:
             env_contents["--disable_tf32"] = "true"
-    mixed_precision_options = ["bf16", "no"]
+    mixed_precision_options = ["bf16", "fp8", "no"]
     env_contents["--mixed_precision"] = None
     while (
         not env_contents["--mixed_precision"]

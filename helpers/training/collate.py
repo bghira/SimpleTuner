@@ -347,61 +347,75 @@ def gather_conditional_sdxl_size_features(examples, latents, weight_dtype):
     return torch.stack(batch_time_ids_list, dim=0)
 
 
-def check_latent_shapes(latents, filepaths, data_backend_id, batch):
+def check_latent_shapes(
+    latents, filepaths, data_backend_id, batch, is_conditioning=False
+):
     # Validate shapes
     test_shape = latents[0].shape
     # 5D tensors (B, F, C, H, W) are for LTX Video currently, and we'll just test the C, H, W shape
     if len(test_shape) == 5:
         test_shape = test_shape[1:]
-    # Check all "aspect_ratio" values and raise error if any differ, with the two differing values:
-    first_aspect_ratio = None
-    for example in batch:
-        aspect_ratio = None
-        if isinstance(example, dict):
-            aspect_ratio = example["aspect_ratio"]
-        elif isinstance(example, TrainingSample):
-            if hasattr(example, "aspect_ratio"):
-                aspect_ratio = example.aspect_ratio
-        if first_aspect_ratio is None and aspect_ratio is not None:
-            first_aspect_ratio = aspect_ratio
-        if (
-            aspect_ratio is not None
-            and first_aspect_ratio is not None
-            and aspect_ratio != first_aspect_ratio
-        ):
-            error_msg = f"(id=({data_backend_id}) Aspect ratio mismatch: {aspect_ratio} != {first_aspect_ratio}"
-            logger.error(error_msg)
-            logger.error(f"Erroneous batch: {batch}")
-            raise ValueError(error_msg)
+
+    # For conditioning latents with multiple backends, we might have different aspect ratios
+    # Only enforce same aspect ratio for training latents
+    if not is_conditioning:
+        # Check all "aspect_ratio" values and raise error if any differ
+        first_aspect_ratio = None
+        for example in batch:
+            aspect_ratio = None
+            if isinstance(example, dict):
+                aspect_ratio = example["aspect_ratio"]
+            elif isinstance(example, TrainingSample):
+                if hasattr(example, "aspect_ratio"):
+                    aspect_ratio = example.aspect_ratio
+            if first_aspect_ratio is None and aspect_ratio is not None:
+                first_aspect_ratio = aspect_ratio
+            if (
+                aspect_ratio is not None
+                and first_aspect_ratio is not None
+                and aspect_ratio != first_aspect_ratio
+            ):
+                error_msg = f"(id=({data_backend_id}) Aspect ratio mismatch: {aspect_ratio} != {first_aspect_ratio}"
+                logger.error(error_msg)
+                logger.error(f"Erroneous batch: {batch}")
+                raise ValueError(error_msg)
+
+    # Rest of the validation remains the same
     for idx, latent in enumerate(latents):
-        # Are there any inf or nan positions?
         if latent is None:
             logger.debug(f"Error batch: {batch}")
-            error_msg = f"(id={data_backend_id}) File {filepaths[idx]} latent is None. Filepath: {filepaths[idx]}, data_backend_id: {data_backend_id}"
+            error_msg = f"(id={data_backend_id}) File {filepaths[idx]} latent is None."
             logger.error(error_msg)
             raise ValueError(error_msg)
         if torch.isnan(latent).any() or torch.isinf(latent).any():
-            # get the data_backend
             data_backend = StateTracker.get_data_backend(data_backend_id)
-            # remove the object
             data_backend["vaecache"].cache_data_backend.delete(filepaths[idx])
             raise ValueError(
-                f"(id={data_backend_id}) Deleted cache file {filepaths[idx]}: contains NaN or Inf values: {latent}"
-            )
-        if len(latent.shape) == 5:
-            if latent.shape[1:] != test_shape:
-                raise ValueError(
-                    f"(id={data_backend_id}) File {filepaths[idx]} latent shape mismatch: {latent.shape[1:]} != {test_shape}"
-                )
-        elif latent.shape != test_shape:
-            raise ValueError(
-                f"(id={data_backend_id}) File {filepaths[idx]} latent shape mismatch: {latent.shape} != {test_shape}"
+                f"(id={data_backend_id}) Deleted cache file {filepaths[idx]}: contains NaN or Inf values"
             )
 
-    debug_log(f" -> stacking {len(latents)} latents: {latents}")
-    return torch.stack(
-        [latent.to(StateTracker.get_accelerator().device) for latent in latents], dim=0
-    )
+        # For conditioning latents, allow different shapes
+        if not is_conditioning:
+            if len(latent.shape) == 5:
+                if latent.shape[1:] != test_shape:
+                    raise ValueError(
+                        f"(id={data_backend_id}) File {filepaths[idx]} latent shape mismatch: {latent.shape[1:]} != {test_shape}"
+                    )
+            elif latent.shape != test_shape:
+                raise ValueError(
+                    f"(id={data_backend_id}) File {filepaths[idx]} latent shape mismatch: {latent.shape} != {test_shape}"
+                )
+
+    # Don't stack if shapes differ (for conditioning with multiple aspect ratios)
+    if is_conditioning and len(set(l.shape for l in latents)) > 1:
+        # Return list of tensors instead of stacked tensor
+        return [latent.to(StateTracker.get_accelerator().device) for latent in latents]
+    else:
+        # Stack normally if all shapes match
+        return torch.stack(
+            [latent.to(StateTracker.get_accelerator().device) for latent in latents],
+            dim=0,
+        )
 
 
 def collate_fn(batch):
@@ -523,7 +537,9 @@ def collate_fn(batch):
                         _backend_id,
                         model,
                     )
-                    debug_log(f"Conditioning latents computed: {len(_latents)} items.")
+                    debug_log(
+                        f"Conditioning latents computed: {len(_latents)} items with shapes: {[l.shape for l in _latents]}"
+                    )
 
                     # unpack from dicts (vae-cache style) & shape-check
                     if isinstance(_latents[0], dict):
@@ -566,7 +582,7 @@ def collate_fn(batch):
 
     # Check if we're in combined mode with multiple conditioning datasets
     sampling_mode = getattr(
-        StateTracker.get_args(), "conditioning_multidataset_sampling", "combined"
+        StateTracker.get_args(), "conditioning_multidataset_sampling"
     )
     is_combined_mode = sampling_mode == "combined" and len(conditioning_backends) > 1
 
