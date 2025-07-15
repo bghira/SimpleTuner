@@ -238,7 +238,7 @@ Create `multidatabackend.json` in your output directory:
 
 - [LCM Paper](https://arxiv.org/abs/2310.04378)
 - [Diffusers LCM Docs](https://huggingface.co/docs/diffusers/using-diffusers/inference_with_lcm)
-- [SimpleTuner Docs](/documentation/TUTORIAL.md)
+- [More SimpleTuner Docs](/documentation/quickstart/SDXL.md)
 
 ---
 
