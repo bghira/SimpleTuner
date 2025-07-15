@@ -16,6 +16,7 @@
 | [OmniGen](/documentation/quickstart/OMNIGEN.md)  | 3.8 B        |  ✓   |  ✓   |     ✓     | optional (int8,  fp8)       | bf16            | ✓                    | ✓               |           |
 | [Stable Diffusion XL](/documentation/quickstart/SDXL.md)| 2.6 B      |  ✓   |  ✓   |     ✓     | not recommended           | bf16            | ✓                    |                 | ✓         |
 | [Lumina2](/documentation/quickstart/LUMINA2.md)      | 2B   |  ✓   |  ✓   |     ✓    | optional (int8)           | bf16            | ✓                    | ✓               |           |
+| [Cosmos2](/documentation/quickstart/COSMOS2IMAGE.md)      | 2B   |  ✓   |  ✓   |     ✓    | not recommended         | bf16            | ✓                    | ✓               |           |
 | [LTX Video](/documentation/quickstart/LTXVIDEO.md)| ~2.5 B      |  ✓   |  ✓   |     ✓     | optional (int8,  fp8)       | bf16            | ✓                    | ✓               |           |
 | [Wan 2.1](/documentation/quickstart/WAN.md)      | 1.3B-14B   |  ✓   |  ✓   |     ✓*    | optional (int8)           | bf16            | ✓                    | ✓               |           |
 

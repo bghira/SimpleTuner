@@ -31,6 +31,7 @@ model_classes = {
         "hidream",
         "auraflow",
         "lumina2",
+        "cosmos2image",
     ],
     "lora": [
         "flux",
