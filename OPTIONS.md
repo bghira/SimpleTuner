@@ -409,9 +409,11 @@ This is a basic overview meant to help you get started. For a complete list of o
 usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
                 --model_family
-                {sd1x,sd2x,sd3,deepfloyd,sana,sdxl,kolors,flux,wan,ltxvideo,pixart_sigma,omnigen,hidream,auraflow}
-                [--model_flavour {1.5,1.4,dreamshaper,realvis,digitaldiffusion,pseudoflex-v2,pseudojourney,2.1,2.0,medium,large,i-medium-400m,i-large-900m,i-xlarge-4.3b,ii-medium-450m,ii-large-1.2b,sana1.5-4.8b-1024,sana1.5-1.6b-1024,sana1.0-1.6b-2048,sana1.0-1.6b-1024,sana1.0-600m-1024,sana1.0-600m-512,base-1.0,refiner-1.0,base-0.9,refiner-0.9,1.0,dev,schnell,kontext,t2v-480p-1.3b-2.1,t2v-480p-14b-2.1,0.9.5,0.9.0,900M-1024-v0.6,900M-1024-v0.7-stage1,900M-1024-v0.7-stage2,600M-512,600M-1024,600M-2048,v1,dev,full,fast,v0.3,v0.2,v0.1}]
-                [--model_type {full,lora}] [--hidream_use_load_balancing_loss]
+                {sd1x,sd2x,sd3,deepfloyd,sana,sdxl,kolors,flux,wan,ltxvideo,pixart_sigma,omnigen,hidream,auraflow,lumina2,cosmos2image}
+                [--model_flavour {1.5,1.4,dreamshaper,realvis,digitaldiffusion,pseudoflex-v2,pseudojourney,2.1,2.0,medium,large,i-medium-400m,i-large-900m,i-xlarge-4.3b,ii-medium-450m,ii-large-1.2b,sana1.5-4.8b-1024,sana1.5-1.6b-1024,sana1.0-1.6b-2048,sana1.0-1.6b-1024,sana1.0-600m-1024,sana1.0-600m-512,base-1.0,refiner-1.0,base-0.9,refiner-0.9,1.0,dev,schnell,kontext,t2v-480p-1.3b-2.1,t2v-480p-14b-2.1,0.9.5,0.9.0,900M-1024-v0.6,900M-1024-v0.7-stage1,900M-1024-v0.7-stage2,600M-512,600M-1024,600M-2048,v1,dev,full,fast,v0.3,v0.2,v0.1,2.0,2b,14b}]
+                [--model_type {full,lora}] [--loss_type {l2,huber,smooth_l1}]
+                [--huber_schedule {snr,exponential,constant}]
+                [--huber_c HUBER_C] [--hidream_use_load_balancing_loss]
                 [--hidream_load_balancing_loss_weight HIDREAM_LOAD_BALANCING_LOSS_WEIGHT]
                 [--flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,nano,all+ffs+embedder,all+ffs+embedder+controlnet}]
                 [--flow_sigmoid_scale FLOW_SIGMOID_SCALE]
@@ -633,9 +635,9 @@ options:
                         The standard deviation of the data used in the soft
                         min weighting method. This is required when using the
                         soft min SNR calculation method.
-  --model_family {sd1x,sd2x,sd3,deepfloyd,sana,sdxl,kolors,flux,wan,ltxvideo,pixart_sigma,omnigen,hidream,auraflow}
+  --model_family {sd1x,sd2x,sd3,deepfloyd,sana,sdxl,kolors,flux,wan,ltxvideo,pixart_sigma,omnigen,hidream,auraflow,lumina2,cosmos2image}
                         The model family to train. This option is required.
-  --model_flavour {1.5,1.4,dreamshaper,realvis,digitaldiffusion,pseudoflex-v2,pseudojourney,2.1,2.0,medium,large,i-medium-400m,i-large-900m,i-xlarge-4.3b,ii-medium-450m,ii-large-1.2b,sana1.5-4.8b-1024,sana1.5-1.6b-1024,sana1.0-1.6b-2048,sana1.0-1.6b-1024,sana1.0-600m-1024,sana1.0-600m-512,base-1.0,refiner-1.0,base-0.9,refiner-0.9,1.0,dev,schnell,kontext,t2v-480p-1.3b-2.1,t2v-480p-14b-2.1,0.9.5,0.9.0,900M-1024-v0.6,900M-1024-v0.7-stage1,900M-1024-v0.7-stage2,600M-512,600M-1024,600M-2048,v1,dev,full,fast,v0.3,v0.2,v0.1}
+  --model_flavour {1.5,1.4,dreamshaper,realvis,digitaldiffusion,pseudoflex-v2,pseudojourney,2.1,2.0,medium,large,i-medium-400m,i-large-900m,i-xlarge-4.3b,ii-medium-450m,ii-large-1.2b,sana1.5-4.8b-1024,sana1.5-1.6b-1024,sana1.0-1.6b-2048,sana1.0-1.6b-1024,sana1.0-600m-1024,sana1.0-600m-512,base-1.0,refiner-1.0,base-0.9,refiner-0.9,1.0,dev,schnell,kontext,t2v-480p-1.3b-2.1,t2v-480p-14b-2.1,0.9.5,0.9.0,900M-1024-v0.6,900M-1024-v0.7-stage1,900M-1024-v0.7-stage2,600M-512,600M-1024,600M-2048,v1,dev,full,fast,v0.3,v0.2,v0.1,2.0,2b,14b}
                         Certain models require designating a given flavour to
                         reference configurations from. The value for this
                         depends on the model that is selected. Currently
@@ -654,11 +656,30 @@ options:
                         ['900M-1024-v0.6', '900M-1024-v0.7-stage1',
                         '900M-1024-v0.7-stage2', '600M-512', '600M-1024',
                         '600M-2048'] omnigen: ['v1'] hidream: ['dev', 'full',
-                        'fast'] auraflow: ['v0.3', 'v0.2', 'v0.1']
+                        'fast'] auraflow: ['v0.3', 'v0.2', 'v0.1'] lumina2:
+                        ['2.0'] cosmos2image: ['2b', '14b']
   --model_type {full,lora}
                         The training type to use. 'full' will train the full
                         model, while 'lora' will train the LoRA model. LoRA is
                         a smaller model that can be used for faster training.
+  --loss_type {l2,huber,smooth_l1}
+                        The loss function to use during training. 'l2' is the
+                        default, but 'huber' and 'smooth_l1' are also
+                        available. Huber loss is less sensitive to outliers
+                        than L2 loss, and smooth L1 is a combination of L1 and
+                        L2 loss. When using Huber loss, it will be scheduled
+                        via --huber_schedule and --huber_c.
+  --huber_schedule {snr,exponential,constant}
+                        constant: Uses a fixed huber_c value. exponential:
+                        Exponentially decays huber_c based on timestep snr:
+                        Adjusts huber_c based on signal-to-noise ratio.
+                        default: snr.
+  --huber_c HUBER_C     The huber_c value to use for Huber loss. This is the
+                        threshold at which the loss function transitions from
+                        L2 to L1. A lower value will make the loss function
+                        more sensitive to outliers, while a higher value will
+                        make it less sensitive. The default value is 0.1,
+                        which is a good starting point for most models.
   --hidream_use_load_balancing_loss
                         When set, will use the load balancing loss for HiDream
                         training. This is an experimental implementation.
