@@ -806,42 +806,37 @@ class Trainer:
         self.enable_gradient_checkpointing()
 
     def init_distillation(self):
+        """Initialize distillation using the factory pattern."""
+        from helpers.distillation.factory import DistillerFactory
+        
         self.distiller = None
+        
         if self.config.distillation_method is None:
             return
-
-        if self.config.distillation_method == "dcm":
-            from helpers.distillation.dcm.distiller import DCMDistiller
-
-            # For LoRA with DCM regularization (single model)
-            dcm_config = {
-                "model_family": self.config.model_family,
-                "model_type": self.config.model_type,
-                "loss_type": self.model.PREDICTION_TYPE.value,
-                "pred_type": self.model.PREDICTION_TYPE.value,
-                # "windows": 16,
-                "is_regularisation_data": True,  # Use regularization approach
-            }
-            if self.config.distillation_config is not None:
-                if "dcm" in self.config.distillation_config:
-                    dcm_config.update(self.config.distillation_config["dcm"])
-                else:
-                    dcm_config.update(self.config.distillation_config)
-            logger.info(f"Distillation config: {dcm_config}")
-            if self.config.model_type == "lora":
-                logger.info(
-                    "Loading flow-matching distillation via low-rank adapter training."
-                )
-                self.distiller = DCMDistiller(
-                    teacher_model=self.model,
-                    noise_scheduler=self.noise_scheduler,
-                    config=dcm_config,
-                )
-            elif self.config.model_type == "full":
-                raise NotImplementedError(
-                    "Separate teacher/student models for distillation are not implemented yet."
-                )
-
+        
+        # Get prediction type from model
+        prediction_type = None
+        if hasattr(self.model, 'PREDICTION_TYPE'):
+            prediction_type = self.model.PREDICTION_TYPE.value
+        
+        try:
+            # Create distiller using factory
+            self.distiller = DistillerFactory.create_distiller(
+                method=self.config.distillation_method,
+                teacher_model=self.model,
+                noise_scheduler=self.noise_scheduler,
+                config=vars(self.config),  # Convert config object to dict
+                model_type=self.config.model_type,
+                model_family=getattr(self.config, 'model_family', None),
+                prediction_type=prediction_type,
+                student_model=None,  # Set this if using separate student model
+            )
+            
+            if self.distiller:
+                logger.info(f"Successfully initialized {self.config.distillation_method.upper()} distiller")
+        except Exception as e:
+            logger.error(f"Failed to initialize distillation: {e}")
+            raise
     def enable_gradient_checkpointing(self):
         if self.config.gradient_checkpointing:
             logger.debug("Enabling gradient checkpointing.")

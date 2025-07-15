@@ -1295,9 +1295,9 @@ def get_argument_parser():
     parser.add_argument(
         "--distillation_method",
         default=None,
-        choices=["dcm"],
+        choices=["lcm", "dcm"],
         help=(
-            "The distillation method to use. Currently, only 'dcm' is supported via LoRA."
+            "The distillation method to use. Currently, LCM and DCM are supported via LoRA."
             " This will apply the selected distillation method to the model."
         ),
     )
