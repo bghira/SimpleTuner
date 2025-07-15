@@ -185,7 +185,7 @@ class TextEmbeddingCache(WebhookMixin):
     def process_write_batch(self, batch):
         """Write a batch of embeddings to the cache."""
         logger.debug(f"Writing {len(batch)} items to disk")
-        logger.debug(f"Batch: {batch}")
+        # logger.debug(f"Batch: {batch}")
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = [
                 executor.submit(self.data_backend.torch_save, *args) for args in batch
@@ -360,6 +360,7 @@ class TextEmbeddingCache(WebhookMixin):
         )
         with torch.no_grad():
             last_reported_index = 0
+            text_encoder_output = None
             for prompt in tqdm(
                 local_caption_split,
                 desc="Processing prompts",
@@ -481,16 +482,22 @@ class TextEmbeddingCache(WebhookMixin):
                 return
 
             logger.debug(f"Returning all {(len(prompt_embeds_all))} prompt embeds")
-            if "prompt_embeds" in text_encoder_output:
+            if (
+                text_encoder_output is not None
+                and "prompt_embeds" in text_encoder_output
+            ):
                 all_prompt_embeds = tuple(
                     [v for v in text_encoder_output["prompt_embeds"]]
                 )
                 text_encoder_output["prompt_embeds"] = torch.cat(
                     all_prompt_embeds, dim=0
                 )
-            if "add_text_embeds" in text_encoder_output:
+            if (
+                text_encoder_output is not None
+                and "add_text_embeds" in text_encoder_output
+            ):
                 all_pooled_embeds = tuple(
-                    [v for v in text_encoder_output["prompt_embeds"]]
+                    [v for v in text_encoder_output["add_text_embeds"]]
                 )
                 text_encoder_output["add_text_embeds"] = torch.cat(
                     all_pooled_embeds, dim=0

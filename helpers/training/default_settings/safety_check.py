@@ -50,13 +50,19 @@ def safety_check(args, accelerator):
     ):
         validate_deepspeed_compat_from_args(accelerator, args)
     if args.controlnet:
-        if args.model_family not in ["sd1x", "sd2x", "sdxl"]:
+        if args.model_family not in [
+            "sd1x",
+            "sd2x",
+            "sdxl",
+            "flux",
+            "pixart_sigma",
+            "auraflow",
+            "sd3",
+            "hidream",
+        ]:
             raise ValueError(
                 f"ControlNet is not yet supported with {args.model_family} models. Please disable --controlnet, or switch model types."
             )
-    if "lora" in args.model_type and "standard" == args.lora_type.lower():
-        if args.model_family == "pixart_sigma":
-            raise Exception(f"{args.model_type} does not support LoRA model training.")
 
     if "lora" in args.model_type and args.train_text_encoder:
         if args.lora_type.lower() == "lycoris":

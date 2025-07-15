@@ -70,6 +70,7 @@ class MetadataBackend:
         self.image_metadata = {}  # Store image metadata
         self.seen_images = {}
         self.config = {}
+        self.dataset_config = StateTracker.get_data_backend_config(self.id)
         self.reload_cache()
         self.resolution = float(resolution)
         self.resolution_type = resolution_type
@@ -103,6 +104,67 @@ class MetadataBackend:
 
     def save_metadata(self):
         raise NotImplementedError
+
+    def clear_metadata(self):
+        """
+        Clear the metadata cache.
+        """
+        self.image_metadata = {}
+        self.image_metadata_loaded = False
+        if self.metadata_file.exists():
+            self.metadata_file.unlink()
+        logger.info(f"({self.id}) Cleared metadata cache.")
+
+    def set_metadata(self, metadata_backend, update_json: bool = True):
+        """
+        Set the metadata for the current instance.
+
+        Args:
+            metadata (dict): The metadata to set.
+            update_json (bool): Whether to update the JSON file.
+        """
+        if not isinstance(metadata_backend, MetadataBackend):
+            raise TypeError(
+                f"Expected MetadataBackend instance, got {type(metadata_backend)}."
+            )
+        self.image_metadata = metadata_backend.get_metadata()
+        self.aspect_ratio_bucket_indices = (
+            metadata_backend.aspect_ratio_bucket_indices.copy()
+        )
+
+        self.image_metadata_loaded = True
+        if update_json:
+            self.save_image_metadata()
+
+    def get_metadata(self):
+        """
+        Get the metadata for the current instance.
+
+        Returns:
+            dict: The metadata.
+        """
+        if not self.image_metadata_loaded:
+            self.load_image_metadata()
+        return self.image_metadata
+
+    def print_debug_info(self):
+        """
+        Print general debug information about the metadata backend.
+        """
+        logger.info(
+            f"\n-> MetadataBackend ID: {self.id}, "
+            f"\n-> Instance Data Dir: {self.instance_data_dir}, "
+            f"\n-> Cache File: {self.cache_file}, "
+            f"\n-> Metadata File: {self.metadata_file}, "
+            f"\n-> Aspect Ratio Buckets: {len(self.aspect_ratio_bucket_indices)}"
+        )
+
+    def set_readonly(self):
+        """
+        Set the metadata backend to read-only mode.
+        """
+        self.read_only = True
+        logger.info(f"MetadataBackend {self.id} is now read-only.")
 
     def _bucket_worker(
         self,
@@ -589,6 +651,9 @@ class MetadataBackend:
         """
         Check if an image meets the resolution requirements.
         """
+        if self.dataset_config.get("dataset_type", None) in ["conditioning"]:
+            # Conditioning datasets do not have resolution requirements.
+            return True
         if image is None and (image_path is not None and image_metadata is None):
             metadata = self.get_metadata_by_filepath(image_path)
             if metadata is None:
@@ -790,18 +855,33 @@ class MetadataBackend:
         Returns:
             dict: Metadata for the image. Returns None if not found.
         """
+        if type(filepath) not in [tuple, list]:
+            filepath = [filepath]
         if type(filepath) is tuple or type(filepath) is list:
             for path in filepath:
+                abs_path = self.data_backend.get_abs_path(path)
                 if path in self.image_metadata:
+                    # Maybe we got the correct path at first.
                     result = self.image_metadata.get(path, None)
                     logger.debug(
                         f"Retrieving metadata for path: {filepath}, result: {result}"
                     )
                     if result is not None:
                         return result
+                elif abs_path in self.image_metadata:
+                    # If we got a relative path, we'll try abs path.
+                    filepath = abs_path
+                    result = self.image_metadata.get(filepath, None)
+                    logger.debug(
+                        f"Retrieving metadata for path: {filepath}, result: {result}"
+                    )
+                    if result is not None:
+                        return result
+
             return None
 
-        return self.image_metadata.get(filepath, None)
+        meta = self.image_metadata.get(filepath, None)
+        return meta
 
     def scan_for_metadata(self):
         """

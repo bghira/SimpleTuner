@@ -69,7 +69,7 @@ class DistillationBase:
         # Store custom schedulers needed for specific distillation methods
         self.custom_schedulers = {}
 
-    def get_scheduler(self, scheduler_name):
+    def get_scheduler(self, scheduler_name: str = None):
         """A child class can override this to provide a custom scheduler."""
         self.logger.warning("No distillation scheduler provided. Using default.")
         return None

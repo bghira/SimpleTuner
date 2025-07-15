@@ -123,6 +123,40 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--loss_type",
+        type=str,
+        default="l2",
+        choices=["l2", "huber", "smooth_l1"],
+        help=(
+            "The loss function to use during training. 'l2' is the default, but 'huber' and 'smooth_l1' are also available."
+            " Huber loss is less sensitive to outliers than L2 loss, and smooth L1 is a combination of L1 and L2 loss."
+            " When using Huber loss, it will be scheduled via --huber_schedule and --huber_c."
+            " NOTE: When training flow-matching models, L2 loss will always be in use."
+        ),
+    )
+    parser.add_argument(
+        "--huber_schedule",
+        type=str,
+        default="snr",
+        choices=["snr", "exponential", "constant"],
+        help=(
+            "constant: Uses a fixed huber_c value."
+            " exponential: Exponentially decays huber_c based on timestep"
+            " snr: Adjusts huber_c based on signal-to-noise ratio."
+            " default: snr."
+        ),
+    )
+    parser.add_argument(
+        "--huber_c",
+        type=float,
+        default=0.1,
+        help=(
+            "The huber_c value to use for Huber loss. This is the threshold at which the loss function transitions from L2 to L1."
+            " A lower value will make the loss function more sensitive to outliers, while a higher value will make it less sensitive."
+            " The default value is 0.1, which is a good starting point for most models."
+        ),
+    )
+    parser.add_argument(
         "--hidream_use_load_balancing_loss",
         action="store_true",
         default=False,
@@ -150,6 +184,9 @@ def get_argument_parser():
             "ai-toolkit",
             "tiny",
             "nano",
+            # control / controlnet
+            "all+ffs+embedder",
+            "all+ffs+embedder+controlnet",
         ],
         default="all",
         help=(
@@ -411,11 +448,40 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--conditioning_multidataset_sampling",
+        type=str,
+        default="random",
+        choices=["combined", "random"],
+        help=(
+            "How to sample from multiple conditioning datasets:\n"
+            "- 'combined': Use all conditioning images from all datasets, increases VRAM requirements a lot.\n"
+            "- 'random': Randomly select one conditioning dataset per training sample (default)\n"
+            "Random mode uses deterministic selection based on image path and epoch."
+        ),
+    )
+    parser.add_argument(
+        "--control",
+        action="store_true",
+        default=False,
+        help=(
+            "If set, channel-wise control style training will be used, where a conditioning input image is required alongside the training data."
+        ),
+    )
+    parser.add_argument(
         "--controlnet",
         action="store_true",
         default=False,
         help=(
             "If set, ControlNet style training will be used, where a conditioning input image is required alongside the training data."
+        ),
+    )
+    parser.add_argument(
+        "--controlnet_custom_config",
+        type=str,
+        default=None,
+        help=(
+            "When training certain ControlNet models (eg. HiDream) you may set a config containing keys like num_layers or num_single_layers"
+            " to adjust the resulting ControlNet size. This is not supported by most models, and may be ignored if the model does not support it."
         ),
     )
     parser.add_argument(
@@ -1748,6 +1814,15 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--validation_stitch_input_location",
+        default="left",
+        choices=["left", "right"],
+        help=(
+            "When set, the input image will be stitched to the left of the generated image during validation."
+            " This is useful for img2img models, such as DeepFloyd Stage II, where the input image is used as a reference."
+        ),
+    )
+    parser.add_argument(
         "--eval_steps_interval",
         type=int,
         default=None,
@@ -1848,13 +1923,14 @@ def get_argument_parser():
         "--mixed_precision",
         type=str,
         default="bf16",
-        choices=["bf16", "fp16", "no"],
+        choices=["bf16", "fp16", "fp8", "no"],
         help=(
             "SimpleTuner only supports bf16 training. Bf16 requires PyTorch >="
             " 1.10. on an Nvidia Ampere or later GPU, and PyTorch 2.3 or newer for Apple Silicon."
             " Default to the value of accelerate config of the current system or the"
             " flag passed with the `accelerate.launch` command. Use this argument to override the accelerate config."
             " fp16 is offered as an experimental option, but is not recommended as it is less-tested and you will likely encounter errors."
+            " fp8 is another experimental option that relies in TorchAO for mixed precision ops."
         ),
     )
     parser.add_argument(
@@ -1931,6 +2007,16 @@ def get_argument_parser():
         help="For distributed training: local_rank",
     )
     parser.add_argument(
+        "--fuse_qkv_projections",
+        action="store_true",
+        default=False,
+        help=(
+            "QKV projections can be fused into a single linear layer."
+            " This can save memory and speed up training, but may not work with all models."
+            " If you encounter issues, disable this option. It is considered experimental."
+        ),
+    )
+    parser.add_argument(
         "--attention_mechanism",
         type=str,
         choices=[
@@ -1986,6 +2072,11 @@ def get_argument_parser():
             "When training with --offset_noise, the value of --noise_offset will only be applied probabilistically."
             " The default behaviour is for offset noise (if enabled) to be applied 25 percent of the time."
         ),
+    )
+    parser.add_argument(
+        "--masked_loss_probability",
+        type=float,
+        default=1.0,
     )
     parser.add_argument(
         "--validation_guidance",
@@ -2293,12 +2384,33 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if args is None and exit_on_error:
         sys.exit(1)
 
+    if (
+        args.controlnet_custom_config is not None
+        and type(args.controlnet_custom_config) is str
+    ):
+        if args.controlnet_custom_config.startswith("{"):
+            try:
+                import ast
+
+                args.controlnet_custom_config = ast.literal_eval(
+                    args.controlnet_custom_config
+                )
+            except Exception as e:
+                logger.error(f"Could not load controlnet_custom_config: {e}")
+                raise
+
     if args.optimizer == "adam_bfloat16" and args.mixed_precision != "bf16":
         if not torch.backends.mps.is_available():
             logging.error(
                 "You cannot use --adam_bfloat16 without --mixed_precision=bf16."
             )
             sys.exit(1)
+
+    if args.mixed_precision == "fp8" and not torch.cuda.is_available():
+        logging.error(
+            "You cannot use --mixed_precision=fp8 without a CUDA device. Please use bf16 instead."
+        )
+        sys.exit(1)
 
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if env_local_rank != -1 and env_local_rank != args.local_rank:
@@ -2366,6 +2478,14 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         and args.base_model_default_dtype == "bf16"
     )
     model_is_quantized = args.base_model_precision != "no_change"
+    if (
+        model_is_quantized
+        and args.mixed_precision == "fp8"
+        and args.base_model_precision != "fp8-torchao"
+    ):
+        raise ValueError(
+            "You cannot use --mixed_precision=fp8 with a quantized base model. Please use bf16 or remove base_model_precision option from your configuration."
+        )
     # check optimiser validity
     chosen_optimizer = args.optimizer
     is_optimizer_deprecated(chosen_optimizer)
@@ -2492,9 +2612,6 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         info_log(f"{log_msg} {int(args.validation_resolution)}px")
     if args.timestep_bias_portion < 0.0 or args.timestep_bias_portion > 1.0:
         raise ValueError("Timestep bias portion must be between 0.0 and 1.0.")
-
-    if args.controlnet and "lora" in args.model_type:
-        raise ValueError("ControlNet is not supported for LoRA models.")
 
     if args.metadata_update_interval < 60:
         raise ValueError("Metadata update interval must be at least 60 seconds.")

@@ -30,6 +30,8 @@ model_classes = {
         "omnigen",
         "hidream",
         "auraflow",
+        "lumina2",
+        "cosmos2image",
     ],
     "lora": [
         "flux",
@@ -43,8 +45,9 @@ model_classes = {
         "deepfloyd",
         "auraflow",
         "hidream",
+        "lumina2",
     ],
-    "controlnet": ["sdxl", "sd1x", "sd2x"],
+    "controlnet": ["sdxl", "sd1x", "sd2x", "hidream", "auraflow", "flux", "pixart_sigma", "sd3", "kolors"],
 }
 
 default_models = {
@@ -673,7 +676,7 @@ def configure_env():
         )
         if not use_tf32:
             env_contents["--disable_tf32"] = "true"
-    mixed_precision_options = ["bf16", "no"]
+    mixed_precision_options = ["bf16", "fp8", "no"]
     env_contents["--mixed_precision"] = None
     while (
         not env_contents["--mixed_precision"]

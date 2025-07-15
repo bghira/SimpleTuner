@@ -1,8 +1,11 @@
+import inspect
 import torch
+from typing import Union
 import diffusers
 import os
 import wandb
 import logging
+import inspect
 import sys
 import numpy as np
 from tqdm import tqdm
@@ -176,6 +179,7 @@ def retrieve_validation_images():
         [
             StateTracker.get_model().requires_conditioning_validation_inputs(),
             args.controlnet,
+            args.control,
         ]
     )
     data_backends = StateTracker.get_data_backends(
@@ -234,7 +238,7 @@ def retrieve_validation_images():
     return validation_set
 
 
-def retrieve_validation_edit_images() -> list[tuple[str, str, Image.Image]]:
+def retrieve_validation_edit_images() -> list[tuple[str, str, list[Image.Image]]]:
     """
     Returns [(shortname, *edited-scene caption*, reference_image), ...]
     for models that need **edit** validation.
@@ -244,7 +248,7 @@ def retrieve_validation_edit_images() -> list[tuple[str, str, Image.Image]]:
     • loop over *image* datasets that have a sampler
     • for every deterministic validation sample returned by the sampler
       – grab its original file path from metadata
-      – ask the dataset’s *registered* conditioning backend for the
+      – ask the dataset's *registered* conditioning backend for the
         counterpart via `get_conditioning_sample()`
       – add the trio to output
     """
@@ -253,26 +257,35 @@ def retrieve_validation_edit_images() -> list[tuple[str, str, Image.Image]]:
         return []  # no-op for ordinary models
 
     args = StateTracker.get_args()
+    # Respect the user's selected validation dataset via --eval_dataset_id and
+    # honour any `disable_validation: true` flags in the backend configuration.
+    validation_data_backend_id = args.eval_dataset_id
     validation_set = []
 
     # ---------- iterate over IMAGE datasets ---------------------------------
     for backend_id, backend in StateTracker.get_data_backends(_type="image").items():
+        backend_config = backend.get("config", {})
+        should_skip_dataset = backend_config.get("disable_validation", False)
+
+        # Skip datasets that the user has explicitly disabled for validation or
+        # that do not match the requested `--eval_dataset_id`.
+        if (
+            validation_data_backend_id is not None
+            and backend.get("id") != validation_data_backend_id
+        ) or should_skip_dataset:
+            logger.debug(
+                f"Not collecting edit-validation images from {backend.get('id', backend_id)}"
+            )
+            continue
         sampler = backend.get("sampler")
         if sampler is None:  # nothing to iterate over
             continue
 
         # each backend should know which conditioning dataset is linked to it
-        cond_backend = backend.get("conditioning_data")
-        cond_backend_id = cond_backend.get("id") if cond_backend else None
-        if cond_backend_id is None:
+        cond_backends = StateTracker.get_conditioning_datasets(backend_id)
+        if not cond_backends:
             logger.debug("No conditioning backend configured for this image dataset.")
             continue
-
-        logger.debug(f"Backend id: {backend_id}, cond_backend_id: {cond_backend_id}")
-        cond_backend = StateTracker.get_data_backend(cond_backend_id)
-        if cond_backend is None:
-            logger.debug(f"Conditioning backend {cond_backend_id} not found.")
-            continue  # mis-configuration → skip
 
         # deterministic slice for validation
         for sample in sampler.retrieve_validation_set(batch_size=args.num_eval_images):
@@ -296,24 +309,23 @@ def retrieve_validation_edit_images() -> list[tuple[str, str, Image.Image]]:
                     rel_path = rel_path.lstrip("/")
                     logger.debug(f"Removed prefix, got relative path: {rel_path}")
                 logger.debug(f"Metadata: {meta}")
-            except Exception as e:
+            except Exception:
                 continue  # metadata missing → skip
 
-            conditioning_dir_prefix = cond_backend[
-                "sampler"
-            ].metadata_backend.instance_data_dir
-            cond_sample_path = os.path.join(conditioning_dir_prefix, rel_path)
-            cond_sample = cond_backend["sampler"].get_conditioning_sample(rel_path)
+            reference_imgs = []
+            for cond_backend in cond_backends:
+                cond_sample = cond_backend["sampler"].get_conditioning_sample(rel_path)
 
-            if cond_sample is None:
+                if cond_sample is None:
+                    continue
+
+                reference_imgs.append(cond_sample.image)
+            if len(reference_imgs) != len(cond_backends):
                 logger.warning(
-                    f"Conditioning sample for {rel_path} not found in {cond_backend_id}."
+                    f"Didn't find enough conditioning samples for {rel_path}."
                 )
                 continue
-
-            reference_img = cond_sample.image
-            logger.debug(f"Validation sample path: {cond_sample_path}")
-            validation_set.append((shortname, edited_prompt, reference_img))
+            validation_set.append((shortname, edited_prompt, reference_imgs))
 
     logger.info(f"Collected {len(validation_set)} edit-validation samples.")
     return validation_set
@@ -338,6 +350,7 @@ def prepare_validation_prompt_list(args, embed_cache, model):
         ("deepfloyd" in args.model_family and str(args.model_flavour).startswith("ii-"))
         or model.requires_conditioning_validation_inputs()
         or args.controlnet
+        or args.control
         or args.validation_using_datasets
     ):
         # Now, we prepare the DeepFloyd upscaler image inputs so that we can calculate their prompts.
@@ -351,7 +364,16 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                 ncols=125,
                 desc="Precomputing validation image embeds",
             ):
-                _, validation_prompt, _ = _validation_sample
+                if (
+                    isinstance(_validation_sample, tuple)
+                    and len(_validation_sample) == 3
+                ):
+                    _, validation_prompt, _ = _validation_sample
+                elif (
+                    isinstance(_validation_sample, tuple)
+                    and len(_validation_sample) == 4
+                ):
+                    _, validation_prompt, _, _ = _validation_sample
                 embed_cache.compute_embeddings_for_prompts(
                     [validation_prompt], load_from_cache=False
                 )
@@ -389,7 +411,7 @@ def prepare_validation_prompt_list(args, embed_cache, model):
             # move_text_encoders(embed_cache.text_encoders, "cpu")
             validation_prompts.append(prompt)
             validation_shortnames.append(shortname)
-    if args.validation_prompt is not None:
+    if args.validation_prompt is not None and args.validation_prompt != "None":
         # Use a single prompt for validation.
         # This will add a single prompt to the prompt library, if in use.
         validation_prompts = validation_prompts + [args.validation_prompt]
@@ -461,6 +483,182 @@ def parse_validation_resolution(input_str: str) -> tuple:
         return (int(pieces[0]), int(pieces[1]))
 
 
+def load_video_frames(video_path):
+    """Load video frames from a file."""
+    try:
+        import imageio
+
+        reader = imageio.get_reader(video_path, "ffmpeg")
+        frames = []
+        for frame in reader:
+            # Convert numpy array to PIL Image
+            frames.append(Image.fromarray(frame))
+        reader.close()
+        return frames
+    except ImportError:
+        # Fallback to opencv if imageio not available
+        try:
+            import cv2
+
+            cap = cv2.VideoCapture(video_path)
+            frames = []
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                # Convert BGR to RGB and then to PIL
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frames.append(Image.fromarray(frame_rgb))
+            cap.release()
+            return frames
+        except ImportError:
+            logger.error(
+                "Neither imageio nor opencv-python is installed. Cannot load video frames."
+            )
+            return None
+
+
+def apply_to_image_or_video(func):
+    """
+    Decorator that allows image manipulation functions to work on both single images and video frames.
+    If input is a list (video frames), applies the function to each frame.
+    If input is a single image, applies the function directly.
+    """
+
+    def wrapper(image_or_frames, *args, **kwargs):
+        if isinstance(image_or_frames, list):
+            # It's a video - apply to each frame
+            return [func(frame, *args, **kwargs) for frame in image_or_frames]
+        else:
+            # It's a single image
+            return func(image_or_frames, *args, **kwargs)
+
+    return wrapper
+
+
+@apply_to_image_or_video
+def draw_text_on_image(
+    image,
+    text,
+    font=None,
+    position=None,
+    fill=(255, 255, 255),
+    stroke_width=2,
+    stroke_fill=(0, 0, 0),
+):
+    """Draw text on a single image."""
+    draw = ImageDraw.Draw(image)
+
+    if font is None:
+        font = ImageFont.load_default()
+
+    if position is None:
+        # Center the text at the bottom
+        try:
+            bbox = draw.textbbox((0, 0), text, font=font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+        except AttributeError:
+            text_width, text_height = font.getsize(text)
+
+        margin = 10
+        x = (image.width - text_width) // 2
+        y = image.height - text_height - margin
+        position = (x, y)
+
+    draw.text(
+        position,
+        text,
+        fill=fill,
+        font=font,
+        stroke_width=stroke_width,
+        stroke_fill=stroke_fill,
+    )
+    return image
+
+
+def stitch_images_or_videos(left, right, separator_width=5, labels=None):
+    """
+    Stitch two images or two videos side by side.
+    If inputs are lists (video frames), stitches frame by frame.
+    """
+    if isinstance(left, list) and isinstance(right, list):
+        # Both are videos - stitch frame by frame
+        if len(left) != len(right):
+            raise ValueError(
+                f"Videos must have the same number of frames. Got {len(left)} and {len(right)}"
+            )
+        return [
+            _stitch_single_pair(left[i], right[i], separator_width, labels)
+            for i in range(len(left))
+        ]
+    elif not isinstance(left, list) and not isinstance(right, list):
+        # Both are single images
+        return _stitch_single_pair(left, right, separator_width, labels)
+    else:
+        raise ValueError("Both inputs must be either single images or lists of frames")
+
+
+def _stitch_single_pair(left_image, right_image, separator_width=5, labels=None):
+    """Helper to stitch a single pair of images."""
+    # Your existing stitching logic here
+    left_width, left_height = left_image.size
+    right_width, right_height = right_image.size
+
+    new_width = left_width + separator_width + right_width
+    new_height = max(left_height, right_height)
+
+    new_image = Image.new("RGB", (new_width, new_height), color="white")
+
+    # Center vertically if needed
+    left_y = (new_height - left_height) // 2
+    right_y = (new_height - right_height) // 2
+
+    new_image.paste(left_image, (0, left_y))
+    new_image.paste(right_image, (left_width + separator_width, right_y))
+
+    # Draw separator
+    draw = ImageDraw.Draw(new_image)
+    line_color = (200, 200, 200)
+    for i in range(separator_width):
+        x = left_width + i
+        draw.line([(x, 0), (x, new_height)], fill=line_color)
+
+    # Add labels if provided
+    if labels:
+        font = None
+        font_candidates = ["DejaVuSans-Bold.ttf", "DejaVuSans.ttf", "Arial.ttf"]
+        for font_name in font_candidates:
+            try:
+                font = ImageFont.truetype(font_name, 28)
+                break
+            except IOError:
+                continue
+        if font is None:
+            font = ImageFont.load_default()
+
+        if labels[0] is not None:
+            draw.text(
+                (10, 10),
+                labels[0],
+                fill=(255, 255, 255),
+                font=font,
+                stroke_width=2,
+                stroke_fill=(0, 0, 0),
+            )
+        if len(labels) > 1 and labels[1] is not None:
+            draw.text(
+                (left_width + separator_width + 10, 10),
+                labels[1],
+                fill=(255, 255, 255),
+                font=font,
+                stroke_width=2,
+                stroke_fill=(0, 0, 0),
+            )
+
+    return new_image
+
+
 class Validation:
     def __init__(
         self,
@@ -484,11 +682,11 @@ class Validation:
         self.model = model
         self.distiller = distiller
         if args.controlnet:
-            self.controlnet = model.get_trained_component()
+            self.controlnet = model.get_trained_component(unwrap_model=False)
         elif "unet" in str(self.model.get_trained_component().__class__).lower():
-            self.unet = self.model.get_trained_component()
+            self.unet = self.model.get_trained_component(unwrap_model=False)
         elif "transformer" in str(self.model.get_trained_component().__class__).lower():
-            self.transformer = self.model.get_trained_component()
+            self.transformer = self.model.get_trained_component(unwrap_model=False)
         self.config = args
         self.save_dir = os.path.join(args.output_dir, "validation_images")
         if not os.path.exists(self.save_dir):
@@ -570,6 +768,7 @@ class Validation:
             self.deepfloyd_stage2
             or self.config.validation_using_datasets
             or self.config.controlnet
+            or self.config.control
             or self.model.requires_conditioning_validation_inputs()
         ):
             self.validation_image_inputs = retrieve_validation_images()
@@ -584,18 +783,25 @@ class Validation:
             if self.config.validation_using_datasets:
                 if PipelineTypes.IMG2IMG not in self.model.PIPELINE_CLASSES:
                     raise ValueError(
-                        f"Cannot run {self.model.MODEL_CLASS} in Img2Img mode."
+                        f"Cannot run {self.model.MODEL_CLASS} in Img2Img mode for validation."
                     )
             if self.config.controlnet:
                 if PipelineTypes.CONTROLNET not in self.model.PIPELINE_CLASSES:
                     raise ValueError(
-                        f"Cannot run {self.model.MODEL_CLASS} in ControlNet mode."
+                        f"Cannot run {self.model.MODEL_CLASS} in ControlNet mode for validation."
+                    )
+            if self.config.control:
+                if PipelineTypes.CONTROL not in self.model.PIPELINE_CLASSES:
+                    raise ValueError(
+                        f"Cannot run {self.model.MODEL_CLASS} in Control mode for validation."
                     )
 
         if self.config.validation_using_datasets:
             return self.model.PIPELINE_CLASSES[PipelineTypes.IMG2IMG]
         if self.config.controlnet:
             return self.model.PIPELINE_CLASSES[PipelineTypes.CONTROLNET]
+        if self.config.control:
+            return self.model.PIPELINE_CLASSES[PipelineTypes.CONTROL]
         return self.model.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
 
     def _gather_prompt_embeds(self, validation_prompt: str):
@@ -612,13 +818,56 @@ class Validation:
 
         return self.model.convert_text_embed_for_pipeline(prompt_embed)
 
-    def _benchmark_path(self, benchmark: str = "base_model"):
-        # does the benchmark directory exist?
-        if not os.path.exists(os.path.join(self.config.output_dir, "benchmarks")):
-            os.makedirs(
-                os.path.join(self.config.output_dir, "benchmarks"), exist_ok=True
+    def _benchmark_image(self, shortname, resolution):
+        """
+        We will retrieve the benchmark image/video for the shortname.
+        """
+        if not self.benchmark_exists():
+            return None
+
+        base_model_benchmark = self._benchmark_path("base_model")
+
+        # Check if this is a video model
+        if isinstance(self.model, VideoModelFoundation):
+            # Look for video with resolution in filename
+            video_pattern = f"{shortname}_{resolution[0]}x{resolution[1]}_"
+            for filename in os.listdir(base_model_benchmark):
+                if filename.startswith(video_pattern) and filename.endswith(".mp4"):
+                    video_path = os.path.join(base_model_benchmark, filename)
+                    frames = load_video_frames(video_path)
+                    if frames:
+                        logger.debug(
+                            f"Loaded {len(frames)} frames from benchmark video: {filename}"
+                        )
+                        return frames
+                    else:
+                        logger.warning(f"Failed to load benchmark video: {filename}")
+                        return None
+
+            # Fallback: try without resolution (old format)
+            for filename in os.listdir(base_model_benchmark):
+                if filename.startswith(f"{shortname}_") and filename.endswith(".mp4"):
+                    video_path = os.path.join(base_model_benchmark, filename)
+                    frames = load_video_frames(video_path)
+                    if frames:
+                        logger.debug(
+                            f"Loaded {len(frames)} frames from benchmark video: {filename}"
+                        )
+                        return frames
+
+            # NEW: If no video found, fall back to image (video model might output images)
+            logger.debug(
+                f"No video benchmark found for {shortname}, checking for image..."
             )
-        return os.path.join(self.config.output_dir, "benchmarks", benchmark)
+
+        # Image logic (now also used as fallback for video models)
+        image_filename = f"{shortname}_{resolution[0]}x{resolution[1]}.png"
+        image_path = os.path.join(base_model_benchmark, image_filename)
+        if os.path.exists(image_path):
+            logger.debug(f"Found image benchmark: {image_filename}")
+            return Image.open(image_path)
+
+        return None
 
     def stitch_benchmark_image(
         self,
@@ -628,36 +877,93 @@ class Validation:
         labels=["base model", "checkpoint"],
     ):
         """
-        For each image, make a new canvas and place it side by side with its equivalent from {self.validation_image_inputs}
-        Add "base model" text to the left image and "checkpoint" text to the right image
-        Include a separator between the images
+        Stitch benchmark and validation images/videos side by side.
+        Handles both single images and lists of frames (videos).
         """
+        # Check if both are videos (lists)
+        if isinstance(validation_image_result, list) and isinstance(
+            benchmark_image, list
+        ):
+            # Stitch frame by frame
+            stitched_frames = []
+            max_frames = min(len(validation_image_result), len(benchmark_image))
 
-        # Calculate new dimensions
-        new_width = (
-            benchmark_image.size[0] + validation_image_result.size[0] + separator_width
-        )
-        new_height = benchmark_image.size[1]
+            for i in range(max_frames):
+                stitched_frame = self._stitch_single_images(
+                    benchmark_image[i],
+                    validation_image_result[i],
+                    separator_width,
+                    labels,
+                )
+                stitched_frames.append(stitched_frame)
 
-        # Create a new image with a white background
+            return stitched_frames
+
+        # Both are single images
+        elif hasattr(validation_image_result, "size") and hasattr(
+            benchmark_image, "size"
+        ):
+            return self._stitch_single_images(
+                benchmark_image, validation_image_result, separator_width, labels
+            )
+
+        # Type mismatch - can't stitch
+        else:
+            logger.warning(
+                "Cannot stitch benchmark: type mismatch between video and image"
+            )
+            return validation_image_result
+
+    def _stitch_single_images(
+        self,
+        left_image,
+        right_image,
+        separator_width=5,
+        labels=["base model", "checkpoint"],
+    ):
+        """Helper method to stitch two single images."""
+        # Calculate dimensions
+        raw_width = left_image.size[0] + right_image.size[0] + separator_width
+        raw_height = max(left_image.size[1], right_image.size[1])
+
+        # Ensure dimensions are divisible by 16 for video encoding
+        new_width = raw_width if raw_width % 16 == 0 else raw_width + 1
+        new_height = raw_height if raw_height % 16 == 0 else raw_height + 1
+
         new_image = Image.new("RGB", (new_width, new_height), color="white")
 
-        # Paste the images with a gap between them
-        new_image.paste(benchmark_image, (0, 0))
-        new_image.paste(
-            validation_image_result, (benchmark_image.size[0] + separator_width, 0)
-        )
+        # Center vertically if heights differ
+        left_y = (new_height - left_image.size[1]) // 2
+        right_y = (new_height - right_image.size[1]) // 2
 
-        # Create a drawing object
+        new_image.paste(left_image, (0, left_y))
+        new_image.paste(right_image, (left_image.size[0] + separator_width, right_y))
+
         draw = ImageDraw.Draw(new_image)
 
-        # Use a default font
-        try:
-            font = ImageFont.truetype("arial.ttf", 36)
-        except IOError:
+        # Draw separator
+        line_color = (200, 200, 200)
+        for i in range(separator_width):
+            x = left_image.size[0] + i
+            draw.line([(x, 0), (x, new_height)], fill=line_color)
+
+        # Add labels
+        font = None
+        font_candidates = [
+            "DejaVuSans-Bold.ttf",
+            "DejaVuSans.ttf",
+            "Arial.ttf",
+            "arial.ttf",
+        ]
+        for font_name in font_candidates:
+            try:
+                font = ImageFont.truetype(font_name, 28)
+                break
+            except IOError:
+                continue
+        if font is None:
             font = ImageFont.load_default()
 
-        # Add text to the left image
         if labels[0] is not None:
             draw.text(
                 (10, 10),
@@ -669,9 +975,8 @@ class Validation:
             )
 
         if labels[1] is not None:
-            # Add text to the right image
             draw.text(
-                (benchmark_image.size[0] + separator_width + 10, 10),
+                (left_image.size[0] + separator_width + 10, 10),
                 labels[1],
                 fill=(255, 255, 255),
                 font=font,
@@ -679,32 +984,7 @@ class Validation:
                 stroke_fill=(0, 0, 0),
             )
 
-        # Draw a vertical line as a separator
-        line_color = (200, 200, 200)  # Light gray
-        for i in range(separator_width):
-            x = validation_image_result.size[0] + i
-            draw.line([(x, 0), (x, new_height)], fill=line_color)
-
         return new_image
-
-    def _benchmark_image(self, shortname, resolution):
-        """
-        We will retrieve the benchmark image for the shortname.
-        """
-        if not self.benchmark_exists():
-            return None
-        base_model_benchmark = self._benchmark_path("base_model")
-        benchmark_image = None
-        _test_filename = f"{shortname}_{resolution[0]}x{resolution[1]}.png"
-        for _benchmark_image in os.listdir(base_model_benchmark):
-            _basename = os.path.basename(_benchmark_image)
-            if _basename == _test_filename:
-                benchmark_image = Image.open(
-                    os.path.join(base_model_benchmark, _benchmark_image)
-                )
-                break
-
-        return benchmark_image
 
     def _benchmark_images(self):
         """
@@ -736,6 +1016,14 @@ class Validation:
 
         return os.path.exists(base_model_benchmark)
 
+    def _benchmark_path(self, benchmark: str = "base_model"):
+        # does the benchmark directory exist?
+        if not os.path.exists(os.path.join(self.config.output_dir, "benchmarks")):
+            os.makedirs(
+                os.path.join(self.config.output_dir, "benchmarks"), exist_ok=True
+            )
+        return os.path.join(self.config.output_dir, "benchmarks", benchmark)
+
     def save_benchmark(self, benchmark: str = "base_model"):
         """
         Saves the benchmark outputs for the base model.
@@ -745,21 +1033,59 @@ class Validation:
             os.makedirs(base_model_benchmark, exist_ok=True)
         if self.validation_images is None:
             return
+
         for shortname, image_list in self.validation_images.items():
             for idx, image in enumerate(image_list):
+                # Get the validation resolution that was used for this index
+                if idx < len(self.validation_resolutions):
+                    logger.debug(
+                        f"Validation saving image for resolution idx {idx} of {len(self.validation_resolutions)}"
+                    )
+                    resolution = self.validation_resolutions[idx]
+                    if isinstance(resolution, str):
+                        # Parse resolution string if needed
+                        if "x" in resolution:
+                            width, height = map(int, resolution.split("x"))
+                        else:
+                            width = height = int(resolution)
+                    elif isinstance(resolution, tuple):
+                        width, height = resolution
+                    else:
+                        width = height = resolution
+                else:
+                    # Fallback to actual size if we somehow have more images than resolutions
+                    logger.warning(
+                        f"Image index {idx} exceeds validation resolutions list {len(self.validation_resolutions)}, using actual size"
+                    )
+                    if hasattr(image, "size"):
+                        width, height = image.size
+                    elif (
+                        isinstance(image, list)
+                        and len(image) > 0
+                        and hasattr(image[0], "size")
+                    ):
+                        width, height = image[0].size
+                    else:
+                        logger.error(
+                            f"Could not determine size for image at index {idx}"
+                        )
+                        continue
+
                 if hasattr(image, "size"):
-                    width, height = image.size
+                    # Single image - save with validation resolution in filename
                     image.save(
                         os.path.join(
                             base_model_benchmark, f"{shortname}_{width}x{height}.png"
                         )
                     )
                 elif type(image) is list:
+                    # Video frames - save with validation resolution in filename
                     from diffusers.utils.export_utils import export_to_video
 
+                    filename = f"{shortname}_{width}x{height}_{idx}.mp4"
                     export_to_video(
                         image,
-                        os.path.join(base_model_benchmark, f"{shortname}_{idx}.mp4"),
+                        os.path.join(base_model_benchmark, filename),
                         fps=self.config.framerate,
                     )
 
@@ -788,15 +1114,23 @@ class Validation:
         skip_execution: bool = False,
     ):
         self._update_state()
-        would_do_intermediary_validation = self.should_perform_intermediary_validation(
+        content = self.validation_prompt_metadata.get("validation_prompts", None)
+        has_validation_prompts = content is not None and len(content) > 0
+        current_step_aligns_with_interval = self.should_perform_intermediary_validation(
             step, self.validation_prompt_metadata, validation_type
-        ) or (step == 0 and validation_type == "base_model")
-        logger.debug(
-            f"Should evaluate: {would_do_intermediary_validation}, force evaluation: {force_evaluation}, skip execution: {skip_execution}"
         )
-        if not would_do_intermediary_validation and not force_evaluation:
+        is_base_model_benchmark = step == 0 and validation_type == "base_model"
+        current_validation_will_execute = has_validation_prompts and (
+            current_step_aligns_with_interval or is_base_model_benchmark
+        )
+        logger.debug(
+            f"Should evaluate: {current_validation_will_execute}, force evaluation: {force_evaluation}, skip execution: {skip_execution}"
+        )
+        if (
+            not current_validation_will_execute and not force_evaluation
+        ) or not has_validation_prompts:
             return self
-        if would_do_intermediary_validation and validation_type == "final":
+        if current_validation_will_execute and validation_type == "final":
             # If the validation would have fired off, we'll skip it.
             # This is useful at the end of training so we don't validate 2x.
             logger.debug(
@@ -820,7 +1154,7 @@ class Validation:
                 self.validation_images = None
                 return self
             self.setup_scheduler()
-            self.process_prompts()
+            self.process_prompts(validation_type=validation_type)
             self.finalize_validation(validation_type)
             if self.evaluation_result is not None:
                 logger.info(f"Evaluation result: {self.evaluation_result}")
@@ -832,6 +1166,10 @@ class Validation:
     def should_perform_intermediary_validation(
         self, step, validation_prompts, validation_type
     ):
+        if validation_prompts is None or (
+            isinstance(validation_prompts, list) and len(validation_prompts) == 0
+        ):
+            return False
         should_do_intermediary_validation = (
             validation_prompts
             and self.global_step % self.config.validation_steps == 0
@@ -863,7 +1201,10 @@ class Validation:
             # some flow-matching adjustments should be made for euler and unipc video model generations.
             if self.config.validation_noise_scheduler in ["flow_matching", "euler"]:
                 # The Beta schedule looks WAY better...
-                scheduler_args["use_beta_sigmas"] = True
+                if not self.model.pipeline.scheduler.config.get(
+                    "use_karras_sigmas", False
+                ):
+                    scheduler_args["use_beta_sigmas"] = True
                 scheduler_args["shift"] = self.config.flow_schedule_shift
             if self.config.validation_noise_scheduler in ["flow_unipc", "unipc"]:
                 scheduler_args["prediction_type"] = "flow_prediction"
@@ -909,13 +1250,32 @@ class Validation:
                 float(getattr(self.config, "validation_lycoris_strength", 1.0))
             )
 
-        if getattr(self.model, "pipeline", None) is None:
-            self.model.pipeline = self.model.get_pipeline(
-                pipeline_type=self.model.DEFAULT_PIPELINE_TYPE
+        pipeline_type = (
+            PipelineTypes.CONTROLNET
+            if self.config.controlnet
+            else (
+                PipelineTypes.CONTROL
+                if self.config.control
+                else self.model.DEFAULT_PIPELINE_TYPE
             )
+        )
+        self.model.pipeline = self.model.get_pipeline(
+            pipeline_type=pipeline_type,
+            load_base_model=False,
+        )
 
         self.model.move_models(self.accelerator.device)
-        # self.model = self.model.pipeline.to(self.inference_device)
+        # Remove text encoders on 'meta' device to avoid move errors
+        for attr in [
+            "text_encoder",
+            "text_encoder_2",
+            "text_encoder_3",
+            "text_encoder_4",
+        ]:
+            te = getattr(self.model.pipeline, attr, None)
+            if getattr(te, "device", None) and te.device.type == "meta":
+                setattr(self.model.pipeline, attr, None)
+        self.model.pipeline.to(self.accelerator.device)
         self.model.pipeline.set_progress_bar_config(disable=True)
 
     def clean_pipeline(self):
@@ -926,7 +1286,7 @@ class Validation:
             del self.model.pipeline
             self.model.pipeline = None
 
-    def process_prompts(self):
+    def process_prompts(self, validation_type: str = None):
         """Processes each validation prompt and logs the result."""
         self.validation_prompt_dict = {}
         self.evaluation_result = None
@@ -953,9 +1313,22 @@ class Validation:
             position=1,
         ):
             validation_input_image = None
-            if len(prompt) == 3 and isinstance(prompt[2], Image.Image):
+            if len(prompt) == 3 and isinstance(prompt[2], list):
+                # list of conditioning inputs
+                shortname, prompt, validation_input_image = prompt
+                if len(validation_input_image) == 1:
+                    # for simplicity, we'll assume pipelines appreciate singletons.
+                    validation_input_image = validation_input_image[0]
+            elif len(prompt) == 3 and isinstance(prompt[2], Image.Image):
                 # DeepFloyd stage II inputs.
                 shortname, prompt, validation_input_image = prompt
+            elif len(prompt) == 4 and isinstance(prompt[3], Image.Image):
+                (
+                    shortname,
+                    prompt,
+                    validation_input_image_path,
+                    validation_input_image,
+                ) = prompt
             else:
                 shortname = self.validation_prompt_metadata["validation_shortnames"][
                     idx
@@ -967,7 +1340,9 @@ class Validation:
                 stitched_validation_images,
                 checkpoint_validation_images,
                 ema_validation_images,
-            ) = self.validate_prompt(prompt, shortname, validation_input_image)
+            ) = self.validate_prompt(
+                prompt, shortname, validation_input_image, validation_type
+            )
             validation_images.update(stitched_validation_images)
             if isinstance(self.model, VideoModelFoundation):
                 self._save_videos(validation_images, shortname, prompt)
@@ -992,20 +1367,265 @@ class Validation:
     def clear_eval_result(self):
         self.evaluation_result = None
 
+    def stitch_three_images(
+        self,
+        left_image,
+        middle_image,
+        right_image,
+        separator_width=5,
+        labels=[None, None, None],
+    ):
+        """
+        Stitch three images horizontally with proper spacing and optional labels.
+        Handles different sizes by centering vertically.
+
+        Args:
+            left_image: First image (e.g., input)
+            middle_image: Second image (e.g., output)
+            right_image: Third image (e.g., benchmark)
+            separator_width: Width of separator between images
+            labels: Text labels for [left, middle, right] images
+        """
+        left_width, left_height = left_image.size
+        middle_width, middle_height = middle_image.size
+        right_width, right_height = right_image.size
+
+        # Calculate new canvas dimensions
+        new_width = (
+            left_width + separator_width + middle_width + separator_width + right_width
+        )
+        new_height = max(left_height, middle_height, right_height)
+
+        # Create new image with white background
+        new_image = Image.new("RGB", (new_width, new_height), color="white")
+
+        # Calculate vertical positions for centering
+        left_y = (new_height - left_height) // 2
+        middle_y = (new_height - middle_height) // 2
+        right_y = (new_height - right_height) // 2
+
+        # Calculate horizontal positions
+        left_x = 0
+        middle_x = left_width + separator_width
+        right_x = middle_x + middle_width + separator_width
+
+        # Paste all three images
+        new_image.paste(left_image, (left_x, left_y))
+        new_image.paste(middle_image, (middle_x, middle_y))
+        new_image.paste(right_image, (right_x, right_y))
+
+        # Create drawing object
+        draw = ImageDraw.Draw(new_image)
+
+        # Draw separators
+        line_color = (200, 200, 200)  # Light gray
+        # First separator
+        for i in range(separator_width):
+            x = left_width + i
+            draw.line([(x, 0), (x, new_height)], fill=line_color)
+        # Second separator
+        for i in range(separator_width):
+            x = middle_x + middle_width + i
+            draw.line([(x, 0), (x, new_height)], fill=line_color)
+
+        # Add labels if provided
+        # Try to use a larger, more universally available font
+        font = None
+        font_candidates = [
+            "DejaVuSans-Bold.ttf",
+            "DejaVuSans.ttf",
+            "LiberationSans-Regular.ttf",
+            "Arial.ttf",
+            "arial.ttf",
+            "FreeSans.ttf",
+            "NotoSans-Regular.ttf",
+        ]
+        for font_name in font_candidates:
+            try:
+                font = ImageFont.truetype(font_name, 28)
+                break
+            except IOError:
+                continue
+        if font is None:
+            # As a fallback, create a simple default font with a larger size
+            try:
+                # Try to use PIL's default font but scale it up
+                font = ImageFont.load_default()
+            except Exception:
+                font = None  # Last resort, will error if used
+
+        if labels[0] is not None:
+            draw.text(
+                (left_x + 10, 10),
+                labels[0],
+                fill=(255, 255, 255),
+                font=font,
+                stroke_width=2,
+                stroke_fill=(0, 0, 0),
+            )
+
+        if labels[1] is not None:
+            draw.text(
+                (middle_x + 10, 10),
+                labels[1],
+                fill=(255, 255, 255),
+                font=font,
+                stroke_width=2,
+                stroke_fill=(0, 0, 0),
+            )
+
+        if labels[2] is not None:
+            draw.text(
+                (right_x + 10, 10),
+                labels[2],
+                fill=(255, 255, 255),
+                font=font,
+                stroke_width=2,
+                stroke_fill=(0, 0, 0),
+            )
+
+        return new_image
+
     def stitch_conditioning_images(self, validation_image_results, conditioning_image):
         """
-        For each image, make a new canvas and place it side by side with its equivalent from {self.validation_image_inputs}
+        For each image/video, make a new canvas and place conditioning image on the LEFT side.
         """
-        stitched_validation_images = []
-        for idx, image in enumerate(validation_image_results):
-            new_width = image.size[0] * 2
-            new_height = image.size[1]
-            new_image = Image.new("RGB", (new_width, new_height))
-            new_image.paste(image, (0, 0))
-            new_image.paste(conditioning_image, (image.size[0], 0))
-            stitched_validation_images.append(new_image)
+        stitched_results = []
 
-        return stitched_validation_images
+        for idx, result in enumerate(validation_image_results):
+            if isinstance(result, list):
+                # It's a video - stitch conditioning image to each frame
+                stitched_frames = [
+                    _stitch_single_pair(
+                        conditioning_image, frame, separator_width=5, labels=None
+                    )
+                    for frame in result
+                ]
+                stitched_results.append(stitched_frames)
+            else:
+                # It's a single image
+                stitched_results.append(
+                    _stitch_single_pair(
+                        conditioning_image, result, separator_width=5, labels=None
+                    )
+                )
+
+        return stitched_results
+
+    def stitch_validation_input_image(
+        self,
+        validation_image_result,
+        validation_input_image,
+        separator_width=5,
+        labels=["input", "output"],
+    ):
+        """
+        Stitch validation input image to the left of the validation output.
+        Handles different sizes by centering vertically when heights differ.
+
+        Args:
+            validation_image_result: The generated validation image
+            validation_input_image: The input/context image used for validation
+            separator_width: Width of separator between images
+            labels: Text labels for [left, right] images
+        """
+        if validation_input_image is None:
+            return validation_image_result
+
+        # Handle list of input images (for multi-input reference models)
+        if isinstance(validation_input_image, list):
+            # Create a composite image from the list - stack them horizontally
+            total_height = max(img.size[1] for img in validation_input_image)
+            total_width = sum(
+                img.size[0] for img in validation_input_image
+            ) + separator_width * (len(validation_input_image) - 1)
+
+            composite_input = Image.new(
+                "RGB", (total_width, total_height), color="white"
+            )
+            x_offset = 0
+            for i, img in enumerate(validation_input_image):
+                # Center each image vertically if needed
+                y_offset = (total_height - img.size[1]) // 2
+                composite_input.paste(img, (x_offset, y_offset))
+                x_offset += img.size[0]
+
+                # Add separator between images (except after last one)
+                if i < len(validation_input_image) - 1:
+                    draw = ImageDraw.Draw(composite_input)
+                    for j in range(separator_width):
+                        draw.line(
+                            [(x_offset + j, 0), (x_offset + j, total_height)],
+                            fill=(200, 200, 200),
+                        )
+                    x_offset += separator_width
+
+            validation_input_image = composite_input
+            labels[0] = "inputs" if labels[0] == "input" else labels[0]  # Pluralize
+
+        input_width, input_height = validation_input_image.size
+        output_width, output_height = validation_image_result.size
+
+        # Calculate new canvas dimensions
+        new_width = input_width + separator_width + output_width
+        new_height = max(input_height, output_height)
+
+        # Create new image with white background
+        new_image = Image.new("RGB", (new_width, new_height), color="white")
+
+        # Calculate vertical positions for centering if heights differ
+        input_y_offset = (
+            (new_height - input_height) // 2 if input_height < new_height else 0
+        )
+        output_y_offset = (
+            (new_height - output_height) // 2 if output_height < new_height else 0
+        )
+
+        # Paste input image on the left
+        new_image.paste(validation_input_image, (0, input_y_offset))
+
+        # Paste output image on the right
+        new_image.paste(
+            validation_image_result, (input_width + separator_width, output_y_offset)
+        )
+
+        # Create drawing object for text and separator
+        draw = ImageDraw.Draw(new_image)
+
+        # Use a default font
+        try:
+            font = ImageFont.truetype("arial.ttf", 36)
+        except IOError:
+            font = ImageFont.load_default()
+
+        # Add text labels if provided
+        if labels[0] is not None:
+            draw.text(
+                (10, 10),
+                labels[0],
+                fill=(255, 255, 255),
+                font=font,
+                stroke_width=2,
+                stroke_fill=(0, 0, 0),
+            )
+
+        if labels[1] is not None:
+            draw.text(
+                (input_width + separator_width + 10, 10),
+                labels[1],
+                fill=(255, 255, 255),
+                font=font,
+                stroke_width=2,
+                stroke_fill=(0, 0, 0),
+            )
+
+        # Draw vertical separator line
+        line_color = (200, 200, 200)  # Light gray
+        for i in range(separator_width):
+            x = input_width + i
+            draw.line([(x, 0), (x, new_height)], fill=line_color)
+
+        return new_image
 
     def _validation_types(self):
         types = ["checkpoint"]
@@ -1021,7 +1641,11 @@ class Validation:
         return types
 
     def validate_prompt(
-        self, prompt, validation_shortname, validation_input_image=None
+        self,
+        prompt,
+        validation_shortname,
+        validation_input_image=None,
+        validation_type=None,
     ):
         """Generate validation images for a single prompt."""
         # Placeholder for actual image generation and logging
@@ -1072,13 +1696,23 @@ class Validation:
                             validation_resolution
                         )
                     else:
-                        validation_resolution_width, validation_resolution_height = (
-                            extra_validation_kwargs["image"].size
-                        )
+                        if isinstance(extra_validation_kwargs["image"], list):
+                            (
+                                validation_resolution_width,
+                                validation_resolution_height,
+                            ) = resolution
+                        else:
+                            (
+                                validation_resolution_width,
+                                validation_resolution_height,
+                            ) = extra_validation_kwargs["image"].size
                 else:
                     raise ValueError(
                         "Validation input images are not supported for this model type."
                     )
+                extra_validation_kwargs["control_image"] = extra_validation_kwargs[
+                    "image"
+                ]
             else:
                 validation_resolution_width, validation_resolution_height = resolution
 
@@ -1193,13 +1827,6 @@ class Validation:
                 logger.debug(
                     f"Image being generated with parameters: {pipeline_kwargs}"
                 )
-                # Print the device attr of any parameters that have one
-                # for key, value in pipeline_kwargs.items():
-                #     if hasattr(value, "device"):
-                #         logger.debug(f"Device for {key}: {value.device}")
-                # for key, value in self.model.pipeline.components.items():
-                #     if hasattr(value, "device"):
-                #         logger.debug(f"Device for {key}: {value.device}")
                 if self.config.model_family == "sana":
                     pipeline_kwargs["complex_human_instruction"] = (
                         self.config.sana_complex_human_instruction
@@ -1222,11 +1849,12 @@ class Validation:
                                 dtype=self.config.weight_dtype,
                             )
                             if hasattr(v, "to")
+                            and v.dtype
+                            in (torch.bfloat16, torch.float16, torch.float32)
                             else v
                         )
                         for k, v in pipeline_kwargs.items()
                     }
-                    import inspect
 
                     call_kwargs = inspect.signature(
                         self.model.pipeline.__call__
@@ -1248,65 +1876,188 @@ class Validation:
                         logger.warning(
                             f"Removed the following kwargs from validation pipeline: {removed_kwargs}"
                         )
-                    if isinstance(self.model, VideoModelFoundation):
-                        all_validation_type_results[current_validation_type] = (
-                            self.model.pipeline(**pipeline_kwargs).frames
-                        )
-                    elif isinstance(self.model, ImageModelFoundation):
-                        all_validation_type_results[current_validation_type] = (
-                            self.model.pipeline(**pipeline_kwargs).images
-                        )
+                    # run in autocast ctx
+                    with torch.amp.autocast(
+                        self.inference_device.type,
+                        dtype=self.config.weight_dtype,
+                    ):
+                        pipeline_result = self.model.pipeline(**pipeline_kwargs)
+                        if hasattr(pipeline_result, "frames"):
+                            all_validation_type_results[current_validation_type] = (
+                                pipeline_result.frames
+                            )
+                        elif hasattr(pipeline_result, "images"):
+                            all_validation_type_results[current_validation_type] = (
+                                pipeline_result.images
+                            )
+                        else:
+                            logger.error(
+                                f"Pipeline result does not have 'frames' or 'images': {pipeline_result}"
+                            )
+                            all_validation_type_results[current_validation_type] = []
                     if current_validation_type == "ema":
                         self.disable_ema_for_inference()
 
-                # retrieve the default image result for stitching to controlnet inputs.
+                # Keep the original unstitched results for checkpoint storage and benchmark comparison
+                # Retrieve the default image result for stitching
                 ema_image_results = all_validation_type_results.get("ema")
                 validation_image_results = all_validation_type_results.get(
                     "checkpoint", ema_image_results
                 )
                 original_validation_image_results = validation_image_results
-                benchmark_image = None
-                if self.config.controlnet:
-                    validation_image_results = self.stitch_conditioning_images(
-                        original_validation_image_results,
-                        extra_validation_kwargs["image"],
+                display_validation_results = validation_image_results.copy()
+
+                # Store EMA results separately
+                if self.config.use_ema and ema_image_results is not None:
+                    if ema_validation_images[validation_shortname] is None:
+                        ema_validation_images[validation_shortname] = []
+                    ema_validation_images[validation_shortname].extend(
+                        ema_image_results
                     )
-                elif not self.config.disable_benchmark and self.benchmark_exists(
-                    "base_model"
-                ):
-                    benchmark_image = self._benchmark_image(
-                        validation_shortname, resolution
+
+                if validation_type != "base_model":
+                    # The logic flow is:
+                    # 1. If controlnet/control: stitch conditioning image to the left
+                    # 2. Otherwise check for input stitching + benchmark:
+                    #    - Both: create [input | output | benchmark] with labels only on outer images
+                    #    - Input only: create [input | output] with labels
+                    #    - Benchmark only: create [output | benchmark] with labels
+                    # 3. Original images are always preserved for checkpoint storage
+
+                    # First, check if we need validation input stitching
+                    has_input_stitching = (
+                        hasattr(self.config, "validation_stitch_input_location")
+                        and self.config.validation_stitch_input_location == "left"
+                        and validation_input_image is not None
                     )
-                    if benchmark_image is not None:
-                        for idx, validation_image in enumerate(
-                            validation_image_results
+
+                    # Check if we'll be adding benchmark
+                    will_add_benchmark = False
+                    benchmark_image = None
+                    if not self.config.disable_benchmark and self.benchmark_exists(
+                        "base_model"
+                    ):
+                        benchmark_image = self._benchmark_image(
+                            validation_shortname, resolution
+                        )
+                        will_add_benchmark = benchmark_image is not None
+
+                    if has_input_stitching and not will_add_benchmark:
+                        # Only input stitching, no benchmark
+                        display_validation_results = [
+                            self.stitch_validation_input_image(
+                                validation_image_result=img,
+                                validation_input_image=validation_input_image,
+                                labels=(["input", "output"]),
+                            )
+                            for img in display_validation_results
+                        ]
+
+                    # Apply controlnet stitching if needed (using original results)
+                    if any([self.config.controlnet, self.config.control]):
+                        # For controlnet, we stitch to the original results
+                        display_validation_results = self.stitch_conditioning_images(
+                            original_validation_image_results,
+                            extra_validation_kwargs["control_image"],
+                        )
+
+                    # Apply benchmark stitching if we determined we have a benchmark
+                    if will_add_benchmark:
+                        if has_input_stitching:
+                            # Three-way stitch: input | output | benchmark
+                            for idx, original_img in enumerate(
+                                original_validation_image_results
+                            ):
+                                labels_to_use = [
+                                    "input",
+                                    "base weights",
+                                    f"step {StateTracker.get_global_step()}",
+                                ]
+
+                                display_validation_results[idx] = (
+                                    self.stitch_three_images(
+                                        left_image=validation_input_image,
+                                        middle_image=benchmark_image,
+                                        right_image=original_img,
+                                        labels=labels_to_use,
+                                    )
+                                )
+                        else:
+                            # No input stitching, just stitch benchmark to output
+                            for idx, original_img in enumerate(
+                                original_validation_image_results
+                            ):
+                                display_validation_results[idx] = (
+                                    self.stitch_benchmark_image(
+                                        validation_image_result=original_img,
+                                        benchmark_image=benchmark_image,
+                                    )
+                                )
+
+                    # Handle EMA comparison stitching
+                    if (
+                        self.config.use_ema
+                        and self.config.ema_validation == "comparison"
+                        and ema_image_results is not None
+                    ):
+                        # Create new display results that include EMA comparison
+                        ema_display_results = []
+                        for idx, display_img in enumerate(display_validation_results):
+                            # Get the original EMA result
+                            ema_img = ema_image_results[idx]
+
+                            # Stitch EMA to the already-stitched display image
+                            ema_stitched = self.stitch_benchmark_image(
+                                validation_image_result=ema_img,
+                                benchmark_image=display_img,
+                                labels=[None, "EMA"],
+                            )
+                            ema_display_results.append(ema_stitched)
+
+                        # Replace display results with EMA comparison results
+                        display_validation_results = ema_display_results
+
+                    # Add the validation prompt to the bottom of the entire image using a decent looking font, in a margin, centred width-wise.
+                    # Scan for fonts to use available.
+                    font = None
+                    font_candidates = [
+                        "DejaVuSans-Bold.ttf",
+                        "DejaVuSans.ttf",
+                        "LiberationSans-Regular.ttf",
+                        "Arial.ttf",
+                        "arial.ttf",
+                        "FreeSans.ttf",
+                        "NotoSans-Regular.ttf",
+                    ]
+                    for font_name in font_candidates:
+                        try:
+                            font = ImageFont.truetype(font_name, 36)
+                            break
+                        except IOError:
+                            continue
+                    if font is None:
+                        # As a fallback, create a simple default font with a larger size
+                        try:
+                            # Try to use PIL's default font but scale it up
+                            font = ImageFont.load_default()
+                        except Exception:
+                            font = None
+                    if font is not None:
+                        # Add the validation prompt text to the bottom of each image
+                        for idx, validation_result in enumerate(
+                            display_validation_results
                         ):
-                            validation_image_results[idx] = self.stitch_benchmark_image(
-                                validation_image_result=validation_image,
-                                benchmark_image=benchmark_image,
+                            display_validation_results[idx] = draw_text_on_image(
+                                validation_result, f"Prompt: {prompt}", font=font
                             )
 
+                # Use original results for checkpoint storage, display results for viewing
                 checkpoint_validation_images[validation_shortname].extend(
                     original_validation_image_results
                 )
                 stitched_validation_images[validation_shortname].extend(
-                    validation_image_results
+                    display_validation_results
                 )
-                if self.config.use_ema:
-                    if (
-                        validation_shortname in ema_validation_images
-                        and ema_image_results is not None
-                    ):
-                        if ema_validation_images[validation_shortname] is None:
-                            # init the value
-                            ema_validation_images[validation_shortname] = []
-                        if isinstance(
-                            ema_validation_images[validation_shortname], list
-                        ):
-                            # if we have a list of images, we can stitch them.
-                            ema_validation_images[validation_shortname].extend(
-                                ema_image_results
-                            )
 
             except Exception as e:
                 import traceback
@@ -1315,25 +2066,6 @@ class Validation:
                     f"Error generating validation image: {e}, {traceback.format_exc()}"
                 )
                 continue
-        if (
-            self.config.use_ema
-            and self.config.ema_validation == "comparison"
-            and benchmark_image is not None
-        ):
-            for idx, validation_image in enumerate(
-                stitched_validation_images[validation_shortname]
-            ):
-                stitched_validation_images[validation_shortname][idx] = (
-                    self.stitch_benchmark_image(
-                        validation_image_result=ema_validation_images[
-                            validation_shortname
-                        ][idx],
-                        benchmark_image=stitched_validation_images[
-                            validation_shortname
-                        ][idx],
-                        labels=[None, "EMA"],
-                    )
-                )
 
         return (
             stitched_validation_images,
@@ -1346,10 +2078,42 @@ class Validation:
         from diffusers.utils.export_utils import export_to_video
 
         for validation_image in validation_images[validation_shortname]:
+            # Get the validation resolution for this index
+            if validation_img_idx < len(self.validation_resolutions):
+                resolution = self.validation_resolutions[validation_img_idx]
+                if isinstance(resolution, str):
+                    if "x" in resolution:
+                        res_label = resolution
+                    else:
+                        res_label = f"{resolution}x{resolution}"
+                elif isinstance(resolution, tuple):
+                    res_label = f"{resolution[0]}x{resolution[1]}"
+                else:
+                    res_label = f"{resolution}x{resolution}"
+            else:
+                # Fallback to actual size if somehow out of bounds
+                logger.warning(
+                    f"Image index {validation_img_idx} exceeds validation resolutions list"
+                )
+                if type(validation_image) is list:
+                    size_x, size_y = validation_image[0].size
+                else:
+                    size_x, size_y = validation_image.size
+                res_label = f"{size_x}x{size_y}"
+
             # convert array of numpy to array of pil:
             validation_image = MultiaspectImage.numpy_list_to_pil(validation_image)
-            size_x, size_y = validation_image[0].size
-            res_label = f"{size_x}x{size_y}"
+            if type(validation_image) is not list:
+                # save as single image instead
+                validation_image.save(
+                    os.path.join(
+                        self.save_dir,
+                        f"step_{StateTracker.get_global_step()}_{validation_shortname}_{validation_img_idx}_{res_label}.png",
+                    )
+                )
+                validation_img_idx += 1
+                continue
+
             export_to_video(
                 validation_image,
                 os.path.join(
@@ -1501,24 +2265,18 @@ class Validation:
                 elif self.config.lora_type.lower() == "standard":
                     _trainable_parameters = [
                         x
-                        for x in self.model.get_trained_component().parameters()
+                        for x in self.model.get_trained_component(
+                            unwrap_model=False
+                        ).parameters()
                         if x.requires_grad
                     ]
                     self.ema_model.store(_trainable_parameters)
                     self.ema_model.copy_to(_trainable_parameters)
             else:
-                # if self.config.ema_device != "accelerator":
-                #     logger.info("Moving checkpoint to CPU for storage.")
-                #     self.model.get_trained_component().to("cpu")
                 logger.debug("Storing EMA weights for later recovery.")
                 self.ema_model.store(self.trainable_parameters())
                 logger.debug("Storing the EMA weights into the model for inference.")
                 self.ema_model.copy_to(self.trainable_parameters())
-            # if self.config.ema_device != "accelerator":
-            #     logger.debug("Moving checkpoint to CPU for storage.")
-            #     self.model.get_trained_component().to("cpu")
-            #     logger.debug("Moving EMA weights to GPU for inference.")
-            #     self.ema_model.to(self.inference_device)
         else:
             logger.debug(
                 "Skipping EMA model setup for validation, as we are not using EMA."
@@ -1547,7 +2305,9 @@ class Validation:
             if self.config.ema_device != "accelerator":
                 logger.debug("Moving EMA weights to CPU for storage.")
                 self.ema_model.to(self.config.ema_device)
-                self.model.get_trained_component().to(self.inference_device)
+                self.model.get_trained_component(unwrap_model=False).to(
+                    self.inference_device
+                )
 
         else:
             logger.debug(
@@ -1626,11 +2386,12 @@ class Evaluation:
 
     def get_timestep_schedule(self, noise_scheduler):
         accept_mu = "mu" in set(
-            inspect.signature(scheduler.set_timesteps).parameters.keys()
+            inspect.signature(noise_scheduler.set_timesteps).parameters.keys()
         )
         scheduler_kwargs = {}
         if accept_mu and self.config.flow_schedule_auto_shift:
             from helpers.models.sd3.pipeline import calculate_shift
+
             scheduler_kwargs["mu"] = calculate_shift(
                 StateTracker.get_model().get_trained_component().config.max_seq
             )

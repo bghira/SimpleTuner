@@ -64,7 +64,9 @@ if __name__ == "__main__":
         trainer.move_models(destination="accelerator")
         trainer.init_distillation()
         trainer.init_validations()
+        trainer.enable_sageattention_inference()
         trainer.init_benchmark_base_model()
+        trainer.disable_sageattention_inference()
 
         trainer.resume_and_prepare()
 

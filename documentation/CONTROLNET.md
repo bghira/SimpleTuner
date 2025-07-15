@@ -4,6 +4,8 @@
 
 ControlNet models are capable of many tasks, which depend on the conditioning data given at training time.
 
+Initially, they were very resource-intensive to train, but we can now use PEFT LoRA or Lycoris to train the same tasks with far fewer resources.
+
 Example (taken from the Diffusers ControlNet model card):
 
 ![example](https://tripleback.net/public/controlnet-example-1.png)
@@ -41,11 +43,10 @@ The dataloader configuration remains pretty close to a typical text-to-image dat
 - A secondary dataset is configured, called `antelope-conditioning`
   - The name isn't important - adding `-data` and `-conditioning` is only done in this example for illustrative purposes.
   - The `dataset_type` should be set to `conditioning`, indicating to the trainer that this is to be used for evaluation and conditioned input training purposes.
-- Conditioning inputs are not VAE-encoded, but instead passed into the model directly during training time as pixel values. This means we don't spend any more time processing VAE embeds at the start of training!
+- When training SDXL, conditioning inputs are not VAE-encoded, but instead passed into the model directly during training time as pixel values. This means we don't spend any more time processing VAE embeds at the start of training!
+- When training Flux, SD3, Auraflow, HiDream, or other MMDiT models, the conditioning inputs are encoded into latents, and these will be computed on-demand during training.
 - Though everything is explicitly labeled as `-controlnet` here, you can reuse the same text embeds that you used for normal full/LoRA tuning. ControlNet inputs do not modify the prompt embeds.
-- The dataset components are labeled as being for SDXL, but they're model-agnostic other than the `resolution` values you'd typically use.
-- You likely want cropping enabled with `crop_style='center'` or `crop_style='corner'` so that the perturbations resulting from random crops don't impact your controlnet model training.
-  - This is a limitation in the current version of ControlNet training, it can be improved for future releases.
+- When using aspect bucketing and random cropping, the conditioning samples will be cropped in the same way as the main image samples, so you don't have to worry about that.
 
 ```json
 [
@@ -54,34 +55,37 @@ The dataloader configuration remains pretty close to a typical text-to-image dat
         "type": "local",
         "dataset_type": "image",
         "conditioning_data": "antelope-conditioning",
-        "instance_data_dir": "/Volumes/ml/datasets/canny-edge/animals/antelope-data",
+        "instance_data_dir": "datasets/animals/antelope-data",
         "caption_strategy": "instanceprompt",
         "instance_prompt": "an antelope",
         "metadata_backend": "discovery",
-        "minimum_image_size": 1.0,
-        "maximum_image_size": 1.0,
-        "target_downsample_size": 1.0,
-        "cache_dir_vae": "/Volumes/ml/cache/vae/sdxl/antelope-data",
+        "minimum_image_size": 512,
+        "maximum_image_size": 1024,
+        "target_downsample_size": 1024,
+        "cache_dir_vae": "cache/vae/sdxl/antelope-data",
         "crop": true,
         "crop_aspect": "square",
         "crop_style": "center",
-        "resolution": 1.0,
-        "resolution_type": "area",
+        "resolution": 1024,
+        "resolution_type": "pixel_area",
         "cache_file_suffix": "controlnet-sdxl"
     },
     {
         "id": "antelope-conditioning",
         "type": "local",
         "dataset_type": "conditioning",
-        "instance_data_dir": "/Volumes/ml/datasets/canny-edge/animals/antelope-conditioning",
+        "instance_data_dir": "datasets/animals/antelope-conditioning",
         "caption_strategy": "instanceprompt",
         "instance_prompt": "an antelope",
         "metadata_backend": "discovery",
         "crop": true,
         "crop_aspect": "square",
         "crop_style": "center",
-        "resolution": 1.0,
-        "resolution_type": "area",
+        "resolution": 1024,
+        "minimum_image_size": 512,
+        "maximum_image_size": 1024,
+        "target_downsample_size": 1024,
+        "resolution_type": "pixel_area",
         "cache_file_suffix": "controlnet-sdxl"
     },
     {
@@ -89,7 +93,7 @@ The dataloader configuration remains pretty close to a typical text-to-image dat
         "dataset_type": "text_embeds",
         "default": true,
         "type": "local",
-        "cache_dir": "/Volumes/ml/cache/text/sdxl-base/controlnet"
+        "cache_dir": "cache/text/sdxl-base/controlnet"
     }
 ]
 ```
@@ -104,23 +108,66 @@ As new as ControlNet support is in SimpleTuner, we've currently just got one opt
 
 This will take about 30 seconds for a small dataset of fewer than 100 images.
 
-## Modifying your environment file to train ControlNet models
+## Modifying your configuration to train ControlNet models
 
 Just setting up the dataloader configuration won't be enough to start training ControlNet models.
 
 Inside `config/config.json`, you will have to set the following values:
 
 ```bash
-"model_type": 'full',
+"model_type": 'lora',
 "controlnet": true,
 
-# You may have to reduce TRAIN_BATCH_SIZE more than usual
+# You may have to reduce TRAIN_BATCH_SIZE and RESOLUTION more than usual
 "train_batch_size": 1
+```
+
+Your configuration will look something like this in the end:
+
+```json
+{
+    "aspect_bucket_rounding": 2,
+    "caption_dropout_probability": 0.1,
+    "checkpointing_steps": 100,
+    "checkpoints_total_limit": 5,
+    "controlnet": true,
+    "data_backend_config": "config/controlnet-sdxl/multidatabackend.json",
+    "disable_benchmark": false,
+    "gradient_checkpointing": true,
+    "hub_model_id": "simpletuner-controlnet-sdxl-lora-test",
+    "learning_rate": 3e-5,
+    "lr_scheduler": "constant",
+    "lr_warmup_steps": 100,
+    "max_train_steps": 1000,
+    "minimum_image_size": 0,
+    "mixed_precision": "bf16",
+    "model_family": "sdxl",
+    "model_type": "lora",
+    "num_train_epochs": 0,
+    "optimizer": "bnb-lion8bit",
+    "output_dir": "output/controlnet-sdxl/models",
+    "push_checkpoints_to_hub": true,
+    "push_to_hub": true,
+    "resolution": 1024,
+    "resolution_type": "pixel_area",
+    "resume_from_checkpoint": "latest",
+    "seed": 42,
+    "train_batch_size": 1,
+    "use_ema": false,
+    "vae_cache_ondemand": true,
+    "validation_guidance": 4.2,
+    "validation_guidance_rescale": 0.0,
+    "validation_num_inference_steps": 20,
+    "validation_resolution": "1024x1024",
+    "validation_seed": 42,
+    "validation_steps": 10,
+    "validation_torch_compile": false
+}
 ```
 
 ## Inference on resulting ControlNet models
 
-An SDXL example is provided here:
+An SDXL example is provided here for inferencing on a **full** ControlNet model (not ControlNet LoRA):
 
 ```py
 # Update these values:
@@ -169,3 +216,104 @@ images = pipe(
 images[0].save(f"hug_lab.png")
 ```
 (_Demo code lifted from the [Hugging Face SDXL ControlNet example](https://huggingface.co/diffusers/controlnet-canny-sdxl-1.0)_)
+
+
+## Automatic Data Augmentation and Conditioning Generation
+
+SimpleTuner can automatically generate conditioning datasets during startup, eliminating the need for manual preprocessing. This is particularly useful for:
+- Super-resolution training
+- JPEG artifact removal
+- Depth-guided generation
+- Edge detection (Canny)
+
+### How It Works
+
+Instead of manually creating conditioning datasets, you can specify a `conditioning` array in your main dataset configuration. SimpleTuner will:
+1. Generate the conditioning images on startup
+2. Create separate datasets with appropriate metadata
+3. Automatically link them to your main dataset
+
+### Performance Considerations
+
+Some generators will run more slowly if they are CPU-bound and your system struggles with CPU taks, while others may require GPU resources and thus run in the main process, which can increase startup time.
+
+**CPU-based generators (fast):**
+- `superresolution` - Blur and noise operations
+- `jpeg_artifacts` - Compression simulation
+- `random_masks` - Mask generation
+- `canny` - Edge detection
+
+**GPU-based generators (slower):**
+- `depth` / `depth_midas` - Requires loading transformer models
+- `segmentation` - Semantic segmentation models
+- `optical_flow` - Motion estimation
+
+GPU-based generators run in the main process and may significantly increase startup time for large datasets.
+
+### Example: Multi-Task Conditioning Dataset
+
+Here's a complete example that generates multiple conditioning types from a single source dataset:
+
+```json
+[
+  {
+    "id": "multitask-training",
+    "type": "local",
+    "instance_data_dir": "/datasets/high-quality-images",
+    "caption_strategy": "filename",
+    "resolution": 512,
+    "conditioning": [
+      {
+        "type": "superresolution",
+        "blur_radius": 2.0,
+        "noise_level": 0.02,
+        "captions": ["enhance image quality", "increase resolution", "sharpen"]
+      },
+      {
+        "type": "jpeg_artifacts", 
+        "quality_range": [20, 40],
+        "captions": ["remove compression", "fix jpeg artifacts"]
+      },
+      {
+        "type": "canny",
+        "low_threshold": 50,
+        "high_threshold": 150
+      }
+    ]
+  },
+  {
+    "id": "text-embed-cache",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "type": "local",
+    "cache_dir": "cache/text/sdxl"
+  }
+]
+```
+
+This configuration will:
+1. Load your high-quality images from `/datasets/high-quality-images`
+2. Generate three conditioning datasets automatically
+3. Use specific captions for super-resolution and JPEG tasks
+4. Use the original image captions for the Canny edge dataset
+
+#### Caption Strategies for Generated Datasets
+
+You have two options for captioning generated conditioning data:
+
+1. **Use source captions** (default): Omit the `captions` field
+2. **Custom captions**: Provide a string or array of strings
+
+For task-specific training (like "enhance" or "remove artifacts"), custom captions often work better than the original image descriptions.
+
+### Startup Time Optimization
+
+For large datasets, conditioning generation can be time-consuming. To optimize:
+
+1. **Generate once**: Conditioning data is cached and won't regenerate if already present
+2. **Use CPU generators**: These can utilize multiple processes for faster generation
+3. **Disable unused types**: Only generate what you need for your training
+4. **Pre-generate**: You can run with `--skip_file_discovery=true` to skip the discovery and generation conditioning data
+5. **Avoid disk scans**: You can use `preserve_data_backend_cache=True` on any large dataset configuration to avoid rescanning the disk for existing conditioning data. This will speed up startup time significantly, especially for large datasets.
+
+The generation process shows progress bars and supports resumption if interrupted.

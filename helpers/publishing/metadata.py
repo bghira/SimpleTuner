@@ -275,6 +275,11 @@ model_output.save("output.png", format="PNG")
 
 def code_example(args, repo_id: str = None, model=None):
     """Return a string with the code example."""
+    # Check if model provides custom code example
+    if model and hasattr(model, "custom_model_card_code_example"):
+        custom_example = model.custom_model_card_code_example(repo_id)
+        if custom_example:
+            return custom_example
     code_example = f"""
 ```python
 {_model_imports(args)}
@@ -299,13 +304,20 @@ model_output = pipeline(
 
 
 def model_type(args):
+    prefix = "ControlNet " if args.controlnet or args.control else ""
     if "lora" in args.model_type:
         if "standard" == args.lora_type.lower():
-            return "standard PEFT LoRA"
+            if (
+                StateTracker.get_model() is not None
+                and StateTracker.get_model().MODEL_TYPE.value == "unet"
+            ):
+                # SDXL and SD1x use LoHa for ControlNet adapters.
+                return f"{prefix}PEFT LoHa"
+            return f"{prefix}PEFT LoRA"
         if "lycoris" == args.lora_type.lower():
-            return "LyCORIS adapter"
+            return f"{prefix}LyCORIS adapter"
     else:
-        return "full rank finetune"
+        return f"{prefix}full rank finetune"
 
 
 def lora_info(args):
@@ -455,6 +467,7 @@ tags:
   - simpletuner
   - {'not-for-all-audiences' if not args.model_card_safe_for_work else 'safe-for-work'}
   - {args.model_type}
+{'  - controlnet' if args.controlnet or args.control else ''}
 {'  - template:sd-lora' if 'lora' in args.model_type else ''}
 {f'  - {args.lora_type}' if 'lora' in args.model_type else ''}
 pipeline_tag: {_pipeline_tag(args)}
@@ -507,7 +520,7 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 - Gradient checkpointing: {StateTracker.get_args().gradient_checkpointing}
 - Prediction type: {model.PREDICTION_TYPE.value}{model.custom_model_card_schedule_info()}
 - Optimizer: {StateTracker.get_args().optimizer}{optimizer_config if optimizer_config is not None else ''}
-- Trainable parameter precision: {'Pure BF16' if torch.backends.mps.is_available() or StateTracker.get_args().mixed_precision == "bf16" else 'FP32'}
+- Trainable parameter precision: {'Pure BF16' if torch.backends.mps.is_available() or StateTracker.get_args().mixed_precision == "bf16" else StateTracker.get_args().mixed_precision}
 - Base model precision: `{args.base_model_precision}`
 - Caption dropout probability: {StateTracker.get_args().caption_dropout_probability or 0.0 * 100}%
 {'- Xformers: Enabled' if StateTracker.get_args().attention_mechanism == 'xformers' else ''}

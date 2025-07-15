@@ -184,11 +184,13 @@ if is_torch_version(">=", "1.9.0"):
 
 class AuraFlowLoraLoaderMixin(LoraBaseMixin):
     r"""
-    Load LoRA layers into [`AuraFlowTransformer2DModel`] Specific to [`AuraFlowPipeline`].
+    Load LoRA layers into [`AuraFlowTransformer2DModel`] and optionally [`ControlNetModel`].
+    Specific to [`AuraFlowPipeline`].
     """
 
-    _lora_loadable_modules = ["transformer"]
+    _lora_loadable_modules = ["transformer", "controlnet"]
     transformer_name = TRANSFORMER_NAME
+    controlnet_name = "controlnet"
 
     @classmethod
     @validate_hf_hub_args
@@ -265,7 +267,7 @@ class AuraFlowLoraLoaderMixin(LoraBaseMixin):
             "framework": "pytorch",
         }
 
-        state_dict = _fetch_state_dict(
+        state_dict, metadata = _fetch_state_dict(
             pretrained_model_name_or_path_or_dict=pretrained_model_name_or_path_or_dict,
             weight_name=weight_name,
             use_safetensors=use_safetensors,
@@ -288,7 +290,7 @@ class AuraFlowLoraLoaderMixin(LoraBaseMixin):
 
         return state_dict
 
-    # Copied from diffusers.loaders.lora_pipeline.CogVideoXLoraLoaderMixin.load_lora_weights
+    # Updated from diffusers.loaders.lora_pipeline.CogVideoXLoraLoaderMixin.load_lora_weights
     def load_lora_weights(
         self,
         pretrained_model_name_or_path_or_dict: Union[str, Dict[str, torch.Tensor]],
@@ -297,7 +299,7 @@ class AuraFlowLoraLoaderMixin(LoraBaseMixin):
     ):
         """
         Load LoRA weights specified in `pretrained_model_name_or_path_or_dict` into `self.transformer` and
-        `self.text_encoder`. All kwargs are forwarded to `self.lora_state_dict`. See
+        optionally `self.controlnet`. All kwargs are forwarded to `self.lora_state_dict`. See
         [`~loaders.StableDiffusionLoraLoaderMixin.lora_state_dict`] for more details on how the state dict is loaded.
         See [`~loaders.StableDiffusionLoraLoaderMixin.load_lora_into_transformer`] for more details on how the state
         dict is loaded into `self.transformer`.
@@ -340,17 +342,40 @@ class AuraFlowLoraLoaderMixin(LoraBaseMixin):
         if not is_correct_format:
             raise ValueError("Invalid LoRA checkpoint.")
 
-        self.load_lora_into_transformer(
-            state_dict,
-            transformer=(
-                getattr(self, self.transformer_name)
-                if not hasattr(self, "transformer")
-                else self.transformer
-            ),
-            adapter_name=adapter_name,
-            _pipeline=self,
-            low_cpu_mem_usage=low_cpu_mem_usage,
-        )
+        # Separate transformer and controlnet weights
+        transformer_state_dict = {}
+        controlnet_state_dict = {}
+
+        for k, v in state_dict.items():
+            if k.startswith("controlnet."):
+                controlnet_state_dict[k] = v
+            else:
+                # Assume transformer weights
+                transformer_state_dict[k] = v
+
+        # Load transformer weights
+        if transformer_state_dict:
+            self.load_lora_into_transformer(
+                transformer_state_dict,
+                transformer=(
+                    getattr(self, self.transformer_name)
+                    if not hasattr(self, "transformer")
+                    else self.transformer
+                ),
+                adapter_name=adapter_name,
+                _pipeline=self,
+                low_cpu_mem_usage=low_cpu_mem_usage,
+            )
+
+        # Load controlnet weights if present
+        if controlnet_state_dict and hasattr(self, "controlnet"):
+            self.load_lora_into_controlnet(
+                controlnet_state_dict,
+                controlnet=self.controlnet,
+                adapter_name=adapter_name,
+                _pipeline=self,
+                low_cpu_mem_usage=low_cpu_mem_usage,
+            )
 
     @classmethod
     # Copied from diffusers.loaders.lora_pipeline.SD3LoraLoaderMixin.load_lora_into_transformer with SD3Transformer2DModel->AuraFlowTransformer2DModel
@@ -420,24 +445,96 @@ class AuraFlowLoraLoaderMixin(LoraBaseMixin):
         )
 
     @classmethod
-    # Copied from diffusers.loaders.lora_pipeline.CogVideoXLoraLoaderMixin.save_lora_weights
+    def load_lora_into_controlnet(
+        cls,
+        state_dict,
+        controlnet,
+        adapter_name=None,
+        _pipeline=None,
+        low_cpu_mem_usage=False,
+    ):
+        """
+        This will load the LoRA layers specified in `state_dict` into `controlnet`.
+
+        Parameters:
+            state_dict (`dict`):
+                A standard state dict containing the lora layer parameters.
+            controlnet:
+                The ControlNet model to load the LoRA layers into.
+            adapter_name (`str`, *optional*):
+                Adapter name to be used for referencing the loaded adapter model.
+            low_cpu_mem_usage (`bool`, *optional*):
+                Speed up model loading by only loading the pretrained LoRA weights.
+        """
+        if low_cpu_mem_usage and is_peft_version("<", "0.13.0"):
+            raise ValueError(
+                "`low_cpu_mem_usage=True` is not compatible with this `peft` version. Please update it with `pip install -U peft`."
+            )
+
+        # Extract controlnet keys
+        keys = list(state_dict.keys())
+        controlnet_keys = [k for k in keys if k.startswith(cls.controlnet_name)]
+        state_dict = {
+            k.replace(f"{cls.controlnet_name}.", ""): v
+            for k, v in state_dict.items()
+            if k in controlnet_keys
+        }
+
+        if len(state_dict.keys()) > 0:
+            # Load the layers corresponding to ControlNet.
+            logger.info(f"Loading {cls.controlnet_name}.")
+
+            # Check if controlnet has load_lora_adapter method
+            if hasattr(controlnet, "load_lora_adapter"):
+                controlnet.load_lora_adapter(
+                    state_dict,
+                    network_alphas=None,
+                    adapter_name=adapter_name,
+                    _pipeline=_pipeline,
+                    low_cpu_mem_usage=low_cpu_mem_usage,
+                )
+            else:
+                # Fallback for models that use a different loading mechanism
+                logger.warning(
+                    f"ControlNet does not have load_lora_adapter method. "
+                    f"Attempting to use load_attn_procs if available."
+                )
+                if hasattr(controlnet, "load_attn_procs"):
+                    controlnet.load_attn_procs(
+                        state_dict,
+                        network_alphas=None,
+                        adapter_name=adapter_name,
+                        _pipeline=_pipeline,
+                        low_cpu_mem_usage=low_cpu_mem_usage,
+                    )
+                else:
+                    raise AttributeError(
+                        f"ControlNet model does not have a method to load LoRA weights. "
+                        f"Please ensure your ControlNet model supports LoRA loading."
+                    )
+
+    @classmethod
+    # Updated from diffusers.loaders.lora_pipeline.CogVideoXLoraLoaderMixin.save_lora_weights
     def save_lora_weights(
         cls,
         save_directory: Union[str, os.PathLike],
         transformer_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
+        controlnet_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
         is_main_process: bool = True,
         weight_name: str = None,
         save_function: Callable = None,
         safe_serialization: bool = True,
     ):
         r"""
-        Save the LoRA parameters corresponding to the UNet and text encoder.
+        Save the LoRA parameters corresponding to the transformer and optionally controlnet.
 
         Arguments:
             save_directory (`str` or `os.PathLike`):
                 Directory to save LoRA parameters to. Will be created if it doesn't exist.
             transformer_lora_layers (`Dict[str, torch.nn.Module]` or `Dict[str, torch.Tensor]`):
                 State dict of the LoRA layers corresponding to the `transformer`.
+            controlnet_lora_layers (`Dict[str, torch.nn.Module]` or `Dict[str, torch.Tensor]`):
+                State dict of the LoRA layers corresponding to the `controlnet`.
             is_main_process (`bool`, *optional*, defaults to `True`):
                 Whether the process calling this is the main process or not. Useful during distributed training and you
                 need to call this function on all processes. In this case, set `is_main_process=True` only on the main
@@ -451,12 +548,19 @@ class AuraFlowLoraLoaderMixin(LoraBaseMixin):
         """
         state_dict = {}
 
-        if not transformer_lora_layers:
-            raise ValueError("You must pass `transformer_lora_layers`.")
+        if not (transformer_lora_layers or controlnet_lora_layers):
+            raise ValueError(
+                "You must pass at least one of `transformer_lora_layers` or `controlnet_lora_layers`."
+            )
 
         if transformer_lora_layers:
             state_dict.update(
                 cls.pack_weights(transformer_lora_layers, cls.transformer_name)
+            )
+
+        if controlnet_lora_layers:
+            state_dict.update(
+                cls.pack_weights(controlnet_lora_layers, cls.controlnet_name)
             )
 
         # Save the model
@@ -763,9 +867,7 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
 
             text_inputs = {k: v.to(device) for k, v in text_inputs.items()}
             prompt_embeds = self.text_encoder(**text_inputs)[0]
-            prompt_attention_mask = (
-                text_inputs["attention_mask"].unsqueeze(-1).expand(prompt_embeds.shape)
-            )
+            prompt_attention_mask = text_inputs["attention_mask"].unsqueeze(-1)
             prompt_embeds = prompt_embeds * prompt_attention_mask
 
         if self.text_encoder is not None:

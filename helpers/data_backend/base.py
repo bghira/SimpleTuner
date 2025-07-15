@@ -48,6 +48,13 @@ class BaseDataBackend(ABC):
         pass
 
     @abstractmethod
+    def get_abs_path(self, sample_path: str = None) -> tuple:
+        """
+        Given a relative path of a sample, return the absolute path.
+        """
+        pass
+
+    @abstractmethod
     def read_image(self, filepath: str, delete_problematic_images: bool = False):
         """
         Read an image from the backend and return a PIL Image.
@@ -89,6 +96,32 @@ class BaseDataBackend(ABC):
         """
         pass
 
+    @abstractmethod
+    def get_instance_representation(self) -> dict:
+        """
+        Get a serializable representation of this backend instance.
+        This should include all necessary information to recreate the backend
+        in another process.
+
+        Returns:
+            dict: Serializable dictionary containing backend configuration
+        """
+        pass
+
+    @staticmethod
+    @abstractmethod
+    def from_instance_representation(representation: dict) -> "BaseDataBackend":
+        """
+        Create a new backend instance from a serialized representation.
+
+        Args:
+            representation: Dictionary created by get_instance_representation()
+
+        Returns:
+            BaseDataBackend: New instance of the appropriate backend
+        """
+        pass
+
     def _decompress_torch(self, gzip_data: BytesIO):
         """
         We've read the gzip from disk. Just decompress it.
@@ -98,7 +131,11 @@ class BaseDataBackend(ABC):
             gzip_data = BytesIO(gzip_data)
         gzip_data.seek(0)
         with gzip.GzipFile(fileobj=gzip_data, mode="rb") as file:
-            decompressed_data = file.read()
+            try:
+                decompressed_data = file.read()
+            except Exception as e:
+                # Handle decompression errors
+                return gzip_data
         return BytesIO(decompressed_data)
 
     def _compress_torch(self, data):
@@ -108,7 +145,6 @@ class BaseDataBackend(ABC):
         output_data_container = BytesIO()
         torch.save(data, output_data_container)
         output_data_container.seek(0)
-
         with BytesIO() as compressed_output:
             with gzip.GzipFile(fileobj=compressed_output, mode="wb") as file:
                 file.write(output_data_container.getvalue())

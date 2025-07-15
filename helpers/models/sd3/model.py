@@ -17,7 +17,8 @@ from helpers.models.sd3.pipeline import (
     StableDiffusion3Pipeline,
     StableDiffusion3Img2ImgPipeline,
 )
-
+from helpers.models.sd3.controlnet import StableDiffusion3ControlNetPipeline
+from diffusers import AutoencoderKL, SD3ControlNetModel
 
 logger = logging.getLogger(__name__)
 is_primary_process = True
@@ -119,6 +120,7 @@ class SD3(ImageModelFoundation):
     PIPELINE_CLASSES = {
         PipelineTypes.TEXT2IMG: StableDiffusion3Pipeline,
         PipelineTypes.IMG2IMG: StableDiffusion3Img2ImgPipeline,
+        PipelineTypes.CONTROLNET: StableDiffusion3ControlNetPipeline,
     }
     MODEL_SUBFOLDER = "transformer"
     # The default model flavor to use when none is specified.
@@ -151,6 +153,62 @@ class SD3(ImageModelFoundation):
             "model": T5EncoderModel,
         },
     }
+
+    def controlnet_init(self):
+        """
+        Initialize SD3 ControlNet model.
+        """
+        logger.info("Creating the SD3 controlnet..")
+
+        if self.config.controlnet_model_name_or_path:
+            logger.info("Loading existing controlnet weights")
+            self.controlnet = SD3ControlNetModel.from_pretrained(
+                self.config.controlnet_model_name_or_path
+            )
+        else:
+            logger.info("Initializing controlnet weights from base model")
+            # SD3ControlNetModel.from_transformer adds 1 extra conditioning channel by default
+            # We set it to 0 because it's not really needed and increases complexity.
+            num_extra_channels = 0
+            self.controlnet = SD3ControlNetModel.from_transformer(
+                self.unwrap_model(self.model),
+                num_extra_conditioning_channels=num_extra_channels,
+            )
+
+        self.controlnet = self.controlnet.to(
+            device=self.accelerator.device,
+            dtype=(
+                self.config.base_weight_dtype
+                if hasattr(self.config, "base_weight_dtype")
+                else self.config.weight_dtype
+            ),
+        )
+        # Log the expected input channels for debugging
+        if hasattr(self.controlnet, "pos_embed_input") and hasattr(
+            self.controlnet.pos_embed_input, "proj"
+        ):
+            in_channels = self.controlnet.pos_embed_input.proj.in_channels
+            logger.info(f"ControlNet expects {in_channels} input channels")
+
+    def requires_conditioning_latents(self) -> bool:
+        """
+        SD3 ControlNet uses latent inputs with optional extra conditioning channels.
+
+        By default (sd3_controlnet_extra_conditioning_channels=0), it uses 16-channel latents.
+        With extra channels, it expects latents + additional control signals.
+        Beware, the pipeline doesn't seem to play well with the added channel.
+        """
+        if self.config.controlnet:
+            return True  # SD3 uses latent inputs for controlnet
+        return False
+
+    def requires_conditioning_validation_inputs(self) -> bool:
+        """
+        Whether this model / flavour requires conditioning inputs during validation.
+        """
+        if self.config.controlnet:
+            return True
+        return False
 
     def _format_text_embedding(self, text_embedding: torch.Tensor):
         """
@@ -264,6 +322,212 @@ class SD3(ImageModelFoundation):
             )[0]
         }
 
+    def prepare_controlnet_conditioning(
+        self, conditioning_latents: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Prepare conditioning inputs for SD3 ControlNet.
+
+        SD3 ControlNet can be configured with extra conditioning channels.
+        We pray the user doesn't go this route, because it leads to pipeline complexity.
+
+        Args:
+            conditioning_latents: The conditioning latents from the dataloader
+
+        Returns:
+            Properly formatted conditioning tensor for the controlnet
+        """
+        # Check what the controlnet expects
+        if hasattr(self.controlnet, "pos_embed_input") and hasattr(
+            self.controlnet.pos_embed_input, "proj"
+        ):
+            # Access the weight tensor shape to determine expected channels
+            # Weight shape for Conv2d is [out_channels, in_channels, kernel_h, kernel_w]
+            weight_shape = self.controlnet.pos_embed_input.proj.weight.shape
+            expected_channels = weight_shape[1]  # in_channels is the second dimension
+            actual_channels = conditioning_latents.shape[1]
+
+            if expected_channels != actual_channels:
+                if expected_channels == 17 and actual_channels == 16:
+                    # SD3 ControlNet was initialized with 1 extra conditioning channel
+                    # Add a zero channel or a specific control signal
+                    batch_size, _, height, width = conditioning_latents.shape
+
+                    # You can customize this to add specific control information
+                    # For example: depth maps, edge maps, segmentation masks, etc.
+                    extra_channel = torch.zeros(
+                        batch_size,
+                        1,
+                        height,
+                        width,
+                        device=conditioning_latents.device,
+                        dtype=conditioning_latents.dtype,
+                    )
+
+                    # If you have specific control data, you can add it here:
+                    # extra_channel = your_control_data.unsqueeze(1)  # shape: [batch, 1, H, W]
+
+                    conditioning_latents = torch.cat(
+                        [conditioning_latents, extra_channel], dim=1
+                    )
+                    logger.debug(
+                        f"Added extra conditioning channel, new shape: {conditioning_latents.shape}"
+                    )
+
+                elif expected_channels < actual_channels:
+                    # ControlNet expects fewer channels, might need to select specific channels
+                    logger.warning(
+                        f"ControlNet expects {expected_channels} channels but got {actual_channels}. "
+                        f"Using first {expected_channels} channels."
+                    )
+                    conditioning_latents = conditioning_latents[:, :expected_channels]
+
+                else:
+                    raise ValueError(
+                        f"Channel mismatch: ControlNet expects {expected_channels} channels "
+                        f"but received {actual_channels} channels. "
+                        "Check your controlnet configuration or conditioning data."
+                    )
+
+        return conditioning_latents
+
+    def controlnet_predict(self, prepared_batch: dict) -> dict:
+        """
+        Perform a forward pass with ControlNet for SD3 model.
+
+        Args:
+            prepared_batch: Dictionary containing the batch data including conditioning_latents
+
+        Returns:
+            Dictionary containing the model prediction
+        """
+        # Get and prepare the conditioning
+        controlnet_cond = prepared_batch["conditioning_latents"].to(
+            device=self.accelerator.device, dtype=self.config.weight_dtype
+        )
+        controlnet_cond = self.prepare_controlnet_conditioning(controlnet_cond)
+        control_block_samples = self.controlnet(
+            hidden_states=prepared_batch["noisy_latents"].to(
+                device=self.accelerator.device,
+                dtype=self.config.base_weight_dtype,
+            ),
+            timestep=prepared_batch["timesteps"],
+            encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(
+                device=self.accelerator.device,
+                dtype=self.config.base_weight_dtype,
+            ),
+            pooled_projections=prepared_batch["add_text_embeds"].to(
+                device=self.accelerator.device,
+                dtype=self.config.weight_dtype,
+            ),
+            joint_attention_kwargs=None,
+            controlnet_cond=controlnet_cond,
+            conditioning_scale=1.0,  # You might want to make this configurable
+            return_dict=False,
+        )[0]
+        control_block_samples = [
+            sample.to(dtype=self.config.base_weight_dtype)
+            for sample in control_block_samples
+        ]
+        model_pred = self.model(
+            hidden_states=prepared_batch["noisy_latents"].to(
+                device=self.accelerator.device,
+                dtype=self.config.base_weight_dtype,
+            ),
+            timestep=prepared_batch["timesteps"],
+            encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(
+                device=self.accelerator.device,
+                dtype=self.config.base_weight_dtype,
+            ),
+            pooled_projections=prepared_batch["add_text_embeds"].to(
+                device=self.accelerator.device,
+                dtype=self.config.weight_dtype,
+            ),
+            block_controlnet_hidden_states=control_block_samples,
+            joint_attention_kwargs=None,
+            return_dict=False,
+        )[0]
+
+        return {"model_prediction": model_pred}
+
+    def get_lora_target_layers(self):
+        """
+        Get the target layers for LoRA training based on configuration.
+        """
+        # Override for ControlNet training if needed
+        if self.config.model_type == "lora" and self.config.controlnet:
+            # Comprehensive targeting including all layers
+            targets = []
+
+            # Controlnet blocks
+            for i in range(12):
+                targets.append(f"controlnet_blocks.{i}")
+
+            # Position embeddings
+            targets.extend(
+                [
+                    "pos_embed.proj",
+                    "pos_embed_input.proj",
+                ]
+            )
+
+            # Context and time embedders
+            targets.append("context_embedder")
+            targets.extend(
+                [
+                    "time_text_embed.timestep_embedder.linear_1",
+                    "time_text_embed.timestep_embedder.linear_2",
+                    "time_text_embed.text_embedder.linear_1",
+                    "time_text_embed.text_embedder.linear_2",
+                ]
+            )
+
+            # All attention layers in transformer blocks
+            for i in range(12):
+                # Main attention
+                targets.extend(
+                    [
+                        f"transformer_blocks.{i}.attn.to_k",
+                        f"transformer_blocks.{i}.attn.to_q",
+                        f"transformer_blocks.{i}.attn.to_v",
+                        f"transformer_blocks.{i}.attn.to_out.0",
+                        f"transformer_blocks.{i}.attn.add_k_proj",
+                        f"transformer_blocks.{i}.attn.add_q_proj",
+                        f"transformer_blocks.{i}.attn.add_v_proj",
+                        f"transformer_blocks.{i}.attn.to_add_out",
+                    ]
+                )
+                # Cross attention
+                targets.extend(
+                    [
+                        f"transformer_blocks.{i}.attn2.to_k",
+                        f"transformer_blocks.{i}.attn2.to_q",
+                        f"transformer_blocks.{i}.attn2.to_v",
+                        f"transformer_blocks.{i}.attn2.to_out.0",
+                    ]
+                )
+                # Feed-forward networks
+                targets.extend(
+                    [
+                        f"transformer_blocks.{i}.ff.net.0.proj",
+                        f"transformer_blocks.{i}.ff.net.2",
+                        f"transformer_blocks.{i}.ff_context.net.0.proj",
+                        f"transformer_blocks.{i}.ff_context.net.2",
+                    ]
+                )
+
+            return targets
+
+        # Default LoRA targets
+        if self.config.lora_type.lower() == "standard":
+            return self.DEFAULT_LORA_TARGET
+        elif self.config.lora_type.lower() == "lycoris":
+            return self.DEFAULT_LYCORIS_TARGET
+        else:
+            raise NotImplementedError(
+                f"Unknown LoRA target type {self.config.lora_type}."
+            )
+
     def check_user_config(self):
         """
         Checks self.config values against important issues. Optionally implemented in child class.
@@ -300,6 +564,10 @@ class SD3(ImageModelFoundation):
         logger.info(
             f"{self.NAME} embeds for unconditional captions: t5={self.config.sd3_t5_uncond_behaviour}, clip={self.config.sd3_clip_uncond_behaviour}"
         )
+
+        # ControlNet specific configuration
+        if self.config.controlnet:
+            self.config.sd3_controlnet_extra_conditioning_channels = 0
 
     def custom_model_card_schedule_info(self):
         output_args = []

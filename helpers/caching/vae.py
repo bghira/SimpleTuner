@@ -48,36 +48,40 @@ def prepare_sample(
         image_path=filepath,
         model=model,
     )
-    is_cond = data_backend_id in StateTracker.get_conditioning_mappings().values()
+    # python will raise an error here if any cond_datasets are set to back multiple train_datasets
+    # this would be a problem since we wouldn't know how to prepare our sample
+    cond_mapping = {y: x for (x, y) in StateTracker.get_conditioning_mappings()}
 
-    if is_cond:
-        # If this VAECache is attached to a *conditioning* dataset, make sure
-        # the geometry matches its training counterpart.  The counterpart’s
-        # metadata is already stored, so we can derive it straight away.
-        if data_backend_id in StateTracker.get_conditioning_mappings().values():
-            # locate the partner backend id
-            for train_id, cond_id in StateTracker.get_conditioning_mappings().items():
-                if cond_id == data_backend_id:
-                    partner_path = training_sample.image_path()
-                    train_meta = StateTracker.get_metadata_by_filepath(
-                        partner_path, data_backend_id=train_id
-                    )
-                    if not train_meta:
-                        training_sample.prepare_like(
-                            TrainingSample(
-                                image=None,
-                                data_backend_id=train_id,
-                                image_metadata=train_meta,
-                                image_path=partner_path,
-                                model=model,
-                            )
-                        )
-                    else:
-                        # prepare the sample independently of the training sample,
-                        # since the metadata scan built an element for this.
-                        # a metadata object will exist for conditioning samples that
-                        # have their dataset configured to operate somewhat independently.
-                        training_sample.prepare()
+    if data_backend_id in cond_mapping:
+        conditioning_sample_path = training_sample.image_path()
+        # locate the partner backend id
+        train_id = cond_mapping[data_backend_id]
+        train_data_backend = StateTracker.get_data_backend(train_id)
+        train_sample_path = training_sample.training_sample_path(
+            training_dataset_id=train_id
+        )
+        cond_meta = StateTracker.get_metadata_by_filepath(
+            conditioning_sample_path, data_backend_id=data_backend_id
+        )
+        if not cond_meta:
+            train_meta = train_data_backend[
+                "metadata_backend"
+            ].get_metadata_by_filepath(train_sample_path)
+            prepared_sample = training_sample.prepare_like(
+                TrainingSample(
+                    image=None,
+                    data_backend_id=train_id,
+                    image_metadata=train_meta,
+                    image_path=train_sample_path,
+                    model=model,
+                )
+            )
+        else:
+            # prepare the sample independently of the training sample,
+            # since the metadata scan built an element for this.
+            # a metadata object will exist for conditioning samples that
+            # have their dataset configured to operate somewhat independently.
+            prepared_sample = training_sample.prepare()
     else:
         # If this VAECache is attached to a *training* dataset, we prepare the
         # sample for training, which includes cropping and resizing.
@@ -537,9 +541,14 @@ class VAECache(WebhookMixin):
             logger.debug(
                 f"Shape for Wan VAE encode: {latents_uncached.shape} with latents_mean: {self.vae.latents_mean} and latents_std: {self.vae.latents_std}"
             )
-            latents_uncached = compute_wan_posterior(
+            posterior = compute_wan_posterior(
                 latents_uncached, self.vae.latents_mean, self.vae.latents_std
             )
+            # Sample from the posterior
+            latents_uncached = posterior.sample()
+
+            # For video, return just the tensor
+            output_cache_entry = latents_uncached
         elif StateTracker.get_model_family() in ["hunyuan-video", "mochi"]:
             raise Exception(
                 f"{StateTracker.get_model_family()} not supported for VAE Caching yet."
@@ -641,13 +650,29 @@ class VAECache(WebhookMixin):
                     self.accelerator.device, dtype=StateTracker.get_vae_dtype()
                 )
                 processed_images = self.prepare_video_latents(processed_images)
+                processed_images = self.model.pre_vae_encode_transform_sample(
+                    processed_images
+                )
                 latents_uncached = self.vae.encode(processed_images)
 
-                if hasattr(latents_uncached, "latent_dist"):
-                    latents_uncached = latents_uncached.latent_dist.sample()
-                elif hasattr(latents_uncached, "sample"):
-                    latents_uncached = latents_uncached.sample()
-                latents_uncached = self.process_video_latents(latents_uncached)
+                # For Wan, get the raw parameters (32 channels)
+                if StateTracker.get_model_family() in ["wan", "cosmos2image"]:
+                    if hasattr(latents_uncached, "latent_dist"):
+                        # This is 32 channels (mu + logvar)
+                        latents_uncached = latents_uncached.latent_dist.parameters
+                    # Process will normalize and sample, returning 16 channels
+                    latents_uncached = self.process_video_latents(latents_uncached)
+                else:
+                    # For other models, sample first
+                    if hasattr(latents_uncached, "latent_dist"):
+                        latents_uncached = latents_uncached.latent_dist.sample()
+                    elif hasattr(latents_uncached, "sample"):
+                        latents_uncached = latents_uncached.sample()
+                    # Then process
+                    latents_uncached = self.process_video_latents(latents_uncached)
+
+                # Now latents_uncached should be 16 channels for Wan
+                # Apply scaling factors
                 if (
                     hasattr(self.vae, "config")
                     and hasattr(self.vae.config, "shift_factor")
@@ -663,15 +688,14 @@ class VAECache(WebhookMixin):
                 elif isinstance(latents_uncached, torch.Tensor) and hasattr(
                     self.vae.config, "scaling_factor"
                 ):
-                    latents_uncached = getattr(
-                        latents_uncached, "latent", latents_uncached
-                    ) * getattr(
+                    latents_uncached = latents_uncached * getattr(
                         self.model,
                         "AUTOENCODER_SCALING_FACTOR",
                         self.vae.config.scaling_factor,
                     )
-                    logger.debug(f"Latents shape: {latents_uncached.shape}")
-
+                    logger.debug(
+                        f"Latents shape after scaling: {latents_uncached.shape}"
+                    )
             # Prepare final latents list by combining cached and newly computed latents
             if isinstance(latents_uncached, dict) and "latents" in latents_uncached:
                 # video models tend to return a dict with latents.
@@ -878,7 +902,9 @@ class VAECache(WebhookMixin):
                             attribute="crop_coordinates",
                         )
                     )
-                    if tuple(current_crop_coordinates) != tuple(crop_coordinates):
+                    if current_crop_coordinates is not None and tuple(
+                        current_crop_coordinates
+                    ) != tuple(crop_coordinates):
                         logger.debug(
                             f"Should be updating crop_coordinates for {filepath} from {current_crop_coordinates} to {crop_coordinates}. But we won't.."
                         )

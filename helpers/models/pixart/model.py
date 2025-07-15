@@ -8,8 +8,13 @@ from helpers.models.common import (
 from transformers import AutoTokenizer, T5EncoderModel
 from helpers.models.pixart.pipeline import (
     PixArtSigmaPipeline,
+    PixArtSigmaControlPipeline,
+    PixArtSigmaControlNetPipeline,
+    PixArtSigmaControlNetLoraLoaderMixin,
 )
-from diffusers import AutoencoderKL, PixArtTransformer2DModel
+from helpers.models.pixart.transformer import PixArtTransformer2DModel
+from diffusers import AutoencoderKL
+from peft.utils import get_peft_model_state_dict
 
 logger = logging.getLogger(__name__)
 is_primary_process = True
@@ -27,6 +32,7 @@ class PixartSigma(ImageModelFoundation):
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 4
+    CONTROLNET_LORA_STATE_DICT_PREFIX = "controlnet_blocks"
     DEFAULT_NOISE_SCHEDULER = "ddim"
     # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
@@ -38,7 +44,8 @@ class PixartSigma(ImageModelFoundation):
     PIPELINE_CLASSES = {
         PipelineTypes.TEXT2IMG: PixArtSigmaPipeline,
         PipelineTypes.IMG2IMG: PixArtSigmaPipeline,
-        # PipelineTypes.CONTROLNET: None,
+        PipelineTypes.CONTROLNET: PixArtSigmaControlNetPipeline,
+        PipelineTypes.CONTROL: PixArtSigmaControlPipeline,
     }
 
     # The default model flavor to use when none is specified.
@@ -63,6 +70,56 @@ class PixartSigma(ImageModelFoundation):
         },
     }
 
+    def controlnet_init(self):
+        logger.info("Creating the PixArt Sigma controlnet..")
+        from helpers.models.pixart.controlnet import (
+            PixArtSigmaControlNetAdapterModel,
+            PixArtSigmaControlNetTransformerModel,
+        )
+
+        base_model = self.unwrap_model(self.model)
+
+        if self.config.controlnet_model_name_or_path:
+            logger.info("Loading existing controlnet weights")
+            controlnet = PixArtSigmaControlNetAdapterModel.from_pretrained(
+                self.config.controlnet_model_name_or_path
+            )
+        else:
+            logger.info("Initializing controlnet weights from base model")
+            num_layers = getattr(self.config, "controlnet_num_layers", 13)
+            num_layers = min(num_layers, len(base_model.transformer_blocks))
+
+            controlnet = PixArtSigmaControlNetAdapterModel.from_transformer(
+                base_model, num_layers=num_layers
+            )
+
+        # Create the combined model wrapper
+        self.controlnet = PixArtSigmaControlNetTransformerModel(
+            transformer=base_model,
+            controlnet=controlnet,
+            blocks_num=controlnet.num_layers,
+            training=True,  # Enable training mode
+        )
+
+        # Ensure controlnet is in training mode
+        self.controlnet.controlnet.train()
+
+    def requires_conditioning_latents(self) -> bool:
+        """
+        PixArt Sigma ControlNet requires latent inputs instead of pixels.
+        """
+        if self.config.controlnet or self.config.control:
+            return True
+        return False
+
+    def requires_conditioning_validation_inputs(self) -> bool:
+        """
+        Whether this model / flavour requires conditioning inputs during validation.
+        """
+        if self.config.controlnet or self.config.control:
+            return True
+        return False
+
     def _format_text_embedding(self, text_embedding: torch.Tensor):
         """
         Models can optionally format the stored text embedding, eg. in a dict, or
@@ -82,7 +139,7 @@ class PixartSigma(ImageModelFoundation):
         }
 
     def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
-        # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['prompt_attention_mask'].shape}")
+        # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['attention_mask'].shape}")
         return {
             "prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
             "prompt_attention_mask": text_embedding["attention_mask"].unsqueeze(0),
@@ -91,7 +148,7 @@ class PixartSigma(ImageModelFoundation):
     def convert_negative_text_embed_for_pipeline(
         self, text_embedding: torch.Tensor, prompt: str
     ) -> dict:
-        # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['prompt_attention_mask'].shape}")
+        # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['attention_mask'].shape}")
         return {
             "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
             "negative_prompt_attention_mask": text_embedding[
@@ -158,6 +215,64 @@ class PixartSigma(ImageModelFoundation):
                 return_dict=False,
             )[0].chunk(2, dim=1)[0]
         }
+
+    def controlnet_predict(self, prepared_batch: dict) -> dict:
+        """
+        Perform a forward pass with ControlNet for PixArt Sigma model.
+        """
+        # ControlNet conditioning - PixArt uses latents instead of pixel values
+        controlnet_cond = prepared_batch.get("conditioning_latents")
+
+        if controlnet_cond is None:
+            raise ValueError(
+                "conditioning_latents must be provided for ControlNet training"
+            )
+
+        controlnet_cond = controlnet_cond.to(
+            device=self.accelerator.device, dtype=self.config.weight_dtype
+        )
+
+        # Check shapes
+        if controlnet_cond.shape[1] != self.LATENT_CHANNEL_COUNT:
+            raise ValueError(
+                f"ControlNet conditioning latents must have {self.LATENT_CHANNEL_COUNT} channels. "
+                f"Got {controlnet_cond.shape[1]} channels."
+            )
+
+        # Get conditioning scale (default to 1.0 if not specified)
+        conditioning_scale = getattr(self.config, "controlnet_conditioning_scale", 1.0)
+
+        # Apply conditioning scale
+        if conditioning_scale != 1.0:
+            controlnet_cond = controlnet_cond * conditioning_scale
+
+        # Forward pass through the controlnet transformer wrapper
+        model_output = self.controlnet(
+            prepared_batch["noisy_latents"].to(
+                device=self.accelerator.device,
+                dtype=self.config.base_weight_dtype,
+            ),
+            encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(
+                device=self.accelerator.device, dtype=self.config.base_weight_dtype
+            ),
+            timestep=prepared_batch["timesteps"],
+            encoder_attention_mask=prepared_batch["encoder_attention_mask"].to(
+                device=self.accelerator.device,
+                dtype=self.config.base_weight_dtype,
+            ),
+            controlnet_cond=controlnet_cond,
+            added_cond_kwargs=None,
+            return_dict=False,
+        )
+
+        # Extract prediction
+        model_pred = model_output[0]
+
+        # Handle learned variance if present
+        if model_pred.shape[1] == self.LATENT_CHANNEL_COUNT * 2:
+            model_pred = model_pred.chunk(2, dim=1)[0]
+
+        return {"model_prediction": model_pred}
 
     def post_model_load_setup(self):
         """
@@ -226,6 +341,66 @@ class PixartSigma(ImageModelFoundation):
             if self.config.validation_noise_scheduler is None:
                 self.config.validation_noise_scheduler = self.DEFAULT_NOISE_SCHEDULER
 
+    def get_lora_target_layers(self):
+        """
+        Get LoRA target layers, with special handling for ControlNet.
+        """
+        if self.config.model_type == "lora" and (
+            self.config.controlnet or self.config.control
+        ):
+            # ONLY target the controlnet adapter blocks, NOT the transformer
+            num_layers = getattr(self.config, "controlnet_num_layers", 13)
+            controlnet_targets = []
+
+            # Target the controlnet adapter blocks
+            for i in range(num_layers):
+                # Only block 0 has before_proj
+                if i == 0:
+                    controlnet_targets.append(
+                        f"controlnet.controlnet_blocks.{i}.before_proj"
+                    )
+
+                # All blocks have after_proj
+                controlnet_targets.append(
+                    f"controlnet.controlnet_blocks.{i}.after_proj"
+                )
+
+                # Target the attention layers in the transformer block
+                controlnet_targets.extend(
+                    [
+                        f"controlnet.controlnet_blocks.{i}.transformer_block.attn1.to_k",
+                        f"controlnet.controlnet_blocks.{i}.transformer_block.attn1.to_q",
+                        f"controlnet.controlnet_blocks.{i}.transformer_block.attn1.to_v",
+                        f"controlnet.controlnet_blocks.{i}.transformer_block.attn1.to_out.0",
+                        f"controlnet.controlnet_blocks.{i}.transformer_block.attn2.to_k",
+                        f"controlnet.controlnet_blocks.{i}.transformer_block.attn2.to_q",
+                        f"controlnet.controlnet_blocks.{i}.transformer_block.attn2.to_v",
+                        f"controlnet.controlnet_blocks.{i}.transformer_block.attn2.to_out.0",
+                    ]
+                )
+
+            return controlnet_targets
+
+        return self.DEFAULT_LORA_TARGET
+
+    def save_lora_weights(self, output_dir: str, **kwargs):
+        """Save LoRA weights for ControlNet model."""
+        if not (self.config.controlnet or self.config.control):
+            return super().save_lora_weights(output_dir)
+
+        # Only save the controlnet LoRA layers
+        controlnet_lora_layers = kwargs.get("controlnet_lora_layers", None)
+        assert (
+            controlnet_lora_layers is not None
+        ), "controlnet_lora_layers must be provided when saving LoRA weights for ControlNet models."
+
+        # Save using the pipeline's mixin method
+        PixArtSigmaControlNetLoraLoaderMixin.save_lora_weights(
+            save_directory=output_dir,
+            transformer_lora_layers=None,  # No transformer LoRA
+            controlnet_lora_layers=controlnet_lora_layers,
+        )
+
     def custom_model_card_schedule_info(self):
         output_args = []
         if self.config.snr_gamma:
@@ -250,6 +425,14 @@ class PixartSigma(ImageModelFoundation):
         output_args.append(
             f"inference_scheduler_timestep_spacing={self.config.inference_scheduler_timestep_spacing}"
         )
+
+        if self.config.controlnet:
+            output_args.append("controlnet_enabled")
+            if hasattr(self.config, "controlnet_conditioning_scale"):
+                output_args.append(
+                    f"controlnet_scale={self.config.controlnet_conditioning_scale}"
+                )
+
         output_str = (
             f" (extra parameters={output_args})"
             if output_args
@@ -257,3 +440,13 @@ class PixartSigma(ImageModelFoundation):
         )
 
         return output_str
+
+    def custom_model_card_code_example(self, repo_id: str = None) -> str:
+        """Provide custom code example for ControlNet models"""
+        if self.config.controlnet or self.config.control:
+            from helpers.models.pixart.model_card_templates import (
+                pixart_sigma_controlnet_code_example,
+            )
+
+            return pixart_sigma_controlnet_code_example(self.config, repo_id, self)
+        return None

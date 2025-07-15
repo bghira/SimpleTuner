@@ -8,12 +8,14 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
 from diffusers.models.attention import FeedForward
 from diffusers.models.attention_processor import (
     Attention,
+    AttentionProcessor,
 )
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import (
@@ -35,6 +37,7 @@ from diffusers.models.embeddings import (
     FluxPosEmbed,
 )
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
+from diffusers import FluxTransformer2DModel as OriginalFluxTransformer2DModel
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -209,20 +212,6 @@ class FluxSingleTransformerBlock(nn.Module):
         self.proj_out = nn.Linear(dim + self.mlp_hidden_dim, dim)
 
         processor = FluxAttnProcessor2_0()
-        if torch.cuda.is_available():
-            # let's assume that the box only ever has H100s.
-            rank = 0
-            primary_device = torch.cuda.get_device_properties(rank)
-            if primary_device.major == 9 and primary_device.minor == 0:
-                if is_flash_attn_available:
-                    if rank == 0:
-                        print("Using FlashAttention3_0 for H100 GPU (Single block)")
-                    processor = FluxSingleAttnProcessor3_0()
-                else:
-                    if rank == 0:
-                        print(
-                            "FlashAttention3_0 is not available, using FlashAttention2_0 for H100 GPU (Single block). Install flash_attn to make use of it."
-                        )
         self.attn = Attention(
             query_dim=dim,
             cross_attention_dim=None,
@@ -264,6 +253,9 @@ class FluxSingleTransformerBlock(nn.Module):
         hidden_states = gate * self.proj_out(hidden_states)
         hidden_states = residual + hidden_states
 
+        if hidden_states.dtype == torch.float16:
+            hidden_states = hidden_states.clip(-65504, 65504)
+
         return hidden_states
 
 
@@ -293,18 +285,6 @@ class FluxTransformerBlock(nn.Module):
 
         if hasattr(F, "scaled_dot_product_attention"):
             processor = FluxAttnProcessor2_0()
-            if torch.cuda.is_available():
-                rank = (
-                    torch.distributed.get_rank()
-                    if torch.distributed.is_initialized()
-                    else 0
-                )
-                primary_device = torch.cuda.get_device_properties(rank)
-                if primary_device.major == 9 and primary_device.minor == 0:
-                    if is_flash_attn_available:
-                        if rank == 0:
-                            print("Using FlashAttention3_0 for H100 GPU (Double block)")
-                        processor = FluxAttnProcessor3_0()
         else:
             raise ValueError(
                 "The current PyTorch version does not support the `scaled_dot_product_attention` function."
@@ -358,12 +338,16 @@ class FluxTransformerBlock(nn.Module):
             )
 
         # Attention.
-        attn_output, context_attn_output = self.attn(
+        attention_outputs = self.attn(
             hidden_states=norm_hidden_states,
             encoder_hidden_states=norm_encoder_hidden_states,
             image_rotary_emb=image_rotary_emb,
             attention_mask=attention_mask,
         )
+        if len(attention_outputs) == 2:
+            attn_output, context_attn_output = attention_outputs
+        elif len(attention_outputs) == 3:
+            attn_output, context_attn_output, ip_attn_output = attention_outputs
 
         # Process attention outputs for the `hidden_states`.
         attn_output = gate_msa.unsqueeze(1) * attn_output
@@ -378,9 +362,10 @@ class FluxTransformerBlock(nn.Module):
         ff_output = gate_mlp.unsqueeze(1) * ff_output
 
         hidden_states = hidden_states + ff_output
+        if len(attention_outputs) == 3:
+            hidden_states = hidden_states + ip_attn_output
 
         # Process attention outputs for the `encoder_hidden_states`.
-
         context_attn_output = c_gate_msa.unsqueeze(1) * context_attn_output
         encoder_hidden_states = encoder_hidden_states + context_attn_output
 
@@ -395,10 +380,13 @@ class FluxTransformerBlock(nn.Module):
             encoder_hidden_states + c_gate_mlp.unsqueeze(1) * context_ff_output
         )
 
+        if encoder_hidden_states.dtype == torch.float16:
+            encoder_hidden_states = encoder_hidden_states.clip(-65504, 65504)
+
         return encoder_hidden_states, hidden_states
 
 
-class FluxTransformer2DModelWithMasking(
+class FluxTransformer2DModel(
     ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin
 ):
     """
@@ -492,6 +480,72 @@ class FluxTransformer2DModelWithMasking(
     def set_gradient_checkpointing_interval(self, value: int):
         self.gradient_checkpointing_interval = value
 
+    @property
+    # Copied from diffusers.models.unets.unet_2d_condition.UNet2DConditionModel.attn_processors
+    def attn_processors(self) -> Dict[str, AttentionProcessor]:
+        r"""
+        Returns:
+            `dict` of attention processors: A dictionary containing all attention processors used in the model with
+            indexed by its weight name.
+        """
+        # set recursively
+        processors = {}
+
+        def fn_recursive_add_processors(
+            name: str,
+            module: torch.nn.Module,
+            processors: Dict[str, AttentionProcessor],
+        ):
+            if hasattr(module, "get_processor"):
+                processors[f"{name}.processor"] = module.get_processor()
+
+            for sub_name, child in module.named_children():
+                fn_recursive_add_processors(f"{name}.{sub_name}", child, processors)
+
+            return processors
+
+        for name, module in self.named_children():
+            fn_recursive_add_processors(name, module, processors)
+
+        return processors
+
+    # Copied from diffusers.models.unets.unet_2d_condition.UNet2DConditionModel.set_attn_processor
+    def set_attn_processor(
+        self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]]
+    ):
+        r"""
+        Sets the attention processor to use to compute attention.
+
+        Parameters:
+            processor (`dict` of `AttentionProcessor` or only `AttentionProcessor`):
+                The instantiated processor class or a dictionary of processor classes that will be set as the processor
+                for **all** `Attention` layers.
+
+                If `processor` is a dict, the key needs to define the path to the corresponding cross attention
+                processor. This is strongly recommended when setting trainable attention processors.
+
+        """
+        count = len(self.attn_processors.keys())
+
+        if isinstance(processor, dict) and len(processor) != count:
+            raise ValueError(
+                f"A dict of processors was passed, but the number of processors {len(processor)} does not match the"
+                f" number of attention layers: {count}. Please make sure to pass {count} processor classes."
+            )
+
+        def fn_recursive_attn_processor(name: str, module: torch.nn.Module, processor):
+            if hasattr(module, "set_processor"):
+                if not isinstance(processor, dict):
+                    module.set_processor(processor)
+                else:
+                    module.set_processor(processor.pop(f"{name}.processor"))
+
+            for sub_name, child in module.named_children():
+                fn_recursive_attn_processor(f"{name}.{sub_name}", child, processor)
+
+        for name, module in self.named_children():
+            fn_recursive_attn_processor(name, module, processor)
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -502,11 +556,14 @@ class FluxTransformer2DModelWithMasking(
         txt_ids: torch.Tensor = None,
         guidance: torch.Tensor = None,
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
+        controlnet_block_samples=None,
+        controlnet_single_block_samples=None,
         return_dict: bool = True,
         attention_mask: Optional[torch.Tensor] = None,
+        controlnet_blocks_repeat: bool = False,
     ) -> Union[torch.FloatTensor, Transformer2DModelOutput]:
         """
-        The [`FluxTransformer2DModelWithMasking`] forward method.
+        The [`FluxTransformer2DModel`] forward method.
 
         Args:
             hidden_states (`torch.FloatTensor` of shape `(batch size, channel, height, width)`):
@@ -571,6 +628,17 @@ class FluxTransformer2DModelWithMasking(
 
         image_rotary_emb = self.pos_embed(ids)
 
+        # IP adapter
+        if (
+            joint_attention_kwargs is not None
+            and "ip_adapter_image_embeds" in joint_attention_kwargs
+        ):
+            ip_adapter_image_embeds = joint_attention_kwargs.pop(
+                "ip_adapter_image_embeds"
+            )
+            ip_hidden_states = self.encoder_hid_proj(ip_adapter_image_embeds)
+            joint_attention_kwargs.update({"ip_hidden_states": ip_hidden_states})
+
         for index_block, block in enumerate(self.transformer_blocks):
             if (
                 self.training
@@ -614,6 +682,26 @@ class FluxTransformer2DModelWithMasking(
                     attention_mask=attention_mask,
                 )
 
+            # controlnet residual
+            if controlnet_block_samples is not None:
+                interval_control = len(self.transformer_blocks) / len(
+                    controlnet_block_samples
+                )
+                interval_control = int(np.ceil(interval_control))
+                # For Xlabs ControlNet.
+                if controlnet_blocks_repeat:
+                    hidden_states = (
+                        hidden_states
+                        + controlnet_block_samples[
+                            index_block % len(controlnet_block_samples)
+                        ]
+                    )
+                else:
+                    hidden_states = (
+                        hidden_states
+                        + controlnet_block_samples[index_block // interval_control]
+                    )
+
         # Flux places the text tokens in front of the image tokens in the
         # sequence.
         hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
@@ -655,6 +743,17 @@ class FluxTransformer2DModelWithMasking(
                     temb=temb,
                     image_rotary_emb=image_rotary_emb,
                     attention_mask=attention_mask,
+                )
+
+            # controlnet residual
+            if controlnet_single_block_samples is not None:
+                interval_control = len(self.single_transformer_blocks) / len(
+                    controlnet_single_block_samples
+                )
+                interval_control = int(np.ceil(interval_control))
+                hidden_states[:, encoder_hidden_states.shape[1] :, ...] = (
+                    hidden_states[:, encoder_hidden_states.shape[1] :, ...]
+                    + controlnet_single_block_samples[index_block // interval_control]
                 )
 
         hidden_states = hidden_states[:, encoder_hidden_states.shape[1] :, ...]
@@ -727,7 +826,7 @@ if __name__ == "__main__":
     img = _pack_latents(img, img.shape[0], 16, height, width)
 
     # Gotta go fast
-    transformer = FluxTransformer2DModelWithMasking.from_config(
+    transformer = FluxTransformer2DModel.from_config(
         {
             "attention_head_dim": 128,
             "guidance_embeds": True,

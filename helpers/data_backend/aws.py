@@ -90,6 +90,59 @@ class S3DataBackend(BaseDataBackend):
             **extra_args,
         )
 
+    def get_instance_representation(self) -> dict:
+        """Get a serializable representation of this backend instance."""
+        return {
+            "backend_type": "aws",
+            "id": self.id,
+            "bucket_name": self.bucket_name,
+            "region_name": self.client.meta.region_name,
+            "endpoint_url": self.client.meta.endpoint_url,
+            "read_retry_limit": self.read_retry_limit,
+            "write_retry_limit": self.write_retry_limit,
+            "read_retry_interval": self.read_retry_interval,
+            "write_retry_interval": self.write_retry_interval,
+            "compress_cache": self.compress_cache,
+            "max_pool_connections": self.max_pool_connections,
+            # Note: accelerator and credentials are not serializable
+        }
+
+    @staticmethod
+    def from_instance_representation(representation: dict) -> "S3DataBackend":
+        """Create a new S3DataBackend instance from a serialized representation."""
+        if representation.get("backend_type") != "aws":
+            raise ValueError(
+                f"Expected backend_type 'aws', got {representation.get('backend_type')}"
+            )
+
+        # Extract parameters from representation
+        return S3DataBackend(
+            id=representation["id"],
+            bucket_name=representation["bucket_name"],
+            accelerator=None,  # Will be set by subprocess if needed
+            region_name=representation.get("region_name", "us-east-1"),
+            endpoint_url=representation.get("endpoint_url"),
+            aws_access_key_id=None,  # Credentials should be re-established in subprocess
+            aws_secret_access_key=None,  # Credentials should be re-established in subprocess
+            read_retry_limit=representation.get("read_retry_limit", 5),
+            write_retry_limit=representation.get("write_retry_limit", 5),
+            read_retry_interval=representation.get("read_retry_interval", 5),
+            write_retry_interval=representation.get("write_retry_interval", 5),
+            compress_cache=representation.get("compress_cache", False),
+            max_pool_connections=representation.get("max_pool_connections", 128),
+        )
+
+    def get_abs_path(self, sample_path: str) -> tuple:
+        """
+        Given a relative path of a sample, return the absolute path.
+        For S3, this is just the S3 key.
+        """
+        if not sample_path:
+            return (self.bucket_name, "")
+        if sample_path.startswith("/"):
+            sample_path = sample_path[1:]
+        return (self.bucket_name, sample_path)
+
     def exists(self, s3_key):
         """Check if the key exists in S3, with retries for transient errors."""
         for i in range(self.read_retry_limit):

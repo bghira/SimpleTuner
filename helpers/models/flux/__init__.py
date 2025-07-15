@@ -69,3 +69,120 @@ def prepare_latent_image_ids(batch_size, height, width, device, dtype):
     )
 
     return latent_image_ids.to(device=device, dtype=dtype)[0]
+
+
+def build_kontext_inputs(
+    cond_latents: list[torch.Tensor] | torch.Tensor,
+    dtype: torch.dtype,
+    device: torch.device,
+    latent_channels: int,
+):
+    """
+    Args
+    ----
+    cond_latents : list of (B, C, H, W) or single (B, C, H, W) tensor
+                   Each tensor is already VAE-encoded by VAECache
+    dtype        : dtype to use (match main latents)
+    device       : target device
+    latent_channels: number of channels in the latent (16 for Flux)
+
+    Returns
+    -------
+    packed_cond : (B, S, C*4)   – flattened patch sequence
+    cond_ids    : (B, S, 3)     – seq-ids with id[...,0] == 1
+    """
+    # Handle different input formats
+    if isinstance(cond_latents, torch.Tensor):
+        # Single tensor, treat as one conditioning image/batch
+        cond_latents = [cond_latents]
+    elif isinstance(cond_latents, list) and len(cond_latents) == 1:
+        # List with single element - no change needed
+        pass
+    elif isinstance(cond_latents, list):
+        # Multiple tensors in list
+        # Check if they're batched (all have same batch size)
+        batch_sizes = [t.shape[0] if len(t.shape) == 4 else 1 for t in cond_latents]
+
+        if all(bs == batch_sizes[0] for bs in batch_sizes):
+            # All have same batch size - this is genuine batched training
+            # Keep as list - each element is a different conditioning image set
+            pass
+        else:
+            raise ValueError(
+                f"Inconsistent batch sizes in conditioning latents: {batch_sizes}"
+            )
+
+    packed_cond = []
+    packed_ids = []
+
+    # Get batch size from first tensor
+    first_tensor = cond_latents[0]
+    if len(first_tensor.shape) == 3:
+        # Single image without batch dim
+        batch_size = 1
+    else:
+        batch_size = first_tensor.shape[0]
+
+    # Process each conditioning tensor
+    # this coordinate offsetting algorithm follows the comfyui implementation
+    # so that multi-image loras will behave the same there
+    # this indexing scheme minimizes max(max_x, max_y)
+    x0 = 0
+    y0 = 0
+
+    for latent in cond_latents:
+        # Ensure 4D shape (B, C, H, W)
+        if len(latent.shape) == 3:
+            if latent.shape[0] == latent_channels:
+                # Shape is (C, H, W) - add batch dimension
+                latent = latent.unsqueeze(0)
+            else:
+                raise ValueError(f"Unexpected 3D tensor shape: {latent.shape}")
+
+        B, C, H, W = latent.shape
+
+        # Verify batch size consistency
+        if B != batch_size:
+            raise ValueError(
+                f"Batch size mismatch: expected {batch_size}, got {B}. "
+                f"All conditioning latents must have the same batch size."
+            )
+
+        # Verify channel count
+        if C != latent_channels:
+            raise ValueError(f"Channel mismatch: expected {latent_channels}, got {C}")
+
+        # Pack this conditioning image/batch
+        packed_cond.append(
+            pack_latents(latent, B, C, H, W).to(device=device, dtype=dtype)
+        )
+
+        # Compute spatial IDs
+        x = 0
+        y = 0
+        if H + y0 > W + x0:
+            x = x0
+        else:
+            y = y0
+
+        # seq-ids: flag-channel==1, rest is y/x indices
+        idx_y = torch.arange(H // 2, device=device) + y // 2
+        idx_x = torch.arange(W // 2, device=device) + x // 2
+        ids = torch.stack(
+            torch.meshgrid(idx_y, idx_x, indexing="ij"), dim=-1
+        )  # (H/2,W/2,2)
+        ones = torch.ones_like(ids[..., :1])
+
+        # Shape: (1, H/2*W/2, 3) -> expand to (B, H/2*W/2, 3)
+        packed_ids.append(
+            torch.cat([ones, ids], dim=-1).view(1, -1, 3).expand(B, -1, -1).to(dtype)
+        )
+
+        x0 = max(x0, W + x)
+        y0 = max(y0, H + y)
+
+    # Concatenate along sequence dimension
+    packed_cond = torch.cat(packed_cond, dim=1)  # (B, total_seq, C*4)
+    packed_ids = torch.cat(packed_ids, dim=1)  # (B, total_seq, 3)
+
+    return packed_cond, packed_ids

@@ -25,6 +25,7 @@ from helpers.training.state_tracker import StateTracker
 from helpers.training.custom_schedule import get_lr_scheduler
 from helpers.training.optimizer_param import (
     determine_optimizer_class_with_config,
+    create_optimizer_with_param_groups,
     determine_params_to_optimize,
     is_lr_scheduler_disabled,
     is_lr_schedulefree,
@@ -37,6 +38,7 @@ from helpers.training.deepspeed import (
 from helpers.training.wrappers import unwrap_model
 from helpers.data_backend.factory import configure_multi_databackend
 from helpers.data_backend.factory import random_dataloader_iterator
+from helpers.training import trainable_parameter_count
 from helpers.training.min_snr_gamma import compute_snr
 from helpers.training.peft_init import init_lokr_network_with_perturbed_normal
 from accelerate.logging import get_logger
@@ -172,16 +174,21 @@ class Trainer:
             None if self.config.report_to.lower() == "none" else self.config.report_to
         )
         if not disable_accelerator:
+            accelerator_custom_config = [self.config.process_group_kwargs]
+            if self.config.mixed_precision == "fp8":
+                # we'll set up a TorchAO config for Accelerator, since otherwise it uses MS-AMP which
+                # is clunky and proprietary third party accelerator that is typically unavailable.
+                from accelerate.utils import AORecipeKwargs
+
+                accelerator_custom_config.append(AORecipeKwargs())
+
             self.accelerator = Accelerator(
                 gradient_accumulation_steps=self.config.gradient_accumulation_steps,
-                mixed_precision=(
-                    self.config.mixed_precision
-                    if not torch.backends.mps.is_available()
-                    else None
-                ),
+                mixed_precision=self.config.mixed_precision,
                 log_with=report_to,
                 project_config=self.config.accelerator_project_config,
-                kwargs_handlers=[self.config.process_group_kwargs],
+                kwargs_handlers=accelerator_custom_config,
+                dynamo_backend=os.environ.get("TRAINING_DYNAMO_BACKEND", "no"),
             )
         safety_check(args=self.config, accelerator=self.accelerator)
 
@@ -508,7 +515,8 @@ class Trainer:
             self.init_validation_prompts()
         except Exception as e:
             logger.error("Could not generate validation prompts.")
-            logger.error(e)
+
+            logger.exception("Could not generate validation prompts")
             raise e
 
         # We calculate the number of steps per epoch by dividing the number of images by the effective batch divisor.
@@ -621,12 +629,33 @@ class Trainer:
                 self.model.model.to(
                     quantization_device, dtype=self.config.base_weight_dtype
                 )
+                if self.config.controlnet:
+                    logger.info(
+                        f"Moving ControlNet to dtype={self.config.base_weight_dtype}, device={quantization_device}"
+                    )
+                    self.model.controlnet.to(
+                        quantization_device, dtype=self.config.base_weight_dtype
+                    )
         if self.config.is_quanto:
             with self.accelerator.local_main_process_first():
                 if ema_only:
                     self.quantise_model(ema=self.ema_model, args=self.config)
 
                     return
+                if self.config.controlnet:
+                    # we'll do the base model first
+                    self.quantise_model(
+                        model=(
+                            self.model.unwrap_model(model=self.model.model)
+                            if not preprocessing_models_only
+                            else None
+                        ),
+                        text_encoders=None,
+                        controlnet=None,
+                        ema=self.ema_model,
+                        args=self.config,
+                    )
+
                 self.quantise_model(
                     model=(
                         self.model.get_trained_component()
@@ -635,7 +664,7 @@ class Trainer:
                     ),
                     text_encoders=self.model.text_encoders,
                     controlnet=None,
-                    ema=self.ema_model,
+                    ema=None,
                     args=self.config,
                 )
         elif self.config.is_torchao:
@@ -647,13 +676,13 @@ class Trainer:
 
                     return
                 (
-                    self.model.model,
+                    q_model,
                     self.model.text_encoders,
                     self.controlnet,
                     self.ema_model,
                 ) = self.quantise_model(
                     model=(
-                        self.model.get_trained_component()
+                        self.model.get_trained_component(base_model=True)
                         if not preprocessing_models_only
                         else None
                     ),
@@ -662,6 +691,22 @@ class Trainer:
                     ema=self.ema_model,
                     args=self.config,
                 )
+                self.model.set_prepared_model(q_model, base_model=True)
+                if self.config.controlnet:
+                    (
+                        q_model,
+                        _,
+                        _,
+                        _,
+                    ) = self.quantise_model(
+                        model=(
+                            self.model.get_trained_component(base_model=False)
+                            if not preprocessing_models_only
+                            else None
+                        ),
+                        args=self.config,
+                    )
+                    self.model.set_prepared_model(q_model, base_model=False)
 
     def init_controlnet_model(self):
         if not self.config.controlnet:
@@ -672,8 +717,6 @@ class Trainer:
     def init_trainable_peft_adapter(self):
         if "lora" not in self.config.model_type:
             return
-        if self.config.controlnet:
-            raise ValueError("Cannot train LoRA with ControlNet.")
         if "standard" == self.config.lora_type.lower():
             lora_info_msg = f"Using LoRA training mode (rank={self.config.lora_rank})"
             logger.info(lora_info_msg)
@@ -690,6 +733,9 @@ class Trainer:
                     % (self.config.init_lora, str(misskeys))
                 )
 
+            logger.info(
+                f"LoRA network has been initialized with {trainable_parameter_count(self._get_trainable_parameters())} parameters"
+            )
         elif "lycoris" == self.config.lora_type.lower():
             from lycoris import create_lycoris
 
@@ -742,11 +788,8 @@ class Trainer:
                 "_lycoris_wrapped_network",
                 self.lycoris_wrapped_network,
             )
-            lycoris_num_params = sum(
-                p.numel() for p in self.lycoris_wrapped_network.parameters()
-            )
             logger.info(
-                f"LyCORIS network has been initialized with {lycoris_num_params:,} parameters"
+                f"LyCORIS network has been initialized with {trainable_parameter_count(self.lycoris_wrapped_network.parameters())} parameters"
             )
         self.accelerator.wait_for_everyone()
 
@@ -826,11 +869,11 @@ class Trainer:
                 self.model.get_trained_component(), "disable_gradient_checkpointing"
             ):
                 unwrap_model(
-                    self.accelerator, self.model.get_trained_component()
+                    self.accelerator, self.model.get_trained_component(base_model=True)
                 ).disable_gradient_checkpointing()
             if self.config.controlnet:
                 unwrap_model(
-                    self.accelerator, self.controlnet
+                    self.accelerator, self.model.get_trained_component()
                 ).disable_gradient_checkpointing()
             if (
                 hasattr(self.config, "train_text_encoder")
@@ -850,7 +893,9 @@ class Trainer:
                 return self.lycoris_wrapped_network.parameters()
         return [
             param
-            for param in self.model.get_trained_component().parameters()
+            for param in self.model.get_trained_component(
+                unwrap_model=False
+            ).parameters()
             if param.requires_grad
         ]
 
@@ -942,12 +987,25 @@ class Trainer:
             model_type_label=self.config.model_type_label,
             lycoris_wrapped_network=self.lycoris_wrapped_network,
         )
+        logger.info(
+            f"Connecting optimizer to {trainable_parameter_count(self.params_to_optimize)} trainable parameters"
+        )
 
         if self.config.use_deepspeed_optimizer:
             logger.info(
                 f"DeepSpeed Optimizer arguments, weight_decay={self.config.adam_weight_decay} eps={self.config.adam_epsilon}, extra_arguments={extra_optimizer_args}"
             )
-            self.optimizer = optimizer_class(self.params_to_optimize)
+            self.optimizer = create_optimizer_with_param_groups(
+                self.model.get_trained_component(unwrap_model=False),
+                optimizer_class,
+                self.params_to_optimize,
+                use_parameter_groups=True,  # Enable weight decay separation
+                cpu_offload_config=(
+                    {"offload_mechanism": self.config.optimizer_offload_mechanism}
+                    if self.config.optimizer_offload_mechanism
+                    else None
+                ),
+            )
         else:
             logger.info(f"Optimizer arguments={extra_optimizer_args}")
             if self.config.train_text_encoder and self.config.text_encoder_lr:
@@ -1026,6 +1084,8 @@ class Trainer:
         self.ema_model = None
         if not self.config.use_ema:
             return
+        # this runs on all processes to ensure shapes are aligned.
+        self.model.pre_ema_creation()
         if self.accelerator.is_main_process:
             logger.info("Using EMA. Creating EMAModel.")
 
@@ -1056,6 +1116,8 @@ class Trainer:
             )
 
         self.accelerator.wait_for_everyone()
+        # same about running on all processes to ensure alignment.
+        self.model.post_ema_creation()
 
     def init_hooks(self):
         from helpers.training.save_hooks import SaveHookManager
@@ -1097,7 +1159,7 @@ class Trainer:
             structured_data={"message": "Moving weights to GPU"},
             message_type="init_prepare_models_begin",
         )
-        primary_model = self.model.get_trained_component()
+        primary_model = self.model.get_trained_component(unwrap_model=False)
         results = self.accelerator.prepare(
             primary_model, lr_scheduler, self.optimizer, self.train_dataloaders[0]
         )
@@ -1245,12 +1307,14 @@ class Trainer:
         )
         StateTracker.set_global_resume_step(self.state["global_resume_step"])
         if not self.config.resume_from_checkpoint:
+            logger.info(f"Not resuming from checkpoint.")
             return lr_scheduler
         if self.config.resume_from_checkpoint != "latest":
             path = os.path.basename(self.config.resume_from_checkpoint)
         else:
             # Get the most recent checkpoint
             path = self.checkpoint_state_latest(self.config.output_dir)
+            logger.info(f"Checking {path} for latest checkpoint.")
 
         if path is None:
             logger.info(
@@ -1413,6 +1477,7 @@ class Trainer:
                     logger.warning(
                         "WandB is disabled, and Accelerate was not quite happy about it."
                     )
+                    self.accelerator.trackers = []
                 else:
                     logger.error(f"Could not initialize trackers: {e}")
                     self._send_webhook_raw(
@@ -1565,9 +1630,9 @@ class Trainer:
         )
         if self.model.get_trained_component() is not None:
             if self.config.is_quantized:
-                self.model.get_trained_component().to(target_device)
+                self.model.get_trained_component(unwrap_model=False).to(target_device)
             else:
-                self.model.get_trained_component().to(
+                self.model.get_trained_component(unwrap_model=False).to(
                     target_device, dtype=self.config.weight_dtype
                 )
         if getattr(self.accelerator, "_lycoris_wrapped_network", None) is not None:
@@ -1609,10 +1674,7 @@ class Trainer:
                 )
 
         if self.config.controlnet:
-            self.model.get_trained_component().train()
-            logger.info(
-                f"Moving ControlNet to {target_device} in {self.config.weight_dtype} precision."
-            )
+            self.model.get_trained_component(unwrap_model=False).train()
             self.model.unwrap_model(self.model.model).to(
                 device=target_device, dtype=self.config.weight_dtype
             )
@@ -1673,6 +1735,7 @@ class Trainer:
 
     def _train_initial_msg(self):
         initial_msg = "\n***** Running training *****"
+        initial_msg += f"\n-  Trainable parameters: {trainable_parameter_count(self._get_trainable_parameters())}"
         initial_msg += f"\n-  Num batches = {self.config.total_num_batches}"
         initial_msg += f"\n-  Num Epochs = {self.config.num_train_epochs}"
         initial_msg += f"\n  - Current Epoch = {self.state['first_epoch']}"
@@ -1786,10 +1849,6 @@ class Trainer:
         prepared_batch,
         custom_timesteps: list = None,
     ):
-        if self.config.controlnet:
-            training_logger.debug(
-                f"Extra conditioning dtype: {prepared_batch['conditioning_pixel_values'].dtype}"
-            )
         if custom_timesteps is not None:
             timesteps = custom_timesteps
         if not self.config.disable_accelerator:
@@ -1853,18 +1912,12 @@ class Trainer:
         return self.model.get_prediction_target(prepared_batch)
 
     def checkpoint_state_remove(self, output_dir, checkpoint):
-        removing_checkpoint = os.path.join(
-            output_dir, checkpoint
-        )
+        removing_checkpoint = os.path.join(output_dir, checkpoint)
         try:
             logger.debug(f"Removing {removing_checkpoint}")
-            shutil.rmtree(
-                removing_checkpoint, ignore_errors=True
-            )
+            shutil.rmtree(removing_checkpoint, ignore_errors=True)
         except Exception as e:
-            logger.error(
-                f"Failed to remove directory: {removing_checkpoint}"
-            )
+            logger.error(f"Failed to remove directory: {removing_checkpoint}")
             print(e)
 
     def checkpoint_state_filter(self, output_dir, suffix=None):
@@ -1872,13 +1925,14 @@ class Trainer:
         checkpoints = os.listdir(output_dir)
         for checkpoint in checkpoints:
             cs = checkpoint.split("-")
-            base = cs[0]; sfx = None
+            base = cs[0]
+            sfx = None
             if len(cs) < 2:
                 continue
             elif len(cs) > 2:
                 sfx = cs[2]
 
-            if base != 'checkpoint':
+            if base != "checkpoint":
                 continue
             if suffix and sfx and suffix != sfx:
                 continue
@@ -1891,15 +1945,13 @@ class Trainer:
 
     def checkpoint_state_cleanup(self, output_dir, limit, suffix=None):
         # remove any left over temp checkpoints (partially written, etc)
-        checkpoints = self.checkpoint_state_filter(output_dir, 'tmp')
+        checkpoints = self.checkpoint_state_filter(output_dir, "tmp")
         for removing_checkpoint in checkpoints:
             self.checkpoint_state_remove(output_dir, removing_checkpoint)
 
         # now remove normal checkpoints past the limit
         checkpoints = self.checkpoint_state_filter(output_dir, suffix)
-        checkpoints = sorted(
-            checkpoints, key=lambda x: int(x.split("-")[1])
-        )
+        checkpoints = sorted(checkpoints, key=lambda x: int(x.split("-")[1]))
 
         # before we save the new checkpoint, we need to have at _most_ `limit - 1` checkpoints
         if len(checkpoints) < limit:
@@ -1910,9 +1962,7 @@ class Trainer:
         logger.debug(
             f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints"
         )
-        logger.debug(
-            f"removing checkpoints: {', '.join(removing_checkpoints)}"
-        )
+        logger.debug(f"removing checkpoints: {', '.join(removing_checkpoints)}")
 
         for removing_checkpoint in removing_checkpoints:
             self.checkpoint_state_remove(output_dir, removing_checkpoint)
@@ -1928,7 +1978,9 @@ class Trainer:
             save_path = f"{save_path}-{suffix}"
 
         # A temporary directory should be used so that saving state is an atomic operation.
-        save_path_tmp = f"{save_path}-tmp" if self.config.checkpointing_use_tempdir else save_path
+        save_path_tmp = (
+            f"{save_path}-tmp" if self.config.checkpointing_use_tempdir else save_path
+        )
 
         # schedulefree optim needs the optimizer to be in eval mode to save the state (and then back to train after)
         self.mark_optimizer_eval()
@@ -1995,8 +2047,8 @@ class Trainer:
                 )
                 break
             self._epoch_rollover(epoch)
-            self.model.get_trained_component().train()
-            training_models = [self.model.get_trained_component()]
+            self.model.get_trained_component(unwrap_model=False).train()
+            training_models = [self.model.get_trained_component(unwrap_model=False)]
             if (
                 "lora" in self.config.model_type
                 and self.config.train_text_encoder
@@ -2349,7 +2401,11 @@ class Trainer:
                             structured_data=structured_data, message_type="train"
                         )
 
-                    if self.config.checkpointing_steps and self.state["global_step"] % self.config.checkpointing_steps == 0:
+                    if (
+                        self.config.checkpointing_steps
+                        and self.state["global_step"] % self.config.checkpointing_steps
+                        == 0
+                    ):
                         self._send_webhook_msg(
                             message=f"Checkpoint: `{webhook_pending_msg}`",
                             message_level="info",
@@ -2359,14 +2415,22 @@ class Trainer:
                             and self.config.checkpoints_total_limit is not None
                         ):
                             # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
-                            self.checkpoint_state_cleanup(self.config.output_dir, self.config.checkpoints_total_limit)
+                            self.checkpoint_state_cleanup(
+                                self.config.output_dir,
+                                self.config.checkpoints_total_limit,
+                            )
 
                         if (
                             self.accelerator.is_main_process
                             or self.config.use_deepspeed_optimizer
                         ):
                             self.checkpoint_state_save(self.config.output_dir)
-                    elif self.config.checkpointing_rolling_steps and self.state["global_step"] % self.config.checkpointing_rolling_steps == 0:
+                    elif (
+                        self.config.checkpointing_rolling_steps
+                        and self.state["global_step"]
+                        % self.config.checkpointing_rolling_steps
+                        == 0
+                    ):
                         self._send_webhook_msg(
                             message=f"Checkpoint: `{webhook_pending_msg}`",
                             message_level="info",
@@ -2376,13 +2440,19 @@ class Trainer:
                             and self.config.checkpoints_rolling_total_limit is not None
                         ):
                             # _before_ saving state, check if this save would set us over the `checkpoints_rolling_total_limit`
-                            self.checkpoint_state_cleanup(self.config.output_dir, self.config.checkpoints_rolling_total_limit, 'rolling')
+                            self.checkpoint_state_cleanup(
+                                self.config.output_dir,
+                                self.config.checkpoints_rolling_total_limit,
+                                "rolling",
+                            )
 
                         if (
                             self.accelerator.is_main_process
                             or self.config.use_deepspeed_optimizer
                         ):
-                            self.checkpoint_state_save(self.config.output_dir, 'rolling')
+                            self.checkpoint_state_save(
+                                self.config.output_dir, "rolling"
+                            )
 
                     if (
                         self.config.accelerator_cache_clear_interval is not None

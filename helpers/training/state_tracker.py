@@ -100,7 +100,7 @@ class StateTracker:
         cache_path = Path(cls.args.output_dir) / f"{cache_name}.json"
         retry_count = 0
         results = None
-        while retry_count < retry_limit and (
+        while retry_count <= retry_limit and (
             not cache_path.exists() or results is None
         ):
             if cache_path.exists():
@@ -405,6 +405,9 @@ class StateTracker:
             _, _, files = subdirectory_list
             for text_embed_path in files:
                 cls.all_text_cache_files[data_backend_id][text_embed_path] = False
+        # we only want to save to disk for local master process
+        if not cls.accelerator.is_local_main_process:
+            return
         cls._save_to_disk(
             "all_text_cache_files_{}".format(data_backend_id),
             cls.all_text_cache_files[data_backend_id],
@@ -458,16 +461,16 @@ class StateTracker:
         return 0
 
     @classmethod
-    def set_conditioning_dataset(
-        cls, data_backend_id: str, conditioning_backend_id: str
+    def set_conditioning_datasets(
+        cls, data_backend_id: str, conditioning_backend_ids: list[str]
     ):
-        cls.data_backends[data_backend_id]["conditioning_data"] = cls.data_backends[
-            conditioning_backend_id
+        cls.data_backends[data_backend_id]["conditioning_data"] = [
+            cls.data_backends[x] for x in conditioning_backend_ids
         ]
 
     @classmethod
-    def get_conditioning_dataset(cls, data_backend_id: str):
-        return cls.data_backends[data_backend_id].get("conditioning_data", None)
+    def get_conditioning_datasets(cls, data_backend_id: str) -> list[dict]:
+        return cls.data_backends[data_backend_id].get("conditioning_data", [])
 
     @classmethod
     def get_data_backend_config(cls, data_backend_id: str):
@@ -480,13 +483,11 @@ class StateTracker:
         cls.data_backends[data_backend_id]["config"] = config
 
     @classmethod
-    def get_conditioning_mappings(cls):
-        conditioning_mappings = {}
+    def get_conditioning_mappings(cls) -> list[tuple[str, str]]:
+        conditioning_mappings = []
         for data_backend_id, data_backend in cls.data_backends.items():
-            if "conditioning_data" in data_backend:
-                conditioning_mappings[data_backend_id] = data_backend[
-                    "conditioning_data"
-                ]["id"]
+            conds = data_backend.get("conditioning_data", [])
+            conditioning_mappings.extend((data_backend_id, x["id"]) for x in conds)
         return conditioning_mappings
 
     @classmethod
@@ -576,8 +577,15 @@ class StateTracker:
         return cls.data_backends[data_backend_id]["text_embed_cache"]
 
     @classmethod
-    def get_metadata_by_filepath(cls, filepath, data_backend_id: str):
-        for _, data_backend in cls.get_data_backends(_types=["image", "video"]).items():
+    def get_metadata_by_filepath(
+        cls,
+        filepath,
+        data_backend_id: str,
+        search_dataset_types: list = ["image", "video", "conditioning"],
+    ):
+        for _, data_backend in cls.get_data_backends(
+            _types=search_dataset_types
+        ).items():
             if "metadata_backend" not in data_backend:
                 continue
             if data_backend_id != data_backend["metadata_backend"].id:

@@ -46,7 +46,7 @@ def normalize_wan_latents(
 
     # Convert latents to float (if not already) and apply normalization:
     # Subtract the mean and then multiply by the standard deviation.
-    print(f"Shapes: {latents.shape}, {latents_mean.shape}, {latents_std.shape}")
+    # print(f"Shapes: {latents.shape}, {latents_mean.shape}, {latents_std.shape}")
     latents = ((latents.float() - latents_mean) * latents_std).to(latents)
 
     return latents
@@ -77,10 +77,18 @@ def compute_wan_posterior(
     """
     latents_mean = torch.tensor(latents_mean)
     latents_std = 1.0 / torch.tensor(latents_std)
-    latents = normalize_wan_latents(latents, latents_mean, latents_std)
 
-    # Construct the posterior distribution using the DiagonalGaussianDistribution.
-    # This distribution represents a diagonal covariance Gaussian, parameterized by [mu, logvar].
+    # Split the concatenated tensor into mu and logvar
+    mu, logvar = torch.chunk(latents, 2, dim=1)
+
+    # Normalize each component separately
+    mu = normalize_wan_latents(mu, latents_mean, latents_std)
+    logvar = normalize_wan_latents(logvar, latents_mean, latents_std)
+
+    # Concatenate back
+    latents = torch.cat([mu, logvar], dim=1)
+
+    # Construct the posterior distribution
     posterior = DiagonalGaussianDistribution(latents)
 
     return posterior
