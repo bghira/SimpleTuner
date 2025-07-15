@@ -650,10 +650,11 @@ class VAECache(WebhookMixin):
                     self.accelerator.device, dtype=StateTracker.get_vae_dtype()
                 )
                 processed_images = self.prepare_video_latents(processed_images)
+                processed_images = self.model.pre_vae_encode_transform_sample(processed_images)
                 latents_uncached = self.vae.encode(processed_images)
 
                 # For Wan, get the raw parameters (32 channels)
-                if StateTracker.get_model_family() in ["wan"]:
+                if StateTracker.get_model_family() in ["wan", "cosmos2image"]:
                     if hasattr(latents_uncached, "latent_dist"):
                         # This is 32 channels (mu + logvar)
                         latents_uncached = latents_uncached.latent_dist.parameters

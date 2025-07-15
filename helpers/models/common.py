@@ -593,6 +593,20 @@ class ModelFoundation(ABC):
         """
         pass
 
+    def pre_vae_encode_transform_sample(self, sample):
+        """
+        Pre-encode transform for the sample before passing it to the VAE.
+        This is a stub and can be optionally implemented in subclasses.
+        """
+        return sample
+
+    def post_vae_encode_transform_sample(self, sample):
+        """
+        Post-encode transform for the sample after passing it to the VAE.
+        This is a stub and can be optionally implemented in subclasses.
+        """
+        return sample
+
     def unload_vae(self):
         if self.vae is not None:
             if hasattr(self.vae, "to"):
