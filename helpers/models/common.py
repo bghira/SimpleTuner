@@ -1337,12 +1337,10 @@ class ModelFoundation(ABC):
             alpha = -math.log(base_huber_c) / num_train_timesteps
 
             # Handle batch of timesteps
-            huber_c_values = []
-            for t in timesteps:
-                huber_c = math.exp(-alpha * t.item())
-                huber_c_values.append(huber_c)
+            # Vectorized computation of huber_c_values using PyTorch
+            huber_c_values = torch.exp(-alpha * timesteps)
 
-            return torch.tensor(huber_c_values, device=timesteps.device)
+            return huber_c_values.to(timesteps.device)
 
         elif huber_schedule == "snr":
             # SNR-based scheduling
