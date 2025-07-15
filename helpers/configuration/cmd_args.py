@@ -123,6 +123,39 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--loss_type",
+        type=str,
+        default="l2",
+        choices=["l2", "huber", "smooth_l1"],
+        help=(
+            "The loss function to use during training. 'l2' is the default, but 'huber' and 'smooth_l1' are also available."
+            " Huber loss is less sensitive to outliers than L2 loss, and smooth L1 is a combination of L1 and L2 loss."
+            " When using Huber loss, it will be scheduled via --huber_schedule and --huber_c."
+        ),
+    )
+    parser.add_argument(
+        "--huber_schedule",
+        type=str,
+        default="snr",
+        choices=["snr", "exponential", "constant"],
+        help=(
+            "constant: Uses a fixed huber_c value."
+            " exponential: Exponentially decays huber_c based on timestep"
+            " snr: Adjusts huber_c based on signal-to-noise ratio."
+            " default: snr."
+        ),
+    )
+    parser.add_argument(
+        "--huber_c",
+        type=float,
+        default=0.1,
+        help=(
+            "The huber_c value to use for Huber loss. This is the threshold at which the loss function transitions from L2 to L1."
+            " A lower value will make the loss function more sensitive to outliers, while a higher value will make it less sensitive."
+            " The default value is 0.1, which is a good starting point for most models."
+        ),
+    )
+    parser.add_argument(
         "--hidream_use_load_balancing_loss",
         action="store_true",
         default=False,

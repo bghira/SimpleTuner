@@ -65,10 +65,10 @@ class Cosmos2Image(VideoModelFoundation):
     def _format_text_embedding(self, text_embedding: torch.Tensor):
         """
         Format the T5 text embedding for storage.
-        
+
         Args:
             text_embedding (torch.Tensor): The embed to adjust.
-        
+
         Returns:
             dict: Formatted embedding data.
         """
@@ -93,20 +93,20 @@ class Cosmos2Image(VideoModelFoundation):
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
         """
         Encode a prompt using T5 encoder.
-        
+
         Args:
             prompts: The list of prompts to encode.
             is_negative_prompt: Whether encoding negative prompts.
-        
+
         Returns:
             Text encoder output (raw)
         """
         max_sequence_length = self.config.tokenizer_max_length or 512
         device = self.accelerator.device
-        
+
         # Ensure prompts is a list
         prompts = [prompts] if isinstance(prompts, str) else prompts
-        
+
         # Tokenize
         text_inputs = self.tokenizers[0](
             prompts,
@@ -116,22 +116,21 @@ class Cosmos2Image(VideoModelFoundation):
             return_tensors="pt",
             return_attention_mask=True,
         )
-        
+
         text_input_ids = text_inputs.input_ids.to(device)
         attention_mask = text_inputs.attention_mask.bool().to(device)
-        
+
         # Encode
         with torch.no_grad():
             prompt_embeds = self.text_encoders[0](
-                text_input_ids,
-                attention_mask=attention_mask
+                text_input_ids, attention_mask=attention_mask
             ).last_hidden_state
-        
+
         # Apply attention mask to zero out padding tokens
         lengths = attention_mask.sum(dim=1).cpu()
         for i, length in enumerate(lengths):
             prompt_embeds[i, length:] = 0
-        
+
         return prompt_embeds
 
     def pre_vae_encode_transform_sample(self, sample):
@@ -145,16 +144,16 @@ class Cosmos2Image(VideoModelFoundation):
             raise ValueError(
                 f"Cosmos T2I expects input with 4 or 5 dimensions, got {sample.ndim}."
             )
-        
+
         return sample
 
     def model_predict(self, prepared_batch):
         """
         Perform model prediction for training.
-        
+
         Args:
             prepared_batch: Dictionary containing batch data
-            
+
         Returns:
             Dictionary containing model prediction
         """
@@ -170,30 +169,31 @@ class Cosmos2Image(VideoModelFoundation):
                 1, 0, 16
             )
             # slice also the target latents
-            prepared_batch["latents"] = prepared_batch["latents"].narrow(
-                1, 0, 16
-            )
+            prepared_batch["latents"] = prepared_batch["latents"].narrow(1, 0, 16)
             # and the noise
-            prepared_batch["noise"] = prepared_batch["noise"].narrow(
-                1, 0, 16
-            )
-        
+            prepared_batch["noise"] = prepared_batch["noise"].narrow(1, 0, 16)
+
         # For T2I, we use single frame (num_frames=1)
-        batch_size, channels, num_frames, height, width = prepared_batch["noisy_latents"].shape
-        
+        batch_size, channels, num_frames, height, width = prepared_batch[
+            "noisy_latents"
+        ].shape
+
         # Create padding mask
         padding_mask = torch.zeros(
-            1, 1, height, width,
+            1,
+            1,
+            height,
+            width,
             device=prepared_batch["noisy_latents"].device,
-            dtype=prepared_batch["noisy_latents"].dtype
+            dtype=prepared_batch["noisy_latents"].dtype,
         )
-        
+
         # Prepare timesteps - Cosmos uses a different timestep format
         timesteps = prepared_batch["timesteps"]
         current_sigma = timesteps  # Assuming timesteps are sigmas
         current_t = current_sigma / (current_sigma + 1)
         timestep = current_t.to(dtype=prepared_batch["noisy_latents"].dtype)
-        
+
         # Model forward pass
         model_pred = self.model(
             hidden_states=prepared_batch["noisy_latents"].to(
@@ -217,18 +217,18 @@ class Cosmos2Image(VideoModelFoundation):
     def prepare_flow_matching_params(self, batch_size: int, device: torch.device):
         """
         Prepare flow matching specific parameters.
-        
+
         Args:
             batch_size: Current batch size
             device: Device to create tensors on
-            
+
         Returns:
             Dictionary of flow matching parameters
         """
         # Sample sigmas according to Cosmos schedule
         sigmas = torch.rand(batch_size, device=device)
         sigmas = self.sigma_min + (self.sigma_max - self.sigma_min) * sigmas
-        
+
         return {
             "sigmas": sigmas,
             "sigma_data": self.sigma_data,
@@ -242,30 +242,35 @@ class Cosmos2Image(VideoModelFoundation):
             raise ValueError(
                 f"{self.NAME} does not support fp8-quanto. Please use fp8-torchao or int8 precision level instead."
             )
-        
+
         if self.config.aspect_bucket_alignment != 16:
             logger.warning(
                 f"{self.NAME} requires an alignment value of 16px. Overriding the value of --aspect_bucket_alignment."
             )
             self.config.aspect_bucket_alignment = 16
-        
+
         # T5 tokenizer settings
         if self.config.tokenizer_max_length is None:
             self.config.tokenizer_max_length = 512
-            logger.info(f"Setting tokenizer max length to {self.config.tokenizer_max_length}")
-        
+            logger.info(
+                f"Setting tokenizer max length to {self.config.tokenizer_max_length}"
+            )
+
         # Validation settings
         if self.config.validation_num_inference_steps < 30:
             logger.warning(
                 f"{self.NAME} expects around 35 or more inference steps. "
                 f"Consider increasing --validation_num_inference_steps to 35."
             )
-        
+
         # Disable custom VAEs
         self.config.pretrained_vae_model_name_or_path = None
-        
+
         # Ensure proper scheduler settings
-        if hasattr(self.config, "flow_schedule_shift") and self.config.flow_schedule_shift is None:
+        if (
+            hasattr(self.config, "flow_schedule_shift")
+            and self.config.flow_schedule_shift is None
+        ):
             self.config.flow_schedule_shift = 1.0  # Cosmos default
 
     def custom_model_card_schedule_info(self):
@@ -273,11 +278,11 @@ class Cosmos2Image(VideoModelFoundation):
         Provide custom schedule information for model card.
         """
         output_args = []
-        
+
         output_args.append(f"sigma_max={self.sigma_max}")
         output_args.append(f"sigma_min={self.sigma_min}")
         output_args.append(f"sigma_data={self.sigma_data}")
-        
+
         if self.config.flow_schedule_auto_shift:
             output_args.append("flow_schedule_auto_shift")
         if self.config.flow_schedule_shift is not None:
@@ -289,27 +294,25 @@ class Cosmos2Image(VideoModelFoundation):
             output_args.append(
                 f"flow_beta_schedule_beta={self.config.flow_beta_schedule_beta}"
             )
-        
+
         output_str = (
-            f" (parameters={output_args})"
-            if output_args
-            else " (default parameters)"
+            f" (parameters={output_args})" if output_args else " (default parameters)"
         )
-        
+
         return output_str
 
     def get_latent_shapes(self, resolution: tuple) -> tuple:
         """
         Calculate latent shapes for given resolution.
-        
+
         Args:
             resolution: (height, width) tuple
-            
+
         Returns:
             (latent_height, latent_width) tuple
         """
         height, width = resolution
         latent_height = height // self.vae_scale_factor_spatial
         latent_width = width // self.vae_scale_factor_spatial
-        
+
         return (latent_height, latent_width)
