@@ -131,6 +131,7 @@ def get_argument_parser():
             "The loss function to use during training. 'l2' is the default, but 'huber' and 'smooth_l1' are also available."
             " Huber loss is less sensitive to outliers than L2 loss, and smooth L1 is a combination of L1 and L2 loss."
             " When using Huber loss, it will be scheduled via --huber_schedule and --huber_c."
+            " NOTE: When training flow-matching models, L2 loss will always be in use."
         ),
     )
     parser.add_argument(
