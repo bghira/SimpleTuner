@@ -1387,7 +1387,7 @@ class ModelFoundation(ABC):
             PredictionTypes.EPSILON,
             PredictionTypes.V_PREDICTION,
         ]:
-            # For scheduled Huber loss, we need to handle timesteps differently
+            # Check if we're using Huber or smooth L1 loss
             if loss_type in ["huber", "smooth_l1"]:
                 # Get timesteps for the batch
                 timesteps = prepared_batch["timesteps"]
@@ -1424,34 +1424,59 @@ class ModelFoundation(ABC):
                         loss_type=loss_type,
                         huber_c=huber_c,
                     )
-            else:
-                # Standard L2 loss
-                loss = self.config.snr_weight * F.mse_loss(
-                    model_pred.float(), target.float(), reduction="none"
-                )
 
-            # Apply SNR weighting if configured
-            if self.config.snr_gamma is not None and self.config.snr_gamma > 0:
-                snr = compute_snr(prepared_batch["timesteps"], self.noise_schedule)
-                snr_divisor = snr
-                if (
-                    self.noise_schedule.config.prediction_type
-                    == PredictionTypes.V_PREDICTION.value
-                ):
-                    snr_divisor = snr + 1
-                mse_loss_weights = (
-                    torch.stack(
-                        [
-                            snr,
-                            self.config.snr_gamma
-                            * torch.ones_like(prepared_batch["timesteps"]),
-                        ],
-                        dim=1,
-                    ).min(dim=1)[0]
-                    / snr_divisor
-                )
-                mse_loss_weights = mse_loss_weights.view(-1, 1, 1, 1)
-                loss = loss * mse_loss_weights
+                # Apply SNR weighting if configured (for Huber/smooth L1)
+                if self.config.snr_gamma is not None and self.config.snr_gamma > 0:
+                    snr = compute_snr(prepared_batch["timesteps"], self.noise_schedule)
+                    snr_divisor = snr
+                    if (
+                        self.noise_schedule.config.prediction_type
+                        == PredictionTypes.V_PREDICTION.value
+                    ):
+                        snr_divisor = snr + 1
+                    mse_loss_weights = (
+                        torch.stack(
+                            [
+                                snr,
+                                self.config.snr_gamma
+                                * torch.ones_like(prepared_batch["timesteps"]),
+                            ],
+                            dim=1,
+                        ).min(dim=1)[0]
+                        / snr_divisor
+                    )
+                    mse_loss_weights = mse_loss_weights.view(-1, 1, 1, 1)
+                    loss = loss * mse_loss_weights
+
+            else:
+                if self.config.snr_gamma is None or self.config.snr_gamma == 0:
+                    loss = self.config.snr_weight * F.mse_loss(
+                        model_pred.float(), target.float(), reduction="none"
+                    )
+                else:
+                    snr = compute_snr(prepared_batch["timesteps"], self.noise_schedule)
+                    snr_divisor = snr
+                    if (
+                        self.noise_schedule.config.prediction_type
+                        == PredictionTypes.V_PREDICTION.value
+                    ):
+                        snr_divisor = snr + 1
+                    mse_loss_weights = (
+                        torch.stack(
+                            [
+                                snr,
+                                self.config.snr_gamma
+                                * torch.ones_like(prepared_batch["timesteps"]),
+                            ],
+                            dim=1,
+                        ).min(dim=1)[0]
+                        / snr_divisor
+                    )
+                    loss = F.mse_loss(
+                        model_pred.float(), target.float(), reduction="none"
+                    )
+                    mse_loss_weights = mse_loss_weights.view(-1, 1, 1, 1)
+                    loss = loss * mse_loss_weights
         else:
             raise NotImplementedError(
                 f"Loss calculation not implemented for prediction type {self.PREDICTION_TYPE}."
