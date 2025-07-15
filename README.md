@@ -171,6 +171,16 @@ A 2B parameter flow-matching model that uses the 16ch Flux VAE.
 
 A [Lumina2 Quickstart](/documentation/quickstart/LUMINA2.md) is available with example configurations.
 
+### Cosmos2 Predict (Image)
+
+A 2B / 14B parameter model that can do video as well as text-to-image.
+
+- Currently, only the text-to-image variant is supported.
+- Lycoris or full-rank tuning are supported, but PEFT LoRAs are currently not.
+- ControlNet training is not yet supported.
+
+A [Cosmos2 Predict Quickstart](/documentation/quickstart/COSMOS2IMAGE.md) is available with full example configuration and dataset.
+
 ### Legacy Stable Diffusion models
 
 RunwayML's SD 1.5 and StabilityAI's SD 2.x are both trainable under the `legacy` designation.
