@@ -597,6 +597,20 @@ class ModelFoundation(ABC):
         """
         pass
 
+    def pre_vae_encode_transform_sample(self, sample):
+        """
+        Pre-encode transform for the sample before passing it to the VAE.
+        This is a stub and can be optionally implemented in subclasses.
+        """
+        return sample
+
+    def post_vae_encode_transform_sample(self, sample):
+        """
+        Post-encode transform for the sample after passing it to the VAE.
+        This is a stub and can be optionally implemented in subclasses.
+        """
+        return sample
+
     def unload_vae(self):
         if self.vae is not None:
             if hasattr(self.vae, "to"):
@@ -1265,6 +1279,92 @@ class ModelFoundation(ABC):
         """
         return text_embedding
 
+    def conditional_loss(
+        self,
+        model_pred: torch.Tensor,
+        target: torch.Tensor,
+        reduction: str = "mean",
+        loss_type: str = "l2",
+        huber_c: float = 0.1,
+    ):
+        """
+        Compute loss with support for L2, Huber, and Smooth L1.
+
+        Args:
+            model_pred: Model predictions
+            target: Target values
+            reduction: Reduction type ('mean' or 'sum')
+            loss_type: Type of loss ('l2', 'huber', 'smooth_l1')
+            huber_c: Huber loss parameter
+        """
+        if loss_type == "l2":
+            loss = F.mse_loss(model_pred, target, reduction=reduction)
+        elif loss_type == "huber":
+            loss = (
+                2
+                * huber_c
+                * (torch.sqrt((model_pred - target) ** 2 + huber_c**2) - huber_c)
+            )
+            if reduction == "mean":
+                loss = torch.mean(loss)
+            elif reduction == "sum":
+                loss = torch.sum(loss)
+        elif loss_type == "smooth_l1":
+            loss = 2 * (torch.sqrt((model_pred - target) ** 2 + huber_c**2) - huber_c)
+            if reduction == "mean":
+                loss = torch.mean(loss)
+            elif reduction == "sum":
+                loss = torch.sum(loss)
+        else:
+            raise NotImplementedError(f"Unsupported Loss Type {loss_type}")
+        return loss
+
+    def compute_scheduled_huber_c(self, timesteps: torch.Tensor) -> torch.Tensor:
+        """
+        Compute the scheduled huber_c parameter based on timesteps.
+
+        Args:
+            timesteps: Current timesteps in the diffusion process
+
+        Returns:
+            Scheduled huber_c values
+        """
+        if not hasattr(self.config, "loss_type"):
+            return torch.tensor(0.1)  # Default value
+
+        if self.config.loss_type not in ["huber", "smooth_l1"]:
+            return torch.tensor(0.1)  # Not used for other loss types
+
+        huber_schedule = getattr(self.config, "huber_schedule", "constant")
+        base_huber_c = getattr(self.config, "huber_c", 0.1)
+
+        if huber_schedule == "constant":
+            return torch.tensor(base_huber_c)
+
+        elif huber_schedule == "exponential":
+            # Exponential decay based on timestep
+            num_train_timesteps = self.noise_schedule.config.num_train_timesteps
+            alpha = -math.log(base_huber_c) / num_train_timesteps
+
+            # Handle batch of timesteps
+            # Vectorized computation of huber_c_values using PyTorch
+            huber_c_values = torch.exp(-alpha * timesteps)
+
+            return huber_c_values.to(timesteps.device)
+
+        elif huber_schedule == "snr":
+            # SNR-based scheduling
+            snr = compute_snr(timesteps, self.noise_schedule)
+            sigmas = (
+                (1.0 - self.noise_schedule.alphas_cumprod[timesteps])
+                / self.noise_schedule.alphas_cumprod[timesteps]
+            ) ** 0.5
+            huber_c = (1 - base_huber_c) / (1 + sigmas) ** 2 + base_huber_c
+            return huber_c
+
+        else:
+            raise NotImplementedError(f"Unknown Huber loss schedule {huber_schedule}")
+
     def loss(
         self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True
     ):
@@ -1276,43 +1376,113 @@ class ModelFoundation(ABC):
         model_pred = model_output["model_prediction"]
         if target is None:
             raise ValueError("Target is None. Cannot compute loss.")
+
+        # Get loss type from config (default to l2 for backward compatibility)
+        loss_type = getattr(self.config, "loss_type", "l2")
+
         if self.PREDICTION_TYPE == PredictionTypes.FLOW_MATCHING:
+            # Flow matching always uses L2 loss
             loss = (model_pred.float() - target.float()) ** 2
         elif self.PREDICTION_TYPE in [
             PredictionTypes.EPSILON,
             PredictionTypes.V_PREDICTION,
         ]:
-            if self.config.snr_gamma is None or self.config.snr_gamma == 0:
-                loss = self.config.snr_weight * F.mse_loss(
-                    model_pred.float(), target.float(), reduction="none"
-                )
+            # Check if we're using Huber or smooth L1 loss
+            if loss_type in ["huber", "smooth_l1"]:
+                # Get timesteps for the batch
+                timesteps = prepared_batch["timesteps"]
+
+                # For scheduled huber, we compute per-sample then average
+                if getattr(self.config, "huber_schedule", "constant") != "constant":
+                    batch_size = model_pred.shape[0]
+                    losses = []
+
+                    for i in range(batch_size):
+                        # Get scheduled huber_c for this timestep
+                        huber_c = self.compute_scheduled_huber_c(
+                            timesteps[i : i + 1]
+                        ).item()
+
+                        # Compute loss for this sample
+                        sample_loss = self.conditional_loss(
+                            model_pred[i : i + 1].float(),
+                            target[i : i + 1].float(),
+                            reduction="none",
+                            loss_type=loss_type,
+                            huber_c=huber_c,
+                        )
+                        losses.append(sample_loss)
+
+                    loss = torch.cat(losses, dim=0)
+                else:
+                    # Constant huber_c - can be computed all at once
+                    huber_c = getattr(self.config, "huber_c", 0.1)
+                    loss = self.conditional_loss(
+                        model_pred.float(),
+                        target.float(),
+                        reduction="none",
+                        loss_type=loss_type,
+                        huber_c=huber_c,
+                    )
+
+                # Apply SNR weighting if configured (for Huber/smooth L1)
+                if self.config.snr_gamma is not None and self.config.snr_gamma > 0:
+                    snr = compute_snr(prepared_batch["timesteps"], self.noise_schedule)
+                    snr_divisor = snr
+                    if (
+                        self.noise_schedule.config.prediction_type
+                        == PredictionTypes.V_PREDICTION.value
+                    ):
+                        snr_divisor = snr + 1
+                    mse_loss_weights = (
+                        torch.stack(
+                            [
+                                snr,
+                                self.config.snr_gamma
+                                * torch.ones_like(prepared_batch["timesteps"]),
+                            ],
+                            dim=1,
+                        ).min(dim=1)[0]
+                        / snr_divisor
+                    )
+                    mse_loss_weights = mse_loss_weights.view(-1, 1, 1, 1)
+                    loss = loss * mse_loss_weights
+
             else:
-                snr = compute_snr(prepared_batch["timesteps"], self.noise_schedule)
-                snr_divisor = snr
-                if (
-                    self.noise_schedule.config.prediction_type
-                    == PredictionTypes.V_PREDICTION.value
-                ):
-                    snr_divisor = snr + 1
-                mse_loss_weights = (
-                    torch.stack(
-                        [
-                            snr,
-                            self.config.snr_gamma
-                            * torch.ones_like(prepared_batch["timesteps"]),
-                        ],
-                        dim=1,
-                    ).min(dim=1)[0]
-                    / snr_divisor
-                )
-                loss = F.mse_loss(model_pred.float(), target.float(), reduction="none")
-                mse_loss_weights = mse_loss_weights.view(-1, 1, 1, 1)
-                loss = loss * mse_loss_weights
+                if self.config.snr_gamma is None or self.config.snr_gamma == 0:
+                    loss = self.config.snr_weight * F.mse_loss(
+                        model_pred.float(), target.float(), reduction="none"
+                    )
+                else:
+                    snr = compute_snr(prepared_batch["timesteps"], self.noise_schedule)
+                    snr_divisor = snr
+                    if (
+                        self.noise_schedule.config.prediction_type
+                        == PredictionTypes.V_PREDICTION.value
+                    ):
+                        snr_divisor = snr + 1
+                    mse_loss_weights = (
+                        torch.stack(
+                            [
+                                snr,
+                                self.config.snr_gamma
+                                * torch.ones_like(prepared_batch["timesteps"]),
+                            ],
+                            dim=1,
+                        ).min(dim=1)[0]
+                        / snr_divisor
+                    )
+                    loss = F.mse_loss(
+                        model_pred.float(), target.float(), reduction="none"
+                    )
+                    mse_loss_weights = mse_loss_weights.view(-1, 1, 1, 1)
+                    loss = loss * mse_loss_weights
         else:
             raise NotImplementedError(
                 f"Loss calculation not implemented for prediction type {self.PREDICTION_TYPE}."
             )
 
+        # Apply conditioning mask if needed
         conditioning_type = prepared_batch.get("conditioning_type")
         if conditioning_type == "mask" and apply_conditioning_mask:
             logger.debug("Applying conditioning mask to loss.")
@@ -1330,15 +1500,14 @@ class ModelFoundation(ABC):
             if random.random() < self.config.masked_loss_probability:
                 mask_image = prepared_batch["conditioning_pixel_values"].to(
                     dtype=loss.dtype, device=loss.device
-                )  # Shape: (batch_size, 3, H', W')
+                )
                 mask_image = torch.sum(mask_image, dim=1, keepdim=True) / 3
                 mask_image = torch.nn.functional.interpolate(
                     mask_image, size=loss.shape[2:], mode="area"
-                )  # Resize to match loss spatial dimensions
-                mask_image = mask_image / 2 + 0.5  # Normalize to [0,1]
-                # binarize
+                )
+                mask_image = mask_image / 2 + 0.5
                 mask_image = (mask_image > 0).to(dtype=loss.dtype, device=loss.device)
-                loss = loss * mask_image  # Element-wise multiplication
+                loss = loss * mask_image
 
         # Average over channels and spatial dims, then over batch.
         loss = loss.mean(dim=list(range(1, len(loss.shape)))).mean()

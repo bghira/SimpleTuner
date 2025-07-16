@@ -1,5 +1,6 @@
 import inspect
 import torch
+from typing import Union
 import diffusers
 import os
 import wandb
@@ -853,12 +854,18 @@ class Validation:
                             f"Loaded {len(frames)} frames from benchmark video: {filename}"
                         )
                         return frames
-        else:
-            # Original image logic
-            image_filename = f"{shortname}_{resolution[0]}x{resolution[1]}.png"
-            image_path = os.path.join(base_model_benchmark, image_filename)
-            if os.path.exists(image_path):
-                return Image.open(image_path)
+
+            # NEW: If no video found, fall back to image (video model might output images)
+            logger.debug(
+                f"No video benchmark found for {shortname}, checking for image..."
+            )
+
+        # Image logic (now also used as fallback for video models)
+        image_filename = f"{shortname}_{resolution[0]}x{resolution[1]}.png"
+        image_path = os.path.join(base_model_benchmark, image_filename)
+        if os.path.exists(image_path):
+            logger.debug(f"Found image benchmark: {image_filename}")
+            return Image.open(image_path)
 
         return None
 
@@ -1029,25 +1036,53 @@ class Validation:
 
         for shortname, image_list in self.validation_images.items():
             for idx, image in enumerate(image_list):
+                # Get the validation resolution that was used for this index
+                if idx < len(self.validation_resolutions):
+                    logger.debug(
+                        f"Validation saving image for resolution idx {idx} of {len(self.validation_resolutions)}"
+                    )
+                    resolution = self.validation_resolutions[idx]
+                    if isinstance(resolution, str):
+                        # Parse resolution string if needed
+                        if "x" in resolution:
+                            width, height = map(int, resolution.split("x"))
+                        else:
+                            width = height = int(resolution)
+                    elif isinstance(resolution, tuple):
+                        width, height = resolution
+                    else:
+                        width = height = resolution
+                else:
+                    # Fallback to actual size if we somehow have more images than resolutions
+                    logger.warning(
+                        f"Image index {idx} exceeds validation resolutions list {len(self.validation_resolutions)}, using actual size"
+                    )
+                    if hasattr(image, "size"):
+                        width, height = image.size
+                    elif (
+                        isinstance(image, list)
+                        and len(image) > 0
+                        and hasattr(image[0], "size")
+                    ):
+                        width, height = image[0].size
+                    else:
+                        logger.error(
+                            f"Could not determine size for image at index {idx}"
+                        )
+                        continue
+
                 if hasattr(image, "size"):
-                    # Single image
-                    width, height = image.size
+                    # Single image - save with validation resolution in filename
                     image.save(
                         os.path.join(
                             base_model_benchmark, f"{shortname}_{width}x{height}.png"
                         )
                     )
                 elif type(image) is list:
-                    # Video frames
+                    # Video frames - save with validation resolution in filename
                     from diffusers.utils.export_utils import export_to_video
 
-                    # Get resolution from first frame
-                    if len(image) > 0 and hasattr(image[0], "size"):
-                        width, height = image[0].size
-                        filename = f"{shortname}_{width}x{height}_{idx}.mp4"
-                    else:
-                        filename = f"{shortname}_{idx}.mp4"
-
+                    filename = f"{shortname}_{width}x{height}_{idx}.mp4"
                     export_to_video(
                         image,
                         os.path.join(base_model_benchmark, filename),
@@ -1166,7 +1201,10 @@ class Validation:
             # some flow-matching adjustments should be made for euler and unipc video model generations.
             if self.config.validation_noise_scheduler in ["flow_matching", "euler"]:
                 # The Beta schedule looks WAY better...
-                scheduler_args["use_beta_sigmas"] = True
+                if not self.model.pipeline.scheduler.config.get(
+                    "use_karras_sigmas", False
+                ):
+                    scheduler_args["use_beta_sigmas"] = True
                 scheduler_args["shift"] = self.config.flow_schedule_shift
             if self.config.validation_noise_scheduler in ["flow_unipc", "unipc"]:
                 scheduler_args["prediction_type"] = "flow_prediction"
@@ -1811,6 +1849,8 @@ class Validation:
                                 dtype=self.config.weight_dtype,
                             )
                             if hasattr(v, "to")
+                            and v.dtype
+                            in (torch.bfloat16, torch.float16, torch.float32)
                             else v
                         )
                         for k, v in pipeline_kwargs.items()
@@ -1841,14 +1881,20 @@ class Validation:
                         self.inference_device.type,
                         dtype=self.config.weight_dtype,
                     ):
-                        if isinstance(self.model, VideoModelFoundation):
+                        pipeline_result = self.model.pipeline(**pipeline_kwargs)
+                        if hasattr(pipeline_result, "frames"):
                             all_validation_type_results[current_validation_type] = (
-                                self.model.pipeline(**pipeline_kwargs).frames
+                                pipeline_result.frames
                             )
-                        elif isinstance(self.model, ImageModelFoundation):
+                        elif hasattr(pipeline_result, "images"):
                             all_validation_type_results[current_validation_type] = (
-                                self.model.pipeline(**pipeline_kwargs).images
+                                pipeline_result.images
                             )
+                        else:
+                            logger.error(
+                                f"Pipeline result does not have 'frames' or 'images': {pipeline_result}"
+                            )
+                            all_validation_type_results[current_validation_type] = []
                     if current_validation_type == "ema":
                         self.disable_ema_for_inference()
 
@@ -2032,10 +2078,42 @@ class Validation:
         from diffusers.utils.export_utils import export_to_video
 
         for validation_image in validation_images[validation_shortname]:
+            # Get the validation resolution for this index
+            if validation_img_idx < len(self.validation_resolutions):
+                resolution = self.validation_resolutions[validation_img_idx]
+                if isinstance(resolution, str):
+                    if "x" in resolution:
+                        res_label = resolution
+                    else:
+                        res_label = f"{resolution}x{resolution}"
+                elif isinstance(resolution, tuple):
+                    res_label = f"{resolution[0]}x{resolution[1]}"
+                else:
+                    res_label = f"{resolution}x{resolution}"
+            else:
+                # Fallback to actual size if somehow out of bounds
+                logger.warning(
+                    f"Image index {validation_img_idx} exceeds validation resolutions list"
+                )
+                if type(validation_image) is list:
+                    size_x, size_y = validation_image[0].size
+                else:
+                    size_x, size_y = validation_image.size
+                res_label = f"{size_x}x{size_y}"
+
             # convert array of numpy to array of pil:
             validation_image = MultiaspectImage.numpy_list_to_pil(validation_image)
-            size_x, size_y = validation_image[0].size
-            res_label = f"{size_x}x{size_y}"
+            if type(validation_image) is not list:
+                # save as single image instead
+                validation_image.save(
+                    os.path.join(
+                        self.save_dir,
+                        f"step_{StateTracker.get_global_step()}_{validation_shortname}_{validation_img_idx}_{res_label}.png",
+                    )
+                )
+                validation_img_idx += 1
+                continue
+
             export_to_video(
                 validation_image,
                 os.path.join(

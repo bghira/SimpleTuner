@@ -1,6 +1,6 @@
 # SimpleTuner 💹
 
-> ⚠️ **Warning**: The scripts in this repository have the potential to damage your training data. Always maintain backups before proceeding.
+> ℹ️ No data is sent to any third parties except through opt-in flag `report_to`, `push_to_hub`, or webhooks which must be manually configured.
 
 **SimpleTuner** is geared towards simplicity, with a focus on making the code easily understood. This codebase serves as a shared academic exercise, and contributions are welcome.
 
@@ -20,6 +20,7 @@ If you have any questions, please feel free to reach out to us there.
   - [Stable Diffusion 2.0/2.1](#stable-diffusion-20--21)
   - [Stable Diffusion 3.0](#stable-diffusion-3)
   - [Kwai Kolors](#kwai-kolors)
+  - [Lumina2](#lumina2)
 - [Hardware Requirements](#hardware-requirements)
   - [Flux](#flux1-dev-schnell)
   - [SDXL](#sdxl-1024px)
@@ -159,6 +160,26 @@ See the [Stable Diffusion 3 Quickstart](/documentation/quickstart/SD3.md) to get
 An SDXL-based model with ChatGLM (General Language Model) 6B as its text encoder, **doubling** the hidden dimension size and substantially increasing the level of local detail included in the prompt embeds.
 
 Kolors support is almost as deep as SDXL, minus ControlNet training support.
+
+
+### Lumina2
+
+A 2B parameter flow-matching model that uses the 16ch Flux VAE.
+
+- LoRA, Lycoris, and full finetuning are supported
+- ControlNet training is not yet supported
+
+A [Lumina2 Quickstart](/documentation/quickstart/LUMINA2.md) is available with example configurations.
+
+### Cosmos2 Predict (Image)
+
+A 2B / 14B parameter model that can do video as well as text-to-image.
+
+- Currently, only the text-to-image variant is supported.
+- Lycoris or full-rank tuning are supported, but PEFT LoRAs are currently not.
+- ControlNet training is not yet supported.
+
+A [Cosmos2 Predict Quickstart](/documentation/quickstart/COSMOS2IMAGE.md) is available with full example configuration and dataset.
 
 ### Legacy Stable Diffusion models
 
