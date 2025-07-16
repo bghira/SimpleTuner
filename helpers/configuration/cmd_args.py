@@ -123,6 +123,40 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--loss_type",
+        type=str,
+        default="l2",
+        choices=["l2", "huber", "smooth_l1"],
+        help=(
+            "The loss function to use during training. 'l2' is the default, but 'huber' and 'smooth_l1' are also available."
+            " Huber loss is less sensitive to outliers than L2 loss, and smooth L1 is a combination of L1 and L2 loss."
+            " When using Huber loss, it will be scheduled via --huber_schedule and --huber_c."
+            " NOTE: When training flow-matching models, L2 loss will always be in use."
+        ),
+    )
+    parser.add_argument(
+        "--huber_schedule",
+        type=str,
+        default="snr",
+        choices=["snr", "exponential", "constant"],
+        help=(
+            "constant: Uses a fixed huber_c value."
+            " exponential: Exponentially decays huber_c based on timestep"
+            " snr: Adjusts huber_c based on signal-to-noise ratio."
+            " default: snr."
+        ),
+    )
+    parser.add_argument(
+        "--huber_c",
+        type=float,
+        default=0.1,
+        help=(
+            "The huber_c value to use for Huber loss. This is the threshold at which the loss function transitions from L2 to L1."
+            " A lower value will make the loss function more sensitive to outliers, while a higher value will make it less sensitive."
+            " The default value is 0.1, which is a good starting point for most models."
+        ),
+    )
+    parser.add_argument(
         "--hidream_use_load_balancing_loss",
         action="store_true",
         default=False,
@@ -415,6 +449,18 @@ def get_argument_parser():
         default=None,
         help=(
             "Setting this turns on perturbed normal initialization of the LyCORIS LoKr PEFT layers. A good value is between 1e-4 and 1e-2."
+        ),
+    )
+    parser.add_argument(
+        "--conditioning_multidataset_sampling",
+        type=str,
+        default="random",
+        choices=["combined", "random"],
+        help=(
+            "How to sample from multiple conditioning datasets:\n"
+            "- 'combined': Use all conditioning images from all datasets, increases VRAM requirements a lot.\n"
+            "- 'random': Randomly select one conditioning dataset per training sample (default)\n"
+            "Random mode uses deterministic selection based on image path and epoch."
         ),
     )
     parser.add_argument(
@@ -1253,9 +1299,9 @@ def get_argument_parser():
     parser.add_argument(
         "--distillation_method",
         default=None,
-        choices=["dcm"],
+        choices=["lcm", "dcm"],
         help=(
-            "The distillation method to use. Currently, only 'dcm' is supported via LoRA."
+            "The distillation method to use. Currently, LCM and DCM are supported via LoRA."
             " This will apply the selected distillation method to the model."
         ),
     )
@@ -1881,13 +1927,14 @@ def get_argument_parser():
         "--mixed_precision",
         type=str,
         default="bf16",
-        choices=["bf16", "fp16", "no"],
+        choices=["bf16", "fp16", "fp8", "no"],
         help=(
             "SimpleTuner only supports bf16 training. Bf16 requires PyTorch >="
             " 1.10. on an Nvidia Ampere or later GPU, and PyTorch 2.3 or newer for Apple Silicon."
             " Default to the value of accelerate config of the current system or the"
             " flag passed with the `accelerate.launch` command. Use this argument to override the accelerate config."
             " fp16 is offered as an experimental option, but is not recommended as it is less-tested and you will likely encounter errors."
+            " fp8 is another experimental option that relies in TorchAO for mixed precision ops."
         ),
     )
     parser.add_argument(
@@ -2363,6 +2410,12 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             )
             sys.exit(1)
 
+    if args.mixed_precision == "fp8" and not torch.cuda.is_available():
+        logging.error(
+            "You cannot use --mixed_precision=fp8 without a CUDA device. Please use bf16 instead."
+        )
+        sys.exit(1)
+
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if env_local_rank != -1 and env_local_rank != args.local_rank:
         args.local_rank = env_local_rank
@@ -2429,6 +2482,14 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         and args.base_model_default_dtype == "bf16"
     )
     model_is_quantized = args.base_model_precision != "no_change"
+    if (
+        model_is_quantized
+        and args.mixed_precision == "fp8"
+        and args.base_model_precision != "fp8-torchao"
+    ):
+        raise ValueError(
+            "You cannot use --mixed_precision=fp8 with a quantized base model. Please use bf16 or remove base_model_precision option from your configuration."
+        )
     # check optimiser validity
     chosen_optimizer = args.optimizer
     is_optimizer_deprecated(chosen_optimizer)

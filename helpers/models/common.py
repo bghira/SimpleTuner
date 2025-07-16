@@ -116,6 +116,7 @@ class ModelFoundation(ABC):
         self.accelerator = accelerator
         self.noise_schedule = None
         self.pipelines = {}
+        self._qkv_projections_fused = False
         self.setup_model_flavour()
         self.setup_training_noise_schedule()
 
@@ -317,9 +318,6 @@ class ModelFoundation(ABC):
         3) Convert & load them into the unwrapped PyTorch modules with set_peft_model_state_dict().
         4) Optionally handle text_encoder_x using the diffusers _set_state_dict_into_text_encoder() helper.
         """
-        # Ensure QKV is unfused before loading
-        self.unfuse_qkv_projections()
-
         # We'll track whichever sub-model is our 'denoiser' (UNet or Transformer).
         denoiser = None
         text_encoder_one_ = None
@@ -430,12 +428,8 @@ class ModelFoundation(ABC):
                 )
 
         logger.info("Finished loading LoRA weights successfully.")
-        # Re-fuse after loading
-        self.fuse_qkv_projections()
 
     def save_lora_weights(self, *args, **kwargs):
-        # Unfuse QKV projections before saving
-        self.unfuse_qkv_projections()
         self.PIPELINE_CLASSES[
             (
                 PipelineTypes.TEXT2IMG
@@ -443,8 +437,18 @@ class ModelFoundation(ABC):
                 else PipelineTypes.CONTROLNET
             )
         ].save_lora_weights(*args, **kwargs)
-        # Re-fuse after saving if you want to continue training
+
+    def pre_ema_creation(self):
+        """
+        A hook that can be overridden in the subclass to perform actions before EMA creation.
+        """
         self.fuse_qkv_projections()
+
+    def post_ema_creation(self):
+        """
+        A hook that can be overridden in the subclass to perform actions after EMA creation.
+        """
+        pass
 
     def check_user_config(self):
         """
@@ -460,7 +464,11 @@ class ModelFoundation(ABC):
 
     def unwrap_model(self, model=None):
         if self.config.controlnet and model is None:
+            if self.controlnet is None:
+                return None
             return unwrap_model(self.accelerator, self.controlnet)
+        if self.model is None:
+            return None
         return unwrap_model(self.accelerator, model or self.model)
 
     def move_extra_models(self, target_device):
@@ -588,6 +596,20 @@ class ModelFoundation(ABC):
 
         """
         pass
+
+    def pre_vae_encode_transform_sample(self, sample):
+        """
+        Pre-encode transform for the sample before passing it to the VAE.
+        This is a stub and can be optionally implemented in subclasses.
+        """
+        return sample
+
+    def post_vae_encode_transform_sample(self, sample):
+        """
+        Post-encode transform for the sample after passing it to the VAE.
+        This is a stub and can be optionally implemented in subclasses.
+        """
+        return sample
 
     def unload_vae(self):
         if self.vae is not None:
@@ -869,8 +891,14 @@ class ModelFoundation(ABC):
         # shared modules may be when ControlNet reuses base model layers, eg. HiDream.
         return False
 
-    def get_trained_component(self, base_model: bool = False):
-        return self.unwrap_model(model=self.model if base_model else None)
+    def get_trained_component(
+        self, base_model: bool = False, unwrap_model: bool = True
+    ):
+        if unwrap_model:
+            return self.unwrap_model(model=self.model if base_model else None)
+        return (
+            self.controlnet if self.config.controlnet and not base_model else self.model
+        )
 
     def _load_pipeline(
         self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True
@@ -883,13 +911,13 @@ class ModelFoundation(ABC):
             setattr(
                 active_pipelines[pipeline_type],
                 self.MODEL_TYPE.value,
-                self.unwrap_model(model=self.model),
+                self.model,
             )
             if self.config.controlnet:
                 setattr(
                     active_pipelines[pipeline_type],
                     "controlnet",
-                    self.unwrap_model(self.get_trained_component()),
+                    self.controlnet,
                 )
             return active_pipelines[pipeline_type]
 
@@ -913,7 +941,7 @@ class ModelFoundation(ABC):
         if "watermark" in signature.parameters:
             pipeline_kwargs["watermark"] = None
         if load_base_model:
-            pipeline_kwargs[self.MODEL_TYPE.value] = self.unwrap_model(model=self.model)
+            pipeline_kwargs[self.MODEL_TYPE.value] = self.model
         else:
             pipeline_kwargs[self.MODEL_TYPE.value] = None
 
@@ -944,7 +972,7 @@ class ModelFoundation(ABC):
             text_encoder_idx += 1
 
         if self.config.controlnet and pipeline_type is PipelineTypes.CONTROLNET:
-            pipeline_kwargs["controlnet"] = self.unwrap_model()
+            pipeline_kwargs["controlnet"] = self.controlnet
 
         logger.debug(
             f"Initialising {pipeline_class.__name__} with components: {pipeline_kwargs}"
@@ -1063,6 +1091,17 @@ class ModelFoundation(ABC):
         return target
 
     def prepare_batch_conditions(self, batch: dict, state: dict) -> dict:
+        # it's a list, but most models will expect it to be a length-1 list containing a tensor, which is what they actually want
+        if (
+            isinstance(batch.get("conditioning_pixel_values"), list)
+            and len(batch["conditioning_pixel_values"]) > 0
+        ):
+            batch["conditioning_pixel_values"] = batch["conditioning_pixel_values"][0]
+        if (
+            isinstance(batch.get("conditioning_latents"), list)
+            and len(batch["conditioning_latents"]) > 0
+        ):
+            batch["conditioning_latents"] = batch["conditioning_latents"][0]
         return batch
 
     def prepare_batch(self, batch: dict, state: dict) -> dict:
@@ -1240,6 +1279,92 @@ class ModelFoundation(ABC):
         """
         return text_embedding
 
+    def conditional_loss(
+        self,
+        model_pred: torch.Tensor,
+        target: torch.Tensor,
+        reduction: str = "mean",
+        loss_type: str = "l2",
+        huber_c: float = 0.1,
+    ):
+        """
+        Compute loss with support for L2, Huber, and Smooth L1.
+
+        Args:
+            model_pred: Model predictions
+            target: Target values
+            reduction: Reduction type ('mean' or 'sum')
+            loss_type: Type of loss ('l2', 'huber', 'smooth_l1')
+            huber_c: Huber loss parameter
+        """
+        if loss_type == "l2":
+            loss = F.mse_loss(model_pred, target, reduction=reduction)
+        elif loss_type == "huber":
+            loss = (
+                2
+                * huber_c
+                * (torch.sqrt((model_pred - target) ** 2 + huber_c**2) - huber_c)
+            )
+            if reduction == "mean":
+                loss = torch.mean(loss)
+            elif reduction == "sum":
+                loss = torch.sum(loss)
+        elif loss_type == "smooth_l1":
+            loss = 2 * (torch.sqrt((model_pred - target) ** 2 + huber_c**2) - huber_c)
+            if reduction == "mean":
+                loss = torch.mean(loss)
+            elif reduction == "sum":
+                loss = torch.sum(loss)
+        else:
+            raise NotImplementedError(f"Unsupported Loss Type {loss_type}")
+        return loss
+
+    def compute_scheduled_huber_c(self, timesteps: torch.Tensor) -> torch.Tensor:
+        """
+        Compute the scheduled huber_c parameter based on timesteps.
+
+        Args:
+            timesteps: Current timesteps in the diffusion process
+
+        Returns:
+            Scheduled huber_c values
+        """
+        if not hasattr(self.config, "loss_type"):
+            return torch.tensor(0.1)  # Default value
+
+        if self.config.loss_type not in ["huber", "smooth_l1"]:
+            return torch.tensor(0.1)  # Not used for other loss types
+
+        huber_schedule = getattr(self.config, "huber_schedule", "constant")
+        base_huber_c = getattr(self.config, "huber_c", 0.1)
+
+        if huber_schedule == "constant":
+            return torch.tensor(base_huber_c)
+
+        elif huber_schedule == "exponential":
+            # Exponential decay based on timestep
+            num_train_timesteps = self.noise_schedule.config.num_train_timesteps
+            alpha = -math.log(base_huber_c) / num_train_timesteps
+
+            # Handle batch of timesteps
+            # Vectorized computation of huber_c_values using PyTorch
+            huber_c_values = torch.exp(-alpha * timesteps)
+
+            return huber_c_values.to(timesteps.device)
+
+        elif huber_schedule == "snr":
+            # SNR-based scheduling
+            snr = compute_snr(timesteps, self.noise_schedule)
+            sigmas = (
+                (1.0 - self.noise_schedule.alphas_cumprod[timesteps])
+                / self.noise_schedule.alphas_cumprod[timesteps]
+            ) ** 0.5
+            huber_c = (1 - base_huber_c) / (1 + sigmas) ** 2 + base_huber_c
+            return huber_c
+
+        else:
+            raise NotImplementedError(f"Unknown Huber loss schedule {huber_schedule}")
+
     def loss(
         self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True
     ):
@@ -1251,45 +1376,116 @@ class ModelFoundation(ABC):
         model_pred = model_output["model_prediction"]
         if target is None:
             raise ValueError("Target is None. Cannot compute loss.")
+
+        # Get loss type from config (default to l2 for backward compatibility)
+        loss_type = getattr(self.config, "loss_type", "l2")
+
         if self.PREDICTION_TYPE == PredictionTypes.FLOW_MATCHING:
+            # Flow matching always uses L2 loss
             loss = (model_pred.float() - target.float()) ** 2
         elif self.PREDICTION_TYPE in [
             PredictionTypes.EPSILON,
             PredictionTypes.V_PREDICTION,
         ]:
-            if self.config.snr_gamma is None or self.config.snr_gamma == 0:
-                loss = self.config.snr_weight * F.mse_loss(
-                    model_pred.float(), target.float(), reduction="none"
-                )
+            # Check if we're using Huber or smooth L1 loss
+            if loss_type in ["huber", "smooth_l1"]:
+                # Get timesteps for the batch
+                timesteps = prepared_batch["timesteps"]
+
+                # For scheduled huber, we compute per-sample then average
+                if getattr(self.config, "huber_schedule", "constant") != "constant":
+                    batch_size = model_pred.shape[0]
+                    losses = []
+
+                    for i in range(batch_size):
+                        # Get scheduled huber_c for this timestep
+                        huber_c = self.compute_scheduled_huber_c(
+                            timesteps[i : i + 1]
+                        ).item()
+
+                        # Compute loss for this sample
+                        sample_loss = self.conditional_loss(
+                            model_pred[i : i + 1].float(),
+                            target[i : i + 1].float(),
+                            reduction="none",
+                            loss_type=loss_type,
+                            huber_c=huber_c,
+                        )
+                        losses.append(sample_loss)
+
+                    loss = torch.cat(losses, dim=0)
+                else:
+                    # Constant huber_c - can be computed all at once
+                    huber_c = getattr(self.config, "huber_c", 0.1)
+                    loss = self.conditional_loss(
+                        model_pred.float(),
+                        target.float(),
+                        reduction="none",
+                        loss_type=loss_type,
+                        huber_c=huber_c,
+                    )
+
+                # Apply SNR weighting if configured (for Huber/smooth L1)
+                if self.config.snr_gamma is not None and self.config.snr_gamma > 0:
+                    snr = compute_snr(prepared_batch["timesteps"], self.noise_schedule)
+                    snr_divisor = snr
+                    if (
+                        self.noise_schedule.config.prediction_type
+                        == PredictionTypes.V_PREDICTION.value
+                    ):
+                        snr_divisor = snr + 1
+                    mse_loss_weights = (
+                        torch.stack(
+                            [
+                                snr,
+                                self.config.snr_gamma
+                                * torch.ones_like(prepared_batch["timesteps"]),
+                            ],
+                            dim=1,
+                        ).min(dim=1)[0]
+                        / snr_divisor
+                    )
+                    mse_loss_weights = mse_loss_weights.view(-1, 1, 1, 1)
+                    loss = loss * mse_loss_weights
+
             else:
-                snr = compute_snr(prepared_batch["timesteps"], self.noise_schedule)
-                snr_divisor = snr
-                if (
-                    self.noise_schedule.config.prediction_type
-                    == PredictionTypes.V_PREDICTION.value
-                ):
-                    snr_divisor = snr + 1
-                mse_loss_weights = (
-                    torch.stack(
-                        [
-                            snr,
-                            self.config.snr_gamma
-                            * torch.ones_like(prepared_batch["timesteps"]),
-                        ],
-                        dim=1,
-                    ).min(dim=1)[0]
-                    / snr_divisor
-                )
-                loss = F.mse_loss(model_pred.float(), target.float(), reduction="none")
-                mse_loss_weights = mse_loss_weights.view(-1, 1, 1, 1)
-                loss = loss * mse_loss_weights
+                if self.config.snr_gamma is None or self.config.snr_gamma == 0:
+                    loss = self.config.snr_weight * F.mse_loss(
+                        model_pred.float(), target.float(), reduction="none"
+                    )
+                else:
+                    snr = compute_snr(prepared_batch["timesteps"], self.noise_schedule)
+                    snr_divisor = snr
+                    if (
+                        self.noise_schedule.config.prediction_type
+                        == PredictionTypes.V_PREDICTION.value
+                    ):
+                        snr_divisor = snr + 1
+                    mse_loss_weights = (
+                        torch.stack(
+                            [
+                                snr,
+                                self.config.snr_gamma
+                                * torch.ones_like(prepared_batch["timesteps"]),
+                            ],
+                            dim=1,
+                        ).min(dim=1)[0]
+                        / snr_divisor
+                    )
+                    loss = F.mse_loss(
+                        model_pred.float(), target.float(), reduction="none"
+                    )
+                    mse_loss_weights = mse_loss_weights.view(-1, 1, 1, 1)
+                    loss = loss * mse_loss_weights
         else:
             raise NotImplementedError(
                 f"Loss calculation not implemented for prediction type {self.PREDICTION_TYPE}."
             )
 
+        # Apply conditioning mask if needed
         conditioning_type = prepared_batch.get("conditioning_type")
         if conditioning_type == "mask" and apply_conditioning_mask:
+            logger.debug("Applying conditioning mask to loss.")
             mask_image = (
                 prepared_batch["conditioning_pixel_values"]
                 .to(dtype=loss.dtype, device=loss.device)[:, 0]
@@ -1304,15 +1500,14 @@ class ModelFoundation(ABC):
             if random.random() < self.config.masked_loss_probability:
                 mask_image = prepared_batch["conditioning_pixel_values"].to(
                     dtype=loss.dtype, device=loss.device
-                )  # Shape: (batch_size, 3, H', W')
+                )
                 mask_image = torch.sum(mask_image, dim=1, keepdim=True) / 3
                 mask_image = torch.nn.functional.interpolate(
                     mask_image, size=loss.shape[2:], mode="area"
-                )  # Resize to match loss spatial dimensions
-                mask_image = mask_image / 2 + 0.5  # Normalize to [0,1]
-                # binarize
+                )
+                mask_image = mask_image / 2 + 0.5
                 mask_image = (mask_image > 0).to(dtype=loss.dtype, device=loss.device)
-                loss = loss * mask_image  # Element-wise multiplication
+                loss = loss * mask_image
 
         # Average over channels and spatial dims, then over batch.
         loss = loss.mean(dim=list(range(1, len(loss.shape)))).mean()
@@ -1581,41 +1776,3 @@ class VideoModelFoundation(ImageModelFoundation):
         # B, F, C, H, W = tensor.shape
         # return tensor.view(B * F, C, H, W)
         return tensor
-
-
-# if self.args.controlnet:
-#     # ControlNet training has an additional adapter thingy.
-#     extra_pipeline_kwargs["controlnet"] = unwrap_model(
-#         self.accelerator, self.controlnet
-#     )
-
-# if self.args.validation_torch_compile:
-#     if self.deepspeed:
-#         logger.warning(
-#             "DeepSpeed does not support torch compile. Disabling. Set --validation_torch_compile=False to suppress this warning."
-#         )
-#     elif self.args.lora_type.lower() == "lycoris":
-#         logger.warning(
-#             "LyCORIS does not support torch compile for validation due to graph compile breaks. Disabling. Set --validation_torch_compile=False to suppress this warning."
-#         )
-#     else:
-#         if self.unet is not None and not is_compiled_module(self.unet):
-#             logger.warning(
-#                 f"Compiling the UNet for validation ({self.args.validation_torch_compile})"
-#             )
-#             self.pipeline.unet = torch.compile(
-#                 self.pipeline.unet,
-#                 mode=self.args.validation_torch_compile_mode,
-#                 fullgraph=False,
-#             )
-#         if self.transformer is not None and not is_compiled_module(
-#             self.transformer
-#         ):
-#             logger.warning(
-#                 f"Compiling the transformer for validation ({self.args.validation_torch_compile})"
-#             )
-#             self.pipeline.transformer = torch.compile(
-#                 self.pipeline.transformer,
-#                 mode=self.args.validation_torch_compile_mode,
-#                 fullgraph=False,
-#             )

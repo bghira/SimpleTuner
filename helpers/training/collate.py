@@ -7,6 +7,7 @@ from helpers.training.state_tracker import StateTracker
 from helpers.training.multi_process import rank_info, _get_rank
 from helpers.image_manipulation.training_sample import TrainingSample
 from concurrent.futures import ThreadPoolExecutor
+from collections import defaultdict
 
 logger = logging.getLogger("collate_fn")
 logger.setLevel(
@@ -346,55 +347,75 @@ def gather_conditional_sdxl_size_features(examples, latents, weight_dtype):
     return torch.stack(batch_time_ids_list, dim=0)
 
 
-def check_latent_shapes(latents, filepaths, data_backend_id, batch):
+def check_latent_shapes(
+    latents, filepaths, data_backend_id, batch, is_conditioning=False
+):
     # Validate shapes
     test_shape = latents[0].shape
     # 5D tensors (B, F, C, H, W) are for LTX Video currently, and we'll just test the C, H, W shape
     if len(test_shape) == 5:
         test_shape = test_shape[1:]
-    # Check all "aspect_ratio" values and raise error if any differ, with the two differing values:
-    first_aspect_ratio = None
-    for example in batch:
-        if isinstance(example, dict):
-            aspect_ratio = example["aspect_ratio"]
-        elif isinstance(example, TrainingSample):
-            aspect_ratio = example.aspect_ratio
-        if first_aspect_ratio is None:
-            first_aspect_ratio = aspect_ratio
-        if aspect_ratio != first_aspect_ratio:
-            error_msg = f"(id=({data_backend_id}) Aspect ratio mismatch: {aspect_ratio} != {first_aspect_ratio}"
-            logger.error(error_msg)
-            logger.error(f"Erroneous batch: {batch}")
-            raise ValueError(error_msg)
+
+    # For conditioning latents with multiple backends, we might have different aspect ratios
+    # Only enforce same aspect ratio for training latents
+    if not is_conditioning:
+        # Check all "aspect_ratio" values and raise error if any differ
+        first_aspect_ratio = None
+        for example in batch:
+            aspect_ratio = None
+            if isinstance(example, dict):
+                aspect_ratio = example["aspect_ratio"]
+            elif isinstance(example, TrainingSample):
+                if hasattr(example, "aspect_ratio"):
+                    aspect_ratio = example.aspect_ratio
+            if first_aspect_ratio is None and aspect_ratio is not None:
+                first_aspect_ratio = aspect_ratio
+            if (
+                aspect_ratio is not None
+                and first_aspect_ratio is not None
+                and aspect_ratio != first_aspect_ratio
+            ):
+                error_msg = f"(id=({data_backend_id}) Aspect ratio mismatch: {aspect_ratio} != {first_aspect_ratio}"
+                logger.error(error_msg)
+                logger.error(f"Erroneous batch: {batch}")
+                raise ValueError(error_msg)
+
+    # Rest of the validation remains the same
     for idx, latent in enumerate(latents):
-        # Are there any inf or nan positions?
         if latent is None:
             logger.debug(f"Error batch: {batch}")
-            error_msg = f"(id={data_backend_id}) File {filepaths[idx]} latent is None. Filepath: {filepaths[idx]}, data_backend_id: {data_backend_id}"
+            error_msg = f"(id={data_backend_id}) File {filepaths[idx]} latent is None."
             logger.error(error_msg)
             raise ValueError(error_msg)
         if torch.isnan(latent).any() or torch.isinf(latent).any():
-            # get the data_backend
             data_backend = StateTracker.get_data_backend(data_backend_id)
-            # remove the object
             data_backend["vaecache"].cache_data_backend.delete(filepaths[idx])
             raise ValueError(
-                f"(id={data_backend_id}) Deleted cache file {filepaths[idx]}: contains NaN or Inf values: {latent}"
-            )
-        if len(latent.shape) == 5:
-            if latent.shape[1:] != test_shape:
-                raise ValueError(
-                    f"(id={data_backend_id}) File {filepaths[idx]} latent shape mismatch: {latent.shape[1:]} != {test_shape}"
-                )
-        elif latent.shape != test_shape:
-            raise ValueError(
-                f"(id={data_backend_id}) File {filepaths[idx]} latent shape mismatch: {latent.shape} != {test_shape}"
+                f"(id={data_backend_id}) Deleted cache file {filepaths[idx]}: contains NaN or Inf values"
             )
 
-    debug_log(f" -> stacking {len(latents)} latents: {latents}")
-    return torch.stack(
-        [latent.to(StateTracker.get_accelerator().device) for latent in latents], dim=0
-    )
+        # For conditioning latents, allow different shapes
+        if not is_conditioning:
+            if len(latent.shape) == 5:
+                if latent.shape[1:] != test_shape:
+                    raise ValueError(
+                        f"(id={data_backend_id}) File {filepaths[idx]} latent shape mismatch: {latent.shape[1:]} != {test_shape}"
+                    )
+            elif latent.shape != test_shape:
+                raise ValueError(
+                    f"(id={data_backend_id}) File {filepaths[idx]} latent shape mismatch: {latent.shape} != {test_shape}"
+                )
+
+    # Don't stack if shapes differ (for conditioning with multiple aspect ratios)
+    if is_conditioning and len(set(l.shape for l in latents)) > 1:
+        # Return list of tensors instead of stacked tensor
+        return [latent.to(StateTracker.get_accelerator().device) for latent in latents]
+    else:
+        # Stack normally if all shapes match
+        return torch.stack(
+            [latent.to(StateTracker.get_accelerator().device) for latent in latents],
+            dim=0,
+        )
 
 
 def collate_fn(batch):
@@ -409,6 +430,10 @@ def collate_fn(batch):
     batch = batch[0]
     examples = batch["training_samples"]
     conditioning_examples = batch["conditioning_samples"]
+    has_conditioning_captions = False
+    if any([sample.caption is not None for sample in conditioning_examples]):
+        # we can use the conditioning captions instead of the principle captions, since they're available.
+        has_conditioning_captions = True
     is_regularisation_data = batch.get("is_regularisation_data", False)
     is_i2v_data = batch.get("is_i2v_data", False)
     if StateTracker.get_args().controlnet and len(examples) != len(
@@ -421,6 +446,7 @@ def collate_fn(batch):
         )
 
     # Randomly drop captions/conditioning based on dropout_probability
+    data_backend_id = None
     for example in examples:
         data_backend_id = example["data_backend_id"]
         if (
@@ -433,6 +459,7 @@ def collate_fn(batch):
         else:
             example["drop_conditioning"] = False
 
+    assert isinstance(data_backend_id, str)
     debug_log("Collect luminance values")
     if "luminance" in examples[0]:
         batch_luminance = [example["luminance"] for example in examples]
@@ -455,91 +482,139 @@ def collate_fn(batch):
             latent_batch, filepaths, data_backend_id, examples
         )
 
-    conditioning_filepaths = []
     training_filepaths = []
     conditioning_type = None
     conditioning_pixel_values = None
     conditioning_latents = None
 
+    # get multiple backend ids
+    data_backend = StateTracker.get_data_backend(data_backend_id)
+    conditioning_backends = data_backend.get("conditioning_data", [])
     if len(conditioning_examples) > 0:
+        # check the # of conditioning backends
         logger.debug(f"Found {len(conditioning_examples)} conditioning examples.")
-        if len(conditioning_examples) != len(examples):
+
+        if len(conditioning_examples) != len(examples) * len(conditioning_backends):
             raise ValueError(
-                "The number of conditioning examples must match the number of training examples."
+                "The number of conditioning examples must be divisible by the number of training samples."
             )
 
-        data_backend = StateTracker.get_data_backend(data_backend_id)
-        conditioning_data_backend_id = data_backend.get("conditioning_data", {}).get(
-            "id"
-        )
-
-        for cond_example, train_example in zip(conditioning_examples, examples):
+        conditioning_map = defaultdict(list)
+        for i, cond_example in enumerate(conditioning_examples):
+            train_example = examples[i % len(examples)]
+            cond_backend = conditioning_backends[i // len(examples)]
             # Ensure conditioning types match
             cond_type = cond_example.get_conditioning_type()
             if conditioning_type is None:
                 conditioning_type = cond_type
             elif cond_type != conditioning_type:
+                # todo: allow each cond backend to have a different type?
                 raise ValueError(
                     f"Conditioning type mismatch: {conditioning_type} != {cond_type}"
                     "\n-> Ensure all conditioning samples are of the same type."
                 )
 
             # Collect conditioning and training file paths
-            conditioning_filepaths.append(cond_example.image_path(basename_only=False))
+            conditioning_map[cond_backend["id"]].append(cond_example)
             training_filepaths.append(train_example["image_path"])
         debug_log(
-            f"Counted {len(conditioning_filepaths)} conditioning filepaths and {len(training_filepaths)} training filepaths."
+            f"Counted {len(conditioning_map)} conditioning filepaths and {len(training_filepaths)} training filepaths."
         )
 
-        if model.requires_conditioning_dataset():
+        assert model is not None
+        if conditioning_type is not None or model.requires_conditioning_dataset():
+            conditioning_latents = []
             if model.requires_conditioning_latents():
                 # Kontext / other latent-conditioned models / adapters
                 debug_log("Compute conditioning latents")
-                conditioning_latents = compute_latents(
-                    conditioning_filepaths,
-                    conditioning_data_backend_id,
-                    model,
-                )
-                debug_log(
-                    f"Conditioning latents computed: {len(conditioning_latents)} items."
-                )
+                for _backend_id, _examples in conditioning_map.items():
+                    _filepaths = [
+                        cond_example.image_path(basename_only=False)
+                        for cond_example in _examples
+                    ]
+                    _latents = compute_latents(
+                        _filepaths,
+                        _backend_id,
+                        model,
+                    )
+                    debug_log(
+                        f"Conditioning latents computed: {len(_latents)} items with shapes: {[l.shape for l in _latents]}"
+                    )
 
-                # unpack from dicts (vae-cache style) & shape-check
-                if isinstance(conditioning_latents[0], dict):
-                    conditioning_latents = [v["latents"] for v in conditioning_latents]
+                    # unpack from dicts (vae-cache style) & shape-check
+                    if isinstance(_latents[0], dict):
+                        _latents = [v["latents"] for v in _latents]
 
-                conditioning_latents = check_latent_shapes(
-                    conditioning_latents,
-                    conditioning_filepaths,
-                    conditioning_data_backend_id,
-                    conditioning_examples,
-                )
+                    _latents = check_latent_shapes(
+                        _latents,
+                        _filepaths,
+                        _backend_id,
+                        _examples,
+                    )
+                    conditioning_latents.append(_latents)
             else:
                 debug_log("Model may require conditioning pixels.")
-                conditioning_pixel_values = conditioning_pixels(
-                    conditioning_filepaths,
-                    training_filepaths,
-                    conditioning_data_backend_id,
-                    data_backend_id,
-                )
-                debug_log(
-                    f"Found {len(conditioning_pixel_values)} conditioning pixel values."
-                )
-                conditioning_pixel_values = torch.stack(
-                    [
-                        latent.to(StateTracker.get_accelerator().device)
-                        for latent in conditioning_pixel_values
+                conditioning_pixel_values = []
+                for _backend_id, _examples in conditioning_map.items():
+                    _filepaths = [
+                        cond_example.image_path(basename_only=False)
+                        for cond_example in _examples
                     ]
-                )
+                    _pixel_values = conditioning_pixels(
+                        _filepaths,
+                        training_filepaths,
+                        _backend_id,
+                        data_backend_id,
+                    )
+                    debug_log(f"Found {len(_pixel_values)} conditioning pixel values.")
+                    # stack up that pixel values list
+                    conditioning_pixel_values.append(
+                        torch.stack(
+                            [
+                                pixels.to(StateTracker.get_accelerator().device)
+                                for pixels in _pixel_values
+                            ]
+                        )
+                    )
 
     # Compute embeddings and handle dropped conditionings
     debug_log("Extract captions")
-    captions = [example["instance_prompt_text"] for example in examples]
-    debug_log("Pull cached text embeds")
-    text_embed_cache = StateTracker.get_data_backend(data_backend_id)[
-        "text_embed_cache"
-    ]
 
+    # Check if we're in combined mode with multiple conditioning datasets
+    sampling_mode = getattr(
+        StateTracker.get_args(), "conditioning_multidataset_sampling"
+    )
+    is_combined_mode = sampling_mode == "combined" and len(conditioning_backends) > 1
+
+    if has_conditioning_captions and not is_combined_mode:
+        # Only use conditioning captions in random mode or with single conditioning dataset
+        captions = [
+            example.caption if example.caption else example["instance_prompt_text"]
+            for example in conditioning_examples
+        ]
+        # If the caption is empty, we use the instance prompt text.
+        captions = [
+            caption if caption else example["instance_prompt_text"]
+            for caption, example in zip(captions, examples)
+        ]
+        debug_log(f"Pull cached text embeds. conditioning captions: {captions}")
+
+        # Get the appropriate text_embed_cache
+        if conditioning_backends:
+            text_embed_cache = conditioning_backends[0]["text_embed_cache"]
+        else:
+            text_embed_cache = StateTracker.get_data_backend(data_backend_id)[
+                "text_embed_cache"
+            ]
+    else:
+        # Use training captions (default behavior)
+        captions = [example["instance_prompt_text"] for example in examples]
+        debug_log(
+            f"Pull cached text embeds. no conditioning captions found or combined mode: {captions}"
+        )
+        text_embed_cache = StateTracker.get_data_backend(data_backend_id)[
+            "text_embed_cache"
+        ]
     if not text_embed_cache.disabled:
         all_text_encoder_outputs = compute_prompt_embeddings(
             captions, text_embed_cache, StateTracker.get_model()

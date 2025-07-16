@@ -72,7 +72,16 @@ from diffusers.models.embeddings import Timesteps, TimestepEmbedding
 def rope(pos: torch.Tensor, dim: int, theta: int) -> torch.Tensor:
     assert dim % 2 == 0, "The dimension must be even."
 
-    scale = torch.arange(0, dim, 2, dtype=torch.float64, device=pos.device) / dim
+    scale = (
+        torch.arange(
+            0,
+            dim,
+            2,
+            dtype=torch.float32 if torch.backends.mps.is_available() else torch.float64,
+            device=pos.device,
+        )
+        / dim
+    )
     omega = 1.0 / (theta**scale)
 
     batch_size, seq_length = pos.shape

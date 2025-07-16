@@ -2192,42 +2192,55 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         return latent_image_ids.to(device=device, dtype=dtype)
 
     def _encode_conditioning_image(
-        self, pil_image, device, dtype
+        self, pil_images: list[Image.Image], device, dtype
     ):  # -> (seq_latents, seq_ids)
-        # -- pick the closest resolution from the Kontext training set -------------
-        w, h = pil_image.size
-        aspect = w / h
-        _, W, H = min(
-            (abs(aspect - w0 / h0), w0, h0) for w0, h0 in PREFERED_KONTEXT_RESOLUTIONS
-        )
-        W, H = 2 * (W // 16), 2 * (H // 16)  # multiple of 16
-        pil_image = pil_image.resize((8 * W, 8 * H), Image.Resampling.LANCZOS)
+        packed_latents = []
+        packed_ids = []
+        offset_x = 0
+        offset_y = 0
+        for image in pil_images:
+            # -- pick the closest resolution from the Kontext training set -------------
+            w, h = image.size
+            aspect = w / h
+            _, W, H = min(
+                (abs(aspect - w0 / h0), w0, h0)
+                for w0, h0 in PREFERED_KONTEXT_RESOLUTIONS
+            )
+            W, H = 2 * (W // 16), 2 * (H // 16)  # multiple of 16
+            image = image.resize((8 * W, 8 * H), Image.Resampling.LANCZOS)
 
-        # -- VAE-encode & pack to (1, S, C*4) --------------------------------------
-        img = torch.tensor(np.asarray(pil_image), dtype=dtype, device=device).permute(
-            2, 0, 1
-        )
-        img = (img / 127.5 - 1.0).unsqueeze(0).to(dtype)
-        if self.vae.device != device:
-            self.vae.to(device)
-        with torch.no_grad():
-            z = self.vae.encode(img).latent_dist.sample().to(dtype)  # (1,C,H/8,W/8)
+            # -- VAE-encode & pack to (1, S, C*4) --------------------------------------
+            # might be nice to be able to batch the latents here
+            img = torch.tensor(np.asarray(image), dtype=dtype, device=device).permute(
+                2, 0, 1
+            )
+            img = (img / 127.5 - 1.0).unsqueeze(0).to(dtype)
+            if self.vae.device != device:
+                self.vae.to(device)
+            with torch.no_grad():
+                z = self.vae.encode(img).latent_dist.sample().to(dtype)  # (1,C,H/8,W/8)
 
-        z = (z - self.vae.config.shift_factor) * self.vae.config.scaling_factor
+            # CRITICAL: Pack the latents properly!
+            z = z.view(1, self.latent_channels, H // 2, 2, W // 2, 2)
+            z = z.permute(0, 2, 4, 1, 3, 5).reshape(
+                1, (H // 2) * (W // 2), self.latent_channels * 4
+            )
 
-        # CRITICAL: Pack the latents properly!
-        z = z.view(1, self.latent_channels, H // 2, 2, W // 2, 2)
-        z = z.permute(0, 2, 4, 1, 3, 5).reshape(
-            1, (H // 2) * (W // 2), self.latent_channels * 4
-        )
+            # -- seq IDs where ids[...,0] = 1 -----------------------------------------
+            # offset using the comfy scheme
+            x, y = (offset_x, 0) if H + offset_y > W + offset_x else (0, offset_y)
+            offset_x = max(offset_x, x + W)
+            offset_y = max(offset_y, y + H)
 
-        # -- seq IDs where ids[...,0] = 1 -----------------------------------------
-        ids = torch.zeros(H // 2, W // 2, 3, dtype=dtype, device=device)
-        ids[..., 0] = 1
-        ids[..., 1] = torch.arange(H // 2, device=device)[:, None]
-        ids[..., 2] = torch.arange(W // 2, device=device)[None, :]
-        ids = ids.view(1, -1, 3)
-        return z, ids
+            ids = torch.zeros(H // 2, W // 2, 3, dtype=dtype, device=device)
+            ids[..., 0] = 1
+            ids[..., 1] = torch.arange(H // 2, device=device)[:, None] + x // 2
+            ids[..., 2] = torch.arange(W // 2, device=device)[None, :] + y // 2
+            ids = ids.view(1, -1, 3)
+
+            packed_latents.append(z)
+            packed_ids.append(ids)
+        return torch.cat(packed_latents, dim=1), torch.cat(packed_ids, dim=1)
 
     @staticmethod
     def _pack_latents(latents, batch_size, num_channels_latents, height, width):
@@ -2321,7 +2334,9 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             Union[torch.FloatTensor, List[torch.FloatTensor]]
         ] = None,
         prompt_2: Optional[Union[str, List[str]]] = None,
-        conditioning_image: Union[None, str, Image.Image] = None,
+        conditioning_image: Union[
+            None, str, Image.Image, list[str], list[Image.Image]
+        ] = None,
         cond_start_step: int = 0,
         cond_end_step: Optional[int] = None,
         height: Optional[int] = None,
@@ -2521,10 +2536,17 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         cond_seq = None
         cond_seq_ids = None
         if conditioning_image is not None:
-            if isinstance(conditioning_image, (str, Path)):
-                conditioning_image = Image.open(conditioning_image).convert("RGB")
+            conditioning_images = (
+                conditioning_image
+                if isinstance(conditioning_image, list)
+                else [conditioning_image]
+            )
+            conditioning_images = [
+                Image.open(x).convert("RGB") if isinstance(x, (str, Path)) else x
+                for x in conditioning_images
+            ]
             cond_seq, cond_seq_ids = self._encode_conditioning_image(
-                conditioning_image, device=device, dtype=latents.dtype
+                conditioning_images, device=device, dtype=latents.dtype
             )
             # broadcast to batch if necessary
             cond_seq = cond_seq.expand(latents.size(0), -1, -1)

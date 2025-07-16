@@ -1,5 +1,6 @@
 import torch, os, logging
 import random
+from helpers.training import diffusers_overrides
 from helpers.models.common import (
     ImageModelFoundation,
     PredictionTypes,
@@ -42,7 +43,7 @@ class Flux(ImageModelFoundation):
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 16
     # The safe diffusers default value for LoRA training targets.
-    DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
+    DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0", "to_qkv"]
     # Only training the Attention blocks by default.
     DEFAULT_LYCORIS_TARGET = ["Attention"]
 
@@ -158,44 +159,57 @@ class Flux(ImageModelFoundation):
         self.controlnet.to(self.accelerator.device, self.config.weight_dtype)
 
     def fuse_qkv_projections(self):
-        if self.config.fuse_qkv_projections:
+        if not self.config.fuse_qkv_projections or self._qkv_projections_fused:
+            return
+
+        try:
             from helpers.models.flux.attention import FluxFusedFlashAttnProcessor3
 
-            if self.model is not None:
-                logger.info("Fusing QKV projections in the model..")
-                for module in self.model.modules():
-                    if isinstance(module, Attention):
-                        module.fuse_projections(fuse=True)
-            else:
-                logger.warning(
-                    "Model does not support QKV projection fusing. Skipping."
-                )
-            self.model.set_attn_processor(FluxFusedFlashAttnProcessor3())
-            if self.controlnet is not None:
-                logger.info("Fusing QKV projections in the ControlNet..")
-                for module in self.controlnet.modules():
-                    if isinstance(module, Attention):
-                        module.fuse_projections(fuse=True)
-                self.controlnet.set_attn_processor(FluxFusedFlashAttnProcessor3())
-            elif self.config.controlnet:
-                logger.warning(
-                    "ControlNet does not support QKV projection fusing. Skipping."
-                )
+            attn_processor = FluxFusedFlashAttnProcessor3()
+        except:
+            from helpers.models.flux.attention import FluxFusedSDPAProcessor
+
+            attn_processor = FluxFusedSDPAProcessor()
+
+        if self.model is not None:
+            logger.debug("Fusing QKV projections in the model..")
+            for module in self.model.modules():
+                if isinstance(module, Attention):
+                    module.fuse_projections(fuse=True)
+        else:
+            logger.warning("Model does not support QKV projection fusing. Skipping.")
+
+        self.unwrap_model(model=self.model).set_attn_processor(attn_processor)
+        if self.controlnet is not None:
+            logger.debug("Fusing QKV projections in the ControlNet..")
+            for module in self.controlnet.modules():
+                if isinstance(module, Attention):
+                    module.fuse_projections(fuse=True)
+            logger.debug(
+                "Setting ControlNet attention processor to FluxFusedFlashAttnProcessor3"
+            )
+            self.unwrap_model(model=self.controlnet).set_attn_processor(attn_processor)
+        elif self.config.controlnet:
+            logger.warning(
+                "ControlNet does not support QKV projection fusing. Skipping."
+            )
+        self._qkv_projections_fused = True
 
     def unfuse_qkv_projections(self):
         """
         Unfuse QKV projections in the model and ControlNet if they were fused.
         """
-        if not self.config.fuse_qkv_projections:
+        if not self.config.fuse_qkv_projections or not self._qkv_projections_fused:
             return
+        self._qkv_projections_fused = False
 
         if self.model is not None:
-            logger.info("Temporarily unfusing QKV projections in the model..")
+            logger.debug("Temporarily unfusing QKV projections in the model..")
             for module in self.model.modules():
                 if isinstance(module, Attention):
                     module.fuse_projections(fuse=False)
             if self.controlnet is not None:
-                logger.info("Tempoarily unfusing QKV projections in the ControlNet..")
+                logger.debug("Tempoarily unfusing QKV projections in the ControlNet..")
                 for module in self.controlnet.modules():
                     if isinstance(module, Attention):
                         module.fuse_projections(fuse=False)
@@ -319,20 +333,28 @@ class Flux(ImageModelFoundation):
         return prompt_embeds, pooled_prompt_embeds, time_ids, masks
 
     def prepare_batch_conditions(self, batch: dict, state: dict):
-        """
-        If collate gave us `conditioning_latents`, turn them into packed
-        sequence + ids that model_predict expects.
-        """
         cond = batch.get("conditioning_latents")
         if cond is None:
             logger.debug(f"No conditioning latents found :(")
             return batch  # nothing to do
+        # Check sampling mode
+        sampling_mode = state.get("args", {}).get(
+            "conditioning_multidataset_sampling", "random"
+        )
 
+        if sampling_mode == "random" and isinstance(cond, list) and len(cond) == 1:
+            # Random mode should have selected just one
+            cond = cond[0]
+        logger.debug(f"Inputs to kontext builder shapes: {cond.shape} {cond.dtype}")
+        # Build Kontext inputs
         packed_cond, cond_ids = build_kontext_inputs(
-            cond,
+            cond if isinstance(cond, list) else [cond],
             dtype=self.config.weight_dtype,
             device=self.accelerator.device,
             latent_channels=self.LATENT_CHANNEL_COUNT,
+        )
+        logger.debug(
+            f"Now we have kontext shapes: {packed_cond.shape} {packed_cond.dtype}"
         )
 
         batch["conditioning_packed_latents"] = packed_cond
@@ -407,6 +429,7 @@ class Flux(ImageModelFoundation):
             f"\n-> Timesteps shape: {prepared_batch['timesteps'].shape if hasattr(prepared_batch['timesteps'], 'shape') else None}, dtype: {prepared_batch['timesteps'].dtype if hasattr(prepared_batch['timesteps'], 'dtype') else None}"
             f"\n-> Guidance: {guidance}"
             f"\n-> Packed Noisy Latents shape: {packed_noisy_latents.shape if hasattr(packed_noisy_latents, 'shape') else None}, dtype: {packed_noisy_latents.dtype if hasattr(packed_noisy_latents, 'dtype') else None}"
+            f"\n-> Conditioning Packed Latents shape: {prepared_batch['conditioning_packed_latents'].shape if 'conditioning_packed_latents' in prepared_batch else 'N/A'}, dtype: {prepared_batch['conditioning_packed_latents'].dtype if 'conditioning_packed_latents' in prepared_batch else 'N/A'}"
         )
 
         if img_ids.dim() == 2:  # (S, 3)  -> (1, S, 3) -> (B, S, 3)
@@ -458,7 +481,7 @@ class Flux(ImageModelFoundation):
             if attention_mask.dim() == 3 and attention_mask.size(1) == 1:
                 attention_mask = attention_mask.squeeze(1)  # [B, 1, S] -> [B, S]
             flux_transformer_kwargs["attention_mask"] = attention_mask
-        model_pred = self.get_trained_component()(**flux_transformer_kwargs)[0]
+        model_pred = self.model(**flux_transformer_kwargs)[0]
         # Drop the reference-image tokens before unpacking
         if use_cond and self.config.model_flavour == "kontext":
             scene_seq_len = packed_noisy_latents.shape[
@@ -664,7 +687,7 @@ class Flux(ImageModelFoundation):
         if self.config.unet_attention_slice:
             if torch.backends.mps.is_available():
                 logger.warning(
-                    "Using attention slicing when training {self.NAME} on MPS can result in NaN errors on the first backward pass. If you run into issues, disable this option and reduce your batch size instead to reduce memory consumption."
+                    f"Using attention slicing when training {self.NAME} on MPS can result in NaN errors on the first backward pass. If you run into issues, disable this option and reduce your batch size instead to reduce memory consumption."
                 )
             if self.get_trained_component() is not None:
                 self.get_trained_component().set_attention_slice("auto")
@@ -771,6 +794,8 @@ class Flux(ImageModelFoundation):
                     "to_k",
                     "to_q",
                     "to_v",
+                    "to_qkv",
+                    "add_qkv_proj",
                     "add_k_proj",
                     "add_q_proj",
                     "add_v_proj",
@@ -783,6 +808,7 @@ class Flux(ImageModelFoundation):
                     "add_k_proj",
                     "add_q_proj",
                     "add_v_proj",
+                    "add_qkv_proj",
                     "to_add_out",
                 ]
             elif self.config.flux_lora_target == "context+ffs":
@@ -791,6 +817,7 @@ class Flux(ImageModelFoundation):
                     "add_k_proj",
                     "add_q_proj",
                     "add_v_proj",
+                    "add_qkv_proj",
                     "to_add_out",
                     "ff_context.net.0.proj",
                     "ff_context.net.2",
@@ -800,6 +827,8 @@ class Flux(ImageModelFoundation):
                     "to_k",
                     "to_q",
                     "to_v",
+                    "to_qkv",
+                    "add_qkv_proj",
                     "add_k_proj",
                     "add_q_proj",
                     "add_v_proj",
@@ -836,6 +865,8 @@ class Flux(ImageModelFoundation):
                     "to_k",
                     "to_q",
                     "to_v",
+                    "to_qkv",
+                    "add_qkv_proj",
                     "to_out.0",
                     "add_k_proj",
                     "add_q_proj",
@@ -853,6 +884,8 @@ class Flux(ImageModelFoundation):
                 return [
                     "to_q",
                     "to_k",
+                    "to_qkv",
+                    "add_qkv_proj",
                     "to_v",
                     "add_q_proj",
                     "add_k_proj",

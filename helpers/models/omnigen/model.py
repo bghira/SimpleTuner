@@ -37,10 +37,6 @@ class OmniGen(ImageModelFoundation):
         super().__init__(config, accelerator)
         self.processor = None
 
-    def post_vae_load_setup(self):
-        # we have to differently scale VAE inputs due to the patches.
-        self.AUTOENCODER_SCALING_FACTOR *= 2
-
     def get_transforms(self, dataset_type: str = "image"):
         from torchvision import transforms
 

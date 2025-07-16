@@ -372,6 +372,8 @@ class PromptHandler:
         Returns:
             _type_: _description_
         """
+        if caption_strategy is None:
+            return None
         if caption_strategy == "filename":
             instance_prompt = PromptHandler.prepare_instance_prompt_from_filename(
                 image_path=image_path,
@@ -411,7 +413,7 @@ class PromptHandler:
             return instance_prompt
         elif caption_strategy == "csv":
             return data_backend.get_caption(image_path)
-        else:
+        elif caption_strategy is not None:
             raise ValueError(
                 f"Unsupported caption strategy: {caption_strategy}. Supported: 'filename', 'textfile', 'parquet', 'instanceprompt', 'csv', 'huggingface'"
             )
@@ -437,7 +439,11 @@ class PromptHandler:
         backend_config = StateTracker.get_data_backend_config(
             data_backend_id=data_backend.id
         )
-        if type(all_image_files) == list and type(all_image_files[0]) == tuple:
+        if (
+            isinstance(all_image_files, list)
+            and len(all_image_files) > 0
+            and isinstance(all_image_files[0], tuple)
+        ):
             all_image_files = all_image_files[0][2]
         from tqdm import tqdm
 
@@ -489,7 +495,11 @@ class PromptHandler:
                         sampler_backend_id=data_backend.id,
                     )
                 elif caption_strategy == "instanceprompt":
-                    return [instance_prompt], []
+                    instance_prompts = instance_prompt
+                    if type(instance_prompt) == str:
+                        instance_prompt = instance_prompt.strip()
+                        instance_prompts = [instance_prompt]
+                    return instance_prompts, []
                 elif caption_strategy == "csv":
                     caption = data_backend.get_caption(image_path)
                 else:

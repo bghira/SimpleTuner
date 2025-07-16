@@ -114,7 +114,9 @@ class SaveHookManager:
             logger.info("Saving EMA model to disk.")
             trainable_parameters = [
                 p
-                for p in self.model.get_trained_component().parameters()
+                for p in self.model.get_trained_component(
+                    unwrap_model=False
+                ).parameters()
                 if p.requires_grad
             ]
             self.ema_model.store(trainable_parameters)
@@ -375,6 +377,7 @@ class SaveHookManager:
             )
         if self.args.use_ema and self.accelerator.is_main_process:
             try:
+                self.model.fuse_qkv_projections()  # if we don't fuse first, we might never load.
                 self.ema_model.load_state_dict(
                     os.path.join(input_dir, self.ema_model_subdir, "ema_model.pt")
                 )

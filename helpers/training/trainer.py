@@ -174,16 +174,21 @@ class Trainer:
             None if self.config.report_to.lower() == "none" else self.config.report_to
         )
         if not disable_accelerator:
+            accelerator_custom_config = [self.config.process_group_kwargs]
+            if self.config.mixed_precision == "fp8":
+                # we'll set up a TorchAO config for Accelerator, since otherwise it uses MS-AMP which
+                # is clunky and proprietary third party accelerator that is typically unavailable.
+                from accelerate.utils import AORecipeKwargs
+
+                accelerator_custom_config.append(AORecipeKwargs())
+
             self.accelerator = Accelerator(
                 gradient_accumulation_steps=self.config.gradient_accumulation_steps,
-                mixed_precision=(
-                    self.config.mixed_precision
-                    if not torch.backends.mps.is_available()
-                    else None
-                ),
+                mixed_precision=self.config.mixed_precision,
                 log_with=report_to,
                 project_config=self.config.accelerator_project_config,
-                kwargs_handlers=[self.config.process_group_kwargs],
+                kwargs_handlers=accelerator_custom_config,
+                dynamo_backend=os.environ.get("TRAINING_DYNAMO_BACKEND", "no"),
             )
         safety_check(args=self.config, accelerator=self.accelerator)
 
@@ -237,6 +242,7 @@ class Trainer:
             self.move_models(destination="accelerator")
             self._exit_on_signal()
             self.init_distillation()
+            self._exit_on_signal()
             self.init_validations()
             self._exit_on_signal()
             self.enable_sageattention_inference()
@@ -509,7 +515,8 @@ class Trainer:
             self.init_validation_prompts()
         except Exception as e:
             logger.error("Could not generate validation prompts.")
-            logger.error(e)
+
+            logger.exception("Could not generate validation prompts")
             raise e
 
         # We calculate the number of steps per epoch by dividing the number of images by the effective batch divisor.
@@ -800,42 +807,37 @@ class Trainer:
         self.enable_gradient_checkpointing()
 
     def init_distillation(self):
+        """Initialize distillation using the factory pattern."""
+        from helpers.distillation.factory import DistillerFactory
+        
         self.distiller = None
+        
         if self.config.distillation_method is None:
             return
-
-        if self.config.distillation_method == "dcm":
-            from helpers.distillation.dcm.distiller import DCMDistiller
-
-            # For LoRA with DCM regularization (single model)
-            dcm_config = {
-                "model_family": self.config.model_family,
-                "model_type": self.config.model_type,
-                "loss_type": self.model.PREDICTION_TYPE.value,
-                "pred_type": self.model.PREDICTION_TYPE.value,
-                # "windows": 16,
-                "is_regularisation_data": True,  # Use regularization approach
-            }
-            if self.config.distillation_config is not None:
-                if "dcm" in self.config.distillation_config:
-                    dcm_config.update(self.config.distillation_config["dcm"])
-                else:
-                    dcm_config.update(self.config.distillation_config)
-            logger.info(f"Distillation config: {dcm_config}")
-            if self.config.model_type == "lora":
-                logger.info(
-                    "Loading flow-matching distillation via low-rank adapter training."
-                )
-                self.distiller = DCMDistiller(
-                    teacher_model=self.model,
-                    noise_scheduler=self.noise_scheduler,
-                    config=dcm_config,
-                )
-            elif self.config.model_type == "full":
-                raise NotImplementedError(
-                    "Separate teacher/student models for distillation are not implemented yet."
-                )
-
+        
+        # Get prediction type from model
+        prediction_type = None
+        if hasattr(self.model, 'PREDICTION_TYPE'):
+            prediction_type = self.model.PREDICTION_TYPE.value
+        
+        try:
+            # Create distiller using factory
+            self.distiller = DistillerFactory.create_distiller(
+                method=self.config.distillation_method,
+                teacher_model=self.model,
+                noise_scheduler=self.noise_scheduler,
+                config=vars(self.config),  # Convert config object to dict
+                model_type=self.config.model_type,
+                model_family=getattr(self.config, 'model_family', None),
+                prediction_type=prediction_type,
+                student_model=None,  # Set this if using separate student model
+            )
+            
+            if self.distiller:
+                logger.info(f"Successfully initialized {self.config.distillation_method.upper()} distiller")
+        except Exception as e:
+            logger.error(f"Failed to initialize distillation: {e}")
+            raise
     def enable_gradient_checkpointing(self):
         if self.config.gradient_checkpointing:
             logger.debug("Enabling gradient checkpointing.")
@@ -886,7 +888,9 @@ class Trainer:
                 return self.lycoris_wrapped_network.parameters()
         return [
             param
-            for param in self.model.get_trained_component().parameters()
+            for param in self.model.get_trained_component(
+                unwrap_model=False
+            ).parameters()
             if param.requires_grad
         ]
 
@@ -987,7 +991,7 @@ class Trainer:
                 f"DeepSpeed Optimizer arguments, weight_decay={self.config.adam_weight_decay} eps={self.config.adam_epsilon}, extra_arguments={extra_optimizer_args}"
             )
             self.optimizer = create_optimizer_with_param_groups(
-                self.model.get_trained_component(),
+                self.model.get_trained_component(unwrap_model=False),
                 optimizer_class,
                 self.params_to_optimize,
                 use_parameter_groups=True,  # Enable weight decay separation
@@ -1075,6 +1079,8 @@ class Trainer:
         self.ema_model = None
         if not self.config.use_ema:
             return
+        # this runs on all processes to ensure shapes are aligned.
+        self.model.pre_ema_creation()
         if self.accelerator.is_main_process:
             logger.info("Using EMA. Creating EMAModel.")
 
@@ -1105,6 +1111,8 @@ class Trainer:
             )
 
         self.accelerator.wait_for_everyone()
+        # same about running on all processes to ensure alignment.
+        self.model.post_ema_creation()
 
     def init_hooks(self):
         from helpers.training.save_hooks import SaveHookManager
@@ -1146,7 +1154,7 @@ class Trainer:
             structured_data={"message": "Moving weights to GPU"},
             message_type="init_prepare_models_begin",
         )
-        primary_model = self.model.get_trained_component()
+        primary_model = self.model.get_trained_component(unwrap_model=False)
         results = self.accelerator.prepare(
             primary_model, lr_scheduler, self.optimizer, self.train_dataloaders[0]
         )
@@ -1464,6 +1472,7 @@ class Trainer:
                     logger.warning(
                         "WandB is disabled, and Accelerate was not quite happy about it."
                     )
+                    self.accelerator.trackers = []
                 else:
                     logger.error(f"Could not initialize trackers: {e}")
                     self._send_webhook_raw(
@@ -1616,9 +1625,9 @@ class Trainer:
         )
         if self.model.get_trained_component() is not None:
             if self.config.is_quantized:
-                self.model.get_trained_component().to(target_device)
+                self.model.get_trained_component(unwrap_model=False).to(target_device)
             else:
-                self.model.get_trained_component().to(
+                self.model.get_trained_component(unwrap_model=False).to(
                     target_device, dtype=self.config.weight_dtype
                 )
         if getattr(self.accelerator, "_lycoris_wrapped_network", None) is not None:
@@ -1660,7 +1669,7 @@ class Trainer:
                 )
 
         if self.config.controlnet:
-            self.model.get_trained_component().train()
+            self.model.get_trained_component(unwrap_model=False).train()
             self.model.unwrap_model(self.model.model).to(
                 device=target_device, dtype=self.config.weight_dtype
             )
@@ -1897,81 +1906,6 @@ class Trainer:
     def get_prediction_target(self, prepared_batch: dict):
         return self.model.get_prediction_target(prepared_batch)
 
-    def _calculate_loss(
-        self,
-        prepared_batch: dict,
-        model_pred,
-        target,
-        apply_conditioning_mask: bool = True,
-    ):
-        # Compute the per-pixel loss without reducing over spatial dimensions
-        if self.config.flow_matching:
-            # For flow matching, compute the per-pixel squared differences
-            loss = (
-                model_pred.float() - target.float()
-            ) ** 2  # Shape: (batch_size, C, H, W)
-        elif self.config.snr_gamma is None or self.config.snr_gamma == 0:
-            training_logger.debug("Calculating loss")
-            loss = self.config.snr_weight * F.mse_loss(
-                model_pred.float(), target.float(), reduction="none"
-            )  # Shape: (batch_size, C, H, W)
-        else:
-            # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
-            # Since we predict the noise instead of x_0, the original formulation is slightly changed.
-            # This is discussed in Section 4.2 of the same paper.
-            training_logger.debug("Using min-SNR loss")
-            snr = compute_snr(prepared_batch["timesteps"], self.noise_scheduler)
-            snr_divisor = snr
-            if self.noise_scheduler.config.prediction_type == "v_prediction":
-                snr_divisor = snr + 1
-
-            training_logger.debug("Calculating MSE loss weights using SNR as divisor")
-            mse_loss_weights = (
-                torch.stack(
-                    [
-                        snr,
-                        self.config.snr_gamma
-                        * torch.ones_like(prepared_batch["timesteps"]),
-                    ],
-                    dim=1,
-                ).min(dim=1)[0]
-                / snr_divisor
-            )  # Shape: (batch_size,)
-
-            # Compute the per-pixel MSE loss without reduction
-            loss = F.mse_loss(
-                model_pred.float(), target.float(), reduction="none"
-            )  # Shape: (batch_size, C, H, W)
-
-            # Reshape mse_loss_weights for broadcasting and apply to loss
-            mse_loss_weights = mse_loss_weights.view(
-                -1, 1, 1, 1
-            )  # Shape: (batch_size, 1, 1, 1)
-            loss = loss * mse_loss_weights  # Shape: (batch_size, C, H, W)
-
-        # Mask the loss using any conditioning data
-        conditioning_type = prepared_batch.get("conditioning_type")
-        if conditioning_type == "mask" and apply_conditioning_mask:
-            # Adapted from:
-            # https://github.com/kohya-ss/sd-scripts/blob/main/library/custom_train_functions.py#L482
-            mask_image = (
-                prepared_batch["conditioning_pixel_values"]
-                .to(dtype=loss.dtype, device=loss.device)[:, 0]
-                .unsqueeze(1)
-            )  # Shape: (batch_size, 1, H', W')
-            mask_image = torch.nn.functional.interpolate(
-                mask_image, size=loss.shape[2:], mode="area"
-            )  # Resize to match loss spatial dimensions
-            mask_image = mask_image / 2 + 0.5  # Normalize to [0,1]
-            loss = loss * mask_image  # Element-wise multiplication
-
-        # Reduce the loss by averaging over channels and spatial dimensions
-        loss = loss.mean(dim=list(range(1, len(loss.shape))))  # Shape: (batch_size,)
-
-        # Further reduce the loss by averaging over the batch dimension
-        loss = loss.mean()  # Scalar value
-        return loss
-
     def checkpoint_state_remove(self, output_dir, checkpoint):
         removing_checkpoint = os.path.join(output_dir, checkpoint)
         try:
@@ -2046,6 +1980,10 @@ class Trainer:
         # schedulefree optim needs the optimizer to be in eval mode to save the state (and then back to train after)
         self.mark_optimizer_eval()
         self.accelerator.save_state(save_path_tmp)
+        if getattr(self, "distiller", None) is not None:
+            self.distiller.on_save_checkpoint(
+                self.state["global_step"], save_path_tmp
+            )
         self.mark_optimizer_train()
         for _, backend in StateTracker.get_data_backends().items():
             if "sampler" in backend:
@@ -2104,8 +2042,8 @@ class Trainer:
                 )
                 break
             self._epoch_rollover(epoch)
-            self.model.get_trained_component().train()
-            training_models = [self.model.get_trained_component()]
+            self.model.get_trained_component(unwrap_model=False).train()
+            training_models = [self.model.get_trained_component(unwrap_model=False)]
             if (
                 "lora" in self.config.model_type
                 and self.config.train_text_encoder
