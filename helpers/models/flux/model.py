@@ -342,10 +342,13 @@ class Flux(ImageModelFoundation):
             "conditioning_multidataset_sampling", "random"
         )
 
-        if sampling_mode == "random" and isinstance(cond, list) and len(cond) == 1:
+        if sampling_mode == "random" and isinstance(cond, list) and len(cond) >= 1:
             # Random mode should have selected just one
             cond = cond[0]
-        logger.debug(f"Inputs to kontext builder shapes: {cond.shape} {cond.dtype}")
+        if isinstance(cond, list):
+            logger.debug(f"Inputs to kontext builder shapes: {[d.shape for d in cond]} {cond[0].dtype}")
+        else:
+            logger.debug(f"Inputs to kontext builder shapes: {cond.shape} {cond.dtype}")
         # Build Kontext inputs
         packed_cond, cond_ids = build_kontext_inputs(
             cond if isinstance(cond, list) else [cond],
