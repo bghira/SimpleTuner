@@ -638,7 +638,10 @@ def sort_dataset_configs_by_dependencies(data_backend_config):
         elif config.get("conditioning_type") == "reference_strict":
             # Look for the dataset that points to this one
             for other_config in enabled_configs:
-                if other_config.get("conditioning_data") == dataset_id or (isinstance(other_config.get("conditioning_data"), list) and dataset_id in other_config["conditioning_data"]):
+                if other_config.get("conditioning_data") == dataset_id or (
+                    isinstance(other_config.get("conditioning_data"), list)
+                    and dataset_id in other_config["conditioning_data"]
+                ):
                     source_id = other_config.get("id")
                     break
 
