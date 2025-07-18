@@ -105,10 +105,15 @@ EXAMPLE_DOC_STRING = """
 TEXT_ENCODER_NAME = "text_encoder"
 TRANSFORMER_NAME = "transformer"
 
+_torch_device = (
+    "mps"
+    if torch.backends.mps.is_available()
+    else "cuda" if torch.cuda.is_available() else "cpu"
+)
 
-@torch.cuda.amp.autocast(dtype=torch.float32)
+
+@torch.amp.autocast(_torch_device, dtype=torch.float32)
 def optimized_scale(positive_flat, negative_flat):
-
     # Calculate dot production
     dot_product = torch.sum(positive_flat * negative_flat, dim=1, keepdim=True)
 
