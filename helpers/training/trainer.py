@@ -809,17 +809,17 @@ class Trainer:
     def init_distillation(self):
         """Initialize distillation using the factory pattern."""
         from helpers.distillation.factory import DistillerFactory
-        
+
         self.distiller = None
-        
+
         if self.config.distillation_method is None:
             return
-        
+
         # Get prediction type from model
         prediction_type = None
-        if hasattr(self.model, 'PREDICTION_TYPE'):
+        if hasattr(self.model, "PREDICTION_TYPE"):
             prediction_type = self.model.PREDICTION_TYPE.value
-        
+
         try:
             # Create distiller using factory
             self.distiller = DistillerFactory.create_distiller(
@@ -828,16 +828,19 @@ class Trainer:
                 noise_scheduler=self.noise_scheduler,
                 config=vars(self.config),  # Convert config object to dict
                 model_type=self.config.model_type,
-                model_family=getattr(self.config, 'model_family', None),
+                model_family=getattr(self.config, "model_family", None),
                 prediction_type=prediction_type,
                 student_model=None,  # Set this if using separate student model
             )
-            
+
             if self.distiller:
-                logger.info(f"Successfully initialized {self.config.distillation_method.upper()} distiller")
+                logger.info(
+                    f"Successfully initialized {self.config.distillation_method.upper()} distiller"
+                )
         except Exception as e:
             logger.error(f"Failed to initialize distillation: {e}")
             raise
+
     def enable_gradient_checkpointing(self):
         if self.config.gradient_checkpointing:
             logger.debug("Enabling gradient checkpointing.")
@@ -1981,9 +1984,7 @@ class Trainer:
         self.mark_optimizer_eval()
         self.accelerator.save_state(save_path_tmp)
         if getattr(self, "distiller", None) is not None:
-            self.distiller.on_save_checkpoint(
-                self.state["global_step"], save_path_tmp
-            )
+            self.distiller.on_save_checkpoint(self.state["global_step"], save_path_tmp)
         self.mark_optimizer_train()
         for _, backend in StateTracker.get_data_backends().items():
             if "sampler" in backend:
