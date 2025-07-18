@@ -158,8 +158,31 @@ class Flux(ImageModelFoundation):
             )
         self.controlnet.to(self.accelerator.device, self.config.weight_dtype)
 
+    def enable_tinygrad_backend(self):
+        if (
+            "tinygrad" not in self.config.attention_mechanism
+            or self._qkv_projections_fused
+            or self._tinygrad_enabled
+        ):
+            return
+        logger.info("Enabling Tinygrad backend for attention processors.")
+
+        from helpers.models.flux.attention_tinygrad import (
+            set_tinygrad_attention_processors,
+        )
+
+        set_tinygrad_attention_processors(self.unwrap_model(model=self.model))
+        if self.controlnet is not None:
+            set_tinygrad_attention_processors(self.unwrap_model(model=self.controlnet))
+
+        self._tinygrad_enabled = True
+
     def fuse_qkv_projections(self):
-        if not self.config.fuse_qkv_projections or self._qkv_projections_fused:
+        if (
+            not self.config.fuse_qkv_projections
+            or self._qkv_projections_fused
+            or self._tinygrad_enabled
+        ):
             return
 
         try:
