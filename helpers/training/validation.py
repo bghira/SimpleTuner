@@ -1386,6 +1386,22 @@ class Validation:
             separator_width: Width of separator between images
             labels: Text labels for [left, middle, right] images
         """
+        # if multi condition images ,we need concat they as left image firstly
+        if isinstance(left_image, list):     
+            if all(isinstance(img, Image.Image) for img in left_image):
+                widths, heights = zip(*(img.size for img in left_image))
+                total_width = sum(widths)
+                max_height = max(heights)
+                new_image = Image.new('RGB', (total_width, max_height))
+                x_offset = 0
+                for img in left_image:
+                    new_image.paste(img, (x_offset, 0))
+                    x_offset += img.size[0]
+                left_image=new_image
+            else:
+                 logger.error(
+                f"Condition in left_image are not all PIL image format"
+            )
         left_width, left_height = left_image.size
         middle_width, middle_height = middle_image.size
         right_width, right_height = right_image.size
