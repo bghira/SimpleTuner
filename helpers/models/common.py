@@ -992,7 +992,7 @@ class ModelFoundation(ABC):
             and getattr(possibly_cached_pipeline, self.MODEL_TYPE.value, None) is None
         ):
             # if the transformer or unet aren't in the cached pipeline, we'll add it.
-            setattr(possibly_cached_pipeline, self.MODEL_TYPE.value, self.model)
+            setattr(possibly_cached_pipeline, self.MODEL_TYPE.value, self.unwrap_model(model=self.model))
         # attach the vae to the cached pipeline.
         setattr(possibly_cached_pipeline, "vae", self.get_vae())
         if self.text_encoders is not None:
