@@ -1114,6 +1114,8 @@ class Validation:
         skip_execution: bool = False,
     ):
         self._update_state()
+        if self.validation_prompt_metadata is None:
+            return self
         content = self.validation_prompt_metadata.get("validation_prompts", None)
         has_validation_prompts = content is not None and len(content) > 0
         current_step_aligns_with_interval = self.should_perform_intermediary_validation(
