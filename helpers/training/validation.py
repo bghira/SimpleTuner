@@ -1510,7 +1510,7 @@ class Validation:
         validation_image_result,
         validation_input_image,
         separator_width=5,
-        labels=["input", "output"],
+        labels=["input", "checkpoint"],
     ):
         """
         Stitch validation input image to the left of the validation output.
@@ -1938,7 +1938,7 @@ class Validation:
                             self.stitch_validation_input_image(
                                 validation_image_result=img,
                                 validation_input_image=validation_input_image,
-                                labels=(["input", "output"]),
+                                labels=(["input", f"step {StateTracker.get_global_step()}"]),
                             )
                             for img in display_validation_results
                         ]
@@ -1960,7 +1960,7 @@ class Validation:
                             ):
                                 labels_to_use = [
                                     "input",
-                                    "base weights",
+                                    "base model",
                                     f"step {StateTracker.get_global_step()}",
                                 ]
 
@@ -1981,6 +1981,9 @@ class Validation:
                                     self.stitch_benchmark_image(
                                         validation_image_result=original_img,
                                         benchmark_image=benchmark_image,
+                                        labels=[
+                                            "base model", f"step {StateTracker.get_global_step()}",
+                                        ]
                                     )
                                 )
 
