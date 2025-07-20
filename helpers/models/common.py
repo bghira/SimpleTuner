@@ -941,7 +941,7 @@ class ModelFoundation(ABC):
         if "watermark" in signature.parameters:
             pipeline_kwargs["watermark"] = None
         if load_base_model:
-            pipeline_kwargs[self.MODEL_TYPE.value] = self.model
+            pipeline_kwargs[self.MODEL_TYPE.value] = self.unwrap_model(model=self.model)
         else:
             pipeline_kwargs[self.MODEL_TYPE.value] = None
 
