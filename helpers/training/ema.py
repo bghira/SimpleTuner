@@ -274,7 +274,7 @@ class EMAModel:
         if self.foreach:
             if (
                 is_transformers_available()
-                and transformers.deepspeed.is_deepspeed_zero3_enabled()
+                and transformers.integrations.deepspeed.is_deepspeed_zero3_enabled()
             ):
                 context_manager = deepspeed.zero.GatheredParameters(
                     parameters, modifier_rank=None
