@@ -484,9 +484,9 @@ class ModelFoundation(ABC):
         Moves the model to the target device.
         """
         if self.model is not None:
-            self.model.to(target_device)
+            self.unwrap_model(model=self.model).to(target_device)
         if self.controlnet is not None:
-            self.controlnet.to(target_device)
+            self.unwrap_model(model=self.controlnet).to(target_device)
         if self.vae is not None and self.vae.device != "meta":
             self.vae.to(target_device)
         if self.text_encoders is not None:
@@ -832,7 +832,7 @@ class ModelFoundation(ABC):
                 self.model, "set_gradient_checkpointing_interval"
             ):
                 logger.info("Setting gradient checkpointing interval..")
-                self.model.set_gradient_checkpointing_interval(
+                self.unwrap_model(model=self.model).set_gradient_checkpointing_interval(
                     int(self.config.gradient_checkpointing_interval)
                 )
         self.fuse_qkv_projections()
@@ -911,13 +911,13 @@ class ModelFoundation(ABC):
             setattr(
                 active_pipelines[pipeline_type],
                 self.MODEL_TYPE.value,
-                self.model,
+                self.unwrap_model(model=self.model),
             )
             if self.config.controlnet:
                 setattr(
                     active_pipelines[pipeline_type],
                     "controlnet",
-                    self.controlnet,
+                    self.unwrap_model(model=self.controlnet),
                 )
             return active_pipelines[pipeline_type]
 
@@ -941,7 +941,7 @@ class ModelFoundation(ABC):
         if "watermark" in signature.parameters:
             pipeline_kwargs["watermark"] = None
         if load_base_model:
-            pipeline_kwargs[self.MODEL_TYPE.value] = self.model
+            pipeline_kwargs[self.MODEL_TYPE.value] = self.unwrap_model(model=self.model)
         else:
             pipeline_kwargs[self.MODEL_TYPE.value] = None
 
@@ -992,7 +992,7 @@ class ModelFoundation(ABC):
             and getattr(possibly_cached_pipeline, self.MODEL_TYPE.value, None) is None
         ):
             # if the transformer or unet aren't in the cached pipeline, we'll add it.
-            setattr(possibly_cached_pipeline, self.MODEL_TYPE.value, self.model)
+            setattr(possibly_cached_pipeline, self.MODEL_TYPE.value, self.unwrap_model(model=self.model))
         # attach the vae to the cached pipeline.
         setattr(possibly_cached_pipeline, "vae", self.get_vae())
         if self.text_encoders is not None:
