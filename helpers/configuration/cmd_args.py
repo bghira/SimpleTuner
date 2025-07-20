@@ -1350,7 +1350,6 @@ def get_argument_parser():
     parser.add_argument(
         "--ema_foreach_disable",
         action="store_true",
-        default=True,
         help=(
             "By default, we use torch._foreach functions for updating the shadow parameters, which should be fast."
             " When provided, this option will disable the foreach methods and use vanilla EMA updates."
