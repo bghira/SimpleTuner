@@ -535,6 +535,43 @@ def apply_to_image_or_video(func):
 
     return wrapper
 
+def get_font_for_labels(font_size=28):
+    """
+    Helper function to get a font for labels with fallback options.
+    
+    Args:
+        font_size (int): The desired font size
+        
+    Returns:
+        ImageFont object or None if no font could be loaded
+    """
+    font = None
+    font_candidates = [
+        "DejaVuSans-Bold.ttf",
+        "DejaVuSans.ttf",
+        "LiberationSans-Regular.ttf",
+        "Arial.ttf",
+        "arial.ttf",
+        "FreeSans.ttf",
+        "NotoSans-Regular.ttf",
+    ]
+    
+    for font_name in font_candidates:
+        try:
+            font = ImageFont.truetype(font_name, font_size)
+            break
+        except IOError:
+            continue
+            
+    if font is None:
+        # As a fallback, create a simple default font
+        try:
+            font = ImageFont.load_default()
+        except Exception:
+            font = None  # Last resort
+            
+    return font
+
 
 @apply_to_image_or_video
 def draw_text_on_image(
@@ -626,17 +663,7 @@ def _stitch_single_pair(left_image, right_image, separator_width=5, labels=None)
 
     # Add labels if provided
     if labels:
-        font = None
-        font_candidates = ["DejaVuSans-Bold.ttf", "DejaVuSans.ttf", "Arial.ttf"]
-        for font_name in font_candidates:
-            try:
-                font = ImageFont.truetype(font_name, 28)
-                break
-            except IOError:
-                continue
-        if font is None:
-            font = ImageFont.load_default()
-
+        font = get_font_for_labels()
         if labels[0] is not None:
             draw.text(
                 (10, 10),
@@ -948,21 +975,7 @@ class Validation:
             draw.line([(x, 0), (x, new_height)], fill=line_color)
 
         # Add labels
-        font = None
-        font_candidates = [
-            "DejaVuSans-Bold.ttf",
-            "DejaVuSans.ttf",
-            "Arial.ttf",
-            "arial.ttf",
-        ]
-        for font_name in font_candidates:
-            try:
-                font = ImageFont.truetype(font_name, 28)
-                break
-            except IOError:
-                continue
-        if font is None:
-            font = ImageFont.load_default()
+        font = get_font_for_labels()
 
         if labels[0] is not None:
             draw.text(
@@ -1432,29 +1445,7 @@ class Validation:
 
         # Add labels if provided
         # Try to use a larger, more universally available font
-        font = None
-        font_candidates = [
-            "DejaVuSans-Bold.ttf",
-            "DejaVuSans.ttf",
-            "LiberationSans-Regular.ttf",
-            "Arial.ttf",
-            "arial.ttf",
-            "FreeSans.ttf",
-            "NotoSans-Regular.ttf",
-        ]
-        for font_name in font_candidates:
-            try:
-                font = ImageFont.truetype(font_name, 28)
-                break
-            except IOError:
-                continue
-        if font is None:
-            # As a fallback, create a simple default font with a larger size
-            try:
-                # Try to use PIL's default font but scale it up
-                font = ImageFont.load_default()
-            except Exception:
-                font = None  # Last resort, will error if used
+        font = get_font_for_labels()
 
         if labels[0] is not None:
             draw.text(
@@ -1519,7 +1510,7 @@ class Validation:
         validation_image_result,
         validation_input_image,
         separator_width=5,
-        labels=["input", "output"],
+        labels=["input", "checkpoint"],
     ):
         """
         Stitch validation input image to the left of the validation output.
@@ -1595,10 +1586,7 @@ class Validation:
         draw = ImageDraw.Draw(new_image)
 
         # Use a default font
-        try:
-            font = ImageFont.truetype("arial.ttf", 36)
-        except IOError:
-            font = ImageFont.load_default()
+        font = get_font_for_labels()
 
         # Add text labels if provided
         if labels[0] is not None:
@@ -1950,7 +1938,7 @@ class Validation:
                             self.stitch_validation_input_image(
                                 validation_image_result=img,
                                 validation_input_image=validation_input_image,
-                                labels=(["input", "output"]),
+                                labels=(["input", f"step {StateTracker.get_global_step()}"]),
                             )
                             for img in display_validation_results
                         ]
@@ -1972,7 +1960,7 @@ class Validation:
                             ):
                                 labels_to_use = [
                                     "input",
-                                    "base weights",
+                                    "base model",
                                     f"step {StateTracker.get_global_step()}",
                                 ]
 
@@ -1993,6 +1981,9 @@ class Validation:
                                     self.stitch_benchmark_image(
                                         validation_image_result=original_img,
                                         benchmark_image=benchmark_image,
+                                        labels=[
+                                            "base model", f"step {StateTracker.get_global_step()}",
+                                        ]
                                     )
                                 )
 
@@ -2021,29 +2012,7 @@ class Validation:
 
                     # Add the validation prompt to the bottom of the entire image using a decent looking font, in a margin, centred width-wise.
                     # Scan for fonts to use available.
-                    font = None
-                    font_candidates = [
-                        "DejaVuSans-Bold.ttf",
-                        "DejaVuSans.ttf",
-                        "LiberationSans-Regular.ttf",
-                        "Arial.ttf",
-                        "arial.ttf",
-                        "FreeSans.ttf",
-                        "NotoSans-Regular.ttf",
-                    ]
-                    for font_name in font_candidates:
-                        try:
-                            font = ImageFont.truetype(font_name, 36)
-                            break
-                        except IOError:
-                            continue
-                    if font is None:
-                        # As a fallback, create a simple default font with a larger size
-                        try:
-                            # Try to use PIL's default font but scale it up
-                            font = ImageFont.load_default()
-                        except Exception:
-                            font = None
+                    font = get_font_for_labels()
                     if font is not None:
                         # Add the validation prompt text to the bottom of each image
                         for idx, validation_result in enumerate(
