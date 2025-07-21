@@ -1,6 +1,7 @@
 import json, logging, os
+
 logger = logging.getLogger(__name__)
-logger.setLevel(os.environ.get('SIMPLETUNER_LOG_LEVEL', 'INFO'))
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 from fastapi import APIRouter, HTTPException, status, BackgroundTasks
 from pydantic import BaseModel
 from helpers.training.trainer import Trainer
@@ -48,7 +49,12 @@ class Configuration:
 
     def _config_clear(self):
         # clear prev configs from disk first
-        for file in ["config/multidatabackend.json", "config/webhooks.json", "config/lycoris_config.json", "config/user_prompt_library.json"]:
+        for file in [
+            "config/multidatabackend.json",
+            "config/webhooks.json",
+            "config/lycoris_config.json",
+            "config/user_prompt_library.json",
+        ]:
             if os.path.exists(file):
                 os.remove(file)
 
@@ -67,15 +73,21 @@ class Configuration:
             print(f"LyCORIS config present: {job_config.lycoris_config}")
             with open("config/lycoris_config.json", "w") as f:
                 f.write(json.dumps(job_config.lycoris_config, indent=4))
-                job_config.trainer_config["lycoris_config"] = "config/lycoris_config.json"
+                job_config.trainer_config["lycoris_config"] = (
+                    "config/lycoris_config.json"
+                )
 
-        user_prompt_library_path = job_config.trainer_config.get('--user_prompt_library', None)
+        user_prompt_library_path = job_config.trainer_config.get(
+            "--user_prompt_library", None
+        )
         print(f"User prompt library path: {user_prompt_library_path}")
         if user_prompt_library_path and hasattr(job_config, "user_prompt_library"):
             print(f"User prompt library present: {job_config.user_prompt_library}")
             with open(user_prompt_library_path, "w") as f:
                 f.write(json.dumps(job_config.user_prompt_library, indent=4))
-                job_config.trainer_config["user_prompt_library"] = "config/user_prompt_library.json"
+                job_config.trainer_config["user_prompt_library"] = (
+                    "config/user_prompt_library.json"
+                )
 
     async def check(self, job_config: ConfigModel):
         """
@@ -114,7 +126,7 @@ class Configuration:
         """
         Run the training job in a separate thread.
         """
-        print("Received call")
+        logger.info("Received call")
         trainer = APIState.get_trainer()
         current_job_id = APIState.get_state("current_job_id")
         job_id = job_config.job_id
@@ -128,7 +140,9 @@ class Configuration:
         self._config_save(job_config)
         try:
             logger.info("Creating new Trainer instance..")
-            trainer = Trainer(config=normalize_args(job_config.trainer_config), job_id=job_id)
+            trainer = Trainer(
+                config=normalize_args(job_config.trainer_config), job_id=job_id
+            )
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
