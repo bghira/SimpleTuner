@@ -12,6 +12,10 @@ from helpers.models.common import ModelFoundation
 logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
+lora_mode_labels = {
+    "singlora": "SingLoRA",
+    "standard": "Standard",
+}
 licenses = {
     "sd1x": "openrail++",
     "sd2x": "openrail++",
@@ -160,7 +164,16 @@ def _model_load(args, repo_id: str = None, model=None):
         repo_id = f"{hf_user_name}/{repo_id}" if hf_user_name else repo_id
     if "lora" in args.model_type:
         if args.lora_type.lower() == "standard":
+            lora_imports = ""
+            if args.peft_lora_mode == "singlora":
+                # we'll import the SingLoRA setup function
+                lora_imports += "from peft_singlora import setup_singlora\n"
+                lora_imports += (
+                    "setup_singlora() # overwrites the nn.Linear mapping in PEFT.\n"
+                )
+
             output = (
+                f"{lora_imports}"
                 f"model_id = '{args.pretrained_model_name_or_path}'"
                 f"\nadapter_id = '{repo_id if repo_id is not None else args.output_dir}'"
                 f"\npipeline = DiffusionPipeline.from_pretrained(model_id, torch_dtype={StateTracker.get_weight_dtype()}) # loading directly in bf16"
@@ -329,6 +342,7 @@ def lora_info(args):
 - LoRA Alpha: {args.lora_alpha}
 - LoRA Dropout: {args.lora_dropout}
 - LoRA initialisation style: {args.lora_init_type}
+- LoRA mode: {lora_mode_labels.get(args.peft_lora_mode, "Standard LoRA")}
     """
     if args.lora_type.lower() == "lycoris":
         lycoris_config_file = args.lycoris_config
