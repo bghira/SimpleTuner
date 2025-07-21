@@ -391,6 +391,16 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--peft_lora_mode",
+        type=str.lower,
+        choices=["standard", "singlora"],
+        default="standard",
+        help=(
+            "When training using --model_type=lora, you may specify a different type of LoRA to train here."
+            " standard refers to training a vanilla LoRA via PEFT, singlora refers to training with SingLoRA, a more efficient representation."
+        ),
+    )
+    parser.add_argument(
         "--lora_init_type",
         type=str,
         choices=["default", "gaussian", "loftq", "olora", "pissa"],
