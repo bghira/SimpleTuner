@@ -2843,6 +2843,27 @@ quality = ["black", "hf-doc-builder", "ruff (>=0.9.2,<0.10.0)"]
 test = ["black", "black", "datasets", "diffusers", "hf-doc-builder", "hf-doc-builder", "parameterized", "protobuf", "pytest", "pytest-cov", "pytest-xdist", "ruff (>=0.9.2,<0.10.0)", "scipy", "sentencepiece"]
 
 [[package]]
+name = "peft-singlora"
+version = "0.1.2"
+description = "SingLoRA: Single Low-Rank Adaptation for PEFT"
+optional = false
+python-versions = ">=3.8"
+groups = ["main"]
+files = [
+    {file = "peft_singlora-0.1.2-py3-none-any.whl", hash = "sha256:cb03d6b12d76a8c05c4989626dbb764f136ce6ac391112a95e03c8484db69ce8"},
+    {file = "peft_singlora-0.1.2.tar.gz", hash = "sha256:165e2e6ea819a48412537fb0da9bd06b32024dd4d6b4259eebebb9d0a5cbd637"},
+]
+
+[package.dependencies]
+peft = ">=0.7.0"
+torch = ">=1.13.0"
+transformers = ">=4.34.0"
+
+[package.extras]
+dev = ["black (>=23.0)", "flake8 (>=6.0)", "isort (>=5.12)", "mypy (>=1.0)", "pytest (>=7.0)", "pytest-cov (>=4.0)"]
+examples = ["accelerate (>=0.21.0)", "datasets (>=2.14.0)", "tqdm (>=4.65.0)"]
+
+[[package]]
 name = "pillow"
 version = "11.3.0"
 description = "Python Imaging Library (Fork)"
@@ -5657,4 +5678,4 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<3.13"
-content-hash = "f2307848bc592e7927ca8b0b657ff7a58546e8d1c4a5c42bd2ba871c051f25f4"
+content-hash = "cb6e0ed42144ef111510336ce1cd5e10a85b87536bd9cbeae15bb06073a33843"
