@@ -727,7 +727,7 @@ class StableDiffusionXLPipeline(
             force_zeros_for_empty_prompt=force_zeros_for_empty_prompt
         )
         self.validation_refiner_aesthetic_score = validation_refiner_aesthetic_score
-        self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
+        self.vae_scale_factor = 8
         self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor)
 
         if self.unet is not None and hasattr(self.unet.config, "sample_size"):
