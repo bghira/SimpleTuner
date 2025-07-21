@@ -1634,6 +1634,11 @@ class ImageModelFoundation(ModelFoundation):
             )
         else:
             # Standard LoRA for everything else
+            if self.config.peft_lora_mode is not None:
+                if self.config.peft_lora_mode.lower() == "singlora":
+                    from peft_singlora import setup_singlora
+                    logger.info("Enabling SingLoRA for LoRA training.")
+                    setup_singlora()
             self.lora_config = LoraConfig(
                 r=self.config.lora_rank,
                 lora_alpha=(
