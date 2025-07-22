@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from helpers.training.ema import EMAModel
 from helpers.training.wrappers import unwrap_model
 from helpers.training.multi_process import _get_rank as get_rank
+from diffusers.utils.state_dict_utils import StateDictType
 from diffusers.utils import (
     convert_state_dict_to_diffusers,
     convert_unet_state_dict_to_peft,
@@ -127,7 +128,8 @@ class SaveHookManager:
                         unwrap_model(
                             self.accelerator, self.model.get_trained_component()
                         )
-                    )
+                    ),
+                    original_type=StateDictType.PEFT,
                 ),
             }
             self.model.save_lora_weights(
@@ -155,21 +157,30 @@ class SaveHookManager:
             ):
                 # unet_lora_layers or transformer_lora_layers
                 lora_save_parameters[f"{self.model.MODEL_SUBFOLDER}_lora_layers"] = (
-                    convert_state_dict_to_diffusers(get_peft_model_state_dict(model))
+                    convert_state_dict_to_diffusers(
+                        get_peft_model_state_dict(model),
+                        original_type=StateDictType.PEFT,
+                    )
                 )
             elif isinstance(
                 model,
                 type(unwrap_model(self.accelerator, self.model.get_text_encoder(0))),
             ):
                 lora_save_parameters["text_encoder_lora_layers"] = (
-                    convert_state_dict_to_diffusers(get_peft_model_state_dict(model))
+                    convert_state_dict_to_diffusers(
+                        get_peft_model_state_dict(model),
+                        original_type=StateDictType.PEFT,
+                    )
                 )
             elif isinstance(
                 model,
                 type(unwrap_model(self.accelerator, self.model.get_text_encoder(1))),
             ):
                 lora_save_parameters["text_encoder_1_lora_layers"] = (
-                    convert_state_dict_to_diffusers(get_peft_model_state_dict(model))
+                    convert_state_dict_to_diffusers(
+                        get_peft_model_state_dict(model),
+                        original_type=StateDictType.PEFT,
+                    )
                 )
             elif not self.use_deepspeed_optimizer:
                 raise ValueError(f"unexpected save model: {model.__class__}")
