@@ -169,7 +169,7 @@ def _model_load(args, repo_id: str = None, model=None):
                 # we'll import the SingLoRA setup function
                 lora_imports += "from peft_singlora import setup_singlora\n"
                 lora_imports += (
-                    "setup_singlora() # overwrites the nn.Linear mapping in PEFT.\n"
+                    "setup_singlora() # overwrites the nn.Linear mapping in PEFT.\n\n"
                 )
 
             output = (
@@ -320,9 +320,12 @@ def model_type(args):
     prefix = "ControlNet " if args.controlnet or args.control else ""
     if "lora" in args.model_type:
         if "standard" == args.lora_type.lower():
+            if args.peft_lora_mode == "singlora":
+                return f"{prefix}PEFT SingLoRA"
             if (
                 StateTracker.get_model() is not None
                 and StateTracker.get_model().MODEL_TYPE.value == "unet"
+                and args.controlnet
             ):
                 # SDXL and SD1x use LoHa for ControlNet adapters.
                 return f"{prefix}PEFT LoHa"
@@ -533,7 +536,7 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
   - Number of GPUs: {StateTracker.get_accelerator().num_processes}
 - Gradient checkpointing: {StateTracker.get_args().gradient_checkpointing}
 - Prediction type: {model.PREDICTION_TYPE.value}{model.custom_model_card_schedule_info()}
-- Optimizer: {StateTracker.get_args().optimizer}{f' (config={optimizer_config})' if optimizer_config is not None else ''}
+- Optimizer: {StateTracker.get_args().optimizer}{f' (config={optimizer_config})' if optimizer_config not in [None, ''] else ''}
 - Trainable parameter precision: {'Pure BF16' if torch.backends.mps.is_available() or StateTracker.get_args().mixed_precision == "bf16" else StateTracker.get_args().mixed_precision}
 - Base model precision: `{args.base_model_precision}`
 - Caption dropout probability: {StateTracker.get_args().caption_dropout_probability or 0.0 * 100}%
