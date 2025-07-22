@@ -2527,7 +2527,6 @@ class Trainer:
                                     else None
                                 ),
                                 webhook_handler=self.webhook_handler,
-                                private=True,
                             )
                         except Exception as e:
                             logger.error(
@@ -2673,5 +2672,5 @@ class Trainer:
                 )
 
             if self.config.push_to_hub and self.accelerator.is_main_process:
-                self.hub_manager.upload_model(validation_images, self.webhook_handler, private=True)
+                self.hub_manager.upload_model(validation_images, self.webhook_handler)
         self.accelerator.end_training()
