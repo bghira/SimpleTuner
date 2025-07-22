@@ -532,10 +532,6 @@ class ModelFoundation(ABC):
                     **self.config.vae_kwargs
                 )
             except Exception as e:
-                logger.warning(
-                    "Couldn't load VAE with default path. Trying without a subfolder.."
-                )
-                logger.error(e)
                 self.config.vae_kwargs["subfolder"] = None
                 self.vae = self.AUTOENCODER_CLASS.from_pretrained(
                     **self.config.vae_kwargs
@@ -992,7 +988,11 @@ class ModelFoundation(ABC):
             and getattr(possibly_cached_pipeline, self.MODEL_TYPE.value, None) is None
         ):
             # if the transformer or unet aren't in the cached pipeline, we'll add it.
-            setattr(possibly_cached_pipeline, self.MODEL_TYPE.value, self.unwrap_model(model=self.model))
+            setattr(
+                possibly_cached_pipeline,
+                self.MODEL_TYPE.value,
+                self.unwrap_model(model=self.model),
+            )
         # attach the vae to the cached pipeline.
         setattr(possibly_cached_pipeline, "vae", self.get_vae())
         if self.text_encoders is not None:
@@ -1637,6 +1637,7 @@ class ImageModelFoundation(ModelFoundation):
             if self.config.peft_lora_mode is not None:
                 if self.config.peft_lora_mode.lower() == "singlora":
                     from peft_singlora import setup_singlora
+
                     logger.info("Enabling SingLoRA for LoRA training.")
                     setup_singlora()
             self.lora_config = LoraConfig(
