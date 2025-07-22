@@ -559,3 +559,29 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
     logger.debug(f"Model Card:\n{model_card_content}")
     with open(os.path.join(repo_folder, "README.md"), "w", encoding="utf-8") as f:
         f.write(yaml_content + model_card_content)
+
+
+def save_training_config(repo_folder: str = None, config: dict = None):
+    import types
+
+    def make_serializable(obj):
+        if isinstance(obj, dict):
+            return {k: make_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [make_serializable(v) for v in obj]
+        elif hasattr(obj, "__dict__"):
+            return make_serializable(vars(obj))
+        elif isinstance(obj, types.SimpleNamespace):
+            return make_serializable(vars(obj))
+        elif isinstance(obj, (str, int, float, bool)) or obj is None:
+            return obj
+        else:
+            return str(obj)
+
+    if repo_folder is None:
+        raise ValueError("The repo_folder must be specified and not be None.")
+    config_path = os.path.join(repo_folder, "simpletuner_config.json")
+    serializable_config = make_serializable(config)
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(serializable_config, f, indent=4)
+    logger.debug(f"Saved model config to {config_path}")
