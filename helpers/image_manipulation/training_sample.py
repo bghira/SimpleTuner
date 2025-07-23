@@ -521,7 +521,7 @@ class TrainingSample:
         Returns:
             tuple: The limited size as (width, height).
         """
-        if self.model.MAXIMUM_CANVAS_SIZE is None:
+        if self.model is None or self.model.MAXIMUM_CANVAS_SIZE is None:
             logger.debug("No canvas size constraint required, value is None.")
             return size_to_check
         max_size = self.model.MAXIMUM_CANVAS_SIZE
