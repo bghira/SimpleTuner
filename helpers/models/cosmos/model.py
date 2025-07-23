@@ -1,5 +1,6 @@
 import torch, os, logging
 from helpers.models.cosmos.pipeline import Cosmos2TextToImagePipeline
+from helpers.models.cosmos.transformer import CosmosTransformer3DModel
 from helpers.models.common import (
     VideoModelFoundation,
     PredictionTypes,
@@ -11,7 +12,6 @@ from transformers import (
     T5EncoderModel,
 )
 from diffusers import AutoencoderKLWan
-from diffusers import CosmosTransformer3DModel
 from helpers.training.multi_process import _get_rank
 
 logger = logging.getLogger(__name__)
