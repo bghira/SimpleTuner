@@ -11,6 +11,10 @@ class TrainingHost:
         self.router.add_api_route("/", self.get_job, methods=["GET"])
         self.router.add_api_route("/state", self.get_host_state, methods=["GET"])
         self.router.add_api_route("/cancel", self.cancel_job, methods=["POST"])
+        self.router.add_api_route(
+            "/status/{job_id}", self.get_job_status, methods=["GET"]
+        )
+        self.router.add_api_route("/jobs", self.list_jobs, methods=["GET"])
 
     def get_host_state(self):
         """
@@ -37,3 +41,35 @@ class TrainingHost:
         APIState.cancel_job()
 
         return {"result": "Job marked for cancellation."}
+
+    def get_job_status(self, job_id: str):
+        """
+        Get status of a training job
+        """
+        active_jobs = APIState.get_active_jobs()
+        if job_id not in active_jobs:
+            return {"detail": f"Job ID '{job_id}' not found"}, 404
+
+        job = active_jobs[job_id]
+        return {
+            "job_id": job_id,
+            "status": job["status"],
+            "start_time": job["start_time"],
+            "end_time": job.get("end_time"),
+        }
+
+    def list_jobs(self):
+        """
+        List all active training jobs
+        """
+        active_jobs = APIState.get_active_jobs()
+        return {
+            "jobs": [
+                {
+                    "job_id": job_id,
+                    "status": job["status"],
+                    "start_time": job["start_time"],
+                }
+                for job_id, job in active_jobs.items()
+            ]
+        }

@@ -346,7 +346,9 @@ class Flux(ImageModelFoundation):
             # Random mode should have selected just one
             cond = cond[0]
         if isinstance(cond, list):
-            logger.debug(f"Inputs to kontext builder shapes: {[d.shape for d in cond]} {cond[0].dtype}")
+            logger.debug(
+                f"Inputs to kontext builder shapes: {[d.shape for d in cond]} {cond[0].dtype}"
+            )
         else:
             logger.debug(f"Inputs to kontext builder shapes: {cond.shape} {cond.dtype}")
         # Build Kontext inputs

@@ -15,7 +15,9 @@ def linear_quadratic_schedule(num_steps, threshold_noise, linear_steps=None):
         linear_steps = num_steps // 2
     if num_steps == 8:
         linear_steps = 6
-    logger.debug("linear_steps...... %s %s %s", linear_steps, threshold_noise, num_steps)
+    logger.debug(
+        "linear_steps...... %s %s %s", linear_steps, threshold_noise, num_steps
+    )
     linear_sigma_schedule = [
         i * threshold_noise / linear_steps for i in range(linear_steps)
     ]

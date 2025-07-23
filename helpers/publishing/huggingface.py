@@ -2,7 +2,7 @@ import os
 import logging
 from pathlib import Path
 from helpers.training.state_tracker import StateTracker
-from helpers.publishing.metadata import save_model_card
+from helpers.publishing.metadata import save_model_card, save_training_config
 
 from huggingface_hub import create_repo, upload_folder, upload_file
 
@@ -29,6 +29,8 @@ class HubManager:
         self.collected_data_backend_str = None
 
     def _create_repo(self):
+        if not self.config.push_to_hub:
+            return
         self._repo_id = create_repo(
             repo_id=self.config.hub_model_id or self.config.tracker_project_name,
             exist_ok=True,
@@ -53,6 +55,8 @@ class HubManager:
         )
 
     def _load_hub_token(self):
+        if not self.config.push_to_hub:
+            return None
         token_path = os.path.join(os.path.expanduser("~"), ".cache/huggingface/token")
         if os.path.exists(token_path):
             with open(token_path, "r") as f:
@@ -66,6 +70,12 @@ class HubManager:
         self.validation_shortnames = validation_prompts.get("validation_shortnames", [])
 
     def upload_validation_folder(self, webhook_handler=None, override_path=None):
+        if webhook_handler:
+            webhook_handler.send(
+                message=f"Uploading {'model' if override_path is None else 'intermediary checkpoint'} validation samples to Hugging Face Hub as `{self.repo_id}`."
+            )
+        if not self.config.push_to_hub:
+            return
         try:
             upload_folder(
                 repo_id=self._repo_id,
@@ -79,10 +89,11 @@ class HubManager:
             logger.error(f"Error uploading validation images to Hugging Face Hub: {e}")
 
     def upload_model(self, validation_images, webhook_handler=None, override_path=None):
-        if webhook_handler:
-            webhook_handler.send(
-                message=f"Uploading {'model' if override_path is None else 'intermediary checkpoint'} to Hugging Face Hub as `{self.repo_id}`."
-            )
+        repo_folder = override_path or os.path.join(
+            self.config.output_dir,
+            "pipeline" if "lora" not in self.config.model_type else "",
+        )
+        save_training_config(repo_folder=repo_folder, config=self.config)
         save_model_card(
             model=self.model,
             repo_id=self.repo_id,
@@ -92,12 +103,14 @@ class HubManager:
             prompt=self.config.validation_prompt,
             validation_prompts=self.validation_prompts,
             validation_shortnames=self.validation_shortnames,
-            repo_folder=override_path
-            or os.path.join(
-                self.config.output_dir,
-                "pipeline" if "lora" not in self.config.model_type else "",
-            ),
+            repo_folder=repo_folder,
         )
+        if not self.config.push_to_hub:
+            return
+        if webhook_handler:
+            webhook_handler.send(
+                message=f"Uploading {'model' if override_path is None else 'intermediary checkpoint'} to Hugging Face Hub as `{self.repo_id}`."
+            )
 
         try:
             self.upload_validation_folder(
@@ -128,6 +141,8 @@ class HubManager:
             )
 
     def upload_full_model(self, override_path=None):
+        if not self.config.push_to_hub:
+            return
         folder_path = os.path.join(self.config.output_dir, "pipeline")
         try:
             upload_folder(
@@ -139,6 +154,8 @@ class HubManager:
             logger.error(f"Failed to upload pipeline to hub: {e}")
 
     def upload_lora_model(self, override_path=None):
+        if not self.config.push_to_hub:
+            return
         lora_weights_path = os.path.join(
             override_path or self.config.output_dir, LORA_SAFETENSORS_FILENAME
         )
@@ -162,6 +179,8 @@ class HubManager:
             logger.error(f"Failed to upload LoRA weights to hub: {e}")
 
     def upload_ema_model(self, override_path=None):
+        if not self.config.push_to_hub or not self.config.use_ema:
+            return
         try:
             check_ema_paths = ["transformer_ema", "unet_ema", "controlnet_ema", "ema"]
             # if any of the folder names are present in the checkpoint dir, we will upload them too
@@ -235,6 +254,8 @@ class HubManager:
                         f"image_{idx}_{sub_idx}.png",
                     )
                     image.save(image_path, format="PNG")
+                    if not self.config.push_to_hub:
+                        continue
                     attempt = 0
                     while attempt < 3:
                         attempt += 1

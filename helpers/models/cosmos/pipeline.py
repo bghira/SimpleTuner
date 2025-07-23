@@ -33,7 +33,7 @@ from diffusers.utils.torch_utils import randn_tensor
 from diffusers.video_processor import VideoProcessor
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.pipelines.cosmos.pipeline_output import CosmosImagePipelineOutput
-
+from helpers.models.flux.pipeline import FluxLoraLoaderMixin
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
 
@@ -132,7 +132,7 @@ def retrieve_timesteps(
     return timesteps, num_inference_steps
 
 
-class Cosmos2TextToImagePipeline(DiffusionPipeline):
+class Cosmos2TextToImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
     r"""
     Pipeline for text-to-image generation using [Cosmos Predict2](https://github.com/nvidia-cosmos/cosmos-predict2).
 

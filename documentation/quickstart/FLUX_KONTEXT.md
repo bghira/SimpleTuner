@@ -74,7 +74,8 @@ The `conditioning_data` field in the edit dataset should point to the reference 
   {
     "id": "my-edited-images",
     "type": "local",
-    "instance_data_dir": "/path/to/datasets/edited-images",     // <-- use absolute paths
+    "cache_dir_vae": "/cache/vae/flux/kontext/edited-images",   // <-- where VAE outputs are stored
+    "instance_data_dir": "/datasets/edited-images",             // <-- use absolute paths
     "conditioning_data": [
       "my-reference-images"                                     // <‑‑ this should be your "id" of the reference set
                                                                 // you could specify a second set to alternate between or combine them, e.g. ["reference-images", "reference-images2"]
@@ -85,7 +86,8 @@ The `conditioning_data` field in the edit dataset should point to the reference 
   {
     "id": "my-reference-images",
     "type": "local",
-    "instance_data_dir": "/path/to/datasets/reference-images",  // <-- use absolute paths
+    "cache_dir_vae": "/cache/vae/flux/kontext/ref-images",      // <-- where VAE outputs are stored. must be different from other dataset VAE paths.
+    "instance_data_dir": "/datasets/reference-images",          // <-- use absolute paths
     "conditioning_type": "reference_strict",                    // <‑‑ if this is set to reference_loose, the images are cropped independently of the edit images
     "resolution": 1024,
     "caption_strategy": null,                                   // <‑‑ no captions needed for references, but if available, will be used INSTEAD of the edit captions

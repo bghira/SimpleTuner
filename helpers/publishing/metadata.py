@@ -12,6 +12,10 @@ from helpers.models.common import ModelFoundation
 logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
+lora_mode_labels = {
+    "singlora": "SingLoRA",
+    "standard": "Standard",
+}
 licenses = {
     "sd1x": "openrail++",
     "sd2x": "openrail++",
@@ -160,7 +164,16 @@ def _model_load(args, repo_id: str = None, model=None):
         repo_id = f"{hf_user_name}/{repo_id}" if hf_user_name else repo_id
     if "lora" in args.model_type:
         if args.lora_type.lower() == "standard":
+            lora_imports = ""
+            if args.peft_lora_mode == "singlora":
+                # we'll import the SingLoRA setup function
+                lora_imports += "from peft_singlora import setup_singlora\n"
+                lora_imports += (
+                    "setup_singlora() # overwrites the nn.Linear mapping in PEFT.\n\n"
+                )
+
             output = (
+                f"{lora_imports}"
                 f"model_id = '{args.pretrained_model_name_or_path}'"
                 f"\nadapter_id = '{repo_id if repo_id is not None else args.output_dir}'"
                 f"\npipeline = DiffusionPipeline.from_pretrained(model_id, torch_dtype={StateTracker.get_weight_dtype()}) # loading directly in bf16"
@@ -307,9 +320,12 @@ def model_type(args):
     prefix = "ControlNet " if args.controlnet or args.control else ""
     if "lora" in args.model_type:
         if "standard" == args.lora_type.lower():
+            if args.peft_lora_mode == "singlora":
+                return f"{prefix}PEFT SingLoRA"
             if (
                 StateTracker.get_model() is not None
                 and StateTracker.get_model().MODEL_TYPE.value == "unet"
+                and args.controlnet
             ):
                 # SDXL and SD1x use LoHa for ControlNet adapters.
                 return f"{prefix}PEFT LoHa"
@@ -329,6 +345,7 @@ def lora_info(args):
 - LoRA Alpha: {args.lora_alpha}
 - LoRA Dropout: {args.lora_dropout}
 - LoRA initialisation style: {args.lora_init_type}
+- LoRA mode: {lora_mode_labels.get(args.peft_lora_mode, "Standard LoRA")}
     """
     if args.lora_type.lower() == "lycoris":
         lycoris_config_file = args.lycoris_config
@@ -519,7 +536,7 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
   - Number of GPUs: {StateTracker.get_accelerator().num_processes}
 - Gradient checkpointing: {StateTracker.get_args().gradient_checkpointing}
 - Prediction type: {model.PREDICTION_TYPE.value}{model.custom_model_card_schedule_info()}
-- Optimizer: {StateTracker.get_args().optimizer}{optimizer_config if optimizer_config is not None else ''}
+- Optimizer: {StateTracker.get_args().optimizer}{f' (config={optimizer_config})' if optimizer_config not in [None, ''] else ''}
 - Trainable parameter precision: {'Pure BF16' if torch.backends.mps.is_available() or StateTracker.get_args().mixed_precision == "bf16" else StateTracker.get_args().mixed_precision}
 - Base model precision: `{args.base_model_precision}`
 - Caption dropout probability: {StateTracker.get_args().caption_dropout_probability or 0.0 * 100}%
@@ -542,3 +559,29 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
     logger.debug(f"Model Card:\n{model_card_content}")
     with open(os.path.join(repo_folder, "README.md"), "w", encoding="utf-8") as f:
         f.write(yaml_content + model_card_content)
+
+
+def save_training_config(repo_folder: str = None, config: dict = None):
+    import types
+
+    def make_serializable(obj):
+        if isinstance(obj, dict):
+            return {k: make_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [make_serializable(v) for v in obj]
+        elif hasattr(obj, "__dict__"):
+            return make_serializable(vars(obj))
+        elif isinstance(obj, types.SimpleNamespace):
+            return make_serializable(vars(obj))
+        elif isinstance(obj, (str, int, float, bool)) or obj is None:
+            return obj
+        else:
+            return str(obj)
+
+    if repo_folder is None:
+        raise ValueError("The repo_folder must be specified and not be None.")
+    config_path = os.path.join(repo_folder, "simpletuner_config.json")
+    serializable_config = make_serializable(config)
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(serializable_config, f, indent=4)
+    logger.debug(f"Saved model config to {config_path}")
