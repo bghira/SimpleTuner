@@ -349,7 +349,7 @@ class Trainer:
         self.state["global_step"] = 0
         self.state["global_resume_step"] = 0
         self.state["first_epoch"] = 1
-        self.state["args"]= self.config.__dict__
+        self.state["args"] = self.config.__dict__
         self.timesteps_buffer = []
         self.guidance_values_list = []
         self.train_loss = 0.0

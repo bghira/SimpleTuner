@@ -110,6 +110,7 @@ class ModelFoundation(ABC):
 
     MODEL_LICENSE = "other"
     CONTROLNET_LORA_STATE_DICT_PREFIX = "controlnet"
+    MAXIMUM_CANVAS_SIZE = None
 
     def __init__(self, config: dict, accelerator):
         self.config = config
