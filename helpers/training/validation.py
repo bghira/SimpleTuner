@@ -535,13 +535,14 @@ def apply_to_image_or_video(func):
 
     return wrapper
 
+
 def get_font_for_labels(font_size=28):
     """
     Helper function to get a font for labels with fallback options.
-    
+
     Args:
         font_size (int): The desired font size
-        
+
     Returns:
         ImageFont object or None if no font could be loaded
     """
@@ -555,21 +556,21 @@ def get_font_for_labels(font_size=28):
         "FreeSans.ttf",
         "NotoSans-Regular.ttf",
     ]
-    
+
     for font_name in font_candidates:
         try:
             font = ImageFont.truetype(font_name, font_size)
             break
         except IOError:
             continue
-            
+
     if font is None:
         # As a fallback, create a simple default font
         try:
             font = ImageFont.load_default()
         except Exception:
             font = None  # Last resort
-            
+
     return font
 
 
@@ -1401,6 +1402,20 @@ class Validation:
             separator_width: Width of separator between images
             labels: Text labels for [left, middle, right] images
         """
+        # if multi condition images ,we need concat they as left image firstly
+        if isinstance(left_image, list):
+            if all(isinstance(img, Image.Image) for img in left_image):
+                widths, heights = zip(*(img.size for img in left_image))
+                total_width = sum(widths)
+                max_height = max(heights)
+                new_image = Image.new("RGB", (total_width, max_height))
+                x_offset = 0
+                for img in left_image:
+                    new_image.paste(img, (x_offset, 0))
+                    x_offset += img.size[0]
+                left_image = new_image
+            else:
+                logger.error(f"Condition in left_image are not all PIL image format")
         left_width, left_height = left_image.size
         middle_width, middle_height = middle_image.size
         right_width, right_height = right_image.size
@@ -1938,7 +1953,9 @@ class Validation:
                             self.stitch_validation_input_image(
                                 validation_image_result=img,
                                 validation_input_image=validation_input_image,
-                                labels=(["input", f"step {StateTracker.get_global_step()}"]),
+                                labels=(
+                                    ["input", f"step {StateTracker.get_global_step()}"]
+                                ),
                             )
                             for img in display_validation_results
                         ]
@@ -1982,8 +1999,9 @@ class Validation:
                                         validation_image_result=original_img,
                                         benchmark_image=benchmark_image,
                                         labels=[
-                                            "base model", f"step {StateTracker.get_global_step()}",
-                                        ]
+                                            "base model",
+                                            f"step {StateTracker.get_global_step()}",
+                                        ],
                                     )
                                 )
 

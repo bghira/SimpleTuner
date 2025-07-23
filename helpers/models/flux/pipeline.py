@@ -345,7 +345,6 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
             "framework": "pytorch",
         }
 
-        
         state_dict, metadata = _fetch_state_dict(
             pretrained_model_name_or_path_or_dict=pretrained_model_name_or_path_or_dict,
             weight_name=weight_name,
@@ -360,7 +359,7 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
             user_agent=user_agent,
             allow_pickle=allow_pickle,
         )
-        
+
         is_dora_scale_present = any("dora_scale" in k for k in state_dict)
         if is_dora_scale_present:
             warn_msg = "It seems like you are using a DoRA checkpoint that is not compatible in Diffusers at the moment. So, we are going to filter out the keys associated to 'dora_scale` from the state dict. If you think this is a mistake please open an issue https://github.com/huggingface/diffusers/issues/new."

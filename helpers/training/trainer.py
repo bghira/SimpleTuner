@@ -74,7 +74,12 @@ from torch.distributions import Beta
 try:
     from lycoris import LycorisNetwork
 except:
-    print("[ERROR] Lycoris not available. Please install ")
+    print("[ERROR] Lycoris not available. Please install.")
+
+try:
+    from peft_singlora import update_singlora_global_step
+except:
+    pass
 from tqdm.auto import tqdm
 
 from diffusers import (
@@ -344,6 +349,7 @@ class Trainer:
         self.state["global_step"] = 0
         self.state["global_resume_step"] = 0
         self.state["first_epoch"] = 1
+        self.state["args"]= self.config.__dict__
         self.timesteps_buffer = []
         self.guidance_values_list = []
         self.train_loss = 0.0
@@ -422,19 +428,20 @@ class Trainer:
     def init_huggingface_hub(self, access_token: str = None):
         # Handle the repository creation
         self.hub_manager = None
-        if not self.accelerator.is_main_process or not self.config.push_to_hub:
+        if not self.accelerator.is_main_process:
             return
         if access_token:
             huggingface_hub.login(token=access_token)
         self.hub_manager = HubManager(config=self.config, model=self.model)
-        try:
-            StateTracker.set_hf_user(huggingface_hub.whoami())
-            logger.info(
-                f"Logged into Hugging Face Hub as '{StateTracker.get_hf_username()}'"
-            )
-        except Exception as e:
-            logger.error(f"Failed to log into Hugging Face Hub: {e}")
-            raise e
+        if self.config.push_to_hub:
+            try:
+                StateTracker.set_hf_user(huggingface_hub.whoami())
+                logger.info(
+                    f"Logged into Hugging Face Hub as '{StateTracker.get_hf_username()}'"
+                )
+            except Exception as e:
+                logger.error(f"Failed to log into Hugging Face Hub: {e}")
+                raise e
 
     def init_preprocessing_models(self, move_to_accelerator: bool = True):
         # image embeddings
@@ -522,7 +529,7 @@ class Trainer:
         # We calculate the number of steps per epoch by dividing the number of images by the effective batch divisor.
         # Gradient accumulation steps mean that we only update the model weights every /n/ steps.
         collected_data_backend_str = list(StateTracker.get_data_backends().keys())
-        if self.config.push_to_hub and self.accelerator.is_main_process:
+        if self.hub_manager is not None and self.accelerator.is_main_process:
             self.hub_manager.collected_data_backend_str = collected_data_backend_str
             self.hub_manager.set_validation_prompts(self.validation_prompt_metadata)
             logger.debug(
@@ -2283,6 +2290,13 @@ class Trainer:
                 wandb_logs = {}
                 if self.accelerator.sync_gradients:
                     try:
+                        if self.config.peft_lora_mode == "singlora":
+                            update_singlora_global_step(
+                                model=self.model.get_trained_component(
+                                    unwrap_model=True
+                                ),
+                                global_step=self.state["global_step"],
+                            )
                         if "prodigy" in self.config.optimizer:
                             self.lr_scheduler.step(**self.extra_lr_scheduler_kwargs)
                             self.lr = self.optimizer.param_groups[0]["d"]
@@ -2513,10 +2527,9 @@ class Trainer:
                         self.enable_gradient_checkpointing()
                         self.mark_optimizer_train()
                 if (
-                    self.config.push_to_hub
-                    and self.config.push_checkpoints_to_hub
-                    and self.state["global_step"] % self.config.checkpointing_steps == 0
+                    self.hub_manager is not None
                     and step % self.config.gradient_accumulation_steps == 0
+                    and self.state["global_step"] % self.config.checkpointing_steps == 0
                     and self.state["global_step"] > self.state["global_resume_step"]
                 ):
                     if self.accelerator.is_main_process:
@@ -2672,6 +2685,6 @@ class Trainer:
                     f"Wrote pipeline to disk: {self.config.output_dir}/pipeline"
                 )
 
-            if self.config.push_to_hub and self.accelerator.is_main_process:
+            if self.hub_manager is not None and self.accelerator.is_main_process:
                 self.hub_manager.upload_model(validation_images, self.webhook_handler)
         self.accelerator.end_training()
