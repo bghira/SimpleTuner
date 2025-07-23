@@ -9,8 +9,8 @@ package-mode = false
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.13"
-torch = { version = "2.7.0+cu128", source = "pytorch" }
-torchvision = "^0.22.0"
+torch = "^2.7.1"
+torchvision = "^0.22.1"
 diffusers = "^0.34.0"
 transformers = "^4.51.1"
 datasets = "^3.0.1"
