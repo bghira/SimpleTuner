@@ -74,7 +74,12 @@ from torch.distributions import Beta
 try:
     from lycoris import LycorisNetwork
 except:
-    print("[ERROR] Lycoris not available. Please install ")
+    print("[ERROR] Lycoris not available. Please install.")
+
+try:
+    from peft_singlora import update_singlora_global_step
+except:
+    pass
 from tqdm.auto import tqdm
 
 from diffusers import (
@@ -2284,6 +2289,13 @@ class Trainer:
                 wandb_logs = {}
                 if self.accelerator.sync_gradients:
                     try:
+                        if self.config.peft_lora_mode == "singlora":
+                            update_singlora_global_step(
+                                model=self.model.get_trained_component(
+                                    unwrap_model=True
+                                ),
+                                global_step=self.state["global_step"],
+                            )
                         if "prodigy" in self.config.optimizer:
                             self.lr_scheduler.step(**self.extra_lr_scheduler_kwargs)
                             self.lr = self.optimizer.param_groups[0]["d"]
@@ -2515,8 +2527,8 @@ class Trainer:
                         self.mark_optimizer_train()
                 if (
                     self.hub_manager is not None
-                    and self.state["global_step"] % self.config.checkpointing_steps == 0
                     and step % self.config.gradient_accumulation_steps == 0
+                    and self.state["global_step"] % self.config.checkpointing_steps == 0
                     and self.state["global_step"] > self.state["global_resume_step"]
                 ):
                     if self.accelerator.is_main_process:

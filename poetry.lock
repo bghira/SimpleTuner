@@ -2844,14 +2844,14 @@ test = ["black", "black", "datasets", "diffusers", "hf-doc-builder", "hf-doc-bui
 
 [[package]]
 name = "peft-singlora"
-version = "0.1.2"
+version = "0.2.0"
 description = "SingLoRA: Single Low-Rank Adaptation for PEFT"
 optional = false
 python-versions = ">=3.8"
 groups = ["main"]
 files = [
-    {file = "peft_singlora-0.1.2-py3-none-any.whl", hash = "sha256:cb03d6b12d76a8c05c4989626dbb764f136ce6ac391112a95e03c8484db69ce8"},
-    {file = "peft_singlora-0.1.2.tar.gz", hash = "sha256:165e2e6ea819a48412537fb0da9bd06b32024dd4d6b4259eebebb9d0a5cbd637"},
+    {file = "peft_singlora-0.2.0-py3-none-any.whl", hash = "sha256:1ddc546eb18f9d6f4e0d80a56f224a0c852de5b72234408a58e1ca3669f9b703"},
+    {file = "peft_singlora-0.2.0.tar.gz", hash = "sha256:f90eda649ff354ae9aa6777e6761e98c8eb56a7b265ba1e734203a318c2716b7"},
 ]
 
 [package.dependencies]
@@ -5678,4 +5678,4 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<3.13"
-content-hash = "cb6e0ed42144ef111510336ce1cd5e10a85b87536bd9cbeae15bb06073a33843"
+content-hash = "0533028374dddcdee8192781d063b090761010327a90257d8fa95366151cbf9a"

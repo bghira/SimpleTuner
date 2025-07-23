@@ -1634,13 +1634,20 @@ class ImageModelFoundation(ModelFoundation):
             )
         else:
             # Standard LoRA for everything else
+            lora_config_cls = LoraConfig
+            lora_config_kwargs = {}
             if self.config.peft_lora_mode is not None:
                 if self.config.peft_lora_mode.lower() == "singlora":
-                    from peft_singlora import setup_singlora
+                    from peft_singlora import setup_singlora, SingLoRAConfig
+
+                    lora_config_cls = SingLoRAConfig
+                    lora_config_kwargs = {
+                        "ramp_up_steps": self.config.singlora_ramp_up_steps or 100,
+                    }
 
                     logger.info("Enabling SingLoRA for LoRA training.")
                     setup_singlora()
-            self.lora_config = LoraConfig(
+            self.lora_config = lora_config_cls(
                 r=self.config.lora_rank,
                 lora_alpha=(
                     self.config.lora_alpha
@@ -1652,6 +1659,7 @@ class ImageModelFoundation(ModelFoundation):
                 target_modules=target_modules,
                 modules_to_save=save_modules,
                 use_dora=self.config.use_dora,
+                **lora_config_kwargs,
             )
 
         # Apply adapter
