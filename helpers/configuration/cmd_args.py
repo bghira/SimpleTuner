@@ -401,6 +401,15 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--singlora_ramp_up_steps",
+        type=int,
+        default=0,
+        help=(
+            "When using SingLoRA, this specifies the number of ramp-up steps."
+            " For diffusion models, it seems that ramp-up steps are harmful to training. (default: 0)"
+        ),
+    )
+    parser.add_argument(
         "--lora_init_type",
         type=str,
         choices=["default", "gaussian", "loftq", "olora", "pissa"],
