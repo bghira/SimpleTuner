@@ -173,11 +173,23 @@ class TestTrainer(unittest.TestCase):
     ):
         trainer = Trainer(disable_accelerator=True)
         trainer.model = Mock()
+        trainer.config = MagicMock(
+            torch_num_threads=2,
+            train_batch_size=1,
+            base_model_precision="no_change",
+            weight_dtype=torch.bfloat16,
+        )
         trainer._misc_init()
-        mock_set_num_threads.assert_called_with(2)
+        mock_set_num_threads.assert_called_with(trainer.config.torch_num_threads)
         self.assertEqual(
             trainer.state,
-            {"lr": 0.0, "global_step": 0, "global_resume_step": 0, "first_epoch": 1},
+            {
+                "lr": 0.0,
+                "global_step": 0,
+                "global_resume_step": 0,
+                "first_epoch": 1,
+                "args": trainer.config.__dict__,
+            },
         )
         self.assertEqual(trainer.timesteps_buffer, [])
         self.assertEqual(trainer.guidance_values_list, [])
@@ -186,7 +198,6 @@ class TestTrainer(unittest.TestCase):
         self.assertIsNone(trainer.grad_norm)
         self.assertEqual(trainer.extra_lr_scheduler_kwargs, {})
         mock_set_global_step.assert_called_with(0)
-        mock_set_args.assert_called_with(trainer.config)
         mock_set_weight_dtype.assert_called_with(trainer.config.weight_dtype)
         mock_set_model_family.assert_called()
         mock_init_noise_schedule.assert_called()
@@ -299,9 +310,7 @@ class TestTrainer(unittest.TestCase):
         self, mock_delete_cache_files, mock_makedirs, mock_parse_args, mock_misc_init
     ):
         trainer = Trainer()
-        trainer.accelerator = MagicMock(
-            is_local_main_process=True
-        )
+        trainer.accelerator = MagicMock(is_local_main_process=True)
         trainer.model = Mock()
         trainer.config = Mock(
             output_dir="/path/to/output", preserve_data_backend_cache=False
