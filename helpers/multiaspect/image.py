@@ -34,6 +34,10 @@ class MultiaspectImage:
         Returns:
             dict: A dictionary containing the adjusted width, height, and canvas size.
         """
+        if width * height <= max_size:
+            # If the canvas size is already within limits, return the original dimensions.
+            return {"width": width, "height": height, "canvas_size": width * height}
+
         align = StateTracker.get_args().aspect_bucket_alignment
         dims = [("width", width), ("height", height)]
 
