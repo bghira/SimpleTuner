@@ -541,12 +541,15 @@ class TrainingSample:
         new_height = MultiaspectImage._round_to_nearest_multiple(new_height)
         new_canvas_size = new_width * new_height
         if new_canvas_size > max_size:
-            # If the new size is still larger than the maximum, we need to adjust it further.
-            new_width = int(new_width - StateTracker.get_args().aspect_bucket_alignment)
-            new_height = int(
-                new_height - StateTracker.get_args().aspect_bucket_alignment
+            # Subtract from the larger dimension first, then the smaller if needed
+            new_canvas_details = MultiaspectImage.limit_canvas_size(
+                width=new_width, height=new_height, max_size=max_size
             )
-            new_canvas_size = new_width * new_height
+            new_width, new_height, new_canvas_size = (
+                new_canvas_details["width"],
+                new_canvas_details["height"],
+                new_canvas_details["canvas_size"],
+            )
         logger.debug(
             f"Canvas size constraint applied: {size_to_check} -> ({new_width}, {new_height}). "
             f"Original canvas: {canvas_size}, New canvas: {new_canvas_size}, "
