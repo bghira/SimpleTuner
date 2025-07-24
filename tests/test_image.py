@@ -403,7 +403,8 @@ class TestMultiaspectImage(unittest.TestCase):
 
             # Test case 2: Canvas size exceeds limit - adjust larger dimension only
             # 2048 * 1024 = 2,097,152 > 2,000,000
-            # Should reduce width by aspect_bucket_alignment: (2048-aspect_bucket_alignment) * 1024 = 2,031,616 < 2,000,000
+            # Should reduce width by aspect_bucket_alignment: (2048-aspect_bucket_alignment) * 1024 = 2,031,616
+            # Then reduce height by aspect_bucket_alignment: (1984) * (1024-aspect_bucket_alignment) = 1984 * 960 < 2,000,000
             result = MultiaspectImage.limit_canvas_size(2048, 1024, 2000000)
             self.assertEqual(result["width"], 2048 - aspect_bucket_alignment)  # 1984
             self.assertEqual(result["height"], 1024 - aspect_bucket_alignment)  # 960
