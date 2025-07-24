@@ -423,7 +423,7 @@ class TestMultiaspectImage(unittest.TestCase):
 
             # Test case 4: Portrait orientation (height > width)
             # 1024 * 2048 = 2,097,152 > 2,000,000
-            # Should reduce height by aspect_bucket_alignment: 1024 * (2048-aspect_bucket_alignment) = 2,031,616 < 2,000,000
+            # Should reduce both width and height by aspect_bucket_alignment if necessary: (1024-aspect_bucket_alignment) * (2048-aspect_bucket_alignment) = 960 * 1984 < 2,000,000
             result = MultiaspectImage.limit_canvas_size(1024, 2048, 2000000)
             self.assertEqual(result["width"], 1024 - aspect_bucket_alignment)  # 960
             self.assertEqual(result["height"], 2048 - aspect_bucket_alignment)  # 1984
