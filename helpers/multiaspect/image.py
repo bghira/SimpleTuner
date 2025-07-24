@@ -18,6 +18,43 @@ import numpy as np
 
 class MultiaspectImage:
     @staticmethod
+    def limit_canvas_size(width: int, height: int, max_size: int) -> dict:
+        """
+        Limit the canvas size to a maximum value.
+        If the canvas size exceeds the maximum, it will be reduced proportionally.
+        It's important that the canvas size returned by this function is used for cropping,
+          since the aspect ratio of the canvas size is not guaranteed to match the
+          aspect ratio of the original image.
+
+        Args:
+            width (int): The width of the image.
+            height (int): The height of the image.
+            max_size (int): The maximum allowed canvas size.
+
+        Returns:
+            dict: A dictionary containing the adjusted width, height, and canvas size.
+        """
+        align = StateTracker.get_args().aspect_bucket_alignment
+        dims = [("width", width), ("height", height)]
+
+        # Sort by size descending
+        dims.sort(key=lambda x: x[1], reverse=True)
+        # Subtract alignment from the larger dimension
+        if dims[0][0] == "width":
+            width -= align
+        else:
+            height -= align
+
+        # If still too large, subtract from the other dimension.
+        if width * height > max_size:
+            if dims[1][0] == "width":
+                width -= align
+            else:
+                height -= align
+
+        return {"width": width, "height": height, "canvas_size": width * height}
+
+    @staticmethod
     def _round_to_nearest_multiple(value, override_value: int = None):
         """Round a value to the nearest multiple."""
         multiple = override_value or StateTracker.get_args().aspect_bucket_alignment
