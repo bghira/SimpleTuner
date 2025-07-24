@@ -50,7 +50,7 @@ class MultiaspectImage:
             height -= align
 
         # If still too large, subtract from the other dimension.
-        # Note: we're referencing the original width and height here, not the adjusted ones.
+        # Note: we're sorting by the original width and height values here to ensure we adjust the originally-smaller-dimension.
         if width * height > max_size:
             if dims[1][0] == "width":
                 width -= align
