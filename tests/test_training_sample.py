@@ -158,7 +158,10 @@ class TestTrainingSample(unittest.TestCase):
             video_data,
             self.data_backend_id,
             video_metadata,
-            model=MagicMock(MAXIMUM_CANVAS_SIZE=None, get_transforms=MagicMock(return_value=MagicMock())),
+            model=MagicMock(
+                MAXIMUM_CANVAS_SIZE=None,
+                get_transforms=MagicMock(return_value=MagicMock()),
+            ),
         )
         sample.prepare()
         # The shape should reflect a final square dimension <= 512
