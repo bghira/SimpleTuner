@@ -1,11 +1,12 @@
 import torch.distributed as dist
+import os
 
 
 def _get_rank():
     if dist.is_available() and dist.is_initialized():
         return dist.get_rank()
     else:
-        return 0
+        return int(os.environ.get("RANK", 0))
 
 
 def rank_info():
