@@ -129,6 +129,11 @@ def check_column_values(
 
 
 def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
+    # running this here sets it correctly for the ranks.
+    if should_log():
+        logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+    else:
+        logger.setLevel(logging.ERROR)
     output = {"id": backend["id"], "config": {}}
     if backend.get("dataset_type", None) == "text_embeds":
         if "caption_filter_list" in backend:

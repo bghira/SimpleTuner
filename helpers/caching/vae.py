@@ -24,7 +24,11 @@ from helpers.models.ltxvideo import normalize_ltx_latents
 from helpers.models.wan import compute_wan_posterior
 
 logger = logging.getLogger("VAECache")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+logger.setLevel(
+    os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
+    if int(os.environ.get("RANK", 0)) == 0
+    else "WARNING"
+)
 
 
 def prepare_sample(
