@@ -125,7 +125,7 @@ class TestTrainingSample(unittest.TestCase):
             video_data,
             self.data_backend_id,
             video_metadata,
-            model=MagicMock(get_transforms=MagicMock()),
+            model=MagicMock(MAXIMUM_CANVAS_SIZE=None, get_transforms=MagicMock()),
         )
         self.assertEqual(sample.original_size, (1280, 720))
         # Confirm it doesn't crash
@@ -158,7 +158,10 @@ class TestTrainingSample(unittest.TestCase):
             video_data,
             self.data_backend_id,
             video_metadata,
-            model=MagicMock(get_transforms=MagicMock(return_value=MagicMock())),
+            model=MagicMock(
+                MAXIMUM_CANVAS_SIZE=None,
+                get_transforms=MagicMock(return_value=MagicMock()),
+            ),
         )
         sample.prepare()
         # The shape should reflect a final square dimension <= 512
@@ -191,7 +194,7 @@ class TestTrainingSample(unittest.TestCase):
             video_data,
             self.data_backend_id,
             video_metadata,
-            model=MagicMock(get_transforms=MagicMock()),
+            model=MagicMock(MAXIMUM_CANVAS_SIZE=None, get_transforms=MagicMock()),
         )
         sample.prepare()
 
@@ -221,7 +224,7 @@ class TestTrainingSample(unittest.TestCase):
             video_data,
             self.data_backend_id,
             video_metadata,
-            model=MagicMock(get_transforms=MagicMock()),
+            model=MagicMock(MAXIMUM_CANVAS_SIZE=None, get_transforms=MagicMock()),
         )
         sample.prepare()
         # Without crop, the pipeline might just do a direct resize to e.g. 128 px on the shorter edge
@@ -345,7 +348,7 @@ class TestTrainingSample(unittest.TestCase):
             video_data,
             self.data_backend_id,
             video_metadata,
-            model=MagicMock(get_transforms=MagicMock()),
+            model=MagicMock(MAXIMUM_CANVAS_SIZE=None, get_transforms=MagicMock()),
         )
         sample.prepare()
         final_frames, final_h, final_w, final_c = sample.image.shape

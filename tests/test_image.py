@@ -384,6 +384,95 @@ class TestMultiaspectImage(unittest.TestCase):
                     f"Failed for original size {W}x{H}",
                 )
 
+    def test_limit_canvas_size(self):
+        """
+        Test the limit_canvas_size method to ensure it properly reduces canvas dimensions
+        when they exceed the maximum allowed size.
+        """
+        with patch("helpers.training.state_tracker.StateTracker.get_args") as mock_args:
+            aspect_bucket_alignment = 64
+            mock_args.return_value = Mock(
+                aspect_bucket_alignment=aspect_bucket_alignment
+            )
+
+            # Test case 1: Canvas size already within limit - no adjustment needed
+            result = MultiaspectImage.limit_canvas_size(1024, 1024, 1024 * 1024)
+            self.assertEqual(result["width"], 1024)
+            self.assertEqual(result["height"], 1024)
+            self.assertEqual(result["canvas_size"], 1024 * 1024)
+
+            # Test case 2: Canvas size exceeds limit - adjust larger dimension only
+            # 2048 * 1024 = 2,097,152 > 2,000,000
+            # Should reduce width by aspect_bucket_alignment: (2048-aspect_bucket_alignment) * 1024 = 2,031,616
+            # Then reduce height by aspect_bucket_alignment: (1984) * (1024-aspect_bucket_alignment) = 1984 * 960 < 2,000,000
+            result = MultiaspectImage.limit_canvas_size(2048, 1024, 2000000)
+            self.assertEqual(result["width"], 2048 - aspect_bucket_alignment)  # 1984
+            self.assertEqual(result["height"], 1024 - aspect_bucket_alignment)  # 960
+            self.assertEqual(result["canvas_size"], 1984 * 960)
+            self.assertLess(result["canvas_size"], 2000000)
+
+            # Test case 3: Canvas size still exceeds after first adjustment - adjust both dimensions
+            # 2048 * 2048 = 4,194,304 > 2,000,000
+            # First reduce larger dimension: (2048-aspect_bucket_alignment) * 2048 = 4,063,232 > 2,000,000
+            # Then reduce other dimension: (2048-aspect_bucket_alignment) * (2048-aspect_bucket_alignment) = 3,936,256 > 2,000,000
+            # But method only does one adjustment per dimension
+            result = MultiaspectImage.limit_canvas_size(2048, 2048, 2000000)
+            self.assertEqual(result["width"], 2048 - aspect_bucket_alignment)  # 1984
+            self.assertEqual(result["height"], 2048 - aspect_bucket_alignment)  # 1984
+            self.assertEqual(result["canvas_size"], 1984 * 1984)
+
+            # Test case 4: Portrait orientation (height > width)
+            # 1024 * 2048 = 2,097,152 > 2,000,000
+            # Should reduce both width and height by aspect_bucket_alignment if necessary: (1024-aspect_bucket_alignment) * (2048-aspect_bucket_alignment) = 960 * 1984 < 2,000,000
+            result = MultiaspectImage.limit_canvas_size(1024, 2048, 2000000)
+            self.assertEqual(result["width"], 1024 - aspect_bucket_alignment)  # 960
+            self.assertEqual(result["height"], 2048 - aspect_bucket_alignment)  # 1984
+            self.assertEqual(result["canvas_size"], 960 * 1984)
+            self.assertLess(result["canvas_size"], 2000000)
+
+            # Test case 5: Different alignment value
+            aspect_bucket_alignment = 32
+            mock_args.return_value = Mock(
+                aspect_bucket_alignment=aspect_bucket_alignment
+            )
+            # 1536 * 1536 = 2,359,296 > 2,000,000
+            # First reduce: (1536-aspect_bucket_alignment) * 1536 = 2,310,144 > 2,000,000
+            # Second reduce: (1536-aspect_bucket_alignment) * (1536-aspect_bucket_alignment) = 2,262,016 > 2,000,000
+            result = MultiaspectImage.limit_canvas_size(1536, 1536, 2000000)
+            self.assertEqual(result["width"], 1536 - aspect_bucket_alignment)  # 1504
+            self.assertEqual(result["height"], 1536 - aspect_bucket_alignment)  # 1504
+            self.assertEqual(result["canvas_size"], 1504 * 1504)
+
+            # Test case 6: Small alignment, large canvas that needs both adjustments
+            mock_args.return_value = Mock(aspect_bucket_alignment=8)
+            # 1600 * 1280 = 2,048,000 > 2,000,000
+            # First reduce width: (1600-8) * 1280 = 2,037,760 > 2,000,000
+            # Then reduce height: (1600-8) * (1280-8) = 2,027,584 > 2,000,000
+            result = MultiaspectImage.limit_canvas_size(1600, 1280, 2000000)
+            self.assertEqual(result["width"], 1600 - 8)  # 1592
+            self.assertEqual(result["height"], 1280 - 8)  # 1272
+            self.assertEqual(result["canvas_size"], 1592 * 1272)
+
+            # Test case 7: Edge case - exactly at limit after one adjustment
+            mock_args.return_value = Mock(aspect_bucket_alignment=100)
+            # Find dimensions where one adjustment brings us exactly to or just under limit
+            # 1100 * 1000 = 1,100,000 > 1,000,000
+            # (1100-100) * 1000 = 1,000,000 = 1,000,000 (exactly at limit)
+            result = MultiaspectImage.limit_canvas_size(1100, 1000, 1000000)
+            self.assertEqual(result["width"], 1000)
+            self.assertEqual(result["height"], 1000)
+            self.assertEqual(result["canvas_size"], 1000000)
+
+            # Test case 8: Very small max_size requiring both adjustments
+            mock_args.return_value = Mock(aspect_bucket_alignment=64)
+            # 512 * 512 = 262,144 > 200,000
+            # (512-64) * 512 = 229,376 > 200,000
+            # (512-64) * (512-64) = 200,704 > 200,000 (still over, but method stops here)
+            result = MultiaspectImage.limit_canvas_size(512, 512, 200000)
+            self.assertEqual(result["width"], 448)
+            self.assertEqual(result["height"], 448)
+            self.assertEqual(result["canvas_size"], 448 * 448)
+
 
 if __name__ == "__main__":
     unittest.main()

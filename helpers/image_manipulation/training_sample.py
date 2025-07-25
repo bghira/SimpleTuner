@@ -510,6 +510,54 @@ class TrainingSample:
                 f"Unknown resolution type: {self.data_backend_config.get('resolution_type')}"
             )
 
+    def _limit_maximum_size(self, size_to_check: tuple) -> tuple:
+        """
+        If self.model.MAXIMUM_CANVAS_SIZE is not None, we have to limit the area of the image to this value.
+
+        The image aspect ratio must be preserved, as well as the bucket alignment interval (eg. 64px)
+
+        Args:
+            size_to_check (tuple): The current size of the image as (width, height).
+        Returns:
+            tuple: The limited size as (width, height).
+        """
+        if self.model is None or self.model.MAXIMUM_CANVAS_SIZE is None:
+            logger.debug("No canvas size constraint required, value is None.")
+            return size_to_check
+        max_size = self.model.MAXIMUM_CANVAS_SIZE
+        width, height = size_to_check
+        canvas_size = width * height
+        if canvas_size <= max_size:
+            # no adjustment needed, we're good to go.
+            logger.debug(f"No canvas size constraint required for {size_to_check}.")
+            return size_to_check
+
+        # Calculate the scale factor to fit within the maximum canvas size
+        scale_factor = sqrt(max_size / canvas_size)
+        new_width = int(width * scale_factor)
+        new_height = int(height * scale_factor)
+        # Ensure the new dimensions are divisible by 8 or 64, depending on the model's requirements
+        new_width = MultiaspectImage._round_to_nearest_multiple(new_width)
+        new_height = MultiaspectImage._round_to_nearest_multiple(new_height)
+        new_canvas_size = new_width * new_height
+        if new_canvas_size > max_size:
+            # Subtract from the larger dimension first, then the smaller if needed
+            new_canvas_details = MultiaspectImage.limit_canvas_size(
+                width=new_width, height=new_height, max_size=max_size
+            )
+            new_width, new_height, new_canvas_size = (
+                new_canvas_details["width"],
+                new_canvas_details["height"],
+                new_canvas_details["canvas_size"],
+            )
+        logger.debug(
+            f"Canvas size constraint applied: {size_to_check} -> ({new_width}, {new_height}). "
+            f"Original canvas: {canvas_size}, New canvas: {new_canvas_size}, "
+            f"Limit: {max_size}"
+        )
+
+        return new_width, new_height
+
     def _calculate_target_downsample_size(self):
         """
         When cropping images, it is optional to disturb them with a resize before the crop.
@@ -591,6 +639,8 @@ class TrainingSample:
         if self.crop_enabled:
             if self.crop_aspect == "square":
                 self.target_size = (self.pixel_resolution, self.pixel_resolution)
+                # ensure the area isn't past the allowed range.
+                self.target_size = self._limit_maximum_size(self.target_size)
                 _, self.intermediary_size, _ = self.target_size_calculator(
                     self.aspect_ratio, self.resolution, self.original_size
                 )
@@ -613,6 +663,7 @@ class TrainingSample:
                 self.aspect_ratio, self.resolution, self.original_size
             )
         )
+        self.target_size = self._limit_maximum_size(self.target_size)
         if (
             self.crop_enabled and self.crop_aspect != "random"
         ) or not self.valid_metadata:
