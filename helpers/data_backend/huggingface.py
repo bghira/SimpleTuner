@@ -13,10 +13,6 @@ from helpers.image_manipulation.load import load_image
 from helpers.training.multi_process import should_log
 
 logger = logging.getLogger("HuggingfaceDatasetsBackend")
-if should_log():
-    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-else:
-    logger.setLevel("ERROR")
 
 
 class HuggingfaceDatasetsBackend(BaseDataBackend):
@@ -68,6 +64,10 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         # Virtual file system mapping: index -> virtual path
         self._path_to_index = {}
         self._index_to_path = {}
+        if should_log():
+            logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+        else:
+            logger.setLevel("ERROR")
 
         # Load the dataset
         self._load_dataset()
@@ -126,19 +126,6 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         """Build mapping between indices and virtual file paths."""
         if not self.streaming:
             dataset_len = len(self.dataset)
-
-            # Check composite configuration
-            is_composite = (
-                self.composite_config.get("enabled", False)
-                if hasattr(self, "composite_config")
-                else False
-            )
-            select_index = (
-                self.composite_config.get("select_index", None)
-                if hasattr(self, "composite_config")
-                else None
-            )
-
             for idx in range(dataset_len):
                 # Create virtual paths based on composite configuration
                 virtual_path = f"{idx}.jpg"
@@ -294,8 +281,10 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                 return None
 
             # Handle composite images if configured
-            if hasattr(self, "composite_config") and self.composite_config.get(
-                "enabled"
+            if (
+                hasattr(self, "composite_config")
+                and isinstance(self.composite_config, dict)
+                and self.composite_config.get("enabled")
             ):
                 image_count = self.composite_config.get("image_count", 1)
                 select_index = self.composite_config.get("select_index", 0)
