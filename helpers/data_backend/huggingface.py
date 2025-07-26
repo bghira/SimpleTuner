@@ -11,6 +11,7 @@ import numpy as np
 from helpers.data_backend.base import BaseDataBackend
 from helpers.image_manipulation.load import load_image
 from helpers.training.multi_process import should_log
+from helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("HuggingfaceDatasetsBackend")
 
@@ -457,32 +458,74 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             raise NotImplementedError("Write operations are not supported")
         return BytesIO(self.read(filepath))
 
+    def _locate_cache_dir(self, cache_dir_hint: str) -> str:
+        # when we just have the dataset id for cache_dir, we need to find the actual cache directory.
+        # some functions in here assemble it on the fly, but here we have a central helper.
+
+        if not cache_dir_hint:
+            raise ValueError(
+                "cache_dir_hint must be provided to locate cache directory"
+            )
+        if not hasattr(self, "cache_dir") or not self.cache_dir:
+            raise ValueError(
+                "Cannot locate cache directory - no cache_dir configured for HuggingFace backend"
+            )
+        if os.path.exists(self.cache_dir):
+            return self.cache_dir
+        # It's probably one of the metadata directory.
+        metadata_dir = (
+            StateTracker.get_args().output_dir
+            / "cache"
+            / "huggingface_metadata"
+            / cache_dir_hint
+        )
+        if metadata_dir.exists():
+            return str(metadata_dir)
+
     def list_files(
         self, file_extensions: list = None, instance_data_dir: str = None
     ) -> list:
         """
-        List all virtual files in the dataset.
+        List all virtual files in the dataset or files in a real directory if instance_data_dir is provided.
         Returns format compatible with os.walk: [(root, dirs, files), ...]
         """
+        if instance_data_dir:
+            # List files from the real directory
+            instance_data_dir = str(instance_data_dir)
+            logger.debug(f"Listing files via {instance_data_dir=}")
+            if not os.path.exists(instance_data_dir):
+                logger.warning(f"Directory does not exist: {instance_data_dir}")
+                return []
+            result = []
+            logger.debug(f"Running os-walk")
+            for root, dirs, files in os.walk(instance_data_dir):
+                filtered_files = []
+                for f in files:
+                    if file_extensions:
+                        ext = os.path.splitext(f)[1].lower().strip(".")
+                        if ext not in file_extensions:
+                            logger.debug(
+                                f"Skipping {ext=} cuz not in {file_extensions}"
+                            )
+                            continue
+                    filtered_files.append(os.path.join(root, f))
+                result.append((root, dirs, filtered_files))
+            logger.debug("Returning results")
+            return result
+
         if self.streaming:
             logger.warning("Cannot list files in streaming mode")
             return []
 
         # For HF datasets, we use a flat structure (no subdirectories)
         files = []
-
         for idx in range(len(self.dataset)):
             virtual_path = self._index_to_path.get(idx, f"{idx}.jpg")
-
-            # Check file extension if filter provided
             if file_extensions:
                 ext = os.path.splitext(virtual_path)[1].lower().strip(".")
                 if ext not in file_extensions:
                     continue
-
             files.append(virtual_path)
-
-        # Return in os.walk format: [(directory, subdirs, files)]
         return [("", [], files)]
 
     def get_abs_path(self, sample_path: str) -> str:
