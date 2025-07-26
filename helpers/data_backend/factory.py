@@ -290,7 +290,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         # same goes for caption strategy. there's no way to do any other implementation.
         if backend.get("caption_strategy", None) is None:
             backend["caption_strategy"] = "huggingface"
-        elif backend["caption_strategy"] != "huggingface":
+        elif backend["caption_strategy"] not in ["huggingface", "instanceprompt"]:
             raise ValueError(
                 f"(id={backend['id']}) When using a huggingface data backend, caption_strategy must be set to 'huggingface'."
             )
@@ -960,6 +960,9 @@ def configure_multi_databackend(
         else:
             raise ValueError(f"Unknown data backend type: {backend['type']}")
 
+        if isinstance(init_backend["cache_dir"], str):
+            init_backend["cache_dir"] = init_backend["cache_dir"].replace("{model_family}", args.model_family)
+
         preserve_data_backend_cache = backend.get("preserve_data_backend_cache", False)
         if not preserve_data_backend_cache and accelerator.is_local_main_process:
             StateTracker.delete_cache_files(
@@ -1524,6 +1527,11 @@ def configure_multi_databackend(
             raise ValueError(
                 f"Backend {init_backend['id']} has prepend_instance_prompt=True, but no instance_prompt was provided. You must provide an instance_prompt, or disable this option."
             )
+        if instance_prompt is None and backend.get("caption_strategy", args.caption_strategy) == "instanceprompt":
+            raise ValueError(
+                f"Backend {init_backend['id']} has caption_strategy=instanceprompt, but no instance_prompt was provided. You must provide an instance_prompt, or change the caption_strategy."
+                f"\n -> backend: {init_backend}"
+            )
 
         # Update the backend registration here so the metadata backend can be found.
         StateTracker.register_data_backend(init_backend)
@@ -1603,6 +1611,8 @@ def configure_multi_databackend(
         ]:
             info_log(f"(id={init_backend['id']}) Creating VAE latent cache.")
             vae_cache_dir = backend.get("cache_dir_vae", None)
+            if isinstance(vae_cache_dir, str):
+                vae_cache_dir = vae_cache_dir.replace("{model_family}", args.model_family)
             if vae_cache_dir in vae_cache_dir_paths:
                 raise ValueError(
                     f"VAE image embed cache directory {backend.get('cache_dir_vae')} is the same as another VAE image embed cache directory. This is not allowed, the trainer will get confused and sleepy and wake up in a distant place with no memory and no money for a taxi ride back home, forever looking in the mirror and wondering who they are. This should be avoided."
@@ -1937,7 +1947,7 @@ def check_huggingface_config(backend: dict) -> None:
 
     # Check caption strategy compatibility
     caption_strategy = backend.get("caption_strategy", "huggingface")
-    if caption_strategy not in ["huggingface"]:
+    if caption_strategy not in ["huggingface", "instanceprompt"]:
         raise ValueError(
             f"Hugging Face datasets should use caption_strategy='huggingface', not '{caption_strategy}'"
         )
