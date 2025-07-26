@@ -2868,23 +2868,24 @@ class PixArtSigmaControlNetPipeline(
         Function invoked when calling the pipeline for generation.
         """
         # 1. Check inputs
+        _transformer = self.transformer if not hasattr(self.transformer, "transformer") else self.transformer.transformer
         height = (
             height
-            or self.transformer.transformer.config.sample_size * self.vae_scale_factor
+            or _transformer.config.sample_size * self.vae_scale_factor
         )
         width = (
             width
-            or self.transformer.transformer.config.sample_size * self.vae_scale_factor
+            or _transformer.config.sample_size * self.vae_scale_factor
         )
 
         if use_resolution_binning:
-            if self.transformer.transformer.config.sample_size == 256:
+            if _transformer.config.sample_size == 256:
                 aspect_ratio_bin = ASPECT_RATIO_2048_BIN
-            elif self.transformer.transformer.config.sample_size == 128:
+            elif _transformer.config.sample_size == 128:
                 aspect_ratio_bin = ASPECT_RATIO_1024_BIN
-            elif self.transformer.transformer.config.sample_size == 64:
+            elif _transformer.config.sample_size == 64:
                 aspect_ratio_bin = ASPECT_RATIO_512_BIN
-            elif self.transformer.transformer.config.sample_size == 32:
+            elif _transformer.config.sample_size == 32:
                 aspect_ratio_bin = ASPECT_RATIO_256_BIN
             else:
                 raise ValueError("Invalid sample size")
