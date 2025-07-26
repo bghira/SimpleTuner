@@ -1139,6 +1139,9 @@ def configure_multi_databackend(
 
             # HF datasets use virtual paths, no instance_data_dir needed
             init_backend["instance_data_dir"] = ""
+            # If no cache_dir_vae is set, we'll just use the main cache_dir.
+            if "cache_dir_vae" not in backend:
+                backend["cache_dir_vae"] = os.path.join(args.cache_dir, "vae", backend["id"])
         else:
             raise ValueError(f"Unknown data backend type: {backend['type']}")
 
@@ -1345,8 +1348,11 @@ def configure_multi_databackend(
                 source_backend=StateTracker.get_data_backend(source_dataset_id),
                 target_backend=init_backend,
             )
+            init_backend["metadata_backend"].split_buckets_between_processes(
+                gradient_accumulation_steps=args.gradient_accumulation_steps,
+                apply_padding=apply_padding,
+            )
         else:
-            # Now split the contents of these buckets between all processes
             init_backend["metadata_backend"].split_buckets_between_processes(
                 gradient_accumulation_steps=args.gradient_accumulation_steps,
                 apply_padding=apply_padding,
