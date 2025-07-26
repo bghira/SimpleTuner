@@ -1355,10 +1355,11 @@ def configure_multi_databackend(
                 apply_padding=apply_padding,
             )
         else:
-            init_backend["metadata_backend"].split_buckets_between_processes(
-                gradient_accumulation_steps=args.gradient_accumulation_steps,
-                apply_padding=apply_padding,
-            )
+            if args.eval_dataset_id is None or init_backend["id"] in args.eval_dataset_id:
+                init_backend["metadata_backend"].split_buckets_between_processes(
+                    gradient_accumulation_steps=args.gradient_accumulation_steps,
+                    apply_padding=apply_padding,
+                )
 
         # Check if there is an existing 'config' in the metadata_backend.config
         excluded_keys = [
