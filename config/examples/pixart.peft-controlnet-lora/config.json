@@ -26,7 +26,7 @@
     "resume_from_checkpoint": "latest",
     "seed": 42,
     "tracker_project_name": "lora-training",
-    "tracker_run_name": "pixart-adamW-eval",
+    "tracker_run_name": "example-training-run",
     "train_batch_size": 1,
     "use_ema": false,
     "vae_batch_size": 1,
