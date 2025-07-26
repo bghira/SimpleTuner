@@ -528,23 +528,23 @@ class Trainer:
 
         # We calculate the number of steps per epoch by dividing the number of images by the effective batch divisor.
         # Gradient accumulation steps mean that we only update the model weights every /n/ steps.
-        collected_data_backend_str = list(StateTracker.get_data_backends().keys())
+        collected_data_backend_keys = list(StateTracker.get_data_backends().keys())
         if self.hub_manager is not None and self.accelerator.is_main_process:
-            self.hub_manager.collected_data_backend_str = collected_data_backend_str
+            self.hub_manager.collected_data_backend_str = collected_data_backend_keys
             self.hub_manager.set_validation_prompts(self.validation_prompt_metadata)
             logger.debug(
                 f"Collected validation prompts: {self.validation_prompt_metadata}"
             )
         self._recalculate_training_steps()
         logger.info(
-            f"Collected the following data backends: {collected_data_backend_str}"
+            f"Collected the following data backends: {collected_data_backend_keys}"
         )
         self._send_webhook_msg(
-            message=f"Collected the following data backends: {collected_data_backend_str}"
+            message=f"Collected the following data backends: {collected_data_backend_keys}"
         )
         self._send_webhook_raw(
             structured_data={
-                "message": f"Collected the following data backends: {collected_data_backend_str}"
+                "message": f"Collected the following data backends: {collected_data_backend_keys}"
             },
             message_type="init_data_backend",
         )
@@ -2082,6 +2082,12 @@ class Trainer:
                         f"Excluding backend: {backend_id}, as it is exhausted? {StateTracker.backend_status(backend_id)} or not found {('train_dataloader' not in backend)}"
                     )
                     continue
+                if self.config.eval_dataset_id is not None:
+                    # skip eval splits.
+                    if isinstance(self.config.eval_dataset_id, str) and backend_id == self.config.eval_dataset_id:
+                        continue
+                    elif isinstance(self.config.eval_dataset_id, list) and backend_id in self.config.eval_dataset_id:
+                        continue
                 train_backends[backend_id] = backend["train_dataloader"]
             # Begin dataloader prefetch, if enabled.
             iterator_args = [train_backends]
