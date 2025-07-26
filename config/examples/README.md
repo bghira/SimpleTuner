@@ -18,6 +18,7 @@ To run `kontext.peft-lora` example:
 git clone https://github.com/bghira/simpletuner
 cd simpletuner
 python3.11 -m venv .venv
+. .venv/bin/activate
 pip install poetry
 poetry install
 ENV=examples/kontext.peft-lora ./train.sh
