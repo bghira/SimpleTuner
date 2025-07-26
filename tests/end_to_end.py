@@ -56,7 +56,9 @@ class SimpleTunerTestRunner:
         self.debug_log_path = Path("debug.log")
         self.state_file = Path(".test_runner_state.json")
         self.should_exit = False
+        self.skip_current_test = False  # New flag for skipping individual tests
         self.tests_lock = threading.Lock()  # Thread safety
+        self.test_processes = {}  # Track running processes
         
         # UI state
         self.selected_test = 0
@@ -134,15 +136,15 @@ class SimpleTunerTestRunner:
         
         return env
     
-    def run_test(self, example_name: str) -> TestResult:
+    def run_test(self, example_name: str, force_rerun: bool = False) -> TestResult:
         """Run a single test"""
         with self.tests_lock:
             if example_name not in self.tests:
                 self.tests[example_name] = TestResult(name=example_name, status=TestStatus.PENDING)
             result = self.tests[example_name]
         
-        # Skip if resumable and already completed
-        if self.resumable and result.status in [TestStatus.SUCCESS, TestStatus.SKIPPED]:
+        # Skip if resumable and already completed (unless force_rerun)
+        if not force_rerun and self.resumable and result.status in [TestStatus.SUCCESS, TestStatus.SKIPPED]:
             self.log_queue.put(f"Skipping {example_name} (already completed)")
             return result
         
@@ -150,6 +152,7 @@ class SimpleTunerTestRunner:
             result.status = TestStatus.RUNNING
             result.start_time = datetime.now()
             result.log_file = f"test_outputs/{example_name}/training.log"
+            result.error = None  # Clear any previous error
         
         self.log_queue.put(f"Starting test: {example_name}")
         
@@ -181,8 +184,28 @@ class SimpleTunerTestRunner:
                     preexec_fn=os.setsid if sys.platform != 'win32' else None  # Create new process group
                 )
                 
+                # Track this process
+                self.test_processes[example_name] = process
+                
                 # Monitor process
                 while process.poll() is None:
+                    # Check if we should skip this specific test
+                    if self.skip_current_test and self.current_test == example_name:
+                        self.log_queue.put(f"Skipping test: {example_name}")
+                        try:
+                            if sys.platform != 'win32':
+                                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                            else:
+                                process.terminate()
+                        except:
+                            process.terminate()
+                        with self.tests_lock:
+                            result.status = TestStatus.SKIPPED
+                            result.error = "Test skipped by user"
+                        self.skip_current_test = False  # Reset flag
+                        break
+                    
+                    # Check if we should exit entirely
                     if self.should_exit:
                         try:
                             if sys.platform != 'win32':
@@ -193,19 +216,26 @@ class SimpleTunerTestRunner:
                             process.terminate()
                         with self.tests_lock:
                             result.status = TestStatus.SKIPPED
-                            result.error = "Test interrupted"
+                            result.error = "Test runner interrupted"
                         break
+                    
                     # Force flush to ensure we can read the log
                     log_file.flush()
                     time.sleep(0.1)
                 
-                if process.returncode == 0:
-                    with self.tests_lock:
-                        result.status = TestStatus.SUCCESS
-                elif result.status != TestStatus.SKIPPED:
-                    with self.tests_lock:
-                        result.status = TestStatus.FAILED
-                        result.error = f"Process exited with code {process.returncode}"
+                # Clean up process tracking
+                if example_name in self.test_processes:
+                    del self.test_processes[example_name]
+                
+                # Set final status if not already set
+                if result.status == TestStatus.RUNNING:
+                    if process.returncode == 0:
+                        with self.tests_lock:
+                            result.status = TestStatus.SUCCESS
+                    else:
+                        with self.tests_lock:
+                            result.status = TestStatus.FAILED
+                            result.error = f"Process exited with code {process.returncode}"
                     
         except Exception as e:
             with self.tests_lock:
@@ -748,11 +778,24 @@ class SimpleTunerTestRunner:
                         tests_list = list(self.tests.values())
                         if tests_list and 0 <= self.selected_test < len(tests_list):
                             selected = tests_list[self.selected_test]
-                            selected.status = TestStatus.PENDING
-                            threading.Thread(target=self.run_test, args=(selected.name,)).start()
+                            test_name = selected.name
+                            
+                            # Check if this test is already running
+                            if selected.status == TestStatus.RUNNING:
+                                self.log_queue.put(f"Test {test_name} is already running")
+                            else:
+                                # Reset status and start new thread for rerun
+                                selected.status = TestStatus.PENDING
+                                threading.Thread(
+                                    target=self.run_test, 
+                                    args=(test_name, True)  # force_rerun=True
+                                ).start()
+                                self.log_queue.put(f"Rerunning test: {test_name}")
+                                
                 elif key == ord('s'):  # Skip current test
                     if self.current_test:
-                        self.should_exit = True
+                        self.skip_current_test = True
+                        self.log_queue.put(f"Skip requested for: {self.current_test}")
                 elif key == curses.KEY_RESIZE:
                     force_redraw = True
             
