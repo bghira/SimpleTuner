@@ -16,8 +16,11 @@ from PIL import Image
 import numpy as np
 
 logger = logging.getLogger("HuggingfaceMetadataBackend")
-target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
-logger.setLevel(target_level)
+from helpers.training.multi_process import should_log
+if should_log():
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+else:
+    logger.setLevel("ERROR")
 
 
 class HuggingfaceMetadataBackend(MetadataBackend):
@@ -119,6 +122,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             )
         with accelerator.main_process_first():
             self.caption_cache = self._extract_captions_to_dict()
+        accelerator.wait_for_everyone()
         self.reload_cache()
         self.load_image_metadata()
 
