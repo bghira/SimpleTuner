@@ -30,7 +30,7 @@
     "push_checkpoints_to_hub": false,
     "push_to_hub": false,
     "quantize_via": "cpu",
-    "report_to": "wandb",
+    "report_to": "none",
     "resume_from_checkpoint": "latest",
     "seed": 42,
     "text_encoder_4_precision": "int8-quanto",
