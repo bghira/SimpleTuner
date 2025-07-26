@@ -101,6 +101,105 @@ The `conditioning_data` field in the edit dataset should point to the reference 
 
 A prepared example [Kontext Max derived demo dataset](https://huggingface.co/datasets/terminusresearch/KontextMax-Edit-smol) which contains reference and edit images along with their caption textfiles is available for browsing to get a better idea of how to set it up.
 
+### Setting up a dedicated validation split
+
+Here's an example configuration that uses a training set with 200,000 samples and a validation set with just a few.
+
+In your `config.json` you'll want to add:
+
+```json
+{
+  "eval_dataset_id": "edited-images",
+}
+```
+
+For your `multidatabackend.json`, `edited-images` and `reference-images` should contain validation data with the same layout as a usual training split.
+
+```json
+[
+    {
+        "id": "edited-images",
+        "disabled": false,
+        "type": "local",
+        "instance_data_dir": "/datasets/edit/edited-images",
+        "minimum_image_size": 1024,
+        "maximum_image_size": 1536,
+        "target_downsample_size": 1024,
+        "resolution": 1024,
+        "resolution_type": "pixel_area",
+        "caption_strategy": "textfile",
+        "cache_dir_vae": "cache/vae/flux-edit",
+        "vae_cache_clear_each_epoch": false,
+        "conditioning_data": ["reference-images"]
+    },
+    {
+        "id": "reference-images",
+        "disabled": false,
+        "type": "local",
+        "instance_data_dir": "/datasets/edit/reference-images",
+        "minimum_image_size": 1024,
+        "maximum_image_size": 1536,
+        "target_downsample_size": 1024,
+        "resolution": 1024,
+        "resolution_type": "pixel_area",
+        "caption_strategy": null,
+        "cache_dir_vae": "cache/vae/flux-ref",
+        "vae_cache_clear_each_epoch": false,
+        "conditioning_type": "reference_strict"
+    },
+    {
+        "id": "subjects200k-left",
+        "disabled": false,
+        "type": "huggingface",
+        "dataset_name": "Yuanshi/Subjects200K",
+        "caption_strategy": "huggingface",
+        "metadata_backend": "huggingface",
+        "resolution": 512,
+        "resolution_type": "pixel_area",
+        "conditioning_data": ["subjects200k-right"],
+        "huggingface": {
+            "caption_column": "description.description_0",
+            "image_column": "image",
+            "composite_image_config": {
+                "enabled": true,
+                "image_count": 2,
+                "select_index": 0
+            }
+        }
+    },
+    {
+        "id": "subjects200k-right",
+        "disabled": false,
+        "type": "huggingface",
+        "dataset_type": "conditioning",
+        "conditioning_type": "reference_strict",
+        "source_dataset_id": "subjects200k-left",
+        "dataset_name": "Yuanshi/Subjects200K",
+        "caption_strategy": "huggingface",
+        "metadata_backend": "huggingface",
+        "resolution": 512,
+        "resolution_type": "pixel_area",
+        "huggingface": {
+            "caption_column": "description.description_1",
+            "image_column": "image",
+            "composite_image_config": {
+                "enabled": true,
+                "image_count": 2,
+                "select_index": 1
+            }
+        }
+    },
+
+    {
+        "id": "text-embed-cache",
+        "dataset_type": "text_embeds",
+        "default": true,
+        "type": "local",
+        "cache_dir": "cache/text/flux"
+    }
+]
+```
+
 ### Automatic Reference-Edit Pair Generation
 
 If you don't have pre-existing reference-edit pairs, SimpleTuner can automatically generate them from a single dataset. This is particularly useful for training models for:
