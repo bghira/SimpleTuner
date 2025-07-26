@@ -7,7 +7,7 @@ from helpers.models.common import (
 )
 from transformers import (
     PreTrainedTokenizerFast,
-    Gemma2PreTrainedModel,
+    Gemma2Model,
 )
 from diffusers import AutoencoderKL
 from diffusers.models.attention_processor import Attention
@@ -55,7 +55,7 @@ class Lumina2(ImageModelFoundation):
             "name": "Gemma2",
             "tokenizer": PreTrainedTokenizerFast,
             "tokenizer_subfolder": "tokenizer",
-            "model": Gemma2PreTrainedModel,
+            "model": Gemma2Model,
             "subfolder": "text_encoder",
         },
     }
@@ -132,7 +132,7 @@ class Lumina2(ImageModelFoundation):
 
         return {
             "prompt_embeds": prompt_embeds,
-            "prompt_attention_mask": attention_mask,
+            "prompt_attention_mask": attention_mask.to(torch.int32),
         }
 
     def convert_negative_text_embed_for_pipeline(
@@ -157,7 +157,7 @@ class Lumina2(ImageModelFoundation):
 
         return {
             "negative_prompt_embeds": prompt_embeds,
-            "negative_prompt_attention_mask": attention_mask,
+            "negative_prompt_attention_mask": attention_mask.to(torch.int32),
         }
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
@@ -233,12 +233,12 @@ class Lumina2(ImageModelFoundation):
                 device=self.accelerator.device,
                 dtype=self.config.base_weight_dtype,
             ),
-            "encoder_attention_mask": encoder_attention_mask,
+            "encoder_attention_mask": encoder_attention_mask.to(torch.int32),
             "return_dict": False,
         }
 
         # Get model prediction
-        model_pred = self.get_trained_component()(**lumina_transformer_kwargs)[0]
+        model_pred = self.model(**lumina_transformer_kwargs)[0]
 
         # IMPORTANT: Lumina2 uses reverse flow, so we multiply by -1
         # This is the key difference mentioned in the prompt

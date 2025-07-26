@@ -202,6 +202,6 @@ class DatasetDuplicator:
         # Check for captions with exact original logic
         if cond_cfg.get("captions", False) not in [False, None]:
             target_cfg["caption_strategy"] = "instanceprompt"
-            target_cfg["instance_prompt"] = cond_cfg["captions"]
+            target_cfg["instance_prompt"] = cond_cfg.get("captions", None) or cond_cfg.get("instance_prompt", None)
 
         return target_cfg

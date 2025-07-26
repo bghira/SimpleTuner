@@ -280,6 +280,10 @@ def compute_prompt_embeddings(captions, text_embed_cache, model):
             transformed_encoder_output["attention_masks"] = torch.stack(
                 [t["attention_mask"] for t in text_encoder_output]
             )
+        if "prompt_attention_mask" in text_encoder_output[0]:
+            transformed_encoder_output["attention_masks"] = torch.stack(
+                [t["prompt_attention_mask"] for t in text_encoder_output]
+            )
         # new style
         if "attention_masks" in text_encoder_output[0]:
             transformed_encoder_output["attention_masks"] = torch.stack(

@@ -1,0 +1,24 @@
+[
+  {
+    "id": "dreambooth-1024",
+    "type": "huggingface",
+    "dataset_name": "keras-dreambooth/minercraft",
+    "crop": false, "crop_style": "random", "crop_aspect": "square",
+    "minimum_image_size": 256,
+    "maximum_image_size": 1024,
+    "target_downsample_size": 1024,
+    "resolution": 1024,
+    "resolution_type": "pixel",
+    "metadata_backend": "huggingface",
+    "caption_strategy": "instanceprompt",
+    "instance_prompt": "minecraft",
+    "cache_dir_vae": "cache/vae/{model_family}/dreambooth-1024"
+  },
+  {
+    "id": "alt-embed-cache",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "type": "local",
+    "cache_dir": "cache/text/{model_family}"
+  }
+]

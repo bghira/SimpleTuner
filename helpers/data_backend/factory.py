@@ -290,7 +290,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         # same goes for caption strategy. there's no way to do any other implementation.
         if backend.get("caption_strategy", None) is None:
             backend["caption_strategy"] = "huggingface"
-        elif backend["caption_strategy"] != "huggingface":
+        elif backend["caption_strategy"] not in ["huggingface", "instanceprompt"]:
             raise ValueError(
                 f"(id={backend['id']}) When using a huggingface data backend, caption_strategy must be set to 'huggingface'."
             )
@@ -708,6 +708,28 @@ def sort_dataset_configs_by_dependencies(data_backend_config):
 
     return sorted_configs
 
+def fill_variables_in_config_paths(
+    args: dict, config: list[dict]
+) -> dict:
+    """
+    Fill in variables in the config paths with values from args.
+    This is useful for paths that contain variables like {cache_dir}, {model_name}, etc.
+    """
+    mapping = {
+        "{model_family}": args.model_family,
+    }
+    altered_configs = []
+    for backend in config:
+        filled_config = {}
+        for key, value in backend.items():
+            if isinstance(value, str):
+                # Replace variables in the string
+                for var_name, var_value in mapping.items():
+                    value = value.replace(var_name, str(var_value))
+            filled_config[key] = value
+        altered_configs.append(filled_config)
+
+    return altered_configs
 
 def configure_multi_databackend(
     args: dict, accelerator, text_encoders, tokenizers, model: ModelFoundation
@@ -738,6 +760,8 @@ def configure_multi_databackend(
         )
     # sort things so that reference datasets are configured last.
     data_backend_config = sort_dataset_configs_by_dependencies(data_backend_config)
+    # replace variable values like {model_family} with composed values
+    data_backend_config = fill_variables_in_config_paths(args=args, config=data_backend_config)
 
     ###                                                                          ###
     #    we'll check for any auto-conditioning configurations and generate them.   #
@@ -840,13 +864,14 @@ def configure_multi_databackend(
         # Generate a TextEmbeddingCache object
         logger.debug(f"rank {get_rank()} is creating TextEmbeddingCache")
         move_text_encoders(args, text_encoders, accelerator.device, force_move=True)
+        text_cache_dir = init_backend.get("cache_dir", args.cache_dir_text)
         init_backend["text_embed_cache"] = TextEmbeddingCache(
             id=init_backend["id"],
             data_backend=init_backend["data_backend"],
             text_encoders=text_encoders,
             tokenizers=tokenizers,
             accelerator=accelerator,
-            cache_dir=init_backend.get("cache_dir", args.cache_dir_text),
+            cache_dir=text_cache_dir,
             model_type=StateTracker.get_model_family(),
             write_batch_size=backend.get("write_batch_size", args.write_batch_size),
             model=model,
@@ -1142,7 +1167,7 @@ def configure_multi_databackend(
             # If no cache_dir_vae is set, we'll just use the main cache_dir.
             if "cache_dir_vae" not in backend:
                 backend["cache_dir_vae"] = os.path.join(
-                    args.cache_dir, "vae", backend["id"]
+                    args.cache_dir, "vae", args.model_family, backend["id"]
                 )
         else:
             raise ValueError(f"Unknown data backend type: {backend['type']}")
@@ -1524,6 +1549,11 @@ def configure_multi_databackend(
             raise ValueError(
                 f"Backend {init_backend['id']} has prepend_instance_prompt=True, but no instance_prompt was provided. You must provide an instance_prompt, or disable this option."
             )
+        if instance_prompt is None and backend.get("caption_strategy", args.caption_strategy) == "instanceprompt":
+            raise ValueError(
+                f"Backend {init_backend['id']} has caption_strategy=instanceprompt, but no instance_prompt was provided. You must provide an instance_prompt, or change the caption_strategy."
+                f"\n -> backend: {init_backend}"
+            )
 
         # Update the backend registration here so the metadata backend can be found.
         StateTracker.register_data_backend(init_backend)
@@ -1601,12 +1631,12 @@ def configure_multi_databackend(
                 "controlnet" if not model.requires_conditioning_latents() else -1
             ),  # hack to encode VAE latents when the model requires them.
         ]:
-            info_log(f"(id={init_backend['id']}) Creating VAE latent cache.")
             vae_cache_dir = backend.get("cache_dir_vae", None)
             if vae_cache_dir in vae_cache_dir_paths:
                 raise ValueError(
-                    f"VAE image embed cache directory {backend.get('cache_dir_vae')} is the same as another VAE image embed cache directory. This is not allowed, the trainer will get confused and sleepy and wake up in a distant place with no memory and no money for a taxi ride back home, forever looking in the mirror and wondering who they are. This should be avoided."
+                    f"VAE image embed cache directory {vae_cache_dir} is the same as another VAE image embed cache directory. This is not allowed, the trainer will get confused and sleepy and wake up in a distant place with no memory and no money for a taxi ride back home, forever looking in the mirror and wondering who they are. This should be avoided."
                 )
+            info_log(f"(id={init_backend['id']}) Creating VAE latent cache: {vae_cache_dir=}")
             vae_cache_dir_paths.append(vae_cache_dir)
 
             if (
@@ -1614,7 +1644,7 @@ def configure_multi_databackend(
                 and vae_cache_dir in text_embed_cache_dir_paths
             ):
                 raise ValueError(
-                    f"VAE image embed cache directory {backend.get('cache_dir_vae')} is the same as the text embed cache directory. This is not allowed, the trainer will get confused."
+                    f"VAE image embed cache directory {vae_cache_dir} is the same as the text embed cache directory. This is not allowed, the trainer will get confused."
                 )
 
             if backend["type"] == "local" and (
@@ -1627,7 +1657,7 @@ def configure_multi_databackend(
                     and requires_conditioning_dataset
                 ):
                     raise ValueError(
-                        f"VAE image embed cache directory {backend.get('cache_dir_vae')} is not set. This is required for the VAE image embed cache."
+                        f"VAE image embed cache directory {vae_cache_dir} is not set. This is required for the VAE image embed cache."
                     )
             move_text_encoders(args, text_encoders, "cpu")
             init_backend["vaecache"] = VAECache(
@@ -1663,7 +1693,7 @@ def configure_multi_databackend(
                 vae_batch_size=backend.get("vae_batch_size", args.vae_batch_size),
                 write_batch_size=backend.get("write_batch_size", args.write_batch_size),
                 read_batch_size=backend.get("read_batch_size", args.read_batch_size),
-                cache_dir=backend.get("cache_dir_vae", args.cache_dir_vae),
+                cache_dir=vae_cache_dir,
                 max_workers=backend.get("max_workers", args.max_workers),
                 process_queue_size=backend.get(
                     "image_processing_batch_size", args.image_processing_batch_size
@@ -1937,7 +1967,7 @@ def check_huggingface_config(backend: dict) -> None:
 
     # Check caption strategy compatibility
     caption_strategy = backend.get("caption_strategy", "huggingface")
-    if caption_strategy not in ["huggingface"]:
+    if caption_strategy not in ["huggingface", "instanceprompt"]:
         raise ValueError(
             f"Hugging Face datasets should use caption_strategy='huggingface', not '{caption_strategy}'"
         )
