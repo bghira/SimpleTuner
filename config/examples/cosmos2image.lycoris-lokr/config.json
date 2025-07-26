@@ -23,7 +23,7 @@
     "push_checkpoints_to_hub": false,
     "push_to_hub": false,
     "quantize_via": "cpu",
-    "report_to": "wandb",
+    "report_to": "none",
     "seed": 42,
     "tracker_project_name": "lycoris-training",
     "tracker_run_name": "example-training-run",
