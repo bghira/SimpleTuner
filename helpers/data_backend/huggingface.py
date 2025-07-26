@@ -458,29 +458,6 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             raise NotImplementedError("Write operations are not supported")
         return BytesIO(self.read(filepath))
 
-    def _locate_cache_dir(self, cache_dir_hint: str) -> str:
-        # when we just have the dataset id for cache_dir, we need to find the actual cache directory.
-        # some functions in here assemble it on the fly, but here we have a central helper.
-
-        if not cache_dir_hint:
-            raise ValueError(
-                "cache_dir_hint must be provided to locate cache directory"
-            )
-        if not hasattr(self, "cache_dir") or not self.cache_dir:
-            raise ValueError(
-                "Cannot locate cache directory - no cache_dir configured for HuggingFace backend"
-            )
-        if os.path.exists(self.cache_dir):
-            return self.cache_dir
-        # It's probably one of the metadata directory.
-        metadata_dir = (
-            StateTracker.get_args().output_dir
-            / "cache"
-            / "huggingface_metadata"
-            / cache_dir_hint
-        )
-        if metadata_dir.exists():
-            return str(metadata_dir)
 
     def list_files(
         self, file_extensions: list = None, instance_data_dir: str = None
