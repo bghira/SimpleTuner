@@ -28,6 +28,7 @@ if should_log():
 else:
     logger.setLevel("ERROR")
 
+
 def prepare_sample(
     image: Image.Image = None,
     data_backend_id: str = None,
@@ -439,10 +440,18 @@ class VAECache(WebhookMixin):
         # this gate is so that we don't bother converting the set to a list unless we're actually going to log them.
         if os.environ.get("SIMPLETUNER_LOG_LEVEL", None) == "DEBUG":
             # print first five of each all_image_files and already_cached_images
-            self.debug_log(f"All ({len(all_image_files)}) image files: (truncated) {list(all_image_files)[:5]}")
-            self.debug_log(f"Existing cache files: (truncated) {list(existing_cache_files)[:5]}")
-            self.debug_log(f"Already cached images: (truncated) {already_cached_images[:5]}")
-            self.debug_log(f"VAECache Mapping: (truncated) {list(self.image_path_to_vae_path.items())[:5]}")
+            self.debug_log(
+                f"All ({len(all_image_files)}) image files: (truncated) {list(all_image_files)[:5]}"
+            )
+            self.debug_log(
+                f"Existing cache files: (truncated) {list(existing_cache_files)[:5]}"
+            )
+            self.debug_log(
+                f"Already cached images: (truncated) {already_cached_images[:5]}"
+            )
+            self.debug_log(
+                f"VAECache Mapping: (truncated) {list(self.image_path_to_vae_path.items())[:5]}"
+            )
 
         return self.local_unprocessed_files
 

@@ -17,6 +17,7 @@ import numpy as np
 
 logger = logging.getLogger("HuggingfaceMetadataBackend")
 from helpers.training.multi_process import should_log
+
 if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 else:

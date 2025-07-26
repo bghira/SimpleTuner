@@ -91,11 +91,14 @@ def prompt_library_injection(new_prompts: dict) -> dict:
 
 import logging
 from helpers.data_backend.base import BaseDataBackend
+from helpers.training.multi_process import _get_rank
 from tqdm import tqdm
 import os
 
 logger = logging.getLogger("PromptHandler")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+logger.setLevel(
+    os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO") if _get_rank() == 0 else "ERROR"
+)
 
 
 class CaptionNotFoundError(Exception):

@@ -1141,7 +1141,9 @@ def configure_multi_databackend(
             init_backend["instance_data_dir"] = ""
             # If no cache_dir_vae is set, we'll just use the main cache_dir.
             if "cache_dir_vae" not in backend:
-                backend["cache_dir_vae"] = os.path.join(args.cache_dir, "vae", backend["id"])
+                backend["cache_dir_vae"] = os.path.join(
+                    args.cache_dir, "vae", backend["id"]
+                )
         else:
             raise ValueError(f"Unknown data backend type: {backend['type']}")
 

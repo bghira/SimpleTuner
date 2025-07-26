@@ -22,6 +22,7 @@ from helpers.models.common import ModelFoundation
 
 logger = logging.getLogger("TextEmbeddingCache")
 from helpers.training.multi_process import _get_rank as get_rank, should_log
+
 if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 else:

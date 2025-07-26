@@ -5,7 +5,12 @@ from helpers.training.state_tracker import StateTracker
 import sys
 
 logger = logging.getLogger("SimpleTuner")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+from helpers.training.multi_process import should_log
+
+if should_log():
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+else:
+    logger.setLevel("ERROR")
 
 helpers = {
     "json": json_file.load_json_config,

@@ -12,12 +12,14 @@ from transformers import (
     T5EncoderModel,
 )
 from diffusers import AutoencoderKLWan
-from helpers.training.multi_process import _get_rank
 
 logger = logging.getLogger(__name__)
-logger.setLevel(
-    os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO") if _get_rank() == 0 else "ERROR"
-)
+from helpers.training.multi_process import should_log
+
+if should_log():
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+else:
+    logger.setLevel("ERROR")
 
 
 class Cosmos2Image(VideoModelFoundation):

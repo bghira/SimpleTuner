@@ -6,10 +6,12 @@ import logging
 from helpers.training.multi_process import _get_rank
 
 logger = logging.getLogger("SimpleTuner")
-if _get_rank() > 0:
-    logger.setLevel(logging.WARNING)
-else:
+from helpers.training.multi_process import should_log
+
+if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+else:
+    logger.setLevel("ERROR")
 
 
 def normalize_args(args_dict):
