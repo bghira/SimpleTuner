@@ -444,7 +444,7 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
             scheduler=scheduler,
         )
 
-        self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
+        self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1) if self.vae is not None else 8
         self.image_processor = PixArtImageProcessor(
             vae_scale_factor=self.vae_scale_factor
         )
