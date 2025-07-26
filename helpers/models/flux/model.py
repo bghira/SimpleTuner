@@ -339,7 +339,7 @@ class Flux(ImageModelFoundation):
         cond = batch.get("conditioning_latents")
         if cond is None:
             logger.debug(f"No conditioning latents found :(")
-            return batch  # nothing to do
+            return super().prepare_batch_conditions(batch=batch, state=state)  # nothing to do
         # Check sampling mode
         sampling_mode = state.get("args", {}).get(
             "conditioning_multidataset_sampling", "random"
@@ -368,7 +368,7 @@ class Flux(ImageModelFoundation):
         batch["conditioning_packed_latents"] = packed_cond
         batch["conditioning_ids"] = cond_ids
 
-        return batch
+        return super().prepare_batch_conditions(batch=batch, state=state)  # fixes ControlNet latents in super class.
 
     def model_predict(self, prepared_batch):
         # handle guidance
