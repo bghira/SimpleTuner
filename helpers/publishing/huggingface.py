@@ -7,7 +7,12 @@ from helpers.publishing.metadata import save_model_card, save_training_config
 from huggingface_hub import create_repo, upload_folder, upload_file
 
 logger = logging.getLogger(__name__)
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", logging.INFO))
+from helpers.training.multi_process import should_log
+
+if should_log():
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+else:
+    logger.setLevel("ERROR")
 
 
 LORA_SAFETENSORS_FILENAME = "pytorch_lora_weights.safetensors"

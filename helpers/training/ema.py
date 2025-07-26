@@ -10,7 +10,12 @@ from diffusers.utils import is_transformers_available
 from helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("EMAModel")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
+from helpers.training.multi_process import should_log
+
+if should_log():
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+else:
+    logger.setLevel("ERROR")
 
 
 def should_update_ema(args, step):

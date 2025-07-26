@@ -13,8 +13,12 @@ import traceback
 import numpy
 
 logger = logging.getLogger("ParquetMetadataBackend")
-target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
-logger.setLevel(target_level)
+from helpers.training.multi_process import should_log
+
+if should_log():
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+else:
+    logger.setLevel("ERROR")
 
 try:
     import pandas as pd

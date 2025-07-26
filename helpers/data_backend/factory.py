@@ -129,6 +129,11 @@ def check_column_values(
 
 
 def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
+    # running this here sets it correctly for the ranks.
+    if should_log():
+        logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+    else:
+        logger.setLevel(logging.ERROR)
     output = {"id": backend["id"], "config": {}}
     if backend.get("dataset_type", None) == "text_embeds":
         if "caption_filter_list" in backend:
@@ -1134,6 +1139,11 @@ def configure_multi_databackend(
 
             # HF datasets use virtual paths, no instance_data_dir needed
             init_backend["instance_data_dir"] = ""
+            # If no cache_dir_vae is set, we'll just use the main cache_dir.
+            if "cache_dir_vae" not in backend:
+                backend["cache_dir_vae"] = os.path.join(
+                    args.cache_dir, "vae", backend["id"]
+                )
         else:
             raise ValueError(f"Unknown data backend type: {backend['type']}")
 
@@ -1340,12 +1350,16 @@ def configure_multi_databackend(
                 source_backend=StateTracker.get_data_backend(source_dataset_id),
                 target_backend=init_backend,
             )
-        else:
-            # Now split the contents of these buckets between all processes
             init_backend["metadata_backend"].split_buckets_between_processes(
                 gradient_accumulation_steps=args.gradient_accumulation_steps,
                 apply_padding=apply_padding,
             )
+        else:
+            if args.eval_dataset_id is None or init_backend["id"] in args.eval_dataset_id:
+                init_backend["metadata_backend"].split_buckets_between_processes(
+                    gradient_accumulation_steps=args.gradient_accumulation_steps,
+                    apply_padding=apply_padding,
+                )
 
         # Check if there is an existing 'config' in the metadata_backend.config
         excluded_keys = [

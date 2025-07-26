@@ -11,7 +11,12 @@ from typing import Any, List, Tuple, Union
 from atomicwrites import atomic_write
 
 logger = logging.getLogger("LocalDataBackend")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+from helpers.training.multi_process import should_log
+
+if should_log():
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+else:
+    logger.setLevel("ERROR")
 
 
 class LocalDataBackend(BaseDataBackend):

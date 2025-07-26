@@ -7,7 +7,12 @@ from PIL import Image
 from helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("ModelEvaluator")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+from helpers.training.multi_process import should_log
+
+if should_log():
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+else:
+    logger.setLevel("ERROR")
 
 model_evaluator_map = {
     "clip": "CLIPModelEvaluator",

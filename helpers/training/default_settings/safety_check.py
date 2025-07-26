@@ -2,14 +2,15 @@ import logging, sys, os
 from os import environ
 from diffusers.utils import is_wandb_available
 from helpers.training.multi_process import _get_rank as get_rank
-from helpers.training.state_tracker import StateTracker
 from torch.version import cuda as cuda_version
 
 logger = logging.getLogger(__name__)
-if get_rank() == 0:
-    logger.setLevel(environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+from helpers.training.multi_process import should_log
+
+if should_log():
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 else:
-    logger.setLevel(logging.ERROR)
+    logger.setLevel("ERROR")
 from helpers.training.error_handling import validate_deepspeed_compat_from_args
 
 

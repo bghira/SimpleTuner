@@ -4,6 +4,7 @@ from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
 from helpers.image_manipulation.training_sample import TrainingSample
 from helpers.metadata.backends.base import MetadataBackend
+from helpers.training.multi_process import should_log
 from tqdm import tqdm
 import json
 import logging
@@ -15,8 +16,12 @@ from PIL import Image
 import numpy as np
 
 logger = logging.getLogger("HuggingfaceMetadataBackend")
-target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
-logger.setLevel(target_level)
+from helpers.training.multi_process import should_log
+
+if should_log():
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+else:
+    logger.setLevel("ERROR")
 
 
 class HuggingfaceMetadataBackend(MetadataBackend):
@@ -83,6 +88,10 @@ class HuggingfaceMetadataBackend(MetadataBackend):
 
         # Composite image configuration
         self.composite_config = hf_config.get("composite_image_config", {})
+        if should_log():
+            logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+        else:
+            logger.setLevel("ERROR")
 
         super().__init__(
             id=id,
@@ -112,38 +121,72 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             raise ValueError(
                 "HuggingfaceMetadataBackend requires HuggingfaceDatasetsBackend"
             )
-
-        self.caption_cache = self._extract_captions_to_dict()
+        with accelerator.main_process_first():
+            self.caption_cache = self._extract_captions_to_dict()
+        accelerator.wait_for_everyone()
         self.reload_cache()
         self.load_image_metadata()
 
     def _extract_captions_to_dict(self) -> Dict[str, Union[str, List[str]]]:
-        """Extract captions from the dataset into a fast lookup dict."""
-        captions = {}
+        """Extract captions from the dataset into a fast lookup dict, using cache if available."""
+        import concurrent.futures
 
+        captions_cache_file = f"{self.cache_file}_captions.json"
+        # Try to load from cache
+        if self.data_backend.exists(captions_cache_file):
+            try:
+                raw = self.data_backend.read(captions_cache_file)
+                if raw:
+                    captions = json.loads(raw)
+                    logger.info(
+                        f"Loaded {len(captions)} captions from cache file {captions_cache_file}"
+                    )
+                    return captions
+            except Exception as e:
+                logger.warning(f"Error loading caption cache, will regenerate: {e}")
+
+        # Otherwise, extract captions and save to cache
         logger.info("Extracting captions from Hugging Face dataset...")
 
-        # Check composite configuration
-        is_composite = self.composite_config.get("enabled", False)
-        select_index = self.composite_config.get("select_index", None)
-
-        # Iterate through dataset
-        for idx in range(len(self.data_backend.dataset)):
+        def process_item(idx):
             item = self.data_backend.dataset[idx]
-
-            # Generate appropriate virtual path
             virtual_path = f"{idx}.jpg"
-
-            # Apply quality filter if specified
             if self.quality_filter and self.quality_column in item:
                 quality = item[self.quality_column]
                 if not self._passes_quality_filter(quality):
-                    continue
-
-            # Extract caption
+                    return None
             caption = self._extract_caption_from_item(item)
             if caption:
+                return (virtual_path, caption)
+            return None
+
+        captions = {}
+        total_items = len(self.data_backend.dataset)
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            results = list(
+                tqdm(
+                    executor.map(process_item, range(total_items)),
+                    desc="Extracting captions",
+                    total=total_items,
+                    ncols=100,
+                    mininterval=0.5,
+                    ascii=True,
+                    position=int(os.environ.get("RANK", 0)),
+                )
+            )
+        for result in results:
+            if result:
+                virtual_path, caption = result
                 captions[virtual_path] = caption
+
+        # Save to cache file
+        try:
+            self.data_backend.write(captions_cache_file, json.dumps(captions))
+            logger.info(
+                f"Saved {len(captions)} captions to cache file {captions_cache_file}"
+            )
+        except Exception as e:
+            logger.warning(f"Error saving caption cache: {e}")
 
         logger.info(f"Extracted {len(captions)} captions from dataset")
         return captions
