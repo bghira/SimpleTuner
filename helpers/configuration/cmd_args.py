@@ -183,6 +183,7 @@ def get_argument_parser():
             "tiny",
             "nano",
             # control / controlnet
+            "controlnet",
             "all+ffs+embedder",
             "all+ffs+embedder+controlnet",
         ],
