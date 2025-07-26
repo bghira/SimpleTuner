@@ -7,7 +7,7 @@ from helpers.models.common import (
 )
 from transformers import (
     PreTrainedTokenizerFast,
-    Gemma2PreTrainedModel,
+    Gemma2Model,
 )
 from diffusers import AutoencoderKL
 from diffusers.models.attention_processor import Attention
@@ -55,7 +55,7 @@ class Lumina2(ImageModelFoundation):
             "name": "Gemma2",
             "tokenizer": PreTrainedTokenizerFast,
             "tokenizer_subfolder": "tokenizer",
-            "model": Gemma2PreTrainedModel,
+            "model": Gemma2Model,
             "subfolder": "text_encoder",
         },
     }
