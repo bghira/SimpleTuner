@@ -474,7 +474,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                 logger.warning(f"Directory does not exist: {instance_data_dir}")
                 return []
             result = []
-            logger.debug(f"Running os-walk")
+            logger.debug(f"Running os.walk")
             for root, dirs, files in os.walk(instance_data_dir):
                 filtered_files = []
                 for f in files:
