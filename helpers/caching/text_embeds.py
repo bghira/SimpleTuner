@@ -17,11 +17,12 @@ from queue import Queue
 import queue
 from threading import Thread
 from concurrent.futures import ThreadPoolExecutor
-from helpers.training.multi_process import _get_rank as get_rank, should_log
 from helpers.webhooks.mixin import WebhookMixin
 from helpers.models.common import ModelFoundation
 
 logger = logging.getLogger("TextEmbeddingCache")
+from helpers.training.multi_process import _get_rank as get_rank, should_log
+
 if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 else:
@@ -174,9 +175,9 @@ class TextEmbeddingCache(WebhookMixin):
                         f"Exiting batch write thread, no more work to do after writing {written_elements} elements"
                     )
                     break
-                logger.debug(
-                    f"Queue is empty. Retrieving new entries. Should retrieve? {self.process_write_batches}"
-                )
+                # logger.debug(
+                #     f"Queue is empty. Retrieving new entries. Should retrieve? {self.process_write_batches}"
+                # )
                 pass
             except Exception:
                 logger.exception("An error occurred while writing embeddings to disk.")

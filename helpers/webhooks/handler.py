@@ -16,7 +16,12 @@ import imageio  # <-- for in-memory video encoding (MP4 or GIF)
 log_levels = {"critical": 0, "error": 1, "warning": 2, "info": 3, "debug": 4}
 
 logger = logging.getLogger(__name__)
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+from helpers.training.multi_process import should_log
+
+if should_log():
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+else:
+    logger.setLevel("ERROR")
 
 
 class WebhookHandler:

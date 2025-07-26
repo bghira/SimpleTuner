@@ -2,10 +2,13 @@ import os
 import sys
 from accelerate.logging import get_logger
 
-logger = get_logger(__name__, log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+logger = get_logger(__name__)
+from helpers.training.multi_process import should_log
 
-target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
-logger.setLevel(target_level)
+if should_log():
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+else:
+    logger.setLevel("ERROR")
 
 
 def validate_deepspeed_compat_from_args(accelerator, args):

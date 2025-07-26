@@ -26,36 +26,34 @@ from helpers.models.all import (
 model_family_choices = list(model_families.keys())
 
 logger = logging.getLogger("ArgsParser")
-# Are we the primary process?
-is_primary_process = True
-if os.environ.get("RANK") is not None:
-    if int(os.environ.get("RANK")) != 0:
-        is_primary_process = False
-logger.setLevel(
-    os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO" if is_primary_process else "ERROR")
-)
+from helpers.training.multi_process import should_log
+
+if should_log():
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+else:
+    logger.setLevel("ERROR")
 
 if torch.cuda.is_available():
     os.environ["NCCL_SOCKET_NTIMEO"] = "2000000"
 
 
 def print_on_main_thread(message):
-    if is_primary_process:
+    if should_log():
         print(message)
 
 
 def info_log(message):
-    if is_primary_process:
+    if should_log():
         logger.info(message)
 
 
 def warning_log(message):
-    if is_primary_process:
+    if should_log():
         logger.warning(message)
 
 
 def error_log(message):
-    if is_primary_process:
+    if should_log():
         logger.error(message)
 
 

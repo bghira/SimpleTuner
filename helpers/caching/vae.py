@@ -13,8 +13,7 @@ from helpers.image_manipulation.training_sample import TrainingSample, PreparedS
 from helpers.data_backend.base import BaseDataBackend
 from helpers.metadata.backends.base import MetadataBackend
 from helpers.training.state_tracker import StateTracker
-from helpers.training.multi_process import _get_rank as get_rank
-from helpers.training.multi_process import rank_info
+from helpers.training.multi_process import _get_rank as get_rank, rank_info, should_log
 from queue import Queue
 from concurrent.futures import as_completed
 from hashlib import sha256
@@ -24,11 +23,10 @@ from helpers.models.ltxvideo import normalize_ltx_latents
 from helpers.models.wan import compute_wan_posterior
 
 logger = logging.getLogger("VAECache")
-logger.setLevel(
-    os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
-    if int(os.environ.get("RANK", 0)) == 0
-    else "WARNING"
-)
+if should_log():
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+else:
+    logger.setLevel("ERROR")
 
 
 def prepare_sample(
@@ -299,6 +297,7 @@ class VAECache(WebhookMixin):
             data_backend_id=self.id,
         )
         # This isn't returned, because we merely check if it's stored, or, store it.
+        logger.debug(f"Checking {self.cache_dir=}")
         (
             StateTracker.get_vae_cache_files(data_backend_id=self.id)
             or StateTracker.set_vae_cache_files(
@@ -438,6 +437,21 @@ class VAECache(WebhookMixin):
         self.local_unprocessed_files = list(
             set(all_image_files) - set(already_cached_images)
         )
+        # this gate is so that we don't bother converting the set to a list unless we're actually going to log them.
+        if os.environ.get("SIMPLETUNER_LOG_LEVEL", None) == "DEBUG":
+            # print first five of each all_image_files and already_cached_images
+            self.debug_log(
+                f"All ({len(all_image_files)}) image files: (truncated) {list(all_image_files)[:5]}"
+            )
+            self.debug_log(
+                f"Existing cache files: (truncated) {list(existing_cache_files)[:5]}"
+            )
+            self.debug_log(
+                f"Already cached images: (truncated) {already_cached_images[:5]}"
+            )
+            self.debug_log(
+                f"VAECache Mapping: (truncated) {list(self.image_path_to_vae_path.items())[:5]}"
+            )
 
         return self.local_unprocessed_files
 
@@ -1118,7 +1132,9 @@ class VAECache(WebhookMixin):
 
     def process_buckets(self):
         futures = []
+        self.debug_log("Listing cached images")
         processed_images = self._list_cached_images()
+        self.debug_log("Reading the cache and copying")
         aspect_bucket_cache = self.metadata_backend.read_cache().copy()
 
         # Extract and shuffle the keys of the dictionary
