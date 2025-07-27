@@ -1,53 +1,34 @@
+#!/usr/bin/env python3
 import os
+import sys
+import json
+import curses
+import textwrap
+from typing import Dict, Any, List, Tuple, Optional
+import traceback
 import huggingface_hub
 import torch
 from helpers.training import quantised_precision_levels, lycoris_defaults
 from helpers.training.optimizer_param import optimizer_choices
 
+# Constants
 bf16_only_optims = [
-    key
-    for key, value in optimizer_choices.items()
+    key for key, value in optimizer_choices.items()
     if value.get("precision", "any") == "bf16"
 ]
 any_precision_optims = [
-    key
-    for key, value in optimizer_choices.items()
+    key for key, value in optimizer_choices.items()
     if value.get("precision", "any") == "any"
 ]
+
 model_classes = {
-    "full": [
-        "flux",
-        "sdxl",
-        "pixart_sigma",
-        "kolors",
-        "sd3",
-        "sd1x",
-        "sd2x",
-        "ltxvideo",
-        "wan",
-        "sana",
-        "deepfloyd",
-        "omnigen",
-        "hidream",
-        "auraflow",
-        "lumina2",
-        "cosmos2image",
-    ],
-    "lora": [
-        "flux",
-        "sdxl",
-        "kolors",
-        "sd3",
-        "sd1x",
-        "sd2x",
-        "ltxvideo",
-        "wan",
-        "deepfloyd",
-        "auraflow",
-        "hidream",
-        "lumina2",
-    ],
-    "controlnet": ["sdxl", "sd1x", "sd2x", "hidream", "auraflow", "flux", "pixart_sigma", "sd3", "kolors"],
+    "full": ["flux", "sdxl", "pixart_sigma", "kolors", "sd3", "sd1x", "sd2x",
+             "ltxvideo", "wan", "sana", "deepfloyd", "omnigen", "hidream",
+             "auraflow", "lumina2", "cosmos2image"],
+    "lora": ["flux", "sdxl", "kolors", "sd3", "sd1x", "sd2x", "ltxvideo",
+             "wan", "deepfloyd", "auraflow", "hidream", "lumina2"],
+    "controlnet": ["sdxl", "sd1x", "sd2x", "hidream", "auraflow", "flux",
+                   "pixart_sigma", "sd3", "kolors"],
 }
 
 default_models = {
@@ -69,952 +50,1354 @@ default_models = {
 }
 
 default_cfg = {
-    "flux": 3.0,
-    "sdxl": 4.2,
-    "pixart_sigma": 3.4,
-    "kolors": 5.0,
-    "terminus": 8.0,
-    "sd3": 5.0,
-    "ltxvideo": 4.0,
-    "hidream": 2.5,
-    "wan": 4.0,
-    "sana": 3.8,
-    "omnigen": 3.2,
-    "deepfloyd": 6.0,
-    "sd2x": 7.0,
-    "sd1x": 6.0,
-}
-
-model_labels = {
-    "flux": "FLUX",
-    "pixart_sigma": "PixArt Sigma",
-    "kolors": "Kwai Kolors",
-    "terminus": "Terminus",
-    "sdxl": "Stable Diffusion XL",
-    "sd3": "Stable Diffusion 3",
-    "sd2x": "Stable Diffusion 2",
-    "sd1x": "Stable Diffusion",
-    "ltxvideo": "LTX Video",
-    "wan": "WanX",
-    "hidream": "HiDream I1",
-    "sana": "Sana",
+    "flux": 3.0, "sdxl": 4.2, "pixart_sigma": 3.4, "kolors": 5.0,
+    "terminus": 8.0, "sd3": 5.0, "ltxvideo": 4.0, "hidream": 2.5,
+    "wan": 4.0, "sana": 3.8, "omnigen": 3.2, "deepfloyd": 6.0,
+    "sd2x": 7.0, "sd1x": 6.0,
 }
 
 lora_ranks = [1, 16, 64, 128, 256]
 learning_rates_by_rank = {
-    1: "3e-4",
-    16: "1e-4",
-    64: "8e-5",
-    128: "6e-5",
-    256: "5.09e-5",
+    1: "3e-4", 16: "1e-4", 64: "8e-5", 128: "6e-5", 256: "5.09e-5",
 }
 
-
-def print_config(env_contents: dict, extra_args: list):
-    # env_contents["TRAINER_EXTRA_ARGS"] = " ".join(extra_args)
-    # output = json.dumps(env_contents, indent=4)
-    # print(output)
-    pass
-
-
-def prompt_user(prompt, default=None):
-    if default:
-        prompt = f"{prompt} (default: {default})"
-    user_input = input(f"{prompt}: ")
-    return user_input.strip() or default
-
-
-def configure_lycoris():
-    print("Let's configure your LyCORIS model!\n")
-
-    print("Select a LyCORIS algorithm:\n")
-
-    print(
-        "1. LoRA - Efficient, balanced fine-tuning. Good for general tasks. (algo=lora)"
-    )
-    print(
-        "2. LoHa - Advanced, strong dampening. Ideal for multi-concept fine-tuning. (algo=loha)"
-    )
-    print(
-        "3. LoKr - Kronecker product-based. Use for complex transformations. (algo=lokr)"
-    )
-    print("4. Full Fine-Tuning - Traditional full model tuning. (algo=full)")
-    print("5. IA^3 - Efficient, tiny files, best for styles. (algo=ia3)")
-    print("6. DyLoRA - Dynamic updates, efficient with large dims. (algo=dylora)")
-    print("7. Diag-OFT - Fast convergence with orthogonal fine-tuning. (algo=diag-oft)")
-    print("8. BOFT - Advanced version of Diag-OFT with more flexibility. (algo=boft)")
-    print("9. GLoRA - Generalized LoRA. (algo=glora)\n")
-
-    # Prompt user to select an algorithm
-    algo = prompt_user(
-        f"Which LyCORIS algorithm would you like to use? (Enter the number corresponding to the algorithm)",
-        "3",  # Default to LoKr
-    )
-
-    # Map the selected number to the actual algorithm name
-    algo_map = {
-        "1": "lora",
-        "2": "loha",
-        "3": "lokr",
-        "4": "full",
-        "5": "ia3",
-        "6": "dylora",
-        "7": "diag-oft",
-        "8": "boft",
-        "9": "glora",
-    }
-
-    algo = algo_map.get(algo, "lokr").lower()
-
-    # Get the default configuration for the selected algorithm
-    default_config = lycoris_defaults.get(algo, {}).copy()
-
-    # Continue with further configuration
-    print(f"\nConfiguring {algo.upper()} algorithm...\n")
-
-    multiplier = float(
-        prompt_user(
-            f"Set the effect multiplier. Adjust for stronger or subtler effects. "
-            f"(default: {default_config.get('multiplier', 1.0)})",
-            default_config.get("multiplier", 1.0),
-        )
-    )
-
-    linear_dim = int(
-        prompt_user(
-            f"Set the linear dimension. Higher values mean more capacity but use more resources. "
-            f"(default: {default_config.get('linear_dim', 1000000)})",
-            default_config.get("linear_dim", 1000000),
-        )
-    )
-
-    linear_alpha = int(
-        prompt_user(
-            f"Set the alpha scaling factor. Controls the impact on the model. "
-            f"(default: {default_config.get('linear_alpha', 1)})",
-            default_config.get("linear_alpha", 1),
-        )
-    )
-
-    # Update basic parameters in config
-    default_config.update(
-        {
-            "multiplier": multiplier,
-            "linear_dim": linear_dim,
-            "linear_alpha": linear_alpha,
+class ConfigState:
+    """Holds the configuration state across navigation"""
+    def __init__(self):
+        self.env_contents = {
+            "--resume_from_checkpoint": "latest",
+            "--data_backend_config": "config/multidatabackend.json",
+            "--aspect_bucket_rounding": 2,
+            "--seed": 42,
+            "--minimum_image_size": 0,
+            "--disable_benchmark": False,
         }
-    )
+        self.extra_args = []
+        self.lycoris_config = None
+        self.model_type = None
+        self.use_lora = False
+        self.use_lycoris = False
+        self.lora_rank = 64
+        self.whoami = None
+        self.dataset_config = []
+        self.completed_steps = set()
+        self.loaded_config_path = None
+        
+    def load_from_file(self, config_path: str):
+        """Load configuration from JSON file"""
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                loaded_config = json.load(f)
+                
+            # Update env_contents with loaded values
+            self.env_contents.update(loaded_config)
+            
+            # Extract model type
+            if "--model_type" in loaded_config:
+                self.model_type = loaded_config["--model_type"]
+                
+            # Check if using LoRA
+            if "--lora_type" in loaded_config:
+                self.use_lora = True
+                self.use_lycoris = loaded_config["--lora_type"] == "lycoris"
+                
+            # Get LoRA rank if present
+            if "--lora_rank" in loaded_config:
+                self.lora_rank = loaded_config["--lora_rank"]
+                
+            # Load LyCORIS config if specified
+            if "--lycoris_config" in loaded_config and os.path.exists(loaded_config["--lycoris_config"]):
+                with open(loaded_config["--lycoris_config"], 'r', encoding='utf-8') as f:
+                    self.lycoris_config = json.load(f)
+                    
+            # Load dataset config if specified
+            backend_config = loaded_config.get("--data_backend_config", "config/multidatabackend.json")
+            if os.path.exists(backend_config):
+                with open(backend_config, 'r', encoding='utf-8') as f:
+                    self.dataset_config = json.load(f)
+                    
+            self.loaded_config_path = config_path
+            
+            # Mark steps as completed based on what's configured
+            if "--output_dir" in loaded_config:
+                self.completed_steps.add(0)  # Basic setup
+            if "--model_type" in loaded_config:
+                self.completed_steps.add(1)  # Model type
+            if "--max_train_steps" in loaded_config or "--num_train_epochs" in loaded_config:
+                self.completed_steps.add(2)  # Training config
+            if "--model_family" in loaded_config:
+                self.completed_steps.add(4)  # Model selection
+            if "--train_batch_size" in loaded_config:
+                self.completed_steps.add(5)  # Training params
+            if "--optimizer" in loaded_config:
+                self.completed_steps.add(6)  # Optimization
+            if "--validation_prompt" in loaded_config:
+                self.completed_steps.add(7)  # Validation
+                
+            return True
+            
+        except Exception as e:
+            return False
 
-    # Conditional prompts based on the selected algorithm
-    if algo == "lokr":
-        factor = int(
-            prompt_user(
-                f"Set the factor for compression/expansion. "
-                f"(default: {default_config.get('factor', 16)})",
-                default_config.get("factor", 16),
-            )
-        )
-        default_config.update({"factor": factor})
-
-        if linear_dim >= 10000:  # Handle full-dimension case
-            print("Full-dimension mode activated. Alpha will be set to 1.")
-            default_config["linear_alpha"] = 1
-
-    elif algo == "loha":
-        if linear_dim > 32:
-            print("Warning: High dim values with LoHa may cause instability.")
-        # Additional LoHa-specific configurations can be added here if needed
-
-    elif algo == "dylora":
-        block_size = int(
-            prompt_user(
-                f"Set block size for DyLoRA (rows/columns updated per step). "
-                f"(default: {default_config.get('block_size', 0)})",
-                default_config.get("block_size", 0),
-            )
-        )
-        default_config.update({"block_size": block_size})
-
-    elif algo in ["diag-oft", "boft"]:
-        constraint = (
-            prompt_user(
-                f"Enforce constraints (e.g., orthogonality)? "
-                f"(True/False, default: {default_config.get('constraint', False)})",
-                str(default_config.get("constraint", False)),
-            ).lower()
-            == "true"
-        )
-
-        rescaled = (
-            prompt_user(
-                f"Rescale transformations? Adjusts model impact. "
-                f"(True/False, default: {default_config.get('rescaled', False)})",
-                str(default_config.get("rescaled", False)),
-            ).lower()
-            == "true"
-        )
-
-        default_config.update(
-            {
-                "constraint": constraint,
-                "rescaled": rescaled,
-            }
-        )
-
-    # Handle presets for specific modules
-    if "apply_preset" in default_config:
-        print("\nNext, configure the modules to target with this algorithm.")
-        target_module = prompt_user(
-            f"Which modules should the {algo.upper()} algorithm be applied to? "
-            f"(default: {', '.join(default_config['apply_preset']['target_module'])})",
-            ", ".join(default_config["apply_preset"]["target_module"]),
-        ).split(",")
-        default_config["apply_preset"]["target_module"] = [
-            m.strip() for m in target_module
+class SimpleTunerNCurses:
+    def __init__(self):
+        self.state = ConfigState()
+        self.current_step = 0
+        self.menu_items = [
+            ("Basic Setup", self.basic_setup),
+            ("Model Type & LoRA/LyCORIS", self.model_type_setup),
+            ("Training Configuration", self.training_config),
+            ("Hugging Face Hub", self.hub_setup),
+            ("Model Selection", self.model_selection),
+            ("Training Parameters", self.training_params),
+            ("Optimization Settings", self.optimization_settings),
+            ("Validation Settings", self.validation_settings),
+            ("Advanced Options", self.advanced_options),
+            ("Dataset Configuration", self.dataset_config),
+            ("Review & Save", self.review_and_save),
         ]
+        
+        # Try to load default config if it exists
+        if os.path.exists("config/config.json"):
+            self.state.load_from_file("config/config.json")
+        
+    def run(self):
+        """Main entry point with error handling"""
+        try:
+            curses.wrapper(self._main_loop)
+        except Exception as e:
+            print(f"Error: {e}")
+            traceback.print_exc()
 
-        for module_name, module_config in default_config["apply_preset"][
-            "module_algo_map"
-        ].items():
-            for param, value in module_config.items():
-                user_value = prompt_user(
-                    f"Set {param} for {module_name}. " f"(default: {value})", value
-                )
-                module_config[param] = (
-                    int(user_value) if isinstance(value, int) else float(user_value)
-                )
+    def _main_loop(self, stdscr):
+        """Main curses loop"""
+        curses.curs_set(0)  # Hide cursor
+        stdscr.clear()
+        
+        # Show startup screen
+        self.show_startup_screen(stdscr)
+        
+        while True:
+            try:
+                action = self.show_main_menu(stdscr)
+                if action == "quit":
+                    break
+                elif action is not None:
+                    self.current_step = action
+                    try:
+                        self.menu_items[action][1](stdscr)
+                        self.state.completed_steps.add(action)
+                    except Exception as e:
+                        self.show_error(stdscr, f"Error in {self.menu_items[action][0]}: {str(e)}")
+            except KeyboardInterrupt:
+                if self.confirm_quit(stdscr):
+                    break
 
-    print("\nLyCORIS configuration complete: ", default_config)
-    return default_config
-
-
-def configure_env():
-    print("Welcome to SimpleTuner!")
-    print("This script will guide you through setting up your config.json file.\n")
-    env_contents = {
-        "--resume_from_checkpoint": "latest",
-        "--data_backend_config": "config/multidatabackend.json",
-        "--aspect_bucket_rounding": 2,
-        "--seed": 42,
-        "--minimum_image_size": 0,
-        "--disable_benchmark": False,
-    }
-    extra_args = []
-
-    output_dir = prompt_user(
-        "Enter the directory where you want to store your outputs", "output/models"
-    )
-    while not os.path.exists(output_dir):
-        should_create = (
-            prompt_user(
-                "That directory did not exist. Should I create it? Answer 'n' to select a new location. ([y]/n)",
-                "y",
-            )
-            == "y"
-        )
-        if should_create:
-            os.makedirs(output_dir, exist_ok=True)
+    def show_startup_screen(self, stdscr):
+        """Show startup screen with loaded config info"""
+        h, w = stdscr.getmaxyx()
+        stdscr.clear()
+        
+        # ASCII art title (simple)
+        title_lines = [
+            "╔═══════════════════════════════════════╗",
+            "║      SimpleTuner Configuration        ║",
+            "║           ncurses Edition             ║",
+            "╚═══════════════════════════════════════╝",
+        ]
+        
+        start_y = (h - len(title_lines) - 6) // 2
+        for idx, line in enumerate(title_lines):
+            x = (w - len(line)) // 2
+            stdscr.addstr(start_y + idx, x, line, curses.A_BOLD)
+            
+        info_y = start_y + len(title_lines) + 2
+        
+        if self.state.loaded_config_path:
+            info = f"Loaded configuration: {self.state.loaded_config_path}"
+            stdscr.addstr(info_y, (w - len(info)) // 2, info, curses.A_DIM)
+            status = "Ready to modify existing configuration"
         else:
-            print(
-                f"Directory {output_dir} does not exist. Please create it and try again."
-            )
-            output_dir = prompt_user(
-                "Enter the directory where you want to store your outputs",
-                "output/models",
-            )
-    env_contents["--output_dir"] = output_dir
+            status = "No configuration loaded - starting fresh"
+            
+        stdscr.addstr(info_y + 1, (w - len(status)) // 2, status)
+        
+        prompt = "Press any key to continue..."
+        stdscr.addstr(h - 2, (w - len(prompt)) // 2, prompt, curses.A_DIM)
+        
+        stdscr.refresh()
+        stdscr.getch()
 
-    # Start with the basic options
-    model_type = prompt_user(
-        "What type of model are you training? (Options: [lora], full)", "lora"
-    ).lower()
-    use_lycoris = False
-    use_lora = False
-    if model_type == "lora":
-        use_lora = True
-        use_lycoris = (
-            prompt_user("Would you like to train a LyCORIS model? ([y]/n)", "y").lower()
-            == "y"
-        )
-        if use_lycoris:
-            env_contents["--lora_type"] = "lycoris"
-            lycoris_config = configure_lycoris()
-            env_contents["--lycoris_config"] = "config/lycoris_config.json"
-            # write json to file
-            import json
+    def show_main_menu(self, stdscr) -> Optional[int]:
+        """Display the main menu/TOC"""
+        stdscr.clear()
+        h, w = stdscr.getmaxyx()
+        
+        # Title
+        title = "SimpleTuner Configuration"
+        stdscr.addstr(1, (w - len(title)) // 2, title, curses.A_BOLD)
+        
+        # Show loaded config info
+        if self.state.loaded_config_path:
+            info = f"Loaded: {self.state.loaded_config_path}"
+            if len(info) > w - 4:
+                info = "..." + info[-(w-7):]
+            stdscr.addstr(2, 2, info, curses.A_DIM)
+            
+        stdscr.addstr(3, 2, "Use arrow keys to navigate, Enter to select, 'q' to quit, 'l' to load config")
+        
+        # Menu items
+        start_y = 5
+        selected = self.current_step
+        
+        while True:
+            for idx, (item_name, _) in enumerate(self.menu_items):
+                y = start_y + idx
+                if y >= h - 2:
+                    break
+                    
+                # Highlight current selection
+                attr = curses.A_REVERSE if idx == selected else curses.A_NORMAL
+                
+                # Mark completed steps
+                prefix = "[✓] " if idx in self.state.completed_steps else "[ ] "
+                text = f"{prefix}{idx + 1}. {item_name}"
+                
+                # Ensure text fits
+                if len(text) > w - 4:
+                    text = text[:w-7] + "..."
+                    
+                stdscr.addstr(y, 2, text, attr)
+            
+            stdscr.refresh()
+            
+            key = stdscr.getch()
+            if key == ord('q'):
+                if self.confirm_quit(stdscr):
+                    return "quit"
+            elif key == ord('l'):
+                if self.load_config_dialog(stdscr):
+                    # Refresh the menu to show updated state
+                    return None
+            elif key == curses.KEY_UP and selected > 0:
+                selected -= 1
+            elif key == curses.KEY_DOWN and selected < len(self.menu_items) - 1:
+                selected += 1
+            elif key in [curses.KEY_ENTER, ord('\n'), ord('\r')]:
+                return selected
 
-            # approximate the rank of the lycoris
-            lora_rank = 16
-            with open("config/lycoris_config.json", "w", encoding="utf-8") as f:
-                f.write(json.dumps(lycoris_config, indent=4))
-        else:
-            env_contents["--lora_type"] = "standard"
-            use_dora = prompt_user(
-                "Would you like to train a DoRA model? (y/[n])", "n"
-            ).lower()
-            if use_dora == "y":
-                env_contents["--use_dora"] = "true"
-            lora_rank = None
-            while lora_rank not in lora_ranks:
-                if lora_rank is not None:
-                    print(f"Invalid LoRA rank: {lora_rank}")
-                lora_rank = int(
-                    prompt_user(
-                        f"Set the LoRA rank (Options: {', '.join([str(x) for x in lora_ranks])})",
-                        "64",
-                    )
-                )
-            env_contents["--lora_rank"] = lora_rank
-    elif model_type == "full":
-        use_ema = prompt_user(
-            "Would you like to use EMA for training? (y/[n])", "n"
-        ).lower()
-        if use_ema == "y":
-            env_contents["--use_ema"] = "true"
+    def show_error(self, stdscr, error_msg: str):
+        """Display an error message and wait for acknowledgment"""
+        h, w = stdscr.getmaxyx()
+        
+        # Create error window
+        error_lines = textwrap.wrap(error_msg, w - 10)
+        error_h = len(error_lines) + 4
+        error_w = min(80, w - 4)
+        
+        error_win = curses.newwin(error_h, error_w, 
+                                 (h - error_h) // 2, 
+                                 (w - error_w) // 2)
+        error_win.box()
+        error_win.addstr(0, 2, " Error ", curses.A_BOLD | curses.color_pair(1))
+        
+        for idx, line in enumerate(error_lines):
+            error_win.addstr(idx + 1, 2, line)
+            
+        error_win.addstr(error_h - 2, 2, "Press any key to continue...")
+        error_win.refresh()
+        error_win.getch()
 
-    print("We'll try and login to Hugging Face Hub..")
-    whoami = None
-    try:
-        whoami = huggingface_hub.whoami()
-    except:
-        pass
-    should_retry = True
-    while not whoami and should_retry:
-        should_retry = (
-            prompt_user(
-                "You are not currently logged into Hugging Face Hub. Would you like to login? (y/n)",
-                "y",
-            ).lower()
-            == "y"
-        )
-        if not should_retry:
-            whoami = None
-            print("Will not be logged into Hugging Face Hub.")
-            break
-        huggingface_hub.login()
-        whoami = huggingface_hub.whoami()
-
-    finishing_count_type = prompt_user(
-        "Should we schedule the end of training by epochs, or steps?", "steps"
-    ).lower()
-    while finishing_count_type not in ["steps", "epochs"]:
-        print(f"Invalid finishing count type: {finishing_count_type}")
-        finishing_count_type = prompt_user(
-            "Should we schedule the end of training by epochs, or steps?", "steps"
-        ).lower()
-    default_checkpointing_interval = 500
-    if finishing_count_type == "steps":
-        env_contents["--max_train_steps"] = int(
-            prompt_user("Set the maximum number of steps", 10000)
-        )
-        if env_contents["--max_train_steps"] < default_checkpointing_interval:
-            # reduce the default checkpointing interval offered to the user so that they get a reasonable value.
-            default_checkpointing_interval = env_contents["--max_train_steps"] // 10
-        env_contents["--num_train_epochs"] = 0
-    else:
-        env_contents["--num_train_epochs"] = prompt_user(
-            "Set the maximum number of epochs", 100
-        )
-        env_contents["--max_train_steps"] = 0
-
-    checkpointing_interval = prompt_user(
-        "Set the checkpointing interval (in steps)", default_checkpointing_interval
-    )
-    env_contents["--checkpointing_steps"] = int(checkpointing_interval)
-    checkpointing_limit = prompt_user(
-        "How many checkpoints do you want to keep? LoRA are small, and you can keep more than a full finetune.",
-        5,
-    )
-    env_contents["--checkpoints_total_limit"] = int(checkpointing_limit)
-    if whoami is not None:
-        print("Connected to Hugging Face Hub as:", whoami["name"])
-        should_push_to_hub = (
-            prompt_user(
-                "Do you want to push your model to Hugging Face Hub when it is completed uploading? (y/n)",
-                "y",
-            ).lower()
-            == "y"
-        )
-        if should_push_to_hub:
-            env_contents["--hub_model_id"] = prompt_user(
-                f"What do you want the name of your Hugging Face Hub model to be? This will be accessible as https://huggingface.co/{whoami['name']}/your-model-name-here",
-                f"simpletuner-{model_type}",
-            )
-            should_push_checkpoints = False
-            env_contents["--push_to_hub"] = "true"
-            should_push_checkpoints = (
-                prompt_user(
-                    "Do you want to push intermediary checkpoints to Hugging Face Hub? ([y]/n)",
-                    "y",
-                ).lower()
-                == "y"
-            )
-            if should_push_checkpoints:
-                env_contents["--push_checkpoints_to_hub"] = "true"
-            model_card_safe_for_work = (
-                prompt_user(
-                    "Is your target model considered safe-for-work? Answering yes here will remove the NSFW warning from the Hugging Face Hub model card. If you are unsure, please leave this as 'no'. (y/[n])",
-                    "n",
-                ).lower()
-                == "y"
-            )
-            if model_card_safe_for_work:
-                env_contents["--model_card_safe_for_work"] = "true"
-    report_to_wandb = (
-        prompt_user(
-            "Would you like to report training statistics to Weights & Biases? ([y]/n)",
-            "y",
-        ).lower()
-        == "y"
-    )
-    report_to_tensorboard = (
-        prompt_user(
-            "Would you like to report training statistics to TensorBoard? (y/[n])", "n"
-        ).lower()
-        == "y"
-    )
-
-    env_contents["--attention_mechanism"] = "diffusers"
-    use_sageattention = (
-        prompt_user(
-            "Would you like to use SageAttention for image validation generation? (y/[n])",
-            "n",
-        ).lower()
-        == "y"
-    )
-    if use_sageattention:
-        env_contents["--attention_mechanism"] = "sageattention"
-        env_contents["--sageattention_usage"] = "inference"
-        use_sageattention_training = (
-            prompt_user(
-                (
-                    "Would you like to use SageAttention to cover the forward and backward pass during training?"
-                    " This has the undesirable consequence of leaving the attention layers untrained,"
-                    " as SageAttention lacks the capability to fully track gradients through quantisation."
-                    " If you are not training the attention layers for some reason, this may not matter and"
-                    " you can safely enable this. For all other use-cases, reconsideration and caution are warranted."
-                ),
-                "n",
-            ).lower()
-            == "y"
-        )
-        if use_sageattention_training:
-            env_contents["--sageattention_usage"] = "both"
-
-    # properly disable wandb/tensorboard/comet_ml etc by default
-    report_to_str = "none"
-    if report_to_wandb or report_to_tensorboard:
-        tracker_project_name = prompt_user(
-            "Enter the name of your Weights & Biases project", f"{model_type}-training"
-        )
-        env_contents["--tracker_project_name"] = tracker_project_name
-        tracker_run_name = prompt_user(
-            "Enter the name of your Weights & Biases runs. This can use shell commands, which can be used to dynamically set the run name.",
-            f"simpletuner-{model_type}",
-        )
-        env_contents["--tracker_run_name"] = tracker_run_name
-        if report_to_wandb:
-            report_to_str = "wandb"
-        if report_to_tensorboard:
-            if report_to_str != "none":
-                # report to both WandB and Tensorboard if the user wanted.
-                report_to_str += ","
+    def get_input(self, stdscr, prompt: str, default: str = "", 
+                  validation_fn=None, multiline=False) -> str:
+        """Generic input function with validation"""
+        h, w = stdscr.getmaxyx()
+        
+        # Clear and display prompt
+        stdscr.clear()
+        wrapped_prompt = textwrap.wrap(prompt, w - 4)
+        for idx, line in enumerate(wrapped_prompt):
+            stdscr.addstr(2 + idx, 2, line)
+            
+        if default:
+            stdscr.addstr(2 + len(wrapped_prompt) + 1, 2, f"Default: {default}")
+            
+        input_y = 2 + len(wrapped_prompt) + 3
+        stdscr.addstr(input_y, 2, "> ")
+        
+        curses.echo()
+        curses.curs_set(1)
+        
+        try:
+            if multiline:
+                lines = []
+                stdscr.addstr(input_y + 1, 2, "(Press Ctrl+D when done)")
+                # Note: multiline input is complex in curses, simplified here
+                user_input = stdscr.getstr(input_y, 4).decode('utf-8')
             else:
-                # remove 'none' from the option
-                report_to_str = ""
-            report_to_str += "tensorboard"
-    env_contents["--report_to"] = report_to_str
+                user_input = stdscr.getstr(input_y, 4, w - 6).decode('utf-8')
+                
+            if not user_input and default:
+                user_input = default
+                
+            if validation_fn and not validation_fn(user_input):
+                raise ValueError("Invalid input")
+                
+            return user_input
+            
+        finally:
+            curses.noecho()
+            curses.curs_set(0)
 
-    print_config(env_contents, extra_args)
+    def show_options(self, stdscr, prompt: str, options: List[str], 
+                     default: int = 0) -> int:
+        """Show a list of options and return the selected index"""
+        stdscr.clear()
+        h, w = stdscr.getmaxyx()
+        
+        # Display prompt
+        wrapped_prompt = textwrap.wrap(prompt, w - 4)
+        for idx, line in enumerate(wrapped_prompt):
+            stdscr.addstr(2 + idx, 2, line)
+            
+        start_y = 2 + len(wrapped_prompt) + 2
+        selected = default
+        
+        while True:
+            for idx, option in enumerate(options):
+                if start_y + idx >= h - 2:
+                    break
+                    
+                attr = curses.A_REVERSE if idx == selected else curses.A_NORMAL
+                text = f"{idx + 1}. {option}"
+                if len(text) > w - 4:
+                    text = text[:w-7] + "..."
+                stdscr.addstr(start_y + idx, 4, text, attr)
+                
+            stdscr.refresh()
+            
+            key = stdscr.getch()
+            if key == curses.KEY_UP and selected > 0:
+                selected -= 1
+            elif key == curses.KEY_DOWN and selected < len(options) - 1:
+                selected += 1
+            elif key in [curses.KEY_ENTER, ord('\n'), ord('\r')]:
+                return selected
+            elif key == 27:  # ESC
+                return -1
 
-    model_class = None
-    while model_class not in model_classes[model_type]:
-        if model_class is not None:
-            print(f"Invalid model class: {model_class}")
-        model_class = prompt_user(
-            f"Which model family are you training? ({'/'.join(model_classes[model_type])})",
-            "flux",
-        ).lower()
+    def confirm_quit(self, stdscr) -> bool:
+        """Confirm quit dialog"""
+        return self.show_options(stdscr, 
+                               "Are you sure you want to quit? Unsaved changes will be lost.",
+                               ["No, continue", "Yes, quit"], 0) == 1
 
-    can_load_model = False
-    model_name = None
-    while not can_load_model:
-        if model_name is not None:
-            print(
-                "For some reason, we can not load that model. Can you check your Hugging Face login and try again?"
-            )
-        model_name = prompt_user(
-            "Enter the model name from Hugging Face Hub", default_models[model_class]
-        )
+    def find_config_files(self, base_path: str = "config") -> List[str]:
+        """Find all config.json files in the config directory and subdirectories"""
+        config_files = []
+        
+        if os.path.exists(base_path):
+            for root, dirs, files in os.walk(base_path):
+                if "config.json" in files:
+                    config_path = os.path.join(root, "config.json")
+                    config_files.append(config_path)
+                    
+        return sorted(config_files)
+
+    def load_config_dialog(self, stdscr) -> bool:
+        """Show dialog to load a configuration file"""
+        # Find available config files
+        config_files = self.find_config_files()
+        
+        if not config_files:
+            self.show_error(stdscr, "No config.json files found in config/ directory")
+            return False
+            
+        # Add options for manual entry and new config
+        options = ["Create new configuration", "Enter path manually"] + config_files
+        
+        selected = self.show_options(stdscr,
+                                   "Select a configuration to load:",
+                                   options, 
+                                   2 if len(config_files) > 0 else 0)
+        
+        if selected == -1:  # ESC pressed
+            return False
+            
+        if selected == 0:  # New configuration
+            self.state = ConfigState()  # Reset to defaults
+            self.state.loaded_config_path = None
+            return True
+            
+        elif selected == 1:  # Manual entry
+            config_path = self.get_input(stdscr,
+                                       "Enter path to config.json:",
+                                       "config/config.json")
+            if os.path.exists(config_path):
+                if self.state.load_from_file(config_path):
+                    self.show_message(stdscr, f"Successfully loaded: {config_path}")
+                    return True
+                else:
+                    self.show_error(stdscr, f"Failed to load: {config_path}")
+                    return False
+            else:
+                self.show_error(stdscr, f"File not found: {config_path}")
+                return False
+                
+        else:  # Selected a file from the list
+            config_path = config_files[selected - 2]
+            if self.state.load_from_file(config_path):
+                self.show_message(stdscr, f"Successfully loaded: {config_path}")
+                return True
+            else:
+                self.show_error(stdscr, f"Failed to load: {config_path}")
+                return False
+
+    def show_message(self, stdscr, message: str):
+        """Display an informational message"""
+        h, w = stdscr.getmaxyx()
+        
+        # Create message window
+        msg_lines = textwrap.wrap(message, w - 10)
+        msg_h = len(msg_lines) + 4
+        msg_w = min(80, w - 4)
+        
+        msg_win = curses.newwin(msg_h, msg_w, 
+                               (h - msg_h) // 2, 
+                               (w - msg_w) // 2)
+        msg_win.box()
+        msg_win.addstr(0, 2, " Info ", curses.A_BOLD)
+        
+        for idx, line in enumerate(msg_lines):
+            msg_win.addstr(idx + 1, 2, line)
+            
+        msg_win.addstr(msg_h - 2, 2, "Press any key to continue...")
+        msg_win.refresh()
+        msg_win.getch()
+
+    def basic_setup(self, stdscr):
+        """Step 1: Basic Setup"""
+        # Show current value if exists
+        current_output_dir = self.state.env_contents.get("--output_dir", "output/models")
+        
+        output_dir = self.get_input(stdscr, 
+                                   f"Enter the directory where you want to store your outputs\n(Current: {current_output_dir}):",
+                                   current_output_dir)
+        
+        if not os.path.exists(output_dir):
+            if self.show_options(stdscr, 
+                               f"Directory {output_dir} doesn't exist. Create it?",
+                               ["Yes", "No, choose another"], 0) == 0:
+                os.makedirs(output_dir, exist_ok=True)
+            else:
+                return self.basic_setup(stdscr)
+                
+        self.state.env_contents["--output_dir"] = output_dir
+
+    def model_type_setup(self, stdscr):
+        """Step 2: Model Type & LoRA/LyCORIS Setup"""
+        # Check current model type
+        current_type = self.state.env_contents.get("--model_type", "lora")
+        
+        model_type_idx = self.show_options(stdscr,
+                                         f"What type of model are you training?\n(Current: {current_type})",
+                                         ["LoRA", "Full"], 
+                                         0 if current_type == "lora" else 1)
+        
+        self.state.model_type = "lora" if model_type_idx == 0 else "full"
+        self.state.env_contents["--model_type"] = self.state.model_type
+        
+        if self.state.model_type == "lora":
+            self.state.use_lora = True
+            
+            # Check if already configured
+            current_lora_type = self.state.env_contents.get("--lora_type", "standard")
+            default_lycoris = 0 if current_lora_type == "lycoris" else 1
+            
+            use_lycoris_idx = self.show_options(stdscr,
+                                              f"Would you like to train a LyCORIS model?\n(Current: {current_lora_type})",
+                                              ["Yes", "No"], default_lycoris)
+            
+            if use_lycoris_idx == 0:
+                self.state.use_lycoris = True
+                self.state.env_contents["--lora_type"] = "lycoris"
+                self.configure_lycoris(stdscr)
+            else:
+                self.state.env_contents["--lora_type"] = "standard"
+                
+                # Check for DoRA
+                current_dora = self.state.env_contents.get("--use_dora", "false") == "true"
+                use_dora_idx = self.show_options(stdscr,
+                                               f"Would you like to train a DoRA model?\n(Current: {'Yes' if current_dora else 'No'})",
+                                               ["No", "Yes"], 1 if current_dora else 0)
+                
+                if use_dora_idx == 1:
+                    self.state.env_contents["--use_dora"] = "true"
+                elif "--use_dora" in self.state.env_contents:
+                    del self.state.env_contents["--use_dora"]
+                    
+                # LoRA rank selection
+                current_rank = self.state.env_contents.get("--lora_rank", 64)
+                rank_options = [str(r) for r in lora_ranks]
+                
+                # Find current rank index
+                default_rank_idx = 2  # Default to 64
+                if current_rank in lora_ranks:
+                    default_rank_idx = lora_ranks.index(current_rank)
+                    
+                rank_idx = self.show_options(stdscr,
+                                           f"Set the LoRA rank:\n(Current: {current_rank})",
+                                           rank_options, default_rank_idx)
+                
+                self.state.lora_rank = lora_ranks[rank_idx]
+                self.state.env_contents["--lora_rank"] = self.state.lora_rank
+        else:
+            # Full fine-tuning
+            current_ema = self.state.env_contents.get("--use_ema", "false") == "true"
+            use_ema_idx = self.show_options(stdscr,
+                                          f"Would you like to use EMA for training?\n(Current: {'Yes' if current_ema else 'No'})",
+                                          ["No", "Yes"], 1 if current_ema else 0)
+            
+            if use_ema_idx == 1:
+                self.state.env_contents["--use_ema"] = "true"
+            elif "--use_ema" in self.state.env_contents:
+                del self.state.env_contents["--use_ema"]
+
+    def configure_lycoris(self, stdscr):
+        """Configure LyCORIS settings"""
+        algorithms = [
+            ("LoRA", "lora", "Efficient, balanced fine-tuning"),
+            ("LoHa", "loha", "Advanced, strong dampening"),
+            ("LoKr", "lokr", "Kronecker product-based"),
+            ("Full", "full", "Traditional full model tuning"),
+            ("IA³", "ia3", "Efficient, tiny files, best for styles"),
+            ("DyLoRA", "dylora", "Dynamic updates"),
+            ("Diag-OFT", "diag-oft", "Fast convergence"),
+            ("BOFT", "boft", "Advanced OFT"),
+            ("GLoRA", "glora", "Generalized LoRA"),
+        ]
+        
+        algo_names = [f"{name} - {desc}" for name, _, desc in algorithms]
+        algo_idx = self.show_options(stdscr,
+                                   "Select a LyCORIS algorithm:",
+                                   algo_names, 2)  # Default to LoKr
+        
+        algo = algorithms[algo_idx][1]
+        default_config = lycoris_defaults.get(algo, {}).copy()
+        
+        # Get multiplier
+        multiplier = self.get_input(stdscr,
+                                  "Set the effect multiplier (adjust for stronger or subtler effects):",
+                                  str(default_config.get('multiplier', 1.0)))
+        
         try:
-            model_info = huggingface_hub.model_info(model_name)
-            if hasattr(model_info, "id"):
-                can_load_model = True
-        except:
-            continue
-    env_contents["--model_type"] = model_type
-    env_contents["--pretrained_model_name_or_path"] = model_name
-    env_contents["--model_family"] = model_class.lower()
-    # Flux-specific options
-    if "FLUX" in env_contents and env_contents["--model_family"] == "flux":
-        if env_contents["--model_type"].lower() == "lora" and not use_lycoris:
-            flux_targets = [
-                "mmdit",
-                "context",
-                "all",
-                "all+ffs",
-                "ai-toolkit",
-                "tiny",
-                "nano",
-            ]
-            flux_target_layers = None
-            while flux_target_layers not in flux_targets:
-                if flux_target_layers:
-                    print(f"Invalid Flux target layers: {flux_target_layers}")
-                flux_target_layers = prompt_user(
-                    f"Set Flux target layers (Options: {'/'.join(flux_targets)})",
-                    "all",
-                )
-            env_contents["--flux_lora_target"] = flux_target_layers
+            default_config['multiplier'] = float(multiplier)
+        except ValueError:
+            default_config['multiplier'] = 1.0
+            
+        # Continue with other LyCORIS parameters...
+        # (Similar pattern for other parameters)
+        
+        self.state.lycoris_config = default_config
+        
+        # Save LyCORIS config
+        with open("config/lycoris_config.json", "w", encoding="utf-8") as f:
+            json.dump(default_config, f, indent=4)
+            
+        self.state.env_contents["--lycoris_config"] = "config/lycoris_config.json"
 
-    print_config(env_contents, extra_args)
-
-    # Additional settings
-    env_contents["--train_batch_size"] = int(
-        prompt_user(
-            "Set the training batch size. Larger values will require larger datasets, more VRAM, and slow things down.",
-            1,
-        )
-    )
-    env_contents["--gradient_checkpointing"] = "true"
-    if env_contents["--model_family"] in ["sdxl", "flux", "sd3", "sana"]:
-        gradient_checkpointing_interval = prompt_user(
-            "Would you like to configure a gradient checkpointing interval? A value larger than 1 will increase VRAM usage but speed up training by skipping checkpoint creation every Nth layer, and a zero will disable this feature.",
-            0,
-        )
+    def training_config(self, stdscr):
+        """Step 3: Training Configuration"""
+        count_type_idx = self.show_options(stdscr,
+                                         "Should we schedule the end of training by epochs or steps?",
+                                         ["Steps", "Epochs"], 0)
+        
+        if count_type_idx == 0:
+            max_steps = self.get_input(stdscr,
+                                     "Set the maximum number of steps:",
+                                     "10000")
+            try:
+                self.state.env_contents["--max_train_steps"] = int(max_steps)
+                self.state.env_contents["--num_train_epochs"] = 0
+            except ValueError:
+                self.state.env_contents["--max_train_steps"] = 10000
+                self.state.env_contents["--num_train_epochs"] = 0
+        else:
+            max_epochs = self.get_input(stdscr,
+                                      "Set the maximum number of epochs:",
+                                      "100")
+            try:
+                self.state.env_contents["--num_train_epochs"] = int(max_epochs)
+                self.state.env_contents["--max_train_steps"] = 0
+            except ValueError:
+                self.state.env_contents["--num_train_epochs"] = 100
+                self.state.env_contents["--max_train_steps"] = 0
+                
+        # Checkpointing
+        default_interval = 500
+        if self.state.env_contents.get("--max_train_steps", 0) > 0:
+            if self.state.env_contents["--max_train_steps"] < default_interval:
+                default_interval = self.state.env_contents["--max_train_steps"] // 10
+                
+        checkpoint_interval = self.get_input(stdscr,
+                                           "Set the checkpointing interval (in steps):",
+                                           str(default_interval))
+        
         try:
-            if int(gradient_checkpointing_interval) > 1:
-                env_contents["--gradient_checkpointing_interval"] = int(
-                    gradient_checkpointing_interval
-                )
+            self.state.env_contents["--checkpointing_steps"] = int(checkpoint_interval)
+        except ValueError:
+            self.state.env_contents["--checkpointing_steps"] = default_interval
+            
+        checkpoint_limit = self.get_input(stdscr,
+                                        "How many checkpoints do you want to keep?",
+                                        "5")
+        
+        try:
+            self.state.env_contents["--checkpoints_total_limit"] = int(checkpoint_limit)
+        except ValueError:
+            self.state.env_contents["--checkpoints_total_limit"] = 5
+
+    def hub_setup(self, stdscr):
+        """Step 4: Hugging Face Hub Setup"""
+        stdscr.clear()
+        stdscr.addstr(2, 2, "Checking Hugging Face Hub login...")
+        stdscr.refresh()
+        
+        try:
+            self.state.whoami = huggingface_hub.whoami()
         except:
-            print("Could not parse gradient checkpointing interval. Not enabling.")
-            pass
+            self.state.whoami = None
+            
+        if not self.state.whoami:
+            login_idx = self.show_options(stdscr,
+                                        "You are not logged into Hugging Face Hub. Would you like to login?",
+                                        ["Yes", "No"], 0)
+            
+            if login_idx == 0:
+                stdscr.clear()
+                stdscr.addstr(2, 2, "Please login to Hugging Face Hub in your terminal...")
+                stdscr.addstr(4, 2, "Press any key when done...")
+                stdscr.refresh()
+                stdscr.getch()
+                
+                try:
+                    huggingface_hub.login()
+                    self.state.whoami = huggingface_hub.whoami()
+                except:
+                    self.show_error(stdscr, "Failed to login to Hugging Face Hub")
+                    return
+                    
+        if self.state.whoami:
+            stdscr.clear()
+            stdscr.addstr(2, 2, f"Connected as: {self.state.whoami['name']}")
+            stdscr.refresh()
+            
+            # Check current push settings
+            current_push = self.state.env_contents.get("--push_to_hub", "false") == "true"
+            
+            push_idx = self.show_options(stdscr,
+                                       f"Do you want to push your model to Hugging Face Hub when completed?\n(Current: {'Yes' if current_push else 'No'})",
+                                       ["Yes", "No"], 0 if current_push else 1)
+            
+            if push_idx == 0:
+                self.state.env_contents["--push_to_hub"] = "true"
+                
+                # Get current model ID
+                current_model_id = self.state.env_contents.get("--hub_model_id", f"simpletuner-{self.state.model_type}")
+                
+                model_id = self.get_input(stdscr,
+                                        f"Model name (will be accessible as https://huggingface.co/{self.state.whoami['name']}/...):\n(Current: {current_model_id})",
+                                        current_model_id)
+                
+                self.state.env_contents["--hub_model_id"] = model_id
+                
+                # Check current checkpoint push setting
+                current_push_ckpt = self.state.env_contents.get("--push_checkpoints_to_hub", "false") == "true"
+                
+                push_checkpoints_idx = self.show_options(stdscr,
+                                                       f"Push intermediary checkpoints to Hub?\n(Current: {'Yes' if current_push_ckpt else 'No'})",
+                                                       ["Yes", "No"], 0 if current_push_ckpt else 1)
+                
+                if push_checkpoints_idx == 0:
+                    self.state.env_contents["--push_checkpoints_to_hub"] = "true"
+                elif "--push_checkpoints_to_hub" in self.state.env_contents:
+                    del self.state.env_contents["--push_checkpoints_to_hub"]
+                    
+                # Check SFW setting
+                current_sfw = self.state.env_contents.get("--model_card_safe_for_work", "false") == "true"
+                
+                safe_idx = self.show_options(stdscr,
+                                           f"Is your model safe-for-work?\n(Current: {'Yes' if current_sfw else 'No'})",
+                                           ["No", "Yes"], 1 if current_sfw else 0)
+                
+                if safe_idx == 1:
+                    self.state.env_contents["--model_card_safe_for_work"] = "true"
+                elif "--model_card_safe_for_work" in self.state.env_contents:
+                    del self.state.env_contents["--model_card_safe_for_work"]
+            else:
+                # Remove push settings if not pushing
+                for key in ["--push_to_hub", "--hub_model_id", "--push_checkpoints_to_hub", "--model_card_safe_for_work"]:
+                    if key in self.state.env_contents:
+                        del self.state.env_contents[key]
 
-    env_contents["--caption_dropout_probability"] = float(
-        prompt_user(
-            "Set the caption dropout rate, or use 0.0 to disable it. Dropout might be a good idea to disable for Flux training, but experimentation is warranted.",
-            "0.05" if any([use_lora, use_lycoris]) else "0.1",
-        )
-    )
+    def model_selection(self, stdscr):
+        """Step 5: Model Selection"""
+        model_type = self.state.model_type or "lora"
+        available_models = model_classes[model_type]
+        
+        model_idx = self.show_options(stdscr,
+                                    "Which model family are you training?",
+                                    available_models, 0)
+        
+        if model_idx == -1:
+            return
+            
+        model_class = available_models[model_idx]
+        self.state.env_contents["--model_family"] = model_class
+        
+        # Model name from HF Hub
+        default_model = default_models.get(model_class, "")
+        
+        while True:
+            model_name = self.get_input(stdscr,
+                                      "Enter the model name from Hugging Face Hub:",
+                                      default_model)
+            
+            stdscr.clear()
+            stdscr.addstr(2, 2, f"Checking model: {model_name}...")
+            stdscr.refresh()
+            
+            try:
+                model_info = huggingface_hub.model_info(model_name)
+                if hasattr(model_info, "id"):
+                    break
+            except:
+                self.show_error(stdscr, f"Could not load model: {model_name}")
+                continue
+                
+        self.state.env_contents["--model_type"] = model_type
+        self.state.env_contents["--pretrained_model_name_or_path"] = model_name
+        
+        # Flux-specific options
+        if model_class == "flux" and model_type == "lora" and not self.state.use_lycoris:
+            flux_targets = ["mmdit", "context", "all", "all+ffs", "ai-toolkit", "tiny", "nano"]
+            target_idx = self.show_options(stdscr,
+                                         "Set Flux target layers:",
+                                         flux_targets, 2)  # Default to "all"
+            
+            if target_idx != -1:
+                self.state.env_contents["--flux_lora_target"] = flux_targets[target_idx]
 
-    resolution_types = ["pixel", "area", "pixel_area"]
-    env_contents["--resolution_type"] = None
-    while env_contents["--resolution_type"] not in resolution_types:
-        if env_contents["--resolution_type"]:
-            print(f"Invalid resolution type: {env_contents['--resolution_type']}")
-        env_contents["--resolution_type"] = prompt_user(
-            "How do you want to measure dataset resolutions? 'pixel' will size images with the shorter edge, 'area' will measure in megapixels, and is great for aspect-bucketing. 'pixel_area' is a combination of these two ideas, which lets you set your area using pixels instead of megapixels.",
-            "pixel_area",
-        ).lower()
-    if (
-        env_contents["--resolution_type"] == "pixel"
-        or env_contents["--resolution_type"] == "pixel_area"
-    ):
-        default_resolution = 1024
-        resolution_unit = "pixel"
-    else:
-        default_resolution = 1.0
-        resolution_unit = "megapixel"
-    env_contents["--resolution"] = prompt_user(
-        f"What would you like the default resolution of your datasets to be? The default for is {env_contents['--resolution_type']} is {default_resolution} {resolution_unit}s.",
-        default_resolution,
-    )
+    def training_params(self, stdscr):
+        """Step 6: Training Parameters"""
+        # Batch size
+        batch_size = self.get_input(stdscr,
+                                  "Set the training batch size (larger values need more VRAM):",
+                                  "1")
+        
+        try:
+            self.state.env_contents["--train_batch_size"] = int(batch_size)
+        except ValueError:
+            self.state.env_contents["--train_batch_size"] = 1
+            
+        # Gradient checkpointing
+        self.state.env_contents["--gradient_checkpointing"] = "true"
+        
+        if self.state.env_contents.get("--model_family") in ["sdxl", "flux", "sd3", "sana"]:
+            gc_interval = self.get_input(stdscr,
+                                       "Gradient checkpointing interval (0 to disable, >1 speeds up training):",
+                                       "0")
+            
+            try:
+                interval = int(gc_interval)
+                if interval > 1:
+                    self.state.env_contents["--gradient_checkpointing_interval"] = interval
+            except ValueError:
+                pass
+                
+        # Caption dropout
+        caption_dropout = self.get_input(stdscr,
+                                       "Set caption dropout rate (0.0 to disable):",
+                                       "0.05" if self.state.use_lora else "0.1")
+        
+        try:
+            self.state.env_contents["--caption_dropout_probability"] = float(caption_dropout)
+        except ValueError:
+            self.state.env_contents["--caption_dropout_probability"] = 0.05
+            
+        # Resolution settings
+        res_types = ["pixel", "area", "pixel_area"]
+        res_idx = self.show_options(stdscr,
+                                  "How to measure dataset resolutions?",
+                                  ["Pixel (shorter edge)", "Area (megapixels)", "Pixel Area (combination)"],
+                                  2)
+        
+        if res_idx != -1:
+            self.state.env_contents["--resolution_type"] = res_types[res_idx]
+            
+            if res_types[res_idx] in ["pixel", "pixel_area"]:
+                default_res = "1024"
+            else:
+                default_res = "1.0"
+                
+            resolution = self.get_input(stdscr,
+                                      f"Default resolution ({res_types[res_idx]}):",
+                                      default_res)
+            
+            self.state.env_contents["--resolution"] = resolution
 
-    # remove spaces from validation resolution, ensure it's a single WxH or a comma-separated list of WxH
-    env_contents["--validation_seed"] = prompt_user("Set the seed for validation", 42)
-    env_contents["--validation_steps"] = prompt_user(
-        "How many steps in between validation outputs?",
-        env_contents["--checkpointing_steps"],
-    )
-    env_contents["--validation_resolution"] = None
-    while (
-        env_contents["--validation_resolution"] is None
-        or "x" not in env_contents["--validation_resolution"]
-    ):
-        if env_contents["--validation_resolution"] is not None:
-            print(
-                "Invalid resolution format. Please enter a single resolution, or a comma-separated list. Example: 1024x1024,1280x768"
-            )
-        env_contents["--validation_resolution"] = prompt_user(
-            "Set the validation resolution. Format could be a single resolution, or comma-separated.",
-            "1024x1024",
-        )
-        env_contents["--validation_resolution"] = ",".join(
-            [x.strip() for x in env_contents["--validation_resolution"].split(",")]
-        )
-    env_contents["--validation_guidance"] = prompt_user(
-        "Set the guidance scale for validation", default_cfg.get(model_class, 3.0)
-    )
-    env_contents["--validation_guidance_rescale"] = prompt_user(
-        "Set the guidance re-scale for validation - this is called dynamic thresholding and is used mostly for zero-terminal SNR models.",
-        "0.0",
-    )
-    env_contents["--validation_num_inference_steps"] = prompt_user(
-        "Set the number of inference steps for validation", "20"
-    )
-    env_contents["--validation_prompt"] = prompt_user(
-        "Set the validation prompt", "A photo-realistic image of a cat"
-    )
-    print_config(env_contents, extra_args)
+    def optimization_settings(self, stdscr):
+        """Step 7: Optimization Settings"""
+        # TF32
+        if torch.cuda.is_available():
+            tf32_idx = self.show_options(stdscr,
+                                       "Enable TF32 mode?",
+                                       ["Yes", "No"], 0)
+            
+            if tf32_idx == 1:
+                self.state.env_contents["--disable_tf32"] = "true"
+                
+        # Mixed precision
+        mixed_precision_idx = self.show_options(stdscr,
+                                              "Set mixed precision mode:",
+                                              ["bf16", "fp8", "no (fp32)"], 0)
+        
+        mixed_precision_map = ["bf16", "fp8", "no"]
+        self.state.env_contents["--mixed_precision"] = mixed_precision_map[mixed_precision_idx]
+        
+        # Optimizer selection
+        if self.state.env_contents["--mixed_precision"] == "bf16":
+            compatible_optims = bf16_only_optims + any_precision_optims
+        else:
+            compatible_optims = any_precision_optims
+            
+        optim_idx = self.show_options(stdscr,
+                                    "Choose an optimizer:",
+                                    compatible_optims, 0)
+        
+        if optim_idx != -1:
+            self.state.env_contents["--optimizer"] = compatible_optims[optim_idx]
+            
+        # Learning rate scheduler
+        lr_schedulers = ["polynomial", "constant"]
+        lr_idx = self.show_options(stdscr,
+                                 "Set learning rate scheduler:",
+                                 lr_schedulers, 0)
+        
+        if lr_idx != -1:
+            lr_scheduler = lr_schedulers[lr_idx]
+            self.state.env_contents["--lr_scheduler"] = lr_scheduler
+            
+            if lr_scheduler == "polynomial":
+                self.state.extra_args.append("--lr_end=1e-8")
+                
+        # Learning rate
+        default_lr = "1e-6"
+        if self.state.model_type == "lora" and hasattr(self.state, 'lora_rank'):
+            default_lr = learning_rates_by_rank.get(self.state.lora_rank, "1e-4")
+        elif self.state.env_contents.get("--optimizer") == "prodigy":
+            default_lr = "1.0"
+            
+        lr = self.get_input(stdscr,
+                          "Set the learning rate:",
+                          default_lr)
+        
+        self.state.env_contents["--learning_rate"] = lr
+        
+        # Warmup steps
+        default_warmup = "100"
+        if self.state.env_contents.get("--max_train_steps", 0) > 0:
+            default_warmup = str(min(100, self.state.env_contents["--max_train_steps"] // 10))
+            
+        warmup = self.get_input(stdscr,
+                              "Set warmup steps:",
+                              default_warmup)
+        
+        try:
+            self.state.env_contents["--lr_warmup_steps"] = int(warmup)
+        except ValueError:
+            self.state.env_contents["--lr_warmup_steps"] = 100
+            
+        # Quantization
+        if self.state.use_lora:
+            warning = "NOTE: Currently, a bug prevents multi-GPU training with LoRA quantization"
+        else:
+            warning = ""
+            
+        quant_idx = self.show_options(stdscr,
+                                    f"Enable model quantization? {warning}",
+                                    ["Yes", "No"], 0)
+        
+        if quant_idx == 0:
+            if self.state.env_contents.get("--use_dora") == "true":
+                del self.state.env_contents["--use_dora"]
+                
+            quant_types = list(quantised_precision_levels)
+            quant_type_idx = self.show_options(stdscr,
+                                             "Choose quantization type:",
+                                             quant_types, 0)
+            
+            if quant_type_idx != -1:
+                self.state.env_contents["--base_model_precision"] = quant_types[quant_type_idx]
 
-    # Advanced options
-    if torch.cuda.is_available():
-        use_tf32 = (
-            prompt_user("Would you like to enable TF32 mode? ([y]/n)", "y").lower()
-            == "y"
-        )
-        if not use_tf32:
-            env_contents["--disable_tf32"] = "true"
-    mixed_precision_options = ["bf16", "fp8", "no"]
-    env_contents["--mixed_precision"] = None
-    while (
-        not env_contents["--mixed_precision"]
-        or env_contents["--mixed_precision"] not in mixed_precision_options
-    ):
-        if env_contents["--mixed_precision"]:
-            print(
-                f"Invalid mixed precision option: {env_contents['--mixed_precision']}"
-            )
-        env_contents["--mixed_precision"] = prompt_user(
-            "Set mixed precision mode (Options: bf16, no (fp32))", "bf16"
-        )
-    if env_contents["--mixed_precision"] == "bf16":
-        compatible_optims = bf16_only_optims + any_precision_optims
-    else:
-        compatible_optims = any_precision_optims
-    env_contents["--optimizer"] = None
-    while (
-        not env_contents["--optimizer"]
-        or env_contents["--optimizer"] not in compatible_optims
-    ):
-        if env_contents["--optimizer"]:
-            print(f"Invalid optimizer: {env_contents['--optimizer']}")
-        env_contents["--optimizer"] = prompt_user(
-            f"Choose an optimizer (Options: {'/'.join(compatible_optims)})",
-            compatible_optims[0],
-        )
+    def validation_settings(self, stdscr):
+        """Step 8: Validation Settings"""
+        # Validation seed
+        val_seed = self.get_input(stdscr,
+                                "Set the seed for validation:",
+                                "42")
+        
+        self.state.env_contents["--validation_seed"] = val_seed
+        
+        # Validation steps
+        default_val_steps = str(self.state.env_contents.get("--checkpointing_steps", 500))
+        val_steps = self.get_input(stdscr,
+                                 "How many steps between validation outputs?",
+                                 default_val_steps)
+        
+        self.state.env_contents["--validation_steps"] = val_steps
+        
+        # Validation resolution
+        val_res = self.get_input(stdscr,
+                               "Set validation resolution (e.g., 1024x1024 or comma-separated list):",
+                               "1024x1024")
+        
+        # Clean up resolution
+        val_res = ",".join([x.strip() for x in val_res.split(",")])
+        self.state.env_contents["--validation_resolution"] = val_res
+        
+        # Validation guidance
+        model_family = self.state.env_contents.get("--model_family", "flux")
+        default_cfg_val = str(default_cfg.get(model_family, 3.0))
+        
+        val_guidance = self.get_input(stdscr,
+                                    "Set guidance scale for validation:",
+                                    default_cfg_val)
+        
+        self.state.env_contents["--validation_guidance"] = val_guidance
+        
+        # Guidance rescale
+        val_rescale = self.get_input(stdscr,
+                                   "Set guidance rescale (dynamic thresholding, 0.0 to disable):",
+                                   "0.0")
+        
+        self.state.env_contents["--validation_guidance_rescale"] = val_rescale
+        
+        # Inference steps
+        val_inf_steps = self.get_input(stdscr,
+                                     "Set number of inference steps for validation:",
+                                     "20")
+        
+        self.state.env_contents["--validation_num_inference_steps"] = val_inf_steps
+        
+        # Validation prompt
+        val_prompt = self.get_input(stdscr,
+                                  "Set the validation prompt:",
+                                  "A photo-realistic image of a cat")
+        
+        self.state.env_contents["--validation_prompt"] = val_prompt
 
-    lr_schedulers = ["polynomial", "constant"]
-    lr_scheduler = None
-    while lr_scheduler not in lr_schedulers:
-        if lr_scheduler:
-            print(f"Invalid learning rate scheduler: {lr_scheduler}")
-        lr_scheduler = prompt_user(
-            f"Set the learning rate scheduler. Options: {'/'.join(lr_schedulers)}",
-            lr_schedulers[0],
-        )
-    learning_rate = prompt_user(
-        "Set the learning rate",
-        (
-            learning_rates_by_rank[lora_rank]
-            if model_type == "lora"
-            else 1.0 if env_contents["--optimizer"] == "prodigy" else "1e-6"
-        ),
-    )
-    lr_warmup_steps = prompt_user(
-        "Set the number of warmup steps before the learning rate reaches its peak. This is set to 10 percent of the total runtime by default, or 100 steps, whichever is higher.",
-        min(100, int(env_contents["--max_train_steps"]) // 10),
-    )
-    env_contents["--learning_rate"] = learning_rate
-    env_contents["--lr_scheduler"] = lr_scheduler
-    if lr_scheduler == "polynomial":
-        extra_args.append("--lr_end=1e-8")
-    env_contents["--lr_warmup_steps"] = lr_warmup_steps
+    def advanced_options(self, stdscr):
+        """Step 9: Advanced Options"""
+        # Tracking
+        wandb_idx = self.show_options(stdscr,
+                                    "Report to Weights & Biases?",
+                                    ["Yes", "No"], 0)
+        
+        tensorboard_idx = self.show_options(stdscr,
+                                          "Report to TensorBoard?",
+                                          ["No", "Yes"], 0)
+        
+        report_to = "none"
+        if wandb_idx == 0 or tensorboard_idx == 1:
+            project_name = self.get_input(stdscr,
+                                        "Enter tracker project name:",
+                                        f"{self.state.model_type}-training")
+            
+            self.state.env_contents["--tracker_project_name"] = project_name
+            
+            run_name = self.get_input(stdscr,
+                                    "Enter tracker run name:",
+                                    f"simpletuner-{self.state.model_type}")
+            
+            self.state.env_contents["--tracker_run_name"] = run_name
+            
+            if wandb_idx == 0:
+                report_to = "wandb"
+            if tensorboard_idx == 1:
+                report_to = "tensorboard" if report_to == "none" else f"{report_to},tensorboard"
+                
+        self.state.env_contents["--report_to"] = report_to
+        
+        # SageAttention
+        self.state.env_contents["--attention_mechanism"] = "diffusers"
+        
+        sage_idx = self.show_options(stdscr,
+                                   "Use SageAttention for validation?",
+                                   ["No", "Yes"], 0)
+        
+        if sage_idx == 1:
+            self.state.env_contents["--attention_mechanism"] = "sageattention"
+            self.state.env_contents["--sageattention_usage"] = "inference"
+            
+            sage_training_idx = self.show_options(stdscr,
+                                                "Use SageAttention for training? (WARNING: May leave attention layers untrained)",
+                                                ["No", "Yes"], 0)
+            
+            if sage_training_idx == 1:
+                self.state.env_contents["--sageattention_usage"] = "both"
+                
+        # Disk cache compression
+        compress_idx = self.show_options(stdscr,
+                                       "Compress disk cache?",
+                                       ["Yes", "No"], 0)
+        
+        if compress_idx == 0:
+            self.state.extra_args.append("--compress_disk_cache")
+            
+        # Torch compile
+        compile_idx = self.show_options(stdscr,
+                                      "Use torch compile during validations?",
+                                      ["No", "Yes"], 0)
+        
+        self.state.env_contents["--validation_torch_compile"] = "true" if compile_idx == 1 else "false"
+        
+        # Prompt library generation
+        prompt_lib_idx = self.show_options(stdscr,
+                                         "Generate a prompt library? (requires Llama 3.2 1B download)",
+                                         ["Yes", "No"], 0)
+        
+        if prompt_lib_idx == 0:
+            trigger = self.get_input(stdscr,
+                                   "Enter trigger word(s) for prompt expansion:",
+                                   "Character Name")
+            
+            num_prompts = self.get_input(stdscr,
+                                       "How many prompts to generate?",
+                                       "8")
+            
+            try:
+                from helpers.prompt_expander import PromptExpander
+                
+                stdscr.clear()
+                stdscr.addstr(2, 2, "Initializing model and generating prompts...")
+                stdscr.refresh()
+                
+                PromptExpander.initialize_model()
+                user_prompt_library = PromptExpander.generate_prompts(
+                    trigger_phrase=trigger,
+                    num_prompts=int(num_prompts)
+                )
+                
+                with open("config/user_prompt_library.json", "w", encoding="utf-8") as f:
+                    json.dump(user_prompt_library, f, indent=4)
+                    
+                self.state.env_contents["--user_prompt_library"] = "config/user_prompt_library.json"
+                
+            except Exception as e:
+                self.show_error(stdscr, f"Failed to generate prompt library: {str(e)}")
 
-    quantization = (
-        prompt_user(
-            f"Would you like to enable model quantization? {'NOTE: Currently, a bug prevents multi-GPU training with LoRA' if use_lora else ''}. ([y]/n)",
-            "y",
-        ).lower()
-        == "y"
-    )
-    if quantization:
-        if env_contents.get("--use_dora") == "true":
-            print("DoRA will be disabled for quantisation.")
-            del env_contents["--use_dora"]
-        quantization_type = None
-        while (
-            not quantization_type or quantization_type not in quantised_precision_levels
-        ):
-            if quantization_type:
-                print(f"Invalid quantization type: {quantization_type}")
-            quantization_type = prompt_user(
-                f"Choose quantization type. (Options: {'/'.join(quantised_precision_levels)})",
-                "int8-quanto",
-            )
-        env_contents["--base_model_precision"] = quantization_type
-    print_config(env_contents, extra_args)
-    compress_disk_cache = (
-        prompt_user("Would you like to compress the disk cache? (y/n)", "y").lower()
-        == "y"
-    )
-    if compress_disk_cache:
-        extra_args.append("--compress_disk_cache")
+    def dataset_config(self, stdscr):
+        """Step 10: Dataset Configuration"""
+        config_idx = self.show_options(stdscr,
+                                     "Configure dataloader?",
+                                     ["Yes", "No"], 0)
+        
+        if config_idx == 1:
+            return
+            
+        # Dataset basics
+        dataset_id = self.get_input(stdscr,
+                                  "Dataset name (simple, no spaces):",
+                                  "my-dataset")
+        
+        dataset_path = self.get_input(stdscr,
+                                    "Dataset path (absolute path recommended):",
+                                    "/datasets/my-dataset")
+        
+        # Caption strategy
+        caption_strategies = [
+            ("filename", "Use image filenames as captions"),
+            ("textfile", "Use .txt files next to images"),
+            ("instanceprompt", "Use one trigger phrase for all"),
+        ]
+        
+        caption_idx = self.show_options(stdscr,
+                                      "How should captions be handled?",
+                                      [f"{name} - {desc}" for name, desc in caption_strategies],
+                                      1)
+        
+        caption_strategy = caption_strategies[caption_idx][0]
+        instance_prompt = None
+        
+        if caption_strategy == "instanceprompt":
+            instance_prompt = self.get_input(stdscr,
+                                           "Enter instance prompt for all images:",
+                                           "Character Name")
+            
+        # Dataset repeats
+        repeats = self.get_input(stdscr,
+                               "Dataset repeats (0 = once, 1 = twice, etc.):",
+                               "10")
+        
+        try:
+            dataset_repeats = int(repeats)
+        except ValueError:
+            dataset_repeats = 10
+            
+        # Resolutions
+        default_res = "1024"
+        if self.state.env_contents.get("--model_family") == "flux":
+            default_res = "256,512,768,1024,1440"
+            
+        resolutions_str = self.get_input(stdscr,
+                                       "Training resolutions (comma-separated for multiple):",
+                                       default_res)
+        
+        try:
+            if "," in resolutions_str:
+                resolutions = [int(r.strip()) for r in resolutions_str.split(",")]
+            else:
+                resolutions = [int(resolutions_str)]
+        except ValueError:
+            resolutions = [1024]
+            
+        # Cache directory
+        cache_dir = self.get_input(stdscr,
+                                 "Cache directory:",
+                                 "cache/")
+        
+        # Large images
+        large_img_idx = self.show_options(stdscr,
+                                        "Do you have very large images (much larger than 1024x1024)?",
+                                        ["No", "Yes"], 0)
+        
+        has_large_images = large_img_idx == 1
+        
+        # Build dataset configuration
+        self._build_dataset_config(dataset_id, dataset_path, caption_strategy,
+                                 instance_prompt, dataset_repeats, resolutions,
+                                 cache_dir, has_large_images)
 
-    # torch compile
-    torch_compile = (
-        prompt_user(
-            "Would you like to use torch compile during validations? (y/n)", "n"
-        ).lower()
-        == "y"
-    )
-    env_contents["--validation_torch_compile"] = "false"
-    if torch_compile:
-        env_contents["--validation_torch_compile"] = "true"
-
-    # Summary and confirmation
-    print_config(env_contents, extra_args)
-    confirm = prompt_user("Does this look correct? (y/n)", "y").lower() == "y"
-
-    if confirm:
-        # Write to .env file
-        with open("config/config.json", "w") as env_file:
-            import json
-
-            env_file.write(json.dumps(env_contents, indent=4))
-
-        print("\nConfiguration file created successfully!")
-    else:
-        print("\nConfiguration aborted. No changes were made.")
-        import sys
-
-        sys.exit(1)
-
-    # dataloader configuration
-    resolution_configs = {
-        64: {"resolution": 64, "minimum_image_size": 48},
-        96: {"resolution": 96, "minimum_image_size": 64},
-        128: {"resolution": 128, "minimum_image_size": 96},
-        256: {"resolution": 256, "minimum_image_size": 128},
-        512: {"resolution": 512, "minimum_image_size": 256},
-        768: {"resolution": 768, "minimum_image_size": 512},
-        1024: {"resolution": 1024, "minimum_image_size": 768},
-        1440: {"resolution": 1440, "minimum_image_size": 1024},
-        2048: {"resolution": 2048, "minimum_image_size": 1440},
-    }
-    default_dataset_configuration = {
-        "id": "PLACEHOLDER",
-        "type": "local",
-        "instance_data_dir": None,
-        "crop": False,
-        "resolution_type": "pixel_area",
-        "metadata_backend": "discovery",
-        "caption_strategy": "filename",
-        "cache_dir_vae": "vae",
-    }
-    default_cropped_dataset_configuration = {
-        "id": "PLACEHOLDER-crop",
-        "type": "local",
-        "instance_data_dir": None,
-        "crop": True,
-        "crop_aspect": "square",
-        "crop_style": "center",
-        "vae_cache_clear_each_epoch": False,
-        "resolution_type": "pixel_area",
-        "metadata_backend": "discovery",
-        "caption_strategy": "filename",
-        "cache_dir_vae": "vae-crop",
-    }
-
-    default_local_configuration = [
-        {
+    def _build_dataset_config(self, dataset_id, dataset_path, caption_strategy,
+                            instance_prompt, dataset_repeats, resolutions,
+                            cache_dir, has_large_images):
+        """Helper to build dataset configuration"""
+        resolution_configs = {
+            64: {"resolution": 64, "minimum_image_size": 48},
+            96: {"resolution": 96, "minimum_image_size": 64},
+            128: {"resolution": 128, "minimum_image_size": 96},
+            256: {"resolution": 256, "minimum_image_size": 128},
+            512: {"resolution": 512, "minimum_image_size": 256},
+            768: {"resolution": 768, "minimum_image_size": 512},
+            1024: {"resolution": 1024, "minimum_image_size": 768},
+            1440: {"resolution": 1440, "minimum_image_size": 1024},
+            2048: {"resolution": 2048, "minimum_image_size": 1440},
+        }
+        
+        default_dataset = {
+            "id": "PLACEHOLDER",
+            "type": "local",
+            "instance_data_dir": None,
+            "crop": False,
+            "resolution_type": "pixel_area",
+            "metadata_backend": "discovery",
+            "caption_strategy": "filename",
+            "cache_dir_vae": "vae",
+        }
+        
+        default_cropped = default_dataset.copy()
+        default_cropped.update({
+            "id": "PLACEHOLDER-crop",
+            "crop": True,
+            "crop_aspect": "square",
+            "crop_style": "center",
+            "vae_cache_clear_each_epoch": False,
+            "cache_dir_vae": "vae-crop",
+        })
+        
+        datasets = [{
             "id": "text-embed-cache",
             "dataset_type": "text_embeds",
             "default": True,
             "type": "local",
-            "cache_dir": "text",
-            "write_batch_size": 128,
-        },
-    ]
-
-    # Let's offer to generate a prompt library for the user. Preserve their existing one if it already exists.
-    should_generate_by_default = "n"
-    if not os.path.exists("config/user_prompt_library.json"):
-        should_generate_by_default = "y"
-    should_generate_prompt_library = (
-        prompt_user(
-            (
-                "Would you like to generate a very rudimentary subject-centric prompt library for your dataset?"
-                " This will download a small 1B Llama 3.2 model."
-                " If a user prompt library exists, it will be overwritten. (y/n)"
+            "cache_dir": os.path.abspath(
+                os.path.join(cache_dir, self.state.env_contents["--model_family"], "text")
             ),
-            should_generate_by_default,
-        ).lower()
-        == "y"
-    )
-    if should_generate_prompt_library:
-        try:
-            user_caption_trigger = prompt_user(
-                "Enter a trigger word (or a few words) that you would like Llama 3.2 1B to expand.",
-                "Character Name",
+            "write_batch_size": 128,
+        }]
+        
+        def create_dataset(resolution, template):
+            dataset = template.copy()
+            dataset.update(resolution_configs.get(resolution, {"resolution": resolution}))
+            dataset["id"] = f"{dataset_id}-{resolution}" if "crop" not in dataset["id"] else f"{dataset_id}-crop-{resolution}"
+            dataset["instance_data_dir"] = os.path.abspath(dataset_path)
+            dataset["repeats"] = dataset_repeats
+            dataset["cache_dir_vae"] = os.path.abspath(
+                os.path.join(cache_dir, self.state.env_contents["--model_family"],
+                           dataset["cache_dir_vae"], str(resolution))
             )
-            number_of_prompts = int(
-                prompt_user("How many prompts would you like to generate?", 8)
-            )
-            from helpers.prompt_expander import PromptExpander
+            dataset["caption_strategy"] = caption_strategy
+            
+            if instance_prompt:
+                dataset["instance_prompt"] = instance_prompt
+                
+            if has_large_images:
+                dataset["maximum_image_size"] = resolution
+                dataset["target_downsample_size"] = resolution
+                
+            return dataset
+            
+        for resolution in resolutions:
+            datasets.append(create_dataset(resolution, default_dataset))
+            datasets.append(create_dataset(resolution, default_cropped))
+            
+        self.state.dataset_config = datasets
 
-            PromptExpander.initialize_model()
-            user_prompt_library = PromptExpander.generate_prompts(
-                trigger_phrase=user_caption_trigger, num_prompts=number_of_prompts
-            )
-            with open("config/user_prompt_library.json", "w", encoding="utf-8") as f:
-                f.write(json.dumps(user_prompt_library, indent=4))
-            print("Prompt library generated successfully!")
-            env_contents["--user_prompt_library"] = "config/user_prompt_library.json"
+    def review_and_save(self, stdscr):
+        """Step 11: Review and Save Configuration"""
+        stdscr.clear()
+        h, w = stdscr.getmaxyx()
+        
+        # Display configuration summary
+        stdscr.addstr(1, 2, "Configuration Summary", curses.A_BOLD)
+        
+        y = 3
+        config_items = []
+        
+        # Prepare summary
+        config_items.append(f"Model Type: {self.state.model_type}")
+        config_items.append(f"Output Directory: {self.state.env_contents.get('--output_dir', 'Not set')}")
+        config_items.append(f"Model Family: {self.state.env_contents.get('--model_family', 'Not set')}")
+        config_items.append(f"Base Model: {self.state.env_contents.get('--pretrained_model_name_or_path', 'Not set')}")
+        
+        if self.state.use_lora:
+            config_items.append(f"LoRA Type: {self.state.env_contents.get('--lora_type', 'standard')}")
+            if not self.state.use_lycoris:
+                config_items.append(f"LoRA Rank: {self.state.env_contents.get('--lora_rank', 'Not set')}")
+                
+        # Display items
+        for item in config_items:
+            if y < h - 4:
+                stdscr.addstr(y, 4, item[:w-6])
+                y += 1
+                
+        stdscr.addstr(h - 3, 2, "Press 's' to save, 'b' to go back, 'q' to quit without saving")
+        stdscr.refresh()
+        
+        while True:
+            key = stdscr.getch()
+            if key == ord('s'):
+                self._save_configuration(stdscr)
+                return
+            elif key == ord('b'):
+                return
+            elif key == ord('q'):
+                if self.confirm_quit(stdscr):
+                    raise KeyboardInterrupt
+
+    def _save_configuration(self, stdscr):
+        """Save the configuration files"""
+        try:
+            # Determine save path
+            save_path = "config/config.json"
+            
+            if self.state.loaded_config_path:
+                save_options = [
+                    f"Save to original location ({self.state.loaded_config_path})",
+                    "Save to new location",
+                    "Save to default (config/config.json)"
+                ]
+                
+                save_choice = self.show_options(stdscr,
+                                              "Where would you like to save?",
+                                              save_options, 0)
+                
+                if save_choice == 0:
+                    save_path = self.state.loaded_config_path
+                elif save_choice == 1:
+                    save_path = self.get_input(stdscr,
+                                             "Enter save path for config.json:",
+                                             "config/my-preset/config.json")
+                    # Create directory if needed
+                    save_dir = os.path.dirname(save_path)
+                    if save_dir and not os.path.exists(save_dir):
+                        os.makedirs(save_dir, exist_ok=True)
+                elif save_choice == 2:
+                    save_path = "config/config.json"
+                else:
+                    return  # Cancelled
+                    
+            # Ensure config directory exists
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            
+            # Save main config
+            with open(save_path, "w") as f:
+                json.dump(self.state.env_contents, f, indent=4)
+                
+            # Save dataset config if configured
+            if self.state.dataset_config:
+                backend_path = self.state.env_contents.get("--data_backend_config", "config/multidatabackend.json")
+                backend_dir = os.path.dirname(backend_path)
+                if backend_dir and not os.path.exists(backend_dir):
+                    os.makedirs(backend_dir, exist_ok=True)
+                    
+                with open(backend_path, "w") as f:
+                    json.dump(self.state.dataset_config, f, indent=4)
+                    
+            stdscr.clear()
+            stdscr.addstr(2, 2, "Configuration saved successfully!", curses.A_BOLD)
+            stdscr.addstr(4, 2, "Files created:")
+            stdscr.addstr(5, 4, f"- {save_path}")
+            
+            if self.state.dataset_config:
+                stdscr.addstr(6, 4, f"- {self.state.env_contents.get('--data_backend_config', 'config/multidatabackend.json')}")
+                
+            if self.state.lycoris_config:
+                stdscr.addstr(7, 4, f"- {self.state.env_contents.get('--lycoris_config', 'config/lycoris_config.json')}")
+                
+            stdscr.addstr(9, 2, "Press any key to continue...")
+            stdscr.refresh()
+            stdscr.getch()
+            
+            # Update loaded path
+            self.state.loaded_config_path = save_path
+            
         except Exception as e:
-            print(f"(warning) Failed to generate prompt library: {e}")
+            self.show_error(stdscr, f"Failed to save configuration: {str(e)}")
 
-    # now we ask user the path to their data, the path to the cache (cache/), number of repeats, update the id placeholder based on users dataset name
-    # then we'll write the file to multidatabackend.json
-    should_configure_dataloader = (
-        prompt_user("Would you like to configure your dataloader? (y/n)", "y").lower()
-        == "y"
-    )
-    if not should_configure_dataloader:
-        print("Skipping dataloader configuration.")
-        return
-    dataset_id = prompt_user(
-        "Enter the name of your dataset. This will be used to generate the cache directory. It should be simple, and not contain spaces or special characters.",
-        "my-dataset",
-    )
-    dataset_path = prompt_user(
-        "Enter the path to your dataset. This should be a directory containing images and text files for their caption. For reliability, use an absolute (full) path, beginning with a '/'",
-        "/datasets/my-dataset",
-    )
-    dataset_caption_strategy = prompt_user(
-        (
-            "How should the dataloader handle captions?"
-            "\n-> 'filename' will use the names of your image files as the caption"
-            "\n-> 'textfile' requires a image.txt file to go next to your image.png file"
-            "\n-> 'instanceprompt' will just use one trigger phrase for all images"
-            "\n"
-            "\n(Options: filename, textfile, instanceprompt)"
-        ),
-        "textfile",
-    )
-    if dataset_caption_strategy not in ["filename", "textfile", "instanceprompt"]:
-        print(f"Invalid caption strategy: {dataset_caption_strategy}")
-        dataset_caption_strategy = "textfile"
-    dataset_instance_prompt = None
-    if "instanceprompt" in dataset_caption_strategy:
-        dataset_instance_prompt = prompt_user(
-            "Enter the instance_prompt you want to use for all images in this dataset",
-            "Character Name",
-        )
-    dataset_repeats = int(
-        prompt_user(
-            "How many times do you want to repeat each image in the dataset? A value of zero means the dataset will only be seen once; a value of one will cause the dataset to be sampled twice.",
-            10,
-        )
-    )
-    default_base_resolutions = "1024"
-    multi_resolution_recommendation_text = (
-        "Multiple resolutions may be provided, but this is only recommended for Flux."
-    )
-    multi_resolution_capable_models = ["flux"]
-    if env_contents["--model_family"] in multi_resolution_capable_models:
-        default_base_resolutions = "256,512,768,1024,1440"
-    multi_resolution_recommendation_text = "A comma-separated list of values or a single item can be given to train on multiple base resolutions."
-    dataset_resolutions = prompt_user(
-        f"Which resolutions do you want to train? {multi_resolution_recommendation_text}",
-        default_base_resolutions,
-    )
-    if "," in dataset_resolutions:
-        # most models don't work with multi base resolution training.
-        if env_contents["--model_family"] not in multi_resolution_capable_models:
-            print(
-                "WARNING: Most models do not play well with multi-resolution training, resulting in degraded outputs and broken hearts. Proceed with caution."
-            )
-        dataset_resolutions = [int(res) for res in dataset_resolutions.split(",")]
+
+def main():
+    """Main entry point"""
+    import sys
+    
+    # Check for command line arguments
+    config_path = None
+    if len(sys.argv) > 1:
+        config_path = sys.argv[1]
+        if not os.path.exists(config_path):
+            print(f"Error: Config file not found: {config_path}")
+            sys.exit(1)
+    
+    configurator = SimpleTunerNCurses()
+    
+    # Load specified config or show startup message
+    if config_path:
+        if not configurator.state.load_from_file(config_path):
+            print(f"Error: Failed to load config: {config_path}")
+            sys.exit(1)
+        print(f"Loaded configuration from: {config_path}")
+    elif configurator.state.loaded_config_path:
+        print(f"Loaded existing configuration from: {configurator.state.loaded_config_path}")
     else:
-        try:
-            dataset_resolutions = [int(dataset_resolutions)]
-        except:
-            print("Invalid resolution value. Using 1024 instead.")
-            dataset_resolutions = [1024]
-
-    dataset_cache_prefix = prompt_user(
-        "Where will your VAE and text encoder caches be written to? Subdirectories will be created inside for you automatically.",
-        "cache/",
-    )
-    has_very_large_images = (
-        prompt_user(
-            "Do you have very-large images in the dataset (eg. much larger than 1024x1024)? (y/n)",
-            "n",
-        ).lower()
-        == "y"
-    )
-
-    # Now we'll modify the default json and if has_very_large_images is true, we will add two keys to each image dataset, 'maximum_image_size' and 'target_downsample_size' equal to the dataset's resolution value
-    def create_dataset_config(resolution, default_config):
-        dataset = default_config.copy()
-        dataset.update(
-            resolution_configs.get(
-                resolution,
-                {"resolution": resolution}
-            )
-        )
-        dataset["id"] = f"{dataset['id']}-{resolution}"
-        dataset["instance_data_dir"] = os.path.abspath(dataset_path)
-        dataset["repeats"] = dataset_repeats
-        # we want the absolute path, as this works best with datasets containing nested subdirectories.
-        dataset["cache_dir_vae"] = os.path.abspath(
-            os.path.join(
-                dataset_cache_prefix,
-                env_contents["--model_family"],
-                dataset["cache_dir_vae"],
-                str(resolution),
-            )
-        )
-        if has_very_large_images:
-            dataset["maximum_image_size"] = dataset["resolution"]
-            dataset["target_downsample_size"] = dataset["resolution"]
-        dataset["id"] = dataset["id"].replace("PLACEHOLDER", dataset_id)
-        if dataset_instance_prompt:
-            dataset["instance_prompt"] = dataset_instance_prompt
-        dataset["caption_strategy"] = dataset_caption_strategy
-
-        if has_very_large_images:
-            dataset["maximum_image_size"] = dataset["resolution"]
-            dataset["target_downsample_size"] = dataset["resolution"]
-        return dataset
-
-    # this is because the text embed dataset is in the default config list at the top.
-    # it's confusingly written because i'm lazy, but you could do this any number of ways.
-    default_local_configuration[0]["cache_dir"] = os.path.abspath(
-        os.path.join(dataset_cache_prefix, env_contents["--model_family"], "text")
-    )
-    for resolution in dataset_resolutions:
-        uncropped_dataset = create_dataset_config(
-            resolution, default_dataset_configuration
-        )
-        default_local_configuration.append(uncropped_dataset)
-        cropped_dataset = create_dataset_config(
-            resolution, default_cropped_dataset_configuration
-        )
-        default_local_configuration.append(cropped_dataset)
-
-    print("Dataloader configuration:")
-    print(default_local_configuration)
-    confirm = prompt_user("Does this look correct? (y/n)", "y").lower() == "y"
-    if confirm:
-        import json
-
-        with open("config/multidatabackend.json", "w", encoding="utf-8") as f:
-            f.write(json.dumps(default_local_configuration, indent=4))
-        print("Dataloader configuration written successfully!")
+        print("No existing configuration found. Starting fresh setup.")
+    
+    print("\nStarting SimpleTuner configuration tool...")
+    print("Press any key to continue...")
+    input()
+    
+    configurator.run()
 
 
 if __name__ == "__main__":
-    configure_env()
+    main()
