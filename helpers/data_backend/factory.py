@@ -708,9 +708,8 @@ def sort_dataset_configs_by_dependencies(data_backend_config):
 
     return sorted_configs
 
-def fill_variables_in_config_paths(
-    args: dict, config: list[dict]
-) -> dict:
+
+def fill_variables_in_config_paths(args: dict, config: list[dict]) -> dict:
     """
     Fill in variables in the config paths with values from args.
     This is useful for paths that contain variables like {cache_dir}, {model_name}, etc.
@@ -730,6 +729,7 @@ def fill_variables_in_config_paths(
         altered_configs.append(filled_config)
 
     return altered_configs
+
 
 def configure_multi_databackend(
     args: dict, accelerator, text_encoders, tokenizers, model: ModelFoundation
@@ -761,7 +761,9 @@ def configure_multi_databackend(
     # sort things so that reference datasets are configured last.
     data_backend_config = sort_dataset_configs_by_dependencies(data_backend_config)
     # replace variable values like {model_family} with composed values
-    data_backend_config = fill_variables_in_config_paths(args=args, config=data_backend_config)
+    data_backend_config = fill_variables_in_config_paths(
+        args=args, config=data_backend_config
+    )
 
     ###                                                                          ###
     #    we'll check for any auto-conditioning configurations and generate them.   #
@@ -1380,7 +1382,10 @@ def configure_multi_databackend(
                 apply_padding=apply_padding,
             )
         else:
-            if args.eval_dataset_id is None or init_backend["id"] in args.eval_dataset_id:
+            if (
+                args.eval_dataset_id is None
+                or init_backend["id"] in args.eval_dataset_id
+            ):
                 init_backend["metadata_backend"].split_buckets_between_processes(
                     gradient_accumulation_steps=args.gradient_accumulation_steps,
                     apply_padding=apply_padding,
@@ -1549,7 +1554,11 @@ def configure_multi_databackend(
             raise ValueError(
                 f"Backend {init_backend['id']} has prepend_instance_prompt=True, but no instance_prompt was provided. You must provide an instance_prompt, or disable this option."
             )
-        if instance_prompt is None and backend.get("caption_strategy", args.caption_strategy) == "instanceprompt":
+        if (
+            instance_prompt is None
+            and backend.get("caption_strategy", args.caption_strategy)
+            == "instanceprompt"
+        ):
             raise ValueError(
                 f"Backend {init_backend['id']} has caption_strategy=instanceprompt, but no instance_prompt was provided. You must provide an instance_prompt, or change the caption_strategy."
                 f"\n -> backend: {init_backend}"
@@ -1636,7 +1645,9 @@ def configure_multi_databackend(
                 raise ValueError(
                     f"VAE image embed cache directory {vae_cache_dir} is the same as another VAE image embed cache directory. This is not allowed, the trainer will get confused and sleepy and wake up in a distant place with no memory and no money for a taxi ride back home, forever looking in the mirror and wondering who they are. This should be avoided."
                 )
-            info_log(f"(id={init_backend['id']}) Creating VAE latent cache: {vae_cache_dir=}")
+            info_log(
+                f"(id={init_backend['id']}) Creating VAE latent cache: {vae_cache_dir=}"
+            )
             vae_cache_dir_paths.append(vae_cache_dir)
 
             if (

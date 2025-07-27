@@ -444,7 +444,11 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
             scheduler=scheduler,
         )
 
-        self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1) if self.vae is not None else 8
+        self.vae_scale_factor = (
+            2 ** (len(self.vae.config.block_out_channels) - 1)
+            if self.vae is not None
+            else 8
+        )
         self.image_processor = PixArtImageProcessor(
             vae_scale_factor=self.vae_scale_factor
         )
@@ -2868,15 +2872,13 @@ class PixArtSigmaControlNetPipeline(
         Function invoked when calling the pipeline for generation.
         """
         # 1. Check inputs
-        _transformer = self.transformer if not hasattr(self.transformer, "transformer") else self.transformer.transformer
-        height = (
-            height
-            or _transformer.config.sample_size * self.vae_scale_factor
+        _transformer = (
+            self.transformer
+            if not hasattr(self.transformer, "transformer")
+            else self.transformer.transformer
         )
-        width = (
-            width
-            or _transformer.config.sample_size * self.vae_scale_factor
-        )
+        height = height or _transformer.config.sample_size * self.vae_scale_factor
+        width = width or _transformer.config.sample_size * self.vae_scale_factor
 
         if use_resolution_binning:
             if _transformer.config.sample_size == 256:
