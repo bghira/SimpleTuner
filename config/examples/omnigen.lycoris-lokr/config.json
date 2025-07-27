@@ -37,7 +37,7 @@
     "push_checkpoints_to_hub": false,
     "push_to_hub": false,
     "quantize_via": "cpu",
-    "report_to": "wandb",
+    "report_to": "none",
     "resolution": 1024,
     "resolution_type": "pixel_area",
     "resume_from_checkpoint": "latest",
