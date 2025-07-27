@@ -2,7 +2,6 @@ import logging, os
 import huggingface_hub
 from helpers.training.default_settings.safety_check import safety_check
 from helpers.publishing.huggingface import HubManager
-from configure import model_labels
 from typing import Optional
 import shutil
 import hashlib
@@ -403,10 +402,7 @@ class Trainer:
 
         model_implementation = model_families.get(model_family)
         StateTracker.set_model_family(model_family)
-        self.config.model_type_label = (
-            getattr(model_implementation, "NAME", None)
-            or model_labels[model_family.lower()]
-        )
+        self.config.model_type_label = getattr(model_implementation, "NAME", None)
         if StateTracker.is_sdxl_refiner():
             self.config.model_type_label = "SDXL Refiner"
 
