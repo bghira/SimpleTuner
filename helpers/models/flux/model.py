@@ -66,6 +66,7 @@ class Flux(ImageModelFoundation):
         "schnell": "black-forest-labs/flux.1-schnell",
         "kontext": "black-forest-labs/flux.1-kontext-dev",
         "fluxbooru": "terminusresearch/fluxbooru-v0.3",
+        "libreflux": "jimmycarter/LibreFlux-SimpleTuner",
     }
     MODEL_LICENSE = "other"
 
@@ -758,7 +759,28 @@ class Flux(ImageModelFoundation):
             self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG], FluxKontextPipeline
         ):
             self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG] = FluxKontextPipeline
-        
+
+        if self.config.model_flavour == "libreflux":
+            if self.config.validation_num_inference_steps < 28:
+                logger.warning(
+                    "LibreFlux requires at least 28 validation steps. Increasing value to 28."
+                )
+                self.config.validation_num_inference_steps = 28
+            if self.config.validation_guidance_real <= 1.0:
+                logger.warning(
+                    "LibreFlux requires CFG at validation time. Enabling it."
+                )
+                self.config.validation_guidance_real = 6.0
+            if not self.config.flux_attention_masked_training:
+                logger.warning(
+                    "LibreFlux requires attention masking. Enabling it."
+                )
+                self.config.flux_attention_masked_training = True
+            if self.config.fused_qkv_projections:
+                logger.warning(
+                    "LibreFlux does not support fused QKV projections. Disabling it."
+                )
+                self.config.fuse_qkv_projections = False
         if self.config.model_flavour == "fluxbooru":
             # FluxBooru requires some special settings, we'll just override them here.
             if self.config.validation_num_inference_steps < 28:
