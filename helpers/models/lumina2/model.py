@@ -47,6 +47,7 @@ class Lumina2(ImageModelFoundation):
     DEFAULT_MODEL_FLAVOUR = "2.0"
     HUGGINGFACE_PATHS = {
         "2.0": "Alpha-VLLM/Lumina-Image-2.0",
+        "neta-lumina": "terminusresearch/neta-lumina-v1",
     }
     MODEL_LICENSE = "apache-2.0"
 
