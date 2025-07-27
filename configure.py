@@ -187,13 +187,13 @@ class ConfigState:
             ):
                 self.completed_steps.add(2)  # Training config
             if "model_family" in loaded_config:
-                self.completed_steps.add(4)  # Model selection
+                self.completed_steps.add(5)  # Model selection
             if "train_batch_size" in loaded_config:
-                self.completed_steps.add(5)  # Training params
+                self.completed_steps.add(6)  # Training params
             if "optimizer" in loaded_config:
-                self.completed_steps.add(6)  # Optimization
+                self.completed_steps.add(7)  # Optimization
             if "validation_prompt" in loaded_config:
-                self.completed_steps.add(7)  # Validation
+                self.completed_steps.add(11)  # Validation
 
             return True
 
@@ -246,7 +246,7 @@ class MenuNavigator:
                     value_text = current_values[item_name]
                     # Truncate if too long
                     max_value_len = self.w - len(display_text) - 10
-                    if len(value_text) > max_value_len:
+                    if hasattr(value_text, "len") and len(value_text) > max_value_len:
                         value_text = "..." + value_text[-(max_value_len - 3) :]
                     display_text += f" [{value_text}]"
 
@@ -284,12 +284,17 @@ class SimpleTunerNCurses:
             ("Basic Setup", self.basic_setup),
             ("Model Type & LoRA/LyCORIS", self.model_type_setup),
             ("Training Configuration", self.training_config),
+            ("Loss Configuration", self.loss_configuration),
             ("Hugging Face Hub", self.hub_setup),
             ("Model Selection", self.model_selection),
             ("Training Parameters", self.training_params),
             ("Optimization Settings", self.optimization_settings),
+            ("VAE Configuration", self.vae_configuration),
+            ("Flow Matching Configuration", self.flow_matching_config),
             ("Validation Settings", self.validation_settings),
             ("Advanced Options", self.advanced_options),
+            ("ControlNet Configuration", self.controlnet_config),
+            ("Model-Specific Options", self.model_specific_options),
             ("Dataset Configuration", self.dataset_config),
             ("Review & Save", self.review_and_save),
         ]
@@ -325,8 +330,11 @@ class SimpleTunerNCurses:
                         self.menu_items[action][1](stdscr)
                         self.state.completed_steps.add(action)
                     except Exception as e:
+                        import traceback
+
                         self.show_error(
-                            stdscr, f"Error in {self.menu_items[action][0]}: {str(e)}"
+                            stdscr,
+                            f"Error in {self.menu_items[action][0]}: {str(e)}\n{traceback.format_exc()}",
                         )
             except KeyboardInterrupt:
                 if self.confirm_quit(stdscr):
@@ -392,25 +400,38 @@ class SimpleTunerNCurses:
         # Menu items
         start_y = 5
         selected = self.current_step
+        max_visible = h - start_y - 2
+        scroll_offset = 0
+
+        # Calculate scroll offset if needed
+        if selected >= max_visible:
+            scroll_offset = selected - max_visible + 1
 
         while True:
-            for idx, (item_name, _) in enumerate(self.menu_items):
+            visible_items = self.menu_items[scroll_offset : scroll_offset + max_visible]
+
+            for idx, (item_name, _) in enumerate(visible_items):
+                actual_idx = idx + scroll_offset
                 y = start_y + idx
-                if y >= h - 2:
-                    break
 
                 # Highlight current selection
-                attr = curses.A_REVERSE if idx == selected else curses.A_NORMAL
+                attr = curses.A_REVERSE if actual_idx == selected else curses.A_NORMAL
 
                 # Mark completed steps
-                prefix = "[✓] " if idx in self.state.completed_steps else "[ ] "
-                text = f"{prefix}{idx + 1}. {item_name}"
+                prefix = "[✓] " if actual_idx in self.state.completed_steps else "[ ] "
+                text = f"{prefix}{actual_idx + 1}. {item_name}"
 
                 # Ensure text fits
                 if len(text) > w - 4:
                     text = text[: w - 7] + "..."
 
                 stdscr.addstr(y, 2, text, attr)
+
+            # Show scroll indicators
+            if scroll_offset > 0:
+                stdscr.addstr(start_y - 1, w - 10, "▲ More", curses.A_DIM)
+            if scroll_offset + max_visible < len(self.menu_items):
+                stdscr.addstr(h - 2, w - 10, "▼ More", curses.A_DIM)
 
             stdscr.refresh()
 
@@ -424,8 +445,12 @@ class SimpleTunerNCurses:
                     return None
             elif key == curses.KEY_UP and selected > 0:
                 selected -= 1
+                if selected < scroll_offset:
+                    scroll_offset = selected
             elif key == curses.KEY_DOWN and selected < len(self.menu_items) - 1:
                 selected += 1
+                if selected >= scroll_offset + max_visible:
+                    scroll_offset = selected - max_visible + 1
             elif key in [curses.KEY_ENTER, ord("\n"), ord("\r")]:
                 return selected
 
@@ -799,8 +824,20 @@ class SimpleTunerNCurses:
                     current_values["LoRA Rank"] = str(
                         self.state.env_contents.get("lora_rank", 64)
                     )
-                    menu_items.append(("DoRA", self._configure_dora))
-                    menu_items.append(("LoRA Rank", self._configure_lora_rank))
+                    current_values["LoRA Alpha"] = str(
+                        self.state.env_contents.get("lora_alpha", 64)
+                    )
+                    current_values["LoRA Dropout"] = str(
+                        self.state.env_contents.get("lora_dropout", 0.0)
+                    )
+                    menu_items.extend(
+                        [
+                            ("DoRA", self._configure_dora),
+                            ("LoRA Rank", self._configure_lora_rank),
+                            ("LoRA Alpha", self._configure_lora_alpha),
+                            ("LoRA Dropout", self._configure_lora_dropout),
+                        ]
+                    )
             else:
                 # Full fine-tuning options
                 use_ema = self.state.env_contents.get("use_ema", "false") == "true"
@@ -895,6 +932,32 @@ class SimpleTunerNCurses:
         if rank_idx >= 0:
             self.state.lora_rank = lora_ranks[rank_idx]
             self.state.env_contents["lora_rank"] = self.state.lora_rank
+
+    def _configure_lora_alpha(self, stdscr):
+        """Configure LoRA alpha"""
+        current = str(self.state.env_contents.get("lora_alpha", self.state.lora_rank))
+        value = self.get_input(
+            stdscr,
+            f"Set the LoRA alpha (typically same as rank):\n(Current: {current})",
+            current,
+        )
+        try:
+            self.state.env_contents["lora_alpha"] = int(value)
+        except ValueError:
+            self.show_error(stdscr, "Invalid value. Keeping current setting.")
+
+    def _configure_lora_dropout(self, stdscr):
+        """Configure LoRA dropout"""
+        current = str(self.state.env_contents.get("lora_dropout", 0.0))
+        value = self.get_input(
+            stdscr,
+            f"Set the LoRA dropout (0.0 to disable):\n(Current: {current})",
+            current,
+        )
+        try:
+            self.state.env_contents["lora_dropout"] = float(value)
+        except ValueError:
+            self.show_error(stdscr, "Invalid value. Keeping current setting.")
 
     def _configure_ema(self, stdscr):
         """Configure EMA for full fine-tuning"""
@@ -1142,30 +1205,67 @@ class SimpleTunerNCurses:
                 and self.state.env_contents["max_train_steps"] > 0
             ):
                 current_values["Training Duration"] = (
-                    f"{self.state.env_contents['--max_train_steps']} steps"
+                    f"{self.state.env_contents['max_train_steps']} steps"
                 )
             elif (
                 "num_train_epochs" in self.state.env_contents
                 and self.state.env_contents["num_train_epochs"] > 0
             ):
                 current_values["Training Duration"] = (
-                    f"{self.state.env_contents['--num_train_epochs']} epochs"
+                    f"{self.state.env_contents['num_train_epochs']} epochs"
                 )
             else:
                 current_values["Training Duration"] = "Not configured"
 
             current_values["Checkpointing Interval"] = (
-                f"{self.state.env_contents.get('--checkpointing_steps', 500)} steps"
+                f"{self.state.env_contents.get('checkpointing_steps', 500)} steps"
             )
             current_values["Checkpoints to Keep"] = str(
                 self.state.env_contents.get("checkpoints_total_limit", 5)
+            )
+
+            # Scheduler configuration
+            current_values["Training Scheduler"] = self.state.env_contents.get(
+                "training_scheduler_timestep_spacing", "trailing"
+            )
+            current_values["Inference Scheduler"] = self.state.env_contents.get(
+                "inference_scheduler_timestep_spacing", "trailing"
+            )
+
+            # Timestep bias
+            current_values["Timestep Bias"] = self.state.env_contents.get(
+                "timestep_bias_strategy", "none"
             )
 
             menu_items = [
                 ("Training Duration", self._configure_training_duration),
                 ("Checkpointing Interval", self._configure_checkpoint_interval),
                 ("Checkpoints to Keep", self._configure_checkpoint_limit),
+                ("Training Scheduler Spacing", self._configure_training_scheduler),
+                ("Inference Scheduler Spacing", self._configure_inference_scheduler),
+                ("Timestep Bias Strategy", self._configure_timestep_bias),
             ]
+
+            # Add timestep bias options if enabled
+            if self.state.env_contents.get("timestep_bias_strategy", "none") != "none":
+                current_values["Bias Multiplier"] = str(
+                    self.state.env_contents.get("timestep_bias_multiplier", 1.0)
+                )
+                menu_items.append(("Bias Multiplier", self._configure_bias_multiplier))
+
+                if self.state.env_contents.get("timestep_bias_strategy") == "range":
+                    current_values["Bias Begin"] = str(
+                        self.state.env_contents.get("timestep_bias_begin", 0)
+                    )
+                    current_values["Bias End"] = str(
+                        self.state.env_contents.get("timestep_bias_end", 1000)
+                    )
+                    menu_items.extend(
+                        [
+                            ("Bias Begin", self._configure_bias_begin),
+                            ("Bias End", self._configure_bias_end),
+                        ]
+                    )
 
             selected = nav.show_menu(
                 "Training Configuration", menu_items, current_values
@@ -1236,8 +1336,358 @@ class SimpleTunerNCurses:
         except ValueError:
             self.state.env_contents["checkpoints_total_limit"] = 5
 
+    def _configure_training_scheduler(self, stdscr):
+        """Configure training scheduler timestep spacing"""
+        options = ["leading", "linspace", "trailing"]
+        current = self.state.env_contents.get(
+            "training_scheduler_timestep_spacing", "trailing"
+        )
+
+        default_idx = 2  # trailing
+        if current in options:
+            default_idx = options.index(current)
+
+        selected = self.show_options(
+            stdscr,
+            f"Training scheduler timestep spacing (SDXL Only)\n(Current: {current})",
+            options,
+            default_idx,
+        )
+
+        if selected >= 0:
+            self.state.env_contents["training_scheduler_timestep_spacing"] = options[
+                selected
+            ]
+
+    def _configure_inference_scheduler(self, stdscr):
+        """Configure inference scheduler timestep spacing"""
+        options = ["leading", "linspace", "trailing"]
+        current = self.state.env_contents.get(
+            "inference_scheduler_timestep_spacing", "trailing"
+        )
+
+        default_idx = 2  # trailing
+        if current in options:
+            default_idx = options.index(current)
+
+        selected = self.show_options(
+            stdscr,
+            f"Inference scheduler timestep spacing (SDXL Only)\n(Current: {current})",
+            options,
+            default_idx,
+        )
+
+        if selected >= 0:
+            self.state.env_contents["inference_scheduler_timestep_spacing"] = options[
+                selected
+            ]
+
+    def _configure_timestep_bias(self, stdscr):
+        """Configure timestep bias strategy"""
+        options = ["none", "earlier", "later", "range"]
+        current = self.state.env_contents.get("timestep_bias_strategy", "none")
+
+        default_idx = 0
+        if current in options:
+            default_idx = options.index(current)
+
+        selected = self.show_options(
+            stdscr,
+            f"Timestep bias strategy\n(Current: {current})\n\n"
+            "earlier: Focus on earlier timesteps (high noise)\n"
+            "later: Focus on later timesteps (low noise)\n"
+            "range: Focus on a specific range\n"
+            "none: No bias",
+            options,
+            default_idx,
+        )
+
+        if selected >= 0:
+            self.state.env_contents["timestep_bias_strategy"] = options[selected]
+
+    def _configure_bias_multiplier(self, stdscr):
+        """Configure timestep bias multiplier"""
+        current = str(self.state.env_contents.get("timestep_bias_multiplier", 1.0))
+        value = self.get_input(
+            stdscr,
+            f"Timestep bias multiplier (higher = stronger bias)\n(Current: {current})",
+            current,
+        )
+        try:
+            self.state.env_contents["timestep_bias_multiplier"] = float(value)
+        except ValueError:
+            self.show_error(stdscr, "Invalid value. Keeping current setting.")
+
+    def _configure_bias_begin(self, stdscr):
+        """Configure timestep bias begin"""
+        current = str(self.state.env_contents.get("timestep_bias_begin", 0))
+        value = self.get_input(
+            stdscr,
+            f"Beginning timestep for range bias\n(Current: {current})",
+            current,
+        )
+        try:
+            self.state.env_contents["timestep_bias_begin"] = int(value)
+        except ValueError:
+            self.show_error(stdscr, "Invalid value. Keeping current setting.")
+
+    def _configure_bias_end(self, stdscr):
+        """Configure timestep bias end"""
+        current = str(self.state.env_contents.get("timestep_bias_end", 1000))
+        value = self.get_input(
+            stdscr,
+            f"Ending timestep for range bias\n(Current: {current})",
+            current,
+        )
+        try:
+            self.state.env_contents["timestep_bias_end"] = int(value)
+        except ValueError:
+            self.show_error(stdscr, "Invalid value. Keeping current setting.")
+
+    def loss_configuration(self, stdscr):
+        """Step 4: Loss Configuration"""
+        nav = MenuNavigator(stdscr)
+
+        while True:
+            current_values = {
+                "Loss Type": self.state.env_contents.get("loss_type", "l2"),
+                "SNR Gamma": str(self.state.env_contents.get("snr_gamma", 5.0)),
+                "Noise Offset": str(self.state.env_contents.get("noise_offset", 0.0)),
+                "Noise Offset Probability": str(
+                    self.state.env_contents.get("noise_offset_probability", 0.25)
+                ),
+                "Input Perturbation": str(
+                    self.state.env_contents.get("input_perturbation", 0.0)
+                ),
+                "Masked Loss Probability": str(
+                    self.state.env_contents.get("masked_loss_probability", 0.0)
+                ),
+            }
+
+            menu_items = [
+                ("Loss Type", self._configure_loss_type),
+                ("SNR Gamma", self._configure_snr_gamma),
+                ("Noise Offset", self._configure_noise_offset),
+                ("Noise Offset Probability", self._configure_noise_offset_prob),
+                ("Input Perturbation", self._configure_input_perturbation),
+                ("Masked Loss Probability", self._configure_masked_loss_prob),
+            ]
+
+            # Add Huber-specific options if Huber loss is selected
+            if self.state.env_contents.get("loss_type") == "huber":
+                current_values["Huber Schedule"] = self.state.env_contents.get(
+                    "huber_schedule", "snr"
+                )
+                current_values["Huber C"] = str(
+                    self.state.env_contents.get("huber_c", 0.1)
+                )
+                menu_items.extend(
+                    [
+                        ("Huber Schedule", self._configure_huber_schedule),
+                        ("Huber C", self._configure_huber_c),
+                    ]
+                )
+
+            # Add soft min SNR option if SNR gamma is set
+            if self.state.env_contents.get("snr_gamma", 0) > 0:
+                current_values["Use Soft Min SNR"] = (
+                    "Yes"
+                    if self.state.env_contents.get("use_soft_min_snr", False)
+                    else "No"
+                )
+                menu_items.append(("Use Soft Min SNR", self._configure_soft_min_snr))
+
+            # Add input perturbation steps if perturbation is enabled
+            if self.state.env_contents.get("input_perturbation", 0) > 0:
+                current_values["Perturbation Steps"] = str(
+                    self.state.env_contents.get("input_perturbation_steps", 0)
+                )
+                menu_items.append(
+                    ("Perturbation Steps", self._configure_perturbation_steps)
+                )
+
+            selected = nav.show_menu("Loss Configuration", menu_items, current_values)
+
+            if selected == -1:  # Quit
+                if self.confirm_quit(stdscr):
+                    raise KeyboardInterrupt
+            elif selected == -2:  # Back
+                return
+            elif selected >= 0:
+                menu_items[selected][1](stdscr)
+
+    def _configure_loss_type(self, stdscr):
+        """Configure loss type"""
+        options = ["l2", "huber", "smooth_l1"]
+        current = self.state.env_contents.get("loss_type", "l2")
+
+        default_idx = 0
+        if current in options:
+            default_idx = options.index(current)
+
+        selected = self.show_options(
+            stdscr,
+            f"Select loss function\n(Current: {current})\n\n"
+            "l2: Standard loss, good for most cases\n"
+            "huber: Less sensitive to outliers\n"
+            "smooth_l1: Combination of L1 and L2",
+            options,
+            default_idx,
+        )
+
+        if selected >= 0:
+            self.state.env_contents["loss_type"] = options[selected]
+
+    def _configure_snr_gamma(self, stdscr):
+        """Configure SNR gamma"""
+        current = str(self.state.env_contents.get("snr_gamma", 5.0))
+        value = self.get_input(
+            stdscr,
+            f"SNR weighting gamma (0 to disable, 5.0 recommended)\n(Current: {current})",
+            current,
+        )
+        try:
+            self.state.env_contents["snr_gamma"] = float(value)
+        except ValueError:
+            self.show_error(stdscr, "Invalid value. Keeping current setting.")
+
+    def _configure_noise_offset(self, stdscr):
+        """Configure noise offset"""
+        current = str(self.state.env_contents.get("noise_offset", 0.0))
+        value = self.get_input(
+            stdscr,
+            f"Noise offset scale (0 to disable, 0.1 typical)\n(Current: {current})",
+            current,
+        )
+        try:
+            self.state.env_contents["noise_offset"] = float(value)
+        except ValueError:
+            self.show_error(stdscr, "Invalid value. Keeping current setting.")
+
+    def _configure_noise_offset_prob(self, stdscr):
+        """Configure noise offset probability"""
+        current = str(self.state.env_contents.get("noise_offset_probability", 0.25))
+        value = self.get_input(
+            stdscr,
+            f"Noise offset probability (0.0-1.0)\n(Current: {current})",
+            current,
+        )
+        try:
+            prob = float(value)
+            if 0.0 <= prob <= 1.0:
+                self.state.env_contents["noise_offset_probability"] = prob
+            else:
+                self.show_error(stdscr, "Value must be between 0.0 and 1.0")
+        except ValueError:
+            self.show_error(stdscr, "Invalid value. Keeping current setting.")
+
+    def _configure_input_perturbation(self, stdscr):
+        """Configure input perturbation"""
+        current = str(self.state.env_contents.get("input_perturbation", 0.0))
+        value = self.get_input(
+            stdscr,
+            f"Input perturbation (0 to disable, 0.1 suggested)\n"
+            "Helps training converge faster\n(Current: {current})",
+            current,
+        )
+        try:
+            self.state.env_contents["input_perturbation"] = float(value)
+        except ValueError:
+            self.show_error(stdscr, "Invalid value. Keeping current setting.")
+
+    def _configure_masked_loss_prob(self, stdscr):
+        """Configure masked loss probability"""
+        current = str(self.state.env_contents.get("masked_loss_probability", 0.0))
+        value = self.get_input(
+            stdscr,
+            f"Masked loss probability (0.0-1.0)\n(Current: {current})",
+            current,
+        )
+        try:
+            prob = float(value)
+            if 0.0 <= prob <= 1.0:
+                self.state.env_contents["masked_loss_probability"] = prob
+            else:
+                self.show_error(stdscr, "Value must be between 0.0 and 1.0")
+        except ValueError:
+            self.show_error(stdscr, "Invalid value. Keeping current setting.")
+
+    def _configure_huber_schedule(self, stdscr):
+        """Configure Huber loss schedule"""
+        options = ["snr", "exponential", "constant"]
+        current = self.state.env_contents.get("huber_schedule", "snr")
+
+        default_idx = 0
+        if current in options:
+            default_idx = options.index(current)
+
+        selected = self.show_options(
+            stdscr,
+            f"Huber loss schedule\n(Current: {current})",
+            options,
+            default_idx,
+        )
+
+        if selected >= 0:
+            self.state.env_contents["huber_schedule"] = options[selected]
+
+    def _configure_huber_c(self, stdscr):
+        """Configure Huber C value"""
+        current = str(self.state.env_contents.get("huber_c", 0.1))
+        value = self.get_input(
+            stdscr,
+            f"Huber C threshold (L2 to L1 transition)\n(Current: {current})",
+            current,
+        )
+        try:
+            self.state.env_contents["huber_c"] = float(value)
+        except ValueError:
+            self.show_error(stdscr, "Invalid value. Keeping current setting.")
+
+    def _configure_soft_min_snr(self, stdscr):
+        """Configure soft min SNR"""
+        current = self.state.env_contents.get("use_soft_min_snr", False)
+
+        selected = self.show_options(
+            stdscr,
+            f"Use soft min SNR calculation?\n(Current: {'Yes' if current else 'No'})",
+            ["No", "Yes"],
+            1 if current else 0,
+        )
+
+        if selected == 1:
+            self.state.env_contents["use_soft_min_snr"] = True
+            # Also need sigma_data
+            sigma_data = self.get_input(
+                stdscr,
+                "Enter sigma_data value for soft min SNR:",
+                "1.0",
+            )
+            try:
+                self.state.env_contents["soft_min_snr_sigma_data"] = float(sigma_data)
+            except ValueError:
+                self.state.env_contents["soft_min_snr_sigma_data"] = 1.0
+        elif selected == 0:
+            if "use_soft_min_snr" in self.state.env_contents:
+                del self.state.env_contents["use_soft_min_snr"]
+            if "soft_min_snr_sigma_data" in self.state.env_contents:
+                del self.state.env_contents["soft_min_snr_sigma_data"]
+
+    def _configure_perturbation_steps(self, stdscr):
+        """Configure input perturbation steps"""
+        current = str(self.state.env_contents.get("input_perturbation_steps", 0))
+        value = self.get_input(
+            stdscr,
+            f"Apply perturbation for first N steps (0 for all)\n(Current: {current})",
+            current,
+        )
+        try:
+            self.state.env_contents["input_perturbation_steps"] = int(value)
+        except ValueError:
+            self.show_error(stdscr, "Invalid value. Keeping current setting.")
+
     def hub_setup(self, stdscr):
-        """Step 4: Hugging Face Hub Setup - Now with menu"""
+        """Step 5: Hugging Face Hub Setup - Now with menu"""
         nav = MenuNavigator(stdscr)
 
         # Check login status
@@ -1404,7 +1854,7 @@ class SimpleTunerNCurses:
             del self.state.env_contents["model_card_safe_for_work"]
 
     def model_selection(self, stdscr):
-        """Step 5: Model Selection - Now with menu"""
+        """Step 6: Model Selection - Now with menu"""
         nav = MenuNavigator(stdscr)
 
         while True:
@@ -1433,6 +1883,17 @@ class SimpleTunerNCurses:
                     "flux_lora_target", "all"
                 )
                 menu_items.append(("Flux LoRA Target", self._configure_flux_target))
+
+            # Add prediction type if applicable
+            model_families_with_prediction = ["sdxl", "sd2x", "sd1x"]
+            if (
+                self.state.env_contents.get("model_family")
+                in model_families_with_prediction
+            ):
+                current_values["Prediction Type"] = self.state.env_contents.get(
+                    "prediction_type", "epsilon"
+                )
+                menu_items.append(("Prediction Type", self._configure_prediction_type))
 
             selected = nav.show_menu("Model Selection", menu_items, current_values)
 
@@ -1520,8 +1981,27 @@ class SimpleTunerNCurses:
         if target_idx >= 0:
             self.state.env_contents["flux_lora_target"] = flux_targets[target_idx]
 
+    def _configure_prediction_type(self, stdscr):
+        """Configure prediction type"""
+        options = ["epsilon", "v_prediction", "sample"]
+        current = self.state.env_contents.get("prediction_type", "epsilon")
+
+        default_idx = 0
+        if current in options:
+            default_idx = options.index(current)
+
+        selected = self.show_options(
+            stdscr,
+            f"Prediction type (for SDXL derivatives)\n(Current: {current})",
+            options,
+            default_idx,
+        )
+
+        if selected >= 0:
+            self.state.env_contents["prediction_type"] = options[selected]
+
     def training_params(self, stdscr):
-        """Step 6: Training Parameters - Now with menu"""
+        """Step 7: Training Parameters - Now with menu"""
         nav = MenuNavigator(stdscr)
 
         while True:
@@ -1565,6 +2045,14 @@ class SimpleTunerNCurses:
                     str(gc_interval) if gc_interval > 0 else "Disabled"
                 )
                 menu_items.insert(2, ("GC Interval", self._configure_gc_interval))
+
+            # Add gradient accumulation
+            current_values["Gradient Accumulation"] = str(
+                self.state.env_contents.get("gradient_accumulation_steps", 1)
+            )
+            menu_items.append(
+                ("Gradient Accumulation", self._configure_gradient_accumulation)
+            )
 
             selected = nav.show_menu("Training Parameters", menu_items, current_values)
 
@@ -1706,8 +2194,26 @@ class SimpleTunerNCurses:
 
         self.state.env_contents["resolution"] = resolution
 
+    def _configure_gradient_accumulation(self, stdscr):
+        """Configure gradient accumulation steps"""
+        current = str(self.state.env_contents.get("gradient_accumulation_steps", 1))
+        value = self.get_input(
+            stdscr,
+            f"Gradient accumulation steps (1 = disabled)\n"
+            "Simulates larger batch sizes\n(Current: {current})",
+            current,
+        )
+        try:
+            steps = int(value)
+            if steps > 1:
+                self.state.env_contents["gradient_accumulation_steps"] = steps
+            elif "gradient_accumulation_steps" in self.state.env_contents:
+                del self.state.env_contents["gradient_accumulation_steps"]
+        except ValueError:
+            self.show_error(stdscr, "Invalid value. Keeping current setting.")
+
     def optimization_settings(self, stdscr):
-        """Step 7: Optimization Settings - Now with menu"""
+        """Step 8: Optimization Settings - Now with menu"""
         nav = MenuNavigator(stdscr)
 
         while True:
@@ -1724,6 +2230,10 @@ class SimpleTunerNCurses:
                 "Warmup Steps": str(
                     self.state.env_contents.get("lr_warmup_steps", 100)
                 ),
+                "Gradient Precision": self.state.env_contents.get(
+                    "gradient_precision", "unmodified"
+                ),
+                "Max Grad Norm": str(self.state.env_contents.get("max_grad_norm", 1.0)),
             }
 
             menu_items = [
@@ -1732,6 +2242,8 @@ class SimpleTunerNCurses:
                 ("Learning Rate", self._configure_learning_rate),
                 ("LR Scheduler", self._configure_lr_scheduler),
                 ("Warmup Steps", self._configure_warmup_steps),
+                ("Gradient Precision", self._configure_gradient_precision),
+                ("Max Grad Norm", self._configure_max_grad_norm),
             ]
 
             # Add TF32 option if CUDA available
@@ -1748,6 +2260,26 @@ class SimpleTunerNCurses:
             else:
                 current_values["Quantization"] = "Disabled"
             menu_items.append(("Quantization", self._configure_quantization))
+
+            # Add text encoder precision options if quantization is enabled
+            if (
+                self.state.env_contents.get("base_model_precision", "no_change")
+                != "no_change"
+            ):
+                for i in range(1, 5):
+                    key = f"text_encoder_{i}_precision"
+                    if key in self.state.env_contents:
+                        current_values[f"Text Encoder {i}"] = self.state.env_contents[
+                            key
+                        ]
+                    menu_items.append(
+                        (
+                            f"Text Encoder {i} Precision",
+                            lambda s, idx=i: self._configure_text_encoder_precision(
+                                s, idx
+                            ),
+                        )
+                    )
 
             selected = nav.show_menu(
                 "Optimization Settings", menu_items, current_values
@@ -1850,9 +2382,18 @@ class SimpleTunerNCurses:
 
     def _configure_lr_scheduler(self, stdscr):
         """Configure learning rate scheduler"""
-        lr_schedulers = ["polynomial", "constant"]
+        lr_schedulers = [
+            "polynomial",
+            "constant",
+            "cosine",
+            "cosine_with_restarts",
+            "linear",
+            "sine",
+        ]
         current_scheduler = self.state.env_contents.get("lr_scheduler", "polynomial")
-        default_sched_idx = 0 if current_scheduler == "polynomial" else 1
+        default_sched_idx = 0
+        if current_scheduler in lr_schedulers:
+            default_sched_idx = lr_schedulers.index(current_scheduler)
 
         lr_idx = self.show_options(
             stdscr,
@@ -1899,6 +2440,43 @@ class SimpleTunerNCurses:
             self.state.env_contents["lr_warmup_steps"] = int(warmup)
         except ValueError:
             self.state.env_contents["lr_warmup_steps"] = int(default_warmup)
+
+    def _configure_gradient_precision(self, stdscr):
+        """Configure gradient precision"""
+        options = ["unmodified", "fp32"]
+        current = self.state.env_contents.get("gradient_precision", "unmodified")
+
+        default_idx = 0
+        if current in options:
+            default_idx = options.index(current)
+
+        selected = self.show_options(
+            stdscr,
+            f"Gradient precision\n(Current: {current})\n\n"
+            "fp32 is slower but more accurate for gradient accumulation",
+            options,
+            default_idx,
+        )
+
+        if selected >= 0:
+            self.state.env_contents["gradient_precision"] = options[selected]
+
+    def _configure_max_grad_norm(self, stdscr):
+        """Configure max gradient norm"""
+        current = str(self.state.env_contents.get("max_grad_norm", 1.0))
+        value = self.get_input(
+            stdscr,
+            f"Max gradient norm (0 to disable clipping)\n(Current: {current})",
+            current,
+        )
+        try:
+            norm = float(value)
+            if norm > 0:
+                self.state.env_contents["max_grad_norm"] = norm
+            elif "max_grad_norm" in self.state.env_contents:
+                del self.state.env_contents["max_grad_norm"]
+        except ValueError:
+            self.show_error(stdscr, "Invalid value. Keeping current setting.")
 
     def _configure_quantization(self, stdscr):
         """Configure quantization"""
@@ -1954,8 +2532,505 @@ class SimpleTunerNCurses:
             if "base_model_precision" in self.state.env_contents:
                 del self.state.env_contents["base_model_precision"]
 
+    def _configure_text_encoder_precision(self, stdscr, encoder_num):
+        """Configure text encoder precision"""
+        key = f"text_encoder_{encoder_num}_precision"
+        current = self.state.env_contents.get(key, "no_change")
+
+        quant_types = ["no_change"] + list(quantised_precision_levels)
+        default_idx = 0
+        if current in quant_types:
+            default_idx = quant_types.index(current)
+
+        selected = self.show_options(
+            stdscr,
+            f"Text Encoder {encoder_num} precision\n(Current: {current})",
+            quant_types,
+            default_idx,
+        )
+
+        if selected >= 0:
+            if quant_types[selected] == "no_change":
+                if key in self.state.env_contents:
+                    del self.state.env_contents[key]
+            else:
+                self.state.env_contents[key] = quant_types[selected]
+
+    def vae_configuration(self, stdscr):
+        """Step 9: VAE Configuration"""
+        nav = MenuNavigator(stdscr)
+
+        while True:
+            current_values = {
+                "VAE Dtype": self.state.env_contents.get("vae_dtype", "default"),
+                "VAE Batch Size": str(self.state.env_contents.get("vae_batch_size", 4)),
+                "VAE Tiling": (
+                    "Enabled"
+                    if self.state.env_contents.get("vae_enable_tiling", False)
+                    else "Disabled"
+                ),
+                "VAE Slicing": (
+                    "Enabled"
+                    if self.state.env_contents.get("vae_enable_slicing", False)
+                    else "Disabled"
+                ),
+                "Keep VAE Loaded": (
+                    "Yes"
+                    if self.state.env_contents.get("keep_vae_loaded", False)
+                    else "No"
+                ),
+                "Cache Scan Behaviour": self.state.env_contents.get(
+                    "vae_cache_scan_behaviour", "recreate"
+                ),
+            }
+
+            menu_items = [
+                ("VAE Dtype", self._configure_vae_dtype),
+                ("VAE Batch Size", self._configure_vae_batch_size),
+                ("VAE Tiling", self._configure_vae_tiling),
+                ("VAE Slicing", self._configure_vae_slicing),
+                ("Keep VAE Loaded", self._configure_keep_vae_loaded),
+                ("Cache Scan Behaviour", self._configure_cache_scan_behaviour),
+            ]
+
+            selected = nav.show_menu("VAE Configuration", menu_items, current_values)
+
+            if selected == -1:  # Quit
+                if self.confirm_quit(stdscr):
+                    raise KeyboardInterrupt
+            elif selected == -2:  # Back
+                return
+            elif selected >= 0:
+                menu_items[selected][1](stdscr)
+
+    def _configure_vae_dtype(self, stdscr):
+        """Configure VAE dtype"""
+        options = ["default", "fp16", "fp32", "bf16"]
+        current = self.state.env_contents.get("vae_dtype", "default")
+
+        default_idx = 0
+        if current in options:
+            default_idx = options.index(current)
+
+        selected = self.show_options(
+            stdscr,
+            f"VAE dtype\n(Current: {current})\n\n"
+            "bf16 is default for SDXL due to NaN issues\n"
+            "fp16 is not recommended",
+            options,
+            default_idx,
+        )
+
+        if selected >= 0:
+            self.state.env_contents["vae_dtype"] = options[selected]
+
+    def _configure_vae_batch_size(self, stdscr):
+        """Configure VAE batch size"""
+        current = str(self.state.env_contents.get("vae_batch_size", 4))
+        value = self.get_input(
+            stdscr,
+            f"VAE batch size for pre-caching\n"
+            "Lower values help with VRAM issues\n(Current: {current})",
+            current,
+        )
+        try:
+            self.state.env_contents["vae_batch_size"] = int(value)
+        except ValueError:
+            self.show_error(stdscr, "Invalid value. Keeping current setting.")
+
+    def _configure_vae_tiling(self, stdscr):
+        """Configure VAE tiling"""
+        current = self.state.env_contents.get("vae_enable_tiling", False)
+
+        selected = self.show_options(
+            stdscr,
+            f"Enable VAE tiling? (For very large images)\n(Current: {'Yes' if current else 'No'})",
+            ["No", "Yes"],
+            1 if current else 0,
+        )
+
+        if selected == 1:
+            self.state.env_contents["vae_enable_tiling"] = True
+        elif selected == 0 and "vae_enable_tiling" in self.state.env_contents:
+            del self.state.env_contents["vae_enable_tiling"]
+
+    def _configure_vae_slicing(self, stdscr):
+        """Configure VAE slicing"""
+        current = self.state.env_contents.get("vae_enable_slicing", False)
+
+        selected = self.show_options(
+            stdscr,
+            f"Enable VAE slicing? (For video models)\n(Current: {'Yes' if current else 'No'})",
+            ["No", "Yes"],
+            1 if current else 0,
+        )
+
+        if selected == 1:
+            self.state.env_contents["vae_enable_slicing"] = True
+        elif selected == 0 and "vae_enable_slicing" in self.state.env_contents:
+            del self.state.env_contents["vae_enable_slicing"]
+
+    def _configure_keep_vae_loaded(self, stdscr):
+        """Configure keep VAE loaded"""
+        current = self.state.env_contents.get("keep_vae_loaded", False)
+
+        selected = self.show_options(
+            stdscr,
+            f"Keep VAE loaded in memory?\n"
+            "Reduces disk churn but uses VRAM\n(Current: {'Yes' if current else 'No'})",
+            ["No", "Yes"],
+            1 if current else 0,
+        )
+
+        if selected == 1:
+            self.state.env_contents["keep_vae_loaded"] = True
+        elif selected == 0 and "keep_vae_loaded" in self.state.env_contents:
+            del self.state.env_contents["keep_vae_loaded"]
+
+    def _configure_cache_scan_behaviour(self, stdscr):
+        """Configure cache scan behaviour"""
+        options = ["recreate", "sync"]
+        current = self.state.env_contents.get("vae_cache_scan_behaviour", "recreate")
+
+        default_idx = 0
+        if current in options:
+            default_idx = options.index(current)
+
+        selected = self.show_options(
+            stdscr,
+            f"Cache scan behaviour\n(Current: {current})\n\n"
+            "recreate: Delete and rebuild inconsistent entries\n"
+            "sync: Update bucket metadata to match reality",
+            options,
+            default_idx,
+        )
+
+        if selected >= 0:
+            self.state.env_contents["vae_cache_scan_behaviour"] = options[selected]
+
+    def flow_matching_config(self, stdscr):
+        """Step 10: Flow Matching Configuration (for Flux/SD3)"""
+        # Check if applicable model
+        if self.state.env_contents.get("model_family") not in ["flux", "sd3", "sana"]:
+            self.show_message(
+                stdscr,
+                "Flow matching configuration is only applicable for Flux, SD3, and Sana models.",
+            )
+            return
+
+        nav = MenuNavigator(stdscr)
+
+        while True:
+            current_values = {
+                "Sigmoid Scale": str(
+                    self.state.env_contents.get("flow_sigmoid_scale", 1.0)
+                ),
+                "Schedule Type": self._get_flow_schedule_type(),
+                "Schedule Shift": str(
+                    self.state.env_contents.get("flow_schedule_shift", 3.0)
+                ),
+                "Auto Shift": (
+                    "Enabled"
+                    if self.state.env_contents.get("flow_schedule_auto_shift", False)
+                    else "Disabled"
+                ),
+            }
+
+            menu_items = [
+                ("Sigmoid Scale", self._configure_sigmoid_scale),
+                ("Schedule Type", self._configure_flow_schedule),
+                ("Schedule Shift", self._configure_schedule_shift),
+                ("Auto Shift", self._configure_auto_shift),
+            ]
+
+            # Add Flux-specific options
+            if self.state.env_contents.get("model_family") == "flux":
+                current_values["Flux Fast Schedule"] = (
+                    "Enabled"
+                    if self.state.env_contents.get("flux_fast_schedule", False)
+                    else "Disabled"
+                )
+                current_values["Guidance Mode"] = self.state.env_contents.get(
+                    "flux_guidance_mode", "constant"
+                )
+                current_values["Attention Masking"] = (
+                    "Enabled"
+                    if self.state.env_contents.get(
+                        "flux_attention_masked_training", False
+                    )
+                    else "Disabled"
+                )
+
+                menu_items.extend(
+                    [
+                        ("Flux Fast Schedule", self._configure_flux_fast_schedule),
+                        ("Guidance Mode", self._configure_flux_guidance_mode),
+                        ("Attention Masking", self._configure_flux_attention_masking),
+                    ]
+                )
+
+                # Add guidance value options based on mode
+                if self.state.env_contents.get("flux_guidance_mode") == "constant":
+                    current_values["Guidance Value"] = str(
+                        self.state.env_contents.get("flux_guidance_value", 1.0)
+                    )
+                    menu_items.append(
+                        ("Guidance Value", self._configure_flux_guidance_value)
+                    )
+                else:
+                    current_values["Guidance Min"] = str(
+                        self.state.env_contents.get("flux_guidance_min", 1.0)
+                    )
+                    current_values["Guidance Max"] = str(
+                        self.state.env_contents.get("flux_guidance_max", 4.0)
+                    )
+                    menu_items.extend(
+                        [
+                            ("Guidance Min", self._configure_flux_guidance_min),
+                            ("Guidance Max", self._configure_flux_guidance_max),
+                        ]
+                    )
+
+            # Add beta schedule options if using beta
+            if self.state.env_contents.get("flow_use_beta_schedule", False):
+                current_values["Beta Alpha"] = str(
+                    self.state.env_contents.get("flow_beta_schedule_alpha", 2.0)
+                )
+                current_values["Beta Beta"] = str(
+                    self.state.env_contents.get("flow_beta_schedule_beta", 2.0)
+                )
+                menu_items.extend(
+                    [
+                        ("Beta Alpha", self._configure_beta_alpha),
+                        ("Beta Beta", self._configure_beta_beta),
+                    ]
+                )
+
+            selected = nav.show_menu(
+                "Flow Matching Configuration", menu_items, current_values
+            )
+
+            if selected == -1:  # Quit
+                if self.confirm_quit(stdscr):
+                    raise KeyboardInterrupt
+            elif selected == -2:  # Back
+                return
+            elif selected >= 0:
+                menu_items[selected][1](stdscr)
+
+    def _get_flow_schedule_type(self):
+        """Get current flow schedule type"""
+        if self.state.env_contents.get("flow_use_uniform_schedule", False):
+            return "uniform"
+        elif self.state.env_contents.get("flow_use_beta_schedule", False):
+            return "beta"
+        else:
+            return "sigmoid"
+
+    def _configure_sigmoid_scale(self, stdscr):
+        """Configure sigmoid scale"""
+        current = str(self.state.env_contents.get("flow_sigmoid_scale", 1.0))
+        value = self.get_input(
+            stdscr,
+            f"Sigmoid scale factor for flow-matching\n(Current: {current})",
+            current,
+        )
+        try:
+            self.state.env_contents["flow_sigmoid_scale"] = float(value)
+        except ValueError:
+            self.show_error(stdscr, "Invalid value. Keeping current setting.")
+
+    def _configure_flow_schedule(self, stdscr):
+        """Configure flow schedule type"""
+        options = ["sigmoid", "uniform", "beta"]
+        current_type = self._get_flow_schedule_type()
+
+        default_idx = 0
+        if current_type in options:
+            default_idx = options.index(current_type)
+
+        selected = self.show_options(
+            stdscr,
+            f"Flow-matching noise schedule\n(Current: {current_type})\n\n"
+            "sigmoid: Default schedule\n"
+            "uniform: May cause bias toward dark images\n"
+            "beta: Approximates sigmoid with customizable shape",
+            options,
+            default_idx,
+        )
+
+        if selected >= 0:
+            # Reset all schedule flags
+            for key in ["flow_use_uniform_schedule", "flow_use_beta_schedule"]:
+                if key in self.state.env_contents:
+                    del self.state.env_contents[key]
+
+            if options[selected] == "uniform":
+                self.state.env_contents["flow_use_uniform_schedule"] = True
+            elif options[selected] == "beta":
+                self.state.env_contents["flow_use_beta_schedule"] = True
+
+    def _configure_schedule_shift(self, stdscr):
+        """Configure schedule shift"""
+        current = str(self.state.env_contents.get("flow_schedule_shift", 3.0))
+        value = self.get_input(
+            stdscr,
+            f"Schedule shift (0-4.0)\n"
+            "Higher values focus on large compositional features\n"
+            "Lower values focus on fine details\n"
+            "Sana and SD3 were trained with 3.0\n(Current: {current})",
+            current,
+        )
+        try:
+            shift = float(value)
+            if shift > 0:
+                self.state.env_contents["flow_schedule_shift"] = shift
+            elif "flow_schedule_shift" in self.state.env_contents:
+                del self.state.env_contents["flow_schedule_shift"]
+        except ValueError:
+            self.show_error(stdscr, "Invalid value. Keeping current setting.")
+
+    def _configure_auto_shift(self, stdscr):
+        """Configure auto shift"""
+        current = self.state.env_contents.get("flow_schedule_auto_shift", False)
+
+        selected = self.show_options(
+            stdscr,
+            f"Auto-shift based on resolution?\n"
+            "Shift value grows exponentially with pixel count\n"
+            "May need lower learning rate\n(Current: {'Yes' if current else 'No'})",
+            ["No", "Yes"],
+            1 if current else 0,
+        )
+
+        if selected == 1:
+            self.state.env_contents["flow_schedule_auto_shift"] = True
+        elif selected == 0 and "flow_schedule_auto_shift" in self.state.env_contents:
+            del self.state.env_contents["flow_schedule_auto_shift"]
+
+    def _configure_flux_fast_schedule(self, stdscr):
+        """Configure Flux fast schedule"""
+        current = self.state.env_contents.get("flux_fast_schedule", False)
+
+        selected = self.show_options(
+            stdscr,
+            f"Use Flux.1S fast schedule? (Experimental)\n(Current: {'Yes' if current else 'No'})",
+            ["No", "Yes"],
+            1 if current else 0,
+        )
+
+        if selected == 1:
+            self.state.env_contents["flux_fast_schedule"] = True
+        elif selected == 0 and "flux_fast_schedule" in self.state.env_contents:
+            del self.state.env_contents["flux_fast_schedule"]
+
+    def _configure_flux_guidance_mode(self, stdscr):
+        """Configure Flux guidance mode"""
+        options = ["constant", "random-range"]
+        current = self.state.env_contents.get("flux_guidance_mode", "constant")
+
+        default_idx = 0
+        if current in options:
+            default_idx = options.index(current)
+
+        selected = self.show_options(
+            stdscr,
+            f"Flux guidance mode\n(Current: {current})\n\n"
+            "constant: Single value for all samples\n"
+            "random-range: Random value per sample",
+            options,
+            default_idx,
+        )
+
+        if selected >= 0:
+            self.state.env_contents["flux_guidance_mode"] = options[selected]
+
+    def _configure_flux_guidance_value(self, stdscr):
+        """Configure Flux guidance value"""
+        current = str(self.state.env_contents.get("flux_guidance_value", 1.0))
+        value = self.get_input(
+            stdscr,
+            f"Flux guidance value\n"
+            "1.0 preserves CFG distillation for Dev model\n(Current: {current})",
+            current,
+        )
+        try:
+            self.state.env_contents["flux_guidance_value"] = float(value)
+        except ValueError:
+            self.show_error(stdscr, "Invalid value. Keeping current setting.")
+
+    def _configure_flux_guidance_min(self, stdscr):
+        """Configure Flux guidance min"""
+        current = str(self.state.env_contents.get("flux_guidance_min", 1.0))
+        value = self.get_input(
+            stdscr,
+            f"Minimum guidance value for random range\n(Current: {current})",
+            current,
+        )
+        try:
+            self.state.env_contents["flux_guidance_min"] = float(value)
+        except ValueError:
+            self.show_error(stdscr, "Invalid value. Keeping current setting.")
+
+    def _configure_flux_guidance_max(self, stdscr):
+        """Configure Flux guidance max"""
+        current = str(self.state.env_contents.get("flux_guidance_max", 4.0))
+        value = self.get_input(
+            stdscr,
+            f"Maximum guidance value for random range\n(Current: {current})",
+            current,
+        )
+        try:
+            self.state.env_contents["flux_guidance_max"] = float(value)
+        except ValueError:
+            self.show_error(stdscr, "Invalid value. Keeping current setting.")
+
+    def _configure_flux_attention_masking(self, stdscr):
+        """Configure Flux attention masking"""
+        current = self.state.env_contents.get("flux_attention_masked_training", False)
+
+        selected = self.show_options(
+            stdscr,
+            f"Use attention masking? (Can be destructive)\n(Current: {'Yes' if current else 'No'})",
+            ["No", "Yes"],
+            1 if current else 0,
+        )
+        if selected == 1:
+            self.state.env_contents["flux_attention_masked_training"] = True
+        elif (
+            selected == 0
+            and "flux_attention_masked_training" in self.state.env_contents
+        ):
+            del self.state.env_contents["flux_attention_masked_training"]
+
+    def _configure_beta_alpha(self, stdscr):
+        """Configure beta schedule alpha"""
+        current = str(self.state.env_contents.get("flow_beta_schedule_alpha", 2.0))
+        value = self.get_input(
+            stdscr,
+            f"Beta schedule alpha value\n(Current: {current})",
+            current,
+        )
+        try:
+            self.state.env_contents["flow_beta_schedule_alpha"] = float(value)
+        except ValueError:
+            self.show_error(stdscr, "Invalid value. Keeping current setting.")
+
+    def _configure_beta_beta(self, stdscr):
+        """Configure beta schedule beta"""
+        current = str(self.state.env_contents.get("flow_beta_schedule_beta", 2.0))
+        value = self.get_input(
+            stdscr,
+            f"Beta schedule beta value\n(Current: {current})",
+            current,
+        )
+        try:
+            self.state.env_contents["flow_beta_schedule_beta"] = float(value)
+        except ValueError:
+            self.show_error(stdscr, "Invalid value. Keeping current setting.")
+
     def validation_settings(self, stdscr):
-        """Step 8: Validation Settings - Now with menu"""
+        """Step 11: Validation Settings - Now with menu"""
         nav = MenuNavigator(stdscr)
 
         while True:
@@ -1982,6 +3057,9 @@ class SimpleTunerNCurses:
                     "validation_prompt", "A photo-realistic image of a cat"
                 )[:40]
                 + "...",
+                "Evaluation Type": self.state.env_contents.get(
+                    "evaluation_type", "none"
+                ),
             }
 
             menu_items = [
@@ -1992,7 +3070,22 @@ class SimpleTunerNCurses:
                 ("Guidance Rescale", self._configure_val_rescale),
                 ("Inference Steps", self._configure_val_inference_steps),
                 ("Validation Prompt", self._configure_val_prompt),
+                ("Evaluation Type", self._configure_evaluation_type),
             ]
+
+            # Add noise scheduler option
+            current_values["Noise Scheduler"] = self.state.env_contents.get(
+                "validation_noise_scheduler", "default"
+            )
+            menu_items.append(("Noise Scheduler", self._configure_val_noise_scheduler))
+
+            # Add torch compile option
+            current_values["Torch Compile"] = (
+                "Enabled"
+                if self.state.env_contents.get("validation_torch_compile", False)
+                else "Disabled"
+            )
+            menu_items.append(("Torch Compile", self._configure_val_torch_compile))
 
             selected = nav.show_menu("Validation Settings", menu_items, current_values)
 
@@ -2068,8 +3161,72 @@ class SimpleTunerNCurses:
         val_prompt = self.get_input(stdscr, "Set the validation prompt:", current)
         self.state.env_contents["validation_prompt"] = val_prompt
 
+    def _configure_evaluation_type(self, stdscr):
+        """Configure evaluation type"""
+        options = ["none", "clip"]
+        current = self.state.env_contents.get("evaluation_type", "none")
+
+        default_idx = 0
+        if current in options:
+            default_idx = options.index(current)
+
+        selected = self.show_options(
+            stdscr,
+            f"Enable CLIP evaluation?\n(Current: {current})\n\n"
+            "CLIP scores measure prompt adherence",
+            options,
+            default_idx,
+        )
+
+        if selected >= 0:
+            self.state.env_contents["evaluation_type"] = options[selected]
+
+    def _configure_val_noise_scheduler(self, stdscr):
+        """Configure validation noise scheduler"""
+        options = ["default", "ddim", "ddpm", "euler", "euler-a", "unipc", "dpm++"]
+        current = self.state.env_contents.get("validation_noise_scheduler", "default")
+
+        # Find default index
+        default_idx = 0
+        for idx, opt in enumerate(options):
+            if opt == current or (current is None and opt == "default"):
+                default_idx = idx
+                break
+
+        selected = self.show_options(
+            stdscr,
+            f"Validation noise scheduler\n(Current: {current})",
+            options,
+            default_idx,
+        )
+
+        if selected >= 0:
+            if options[selected] == "default":
+                if "validation_noise_scheduler" in self.state.env_contents:
+                    del self.state.env_contents["validation_noise_scheduler"]
+            else:
+                self.state.env_contents["validation_noise_scheduler"] = options[
+                    selected
+                ]
+
+    def _configure_val_torch_compile(self, stdscr):
+        """Configure validation torch compile"""
+        current = self.state.env_contents.get("validation_torch_compile", False)
+
+        selected = self.show_options(
+            stdscr,
+            f"Enable torch.compile() for validation? (Can speed up inference)\n(Current: {'Yes' if current else 'No'})",
+            ["No", "Yes"],
+            1 if current else 0,
+        )
+
+        if selected == 1:
+            self.state.env_contents["validation_torch_compile"] = True
+        elif selected == 0 and "validation_torch_compile" in self.state.env_contents:
+            del self.state.env_contents["validation_torch_compile"]
+
     def advanced_options(self, stdscr):
-        """Step 9: Advanced Options - Now with menu"""
+        """Step 12: Advanced Options - Now with menu"""
         nav = MenuNavigator(stdscr)
 
         while True:
@@ -2095,6 +3252,11 @@ class SimpleTunerNCurses:
                     if "user_prompt_library" in self.state.env_contents
                     else "Not configured"
                 ),
+                "Rescale Betas Zero SNR": (
+                    "Enabled"
+                    if self.state.env_contents.get("rescale_betas_zero_snr", False)
+                    else "Disabled"
+                ),
             }
 
             menu_items = [
@@ -2103,6 +3265,9 @@ class SimpleTunerNCurses:
                 ("Disk Cache Compression", self._configure_disk_compression),
                 ("Torch Compile", self._configure_torch_compile),
                 ("Prompt Library", self._configure_prompt_library),
+                ("Rescale Betas Zero SNR", self._configure_rescale_betas),
+                ("Freeze Encoder Settings", self._configure_freeze_encoder),
+                ("Distillation Settings", self._configure_distillation),
             ]
 
             selected = nav.show_menu("Advanced Options", menu_items, current_values)
@@ -2372,8 +3537,494 @@ class SimpleTunerNCurses:
                     stdscr, f"(warning) Failed to generate prompt library: {str(e)}"
                 )
 
+    def _configure_rescale_betas(self, stdscr):
+        """Configure rescale betas zero SNR"""
+        current = self.state.env_contents.get("rescale_betas_zero_snr", False)
+
+        selected = self.show_options(
+            stdscr,
+            f"Rescale betas to zero terminal SNR?\n"
+            "Recommended for v_prediction training\n(Current: {'Yes' if current else 'No'})",
+            ["No", "Yes"],
+            1 if current else 0,
+        )
+
+        if selected == 1:
+            self.state.env_contents["rescale_betas_zero_snr"] = True
+        elif selected == 0 and "rescale_betas_zero_snr" in self.state.env_contents:
+            del self.state.env_contents["rescale_betas_zero_snr"]
+
+    def _configure_freeze_encoder(self, stdscr):
+        """Configure freeze encoder settings"""
+        nav = MenuNavigator(stdscr)
+
+        while True:
+            current_values = {
+                "Freeze Strategy": self.state.env_contents.get(
+                    "freeze_encoder_strategy", "none"
+                ),
+                "Layer Freeze Strategy": self.state.env_contents.get(
+                    "layer_freeze_strategy", "none"
+                ),
+            }
+
+            menu_items = [
+                ("Freeze Strategy", self._configure_freeze_strategy),
+                ("Layer Freeze Strategy", self._configure_layer_freeze_strategy),
+            ]
+
+            # Add strategy-specific options
+            strategy = self.state.env_contents.get("freeze_encoder_strategy", "none")
+            if strategy in ["before", "after", "between"]:
+                if strategy in ["before", "between"]:
+                    current_values["Freeze Before"] = str(
+                        self.state.env_contents.get("freeze_encoder_before", 17)
+                    )
+                    menu_items.append(("Freeze Before", self._configure_freeze_before))
+                if strategy in ["after", "between"]:
+                    current_values["Freeze After"] = str(
+                        self.state.env_contents.get("freeze_encoder_after", 17)
+                    )
+                    menu_items.append(("Freeze After", self._configure_freeze_after))
+
+            selected = nav.show_menu(
+                "Freeze Encoder Settings", menu_items, current_values
+            )
+
+            if selected == -1:  # Quit
+                if self.confirm_quit(stdscr):
+                    raise KeyboardInterrupt
+            elif selected == -2:  # Back
+                return
+            elif selected >= 0:
+                menu_items[selected][1](stdscr)
+
+    def _configure_freeze_strategy(self, stdscr):
+        """Configure freeze encoder strategy"""
+        options = ["none", "before", "after", "between"]
+        current = self.state.env_contents.get("freeze_encoder_strategy", "none")
+
+        default_idx = 0
+        if current in options:
+            default_idx = options.index(current)
+
+        selected = self.show_options(
+            stdscr,
+            f"Text encoder freeze strategy\n(Current: {current})\n\n"
+            "before: Freeze layers before specified layer\n"
+            "after: Freeze layers after specified layer\n"
+            "between: Freeze layers between two specified layers",
+            options,
+            default_idx,
+        )
+
+        if selected >= 0:
+            self.state.env_contents["freeze_encoder_strategy"] = options[selected]
+
+    def _configure_layer_freeze_strategy(self, stdscr):
+        """Configure layer freeze strategy"""
+        options = ["none", "bitfit"]
+        current = self.state.env_contents.get("layer_freeze_strategy", "none")
+
+        default_idx = 0
+        if current in options:
+            default_idx = options.index(current)
+
+        selected = self.show_options(
+            stdscr,
+            f"Layer freeze strategy\n(Current: {current})\n\n"
+            "none: Normal training\n"
+            "bitfit: Freeze weights, train only bias",
+            options,
+            default_idx,
+        )
+
+        if selected >= 0:
+            self.state.env_contents["layer_freeze_strategy"] = options[selected]
+
+    def _configure_freeze_before(self, stdscr):
+        """Configure freeze before layer"""
+        current = str(self.state.env_contents.get("freeze_encoder_before", 17))
+        value = self.get_input(
+            stdscr,
+            f"Freeze layers before this layer number\n(Current: {current})",
+            current,
+        )
+        try:
+            self.state.env_contents["freeze_encoder_before"] = int(value)
+        except ValueError:
+            self.show_error(stdscr, "Invalid value. Keeping current setting.")
+
+    def _configure_freeze_after(self, stdscr):
+        """Configure freeze after layer"""
+        current = str(self.state.env_contents.get("freeze_encoder_after", 17))
+        value = self.get_input(
+            stdscr,
+            f"Freeze layers after this layer number\n(Current: {current})",
+            current,
+        )
+        try:
+            self.state.env_contents["freeze_encoder_after"] = int(value)
+        except ValueError:
+            self.show_error(stdscr, "Invalid value. Keeping current setting.")
+
+    def _configure_distillation(self, stdscr):
+        """Configure distillation settings"""
+        current_method = self.state.env_contents.get("distillation_method")
+
+        use_distillation = self.show_options(
+            stdscr,
+            f"Enable distillation training?\n(Current: {'Yes - ' + current_method if current_method else 'No'})",
+            ["No", "Yes"],
+            1 if current_method else 0,
+        )
+
+        if use_distillation == 1:
+            # Choose distillation method
+            methods = ["lcm", "dcm"]
+            default_idx = 0
+            if current_method in methods:
+                default_idx = methods.index(current_method)
+
+            method_idx = self.show_options(
+                stdscr,
+                "Select distillation method:",
+                ["LCM (Latent Consistency)", "DCM (Direct Consistency)"],
+                default_idx,
+            )
+
+            if method_idx >= 0:
+                self.state.env_contents["distillation_method"] = methods[method_idx]
+
+                # TODO: Add distillation_config options if needed
+        else:
+            if "distillation_method" in self.state.env_contents:
+                del self.state.env_contents["distillation_method"]
+            if "distillation_config" in self.state.env_contents:
+                del self.state.env_contents["distillation_config"]
+
+    def controlnet_config(self, stdscr):
+        """Step 13: ControlNet Configuration"""
+        current_control = (
+            "control" in self.state.env_contents
+            or "controlnet" in self.state.env_contents
+        )
+
+        use_control = self.show_options(
+            stdscr,
+            f"Enable control/ControlNet training?\n(Current: {'Yes' if current_control else 'No'})",
+            ["No", "Yes"],
+            1 if current_control else 0,
+        )
+
+        if use_control == 0:
+            # Remove control settings
+            for key in [
+                "control",
+                "controlnet",
+                "controlnet_model_name_or_path",
+                "controlnet_custom_config",
+                "conditioning_multidataset_sampling",
+            ]:
+                if key in self.state.env_contents:
+                    del self.state.env_contents[key]
+            return
+
+        # Choose control type
+        control_type = self.show_options(
+            stdscr,
+            "Select control type:",
+            ["Channel-wise control", "ControlNet"],
+            1 if "controlnet" in self.state.env_contents else 0,
+        )
+
+        if control_type == 0:
+            self.state.env_contents["control"] = True
+            if "controlnet" in self.state.env_contents:
+                del self.state.env_contents["controlnet"]
+        else:
+            self.state.env_contents["controlnet"] = True
+            if "control" in self.state.env_contents:
+                del self.state.env_contents["control"]
+
+            # Configure ControlNet model path
+            current_path = self.state.env_contents.get(
+                "controlnet_model_name_or_path", ""
+            )
+            model_path = self.get_input(
+                stdscr,
+                "Enter ControlNet model path (optional):",
+                current_path,
+            )
+            if model_path:
+                self.state.env_contents["controlnet_model_name_or_path"] = model_path
+
+        # Configure conditioning dataset sampling
+        current_sampling = self.state.env_contents.get(
+            "conditioning_multidataset_sampling", "random"
+        )
+        sampling_idx = self.show_options(
+            stdscr,
+            f"Conditioning dataset sampling\n(Current: {current_sampling})",
+            ["Random (default)", "Combined (higher VRAM)"],
+            0 if current_sampling == "random" else 1,
+        )
+
+        if sampling_idx == 1:
+            self.state.env_contents["conditioning_multidataset_sampling"] = "combined"
+        else:
+            self.state.env_contents["conditioning_multidataset_sampling"] = "random"
+
+    def model_specific_options(self, stdscr):
+        """Step 14: Model-Specific Options"""
+        model_family = self.state.env_contents.get("model_family")
+
+        if not model_family:
+            self.show_message(stdscr, "Please select a model family first.")
+            return
+
+        nav = MenuNavigator(stdscr)
+
+        while True:
+            current_values = {}
+            menu_items = []
+
+            # LTX Video options
+            if model_family == "ltxvideo":
+                current_values["Train Mode"] = self.state.env_contents.get(
+                    "ltx_train_mode", "i2v"
+                )
+                current_values["I2V Probability"] = str(
+                    self.state.env_contents.get("ltx_i2v_prob", 0.1)
+                )
+                current_values["Protect First Frame"] = (
+                    "Yes"
+                    if self.state.env_contents.get("ltx_protect_first_frame", False)
+                    else "No"
+                )
+
+                menu_items.extend(
+                    [
+                        ("Train Mode", self._configure_ltx_train_mode),
+                        ("I2V Probability", self._configure_ltx_i2v_prob),
+                        ("Protect First Frame", self._configure_ltx_protect_first),
+                    ]
+                )
+
+                if not self.state.env_contents.get("ltx_protect_first_frame", False):
+                    current_values["Partial Noise Fraction"] = str(
+                        self.state.env_contents.get("ltx_partial_noise_fraction", 0.05)
+                    )
+                    menu_items.append(
+                        ("Partial Noise Fraction", self._configure_ltx_partial_noise)
+                    )
+
+            # SD3 options
+            elif model_family == "sd3":
+                current_values["CLIP Uncond Behaviour"] = self.state.env_contents.get(
+                    "sd3_clip_uncond_behaviour", "empty_string"
+                )
+                current_values["T5 Uncond Behaviour"] = self.state.env_contents.get(
+                    "sd3_t5_uncond_behaviour", "follow_clip"
+                )
+
+                menu_items.extend(
+                    [
+                        ("CLIP Uncond Behaviour", self._configure_sd3_clip_uncond),
+                        ("T5 Uncond Behaviour", self._configure_sd3_t5_uncond),
+                    ]
+                )
+
+            # T5 padding (for models with T5)
+            if model_family in ["flux", "sd3", "pixart_sigma"]:
+                current_values["T5 Padding"] = self.state.env_contents.get(
+                    "t5_padding", "unmodified"
+                )
+                menu_items.append(("T5 Padding", self._configure_t5_padding))
+
+            # Sana options
+            elif model_family == "sana":
+                current_values["Complex Human Instruction"] = (
+                    "Enabled"
+                    if self.state.env_contents.get(
+                        "sana_complex_human_instruction", True
+                    )
+                    else "Disabled"
+                )
+                menu_items.append(
+                    ("Complex Human Instruction", self._configure_sana_instruction)
+                )
+
+            if not menu_items:
+                self.show_message(
+                    stdscr, f"No specific options available for {model_family}."
+                )
+                return
+
+            selected = nav.show_menu(
+                f"{model_family.upper()} Specific Options", menu_items, current_values
+            )
+
+            if selected == -1:  # Quit
+                if self.confirm_quit(stdscr):
+                    raise KeyboardInterrupt
+            elif selected == -2:  # Back
+                return
+            elif selected >= 0:
+                menu_items[selected][1](stdscr)
+
+    def _configure_ltx_train_mode(self, stdscr):
+        """Configure LTX train mode"""
+        options = ["t2v", "i2v"]
+        current = self.state.env_contents.get("ltx_train_mode", "i2v")
+
+        default_idx = 1 if current == "i2v" else 0
+
+        selected = self.show_options(
+            stdscr,
+            f"LTX training mode\n(Current: {current})\n\n"
+            "t2v: Text-to-video\n"
+            "i2v: Image-to-video",
+            options,
+            default_idx,
+        )
+
+        if selected >= 0:
+            self.state.env_contents["ltx_train_mode"] = options[selected]
+
+    def _configure_ltx_i2v_prob(self, stdscr):
+        """Configure LTX i2v probability"""
+        current = str(self.state.env_contents.get("ltx_i2v_prob", 0.1))
+        value = self.get_input(
+            stdscr,
+            f"I2V probability (0.0-1.0)\n"
+            "Chance of applying i2v style training\n(Current: {current})",
+            current,
+        )
+        try:
+            prob = float(value)
+            if 0.0 <= prob <= 1.0:
+                self.state.env_contents["ltx_i2v_prob"] = prob
+            else:
+                self.show_error(stdscr, "Value must be between 0.0 and 1.0")
+        except ValueError:
+            self.show_error(stdscr, "Invalid value. Keeping current setting.")
+
+    def _configure_ltx_protect_first(self, stdscr):
+        """Configure LTX protect first frame"""
+        current = self.state.env_contents.get("ltx_protect_first_frame", False)
+
+        selected = self.show_options(
+            stdscr,
+            f"Fully protect first frame in i2v?\n(Current: {'Yes' if current else 'No'})",
+            ["No", "Yes"],
+            1 if current else 0,
+        )
+
+        if selected == 1:
+            self.state.env_contents["ltx_protect_first_frame"] = True
+        elif selected == 0 and "ltx_protect_first_frame" in self.state.env_contents:
+            del self.state.env_contents["ltx_protect_first_frame"]
+
+    def _configure_ltx_partial_noise(self, stdscr):
+        """Configure LTX partial noise fraction"""
+        current = str(self.state.env_contents.get("ltx_partial_noise_fraction", 0.05))
+        value = self.get_input(
+            stdscr,
+            f"Maximum noise fraction for first frame (0.0-1.0)\n"
+            "0.05 = 5% noise, 95% original\n(Current: {current})",
+            current,
+        )
+        try:
+            frac = float(value)
+            if 0.0 <= frac <= 1.0:
+                self.state.env_contents["ltx_partial_noise_fraction"] = frac
+            else:
+                self.show_error(stdscr, "Value must be between 0.0 and 1.0")
+        except ValueError:
+            self.show_error(stdscr, "Invalid value. Keeping current setting.")
+
+    def _configure_sd3_clip_uncond(self, stdscr):
+        """Configure SD3 CLIP uncond behaviour"""
+        options = ["empty_string", "zero"]
+        current = self.state.env_contents.get(
+            "sd3_clip_uncond_behaviour", "empty_string"
+        )
+
+        default_idx = 0 if current == "empty_string" else 1
+
+        selected = self.show_options(
+            stdscr,
+            f"SD3 CLIP unconditional behaviour\n(Current: {current})",
+            options,
+            default_idx,
+        )
+
+        if selected >= 0:
+            self.state.env_contents["sd3_clip_uncond_behaviour"] = options[selected]
+
+    def _configure_sd3_t5_uncond(self, stdscr):
+        """Configure SD3 T5 uncond behaviour"""
+        options = ["follow_clip", "empty_string", "zero"]
+        current = self.state.env_contents.get("sd3_t5_uncond_behaviour", "follow_clip")
+
+        default_idx = 0
+        if current in options:
+            default_idx = options.index(current)
+
+        selected = self.show_options(
+            stdscr,
+            f"SD3 T5 unconditional behaviour\n(Current: {current})",
+            ["Follow CLIP setting", "Empty string", "Zero"],
+            default_idx,
+        )
+
+        if selected >= 0:
+            if selected == 0:
+                if "sd3_t5_uncond_behaviour" in self.state.env_contents:
+                    del self.state.env_contents["sd3_t5_uncond_behaviour"]
+            else:
+                self.state.env_contents["sd3_t5_uncond_behaviour"] = options[selected]
+
+    def _configure_t5_padding(self, stdscr):
+        """Configure T5 padding"""
+        options = ["unmodified", "zero"]
+        current = self.state.env_contents.get("t5_padding", "unmodified")
+
+        default_idx = 0 if current == "unmodified" else 1
+
+        selected = self.show_options(
+            stdscr,
+            f"T5 padding behaviour\n(Current: {current})",
+            options,
+            default_idx,
+        )
+
+        if selected >= 0:
+            self.state.env_contents["t5_padding"] = options[selected]
+
+    def _configure_sana_instruction(self, stdscr):
+        """Configure Sana complex human instruction"""
+        current = self.state.env_contents.get("sana_complex_human_instruction", True)
+
+        selected = self.show_options(
+            stdscr,
+            f"Attach complex human instruction to prompts?\n"
+            "Required for Gemma model\n(Current: {'Yes' if current else 'No'})",
+            ["No", "Yes"],
+            1 if current else 0,
+        )
+
+        if selected == 0:
+            self.state.env_contents["sana_complex_human_instruction"] = False
+        elif (
+            selected == 1
+            and "sana_complex_human_instruction" in self.state.env_contents
+        ):
+            del self.state.env_contents["sana_complex_human_instruction"]
+
     def dataset_config(self, stdscr):
-        """Step 10: Dataset Configuration - Now with menu"""
+        """Step 15: Dataset Configuration - Comprehensive version"""
         config_idx = self.show_options(
             stdscr, "Would you like to configure your dataloader?", ["Yes", "No"], 0
         )
@@ -2383,57 +4034,29 @@ class SimpleTunerNCurses:
 
         nav = MenuNavigator(stdscr)
 
-        # Initialize dataset values if not configured
-        if not hasattr(self, "_dataset_values"):
-            self._dataset_values = {
-                "id": "my-dataset",
-                "path": "/datasets/my-dataset",
-                "caption_strategy": "textfile",
-                "instance_prompt": None,
-                "repeats": 10,
-                "resolutions": [1024],
-                "cache_dir": "cache/",
-                "has_large_images": False,
-            }
+        # Initialize dataset manager if not exists
+        if not hasattr(self, "_datasets"):
+            self._datasets = []
+            self._current_dataset_idx = 0
 
         while True:
-            # Build current values display
+            # Build menu
             current_values = {
-                "Dataset ID": self._dataset_values["id"],
-                "Dataset Path": self._dataset_values["path"],
-                "Caption Strategy": self._dataset_values["caption_strategy"],
-                "Dataset Repeats": str(self._dataset_values["repeats"]),
-                "Resolutions": ", ".join(map(str, self._dataset_values["resolutions"])),
-                "Cache Directory": self._dataset_values["cache_dir"],
-                "Large Images": (
-                    "Yes" if self._dataset_values["has_large_images"] else "No"
-                ),
+                "Datasets Configured": str(len(self._datasets)),
             }
 
-            if self._dataset_values["caption_strategy"] == "instanceprompt":
-                current_values["Instance Prompt"] = self._dataset_values.get(
-                    "instance_prompt", "Not set"
-                )
-
             menu_items = [
-                ("Dataset ID", self._configure_dataset_id),
-                ("Dataset Path", self._configure_dataset_path),
-                ("Caption Strategy", self._configure_caption_strategy),
-                ("Dataset Repeats", self._configure_dataset_repeats),
-                ("Resolutions", self._configure_resolutions),
-                ("Cache Directory", self._configure_cache_dir),
-                ("Large Images", self._configure_large_images),
-                ("Apply Configuration", self._apply_dataset_config),
+                ("Add New Dataset", self._add_dataset),
+                ("Edit Existing Dataset", self._edit_dataset),
+                ("Remove Dataset", self._remove_dataset),
+                ("Configure Text Embeds Dataset", self._configure_text_embeds),
+                ("Configure Image Embeds Dataset", self._configure_image_embeds),
+                ("Review All Datasets", self._review_datasets),
+                ("Apply Configuration", self._apply_all_datasets),
             ]
 
-            if self._dataset_values["caption_strategy"] == "instanceprompt":
-                # Insert instance prompt before Apply
-                menu_items.insert(
-                    -1, ("Instance Prompt", self._configure_instance_prompt)
-                )
-
             selected = nav.show_menu(
-                "Dataset Configuration", menu_items, current_values
+                "Dataset Configuration Manager", menu_items, current_values
             )
 
             if selected == -1:  # Quit
@@ -2447,6 +4070,604 @@ class SimpleTunerNCurses:
                     return
                 else:
                     menu_items[selected][1](stdscr)
+
+    def _add_dataset(self, stdscr):
+        """Add a new dataset configuration"""
+        # Choose dataset type
+        dataset_types = ["image", "video", "conditioning"]
+        type_idx = self.show_options(
+            stdscr,
+            "Select dataset type:",
+            ["Image Dataset", "Video Dataset", "Conditioning Dataset"],
+            0,
+        )
+
+        if type_idx < 0:
+            return
+
+        dataset_type = dataset_types[type_idx]
+
+        # Choose backend type
+        backend_types = ["local", "aws", "csv", "huggingface"]
+        backend_idx = self.show_options(
+            stdscr,
+            "Select storage backend:",
+            ["Local Filesystem", "AWS S3", "CSV URL List", "Hugging Face Dataset"],
+            0,
+        )
+
+        if backend_idx < 0:
+            return
+
+        backend_type = backend_types[backend_idx]
+
+        # Create dataset config
+        dataset = {
+            "dataset_type": dataset_type,
+            "type": backend_type,
+            "disabled": False,
+        }
+
+        # Configure based on type
+        if dataset_type == "image":
+            self._configure_image_dataset(stdscr, dataset)
+        elif dataset_type == "video":
+            self._configure_video_dataset(stdscr, dataset)
+        elif dataset_type == "conditioning":
+            self._configure_conditioning_dataset(stdscr, dataset)
+
+        self._datasets.append(dataset)
+        self.show_message(stdscr, f"Dataset '{dataset['id']}' added successfully!")
+
+    def _configure_image_dataset(self, stdscr, dataset):
+        """Configure an image dataset with all options"""
+        nav = MenuNavigator(stdscr)
+
+        # Initialize with defaults
+        dataset.update(
+            {
+                "id": f"dataset-{len(self._datasets)}",
+                "resolution": 1024,
+                "resolution_type": "pixel_area",
+                "caption_strategy": "textfile",
+                "crop": False,
+                "repeats": 0,
+                "minimum_image_size": 0,
+                "metadata_backend": "discovery",
+            }
+        )
+
+        while True:
+            # Build current values
+            current_values = {
+                "Dataset ID": dataset["id"],
+                "Resolution": f"{dataset['resolution']} ({dataset['resolution_type']})",
+                "Caption Strategy": dataset["caption_strategy"],
+                "Crop": "Yes" if dataset.get("crop", False) else "No",
+                "Repeats": str(dataset.get("repeats", 0)),
+            }
+
+            # Add backend-specific values
+            if dataset["type"] == "local":
+                current_values["Data Directory"] = dataset.get(
+                    "instance_data_dir", "Not set"
+                )
+                current_values["VAE Cache"] = dataset.get("cache_dir_vae", "Not set")
+            elif dataset["type"] == "aws":
+                current_values["S3 Bucket"] = dataset.get("aws_bucket_name", "Not set")
+                current_values["S3 Prefix"] = dataset.get("aws_data_prefix", "")
+
+            menu_items = [
+                (
+                    "Basic Settings",
+                    lambda s: self._configure_dataset_basics(s, dataset),
+                ),
+                (
+                    "Resolution Settings",
+                    lambda s: self._configure_resolution_settings(s, dataset),
+                ),
+                (
+                    "Caption Settings",
+                    lambda s: self._configure_caption_settings(s, dataset),
+                ),
+                ("Crop Settings", lambda s: self._configure_crop_settings(s, dataset)),
+                (
+                    "Cache Settings",
+                    lambda s: self._configure_cache_settings(s, dataset),
+                ),
+                (
+                    "Advanced Settings",
+                    lambda s: self._configure_advanced_settings(s, dataset),
+                ),
+            ]
+
+            # Add backend-specific options
+            if dataset["type"] == "local":
+                menu_items.insert(
+                    1,
+                    (
+                        "Local Path Settings",
+                        lambda s: self._configure_local_paths(s, dataset),
+                    ),
+                )
+            elif dataset["type"] == "aws":
+                menu_items.insert(
+                    1,
+                    (
+                        "AWS Settings",
+                        lambda s: self._configure_aws_settings(s, dataset),
+                    ),
+                )
+            elif dataset["type"] == "csv":
+                menu_items.insert(
+                    1,
+                    (
+                        "CSV Settings",
+                        lambda s: self._configure_csv_settings(s, dataset),
+                    ),
+                )
+            elif dataset["type"] == "huggingface":
+                menu_items.insert(
+                    1,
+                    (
+                        "HuggingFace Settings",
+                        lambda s: self._configure_hf_settings(s, dataset),
+                    ),
+                )
+
+            # Add conditioning options if applicable
+            if "conditioning" not in dataset and dataset["dataset_type"] == "image":
+                menu_items.append(
+                    (
+                        "Auto-generate Conditioning",
+                        lambda s: self._configure_auto_conditioning(s, dataset),
+                    )
+                )
+
+            selected = nav.show_menu(
+                f"Configure Image Dataset: {dataset['id']}", menu_items, current_values
+            )
+
+            if selected == -1:  # Quit
+                if self.confirm_quit(stdscr):
+                    raise KeyboardInterrupt
+            elif selected == -2:  # Back
+                return
+            elif selected >= 0:
+                menu_items[selected][1](stdscr)
+
+    def _configure_dataset_basics(self, stdscr, dataset):
+        """Configure basic dataset settings"""
+        nav = MenuNavigator(stdscr)
+
+        while True:
+            current_values = {
+                "Dataset ID": dataset["id"],
+                "Disabled": "Yes" if dataset.get("disabled", False) else "No",
+                "Probability": str(dataset.get("probability", 1.0)),
+                "Repeats": str(dataset.get("repeats", 0)),
+                "Regularization Data": (
+                    "Yes" if dataset.get("is_regularisation_data", False) else "No"
+                ),
+            }
+
+            menu_items = [
+                ("Dataset ID", lambda s: self._set_dataset_id(s, dataset)),
+                ("Enable/Disable", lambda s: self._toggle_dataset(s, dataset)),
+                ("Sampling Probability", lambda s: self._set_probability(s, dataset)),
+                ("Dataset Repeats", lambda s: self._set_repeats(s, dataset)),
+                (
+                    "Regularization Data",
+                    lambda s: self._toggle_regularization(s, dataset),
+                ),
+            ]
+
+            selected = nav.show_menu(
+                "Basic Dataset Settings", menu_items, current_values
+            )
+
+            if selected == -1 or selected == -2:
+                return
+            elif selected >= 0:
+                menu_items[selected][1](stdscr)
+
+    def _configure_resolution_settings(self, stdscr, dataset):
+        """Configure resolution and image size settings"""
+        nav = MenuNavigator(stdscr)
+
+        while True:
+            current_values = {
+                "Resolution": str(dataset.get("resolution", 1024)),
+                "Resolution Type": dataset.get("resolution_type", "pixel_area"),
+                "Min Image Size": str(dataset.get("minimum_image_size", 0)),
+                "Max Image Size": (
+                    str(dataset.get("maximum_image_size", 0))
+                    if dataset.get("maximum_image_size")
+                    else "Not set"
+                ),
+                "Target Downsample": (
+                    str(dataset.get("target_downsample_size", 0))
+                    if dataset.get("target_downsample_size")
+                    else "Not set"
+                ),
+                "Min Aspect Ratio": str(dataset.get("minimum_aspect_ratio", 0.5)),
+                "Max Aspect Ratio": str(dataset.get("maximum_aspect_ratio", 3.0)),
+            }
+
+            menu_items = [
+                ("Resolution", lambda s: self._set_resolution(s, dataset)),
+                ("Resolution Type", lambda s: self._set_resolution_type(s, dataset)),
+                ("Minimum Image Size", lambda s: self._set_min_image_size(s, dataset)),
+                ("Maximum Image Size", lambda s: self._set_max_image_size(s, dataset)),
+                (
+                    "Target Downsample Size",
+                    lambda s: self._set_target_downsample(s, dataset),
+                ),
+                ("Aspect Ratio Limits", lambda s: self._set_aspect_limits(s, dataset)),
+            ]
+
+            selected = nav.show_menu("Resolution Settings", menu_items, current_values)
+
+            if selected == -1 or selected == -2:
+                return
+            elif selected >= 0:
+                menu_items[selected][1](stdscr)
+
+    def _configure_caption_settings(self, stdscr, dataset):
+        """Configure caption-related settings"""
+        nav = MenuNavigator(stdscr)
+
+        while True:
+            current_values = {
+                "Caption Strategy": dataset.get("caption_strategy", "textfile"),
+                "Instance Prompt": dataset.get("instance_prompt", "Not set"),
+                "Prepend Instance": (
+                    "Yes" if dataset.get("prepend_instance_prompt", False) else "No"
+                ),
+                "Only Instance": (
+                    "Yes" if dataset.get("only_instance_prompt", False) else "No"
+                ),
+            }
+
+            # Add parquet settings if applicable
+            if dataset.get("caption_strategy") == "parquet":
+                if "parquet" in dataset:
+                    current_values["Parquet File"] = dataset["parquet"].get(
+                        "path", "Not set"
+                    )
+                else:
+                    current_values["Parquet File"] = "Not configured"
+
+            menu_items = [
+                ("Caption Strategy", lambda s: self._set_caption_strategy(s, dataset)),
+                ("Instance Prompt", lambda s: self._set_instance_prompt(s, dataset)),
+                (
+                    "Prepend Instance Prompt",
+                    lambda s: self._toggle_prepend_instance(s, dataset),
+                ),
+                (
+                    "Only Instance Prompt",
+                    lambda s: self._toggle_only_instance(s, dataset),
+                ),
+            ]
+
+            # Add strategy-specific options
+            if dataset.get("caption_strategy") == "parquet":
+                menu_items.append(
+                    ("Parquet Settings", lambda s: self._configure_parquet(s, dataset))
+                )
+
+            # Add caption filter list option for text datasets
+            menu_items.append(
+                ("Caption Filter List", lambda s: self._set_caption_filter(s, dataset))
+            )
+
+            selected = nav.show_menu("Caption Settings", menu_items, current_values)
+
+            if selected == -1 or selected == -2:
+                return
+            elif selected >= 0:
+                menu_items[selected][1](stdscr)
+
+    def _configure_crop_settings(self, stdscr, dataset):
+        """Configure cropping and aspect settings"""
+        nav = MenuNavigator(stdscr)
+
+        while True:
+            current_values = {
+                "Crop Enabled": "Yes" if dataset.get("crop", False) else "No",
+                "Crop Style": dataset.get("crop_style", "center"),
+                "Crop Aspect": dataset.get("crop_aspect", "square"),
+                "Aspect Buckets": (
+                    str(len(dataset.get("crop_aspect_buckets", []))) + " buckets"
+                    if "crop_aspect_buckets" in dataset
+                    else "Not set"
+                ),
+                "Aspect Rounding": str(dataset.get("aspect_bucket_rounding", 2)),
+            }
+
+            menu_items = [
+                ("Enable Cropping", lambda s: self._toggle_crop(s, dataset)),
+                ("Crop Style", lambda s: self._set_crop_style(s, dataset)),
+                ("Crop Aspect", lambda s: self._set_crop_aspect(s, dataset)),
+                ("Aspect Buckets", lambda s: self._set_aspect_buckets(s, dataset)),
+                ("Aspect Rounding", lambda s: self._set_aspect_rounding(s, dataset)),
+            ]
+
+            selected = nav.show_menu("Crop Settings", menu_items, current_values)
+
+            if selected == -1 or selected == -2:
+                return
+            elif selected >= 0:
+                menu_items[selected][1](stdscr)
+
+    def _configure_cache_settings(self, stdscr, dataset):
+        """Configure cache-related settings"""
+        nav = MenuNavigator(stdscr)
+
+        while True:
+            current_values = {
+                "VAE Cache Dir": dataset.get("cache_dir_vae", "Not set"),
+                "Clear VAE Each Epoch": (
+                    "Yes" if dataset.get("vae_cache_clear_each_epoch", False) else "No"
+                ),
+                "Hash Filenames": (
+                    "Yes" if dataset.get("hash_filenames", False) else "No"
+                ),
+                "Skip Discovery": dataset.get("skip_file_discovery", "None"),
+                "Preserve Cache": (
+                    "Yes" if dataset.get("preserve_data_backend_cache", False) else "No"
+                ),
+                "Text Embeds": dataset.get("text_embeds", "default"),
+                "Image Embeds": dataset.get("image_embeds", "Not set"),
+            }
+
+            menu_items = [
+                ("VAE Cache Directory", lambda s: self._set_vae_cache_dir(s, dataset)),
+                (
+                    "Clear VAE Cache Each Epoch",
+                    lambda s: self._toggle_vae_clear(s, dataset),
+                ),
+                ("Hash Filenames", lambda s: self._toggle_hash_filenames(s, dataset)),
+                ("Skip File Discovery", lambda s: self._set_skip_discovery(s, dataset)),
+                (
+                    "Preserve Backend Cache",
+                    lambda s: self._toggle_preserve_cache(s, dataset),
+                ),
+                (
+                    "Text Embeds Dataset",
+                    lambda s: self._set_text_embeds_ref(s, dataset),
+                ),
+                (
+                    "Image Embeds Dataset",
+                    lambda s: self._set_image_embeds_ref(s, dataset),
+                ),
+            ]
+
+            selected = nav.show_menu("Cache Settings", menu_items, current_values)
+
+            if selected == -1 or selected == -2:
+                return
+            elif selected >= 0:
+                menu_items[selected][1](stdscr)
+
+    def _configure_text_embeds(self, stdscr):
+        """Configure a text embeds dataset"""
+        dataset = {
+            "dataset_type": "text_embeds",
+            "type": "local",
+            "default": False,
+            "write_batch_size": 128,
+        }
+
+        # Get ID
+        dataset["id"] = self.get_input(
+            stdscr,
+            "Enter text embeds dataset ID:",
+            f"text-embeds-{len(self._datasets)}",
+        )
+
+        # Set as default?
+        default_idx = self.show_options(
+            stdscr, "Set as default text embeds dataset?", ["No", "Yes"], 0
+        )
+        dataset["default"] = default_idx == 1
+
+        # Storage backend
+        backend_idx = self.show_options(
+            stdscr, "Storage backend:", ["Local", "AWS S3"], 0
+        )
+
+        if backend_idx == 0:
+            dataset["type"] = "local"
+            dataset["cache_dir"] = self.get_input(
+                stdscr,
+                "Enter cache directory for text embeds:",
+                f"cache/text/{self.state.env_contents.get('model_family', 'model')}",
+            )
+        else:
+            dataset["type"] = "aws"
+            self._configure_aws_settings(stdscr, dataset)
+
+        # Write batch size
+        batch_size = self.get_input(
+            stdscr, "Write batch size:", str(dataset["write_batch_size"])
+        )
+        try:
+            dataset["write_batch_size"] = int(batch_size)
+        except ValueError:
+            pass
+
+        self._datasets.append(dataset)
+        self.show_message(stdscr, f"Text embeds dataset '{dataset['id']}' added!")
+
+    def _configure_image_embeds(self, stdscr):
+        """Configure an image embeds dataset"""
+        dataset = {
+            "dataset_type": "image_embeds",
+            "type": "local",
+        }
+
+        # Get ID
+        dataset["id"] = self.get_input(
+            stdscr,
+            "Enter image embeds dataset ID:",
+            f"image-embeds-{len(self._datasets)}",
+        )
+
+        # Storage backend
+        backend_idx = self.show_options(
+            stdscr, "Storage backend:", ["Local", "AWS S3"], 0
+        )
+
+        if backend_idx == 0:
+            dataset["type"] = "local"
+        else:
+            dataset["type"] = "aws"
+            self._configure_aws_settings(stdscr, dataset)
+
+        self._datasets.append(dataset)
+        self.show_message(stdscr, f"Image embeds dataset '{dataset['id']}' added!")
+
+    def _apply_all_datasets(self, stdscr):
+        """Apply all dataset configurations"""
+        if not self._datasets:
+            self.show_error(stdscr, "No datasets configured!")
+            return
+
+        # Validate configuration
+        has_text_embeds = any(
+            d.get("dataset_type") == "text_embeds" and d.get("default")
+            for d in self._datasets
+        )
+
+        if not has_text_embeds:
+            # Auto-create default text embeds
+            self._datasets.append(
+                {
+                    "id": "text-embeds",
+                    "dataset_type": "text_embeds",
+                    "default": True,
+                    "type": "local",
+                    "cache_dir": f"cache/text/{self.state.env_contents.get('model_family', 'model')}",
+                    "write_batch_size": 128,
+                }
+            )
+
+        # Save configuration
+        self.state.dataset_config = self._datasets
+        self.state.env_contents["data_backend_config"] = self.state.env_contents.get(
+            "data_backend_config", "config/multidatabackend.json"
+        )
+
+        self.show_message(
+            stdscr, f"Applied {len(self._datasets)} dataset configurations!"
+        )
+
+    # Helper methods for all the configuration options...
+    def _set_dataset_id(self, stdscr, dataset):
+        """Set dataset ID"""
+        dataset["id"] = self.get_input(
+            stdscr,
+            "Enter dataset ID (unique identifier):",
+            dataset.get("id", "my-dataset"),
+        )
+
+    def _toggle_dataset(self, stdscr, dataset):
+        """Toggle dataset enabled/disabled"""
+        current = dataset.get("disabled", False)
+        idx = self.show_options(
+            stdscr,
+            f"Dataset currently: {'Disabled' if current else 'Enabled'}",
+            ["Enable", "Disable"],
+            1 if current else 0,
+        )
+        if idx >= 0:
+            dataset["disabled"] = idx == 1
+
+    def _set_probability(self, stdscr, dataset):
+        """Set sampling probability"""
+        current = str(dataset.get("probability", 1.0))
+        value = self.get_input(stdscr, "Sampling probability (0.0-1.0):", current)
+        try:
+            prob = float(value)
+            if 0.0 <= prob <= 1.0:
+                dataset["probability"] = prob
+        except ValueError:
+            pass
+
+    def _configure_parquet(self, stdscr, dataset):
+        """Configure parquet settings"""
+        if "parquet" not in dataset:
+            dataset["parquet"] = {}
+
+        nav = MenuNavigator(stdscr)
+        parquet = dataset["parquet"]
+
+        while True:
+            current_values = {
+                "Path": parquet.get("path", "Not set"),
+                "Filename Column": parquet.get("filename_column", "id"),
+                "Caption Column": parquet.get("caption_column", "caption"),
+                "Width Column": parquet.get("width_column", "Not set"),
+                "Height Column": parquet.get("height_column", "Not set"),
+                "ID Has Extension": (
+                    "Yes"
+                    if parquet.get("identifier_includes_extension", False)
+                    else "No"
+                ),
+            }
+
+            menu_items = [
+                ("Parquet File Path", lambda s: self._set_parquet_path(s, parquet)),
+                (
+                    "Filename Column",
+                    lambda s: self._set_parquet_column(
+                        s, parquet, "filename_column", "Filename column name:"
+                    ),
+                ),
+                (
+                    "Caption Column",
+                    lambda s: self._set_parquet_column(
+                        s, parquet, "caption_column", "Caption column name:"
+                    ),
+                ),
+                (
+                    "Width Column",
+                    lambda s: self._set_parquet_column(
+                        s, parquet, "width_column", "Width column name (optional):"
+                    ),
+                ),
+                (
+                    "Height Column",
+                    lambda s: self._set_parquet_column(
+                        s, parquet, "height_column", "Height column name (optional):"
+                    ),
+                ),
+                (
+                    "Fallback Caption",
+                    lambda s: self._set_parquet_column(
+                        s,
+                        parquet,
+                        "fallback_caption_column",
+                        "Fallback caption column (optional):",
+                    ),
+                ),
+                (
+                    "ID Includes Extension",
+                    lambda s: self._toggle_parquet_extension(s, parquet),
+                ),
+            ]
+
+            selected = nav.show_menu(
+                "Parquet Configuration", menu_items, current_values
+            )
+
+            if selected == -1 or selected == -2:
+                dataset["metadata_backend"] = "parquet"
+                return
+            elif selected >= 0:
+                menu_items[selected][1](stdscr)
 
     def _configure_dataset_id(self, stdscr):
         """Configure dataset ID"""
@@ -2750,42 +4971,18 @@ class SimpleTunerNCurses:
         self.state.dataset_config = datasets
 
     def review_and_save(self, stdscr):
-        """Step 11: Review and Save Configuration"""
+        """Step 16: Review and Save Configuration"""
         stdscr.clear()
         h, w = stdscr.getmaxyx()
 
         # Display configuration summary
         stdscr.addstr(1, 2, "Configuration Summary", curses.A_BOLD)
-
-        y = 3
-        config_items = []
-
-        # Prepare summary
-        config_items.append(f"Model Type: {self.state.model_type}")
-        config_items.append(
-            f"Output Directory: {self.state.env_contents.get('--output_dir', 'Not set')}"
-        )
-        config_items.append(
-            f"Model Family: {self.state.env_contents.get('--model_family', 'Not set')}"
-        )
-        config_items.append(
-            f"Base Model: {self.state.env_contents.get('--pretrained_model_name_or_path', 'Not set')}"
-        )
-
-        if self.state.use_lora:
-            config_items.append(
-                f"LoRA Type: {self.state.env_contents.get('--lora_type', 'standard')}"
-            )
-            if not self.state.use_lycoris:
-                config_items.append(
-                    f"LoRA Rank: {self.state.env_contents.get('--lora_rank', 'Not set')}"
-                )
-
-        # Display items
-        for item in config_items:
-            if y < h - 4:
-                stdscr.addstr(y, 4, item[: w - 6])
-                y += 1
+        # Print the JSON configuration
+        config_str = json.dumps(self.state.env_contents, indent=4)
+        lines = config_str.splitlines()
+        for i, line in enumerate(lines):
+            if i + 3 < h:
+                stdscr.addstr(i + 3, 2, line)
 
         stdscr.addstr(
             h - 3, 2, "Press 's' to save, 'b' to go back, 'q' to quit without saving"
@@ -2865,14 +5062,14 @@ class SimpleTunerNCurses:
                 stdscr.addstr(
                     6,
                     4,
-                    f"- {self.state.env_contents.get('--data_backend_config', 'config/multidatabackend.json')}",
+                    f"- {self.state.env_contents.get('data_backend_config', 'config/multidatabackend.json')}",
                 )
 
             if self.state.lycoris_config:
                 stdscr.addstr(
                     7,
                     4,
-                    f"- {self.state.env_contents.get('--lycoris_config', 'config/lycoris_config.json')}",
+                    f"- {self.state.env_contents.get('lycoris_config', 'config/lycoris_config.json')}",
                 )
 
             stdscr.addstr(9, 2, "Press any key to continue...")
@@ -2884,6 +5081,522 @@ class SimpleTunerNCurses:
 
         except Exception as e:
             self.show_error(stdscr, f"Failed to save configuration: {str(e)}")
+
+    def _configure_video_dataset(self, stdscr, dataset):
+        """Configure a video dataset"""
+        # Use most of the image dataset configuration
+        self._configure_image_dataset(stdscr, dataset)
+
+        # Add video-specific configuration
+        nav = MenuNavigator(stdscr)
+
+        if "video" not in dataset:
+            dataset["video"] = {}
+
+        video_config = dataset["video"]
+
+        while True:
+            current_values = {
+                "Num Frames": str(video_config.get("num_frames", 125)),
+                "Min Frames": str(video_config.get("min_frames", 125)),
+                "Max Frames": (
+                    str(video_config.get("max_frames", 0))
+                    if video_config.get("max_frames")
+                    else "Not set"
+                ),
+                "Is I2V": "Yes" if video_config.get("is_i2v", True) else "No",
+            }
+
+            menu_items = [
+                (
+                    "Number of Frames",
+                    lambda s: self._set_video_frames(
+                        s, video_config, "num_frames", "Number of frames to train on:"
+                    ),
+                ),
+                (
+                    "Minimum Frames",
+                    lambda s: self._set_video_frames(
+                        s, video_config, "min_frames", "Minimum video length (frames):"
+                    ),
+                ),
+                (
+                    "Maximum Frames",
+                    lambda s: self._set_video_frames(
+                        s,
+                        video_config,
+                        "max_frames",
+                        "Maximum video length (frames, 0=unlimited):",
+                    ),
+                ),
+                ("I2V Training", lambda s: self._toggle_i2v(s, video_config)),
+            ]
+
+            selected = nav.show_menu(
+                "Video-Specific Settings", menu_items, current_values
+            )
+
+            if selected == -1 or selected == -2:
+                return
+            elif selected >= 0:
+                menu_items[selected][1](stdscr)
+
+    def _configure_conditioning_dataset(self, stdscr, dataset):
+        """Configure a conditioning dataset"""
+        # Set conditioning type
+        cond_type_idx = self.show_options(
+            stdscr, "Select conditioning type:", ["ControlNet", "Mask"], 0
+        )
+
+        if cond_type_idx < 0:
+            return
+
+        dataset["conditioning_type"] = "controlnet" if cond_type_idx == 0 else "mask"
+
+        # Use base image dataset configuration
+        self._configure_image_dataset(stdscr, dataset)
+
+    def _configure_auto_conditioning(self, stdscr, dataset):
+        """Configure automatic conditioning generation"""
+        if "conditioning" not in dataset:
+            dataset["conditioning"] = []
+
+        nav = MenuNavigator(stdscr)
+
+        while True:
+            current_values = {
+                "Conditioning Types": f"{len(dataset['conditioning'])} configured"
+            }
+
+            menu_items = [
+                (
+                    "Add Conditioning Type",
+                    lambda s: self._add_conditioning_type(s, dataset),
+                ),
+                (
+                    "Remove Conditioning Type",
+                    lambda s: self._remove_conditioning_type(s, dataset),
+                ),
+                (
+                    "Review Conditioning",
+                    lambda s: self._review_conditioning(s, dataset),
+                ),
+            ]
+
+            selected = nav.show_menu(
+                "Auto-Generate Conditioning", menu_items, current_values
+            )
+
+            if selected == -1 or selected == -2:
+                return
+            elif selected >= 0:
+                menu_items[selected][1](stdscr)
+
+    def _add_conditioning_type(self, stdscr, dataset):
+        """Add a conditioning type"""
+        cond_types = [
+            ("superresolution", "Generate low-quality versions for super-resolution"),
+            ("jpeg_artifacts", "Add JPEG compression artifacts"),
+            ("depth_midas", "Generate depth maps"),
+            ("random_masks", "Create random masks for inpainting"),
+            ("canny", "Generate Canny edge maps"),
+        ]
+
+        # Show conditioning types
+        type_idx = self.show_options(
+            stdscr,
+            "Select conditioning type to generate:",
+            [f"{t[0]} - {t[1]}" for t in cond_types],
+            0,
+        )
+
+        if type_idx < 0:
+            return
+
+        cond_type = cond_types[type_idx][0]
+        cond_config = {"type": cond_type}
+
+        # Configure type-specific parameters
+        if cond_type == "superresolution":
+            self._configure_superresolution_params(stdscr, cond_config)
+        elif cond_type == "jpeg_artifacts":
+            self._configure_jpeg_params(stdscr, cond_config)
+        elif cond_type == "depth_midas":
+            self._configure_depth_params(stdscr, cond_config)
+        elif cond_type == "random_masks":
+            self._configure_mask_params(stdscr, cond_config)
+        elif cond_type == "canny":
+            self._configure_canny_params(stdscr, cond_config)
+
+        # Configure captions
+        caption_idx = self.show_options(
+            stdscr,
+            "Caption strategy for generated conditioning:",
+            ["Use source captions", "No captions", "Single caption", "Random captions"],
+            0,
+        )
+
+        if caption_idx == 1:
+            cond_config["captions"] = False
+        elif caption_idx == 2:
+            caption = self.get_input(
+                stdscr,
+                "Enter caption for all conditioning images:",
+                "conditioning image",
+            )
+            cond_config["captions"] = caption
+        elif caption_idx == 3:
+            num_captions = self.get_input(stdscr, "How many random captions?", "5")
+            captions = []
+            for i in range(int(num_captions)):
+                caption = self.get_input(
+                    stdscr, f"Enter caption {i+1}:", f"conditioning variant {i+1}"
+                )
+                captions.append(caption)
+            cond_config["captions"] = captions
+
+        dataset["conditioning"].append(cond_config)
+
+    def _configure_local_paths(self, stdscr, dataset):
+        """Configure local filesystem paths"""
+        dataset["instance_data_dir"] = self.get_input(
+            stdscr,
+            "Enter path to image directory:",
+            dataset.get("instance_data_dir", "/path/to/images"),
+        )
+
+        dataset["cache_dir_vae"] = self.get_input(
+            stdscr,
+            "Enter VAE cache directory:",
+            dataset.get("cache_dir_vae", "cache/vae"),
+        )
+
+    def _configure_aws_settings(self, stdscr, dataset):
+        """Configure AWS S3 settings"""
+        nav = MenuNavigator(stdscr)
+
+        while True:
+            current_values = {
+                "Bucket": dataset.get("aws_bucket_name", "Not set"),
+                "Prefix": dataset.get("aws_data_prefix", ""),
+                "Region": dataset.get("aws_region_name", "us-east-1"),
+                "Endpoint": dataset.get("aws_endpoint_url", "Default"),
+            }
+
+            menu_items = [
+                ("S3 Bucket Name", lambda s: self._set_aws_bucket(s, dataset)),
+                ("S3 Prefix", lambda s: self._set_aws_prefix(s, dataset)),
+                ("AWS Region", lambda s: self._set_aws_region(s, dataset)),
+                ("Custom Endpoint", lambda s: self._set_aws_endpoint(s, dataset)),
+                ("Access Credentials", lambda s: self._set_aws_credentials(s, dataset)),
+            ]
+
+            selected = nav.show_menu("AWS S3 Configuration", menu_items, current_values)
+
+            if selected == -1 or selected == -2:
+                return
+            elif selected >= 0:
+                menu_items[selected][1](stdscr)
+
+    def _configure_csv_settings(self, stdscr, dataset):
+        """Configure CSV dataset settings"""
+        dataset["csv_file"] = self.get_input(
+            stdscr, "Enter path to CSV file:", dataset.get("csv_file", "dataset.csv")
+        )
+
+        dataset["csv_caption_column"] = self.get_input(
+            stdscr,
+            "Caption column name in CSV:",
+            dataset.get("csv_caption_column", "caption"),
+        )
+
+        dataset["csv_cache_dir"] = self.get_input(
+            stdscr,
+            "Cache directory for downloaded images:",
+            dataset.get("csv_cache_dir", "cache/csv"),
+        )
+
+        # Force caption strategy
+        dataset["caption_strategy"] = "csv"
+
+    def _configure_hf_settings(self, stdscr, dataset):
+        """Configure Hugging Face dataset settings"""
+        dataset["dataset_name"] = self.get_input(
+            stdscr,
+            "Hugging Face dataset name (e.g., 'username/dataset-name'):",
+            dataset.get("dataset_name", ""),
+        )
+
+        dataset["image_column"] = self.get_input(
+            stdscr, "Image column name:", dataset.get("image_column", "image")
+        )
+
+        dataset["caption_column"] = self.get_input(
+            stdscr, "Caption column name:", dataset.get("caption_column", "caption")
+        )
+
+        # Optional subset
+        subset = self.get_input(
+            stdscr,
+            "Dataset subset/config (leave empty for default):",
+            dataset.get("subset", ""),
+        )
+        if subset:
+            dataset["subset"] = subset
+
+        # Force strategies
+        dataset["caption_strategy"] = "huggingface"
+        dataset["metadata_backend"] = "huggingface"
+
+    # Resolution and sizing helpers
+    def _set_resolution(self, stdscr, dataset):
+        """Set dataset resolution"""
+        res_type = dataset.get("resolution_type", "pixel_area")
+
+        if res_type == "area":
+            prompt = "Resolution in megapixels (e.g., 1.0 for ~1024x1024):"
+            default = "1.0"
+        elif res_type == "pixel_area":
+            prompt = "Resolution in pixels (e.g., 1024 for ~1024x1024):"
+            default = "1024"
+        else:
+            prompt = "Resolution for shorter edge in pixels:"
+            default = "1024"
+
+        value = self.get_input(stdscr, prompt, str(dataset.get("resolution", default)))
+
+        try:
+            if res_type == "area":
+                dataset["resolution"] = float(value)
+            else:
+                dataset["resolution"] = int(value)
+        except ValueError:
+            pass
+
+    def _set_resolution_type(self, stdscr, dataset):
+        """Set resolution measurement type"""
+        types = ["pixel_area", "area", "pixel"]
+        descriptions = [
+            "pixel_area - Total pixel count (1024 = ~1024x1024)",
+            "area - Megapixels (1.0 = ~1024x1024)",
+            "pixel - Shorter edge length",
+        ]
+
+        current = dataset.get("resolution_type", "pixel_area")
+        default_idx = types.index(current) if current in types else 0
+
+        idx = self.show_options(
+            stdscr, "Resolution measurement type:", descriptions, default_idx
+        )
+
+        if idx >= 0:
+            dataset["resolution_type"] = types[idx]
+
+    # Caption strategy helpers
+    def _set_caption_strategy(self, stdscr, dataset):
+        """Set caption strategy"""
+        strategies = ["textfile", "filename", "instanceprompt", "parquet"]
+
+        if dataset.get("type") == "csv":
+            strategies = ["csv"]
+        elif dataset.get("type") == "huggingface":
+            strategies = ["huggingface"]
+
+        descriptions = {
+            "textfile": "Text files next to images",
+            "filename": "Use cleaned filenames",
+            "instanceprompt": "Single prompt for all",
+            "parquet": "From parquet/JSONL file",
+            "csv": "From CSV file",
+            "huggingface": "From HF dataset",
+        }
+
+        current = dataset.get("caption_strategy", "textfile")
+        options = [f"{s} - {descriptions.get(s, s)}" for s in strategies]
+        default_idx = strategies.index(current) if current in strategies else 0
+
+        idx = self.show_options(stdscr, "Caption strategy:", options, default_idx)
+
+        if idx >= 0:
+            dataset["caption_strategy"] = strategies[idx]
+
+    # Crop configuration helpers
+    def _set_crop_style(self, stdscr, dataset):
+        """Set crop style"""
+        if not dataset.get("crop", False):
+            self.show_message(stdscr, "Enable cropping first!")
+            return
+
+        styles = ["center", "random", "corner", "face"]
+        current = dataset.get("crop_style", "center")
+        default_idx = styles.index(current) if current in styles else 0
+
+        idx = self.show_options(stdscr, "Crop style:", styles, default_idx)
+
+        if idx >= 0:
+            dataset["crop_style"] = styles[idx]
+
+    def _set_crop_aspect(self, stdscr, dataset):
+        """Set crop aspect"""
+        if not dataset.get("crop", False):
+            self.show_message(stdscr, "Enable cropping first!")
+            return
+
+        aspects = ["square", "preserve", "closest", "random"]
+        descriptions = [
+            "square - Always 1:1",
+            "preserve - Keep original aspect",
+            "closest - Match nearest bucket",
+            "random - Random from buckets",
+        ]
+
+        current = dataset.get("crop_aspect", "square")
+        default_idx = aspects.index(current) if current in aspects else 0
+
+        idx = self.show_options(stdscr, "Crop aspect:", descriptions, default_idx)
+
+        if idx >= 0:
+            dataset["crop_aspect"] = aspects[idx]
+
+    def _set_aspect_buckets(self, stdscr, dataset):
+        """Set custom aspect ratio buckets"""
+        current = dataset.get("crop_aspect_buckets", [])
+        current_str = (
+            ", ".join(map(str, current))
+            if current
+            else "0.5, 0.75, 1.0, 1.33, 1.5, 2.0"
+        )
+
+        value = self.get_input(
+            stdscr, "Aspect ratio buckets (comma-separated):", current_str
+        )
+
+        try:
+            buckets = [float(x.strip()) for x in value.split(",")]
+            dataset["crop_aspect_buckets"] = sorted(buckets)
+        except ValueError:
+            self.show_error(stdscr, "Invalid bucket values")
+
+    # AWS helpers
+    def _set_aws_bucket(self, stdscr, dataset):
+        """Set AWS bucket name"""
+        dataset["aws_bucket_name"] = self.get_input(
+            stdscr, "S3 bucket name:", dataset.get("aws_bucket_name", "my-bucket")
+        )
+
+    def _set_aws_credentials(self, stdscr, dataset):
+        """Set AWS credentials"""
+        use_env = self.show_options(
+            stdscr, "AWS credentials source:", ["Environment/IAM", "Specify here"], 0
+        )
+
+        if use_env == 0:
+            # Clear any stored credentials
+            for key in ["aws_access_key_id", "aws_secret_access_key"]:
+                if key in dataset:
+                    del dataset[key]
+        else:
+            dataset["aws_access_key_id"] = self.get_input(
+                stdscr, "AWS Access Key ID:", dataset.get("aws_access_key_id", "")
+            )
+            dataset["aws_secret_access_key"] = self.get_input(
+                stdscr,
+                "AWS Secret Access Key:",
+                dataset.get("aws_secret_access_key", ""),
+            )
+
+    # Review and edit helpers
+    def _review_datasets(self, stdscr):
+        """Review all configured datasets"""
+        if not self._datasets:
+            self.show_message(stdscr, "No datasets configured yet!")
+            return
+
+        stdscr.clear()
+        h, w = stdscr.getmaxyx()
+
+        stdscr.addstr(1, 2, "Configured Datasets", curses.A_BOLD)
+
+        y = 3
+        for i, dataset in enumerate(self._datasets):
+            if y + 3 >= h - 2:
+                stdscr.addstr(h - 2, 2, "Press any key for more...")
+                stdscr.getch()
+                stdscr.clear()
+                stdscr.addstr(1, 2, "Configured Datasets (continued)", curses.A_BOLD)
+                y = 3
+
+            stdscr.addstr(
+                y,
+                2,
+                f"[{i+1}] {dataset.get('id', 'unnamed')} ({dataset.get('dataset_type', 'image')})",
+            )
+            stdscr.addstr(
+                y + 1,
+                4,
+                f"Type: {dataset.get('type', 'local')}, "
+                f"Resolution: {dataset.get('resolution', 'N/A')}",
+            )
+            if dataset.get("disabled", False):
+                stdscr.addstr(y + 1, w - 20, "[DISABLED]", curses.A_DIM)
+            y += 3
+
+        stdscr.addstr(h - 2, 2, "Press any key to continue...")
+        stdscr.getch()
+
+    def _edit_dataset(self, stdscr):
+        """Edit an existing dataset"""
+        if not self._datasets:
+            self.show_message(stdscr, "No datasets to edit!")
+            return
+
+        # Show dataset list
+        options = []
+        for i, ds in enumerate(self._datasets):
+            options.append(
+                f"{ds.get('id', 'unnamed')} ({ds.get('dataset_type', 'image')}, {ds.get('type', 'local')})"
+            )
+
+        idx = self.show_options(stdscr, "Select dataset to edit:", options, 0)
+
+        if idx >= 0:
+            dataset = self._datasets[idx]
+
+            if dataset.get("dataset_type") == "image":
+                self._configure_image_dataset(stdscr, dataset)
+            elif dataset.get("dataset_type") == "video":
+                self._configure_video_dataset(stdscr, dataset)
+            elif dataset.get("dataset_type") == "conditioning":
+                self._configure_conditioning_dataset(stdscr, dataset)
+            elif dataset.get("dataset_type") == "text_embeds":
+                # Inline edit for text embeds
+                self._configure_text_embeds(stdscr)
+                self._datasets.pop()  # Remove the newly added one
+            elif dataset.get("dataset_type") == "image_embeds":
+                # Inline edit for image embeds
+                self._configure_image_embeds(stdscr)
+                self._datasets.pop()  # Remove the newly added one
+
+    def _remove_dataset(self, stdscr):
+        """Remove a dataset"""
+        if not self._datasets:
+            self.show_message(stdscr, "No datasets to remove!")
+            return
+
+        # Show dataset list
+        options = []
+        for i, ds in enumerate(self._datasets):
+            options.append(
+                f"{ds.get('id', 'unnamed')} ({ds.get('dataset_type', 'image')})"
+            )
+
+        idx = self.show_options(stdscr, "Select dataset to remove:", options, 0)
+
+        if idx >= 0:
+            removed = self._datasets.pop(idx)
+            self.show_message(
+                stdscr, f"Removed dataset: {removed.get('id', 'unnamed')}"
+            )
 
 
 def main():
@@ -2912,10 +5625,6 @@ def main():
         )
     else:
         print("No existing configuration found. Starting fresh setup.")
-
-    print("\nStarting SimpleTuner configuration tool...")
-    print("Press any key to continue...")
-    input()
 
     configurator.run()
 
