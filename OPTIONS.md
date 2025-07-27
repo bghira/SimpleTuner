@@ -12,7 +12,7 @@ The JSON filename expected is `config.json` and the key names are the same as th
 
 The script `configure.py` in the project root can be used via `python configure.py` to set up a `config.json` file with mostly-ideal default settings.
 
-## Modifying existing configurations
+#### Modifying existing configurations
 
 The `configure.py` script is capable of accepting a single argument, a compatible `config.json`, allowing interactive modification of your training setup:
 
