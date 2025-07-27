@@ -280,10 +280,15 @@ class PixArtSigmaControlNetLoraLoaderMixin(LoraBaseMixin):
                     transformer_state_dict[key] = value
 
         # Load into transformer if there are transformer weights
+        _transformer = (
+            self.transformer
+            if not hasattr(self.transformer, "transformer")
+            else self.transformer.transformer
+        )
         if transformer_state_dict:
             self.load_lora_into_transformer(
                 transformer_state_dict,
-                transformer=self.transformer.transformer,  # Access the base transformer
+                transformer=_transformer,  # Access the base transformer
                 adapter_name=adapter_name,
                 _pipeline=self,
             )
@@ -2970,7 +2975,7 @@ class PixArtSigmaControlNetPipeline(
             )
 
         # 5. Prepare latents
-        latent_channels = self.transformer.transformer.config.in_channels
+        latent_channels = _transformer.config.in_channels
         latents = self.prepare_latents(
             batch_size * num_images_per_prompt,
             latent_channels,
@@ -3066,7 +3071,7 @@ class PixArtSigmaControlNetPipeline(
 
                 # learned sigma
                 if (
-                    self.transformer.transformer.config.out_channels // 2
+                    _transformer.config.out_channels // 2
                     == latent_channels
                 ):
                     noise_pred = noise_pred.chunk(2, dim=1)[0]
