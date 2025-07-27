@@ -65,6 +65,7 @@ class Flux(ImageModelFoundation):
         "dev": "black-forest-labs/flux.1-dev",
         "schnell": "black-forest-labs/flux.1-schnell",
         "kontext": "black-forest-labs/flux.1-kontext-dev",
+        "fluxbooru": "terminusresearch/fluxbooru-v0.3",
     }
     MODEL_LICENSE = "other"
 
@@ -757,6 +758,25 @@ class Flux(ImageModelFoundation):
             self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG], FluxKontextPipeline
         ):
             self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG] = FluxKontextPipeline
+        
+        if self.config.model_flavour == "fluxbooru":
+            # FluxBooru requires some special settings, we'll just override them here.
+            if self.config.validation_num_inference_steps < 28:
+                logger.warning("FluxBooru requires at least 28 validation steps. Increasing value to 28.")
+                self.config.validation_num_inference_steps = 28
+            if self.config.validation_guidance_real <= 1.0:
+                logger.warning("FluxBooru requires CFG at validation time. Enabling it.")
+                self.config.validation_guidance_real = 6.0
+            if self.config.flux_guidance_value != 3.5:
+                logger.warning(
+                    "FluxBooru requires a static guidance value of 3.5. Overriding --flux_guidance_value."
+                )
+                self.config.flux_guidance_value = 3.5
+            if self.config.flux_attention_masked_training:
+                logger.warning(
+                    "FluxBooru does not support attention masking. Disabling it."
+                )
+                self.config.flux_attention_masked_training = False
 
     def conditioning_validation_dataset_type(self) -> bool:
         # Most conditioning inputs (ControlNet) etc require "conditioning" dataset, but Kontext requires "images".
