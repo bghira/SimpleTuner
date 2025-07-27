@@ -458,7 +458,6 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             raise NotImplementedError("Write operations are not supported")
         return BytesIO(self.read(filepath))
 
-
     def list_files(
         self, file_extensions: list = None, instance_data_dir: str = None
     ) -> list:

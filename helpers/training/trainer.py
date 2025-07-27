@@ -2080,9 +2080,15 @@ class Trainer:
                     continue
                 if self.config.eval_dataset_id is not None:
                     # skip eval splits.
-                    if isinstance(self.config.eval_dataset_id, str) and backend_id == self.config.eval_dataset_id:
+                    if (
+                        isinstance(self.config.eval_dataset_id, str)
+                        and backend_id == self.config.eval_dataset_id
+                    ):
                         continue
-                    elif isinstance(self.config.eval_dataset_id, list) and backend_id in self.config.eval_dataset_id:
+                    elif (
+                        isinstance(self.config.eval_dataset_id, list)
+                        and backend_id in self.config.eval_dataset_id
+                    ):
                         continue
                 train_backends[backend_id] = backend["train_dataloader"]
             # Begin dataloader prefetch, if enabled.
