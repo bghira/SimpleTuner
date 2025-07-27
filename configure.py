@@ -55,6 +55,20 @@ default_cfg = {
     "wan": 4.0, "sana": 3.8, "omnigen": 3.2, "deepfloyd": 6.0,
     "sd2x": 7.0, "sd1x": 6.0,
 }
+model_labels = {
+    "flux": "FLUX",
+    "pixart_sigma": "PixArt Sigma",
+    "kolors": "Kwai Kolors",
+    "terminus": "Terminus",
+    "sdxl": "Stable Diffusion XL",
+    "sd3": "Stable Diffusion 3",
+    "sd2x": "Stable Diffusion 2",
+    "sd1x": "Stable Diffusion",
+    "ltxvideo": "LTX Video",
+    "wan": "WanX",
+    "hidream": "HiDream I1",
+    "sana": "Sana",
+}
 
 lora_ranks = [1, 16, 64, 128, 256]
 learning_rates_by_rank = {
