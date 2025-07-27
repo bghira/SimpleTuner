@@ -118,6 +118,7 @@ class ModelFoundation(ABC):
         self.noise_schedule = None
         self.pipelines = {}
         self._qkv_projections_fused = False
+        self._tinygrad_enabled = False
         self.setup_model_flavour()
         self.setup_training_noise_schedule()
 
@@ -832,6 +833,7 @@ class ModelFoundation(ABC):
                 self.unwrap_model(model=self.model).set_gradient_checkpointing_interval(
                     int(self.config.gradient_checkpointing_interval)
                 )
+        self.enable_tinygrad_backend()
         self.fuse_qkv_projections()
         self.post_model_load_setup()
 
