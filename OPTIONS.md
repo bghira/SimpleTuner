@@ -415,7 +415,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--huber_schedule {snr,exponential,constant}]
                 [--huber_c HUBER_C] [--hidream_use_load_balancing_loss]
                 [--hidream_load_balancing_loss_weight HIDREAM_LOAD_BALANCING_LOSS_WEIGHT]
-                [--flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,nano,all+ffs+embedder,all+ffs+embedder+controlnet}]
+                [--flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,nano,controlnet,all+ffs+embedder,all+ffs+embedder+controlnet}]
                 [--flow_sigmoid_scale FLOW_SIGMOID_SCALE]
                 [--flux_fast_schedule] [--flow_use_uniform_schedule]
                 [--flow_use_beta_schedule]
@@ -691,7 +691,7 @@ options:
                         When set, will use augment the load balancing loss for
                         HiDream training. This is an experimental
                         implementation.
-  --flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,nano,all+ffs+embedder,all+ffs+embedder+controlnet}
+  --flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,nano,controlnet,all+ffs+embedder,all+ffs+embedder+controlnet}
                         This option only applies to Standard LoRA, not
                         Lycoris. Flux has single and joint attention blocks.
                         By default, all attention layers are trained, but not
