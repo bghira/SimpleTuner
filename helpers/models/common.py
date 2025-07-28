@@ -241,6 +241,15 @@ class ModelFoundation(ABC):
             "model_predict must be implemented in the child class."
         )
 
+    def tread_init(self):
+        """
+        Initialize the TREAD model training method.
+        This is a stub and should be implemented in subclasses.
+        """
+        raise NotImplementedError(
+            "tread_init must be implemented in the child class."
+        )
+
     @abstractmethod
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
         """

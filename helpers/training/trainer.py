@@ -236,6 +236,7 @@ class Trainer:
                     self.init_load_base_model,
                     self.init_precision,
                     self.init_controlnet_model,
+                    self.init_tread_model,
                     self.init_freeze_models,
                     self.init_trainable_peft_adapter,
                     self.init_ema_model,
@@ -715,6 +716,12 @@ class Trainer:
         if not self.config.controlnet:
             return
         self.model.controlnet_init()
+        self.accelerator.wait_for_everyone()
+
+    def init_tread_model(self):
+        if not self.config.tread_config:
+            return
+        self.model.tread_init()
         self.accelerator.wait_for_everyone()
 
     def init_trainable_peft_adapter(self):

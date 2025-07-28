@@ -51,6 +51,7 @@ For multi-node distributed training, [this guide](/documentation/DISTRIBUTED.md)
 ## Features
 
 - Multi-GPU training
+- New token-wise dropout techniques like [TREAD](/documentation/TREAD.md) for speeding up Flux training, including Kontext
 - Image, video, and caption features (embeds) are cached to the hard drive in advance, so that training runs faster and with less memory consumption
 - Aspect bucketing: support for a variety of image/video sizes and aspect ratios, enabling widescreen and portrait training.
 - Refiner LoRA or full u-net training for SDXL

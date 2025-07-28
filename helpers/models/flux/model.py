@@ -1,5 +1,6 @@
 import torch, os, logging
 import random
+from torch.nn import functional as F
 from helpers.training import diffusers_overrides
 from helpers.models.common import (
     ImageModelFoundation,
@@ -162,6 +163,34 @@ class Flux(ImageModelFoundation):
                 self.unwrap_model(self.model)
             )
         self.controlnet.to(self.accelerator.device, self.config.weight_dtype)
+
+    def tread_init(self):
+        """
+        Initialize the TREAD model training method.
+        """
+        from helpers.training.tread import TREADRouter
+
+        if (
+            getattr(self.config, 'tread_config', None) is None
+            or getattr(self.config, 'tread_config', None) is {}
+            or getattr(self.config, 'tread_config', {}).get('routes', None) is None
+        ):
+            logger.error(
+                "TREAD training requires you to configure the routes in the TREAD config"
+            )
+            import sys
+
+            sys.exit(1)
+
+        self.unwrap_model(model=self.model).set_router(
+            TREADRouter(
+                seed = getattr(self.config, 'seed', None) or 42,
+                device = self.accelerator.device,
+            ),
+            self.config.tread_config['routes'],
+        )
+
+        logger.info('TREAD training is enabled')
 
     def fuse_qkv_projections(self):
         if not self.config.fuse_qkv_projections or self._qkv_projections_fused:
@@ -352,25 +381,31 @@ class Flux(ImageModelFoundation):
         if sampling_mode == "random" and isinstance(cond, list) and len(cond) >= 1:
             # Random mode should have selected just one
             cond = cond[0]
-        if isinstance(cond, list):
-            logger.debug(
-                f"Inputs to kontext builder shapes: {[d.shape for d in cond]} {cond[0].dtype}"
-            )
-        else:
-            logger.debug(f"Inputs to kontext builder shapes: {cond.shape} {cond.dtype}")
-        # Build Kontext inputs
-        packed_cond, cond_ids = build_kontext_inputs(
-            cond if isinstance(cond, list) else [cond],
-            dtype=self.config.weight_dtype,
-            device=self.accelerator.device,
-            latent_channels=self.LATENT_CHANNEL_COUNT,
-        )
-        logger.debug(
-            f"Now we have kontext shapes: {packed_cond.shape} {packed_cond.dtype}"
-        )
 
-        batch["conditioning_packed_latents"] = packed_cond
-        batch["conditioning_ids"] = cond_ids
+        # This is only a thing we do if we're training kontext, but conditioning
+        # images are also used for masked loss training, so if we hit an error
+        # here for index, ignore it.
+        if self.config.model_flavour == "kontext":
+            if isinstance(cond, list):
+                logger.debug(
+                    f"Inputs to kontext builder shapes: {[d.shape for d in cond]} {cond[0].dtype}"
+                )
+            else:
+                logger.debug(f"Inputs to kontext builder shapes: {cond.shape} {cond.dtype}")
+
+            # Build Kontext inputs
+            packed_cond, cond_ids = build_kontext_inputs(
+                cond if isinstance(cond, list) else [cond],
+                dtype=self.config.weight_dtype,
+                device=self.accelerator.device,
+                latent_channels=self.LATENT_CHANNEL_COUNT,
+            )
+            logger.debug(
+                f"Now we have kontext shapes: {packed_cond.shape} {packed_cond.dtype}"
+            )
+
+            batch["conditioning_packed_latents"] = packed_cond
+            batch["conditioning_ids"] = cond_ids
 
         return super().prepare_batch_conditions(
             batch=batch, state=state
@@ -495,6 +530,27 @@ class Flux(ImageModelFoundation):
             if attention_mask.dim() == 3 and attention_mask.size(1) == 1:
                 attention_mask = attention_mask.squeeze(1)  # [B, 1, S] -> [B, S]
             flux_transformer_kwargs["attention_mask"] = attention_mask
+
+        # For masking and segmentation training when combined with TREAD, avoid
+        # dropping any tokens that are in the mask.
+        if (
+            getattr(self.config, 'tread_config', None) is not None
+            and self.config.tread_config is not None
+            and "conditioning_pixel_values" in prepared_batch
+            and prepared_batch["conditioning_pixel_values"] is not None
+            and prepared_batch.get("conditioning_type") in ("mask", "segmentation")
+        ):
+            with torch.no_grad():
+                h_tokens = prepared_batch["latents"].shape[2] // 2   # H_latent // 2
+                w_tokens = prepared_batch["latents"].shape[3] // 2   # W_latent // 2
+                mask_img = prepared_batch["conditioning_pixel_values"]      # (B,3,Hc,Wc)
+                # fuse RGB → single channel, map to [0,1]
+                mask_img = (mask_img.sum(1, keepdim=True)/3 + 1)/2
+                # down‑sample so each latent / image token corresponds to 1 pixel
+                mask_lat = F.interpolate(mask_img, size=(h_tokens, w_tokens), mode="area")  # (B,1,32,32)
+                force_keep = mask_lat.flatten(2).squeeze(1) > 0.5          # (B, S_img)
+                flux_transformer_kwargs['force_keep_mask'] = force_keep
+
         model_pred = self.model(**flux_transformer_kwargs)[0]
         # Drop the reference-image tokens before unpacking
         if use_cond and self.config.model_flavour == "kontext":
