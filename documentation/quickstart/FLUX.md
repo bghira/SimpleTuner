@@ -452,6 +452,60 @@ If VRAM is not a concern (eg. 48G or greater) then int8 with torch.compile is yo
 
 If you are training a subject or style and would like to mask one or the other, see the [masked loss training](/documentation/DREAMBOOTH.md#masked-loss) section of the Dreambooth guide.
 
+### TREAD training
+
+> ⚠️ **Experimental**: TREAD is a newly implemented feature. While functional, optimal configurations are still being explored.
+
+[TREAD](/documentation/TREAD.md) (paper) stands for **T**oken **R**outing for **E**fficient **A**rchitecture-agnostic **D**iffusion. It is a method that can accelerate Flux training by intelligently routing tokens through transformer layers. The speedup is proportional to how many tokens you drop.
+
+#### Quick setup
+
+Add this to your `config.json`:
+
+```json
+{
+  "tread_config": {
+    "routes": [
+      {
+        "selection_ratio": 0.5,
+        "start_layer_idx": 2,
+        "end_layer_idx": -2
+      }
+    ]
+  }
+}
+```
+
+This configuration will:
+- Keep only 50% of image tokens during layers 2 through second-to-last
+- Text tokens are never dropped
+- Training speedup of ~25% with minimal quality impact
+
+#### Key points
+
+- **Currently Flux-only** - TREAD is only implemented for Flux models
+- **Best at high resolutions** - Biggest speedups at 1024x1024+ due to attention's O(n²) complexity
+- **Compatible with masked loss** - Masked regions are automatically preserved (but this reduces speedup)
+- **Works with quantization** - Can be combined with int8/int4/NF4 training
+- **Expect initial loss spike** - When starting LoRA/LoKr training, loss will be higher initially but corrects quickly
+
+#### Tuning tips
+
+- **Conservative (quality-focused)**: Use `selection_ratio` of 0.3-0.5
+- **Aggressive (speed-focused)**: Use `selection_ratio` of 0.6-0.8
+- **Avoid early/late layers**: Don't route in layers 0-1 or the final layer
+- **For LoRA training**: May see slight slowdowns - experiment with different configs
+- **Higher resolution = better speedup**: Most beneficial at 1024px and above
+
+#### Known behavior
+
+- The more tokens dropped (higher `selection_ratio`), the faster training but higher initial loss
+- LoRA/LoKr training shows an initial loss spike that rapidly corrects as the network adapts
+- Some LoRA configurations may train slightly slower - optimal configs still being explored
+- The RoPE (rotary position embedding) implementation is functional but may not be 100% correct
+
+For detailed configuration options and troubleshooting, see the [full TREAD documentation](/documentation/TREAD.md).
+
 ### Classifier-free guidance
 
 #### Problem
@@ -556,4 +610,4 @@ The users of [Terminus Research](https://huggingface.co/terminusresearch) who wo
 
 [Lambda Labs](https://lambdalabs.com) for generous compute allocations that were used for tests and verifications for large scale training runs
 
-Especially [@JimmyCarter](https://huggingface.co/jimmycarter) and [@kaibioinfo](https://github.com/kaibioinfo) for coming up with some of the best ideas and putting them into action, offering pull requests and running exhaustive tests for analysis - even daring to use _their own faces_ for DreamBooth experimentation.
+Especially [@JimmyCarter](https://huggingface.co/jimmycarter) (incl TREAD addition) and [@kaibioinfo](https://github.com/kaibioinfo) for coming up with some of the best ideas and putting them into action, offering pull requests and running exhaustive tests for analysis - even daring to use _their own faces_ for DreamBooth experimentation.
