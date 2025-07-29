@@ -21,7 +21,7 @@
     "num_eval_images": 25,
     "num_train_epochs": 0,
     "optimizer": "adamw_bf16",
-    "output_dir": "output/examples/flux.peft-lora",
+    "output_dir": "output/examples/flux.peft-lora+TREAD",
     "push_checkpoints_to_hub": false,
     "push_to_hub": false,
     "quantize_via": "cpu",
@@ -30,6 +30,15 @@
     "tracker_project_name": "lora-training",
     "tracker_run_name": "example-training-run",
     "train_batch_size": 1,
+    "tread_config": {
+        "routes": [
+            {
+                "end_layer_idx": -2,
+                "selection_ratio": 0.5,
+                "start_layer_idx": 2
+            }
+        ]
+    },
     "use_ema": false,
     "vae_batch_size": 1,
     "validation_disable_unconditional": true,
