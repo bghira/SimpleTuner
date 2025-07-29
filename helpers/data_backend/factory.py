@@ -1153,9 +1153,11 @@ def configure_multi_databackend(
                 accelerator=accelerator,
                 identifier=init_backend["id"],
                 dataset_name=backend["dataset_name"],
+                dataset_type=backend.get("dataset_type", "image"),
                 split=backend.get("split", "train"),
                 revision=backend.get("revision", None),
-                image_column=backend.get("image_column", "image"),
+                image_column=hf_config.get("image_column", "image"),
+                video_column=hf_config.get("video_column", "video"),
                 cache_dir=backend.get("cache_dir", args.cache_dir),
                 compress_cache=args.compress_disk_cache,
                 streaming=backend.get("streaming", False),
@@ -1216,6 +1218,7 @@ def configure_multi_databackend(
             # Extract HF-specific metadata config
             hf_config = backend.get("huggingface", {})
             metadata_backend_args["hf_config"] = hf_config
+            metadata_backend_args["dataset_type"] = backend.get("dataset_type", "image")
 
             # Extract quality filter if present
             quality_filter = None
@@ -1988,9 +1991,11 @@ def get_huggingface_backend(
     accelerator,
     identifier: str,
     dataset_name: str,
+    dataset_type: str,
     split: str = "train",
     revision: str = None,
     image_column: str = "image",
+    video_column: str = "video",
     cache_dir: str = None,
     compress_cache: bool = False,
     streaming: bool = False,
@@ -2048,9 +2053,11 @@ def get_huggingface_backend(
         accelerator=accelerator,
         id=identifier,
         dataset_name=dataset_name,
+        dataset_type=dataset_type,
         split=split,
         revision=revision,
         image_column=image_column,
+        video_column=video_column,
         cache_dir=cache_dir,
         compress_cache=compress_cache,
         streaming=streaming,
