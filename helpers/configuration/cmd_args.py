@@ -2425,17 +2425,12 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
                 logger.error(f"Could not load controlnet_custom_config: {e}")
                 raise
 
-    if (
-        args.tread_config is not None
-        and type(args.tread_config) is str
-    ):
+    if args.tread_config is not None and type(args.tread_config) is str:
         if args.tread_config.startswith("{"):
             try:
                 import ast
 
-                args.tread_config = ast.literal_eval(
-                    args.tread_config
-                )
+                args.tread_config = ast.literal_eval(args.tread_config)
             except Exception as e:
                 logger.error(f"Could not load tread_config: {e}")
                 raise

@@ -3070,10 +3070,7 @@ class PixArtSigmaControlNetPipeline(
                     )
 
                 # learned sigma
-                if (
-                    _transformer.config.out_channels // 2
-                    == latent_channels
-                ):
+                if _transformer.config.out_channels // 2 == latent_channels:
                     noise_pred = noise_pred.chunk(2, dim=1)[0]
 
                 # compute previous image: x_t -> x_t-1

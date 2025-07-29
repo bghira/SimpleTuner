@@ -147,7 +147,7 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
         self,
         prompt: Union[str, List[str]] = None,
         num_videos_per_prompt: int = 1,
-        max_sequence_length: int = 226,
+        max_sequence_length: int = 512,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
     ):
@@ -200,7 +200,7 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
         num_videos_per_prompt: int = 1,
         prompt_embeds: Optional[torch.Tensor] = None,
         negative_prompt_embeds: Optional[torch.Tensor] = None,
-        max_sequence_length: int = 226,
+        max_sequence_length: int = 512,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
     ):
@@ -415,7 +415,7 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
             ]
         ] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
-        max_sequence_length: int = 226,  # changed to 226 to match training parameters of model, Diffusers sets to 512 for some unknown reason
+        max_sequence_length: int = 512,
     ):
         r"""
         The call function to the pipeline for generation.

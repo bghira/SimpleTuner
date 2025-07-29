@@ -42,9 +42,12 @@ class _Int8WeightOnlyLinear(torch.autograd.Function):
 torchao.prototype.quantized_training.int8._Int8WeightOnlyLinear = _Int8WeightOnlyLinear
 
 try:
-    from torchao.prototype.quantized_training.int8 import Int8QuantizedTrainingLinearWeight, implements
+    from torchao.prototype.quantized_training.int8 import (
+        Int8QuantizedTrainingLinearWeight,
+        implements,
+    )
     import torch
-    
+
     # Check if cat is already implemented
     test_tensor = Int8QuantizedTrainingLinearWeight.from_float(torch.randn(2, 2))
     try:
@@ -56,14 +59,16 @@ try:
         def _(func, types, args, kwargs):
             """Implement concatenation for Int8QuantizedTrainingLinearWeight (needed for DDP)."""
             tensors = args[0]
-            dim = args[1] if len(args) > 1 else kwargs.get('dim', 0)
-            
+            dim = args[1] if len(args) > 1 else kwargs.get("dim", 0)
+
             # First, check if we have any Int8QuantizedTrainingLinearWeight tensors
-            has_int8 = any(isinstance(t, Int8QuantizedTrainingLinearWeight) for t in tensors)
+            has_int8 = any(
+                isinstance(t, Int8QuantizedTrainingLinearWeight) for t in tensors
+            )
             if not has_int8:
                 # No int8 tensors, use regular cat
                 return func(tensors, dim, **kwargs)
-            
+
             # Check if all tensors have the same number of dimensions
             # This is important for DDP which might mix different tensor types
             ndims = set()
@@ -73,7 +78,7 @@ try:
                     ndims.add(2)
                 else:
                     ndims.add(t.ndim)
-            
+
             # If we have mixed dimensions, we need to handle this carefully
             if len(ndims) > 1:
                 # For DDP's _broadcast_coalesced, tensors are often flattened
@@ -86,13 +91,15 @@ try:
                     else:
                         # Just flatten
                         flattened.append(t.flatten())
-                
+
                 # Cat along dim 0 (since everything is now 1D)
                 return func(flattened, 0, **kwargs)
-            
+
             # If all have same dimensions, proceed with type checking
-            all_int8 = all(isinstance(t, Int8QuantizedTrainingLinearWeight) for t in tensors)
-            
+            all_int8 = all(
+                isinstance(t, Int8QuantizedTrainingLinearWeight) for t in tensors
+            )
+
             if not all_int8:
                 # Mixed types with same dimensions - dequantize int8 tensors
                 dequantized = []
@@ -102,33 +109,35 @@ try:
                     else:
                         dequantized.append(t)
                 return func(dequantized, dim, **kwargs)
-            
+
             # All are int8 weights with same dimensions
             if dim == 0:
                 # Row-wise concat: both int_data and scale need concatenation
                 int_data_list = [t.int_data for t in tensors]
                 scale_list = [t.scale for t in tensors]
-                
+
                 cat_int_data = torch.cat(int_data_list, dim=0)
                 cat_scale = torch.cat(scale_list, dim=0)
-                
+
                 return Int8QuantizedTrainingLinearWeight(cat_int_data, cat_scale)
-            
+
             elif dim == 1:
                 # Column-wise concat: scales stay the same (per-row quantization)
                 int_data_list = [t.int_data for t in tensors]
                 cat_int_data = torch.cat(int_data_list, dim=1)
-                
+
                 # All tensors should have the same scale for this case
                 return Int8QuantizedTrainingLinearWeight(cat_int_data, tensors[0].scale)
-            
+
             else:
                 # For other dimensions, fall back to dequantize
                 dequantized = [t.dequantize() for t in tensors]
                 return func(dequantized, dim, **kwargs)
-        
-        print("✓ Monkeypatched aten.cat for Int8QuantizedTrainingLinearWeight - DDP enabled!")
-        
+
+        print(
+            "✓ Monkeypatched aten.cat for Int8QuantizedTrainingLinearWeight - DDP enabled!"
+        )
+
 except ImportError:
     # torchao int8 not being used
     pass

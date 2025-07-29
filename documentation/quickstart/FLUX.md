@@ -483,7 +483,7 @@ This configuration will:
 
 #### Key points
 
-- **Currently Flux-only** - TREAD is only implemented for Flux models
+- **Limited architecture support** - TREAD is only implemented for Flux and Wan models
 - **Best at high resolutions** - Biggest speedups at 1024x1024+ due to attention's O(n²) complexity
 - **Compatible with masked loss** - Masked regions are automatically preserved (but this reduces speedup)
 - **Works with quantization** - Can be combined with int8/int4/NF4 training

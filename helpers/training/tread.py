@@ -6,11 +6,12 @@ from typing import Optional, Any
 @dataclass
 class MaskInfo:
     """Book‑keeping for one TREAD routing window."""
-    mask:        torch.BoolTensor   # True where token was *dropped*
-    ids_keep:    torch.LongTensor   # (B, num_keep)
-    ids_mask:    torch.LongTensor   # (B, num_mask)
-    ids_shuffle: torch.LongTensor   # permutation that packs kept tokens first
-    ids_restore: torch.LongTensor   # inverse permutation
+
+    mask: torch.BoolTensor  # True where token was *dropped*
+    ids_keep: torch.LongTensor  # (B, num_keep)
+    ids_mask: torch.LongTensor  # (B, num_mask)
+    ids_shuffle: torch.LongTensor  # permutation that packs kept tokens first
+    ids_restore: torch.LongTensor  # inverse permutation
 
 
 class TREADRouter:
@@ -44,8 +45,8 @@ class TREADRouter:
         Normalised to [0, 1] **per sample** to avoid scale drift.
         """
         # x: (B, S, D)
-        mags = x.abs().sum(-1)                       # (B,S)
-        rng  = mags.max(dim=1, keepdim=True)[0] - mags.min(dim=1, keepdim=True)[0]
+        mags = x.abs().sum(-1)  # (B,S)
+        rng = mags.max(dim=1, keepdim=True)[0] - mags.min(dim=1, keepdim=True)[0]
         mags = (mags - mags.min(dim=1, keepdim=True)[0]) / (rng + 1e-8)
         return mags
 
@@ -55,7 +56,7 @@ class TREADRouter:
     @torch.no_grad()
     def get_mask(
         self,
-        x: torch.Tensor,                       # (B, S, D)
+        x: torch.Tensor,  # (B, S, D)
         mask_ratio: float = 0.0,
         l1_reg: float = 0.0,
         inverse: bool = False,
@@ -74,17 +75,17 @@ class TREADRouter:
         # ---------------------------------------------------------------------
         if force_keep is None:
             force_keep = torch.zeros(B, S, dtype=torch.bool, device=x.device)
-        num_force = force_keep.sum(1)                  # (B,)  how many per sample
+        num_force = force_keep.sum(1)  # (B,)  how many per sample
 
         # overall keep budget (one scalar K for the whole batch)
-        base_keep   = S - int(round(S * float(mask_ratio)))
+        base_keep = S - int(round(S * float(mask_ratio)))
         keep_budget = max(base_keep, int(num_force.max()))
-        K = keep_budget                                # make name explicit
+        K = keep_budget  # make name explicit
 
         # ---------------------------------------------------------------------
         # 2) importance + randomness mix
         # ---------------------------------------------------------------------
-        score = self._importance(x)                    # in [0,1]
+        score = self._importance(x)  # in [0,1]
         if inverse:
             score = 1.0 - score
 
@@ -96,14 +97,14 @@ class TREADRouter:
         )
 
         mix = (1.0 - l1_reg) * noise + l1_reg * score  # convex combination
-        mix = mix.masked_fill(force_keep, -1.0)        # force‑keep ⇒ lowest rank
+        mix = mix.masked_fill(force_keep, -1.0)  # force‑keep ⇒ lowest rank
 
         # ---------------------------------------------------------------------
         # 3) build permutations
         # ---------------------------------------------------------------------
-        ids_shuffle = torch.argsort(mix, dim=1)        # (B, S) smallest first
-        ids_keep    = ids_shuffle[:, :K]               # (B, K)
-        ids_mask    = ids_shuffle[:, K:]               # (B, S-K)
+        ids_shuffle = torch.argsort(mix, dim=1)  # (B, S) smallest first
+        ids_keep = ids_shuffle[:, :K]  # (B, K)
+        ids_mask = ids_shuffle[:, K:]  # (B, S-K)
         ids_restore = torch.argsort(ids_shuffle, dim=1)
 
         # bool mask where True = *masked* (dropped) token
@@ -111,7 +112,6 @@ class TREADRouter:
         mask.scatter_(1, ids_keep, False)
 
         return MaskInfo(mask, ids_keep, ids_mask, ids_shuffle, ids_restore)
-
 
     def start_route(self, x: torch.Tensor, info: MaskInfo) -> torch.Tensor:
         """
@@ -125,7 +125,7 @@ class TREADRouter:
 
     def end_route(
         self,
-        routed_x: torch.Tensor,           # (B, num_keep, D)
+        routed_x: torch.Tensor,  # (B, num_keep, D)
         info: MaskInfo,
         original_x: Optional[torch.Tensor] = None,
         mask_token: float | int = 0.0,
@@ -138,11 +138,11 @@ class TREADRouter:
         fill them with `mask_token`.
         """
         B, S = info.mask.shape
-        D    = routed_x.shape[2]
+        D = routed_x.shape[2]
 
         # Create buffer for all tokens in shuffled order
         x_shuf = torch.empty(B, S, D, device=routed_x.device, dtype=routed_x.dtype)
-        x_shuf[:, :routed_x.size(1), :] = routed_x
+        x_shuf[:, : routed_x.size(1), :] = routed_x
 
         if original_x is not None:
             # put original skipped tokens back behind the kept ones
@@ -151,9 +151,9 @@ class TREADRouter:
                 info.ids_shuffle.unsqueeze(-1).expand_as(original_x),
                 dim=1,
             )
-            x_shuf[:, routed_x.size(1):, :] = orig_shuf[:, routed_x.size(1):, :]
+            x_shuf[:, routed_x.size(1) :, :] = orig_shuf[:, routed_x.size(1) :, :]
         else:
-            x_shuf[:, routed_x.size(1):, :].fill_(mask_token)
+            x_shuf[:, routed_x.size(1) :, :].fill_(mask_token)
 
         # Undo the permutation
         x_full = torch.take_along_dim(
