@@ -4,8 +4,6 @@
     "controlnet": true,
     "data_backend_config": "config/examples/multidatabackend-controlnet-128px.json",
     "disable_bucket_pruning": true,
-    "eval_steps_interval": 50,
-    "evaluation_type": "clip",
     "flow_schedule_shift": 3,
     "flux_lora_target": "controlnet",
     "grad_clip_method": "value",
