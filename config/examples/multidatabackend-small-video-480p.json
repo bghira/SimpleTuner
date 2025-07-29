@@ -1,0 +1,28 @@
+[
+  {
+    "id": "dreambooth-480",
+    "type": "huggingface",
+    "dataset_type": "video",
+    "dataset_name": "sayakpaul/video-dataset-disney-organized",
+    "crop": false, "crop_style": "random", "crop_aspect": "square",
+    "minimum_image_size": 128,
+    "maximum_image_size": 480,
+    "target_downsample_size": 480,
+    "resolution": 480,
+    "resolution_type": "pixel_area",
+    "metadata_backend": "huggingface",
+    "caption_strategy": "huggingface",
+    "huggingface": {
+      "video_column": "video",
+      "caption_column": "prompt"
+    },
+    "cache_dir_vae": "cache/vae/{model_family}/dreambooth-480"
+  },
+  {
+    "id": "alt-embed-cache",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "type": "local",
+    "cache_dir": "cache/text/{model_family}"
+  }
+]
