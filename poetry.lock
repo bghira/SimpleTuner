@@ -4591,14 +4591,14 @@ test = ["numpy (>=1.23)", "pytest (>=8.1.1)", "pytest-md (>=0.2.0)", "ruff (>=0.
 
 [[package]]
 name = "torchao"
-version = "0.11.0"
+version = "0.12.0"
 description = "Package for applying ao techniques to GPU models"
 optional = false
 python-versions = "*"
 groups = ["main"]
 files = [
-    {file = "torchao-0.11.0-cp39-abi3-manylinux_2_28_x86_64.manylinux_2_24_x86_64.whl", hash = "sha256:5d9804833a7ec4d98a759d4750cd0f07dbd90503e3f3f4c59c77a9b9172bf043"},
-    {file = "torchao-0.11.0-py3-none-any.whl", hash = "sha256:22be86f06e95b3c1f700eb8eb9fc73a5c2c9d88845ef1f37b3448bb1848a2ccd"},
+    {file = "torchao-0.12.0-cp39-abi3-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:326ea2800cc7d9d50f0d17742ad923e5c6d4c4dd5942558f4ed13db00bdebc7c"},
+    {file = "torchao-0.12.0-py3-none-any.whl", hash = "sha256:103f2a9164d2e4f705332af1aafbb8473eadd14d9164e45857ca187cde1f13d2"},
 ]
 
 [package.extras]
@@ -5671,4 +5671,4 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<3.13"
-content-hash = "354ba8a82621b667e08b252587214aa8bc515255de55b4b5045e05d7c9674596"
+content-hash = "30b57c547b1f51dbd45fc64beba6897c0a25a5a4c2041bf1dd5865185c5b9919"
