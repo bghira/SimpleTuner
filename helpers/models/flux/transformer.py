@@ -57,19 +57,17 @@ from helpers.models.flux.attention import (
 from helpers.training.tread import TREADRouter
 
 
-def _apply_rotary_emb_anyshape(
-    x, freqs_cis, use_real=True, use_real_unbind_dim=-1
-):
+def _apply_rotary_emb_anyshape(x, freqs_cis, use_real=True, use_real_unbind_dim=-1):
     """
     Same API as the original, but also works when `freqs_cis` is
     batched (cos, sin) each (B, S, D).
     """
     cos, sin = freqs_cis
-    if cos.ndim == 3:                       # (B, S, D)  ← new case
-        cos = cos[:, None]                  # (B, 1, S, D)
+    if cos.ndim == 3:  # (B, S, D)  ← new case
+        cos = cos[:, None]  # (B, 1, S, D)
         sin = sin[:, None]
-    else:                                   # (S, D)     ← old case
-        cos = cos[None, None]               # (1, 1, S, D)
+    else:  # (S, D)     ← old case
+        cos = cos[None, None]  # (1, 1, S, D)
         sin = sin[None, None]
 
     cos, sin = cos.to(x.device), sin.to(x.device)
@@ -603,13 +601,13 @@ class FluxTransformer2DModel(
         If `rope` is a tensor  ➜  (B, keep_len, D) tensor
         If `rope` is a tuple   ➜  tuple of two tensors, each (B, keep_len, D)
         """
+
         def _route_one(r: torch.Tensor) -> torch.Tensor:
-            rB   = r.unsqueeze(0).expand(batch, -1, -1)               # (B, S, D)
+            rB = r.unsqueeze(0).expand(batch, -1, -1)  # (B, S, D)
             shuf = torch.take_along_dim(
-                rB,
-                info.ids_shuffle.unsqueeze(-1).expand_as(rB), dim=1
+                rB, info.ids_shuffle.unsqueeze(-1).expand_as(rB), dim=1
             )
-            return shuf[:, :keep_len, :]                              # (B, keep, D)
+            return shuf[:, :keep_len, :]  # (B, keep, D)
 
         if isinstance(rope, tuple):
             return tuple(_route_one(r) for r in rope)
@@ -714,58 +712,72 @@ class FluxTransformer2DModel(
         # TREAD related
         routes = self._tread_routes or []
         router = self._tread_router
-        use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()  # enable only while training
-        route_ptr = 0   # which entry in `routes` we’re on
-        routing_now = False   # are we inside a route?
+        use_routing = (
+            self.training and len(routes) > 0 and torch.is_grad_enabled()
+        )  # enable only while training
+        route_ptr = 0  # which entry in `routes` we’re on
+        routing_now = False  # are we inside a route?
         tread_mask_info = None
-        saved_tokens = None   # copy of full‑seq image tokens
-        global_idx = 0   # counts over *all* transformer layers
+        saved_tokens = None  # copy of full‑seq image tokens
+        global_idx = 0  # counts over *all* transformer layers
         current_rope = image_rotary_emb
 
         # TREAD: handle negative route index.
         if routes:
-            total_layers = len(self.transformer_blocks) + len(self.single_transformer_blocks)
-            def _to_pos(idx): return idx if idx >= 0 else total_layers + idx
+            total_layers = len(self.transformer_blocks) + len(
+                self.single_transformer_blocks
+            )
+
+            def _to_pos(idx):
+                return idx if idx >= 0 else total_layers + idx
+
             routes = [
-                {**r, "start_layer_idx": _to_pos(r["start_layer_idx"]),
-                      "end_layer_idx":   _to_pos(r["end_layer_idx"]  )} for r in routes
+                {
+                    **r,
+                    "start_layer_idx": _to_pos(r["start_layer_idx"]),
+                    "end_layer_idx": _to_pos(r["end_layer_idx"]),
+                }
+                for r in routes
             ]
 
         for index_block, block in enumerate(self.transformer_blocks):
             # TREAD: START a route?
-            if (use_routing and route_ptr < len(routes)
-                    and global_idx == routes[route_ptr]["start_layer_idx"]):
-                    mask_ratio = routes[route_ptr]["selection_ratio"]
-                    tread_mask_info = router.get_mask(
-                        hidden_states,
-                        mask_ratio=mask_ratio,
-                        force_keep=force_keep_mask,
-                    )
-                    saved_tokens = hidden_states.clone()
-                    hidden_states = router.start_route(hidden_states, tread_mask_info)
-                    routing_now = True
+            if (
+                use_routing
+                and route_ptr < len(routes)
+                and global_idx == routes[route_ptr]["start_layer_idx"]
+            ):
+                mask_ratio = routes[route_ptr]["selection_ratio"]
+                tread_mask_info = router.get_mask(
+                    hidden_states,
+                    mask_ratio=mask_ratio,
+                    force_keep=force_keep_mask,
+                )
+                saved_tokens = hidden_states.clone()
+                hidden_states = router.start_route(hidden_states, tread_mask_info)
+                routing_now = True
 
-                    # --- build RoPE with    [ text | routed‑image ]    rows -------------
-                    # 1. text part:  (B, txt_len, D) – identical for all samples
-                    text_rope_b = tuple(
-                        r[:txt_len].unsqueeze(0).expand(hidden_states.size(0), -1, -1)
-                        for r in image_rotary_emb
-                    )
+                # --- build RoPE with    [ text | routed‑image ]    rows -------------
+                # 1. text part:  (B, txt_len, D) – identical for all samples
+                text_rope_b = tuple(
+                    r[:txt_len].unsqueeze(0).expand(hidden_states.size(0), -1, -1)
+                    for r in image_rotary_emb
+                )
 
-                    # 2. image part: apply the same shuffle+slice as the tokens
-                    image_only_rope = tuple(r[txt_len:] for r in image_rotary_emb)
-                    img_rope_r = self._route_rope(
-                        image_only_rope,
-                        tread_mask_info,
-                        keep_len=hidden_states.size(1),      # S_keep
-                        batch=hidden_states.size(0),
-                    )
+                # 2. image part: apply the same shuffle+slice as the tokens
+                image_only_rope = tuple(r[txt_len:] for r in image_rotary_emb)
+                img_rope_r = self._route_rope(
+                    image_only_rope,
+                    tread_mask_info,
+                    keep_len=hidden_states.size(1),  # S_keep
+                    batch=hidden_states.size(0),
+                )
 
-                    # 3. concatenate → (B, txt_len+S_keep, D)
-                    current_rope = tuple(
-                        torch.cat([tr, ir], dim=1)
-                        for tr, ir in zip(text_rope_b, img_rope_r)
-                    )
+                # 3. concatenate → (B, txt_len+S_keep, D)
+                current_rope = tuple(
+                    torch.cat([tr, ir], dim=1)
+                    for tr, ir in zip(text_rope_b, img_rope_r)
+                )
             if (
                 self.training
                 and self.gradient_checkpointing
@@ -835,11 +847,11 @@ class FluxTransformer2DModel(
                     tread_mask_info,
                     original_x=saved_tokens,
                 )
-                routing_now  = False
-                route_ptr   += 1
+                routing_now = False
+                route_ptr += 1
                 current_rope = image_rotary_emb
 
-            global_idx += 1   # advance global layer counter
+            global_idx += 1  # advance global layer counter
 
         # Flux places the text tokens in front of the image tokens in the
         # sequence.
@@ -848,28 +860,41 @@ class FluxTransformer2DModel(
 
         for index_block, block in enumerate(self.single_transformer_blocks):
             # TREAD: START? (operate on *image* tokens only)
-            if (use_routing and route_ptr < len(routes)
-                    and global_idx == routes[route_ptr]["start_layer_idx"]):
+            if (
+                use_routing
+                and route_ptr < len(routes)
+                and global_idx == routes[route_ptr]["start_layer_idx"]
+            ):
                 mask_ratio = routes[route_ptr]["selection_ratio"]
 
                 text_tok = hidden_states[:, :txt_len, :]
                 img_tok = hidden_states[:, txt_len:, :]
 
-                fkm = force_keep_mask[:, txt_len:] if force_keep_mask is not None else None
-                tread_mask_info = router.get_mask(img_tok, mask_ratio=mask_ratio,
-                    force_keep=fkm)
+                fkm = (
+                    force_keep_mask[:, txt_len:]
+                    if force_keep_mask is not None
+                    else None
+                )
+                tread_mask_info = router.get_mask(
+                    img_tok, mask_ratio=mask_ratio, force_keep=fkm
+                )
                 saved_tokens = img_tok.clone()
                 img_tok = router.start_route(img_tok, tread_mask_info)
 
                 hidden_states = torch.cat([text_tok, img_tok], dim=1)
-                routing_now   = True
+                routing_now = True
 
                 # shrink the attention_mask, if one is provided
                 if attention_mask is not None:
-                    pad = torch.zeros(attention_mask.size(0), img_tok.size(1),
-                                      device=attention_mask.device,
-                                      dtype=attention_mask.dtype)
-                    attention_mask = torch.cat([attention_mask[:, :txt_len], pad], dim=1)
+                    pad = torch.zeros(
+                        attention_mask.size(0),
+                        img_tok.size(1),
+                        device=attention_mask.device,
+                        dtype=attention_mask.dtype,
+                    )
+                    attention_mask = torch.cat(
+                        [attention_mask[:, :txt_len], pad], dim=1
+                    )
 
                 # Handle shrinking RoPE
                 text_rope_b = tuple(
@@ -883,7 +908,8 @@ class FluxTransformer2DModel(
                     batch=img_tok.size(0),
                 )
                 current_rope = tuple(
-                    torch.cat([tr, ir], dim=1) for tr, ir in zip(text_rope_b, img_rope_r)
+                    torch.cat([tr, ir], dim=1)
+                    for tr, ir in zip(text_rope_b, img_rope_r)
                 )
 
             if (
@@ -948,7 +974,7 @@ class FluxTransformer2DModel(
                 hidden_states = torch.cat([text_tok, img_tok], dim=1)
 
                 routing_now = False
-                route_ptr  += 1
+                route_ptr += 1
 
                 if attention_mask is not None:
                     pad = torch.zeros(
@@ -957,9 +983,11 @@ class FluxTransformer2DModel(
                         device=attention_mask.device,
                         dtype=attention_mask.dtype,
                     )
-                    attention_mask = torch.cat([attention_mask[:, :txt_len], pad], dim=1)
+                    attention_mask = torch.cat(
+                        [attention_mask[:, :txt_len], pad], dim=1
+                    )
 
-                current_rope  = image_rotary_emb
+                current_rope = image_rotary_emb
 
             global_idx += 1
 
@@ -1079,52 +1107,61 @@ if __name__ == "__main__":
     # 0. dummy inputs (same as before)
     # ------------------------------------------------------------------
     dtype = torch.bfloat16
-    bsz   = 2
-    img   = torch.rand((bsz, 16, 64, 64), device="cuda", dtype=dtype)
+    bsz = 2
+    img = torch.rand((bsz, 16, 64, 64), device="cuda", dtype=dtype)
     timestep = torch.tensor([0.5, 0.5], device="cuda")
-    pooled   = torch.rand(bsz, 768, device="cuda", dtype=dtype)
-    text     = torch.rand((bsz, 512, 4096), device="cuda", dtype=dtype)
+    pooled = torch.rand(bsz, 768, device="cuda", dtype=dtype)
+    text = torch.rand((bsz, 512, 4096), device="cuda", dtype=dtype)
 
-    attn_mask = torch.tensor([[1.0]*384 + [0.0]*128]*bsz,
-                              device="cuda", dtype=dtype)
+    attn_mask = torch.tensor(
+        [[1.0] * 384 + [0.0] * 128] * bsz, device="cuda", dtype=dtype
+    )
 
     # helpers -----------------------------------------------------------------
     def _pack_latents(latents, batch, C, H, W):
-        latents = latents.view(batch, C, H//2, 2, W//2, 2)
-        latents = latents.permute(0,2,4,1,3,5)
-        return latents.reshape(batch, (H//2)*(W//2), C*4)
+        latents = latents.view(batch, C, H // 2, 2, W // 2, 2)
+        latents = latents.permute(0, 2, 4, 1, 3, 5)
+        return latents.reshape(batch, (H // 2) * (W // 2), C * 4)
 
     def _latent_ids(batch, H, W):
-        ids = torch.zeros(H//2, W//2, 3)
-        ids[...,1] += torch.arange(H//2)[:,None]
-        ids[...,2] += torch.arange(W//2)[None,:]
-        ids = ids.unsqueeze(0).repeat(batch,1,1,1)
+        ids = torch.zeros(H // 2, W // 2, 3)
+        ids[..., 1] += torch.arange(H // 2)[:, None]
+        ids[..., 2] += torch.arange(W // 2)[None, :]
+        ids = ids.unsqueeze(0).repeat(batch, 1, 1, 1)
         return ids.reshape(batch, -1, 3).to("cuda", dtype=dtype)
 
     txt_ids = torch.zeros(bsz, text.size(1), 3, device="cuda", dtype=dtype)
-    scale   = 16
-    H = 2*(512//scale); W = 2*(512//scale)
+    scale = 16
+    H = 2 * (512 // scale)
+    W = 2 * (512 // scale)
     img_ids = _latent_ids(bsz, H, W)
-    img     = _pack_latents(img, bsz, 16, H, W)
+    img = _pack_latents(img, bsz, 16, H, W)
 
     # ------------------------------------------------------------------
     # 1. build model & simple routing schedule
     # ------------------------------------------------------------------
     transformer = FluxTransformer2DModel.from_config(
-        dict(attention_head_dim=128, guidance_embeds=True, in_channels=64,
-             joint_attention_dim=4096, num_attention_heads=24,
-             num_layers=4, num_single_layers=8, patch_size=1,
-             pooled_projection_dim=768)
+        dict(
+            attention_head_dim=128,
+            guidance_embeds=True,
+            in_channels=64,
+            joint_attention_dim=4096,
+            num_attention_heads=24,
+            num_layers=4,
+            num_single_layers=8,
+            patch_size=1,
+            pooled_projection_dim=768,
+        )
     ).to("cuda", dtype=dtype)
 
     # route keeps 50 % of tokens between global layers 2 and 5
     routes = [dict(selection_ratio=0.5, start_layer_idx=2, end_layer_idx=5)]
     transformer.set_router(
-        TREADRouter(device='cuda'),
+        TREADRouter(device="cuda"),
         routes,
     )
 
-    transformer.train()                    # routing only works in train mode
+    transformer.train()  # routing only works in train mode
     guidance = torch.full((bsz,), 2.0, device="cuda")
 
     # ------------------------------------------------------------------
@@ -1132,9 +1169,14 @@ if __name__ == "__main__":
     # ------------------------------------------------------------------
     try:
         out = transformer(
-            img, encoder_hidden_states=text, pooled_projections=pooled,
-            timestep=timestep, img_ids=img_ids, txt_ids=txt_ids,
-            guidance=guidance, attention_mask=attn_mask,
+            img,
+            encoder_hidden_states=text,
+            pooled_projections=pooled,
+            timestep=timestep,
+            img_ids=img_ids,
+            txt_ids=txt_ids,
+            guidance=guidance,
+            attention_mask=attn_mask,
         )
         loss = out.sample.mean()
         loss.backward()

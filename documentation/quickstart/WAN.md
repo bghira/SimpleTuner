@@ -222,6 +222,83 @@ Your config at the end will look like mine:
 
 Of particular importance in this configuration are the validation settings. Without these, the outputs do not look super great.
 
+### TREAD training
+
+> ⚠️ **Experimental**: TREAD is a newly implemented feature. While functional, optimal configurations are still being explored.
+
+[TREAD](/documentation/TREAD.md) (paper) stands for **T**oken **R**outing for **E**fficient **A**rchitecture-agnostic **D**iffusion. It is a method that can accelerate Flux training by intelligently routing tokens through transformer layers. The speedup is proportional to how many tokens you drop.
+
+#### Quick setup
+
+Add this to your `config.json` for a simple and conservative approach to reach about 5 seconds per step with bs=2 and 480p (reduced from 10 seconds per step vanilla speed):
+
+```json
+{
+  "tread_config": {
+    "routes": [
+      {
+        "selection_ratio": 0.1,
+        "start_layer_idx": 2,
+        "end_layer_idx": -2
+      }
+    ]
+  }
+}
+```
+
+This configuration will:
+- Keep only 50% of image tokens during layers 2 through second-to-last
+- Text tokens are never dropped
+- Training speedup of ~25% with minimal quality impact
+- Potentially improves training quality and convergence
+
+For Wan 1.3B we can enhance this approach using a progressive route setup over all 29 layers and hit a speed around 7.7 seconds per step at bs=2 and 480p:
+
+```json
+{
+  "tread_config": {
+      "routes": [
+          { "selection_ratio": 0.1, "start_layer_idx": 2, "end_layer_idx": 8 },
+          { "selection_ratio": 0.25, "start_layer_idx": 9, "end_layer_idx": 11 },
+          { "selection_ratio": 0.35, "start_layer_idx": 12, "end_layer_idx": 15 },
+          { "selection_ratio": 0.25, "start_layer_idx": 16, "end_layer_idx": 23 },
+          { "selection_ratio": 0.1, "start_layer_idx": 24, "end_layer_idx": -2 }
+      ]
+  }
+}
+```
+
+This configuration will attempt to use more aggressive token dropout in the inner layers of the model where semantic knowledge isn't as important.
+
+For some datasets, more aggressive dropout may be tolerable, but a value of 0.5 is considerably high for Wan 2.1.
+
+#### Key points
+
+- **Limited architecture support** - TREAD is only implemented for Flux and Wan models
+- **Best at high resolutions** - Biggest speedups at 1024x1024+ due to attention's O(n²) complexity
+- **Compatible with masked loss** - Masked regions are automatically preserved (but this reduces speedup)
+- **Works with quantization** - Can be combined with int8/int4/NF4 training
+- **Expect initial loss spike** - When starting LoRA/LoKr training, loss will be higher initially but corrects quickly
+
+#### Tuning tips
+
+- **Conservative (quality-focused)**: Use `selection_ratio` of 0.1-0.3
+- **Aggressive (speed-focused)**: Use `selection_ratio` of 0.3-0.5 and accept the quality impact
+- **Avoid early/late layers**: Don't route in layers 0-1 or the final layer
+- **For LoRA training**: May see slight slowdowns - experiment with different configs
+- **Higher resolution = better speedup**: Most beneficial at 1024px and above
+
+#### Known behavior
+
+- The more tokens dropped (higher `selection_ratio`), the faster training but higher initial loss
+- LoRA/LoKr training shows an initial loss spike that rapidly corrects as the network adapts
+  - Using less-aggressive training configuration or multiple routes with inner layers having higher levels will alleviate this
+- Some LoRA configurations may train slightly slower - optimal configs still being explored
+- The RoPE (rotary position embedding) implementation is functional but may not be 100% correct
+
+For detailed configuration options and troubleshooting, see the [full TREAD documentation](/documentation/TREAD.md).
+
+
 #### Validation prompts
 
 Inside `config/config.json` is the "primary validation prompt", which is typically the main instance_prompt you are training on for your single subject or style. Additionally, a JSON file may be created that contains extra prompts to run through during validations.

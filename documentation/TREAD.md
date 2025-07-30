@@ -89,7 +89,7 @@ Multiple routing windows with different selection ratios:
 ## Compatibility
 
 ### Supported Models
-- **FLUX** - Currently the only supported model family
+- **FLUX and Wan** - Currently the only supported model families
 - Future support planned for other diffusion transformers
 
 ### Works Well With
@@ -100,26 +100,25 @@ Multiple routing windows with different selection ratios:
 ### Limitations
 - Only active during training (not inference)
 - Requires gradient computation (won't work in eval mode)
-- Currently FLUX-specific implementation
+- Currently FLUX and Wan-specific implementation, not available for Lumina2, other architectures yet
 
 ## Performance Considerations
 
 ### Speed Benefits
 - Training speedup is proportional to `selection_ratio` (closer to 1.0 = more tokens dropped = faster training)
-- **Biggest speedups occur at 1024x1024 resolution and above** due to attention's O(n²) complexity
+- **Biggest speedups occur with longer video inputs and higher resolutions** due to attention's O(n²) complexity
 - Typically 20-40% speedup, but results vary based on configuration
 - With masked loss training, speedup is reduced as masked tokens cannot be dropped
 
 ### Quality Trade-offs
 - **Higher token dropping leads to higher initial loss** when starting LoRA/LoKr training
-- The loss tends to correct fairly rapidly and images normalize quickly
-- This may be the network adjusting to fewer tokens in intermediary layers
-- Conservative ratios (0.3-0.5) typically maintain quality
-- Aggressive ratios (>0.7) may impact convergence
+- The loss tends to correct fairly rapidly and images normalize quickly unless high selection ratio is in use
+  - This may be the network adjusting to fewer tokens in intermediary layers
+- Conservative ratios (0.1-0.25) typically maintain quality
+- Aggressive ratios (>0.35) definitely will impact convergence
 
 ### LoRA-specific Considerations
-- Some users report slight slowdowns with LoRA training
-- This may be configuration-dependent - optimal routing configs need more exploration
+- Performance may be data-dependent - optimal routing configs need more exploration
 - Initial loss spike is more noticeable with LoRA/LoKr than full fine-tuning
 
 ### Recommended Settings
@@ -133,7 +132,7 @@ For balanced speed/quality:
 }
 ```
 
-For maximum speed (expect initial loss spike):
+For maximum speed (expect massive loss spike):
 ```json
 {
   "routes": [

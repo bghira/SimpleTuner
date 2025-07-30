@@ -171,9 +171,9 @@ class Flux(ImageModelFoundation):
         from helpers.training.tread import TREADRouter
 
         if (
-            getattr(self.config, 'tread_config', None) is None
-            or getattr(self.config, 'tread_config', None) is {}
-            or getattr(self.config, 'tread_config', {}).get('routes', None) is None
+            getattr(self.config, "tread_config", None) is None
+            or getattr(self.config, "tread_config", None) is {}
+            or getattr(self.config, "tread_config", {}).get("routes", None) is None
         ):
             logger.error(
                 "TREAD training requires you to configure the routes in the TREAD config"
@@ -184,13 +184,13 @@ class Flux(ImageModelFoundation):
 
         self.unwrap_model(model=self.model).set_router(
             TREADRouter(
-                seed = getattr(self.config, 'seed', None) or 42,
-                device = self.accelerator.device,
+                seed=getattr(self.config, "seed", None) or 42,
+                device=self.accelerator.device,
             ),
-            self.config.tread_config['routes'],
+            self.config.tread_config["routes"],
         )
 
-        logger.info('TREAD training is enabled')
+        logger.info("TREAD training is enabled")
 
     def fuse_qkv_projections(self):
         if not self.config.fuse_qkv_projections or self._qkv_projections_fused:
@@ -391,7 +391,9 @@ class Flux(ImageModelFoundation):
                     f"Inputs to kontext builder shapes: {[d.shape for d in cond]} {cond[0].dtype}"
                 )
             else:
-                logger.debug(f"Inputs to kontext builder shapes: {cond.shape} {cond.dtype}")
+                logger.debug(
+                    f"Inputs to kontext builder shapes: {cond.shape} {cond.dtype}"
+                )
 
             # Build Kontext inputs
             packed_cond, cond_ids = build_kontext_inputs(
@@ -534,22 +536,24 @@ class Flux(ImageModelFoundation):
         # For masking and segmentation training when combined with TREAD, avoid
         # dropping any tokens that are in the mask.
         if (
-            getattr(self.config, 'tread_config', None) is not None
+            getattr(self.config, "tread_config", None) is not None
             and self.config.tread_config is not None
             and "conditioning_pixel_values" in prepared_batch
             and prepared_batch["conditioning_pixel_values"] is not None
             and prepared_batch.get("conditioning_type") in ("mask", "segmentation")
         ):
             with torch.no_grad():
-                h_tokens = prepared_batch["latents"].shape[2] // 2   # H_latent // 2
-                w_tokens = prepared_batch["latents"].shape[3] // 2   # W_latent // 2
-                mask_img = prepared_batch["conditioning_pixel_values"]      # (B,3,Hc,Wc)
+                h_tokens = prepared_batch["latents"].shape[2] // 2  # H_latent // 2
+                w_tokens = prepared_batch["latents"].shape[3] // 2  # W_latent // 2
+                mask_img = prepared_batch["conditioning_pixel_values"]  # (B,3,Hc,Wc)
                 # fuse RGB → single channel, map to [0,1]
-                mask_img = (mask_img.sum(1, keepdim=True)/3 + 1)/2
+                mask_img = (mask_img.sum(1, keepdim=True) / 3 + 1) / 2
                 # down‑sample so each latent / image token corresponds to 1 pixel
-                mask_lat = F.interpolate(mask_img, size=(h_tokens, w_tokens), mode="area")  # (B,1,32,32)
-                force_keep = mask_lat.flatten(2).squeeze(1) > 0.5          # (B, S_img)
-                flux_transformer_kwargs['force_keep_mask'] = force_keep
+                mask_lat = F.interpolate(
+                    mask_img, size=(h_tokens, w_tokens), mode="area"
+                )  # (B,1,32,32)
+                force_keep = mask_lat.flatten(2).squeeze(1) > 0.5  # (B, S_img)
+                flux_transformer_kwargs["force_keep_mask"] = force_keep
 
         model_pred = self.model(**flux_transformer_kwargs)[0]
         # Drop the reference-image tokens before unpacking
@@ -828,9 +832,7 @@ class Flux(ImageModelFoundation):
                 )
                 self.config.validation_guidance_real = 6.0
             if not self.config.flux_attention_masked_training:
-                logger.warning(
-                    "LibreFlux requires attention masking. Enabling it."
-                )
+                logger.warning("LibreFlux requires attention masking. Enabling it.")
                 self.config.flux_attention_masked_training = True
             if self.config.fused_qkv_projections:
                 logger.warning(
@@ -840,10 +842,14 @@ class Flux(ImageModelFoundation):
         if self.config.model_flavour == "fluxbooru":
             # FluxBooru requires some special settings, we'll just override them here.
             if self.config.validation_num_inference_steps < 28:
-                logger.warning("FluxBooru requires at least 28 validation steps. Increasing value to 28.")
+                logger.warning(
+                    "FluxBooru requires at least 28 validation steps. Increasing value to 28."
+                )
                 self.config.validation_num_inference_steps = 28
             if self.config.validation_guidance_real <= 1.0:
-                logger.warning("FluxBooru requires CFG at validation time. Enabling it.")
+                logger.warning(
+                    "FluxBooru requires CFG at validation time. Enabling it."
+                )
                 self.config.validation_guidance_real = 6.0
             if self.config.flux_guidance_value != 3.5:
                 logger.warning(
