@@ -514,7 +514,7 @@ This is a {model_type(args)} derived from [{base_model}](https://huggingface.co/
 - Steps: `{StateTracker.get_args().validation_num_inference_steps}`
 - Sampler: `{'FlowMatchEulerDiscreteScheduler' if model.PREDICTION_TYPE.value == "flow_matching" else StateTracker.get_args().validation_noise_scheduler}`
 - Seed: `{StateTracker.get_args().validation_seed}`
-- Resolution{'s' if ',' in StateTracker.get_args().validation_resolution else ''}: `{StateTracker.get_args().validation_resolution}`
+- Resolution{'s' if ',' in str(StateTracker.get_args().validation_resolution) else ''}: `{str(StateTracker.get_args().validation_resolution)}`
 {f"- Skip-layer guidance: {_skip_layers(args)}" if args.model_family in ['sd3', 'flux'] else ''}
 
 Note: The validation settings are not necessarily the same as the [training settings](#training-settings).
