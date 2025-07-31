@@ -61,9 +61,10 @@ class Flux(ImageModelFoundation):
     }
 
     # The default model flavor to use when none is specified.
-    DEFAULT_MODEL_FLAVOUR = "dev"
+    DEFAULT_MODEL_FLAVOUR = "krea"
     HUGGINGFACE_PATHS = {
         "dev": "black-forest-labs/flux.1-dev",
+        "krea": "black-forest-labs/flux.1-krea-dev",
         "schnell": "black-forest-labs/flux.1-schnell",
         "kontext": "black-forest-labs/flux.1-kontext-dev",
         "fluxbooru": "terminusresearch/fluxbooru-v0.3",
