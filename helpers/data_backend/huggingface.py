@@ -9,9 +9,11 @@ from PIL import Image
 import numpy as np
 
 from helpers.data_backend.base import BaseDataBackend
-from helpers.image_manipulation.load import load_image
+from helpers.image_manipulation.load import load_image, load_video
 from helpers.training.multi_process import should_log
 from helpers.training.state_tracker import StateTracker
+
+from torchvision.io.video_reader import VideoReader
 
 logger = logging.getLogger("HuggingfaceDatasetsBackend")
 
@@ -25,12 +27,14 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         split: str = "train",
         revision: str = None,
         image_column: str = "image",
+        video_column: str = "video",
         cache_dir: Optional[str] = None,
         compress_cache: bool = False,
         streaming: bool = False,
         filter_func: Optional[callable] = None,
         num_proc: int = 16,
         composite_config: dict = {},
+        dataset_type: str = "image",
     ):
         """
         Initialize the Hugging Face datasets backend.
@@ -52,9 +56,12 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         self.type = "huggingface"
         self.accelerator = accelerator
         self.dataset_name = dataset_name
+        self.dataset_type = dataset_type
+        self.file_extension = "jpg" if dataset_type == "image" else "mp4"
         self.split = split
         self.revision = revision
         self.image_column = image_column
+        self.video_column = video_column
         self.cache_dir = cache_dir
         self.compress_cache = compress_cache
         self.streaming = streaming
@@ -129,13 +136,13 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             dataset_len = len(self.dataset)
             for idx in range(dataset_len):
                 # Create virtual paths based on composite configuration
-                virtual_path = f"{idx}.jpg"
+                virtual_path = f"{idx}.{self.file_extension}"
 
                 self._path_to_index[virtual_path] = idx
                 self._index_to_path[idx] = virtual_path
 
                 # Also map the simple format for backwards compatibility
-                simple_path = f"{idx}.jpg"
+                simple_path = f"{idx}.{self.file_extension}"
                 if simple_path != virtual_path:
                     self._path_to_index[simple_path] = idx
         else:
@@ -155,7 +162,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         if basename in self._path_to_index:
             return self._path_to_index[basename]
 
-        # Handle simple format (e.g., "123.jpg" -> 123)
+        # Handle simple format (e.g., "123.{self.file_extension}" -> 123)
         try:
             index = int(os.path.splitext(basename)[0])
             return index
@@ -273,11 +280,13 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         try:
             # Get the item from dataset
             item = self.dataset[index]
-            image = item.get(self.image_column)
+            sample = item.get(
+                self.video_column if self.dataset_type == "video" else self.image_column
+            )
 
-            if image is None:
+            if sample is None:
                 logger.error(
-                    f"No image found in column '{self.image_column}' for index {index}"
+                    f"No {self.dataset_type} found in column '{self.video_column if self.dataset_type == 'video' else self.image_column}' for index {index}"
                 )
                 return None
 
@@ -290,8 +299,8 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                 image_count = self.composite_config.get("image_count", 1)
                 select_index = self.composite_config.get("select_index", 0)
 
-                if isinstance(image, Image.Image):
-                    width, height = image.size
+                if isinstance(sample, Image.Image):
+                    width, height = sample.size
                     slice_width = width // image_count
 
                     # Calculate crop box for the selected index
@@ -299,25 +308,60 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                     right = (select_index + 1) * slice_width
 
                     # Crop the image
-                    image = image.crop((left, 0, right, height))
+                    sample = sample.crop((left, 0, right, height))
 
             # Handle different image types
-            if isinstance(image, Image.Image):
+            if isinstance(sample, Image.Image):
                 # PIL Image - convert to bytes
                 buffer = BytesIO()
-                image.save(buffer, format="PNG")
+                sample.save(buffer, format="PNG")
                 data = buffer.getvalue()
-            elif isinstance(image, np.ndarray):
+            elif isinstance(sample, np.ndarray):
                 # NumPy array - convert to PIL then bytes
-                pil_image = Image.fromarray(image)
+                pil_image = Image.fromarray(sample)
                 buffer = BytesIO()
                 pil_image.save(buffer, format="PNG")
                 data = buffer.getvalue()
-            elif isinstance(image, bytes):
+            elif isinstance(sample, bytes):
                 # Already bytes
-                data = image
+                data = sample
+            elif isinstance(sample, VideoReader):
+                # VideoReader - encode all frames into a video file in memory
+                import cv2
+
+                frames = []
+                for frame in sample:
+                    # frame['data'] is a torch tensor (T, H, W, C)
+                    frame_np = frame["data"].numpy()
+                    # Convert from RGB to BGR for OpenCV
+                    frame_np = cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR)
+                    frames.append(frame_np)
+
+                if not frames:
+                    logger.error("VideoReader contains no frames")
+                    return None
+
+                height, width, channels = frames[0].shape
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                temp_video = BytesIO()
+                # OpenCV cannot write directly to BytesIO, so use a temp file
+                import tempfile
+
+                with tempfile.NamedTemporaryFile(suffix=".mp4", delete=True) as tmpfile:
+                    out = cv2.VideoWriter(
+                        tmpfile.name,
+                        fourcc,
+                        sample.get_metadata()["video"]["fps"][0],
+                        (width, height),
+                    )
+                    for frame in frames:
+                        out.write(frame)
+                    out.release()
+                    tmpfile.seek(0)
+                    data = tmpfile.read()
+                # Now data contains the video bytes
             else:
-                logger.error(f"Unsupported image type: {type(image)}")
+                logger.error(f"Unsupported image type: {type(sample)}")
                 return None
 
             if as_byteIO:
@@ -326,6 +370,9 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
 
         except Exception as e:
             logger.error(f"Error reading from dataset at index {index}: {e}")
+            import traceback
+
+            logger.error(traceback.format_exc())
             raise
 
     def write(self, filepath: Union[str, Path], data: Any) -> None:
@@ -458,7 +505,6 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             raise NotImplementedError("Write operations are not supported")
         return BytesIO(self.read(filepath))
 
-
     def list_files(
         self, file_extensions: list = None, instance_data_dir: str = None
     ) -> list:
@@ -497,7 +543,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         # For HF datasets, we use a flat structure (no subdirectories)
         files = []
         for idx in range(len(self.dataset)):
-            virtual_path = self._index_to_path.get(idx, f"{idx}.jpg")
+            virtual_path = self._index_to_path.get(idx, f"{idx}.{self.file_extension}")
             if file_extensions:
                 ext = os.path.splitext(virtual_path)[1].lower().strip(".")
                 if ext not in file_extensions:
@@ -520,7 +566,10 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             image_data = self.read(filepath, as_byteIO=True)
             if image_data is None:
                 return None
-            image = load_image(image_data)
+            loader = load_image
+            if self.dataset_type == "video":
+                loader = load_video
+            image = loader(image_data)
             return image
         except Exception as e:
             logger.error(f"Error opening image {filepath}: {e}")
@@ -554,6 +603,9 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
     def get_dataset_item(self, index: int):
         """Get the full dataset item at the given index."""
         if not self.streaming and (index < 0 or index >= len(self.dataset)):
+            logger.warning(
+                f"Retrieving {index=} for {len(self.dataset)=}, returning None"
+            )
             return None
         return self.dataset[index]
 

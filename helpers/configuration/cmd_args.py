@@ -503,6 +503,15 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--tread_config",
+        type=str,
+        default=None,
+        help=(
+            "Allows you to train using the TREAD method, which can speed up training. It requires you to set up a"
+            " configuration specific to the network you are training. Currently only works for FLUX."
+        ),
+    )
+    parser.add_argument(
         "--controlnet_model_name_or_path",
         type=str,
         default=None,
@@ -2414,6 +2423,16 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
                 )
             except Exception as e:
                 logger.error(f"Could not load controlnet_custom_config: {e}")
+                raise
+
+    if args.tread_config is not None and type(args.tread_config) is str:
+        if args.tread_config.startswith("{"):
+            try:
+                import ast
+
+                args.tread_config = ast.literal_eval(args.tread_config)
+            except Exception as e:
+                logger.error(f"Could not load tread_config: {e}")
                 raise
 
     if args.optimizer == "adam_bfloat16" and args.mixed_precision != "bf16":

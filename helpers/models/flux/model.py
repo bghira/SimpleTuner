@@ -1,5 +1,6 @@
 import torch, os, logging
 import random
+from torch.nn import functional as F
 from helpers.training import diffusers_overrides
 from helpers.models.common import (
     ImageModelFoundation,
@@ -60,11 +61,14 @@ class Flux(ImageModelFoundation):
     }
 
     # The default model flavor to use when none is specified.
-    DEFAULT_MODEL_FLAVOUR = "dev"
+    DEFAULT_MODEL_FLAVOUR = "krea"
     HUGGINGFACE_PATHS = {
         "dev": "black-forest-labs/flux.1-dev",
+        "krea": "black-forest-labs/flux.1-krea-dev",
         "schnell": "black-forest-labs/flux.1-schnell",
         "kontext": "black-forest-labs/flux.1-kontext-dev",
+        "fluxbooru": "terminusresearch/fluxbooru-v0.3",
+        "libreflux": "jimmycarter/LibreFlux-SimpleTuner",
     }
     MODEL_LICENSE = "other"
 
@@ -160,6 +164,34 @@ class Flux(ImageModelFoundation):
                 self.unwrap_model(self.model)
             )
         self.controlnet.to(self.accelerator.device, self.config.weight_dtype)
+
+    def tread_init(self):
+        """
+        Initialize the TREAD model training method.
+        """
+        from helpers.training.tread import TREADRouter
+
+        if (
+            getattr(self.config, "tread_config", None) is None
+            or getattr(self.config, "tread_config", None) is {}
+            or getattr(self.config, "tread_config", {}).get("routes", None) is None
+        ):
+            logger.error(
+                "TREAD training requires you to configure the routes in the TREAD config"
+            )
+            import sys
+
+            sys.exit(1)
+
+        self.unwrap_model(model=self.model).set_router(
+            TREADRouter(
+                seed=getattr(self.config, "seed", None) or 42,
+                device=self.accelerator.device,
+            ),
+            self.config.tread_config["routes"],
+        )
+
+        logger.info("TREAD training is enabled")
 
     def fuse_qkv_projections(self):
         if not self.config.fuse_qkv_projections or self._qkv_projections_fused:
@@ -339,7 +371,9 @@ class Flux(ImageModelFoundation):
         cond = batch.get("conditioning_latents")
         if cond is None:
             logger.debug(f"No conditioning latents found :(")
-            return super().prepare_batch_conditions(batch=batch, state=state)  # nothing to do
+            return super().prepare_batch_conditions(
+                batch=batch, state=state
+            )  # nothing to do
         # Check sampling mode
         sampling_mode = state.get("args", {}).get(
             "conditioning_multidataset_sampling", "random"
@@ -348,27 +382,37 @@ class Flux(ImageModelFoundation):
         if sampling_mode == "random" and isinstance(cond, list) and len(cond) >= 1:
             # Random mode should have selected just one
             cond = cond[0]
-        if isinstance(cond, list):
-            logger.debug(
-                f"Inputs to kontext builder shapes: {[d.shape for d in cond]} {cond[0].dtype}"
+
+        # This is only a thing we do if we're training kontext, but conditioning
+        # images are also used for masked loss training, so if we hit an error
+        # here for index, ignore it.
+        if self.config.model_flavour == "kontext":
+            if isinstance(cond, list):
+                logger.debug(
+                    f"Inputs to kontext builder shapes: {[d.shape for d in cond]} {cond[0].dtype}"
+                )
+            else:
+                logger.debug(
+                    f"Inputs to kontext builder shapes: {cond.shape} {cond.dtype}"
+                )
+
+            # Build Kontext inputs
+            packed_cond, cond_ids = build_kontext_inputs(
+                cond if isinstance(cond, list) else [cond],
+                dtype=self.config.weight_dtype,
+                device=self.accelerator.device,
+                latent_channels=self.LATENT_CHANNEL_COUNT,
             )
-        else:
-            logger.debug(f"Inputs to kontext builder shapes: {cond.shape} {cond.dtype}")
-        # Build Kontext inputs
-        packed_cond, cond_ids = build_kontext_inputs(
-            cond if isinstance(cond, list) else [cond],
-            dtype=self.config.weight_dtype,
-            device=self.accelerator.device,
-            latent_channels=self.LATENT_CHANNEL_COUNT,
-        )
-        logger.debug(
-            f"Now we have kontext shapes: {packed_cond.shape} {packed_cond.dtype}"
-        )
+            logger.debug(
+                f"Now we have kontext shapes: {packed_cond.shape} {packed_cond.dtype}"
+            )
 
-        batch["conditioning_packed_latents"] = packed_cond
-        batch["conditioning_ids"] = cond_ids
+            batch["conditioning_packed_latents"] = packed_cond
+            batch["conditioning_ids"] = cond_ids
 
-        return super().prepare_batch_conditions(batch=batch, state=state)  # fixes ControlNet latents in super class.
+        return super().prepare_batch_conditions(
+            batch=batch, state=state
+        )  # fixes ControlNet latents in super class.
 
     def model_predict(self, prepared_batch):
         # handle guidance
@@ -489,6 +533,29 @@ class Flux(ImageModelFoundation):
             if attention_mask.dim() == 3 and attention_mask.size(1) == 1:
                 attention_mask = attention_mask.squeeze(1)  # [B, 1, S] -> [B, S]
             flux_transformer_kwargs["attention_mask"] = attention_mask
+
+        # For masking and segmentation training when combined with TREAD, avoid
+        # dropping any tokens that are in the mask.
+        if (
+            getattr(self.config, "tread_config", None) is not None
+            and self.config.tread_config is not None
+            and "conditioning_pixel_values" in prepared_batch
+            and prepared_batch["conditioning_pixel_values"] is not None
+            and prepared_batch.get("conditioning_type") in ("mask", "segmentation")
+        ):
+            with torch.no_grad():
+                h_tokens = prepared_batch["latents"].shape[2] // 2  # H_latent // 2
+                w_tokens = prepared_batch["latents"].shape[3] // 2  # W_latent // 2
+                mask_img = prepared_batch["conditioning_pixel_values"]  # (B,3,Hc,Wc)
+                # fuse RGB → single channel, map to [0,1]
+                mask_img = (mask_img.sum(1, keepdim=True) / 3 + 1) / 2
+                # down‑sample so each latent / image token corresponds to 1 pixel
+                mask_lat = F.interpolate(
+                    mask_img, size=(h_tokens, w_tokens), mode="area"
+                )  # (B,1,32,32)
+                force_keep = mask_lat.flatten(2).squeeze(1) > 0.5  # (B, S_img)
+                flux_transformer_kwargs["force_keep_mask"] = force_keep
+
         model_pred = self.model(**flux_transformer_kwargs)[0]
         # Drop the reference-image tokens before unpacking
         if use_cond and self.config.model_flavour == "kontext":
@@ -753,6 +820,48 @@ class Flux(ImageModelFoundation):
             self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG], FluxKontextPipeline
         ):
             self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG] = FluxKontextPipeline
+
+        if self.config.model_flavour == "libreflux":
+            if self.config.validation_num_inference_steps < 28:
+                logger.warning(
+                    "LibreFlux requires at least 28 validation steps. Increasing value to 28."
+                )
+                self.config.validation_num_inference_steps = 28
+            if self.config.validation_guidance_real <= 1.0:
+                logger.warning(
+                    "LibreFlux requires CFG at validation time. Enabling it."
+                )
+                self.config.validation_guidance_real = 6.0
+            if not self.config.flux_attention_masked_training:
+                logger.warning("LibreFlux requires attention masking. Enabling it.")
+                self.config.flux_attention_masked_training = True
+            if self.config.fused_qkv_projections:
+                logger.warning(
+                    "LibreFlux does not support fused QKV projections. Disabling it."
+                )
+                self.config.fuse_qkv_projections = False
+        if self.config.model_flavour == "fluxbooru":
+            # FluxBooru requires some special settings, we'll just override them here.
+            if self.config.validation_num_inference_steps < 28:
+                logger.warning(
+                    "FluxBooru requires at least 28 validation steps. Increasing value to 28."
+                )
+                self.config.validation_num_inference_steps = 28
+            if self.config.validation_guidance_real <= 1.0:
+                logger.warning(
+                    "FluxBooru requires CFG at validation time. Enabling it."
+                )
+                self.config.validation_guidance_real = 6.0
+            if self.config.flux_guidance_value != 3.5:
+                logger.warning(
+                    "FluxBooru requires a static guidance value of 3.5. Overriding --flux_guidance_value."
+                )
+                self.config.flux_guidance_value = 3.5
+            if self.config.flux_attention_masked_training:
+                logger.warning(
+                    "FluxBooru does not support attention masking. Disabling it."
+                )
+                self.config.flux_attention_masked_training = False
 
     def conditioning_validation_dataset_type(self) -> bool:
         # Most conditioning inputs (ControlNet) etc require "conditioning" dataset, but Kontext requires "images".

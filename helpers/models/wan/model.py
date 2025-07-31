@@ -16,6 +16,8 @@ from helpers.models.wan.pipeline import WanPipeline
 
 logger = logging.getLogger(__name__)
 from helpers.training.multi_process import should_log
+from helpers.training.tread import TREADRouter
+from torch.nn import functional as F
 
 if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -62,6 +64,33 @@ class Wan(VideoModelFoundation):
             "model": UMT5EncoderModel,
         },
     }
+
+    def tread_init(self):
+        """
+        Initialize the TREAD model training method for Wan.
+        """
+
+        if (
+            getattr(self.config, "tread_config", None) is None
+            or getattr(self.config, "tread_config", None) is {}
+            or getattr(self.config, "tread_config", {}).get("routes", None) is None
+        ):
+            logger.error(
+                "TREAD training requires you to configure the routes in the TREAD config"
+            )
+            import sys
+
+            sys.exit(1)
+
+        self.unwrap_model(model=self.model).set_router(
+            TREADRouter(
+                seed=getattr(self.config, "seed", None) or 42,
+                device=self.accelerator.device,
+            ),
+            self.config.tread_config["routes"],
+        )
+
+        logger.info("TREAD training is enabled for Wan")
 
     def update_pipeline_call_kwargs(self, pipeline_kwargs):
         """
@@ -141,14 +170,57 @@ class Wan(VideoModelFoundation):
         return prompt_embeds, masks
 
     def model_predict(self, prepared_batch):
-        model_pred = self.model(
-            prepared_batch["noisy_latents"].to(self.config.weight_dtype),
-            encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(
+        """
+        Modify the existing model_predict to support TREAD with masked training.
+        """
+        wan_transformer_kwargs = {
+            "hidden_states": prepared_batch["noisy_latents"].to(
                 self.config.weight_dtype
             ),
-            timestep=prepared_batch["timesteps"],
-            return_dict=False,
-        )[0]
+            "encoder_hidden_states": prepared_batch["encoder_hidden_states"].to(
+                self.config.weight_dtype
+            ),
+            "timestep": prepared_batch["timesteps"],
+            "return_dict": False,
+        }
+
+        # For masking with TREAD, avoid dropping any tokens that are in the mask
+        if (
+            getattr(self.config, "tread_config", None) is not None
+            and self.config.tread_config is not None
+            and "conditioning_pixel_values" in prepared_batch
+            and prepared_batch["conditioning_pixel_values"] is not None
+            and prepared_batch.get("conditioning_type") in ("mask", "segmentation")
+        ):
+            with torch.no_grad():
+                # For video: B, C, T, H, W
+                b, c, t, h, w = prepared_batch["latents"].shape
+                # Wan uses patch_size (1, 2, 2), so token dimensions are:
+                t_tokens = t // 1  # temporal patches
+                h_tokens = h // 2  # height patches
+                w_tokens = w // 2  # width patches
+
+                mask_vid = prepared_batch[
+                    "conditioning_pixel_values"
+                ]  # (B,C,T,H,W) for video
+                # fuse channels → single channel, map to [0,1]
+                mask_vid = (mask_vid.mean(1, keepdim=True) + 1) / 2
+                # downsample to match token dimensions
+                mask_tok = F.interpolate(
+                    mask_vid,
+                    size=(t_tokens, h_tokens, w_tokens),
+                    mode="trilinear",
+                    align_corners=False,
+                )  # (B,1,t_tok,h_tok,w_tok)
+                # Flatten in the same order as patch_embedding
+                # After conv3d: (B, D, T', H', W')
+                # After flatten(2): (B, D, T'*H'*W') with order T->H->W
+                # After transpose(1,2): (B, T'*H'*W', D)
+                # So we flatten the mask with the same T->H->W order
+                force_keep = mask_tok.squeeze(1).flatten(1) > 0.5  # (B, S_vid)
+                wan_transformer_kwargs["force_keep_mask"] = force_keep
+
+        model_pred = self.model(**wan_transformer_kwargs)[0]
 
         return {
             "model_prediction": model_pred,
@@ -175,9 +247,9 @@ class Wan(VideoModelFoundation):
 
         if self.config.tokenizer_max_length is not None:
             logger.warning(
-                f"-!- {self.NAME} supports a max length of 226 tokens, --tokenizer_max_length is ignored -!-"
+                f"-!- {self.NAME} supports a max length of 512 tokens, --tokenizer_max_length is ignored -!-"
             )
-        self.config.tokenizer_max_length = 226
+        self.config.tokenizer_max_length = 512
         if self.config.validation_num_inference_steps > 50:
             logger.warning(
                 f"{self.NAME} {self.config.model_flavour} may be wasting compute with more than 50 steps. Consider reducing the value to save time."

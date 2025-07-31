@@ -17,6 +17,7 @@ import numpy as np
 
 logger = logging.getLogger("HuggingfaceMetadataBackend")
 from helpers.training.multi_process import should_log
+import cv2
 
 if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -53,6 +54,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         split_composite_images: bool = False,
         composite_image_column: str = "image",
         quality_filter: Optional[Dict[str, Any]] = None,
+        dataset_type: str = "image",
     ):
         """
         Initialize the Hugging Face metadata backend.
@@ -71,17 +73,21 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             quality_filter: Dict of quality thresholds to filter by
         """
         self.hf_config = hf_config
+        self.dataset_type = dataset_type
         self.split_composite_images = split_composite_images
         self.composite_image_column = composite_image_column
         self.quality_filter = quality_filter
 
         # Get column names from config
+        self.video_column = hf_config.get("video_column", "video")
         self.caption_column = hf_config.get("caption_column", "caption")
         self.fallback_caption_column = hf_config.get("fallback_caption_column", None)
         self.width_column = hf_config.get("width_column", None)
         self.height_column = hf_config.get("height_column", None)
         self.quality_column = hf_config.get("quality_column", "quality_assessment")
         self.description_column = hf_config.get("description_column", "description")
+        self.file_extension = "jpg" if dataset_type == "image" else "mp4"
+        self.file_extension = hf_config.get("file_extension", self.file_extension)
         # Video-specific columns
         self.num_frames_column = hf_config.get("num_frames_column", None)
         self.fps_column = hf_config.get("fps_column", None)
@@ -124,8 +130,10 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         with accelerator.main_process_first():
             self.caption_cache = self._extract_captions_to_dict()
         accelerator.wait_for_everyone()
-        self.reload_cache()
-        self.load_image_metadata()
+        with accelerator.main_process_first():
+            self.reload_cache()
+            self.load_image_metadata()
+        accelerator.wait_for_everyone()
 
     def _extract_captions_to_dict(self) -> Dict[str, Union[str, List[str]]]:
         """Extract captions from the dataset into a fast lookup dict, using cache if available."""
@@ -150,13 +158,14 @@ class HuggingfaceMetadataBackend(MetadataBackend):
 
         def process_item(idx):
             item = self.data_backend.dataset[idx]
-            virtual_path = f"{idx}.jpg"
+            virtual_path = f"{idx}.{self.file_extension}"
             if self.quality_filter and self.quality_column in item:
                 quality = item[self.quality_column]
                 if not self._passes_quality_filter(quality):
                     return None
             caption = self._extract_caption_from_item(item)
             if caption:
+                print(f"Pairing {virtual_path=} to {caption=}")
                 return (virtual_path, caption)
             return None
 
@@ -194,7 +203,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
     def _extract_caption_from_item(self, item: Dict) -> Optional[Union[str, List[str]]]:
         """Extract caption from a dataset item."""
         caption = None
-
+        print(f"extracting caption from {item=}")
         # Handle list of caption columns
         if isinstance(self.caption_column, list):
             caption_values = []
@@ -207,6 +216,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         else:
             # Single caption column (might be nested)
             caption = self._get_nested_value(item, self.caption_column)
+            print(f"retrieved {self.caption_column=} {caption=}")
             if caption:
                 caption = str(caption)
 
@@ -380,7 +390,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         # Generate virtual paths based on configuration
         all_files = []
         for idx in range(total_items):
-            virtual_path = f"{idx}.jpg"
+            virtual_path = f"{idx}.{self.file_extension}"
             all_files.append(virtual_path)
 
         if ignore_existing_cache:
@@ -397,6 +407,82 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         logger.debug(f"Found {len(new_files)} new files out of {len(all_files)} total")
 
         return new_files
+
+    def _get_video_metadata_from_item(self, item: Dict) -> Dict[str, Any]:
+        """Extract video metadata from dataset item, including original_size."""
+        metadata = {}
+
+        # Prefer explicit aspect_ratio column if present
+        aspect_ratio = None
+        if "aspect_ratio" in item:
+            try:
+                aspect_ratio = float(item["aspect_ratio"])
+            except Exception:
+                aspect_ratio = None
+
+        # Try width/height columns
+        width, height = None, None
+        if self.width_column and self.height_column:
+            if self.width_column in item and self.height_column in item:
+                try:
+                    width = int(item[self.width_column])
+                    height = int(item[self.height_column])
+                except Exception:
+                    width, height = None, None
+
+        # If we have width and height, use them
+        if width and height:
+            metadata["original_size"] = (width, height)
+            if aspect_ratio is None and height != 0:
+                aspect_ratio = width / height
+        # If we have aspect_ratio but not width/height, set dummy size
+        elif aspect_ratio is not None:
+            # Use a default height (e.g., 256) to compute width
+            height = 256
+            width = int(round(aspect_ratio * height))
+            metadata["original_size"] = (width, height)
+
+        # Extract number of frames if available
+        if self.num_frames_column and self.num_frames_column in item:
+            try:
+                metadata["num_frames"] = int(item[self.num_frames_column])
+            except Exception:
+                pass
+
+        # Extract FPS if available
+        if self.fps_column and self.fps_column in item:
+            try:
+                metadata["fps"] = float(item[self.fps_column])
+            except Exception:
+                pass
+
+        # use the VideoReader object and retrieve the metadata.
+        if "original_size" not in metadata and self.video_column in item:
+            video = item[self.video_column]
+            video_md = video.get_metadata().get("video", {})
+            print(f"{video_md=}")
+            if "fps" in video_md:
+                if len(video_md["fps"]) > 1:
+                    logger.warning(
+                        f"Ignoring variable FPS in video metadata: {video_md['fps']}"
+                    )
+                metadata["fps"] = video_md["fps"][0]
+            if "duration" in video_md and "fps" in metadata:
+                if len(video_md["duration"]) > 1:
+                    logger.warning(
+                        f"Ignoring variable FPS in video metadata: {video_md['duration']}"
+                    )
+
+                metadata["num_frames"] = video_md["duration"][0] * metadata["fps"]
+            frame_size = next(video)["data"].shape
+            if len(frame_size) == 3:  # RGB frame
+                c, h, w = frame_size
+                metadata["original_size"] = (w, h)
+            else:  # Grayscale frame
+                metadata["original_size"] = (frame_size[2], frame_size[1])
+            print(f"{metadata=}")
+
+        return metadata
 
     def _get_image_metadata_from_item(self, item: Dict) -> Dict[str, Any]:
         """Extract image metadata from dataset item."""
@@ -490,60 +576,85 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                     return aspect_ratio_bucket_indices
 
             # Get image metadata (will handle composite images)
-            image_metadata = self._get_image_metadata_from_item(item)
+            if self.dataset_type == "image":
+                sample_metadata = self._get_image_metadata_from_item(item)
 
-            if "original_size" not in image_metadata:
-                logger.warning(f"Could not determine image size for {image_path_str}")
-                statistics.setdefault("skipped", {}).setdefault("metadata_missing", 0)
-                statistics["skipped"]["metadata_missing"] += 1
-                return aspect_ratio_bucket_indices
-
-            # Check video frame constraints if this is a video dataset
-            if "num_frames" in image_metadata:
-                num_frames = image_metadata["num_frames"]
-
-                if self.minimum_num_frames and num_frames < self.minimum_num_frames:
-                    logger.debug(
-                        f"Video {image_path_str} has {num_frames} frames, below minimum {self.minimum_num_frames}"
-                    )
-                    statistics.setdefault("skipped", {}).setdefault("too_few_frames", 0)
-                    statistics["skipped"]["too_few_frames"] += 1
-                    return aspect_ratio_bucket_indices
-
-                if self.maximum_num_frames and num_frames > self.maximum_num_frames:
-                    logger.debug(
-                        f"Video {image_path_str} has {num_frames} frames, above maximum {self.maximum_num_frames}"
+                if "original_size" not in sample_metadata:
+                    logger.warning(
+                        f"Could not determine image size for {image_path_str}"
                     )
                     statistics.setdefault("skipped", {}).setdefault(
-                        "too_many_frames", 0
+                        "metadata_missing", 0
                     )
-                    statistics["skipped"]["too_many_frames"] += 1
+                    statistics["skipped"]["metadata_missing"] += 1
                     return aspect_ratio_bucket_indices
-
-            # Check resolution requirements
-            if not self.meets_resolution_requirements(image_metadata=image_metadata):
-                if self.delete_unwanted_images:
-                    logger.debug(
-                        f"{image_path_str} does not meet resolution requirements."
+                # Check resolution requirements
+                if not self.meets_resolution_requirements(
+                    image_metadata=sample_metadata
+                ):
+                    if self.delete_unwanted_images:
+                        logger.debug(
+                            f"{image_path_str} does not meet resolution requirements."
+                        )
+                    statistics.setdefault("skipped", {}).setdefault("too_small", 0)
+                    statistics["skipped"]["too_small"] += 1
+                    return aspect_ratio_bucket_indices
+                # Create training sample
+                training_sample = TrainingSample(
+                    image=None,  # We don't load actual image data here
+                    data_backend_id=self.id,
+                    image_metadata=sample_metadata,
+                    image_path=image_path_str,
+                )
+            elif self.dataset_type == "video":
+                # Check video frame constraints if this is a video dataset
+                if self.video_column not in item:
+                    logger.warning(
+                        f"Video column '{self.video_column}' not found in item {image_path_str}"
                     )
-                statistics.setdefault("skipped", {}).setdefault("too_small", 0)
-                statistics["skipped"]["too_small"] += 1
-                return aspect_ratio_bucket_indices
+                    statistics.setdefault("skipped", {}).setdefault(
+                        "metadata_missing", 0
+                    )
+                    statistics["skipped"]["metadata_missing"] += 1
+                    return aspect_ratio_bucket_indices
+                sample_metadata = self._get_video_metadata_from_item(item)
+                if "num_frames" in sample_metadata:
+                    num_frames = sample_metadata["num_frames"]
 
-            # Create training sample
-            training_sample = TrainingSample(
-                image=None,  # We don't load actual image data here
-                data_backend_id=self.id,
-                image_metadata=image_metadata,
-                image_path=image_path_str,
-            )
+                    if self.minimum_num_frames and num_frames < self.minimum_num_frames:
+                        logger.debug(
+                            f"Video {image_path_str} has {num_frames} frames, below minimum {self.minimum_num_frames}"
+                        )
+                        statistics.setdefault("skipped", {}).setdefault(
+                            "too_few_frames", 0
+                        )
+                        statistics["skipped"]["too_few_frames"] += 1
+                        return aspect_ratio_bucket_indices
+
+                    if self.maximum_num_frames and num_frames > self.maximum_num_frames:
+                        logger.debug(
+                            f"Video {image_path_str} has {num_frames} frames, above maximum {self.maximum_num_frames}"
+                        )
+                        statistics.setdefault("skipped", {}).setdefault(
+                            "too_many_frames", 0
+                        )
+                        statistics["skipped"]["too_many_frames"] += 1
+                        return aspect_ratio_bucket_indices
+                # Create training sample
+                training_sample = TrainingSample(
+                    image=None,  # We don't load actual data here
+                    data_backend_id=self.id,
+                    image_metadata=sample_metadata,
+                    image_path=image_path_str,
+                )
             prepared_sample = training_sample.prepare()
+            print(f"{prepared_sample=}")
 
             # Calculate aspect ratio
             aspect_ratio = float(prepared_sample.aspect_ratio)
 
             # Update metadata
-            image_metadata.update(
+            sample_metadata.update(
                 {
                     "aspect_ratio": aspect_ratio,
                     "intermediary_size": prepared_sample.intermediary_size,
@@ -560,7 +671,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
 
             # Store metadata updates
             if metadata_updates is not None:
-                metadata_updates[image_path_str] = image_metadata
+                metadata_updates[image_path_str] = sample_metadata
 
         except Exception as e:
             logger.error(f"Error processing file {image_path_str}: {e}")
@@ -621,7 +732,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             ncols=100,
         ):
             # Generate virtual path based on composite configuration
-            virtual_path = f"{idx}.jpg"
+            virtual_path = f"{idx}.{self.file_extension}"
 
             # Skip if already processed
             if virtual_path in existing_files:

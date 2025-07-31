@@ -2,7 +2,6 @@ import logging, os
 import huggingface_hub
 from helpers.training.default_settings.safety_check import safety_check
 from helpers.publishing.huggingface import HubManager
-from configure import model_labels
 from typing import Optional
 import shutil
 import hashlib
@@ -237,6 +236,7 @@ class Trainer:
                     self.init_load_base_model,
                     self.init_precision,
                     self.init_controlnet_model,
+                    self.init_tread_model,
                     self.init_freeze_models,
                     self.init_trainable_peft_adapter,
                     self.init_ema_model,
@@ -403,10 +403,7 @@ class Trainer:
 
         model_implementation = model_families.get(model_family)
         StateTracker.set_model_family(model_family)
-        self.config.model_type_label = (
-            getattr(model_implementation, "NAME", None)
-            or model_labels[model_family.lower()]
-        )
+        self.config.model_type_label = getattr(model_implementation, "NAME", None)
         if StateTracker.is_sdxl_refiner():
             self.config.model_type_label = "SDXL Refiner"
 
@@ -719,6 +716,12 @@ class Trainer:
         if not self.config.controlnet:
             return
         self.model.controlnet_init()
+        self.accelerator.wait_for_everyone()
+
+    def init_tread_model(self):
+        if not self.config.tread_config:
+            return
+        self.model.tread_init()
         self.accelerator.wait_for_everyone()
 
     def init_trainable_peft_adapter(self):
@@ -2084,9 +2087,15 @@ class Trainer:
                     continue
                 if self.config.eval_dataset_id is not None:
                     # skip eval splits.
-                    if isinstance(self.config.eval_dataset_id, str) and backend_id == self.config.eval_dataset_id:
+                    if (
+                        isinstance(self.config.eval_dataset_id, str)
+                        and backend_id == self.config.eval_dataset_id
+                    ):
                         continue
-                    elif isinstance(self.config.eval_dataset_id, list) and backend_id in self.config.eval_dataset_id:
+                    elif (
+                        isinstance(self.config.eval_dataset_id, list)
+                        and backend_id in self.config.eval_dataset_id
+                    ):
                         continue
                 train_backends[backend_id] = backend["train_dataloader"]
             # Begin dataloader prefetch, if enabled.

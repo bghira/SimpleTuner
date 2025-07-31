@@ -280,10 +280,15 @@ class PixArtSigmaControlNetLoraLoaderMixin(LoraBaseMixin):
                     transformer_state_dict[key] = value
 
         # Load into transformer if there are transformer weights
+        _transformer = (
+            self.transformer
+            if not hasattr(self.transformer, "transformer")
+            else self.transformer.transformer
+        )
         if transformer_state_dict:
             self.load_lora_into_transformer(
                 transformer_state_dict,
-                transformer=self.transformer.transformer,  # Access the base transformer
+                transformer=_transformer,  # Access the base transformer
                 adapter_name=adapter_name,
                 _pipeline=self,
             )
@@ -444,7 +449,11 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
             scheduler=scheduler,
         )
 
-        self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1) if self.vae is not None else 8
+        self.vae_scale_factor = (
+            2 ** (len(self.vae.config.block_out_channels) - 1)
+            if self.vae is not None
+            else 8
+        )
         self.image_processor = PixArtImageProcessor(
             vae_scale_factor=self.vae_scale_factor
         )
@@ -2868,15 +2877,13 @@ class PixArtSigmaControlNetPipeline(
         Function invoked when calling the pipeline for generation.
         """
         # 1. Check inputs
-        _transformer = self.transformer if not hasattr(self.transformer, "transformer") else self.transformer.transformer
-        height = (
-            height
-            or _transformer.config.sample_size * self.vae_scale_factor
+        _transformer = (
+            self.transformer
+            if not hasattr(self.transformer, "transformer")
+            else self.transformer.transformer
         )
-        width = (
-            width
-            or _transformer.config.sample_size * self.vae_scale_factor
-        )
+        height = height or _transformer.config.sample_size * self.vae_scale_factor
+        width = width or _transformer.config.sample_size * self.vae_scale_factor
 
         if use_resolution_binning:
             if _transformer.config.sample_size == 256:
@@ -2968,7 +2975,7 @@ class PixArtSigmaControlNetPipeline(
             )
 
         # 5. Prepare latents
-        latent_channels = self.transformer.transformer.config.in_channels
+        latent_channels = _transformer.config.in_channels
         latents = self.prepare_latents(
             batch_size * num_images_per_prompt,
             latent_channels,
@@ -3063,10 +3070,7 @@ class PixArtSigmaControlNetPipeline(
                     )
 
                 # learned sigma
-                if (
-                    self.transformer.transformer.config.out_channels // 2
-                    == latent_channels
-                ):
+                if _transformer.config.out_channels // 2 == latent_channels:
                     noise_pred = noise_pred.chunk(2, dim=1)[0]
 
                 # compute previous image: x_t -> x_t-1

@@ -206,10 +206,6 @@ class TestTrainer(unittest.TestCase):
     @patch(
         "helpers.training.trainer.model_classes", {"full": ["sdxl", "sd3", "legacy"]}
     )
-    @patch(
-        "helpers.training.trainer.model_labels",
-        {"sdxl": "SDXL", "sd3": "SD3", "legacy": "Legacy"},
-    )
     @patch("helpers.training.state_tracker.StateTracker")
     def test_set_model_family_default(self, mock_state_tracker, mock_logger):
         with patch("helpers.training.trainer.Trainer._misc_init"):

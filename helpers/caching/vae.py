@@ -142,7 +142,10 @@ class VAECache(WebhookMixin):
         if len(self.cache_dir) > 0 and self.cache_dir[-1] == "/":
             # Remove trailing slash
             self.cache_dir = self.cache_dir[:-1]
-        if self.cache_data_backend and self.cache_data_backend.type in ["local", "huggingface"]:
+        if self.cache_data_backend and self.cache_data_backend.type in [
+            "local",
+            "huggingface",
+        ]:
             self.cache_dir = os.path.abspath(self.cache_dir)
             self.cache_data_backend.create_directory(self.cache_dir)
         self.resolution = resolution
