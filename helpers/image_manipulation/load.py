@@ -1,6 +1,6 @@
 import logging
 import tempfile
-import os, sys
+import os
 import numpy as np
 
 from io import BytesIO
