@@ -5,7 +5,6 @@ import numpy as np
 
 from io import BytesIO
 from typing import Union, IO, Any
-from contextlib import contextmanager
 
 try:
     import pillow_jxl
