@@ -74,6 +74,41 @@ def decode_image_with_pil(img_data: bytes) -> Image.Image:
     return img_pil
 
 
+def remove_iccp_chunk(img_bytes: bytes) -> bytes:
+    """
+    Remove the iCCP chunk from a PNG image if present.
+    Returns the modified bytes, or the original if not PNG or no iCCP chunk found.
+    """
+    PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+    if not img_bytes.startswith(PNG_SIGNATURE):
+        return img_bytes
+
+    out = bytearray()
+    out += PNG_SIGNATURE
+    i = len(PNG_SIGNATURE)
+    while i < len(img_bytes):
+        # Need at least 8 bytes for length and type
+        if i + 8 > len(img_bytes):
+            break
+        length = int.from_bytes(img_bytes[i : i + 4], "big")
+        # Validate length: must be non-negative, not too large, and fit in buffer
+        if length < 0 or length > 2**31 - 1 or i + 8 + length + 4 > len(img_bytes):
+            # Malformed chunk length; abort processing to avoid memory issues
+            break
+        # Need enough bytes for chunk data and CRC (4 bytes)
+        if i + 8 + length + 4 > len(img_bytes):
+            break
+        chunk_type = img_bytes[i + 4 : i + 8]
+        # crc = img_bytes[i + 8 + length : i + 12 + length]
+        if chunk_type == b"iCCP":
+            # skip this chunk
+            i += 8 + length + 4
+            continue
+        out += img_bytes[i : i + 8 + length + 4]
+        i += 8 + length + 4
+    return bytes(out)
+
+
 def load_image(img_data: Union[bytes, IO[Any], str]) -> Image.Image:
     """
     Load an image using CV2. If that fails, fall back to PIL.
@@ -86,6 +121,9 @@ def load_image(img_data: Union[bytes, IO[Any], str]) -> Image.Image:
     elif hasattr(img_data, "read"):
         # Check if it's file-like object.
         img_data = img_data.read()
+
+    # remove iCCP chunk if found
+    img_data = remove_iccp_chunk(img_data)
 
     # Preload the image bytes with channels unchanged and ensure determine
     # if the image has an alpha channel. If it does we should add a white
