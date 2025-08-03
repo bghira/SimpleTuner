@@ -91,6 +91,10 @@ def remove_iccp_chunk(img_bytes: bytes) -> bytes:
         if i + 8 > len(img_bytes):
             break
         length = int.from_bytes(img_bytes[i : i + 4], "big")
+        # Validate length: must be non-negative, not too large, and fit in buffer
+        if length < 0 or length > 2**31 - 1 or i + 8 + length + 4 > len(img_bytes):
+            # Malformed chunk length; abort processing to avoid memory issues
+            break
         # Need enough bytes for chunk data and CRC (4 bytes)
         if i + 8 + length + 4 > len(img_bytes):
             break
