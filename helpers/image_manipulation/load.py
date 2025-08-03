@@ -99,7 +99,6 @@ def remove_iccp_chunk(img_bytes: bytes) -> bytes:
         if i + 8 + length + 4 > len(img_bytes):
             break
         chunk_type = img_bytes[i + 4 : i + 8]
-        chunk_data = img_bytes[i + 8 : i + 8 + length]
         # crc = img_bytes[i + 8 + length : i + 12 + length]
         if chunk_type == b"iCCP":
             # skip this chunk
