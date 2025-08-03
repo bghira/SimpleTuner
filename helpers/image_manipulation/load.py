@@ -87,9 +87,13 @@ def remove_iccp_chunk(img_bytes: bytes) -> bytes:
     out += PNG_SIGNATURE
     i = len(PNG_SIGNATURE)
     while i < len(img_bytes):
+        # Need at least 8 bytes for length and type
         if i + 8 > len(img_bytes):
             break
         length = int.from_bytes(img_bytes[i : i + 4], "big")
+        # Need enough bytes for chunk data and CRC (4 bytes)
+        if i + 8 + length + 4 > len(img_bytes):
+            break
         chunk_type = img_bytes[i + 4 : i + 8]
         chunk_data = img_bytes[i + 8 : i + 8 + length]
         crc = img_bytes[i + 8 + length : i + 12 + length]
