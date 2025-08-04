@@ -250,18 +250,28 @@ class TrainingSample:
         elif self.resolution_type == "area":
             # Convert pixel area to megapixels, remapping commonly used round values
             # to their pixel_area equivalents for compatibility purposes.
-            self.target_area = {
+            resolution_map = {
                 0.25: 512**2,
                 0.5: 768**2,
                 1.0: 1024**2,
                 2.0: 1536**2,
                 4.0: 2048**2,
-            }.get(self.resolution, self.resolution * 1e6)
+            }
+            # Find the closest match within a small tolerance
+            target_area = None
+            for key, value in resolution_map.items():
+                if abs(self.resolution - key) < 0.05:  # Allow 0.05 tolerance
+                    target_area = value
+                    break
+
+            if target_area is None:
+                target_area = self.resolution * 1e6
+
+            self.target_area = target_area
+
             # Store the pixel value, eg. 1024
             self.pixel_resolution = int(
-                MultiaspectImage._round_to_nearest_multiple(
-                    sqrt(self.resolution * (1024**2))
-                )
+                MultiaspectImage._round_to_nearest_multiple(sqrt(self.target_area))
             )
             # Store the megapixel value, eg. 1.0
             self.megapixel_resolution = self.resolution
@@ -416,7 +426,7 @@ class TrainingSample:
         Perform initial image preparations such as converting to RGB and applying EXIF transformations.
 
         Args:
-            image (Image.Image): The image to prepare.
+            return_tensor (bool): Whether to return tensors.
 
         Returns: tuple
             - image data (PIL.Image)
@@ -436,11 +446,17 @@ class TrainingSample:
             # Return normalised tensor.
             image = self.transforms(image)
         webhook_handler = StateTracker.get_webhook_handler()
+
+        # For square crops, ensure aspect ratio is exactly 1.0
+        final_aspect_ratio = self.aspect_ratio
+        if self.crop_enabled and self.crop_aspect == "square":
+            final_aspect_ratio = 1.0
+
         prepared_sample = PreparedSample(
             image=image,
             original_size=self.original_size,
             crop_coordinates=self.crop_coordinates,
-            aspect_ratio=self.aspect_ratio,
+            aspect_ratio=final_aspect_ratio,  # Use the corrected aspect ratio
             image_metadata=self.image_metadata,
             target_size=self.target_size,
             intermediary_size=self.intermediary_size,
@@ -636,11 +652,20 @@ class TrainingSample:
         self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
             self.original_size
         )
+        is_square_crop = False  # Track if we want square output
+
         if self.crop_enabled:
             if self.crop_aspect == "square":
+                is_square_crop = True
                 self.target_size = (self.pixel_resolution, self.pixel_resolution)
                 # ensure the area isn't past the allowed range.
                 self.target_size = self._limit_maximum_size(self.target_size)
+
+                # Force square dimensions after limiting
+                if self.target_size[0] != self.target_size[1]:
+                    min_dim = min(self.target_size[0], self.target_size[1])
+                    self.target_size = (min_dim, min_dim)
+
                 _, self.intermediary_size, _ = self.target_size_calculator(
                     self.aspect_ratio, self.resolution, self.original_size
                 )
@@ -653,25 +678,35 @@ class TrainingSample:
                 )
                 logger.debug(f"Square crop metadata: {square_crop_metadata}")
                 return square_crop_metadata
+
         if self.crop_enabled and (
             self.crop_aspect == "random" or self.crop_aspect == "closest"
         ):
             # Grab a random aspect ratio from a list.
             self.aspect_ratio = self._select_random_aspect()
+
         self.target_size, calculated_intermediary_size, self.aspect_ratio = (
             self.target_size_calculator(
                 self.aspect_ratio, self.resolution, self.original_size
             )
         )
         self.target_size = self._limit_maximum_size(self.target_size)
+
         if (
             self.crop_enabled and self.crop_aspect != "random"
         ) or not self.valid_metadata:
             self.intermediary_size = calculated_intermediary_size
-        self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-            self.target_size
-        )
+
+        # Only recalculate aspect ratio if it's not a square crop
+        if not is_square_crop:
+            self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+                self.target_size
+            )
+        else:
+            self.aspect_ratio = 1.0
+
         self.correct_intermediary_square_size()
+
         if self.aspect_ratio == 1.0:
             self.target_size = (self.pixel_resolution, self.pixel_resolution)
 
