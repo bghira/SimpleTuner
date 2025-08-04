@@ -870,12 +870,7 @@ class PreparedSample:
         self.original_size = original_size
         self.intermediary_size = intermediary_size
         self.target_size = target_size
-        if image is not None and hasattr(image, "size") and type(image.size) is tuple:
-            self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-                image.size[0] / image.size[1]
-            )
-        else:
-            self.aspect_ratio = aspect_ratio
+        self.aspect_ratio = aspect_ratio
         self.crop_coordinates = crop_coordinates
 
     def __str__(self):
