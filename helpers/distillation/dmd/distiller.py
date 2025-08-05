@@ -316,8 +316,7 @@ class DMDDistiller(DistillationBase):
         torch.nn.utils.clip_grad_norm_(self.fake_score_transformer.parameters(), 1.0)
         self.fake_score_optimizer.step()
 
-        if hasattr(self, "logger"):
-            self.logger.debug(f"Fake score loss: {loss.item():.4f}")
+        logger.debug(f"Fake score loss: {loss.item():.4f}")
 
     def _pred_noise_to_pred_video(self, pred_noise, noise_input, timestep):
         """Convert predicted noise to predicted clean video."""
