@@ -182,6 +182,15 @@ A 2B / 14B parameter model that can do video as well as text-to-image.
 
 A [Cosmos2 Predict Quickstart](/documentation/quickstart/COSMOS2IMAGE.md) is available with full example configuration and dataset.
 
+### Qwen-Image
+
+A **massive** 20B MMDiT that can do text-to-image.
+
+- Lycoris, LoRA, and full-rank training are all supported, with full-rank training requiring H200 or better with DeepSpeed
+- ControlNet training is not yet supported.
+
+A [Qwen Image Quickstart](/documentation/quickstart/QWEN_IMAGE.md) is available with example configuration and dataset, as well as general training/configuration tips.
+
 ### Legacy Stable Diffusion models
 
 RunwayML's SD 1.5 and StabilityAI's SD 2.x are both trainable under the `legacy` designation.
