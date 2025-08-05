@@ -17,9 +17,6 @@ from diffusers import (
     QwenImagePipeline,
 )
 from diffusers.models.attention_processor import Attention
-from helpers.training.custom_schedule import (
-    apply_flow_schedule_shift,
-)
 
 logger = logging.getLogger(__name__)
 from helpers.training.multi_process import should_log
@@ -36,7 +33,6 @@ class QwenImage(ImageModelFoundation):
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKLQwenImage
     LATENT_CHANNEL_COUNT = 16
-    AUTOENCODER_SCALING_FACTOR = 1.0  # Qwen Image doesn't use additional scaling
 
     MODEL_CLASS = QwenImageTransformer2DModel
     MODEL_SUBFOLDER = "transformer"
@@ -67,9 +63,7 @@ class QwenImage(ImageModelFoundation):
 
     def __init__(self, config: dict, accelerator):
         super().__init__(config, accelerator)
-        # Qwen Image specific initialization
-        self.is_flow_matching = True
-        self.is_transformer = True
+        self.vae_scale_factor = 8
 
     def setup_training_noise_schedule(self):
         """
@@ -91,7 +85,7 @@ class QwenImage(ImageModelFoundation):
             "use_beta_sigmas": False,
             "use_dynamic_shifting": True,
             "use_exponential_sigmas": False,
-            "use_karras_sigmas": False
+            "use_karras_sigmas": False,
         }
 
         self.noise_schedule = FlowMatchEulerDiscreteScheduler(**scheduler_config)
@@ -99,52 +93,14 @@ class QwenImage(ImageModelFoundation):
 
         return self.config, self.noise_schedule
 
-    def load_model(self, move_to_device: bool = True):
-        """
-        Load the Qwen Image model components.
-        """
-        from transformers.utils import ContextManagers
-        from helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
-
-        dtype = self.config.weight_dtype
-        logger.info("Loading Qwen Image model")
-
-        # Determine model paths
-        model_path = self.config.pretrained_model_name_or_path
-        transformer_subfolder = 'transformer'
-
-        # Check if it's a full checkpoint
-        if os.path.exists(model_path):
-            transformer_path = os.path.join(model_path, 'transformer')
-            if os.path.exists(transformer_path):
-                transformer_subfolder = None
-                te_folder_path = os.path.join(model_path, 'text_encoder')
-                if os.path.exists(te_folder_path):
-                    # Full checkpoint, use as base
-                    pass
-
-        # Load transformer
-        logger.info("Loading transformer")
-        with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
-            self.model = QwenImageTransformer2DModel.from_pretrained(
-                transformer_path if transformer_subfolder is None else model_path,
-                subfolder=transformer_subfolder,
-                torch_dtype=dtype
-            )
-
-        if move_to_device:
-            self.model.to(self.accelerator.device, dtype=dtype)
-
-        self.post_model_load_setup()
-
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
         """
         Encode prompts using Qwen's text encoder.
-        
+
         Args:
             prompts: List of text prompts to encode
             is_negative_prompt: Whether these are negative prompts
-            
+
         Returns:
             Tuple of (prompt_embeds, prompt_embeds_mask)
         """
@@ -160,7 +116,7 @@ class QwenImage(ImageModelFoundation):
 
         # Get the pipeline for encoding
         pipeline = self.get_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)
-        
+
         # Use pipeline's encode_prompt method
         prompt_embeds, prompt_embeds_mask = pipeline.encode_prompt(
             prompts,
@@ -168,19 +124,19 @@ class QwenImage(ImageModelFoundation):
             num_images_per_prompt=1,
         )
 
-        return prompt_embeds, prompt_embeds_mask, None, prompt_embeds_mask
+        return prompt_embeds, prompt_embeds_mask
 
     def _format_text_embedding(self, text_embedding: torch.Tensor):
         """
         Format the text embeddings for Qwen Image.
-        
+
         Args:
             text_embedding: The embedding tuple from _encode_prompts
-            
+
         Returns:
             Dictionary with formatted embeddings
         """
-        prompt_embeds, prompt_embeds_mask, _, masks = text_embedding
+        prompt_embeds, prompt_embeds_mask = text_embedding
 
         return {
             "prompt_embeds": prompt_embeds,
@@ -196,12 +152,16 @@ class QwenImage(ImageModelFoundation):
             attention_mask = attention_mask.unsqueeze(0)
 
         return {
-            "prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0)
-            if text_embedding["prompt_embeds"].dim() == 2
-            else text_embedding["prompt_embeds"],
-            "prompt_embeds_mask": attention_mask.to(dtype=torch.int64)
-            if attention_mask is not None
-            else None,
+            "prompt_embeds": (
+                text_embedding["prompt_embeds"].unsqueeze(0)
+                if text_embedding["prompt_embeds"].dim() == 2
+                else text_embedding["prompt_embeds"]
+            ),
+            "prompt_embeds_mask": (
+                attention_mask.to(dtype=torch.int64)
+                if attention_mask is not None
+                else None
+            ),
         }
 
     def convert_negative_text_embed_for_pipeline(
@@ -215,45 +175,54 @@ class QwenImage(ImageModelFoundation):
             attention_mask = attention_mask.unsqueeze(0)
 
         return {
-            "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0)
-            if text_embedding["prompt_embeds"].dim() == 2
-            else text_embedding["prompt_embeds"],
-            "negative_prompt_embeds_mask": attention_mask.to(dtype=torch.int64)
-            if attention_mask is not None
-            else None,
+            "negative_prompt_embeds": (
+                text_embedding["prompt_embeds"].unsqueeze(0)
+                if text_embedding["prompt_embeds"].dim() == 2
+                else text_embedding["prompt_embeds"]
+            ),
+            "negative_prompt_embeds_mask": (
+                attention_mask.to(dtype=torch.int64)
+                if attention_mask is not None
+                else None
+            ),
         }
 
     def model_predict(self, prepared_batch):
         """
         Perform a forward pass with the Qwen Image model.
-        
-        Args:
-            prepared_batch: Dictionary containing prepared batch data
-            
-        Returns:
-            Dictionary with model prediction
         """
         latent_model_input = prepared_batch["noisy_latents"]
         timesteps = prepared_batch["timesteps"]
-        
-        # Prepare the latents for Qwen Image (patchify)
-        batch_size, num_channels, height, width = latent_model_input.shape
-        
-        # Reshape to patches: (B, C, H, W) -> (B, H//2 * W//2, C*4)
-        latent_model_input = latent_model_input.view(
-            batch_size, num_channels, height // 2, 2, width // 2, 2
+
+        # Handle both 4D and 5D inputs
+        if latent_model_input.dim() == 5:
+            batch_size, num_channels, frames, latent_height, latent_width = (
+                latent_model_input.shape
+            )
+            latent_model_input = latent_model_input.squeeze(2)
+        else:
+            batch_size, num_channels, latent_height, latent_width = (
+                latent_model_input.shape
+            )
+
+        # Get the pipeline class to use its static methods
+        pipeline_class = self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
+
+        # Pack latents using the official method
+        latent_model_input = pipeline_class._pack_latents(
+            latent_model_input,
+            batch_size,
+            num_channels,
+            latent_height,  # Already in latent space
+            latent_width,  # Already in latent space
         )
-        latent_model_input = latent_model_input.permute(0, 2, 4, 1, 3, 5)
-        latent_model_input = latent_model_input.reshape(
-            batch_size, (height // 2) * (width // 2), num_channels * 4
-        )
-        
+
         # Prepare text embeddings
         prompt_embeds = prepared_batch["prompt_embeds"].to(
             device=self.accelerator.device,
             dtype=self.config.weight_dtype,
         )
-        
+
         # Get attention mask
         prompt_embeds_mask = prepared_batch.get("encoder_attention_mask")
         if prompt_embeds_mask is not None:
@@ -262,25 +231,25 @@ class QwenImage(ImageModelFoundation):
             )
             if prompt_embeds_mask.dim() == 3 and prompt_embeds_mask.size(1) == 1:
                 prompt_embeds_mask = prompt_embeds_mask.squeeze(1)
-        
-        # Prepare image shapes
-        img_shapes = [(1, height // 2, width // 2)] * batch_size
-        
+
+        # Prepare image shapes - using the LATENT dimensions divided by 2 (for patchification)
+        img_shapes = [(1, latent_height // 2, latent_width // 2)] * batch_size
+
         # Prepare timesteps (normalize to 0-1 range)
         timesteps = (
             torch.tensor(prepared_batch["timesteps"])
             .expand(batch_size)
             .to(device=self.accelerator.device)
-            / self.noise_schedule.config.num_train_timesteps
+            / 1000.0  # Normalize to [0, 1]
         )
-        
+
         # Get text sequence lengths
         txt_seq_lens = (
             prompt_embeds_mask.sum(dim=1).tolist()
             if prompt_embeds_mask is not None
             else [prompt_embeds.shape[1]] * batch_size
         )
-        
+
         # Forward pass through transformer
         noise_pred = self.model(
             hidden_states=latent_model_input.to(
@@ -294,22 +263,61 @@ class QwenImage(ImageModelFoundation):
             txt_seq_lens=txt_seq_lens,
             return_dict=False,
         )[0]
-        
+
         # Unpack the noise prediction back to original shape
-        noise_pred = noise_pred.view(
-            batch_size, height // 2, width // 2, num_channels, 2, 2
+        # Note: _unpack_latents expects pixel-space dimensions and will apply vae_scale_factor
+        # So we need to convert our latent dimensions back to pixel space
+        pixel_height = latent_height * self.vae_scale_factor
+        pixel_width = latent_width * self.vae_scale_factor
+
+        noise_pred = pipeline_class._unpack_latents(
+            noise_pred, pixel_height, pixel_width, self.vae_scale_factor
         )
-        noise_pred = noise_pred.permute(0, 3, 1, 4, 2, 5)
-        noise_pred = noise_pred.reshape(batch_size, num_channels, height, width)
-        
+
+        # Remove the extra dimension that _unpack_latents adds
+        if noise_pred.dim() == 5:
+            noise_pred = noise_pred.squeeze(2)  # Remove the frame dimension
+
         return {"model_prediction": noise_pred}
+
+    def pre_vae_encode_transform_sample(self, sample):
+        """
+        Pre-encode transform for the sample before passing it to the VAE.
+        Qwen Image VAE expects 5D input (adds frame dimension).
+        """
+        # Add frame dimension for Qwen VAE if needed
+        if sample.dim() == 4:
+            sample = sample.unsqueeze(2)  # (B, C, H, W) -> (B, C, 1, H, W)
+        return sample
+
+    def post_vae_encode_transform_sample(self, sample):
+        """
+        Post-encode transform for Qwen Image VAE output.
+        Normalizes latents and removes frame dimension.
+        """
+        # Qwen Image VAE normalization
+        latents_mean = (
+            torch.tensor(self.vae.config.latents_mean)
+            .view(1, self.vae.config.z_dim, 1, 1)
+            .to(sample.device, sample.dtype)
+        )
+        latents_std = 1.0 / torch.tensor(self.vae.config.latents_std).view(
+            1, self.vae.config.z_dim, 1, 1
+        ).to(sample.device, sample.dtype)
+
+        sample = (sample - latents_mean) * latents_std
+
+        # Remove frame dimension if present
+        if sample.dim() == 5:
+            sample = sample.squeeze(2)  # (B, C, 1, H, W) -> (B, C, H, W)
+        return sample
 
     def check_user_config(self):
         """
         Check and validate user configuration for Qwen Image.
         """
         super().check_user_config()
-        
+
         # Qwen Image specific checks
         if self.config.aspect_bucket_alignment != 32:
             logger.warning(
@@ -317,7 +325,7 @@ class QwenImage(ImageModelFoundation):
                 "Overriding the value of --aspect_bucket_alignment."
             )
             self.config.aspect_bucket_alignment = 32
-        
+
         # Ensure we're using flow matching
         if self.config.prediction_type != "flow_matching":
             logger.warning(
@@ -325,47 +333,3 @@ class QwenImage(ImageModelFoundation):
                 "Overriding prediction_type to 'flow_matching'."
             )
             self.config.prediction_type = "flow_matching"
-
-    def pre_vae_encode_transform_sample(self, sample):
-        """
-        Pre-encode transform for the sample before passing it to the VAE.
-        For QwenImage, we need to add a frame dimension since it uses Wan VAE.
-        """
-        # Add frame dimension: (B, C, H, W) -> (B, C, 1, H, W)
-        if sample.dim() == 4:
-            sample = sample.unsqueeze(2)
-        return sample
-
-    def post_vae_encode_transform_sample(self, sample):
-        """
-        Post-encode transform for Qwen Image VAE output.
-        """
-        # Remove frame dimension if present: (B, C, 1, H, W) -> (B, C, H, W)
-        if sample.dim() == 5 and sample.shape[2] == 1:
-            sample = sample.squeeze(2)
-        
-        # Qwen Image VAE normalization
-        if hasattr(self.vae.config, "latents_mean") and hasattr(
-            self.vae.config, "latents_std"
-        ):
-            # Adjust dimensions based on whether frame dim is present
-            if sample.dim() == 5:
-                latents_mean = torch.tensor(self.vae.config.latents_mean).view(
-                    1, self.vae.config.z_dim, 1, 1, 1
-                ).to(sample.device, sample.dtype)
-                
-                latents_std = 1.0 / torch.tensor(self.vae.config.latents_std).view(
-                    1, self.vae.config.z_dim, 1, 1, 1
-                ).to(sample.device, sample.dtype)
-            else:
-                latents_mean = torch.tensor(self.vae.config.latents_mean).view(
-                    1, self.vae.config.z_dim, 1, 1
-                ).to(sample.device, sample.dtype)
-                
-                latents_std = 1.0 / torch.tensor(self.vae.config.latents_std).view(
-                    1, self.vae.config.z_dim, 1, 1
-                ).to(sample.device, sample.dtype)
-            
-            sample = (sample - latents_mean) * latents_std
-        
-        return sample
