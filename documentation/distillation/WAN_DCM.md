@@ -1,6 +1,6 @@
 # DCM Distillation Quickstart (SimpleTuner)
 
-In this example, we'll be training a **50-step student** using **DCM distillation** from a large flow-matching teacher model like [Wan 2.1 T2V](https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B).
+In this example, we'll be training a **4-step student** using **DCM distillation** from a large flow-matching teacher model like [Wan 2.1 T2V](https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B).
 
 DCM supports:
 
@@ -109,7 +109,7 @@ Edit your `config/config.json`:
     "validation_prompt_library": false,
     "validation_resolution": "832x480",
     "validation_seed": 42,
-    "validation_steps": 50,
+    "validation_steps": 4,
     "webhook_config": "config/wan/webhook.json"
 }
 ```
