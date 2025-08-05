@@ -675,8 +675,8 @@ class VAECache(WebhookMixin):
                     processed_images
                 )
                 latents_uncached = self.vae.encode(processed_images)
-                processed_images = self.model.post_vae_encode_transform_sample(
-                    processed_images
+                latents_uncached = self.model.post_vae_encode_transform_sample(
+                    latents_uncached
                 )
 
                 # For Wan, get the raw parameters (32 channels)
