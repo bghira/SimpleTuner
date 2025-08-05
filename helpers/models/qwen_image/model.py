@@ -303,7 +303,6 @@ class QwenImage(ImageModelFoundation):
             sample_latents = sample_latents.squeeze(
                 2
             )  # (B, C, 1, H, W) -> (B, C, H, W)
-        print(f"Initial {sample_latents.shape=}")
         latents_mean = (
             torch.tensor(self.vae.config.latents_mean)
             .view(1, self.vae.config.z_dim, 1, 1)
@@ -315,7 +314,6 @@ class QwenImage(ImageModelFoundation):
 
         sample_latents = (sample_latents - latents_mean) * latents_std
 
-        print(f"Final {sample_latents.shape=}")
         return sample_latents
 
     def check_user_config(self):
