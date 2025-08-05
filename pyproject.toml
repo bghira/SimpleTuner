@@ -12,7 +12,7 @@ python = ">=3.10,<3.13"
 torch = {version = "^2.7.1", source = "pytorch"}
 torchvision = {version = "^0.22.1", source = "pytorch"}
 diffusers = {git = "https://github.com/huggingface/diffusers"}
-transformers = "^4.51.1"
+transformers = "^4.55.0"
 datasets = "^3.0.1"
 bitsandbytes = "^0.45.0"
 wandb = "^0.21.0"
