@@ -371,7 +371,11 @@ class DMDDistiller(DistillationBase):
         # Load optimizer
         opt_path = os.path.join(ckpt_dir, DMD_OPTIMIZER_DEFAULT_FILENAME)
         if os.path.exists(opt_path):
+            if torch.cuda.is_available():
+                map_location = {"cuda:0": f"cuda:{torch.cuda.current_device()}"}
+            else:
+                map_location = "cpu"
             payload = torch.load(
-                opt_path, map_location={"cuda:0": f"cuda:{torch.cuda.current_device()}"}
+                opt_path, map_location=map_location
             )
             self.fake_score_optimizer.load_state_dict(payload["state"])
