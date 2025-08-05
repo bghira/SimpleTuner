@@ -17,7 +17,7 @@ DMD features:
 
 It's recommended to attempt LCM or DCM distillation methods for the 14B Wan model instead of DMD, if you do not have the needed VRAM.
 
-**A B200** may be required currently without sparse attention support when distilling the 14B.
+An NVIDIA B200 may be required when distilling the 14B model without sparse attention support.
 
 Using LoRA student training can reduce the requirements substantially, but still quite hefty.
 
