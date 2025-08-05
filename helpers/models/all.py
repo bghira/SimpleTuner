@@ -13,6 +13,7 @@ from helpers.models.omnigen.model import OmniGen
 from helpers.models.auraflow.model import Auraflow
 from helpers.models.lumina2.model import Lumina2
 from helpers.models.cosmos.model import Cosmos2Image
+from helpers.models.qwen_image.model import QwenImage
 
 model_families = {
     "sd1x": StableDiffusion1,
@@ -31,6 +32,7 @@ model_families = {
     "auraflow": Auraflow,
     "lumina2": Lumina2,
     "cosmos2image": Cosmos2Image,
+    "qwen_image": QwenImage,
 }
 
 

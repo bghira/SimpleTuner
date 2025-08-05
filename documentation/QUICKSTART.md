@@ -19,6 +19,7 @@
 | [Cosmos2](/documentation/quickstart/COSMOS2IMAGE.md)      | 2B   |  ✓   |  ✓   |     ✓    | not recommended         | bf16            | ✓                    | ✓               |           |
 | [LTX Video](/documentation/quickstart/LTXVIDEO.md)| ~2.5 B      |  ✓   |  ✓   |     ✓     | optional (int8,  fp8)       | bf16            | ✓                    | ✓               |           |
 | [Wan 2.1](/documentation/quickstart/WAN.md)      | 1.3B-14B   |  ✓   |  ✓   |     ✓*    | optional (int8)           | bf16            | ✓                    | ✓               |           |
+| [Qwen Image](/documentation/quickstart/QWEN_IMAGE.md) | 20B |  ✓   |  ✓   |     ✓*    | required (int8, nf4)      | bf16            | ✓ (required)         | ✓               |           |
 
 * _✓ = Supported_
 * _* Requires DeepSpeed for full-rank_
