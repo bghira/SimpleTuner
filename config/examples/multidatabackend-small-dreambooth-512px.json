@@ -11,7 +11,7 @@
     "resolution_type": "pixel",
     "metadata_backend": "huggingface",
     "caption_strategy": "instanceprompt",
-    "instance_prompt": "minecraft",
+    "instance_prompt": "The image represents the world of minecraft. In the image is a landscape from the game minecraft. The landscape is made of blocks called voxels, and the game is fun for all ages.",
     "cache_dir_vae": "cache/vae/{model_family}/dreambooth-512"
   },
   {
