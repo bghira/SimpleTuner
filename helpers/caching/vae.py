@@ -675,6 +675,9 @@ class VAECache(WebhookMixin):
                     processed_images
                 )
                 latents_uncached = self.vae.encode(processed_images)
+                latents_uncached = self.model.post_vae_encode_transform_sample(
+                    latents_uncached
+                )
 
                 # For Wan, get the raw parameters (32 channels)
                 if StateTracker.get_model_family() in ["wan", "cosmos2image"]:
