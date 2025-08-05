@@ -328,7 +328,10 @@ class DMDDistiller(DistillationBase):
 
     def on_save_checkpoint(self, step: int, ckpt_dir: str):
         """Save fake score transformer checkpoint."""
-        if self.fake_score_transformer is None or torch.distributed.get_rank() != 0:
+        if (
+            self.fake_score_transformer is None
+            or (torch.distributed.is_initialized() and torch.distributed.get_rank() != 0)
+        ):
             return
 
         # Model weights
