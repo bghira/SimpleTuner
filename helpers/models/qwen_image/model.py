@@ -32,6 +32,7 @@ class QwenImage(ImageModelFoundation):
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKLQwenImage
+    AUTOENCODER_SCALING_FACTOR = 1.0
     LATENT_CHANNEL_COUNT = 16
 
     MODEL_CLASS = QwenImageTransformer2DModel
@@ -208,13 +209,18 @@ class QwenImage(ImageModelFoundation):
         # Get the pipeline class to use its static methods
         pipeline_class = self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
 
+        # Note: _unpack_latents expects pixel-space dimensions and will apply vae_scale_factor
+        # So we need to convert our latent dimensions back to pixel space
+        pixel_height = latent_height * self.vae_scale_factor
+        pixel_width = latent_width * self.vae_scale_factor
+
         # Pack latents using the official method
         latent_model_input = pipeline_class._pack_latents(
             latent_model_input,
             batch_size,
             num_channels,
-            latent_height,  # Already in latent space
-            latent_width,  # Already in latent space
+            latent_height,
+            latent_width,
         )
 
         # Prepare text embeddings
@@ -265,11 +271,6 @@ class QwenImage(ImageModelFoundation):
         )[0]
 
         # Unpack the noise prediction back to original shape
-        # Note: _unpack_latents expects pixel-space dimensions and will apply vae_scale_factor
-        # So we need to convert our latent dimensions back to pixel space
-        pixel_height = latent_height * self.vae_scale_factor
-        pixel_width = latent_width * self.vae_scale_factor
-
         noise_pred = pipeline_class._unpack_latents(
             noise_pred, pixel_height, pixel_width, self.vae_scale_factor
         )
@@ -296,21 +297,26 @@ class QwenImage(ImageModelFoundation):
         Normalizes latents and removes frame dimension.
         """
         # Qwen Image VAE normalization
+        # Remove frame dimension if present
+        sample_latents = sample.latent_dist.sample()
+        if sample_latents.dim() == 5:
+            sample_latents = sample_latents.squeeze(
+                2
+            )  # (B, C, 1, H, W) -> (B, C, H, W)
+        print(f"Initial {sample_latents.shape=}")
         latents_mean = (
             torch.tensor(self.vae.config.latents_mean)
             .view(1, self.vae.config.z_dim, 1, 1)
-            .to(sample.device, sample.dtype)
+            .to(sample_latents.device, sample_latents.dtype)
         )
         latents_std = 1.0 / torch.tensor(self.vae.config.latents_std).view(
             1, self.vae.config.z_dim, 1, 1
-        ).to(sample.device, sample.dtype)
+        ).to(sample_latents.device, sample_latents.dtype)
 
-        sample = (sample - latents_mean) * latents_std
+        sample_latents = (sample_latents - latents_mean) * latents_std
 
-        # Remove frame dimension if present
-        if sample.dim() == 5:
-            sample = sample.squeeze(2)  # (B, C, 1, H, W) -> (B, C, H, W)
-        return sample
+        print(f"Final {sample_latents.shape=}")
+        return sample_latents
 
     def check_user_config(self):
         """
