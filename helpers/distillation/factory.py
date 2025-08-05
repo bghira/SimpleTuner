@@ -12,6 +12,7 @@ class DistillationMethod(Enum):
     """Supported distillation methods."""
 
     DCM = "dcm"
+    DMD = "dmd"
     LCM = "lcm"
 
     @classmethod
@@ -44,12 +45,12 @@ class DistillerFactory:
         Create a distiller instance based on the specified method.
 
         Args:
-            method: Distillation method (dcm, lcm, etc.)
+            method: Distillation method (dcm, dmd, lcm, etc.)
             teacher_model: The teacher model instance
             noise_scheduler: The noise scheduler instance
             config: Configuration dict from trainer
             model_type: Type of model training ("lora" or "full")
-            model_family: Model family for DCM (e.g., "wan", "hunyuan")
+            model_family: Model family (e.g., "wan", "hunyuan")
             prediction_type: Model prediction type (e.g., "flow_matching", "epsilon")
             student_model: Optional separate student model (for full model distillation)
 
@@ -84,6 +85,16 @@ class DistillerFactory:
                 prediction_type=prediction_type,
                 student_model=student_model,
             )
+        elif method == DistillationMethod.DMD:
+            return DistillerFactory._create_dmd_distiller(
+                teacher_model=teacher_model,
+                noise_scheduler=noise_scheduler,
+                distill_config=distill_config,
+                model_type=model_type,
+                model_family=model_family,
+                prediction_type=prediction_type,
+                student_model=student_model,
+            )
         elif method == DistillationMethod.LCM:
             return DistillerFactory._create_lcm_distiller(
                 teacher_model=teacher_model,
@@ -95,6 +106,74 @@ class DistillerFactory:
             )
         else:
             raise ValueError(f"Unsupported distillation method: {method}")
+
+    @staticmethod
+    def _create_dmd_distiller(
+        teacher_model,
+        noise_scheduler,
+        distill_config: Dict[str, Any],
+        model_type: str,
+        model_family: Optional[str],
+        prediction_type: Optional[str],
+        student_model=None,
+    ) -> DistillationBase:
+        """Create and configure a DMD distiller."""
+        try:
+            from helpers.distillation.dmd.distiller import DMDDistiller
+        except ImportError:
+            raise ImportError(
+                "DMD distiller not found. Please ensure helpers.distillation.dmd is available."
+            )
+
+        # Build DMD-specific config with defaults
+        dmd_config = {
+            "model_family": model_family or "wan",
+            "dmd_denoising_steps": "1000,757,522",  # 3-step default
+            "min_timestep_ratio": 0.02,
+            "max_timestep_ratio": 0.98,
+            "generator_update_interval": 5,
+            "real_score_guidance_scale": 3.0,
+            "simulate_generator_forward": False,
+            "fake_score_lr": 1e-5,
+            "fake_score_lr_scheduler": "cosine_with_min_lr",
+            "min_lr_ratio": 0.5,
+        }
+
+        # Add flow-matching specific defaults if applicable
+        if prediction_type and "flow" in prediction_type.lower():
+            dmd_config["shift"] = 5.0  # FastVideo uses shift=5 for Wan models
+
+        # Override with user config
+        dmd_config.update(distill_config)
+
+        logger.info(f"Creating DMD distiller with config: {dmd_config}")
+
+        if model_type == "lora":
+            logger.info("Loading DMD distillation via low-rank adapter training.")
+            return DMDDistiller(
+                teacher_model=teacher_model,
+                student_model=None,  # Use teacher with adapters
+                noise_scheduler=noise_scheduler,
+                config=dmd_config,
+            )
+        elif model_type == "full":
+            if student_model is None:
+                # For DMD, we can use the teacher as base for student
+                logger.info(
+                    "DMD full model distillation: initializing student from teacher."
+                )
+            else:
+                logger.info(
+                    "Loading DMD distillation with separate teacher/student models."
+                )
+            return DMDDistiller(
+                teacher_model=teacher_model,
+                student_model=student_model,
+                noise_scheduler=noise_scheduler,
+                config=dmd_config,
+            )
+        else:
+            raise ValueError(f"Unknown model type: {model_type}")
 
     @staticmethod
     def _create_dcm_distiller(
