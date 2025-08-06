@@ -1,3 +1,5 @@
+import warnings
+import torch
 import logging
 import os
 from colorama import Fore, Back, Style, init
@@ -13,10 +15,19 @@ class ColorizedFormatter(logging.Formatter):
     }
 
     def format(self, record):
+        # Try to get torch rank if torch is available
+        try:
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                rank = torch.distributed.get_rank()
+            else:
+                rank = 0
+        except Exception:
+            rank = 0
+
         level_color = self.level_colors.get(record.levelno, "")
         reset_color = Style.RESET_ALL
         message = super().format(record)
-        return f"{level_color}{message}{reset_color}"
+        return f"[RANK {rank}] {level_color}{message}{reset_color}"
 
 
 # Initialize colorama
@@ -40,11 +51,25 @@ if os.path.exists("debug.log"):
     with open("debug.log", "w"):
         pass
 
-# Create a file handler
+
+# Create a file handler with rank info in the log format
+class RankFileFormatter(logging.Formatter):
+    def format(self, record):
+        try:
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                rank = torch.distributed.get_rank()
+            else:
+                rank = 0
+        except Exception:
+            rank = 0
+        message = super().format(record)
+        return f"[RANK {rank}] {message}"
+
+
 file_handler = logging.FileHandler("debug.log")
 file_handler.setLevel(logging.DEBUG)  # Capture debug and above
 file_handler.setFormatter(
-    logging.Formatter("%(asctime)s [%(levelname)s] (%(name)s) %(message)s")
+    RankFileFormatter("%(asctime)s [%(levelname)s] (%(name)s) %(message)s")
 )
 
 # Remove existing handlers
@@ -76,8 +101,6 @@ torchdistlogger = logging.getLogger("torch.distributed.nn.jit.instantiator")
 torchdistlogger.setLevel("WARNING")
 torch_utils_logger = logging.getLogger("diffusers.utils.torch_utils")
 torch_utils_logger.setLevel("ERROR")
-
-import warnings
 
 # Suppress specific PIL warning
 warnings.filterwarnings(
