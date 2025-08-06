@@ -1312,7 +1312,7 @@ class VAECache(WebhookMixin):
                             current=statistics["total"],
                         )
                     self.debug_log(
-                        f"Completed process_buckets, all {len(futures)} futures have been returned."
+                        "Completed process_buckets, all futures have been returned."
                     )
                 except Exception as e:
                     logger.error(f"Fatal error when processing bucket {bucket}: {e}")
