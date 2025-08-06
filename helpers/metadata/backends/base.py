@@ -14,6 +14,7 @@ from pathlib import Path
 from tqdm import tqdm
 from PIL import Image
 from math import floor
+from random import shuffle
 import numpy as np
 
 # For semaphore
@@ -420,7 +421,15 @@ class MetadataBackend:
             self.batch_size * num_processes * gradient_accumulation_steps
         )
 
+        should_shuffle_contents = (
+            os.environ.get("SIMPLETUNER_SHUFFLE_BUCKETS", "1") == "1"
+        )
         for bucket, images in self.aspect_ratio_bucket_indices.items():
+            # Shuffle bucket contents to ensure randomness
+            if should_shuffle_contents:
+                logger.debug(f"Shuffling bucket {bucket} contents.")
+                shuffle(images)
+
             # Trim the list to a length that's divisible by the effective batch size
             total_img_count_incl_repeats = len(images) * (self.repeats + 1)
             num_batches = ceil(total_img_count_incl_repeats / effective_batch_size)
