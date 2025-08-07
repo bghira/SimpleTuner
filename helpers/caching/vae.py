@@ -555,7 +555,7 @@ class VAECache(WebhookMixin):
             logger.debug(f"Video latent processing results: {output_cache_entry}")
             # we'll now overwrite the latents after logging.
             output_cache_entry["latents"] = latents_uncached
-        elif StateTracker.get_model_family() in ["wan", "cosmos2image"]:
+        elif StateTracker.get_model_family() in ["wan"]:
             logger.debug(
                 f"Shape for Wan VAE encode: {latents_uncached.shape} with latents_mean: {self.vae.latents_mean} and latents_std: {self.vae.latents_std}"
             )
