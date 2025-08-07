@@ -677,7 +677,7 @@ class VAECache(WebhookMixin):
                 )
 
                 # For Wan, get the raw parameters (32 channels)
-                if StateTracker.get_model_family() in ["wan", "cosmos2image"]:
+                if StateTracker.get_model_family() in ["wan"]:
                     if hasattr(latents_uncached, "latent_dist"):
                         # This is 32 channels (mu + logvar)
                         latents_uncached = latents_uncached.latent_dist.parameters
