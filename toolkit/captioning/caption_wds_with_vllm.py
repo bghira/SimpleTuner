@@ -7,7 +7,7 @@ Multi-GPU, multi-process captioner with true vLLM batching and shard-level track
 - Supports partial shard recovery
 
 Run:
-  python caption_dataset_improved.py \
+  python caption_wds_with_vllm.py \
     --gpus 0,1,2,3 \
     --output-dir captioner_output/captions \
     --checkpoint-dir captioner_output/checkpoints \
@@ -239,6 +239,7 @@ def gpu_worker(
     precision: str,
     batch_size: int,
     coalesce_ms: int,
+    pretrained_model_name_or_path: str,
 ):
     """GPU worker process that runs vLLM and processes batches"""
     # Isolate the GPU
@@ -250,13 +251,13 @@ def gpu_worker(
     import numpy as np  # noqa: F401  (sometimes speeds up pillow)
 
     LOG.info(
-        f"[gpu {gpu_id}] Loading model {args.pretrained_model_name_or_path} ({precision})"
+        f"[gpu {gpu_id}] Loading model {pretrained_model_name_or_path} ({precision})"
     )
     dtype = "float16" if precision == "fp16" else "bfloat16"
 
     try:
         llm = LLM(
-            model=args.pretrained_model_name_or_path,
+            model=pretrained_model_name_or_path,
             trust_remote_code=True,
             tensor_parallel_size=1,
             max_model_len=MAX_MODEL_LEN,
@@ -528,6 +529,7 @@ def main():
                 args.precision,
                 args.batch_size,
                 args.coalesce_ms,
+                args.pretrained_model_name_or_path,
             ),
             daemon=False,
         )
