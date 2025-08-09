@@ -386,7 +386,9 @@ def create_shard_list(dataset_repo_path: str) -> List[str]:
 def process_shard(shard_url: str, token: str, processed_keys: set) -> wds.DataPipeline:
     """Create dataset for a single shard with proper error handling"""
     # Use individual curl command for better error handling
-    url_cmd = f"pipe:curl -s -L -H 'Authorization:Bearer {token}' '{shard_url}' || true"
+    url_cmd = (
+        f"pipe:curl -s -L -H 'Authorization:Bearer {shlex.quote(token)}' {shlex.quote(shard_url)} || true"
+    )
 
     ds = wds.DataPipeline(
         wds.SimpleShardList(url_cmd),
