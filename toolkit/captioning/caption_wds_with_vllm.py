@@ -258,7 +258,6 @@ def gpu_worker(
 
     from vllm import LLM, SamplingParams  # Import inside child process
     from PIL import Image
-    import numpy as np  # noqa: F401  (sometimes speeds up pillow)
 
     LOG.info(
         f"[gpu {gpu_id}] Loading model {pretrained_model_name_or_path} ({precision})"
