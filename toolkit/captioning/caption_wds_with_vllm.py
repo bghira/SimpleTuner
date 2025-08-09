@@ -16,7 +16,17 @@ Run:
     --max-inflight-per-gpu 256
 """
 
-import os, io, json, time, queue, logging, signal, sys, argparse, traceback, base64
+import os
+import io
+import json
+import time
+import queue
+import logging
+import signal
+import sys
+import argparse
+import traceback
+import base64
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -437,7 +447,9 @@ def create_shard_list(dataset_repo_path: str) -> List[str]:
 def process_shard(shard_url: str, token: str, processed_keys: set) -> wds.DataPipeline:
     """Create dataset for a single shard with proper error handling"""
     # Use individual curl command for better error handling
-    url_cmd = f"pipe:curl -s -L -H 'Authorization:Bearer {token}' '{shard_url}' || true"
+    url_cmd = (
+        f"pipe:curl -s -L -H 'Authorization:Bearer {shlex.quote(token)}' {shlex.quote(shard_url)} || true"
+    )
 
     ds = wds.DataPipeline(
         wds.SimpleShardList(url_cmd),
@@ -668,7 +680,23 @@ def main():
                         if isinstance(image_data, bytes):
                             image = Image.open(io.BytesIO(image_data)).convert("RGB")
                         elif isinstance(image_data, Image.Image):
-                            image = image_data.convert("RGB")
+                            try:
+                                image = Image.open(io.BytesIO(image_data)).convert("RGB")
+                            except Exception as e:
+                                LOG.warning(f"Failed to open/convert image bytes for {key}: {e}")
+                                shard_errors += 1
+                                stats["errors"] = stats.get("errors", 0) + 1
+                                pbar.update(1)
+                                continue
+                        elif isinstance(image_data, Image.Image):
+                            try:
+                                image = image_data.convert("RGB")
+                            except Exception as e:
+                                LOG.warning(f"Failed to convert PIL Image for {key}: {e}")
+                                shard_errors += 1
+                                stats["errors"] = stats.get("errors", 0) + 1
+                                pbar.update(1)
+                                continue
                         else:
                             LOG.warning(
                                 f"Unexpected image type for {key}: {type(image_data)}"
