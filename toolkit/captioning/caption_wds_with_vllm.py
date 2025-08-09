@@ -619,7 +619,23 @@ def main():
                         if isinstance(image_data, bytes):
                             image = Image.open(io.BytesIO(image_data)).convert("RGB")
                         elif isinstance(image_data, Image.Image):
-                            image = image_data.convert("RGB")
+                            try:
+                                image = Image.open(io.BytesIO(image_data)).convert("RGB")
+                            except Exception as e:
+                                LOG.warning(f"Failed to open/convert image bytes for {key}: {e}")
+                                shard_errors += 1
+                                stats["errors"] = stats.get("errors", 0) + 1
+                                pbar.update(1)
+                                continue
+                        elif isinstance(image_data, Image.Image):
+                            try:
+                                image = image_data.convert("RGB")
+                            except Exception as e:
+                                LOG.warning(f"Failed to convert PIL Image for {key}: {e}")
+                                shard_errors += 1
+                                stats["errors"] = stats.get("errors", 0) + 1
+                                pbar.update(1)
+                                continue
                         else:
                             LOG.warning(
                                 f"Unexpected image type for {key}: {type(image_data)}"
