@@ -17,12 +17,16 @@ Run:
 """
 
 import os
+
+os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "0"
+os.environ["OMP_NUM_THREADS"] = "64"
 import io
 import json
 import time
 import queue
 import logging
 import signal
+import shlex
 import sys
 import argparse
 import traceback
@@ -228,16 +232,8 @@ class CaptionUtils:
                         parts.append(clean)
                         seen.update(words)
 
-        if len(parts) == 1:
-            return parts[0]
-        if len(parts) == 2:
-            return f"{parts[0]} {parts[1]}"
-        out = parts[0]
-        for p in parts[1:3]:
-            if not out.endswith("."):
-                out += "."
-            out += f" {p}"
-        return out
+        # Return each part as a separate line
+        return "\n".join(parts)
 
 
 # ---------------- GPU Worker Process ----------------
@@ -250,6 +246,7 @@ def gpu_worker(
     batch_size: int,
     coalesce_ms: int,
     pretrained_model_name_or_path: str,
+    max_retries: int = 3,  # Add max retries parameter
 ):
     # Isolate the GPU
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
@@ -257,47 +254,116 @@ def gpu_worker(
 
     from vllm import LLM, SamplingParams
     from PIL import Image
+    from transformers import AutoTokenizer, AutoProcessor
+    from qwen_vl_utils import process_vision_info
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        pretrained_model_name_or_path, trust_remote_code=True, use_fast=True
+    )
+    # optional: match qwen’s recommended pixel budget
+    processor = AutoProcessor.from_pretrained(pretrained_model_name_or_path)
 
     LOG.info(
         f"[gpu {gpu_id}] Loading model {pretrained_model_name_or_path} ({precision})"
     )
     dtype = "float16" if precision == "fp16" else "bfloat16"
 
-    llm = LLM(
-        model=pretrained_model_name_or_path,
-        trust_remote_code=True,
-        tensor_parallel_size=1,
-        max_model_len=MAX_MODEL_LEN,
-        enforce_eager=True,
-        enable_chunked_prefill=True,
-        gpu_memory_utilization=0.92,
-        dtype=dtype,
-        limit_mm_per_prompt={"image": LIMIT_IMAGES_PER_PROMPT},
-    )
+    # Configure based on precision
+    if precision == "awq":
+        llm = LLM(
+            model="Qwen/Qwen2.5-VL-3B-Instruct-AWQ",
+            trust_remote_code=True,
+            tensor_parallel_size=1,
+            max_model_len=MAX_MODEL_LEN,
+            enforce_eager=True,
+            quantization="awq",
+            gpu_memory_utilization=0.95,
+            dtype="float16",
+            limit_mm_per_prompt={"image": LIMIT_IMAGES_PER_PROMPT},
+            disable_mm_preprocessor_cache=True,
+        )
+    elif precision == "fp8":
+        llm = LLM(
+            model=pretrained_model_name_or_path,
+            trust_remote_code=True,
+            tensor_parallel_size=1,
+            max_model_len=MAX_MODEL_LEN,
+            enforce_eager=True,
+            enable_chunked_prefill=True,
+            gpu_memory_utilization=0.92,
+            dtype="bfloat16",
+            quantization="fp8",
+            limit_mm_per_prompt={"image": LIMIT_IMAGES_PER_PROMPT},
+            disable_mm_preprocessor_cache=True,
+        )
+    else:
+        llm = LLM(
+            model=pretrained_model_name_or_path,
+            trust_remote_code=True,
+            tensor_parallel_size=1,
+            max_num_seqs=512,
+            max_num_batched_tokens=8192,
+            max_model_len=MAX_MODEL_LEN,
+            enforce_eager=True,
+            enable_chunked_prefill=False,
+            gpu_memory_utilization=0.92,
+            dtype=dtype,
+            limit_mm_per_prompt={"image": LIMIT_IMAGES_PER_PROMPT},
+            disable_mm_preprocessor_cache=True,
+        )
 
-    # Fixed sampling params with stop tokens
-    sampling = SamplingParams(
-        temperature=0.8,
-        top_p=0.95,
-        max_tokens=512,
-        stop=[
-            "<|end|>",
-            "<|endoftext|>",
-            "<|im_end|>",
-            "<|end_of_text|>",
-            "|assistant|",
-            "<|assistant_end|>",
+    # Different prompt variations for retries
+    prompt_sets = [
+        [
+            "describe in detail without speculating. don't write anything except the caption.",
         ],
-        stop_token_ids=[151643, 151645],
-        repetition_penalty=1.05,
-        frequency_penalty=0.1,
-        skip_special_tokens=True,
-    )
-
-    prompts = [
-        "describe in detail without speculating. don't write anything except the caption.",
-        "without speculating or proving any additional contet, describe what you see",
+        [
+            "provide a detailed description of the visual content in this image.",
+        ],
+        [
+            "what is shown in this image? provide a comprehensive description.",
+        ],
     ]
+
+    def get_sampling_params(temperature=0.7):
+        return SamplingParams(
+            temperature=temperature,
+            top_p=0.95,
+            max_tokens=256,
+            stop=[
+                "<|end|>",
+                "<|endoftext|>",
+                "<|im_end|>",
+                "<|end_of_text|>",
+                "|assistant|",
+                "<|assistant_end|>",
+            ],
+            stop_token_ids=[151643, 151645],
+            repetition_penalty=1.05,
+            frequency_penalty=0.1,
+            skip_special_tokens=True,
+        )
+
+    def build_inputs(pil_img: Image.Image, question: str):
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": pil_img},
+                    {"type": "text", "text": question},
+                ],
+            }
+        ]
+        prompt_text = processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        # if you want qwen’s video/image normalization path:
+        image_inputs, _ = process_vision_info(messages)  # returns processed images
+        prompt_ids = tokenizer(prompt_text, add_special_tokens=False).input_ids
+        return {
+            "prompt_token_ids": prompt_ids,
+            "multi_modal_data": {"image": image_inputs},  # list of PILs/arrays
+        }
 
     def make_req(img: Image.Image, q: str) -> Dict[str, Any]:
         return {
@@ -310,7 +376,6 @@ def gpu_worker(
         if not text:
             return ""
 
-        # Remove everything after first end token
         end_tokens = [
             "<|end|>",
             "<|endoftext|>",
@@ -332,14 +397,33 @@ def gpu_worker(
             if token in cleaned:
                 cleaned = cleaned.split(token)[0]
 
-        # Also remove any "I'm sorry" refusals that might appear
         if "I'm sorry" in cleaned or "I cannot" in cleaned:
-            # Just take the part before the refusal if there is any
             parts = cleaned.split("I'm sorry")[0].split("I cannot")[0]
-            if len(parts.strip()) > 50:  # If we have substantial content before refusal
+            if len(parts.strip()) > 50:
                 cleaned = parts
 
         return cleaned.strip()
+
+    def is_refusal(text: str) -> bool:
+        """Check if the output is likely a refusal or too short"""
+        if not text or len(text) < 20:
+            return True
+
+        refusal_patterns = [
+            "i'm sorry",
+            "i cannot",
+            "i apologize",
+            "inappropriate",
+            "i can't",
+            "unable to",
+            "not able to",
+            "refuse to",
+            "digital artwork",
+            "stylized",  # Also catch generic fallbacks
+        ]
+
+        text_lower = text.lower()
+        return any(pattern in text_lower for pattern in refusal_patterns)
 
     buf: List[Tuple[str, str, bytes]] = []
     last = time.monotonic()
@@ -349,56 +433,106 @@ def gpu_worker(
         if not buf:
             return
 
-        reqs = []
-        index = []
-        imgs = []
+        LOG.info(f"[gpu {gpu_id}] flushing batch of {len(buf)} images")
 
-        for k, u, jb in buf:
+        retry_items = []
+        completed_items = []
+
+        # run up to max_retries; each retry uses a different prompt set & temp
+        for retry_attempt in range(max_retries):
+            items_to_process = buf if retry_attempt == 0 else retry_items
+            retry_items = []  # reset for the next loop
+
+            if not items_to_process:
+                break
+
+            if retry_attempt > 0:
+                LOG.info(
+                    f"[gpu {gpu_id}] retry {retry_attempt} for {len(items_to_process)} images"
+                )
+
+            # choose prompt variants for this round
+            prompts = prompt_sets[min(retry_attempt, len(prompt_sets) - 1)]
+
+            # build a single batched call to vllm
+            reqs = []
+            index = []
+
+            for k, u, jb in items_to_process:
+                try:
+                    im = Image.open(io.BytesIO(jb)).convert("RGB")
+                    # keep image work cheap + consistent
+                    im.thumbnail((512, 512), Image.LANCZOS)
+
+                    # two prompts per image to improve robustness
+                    for q in prompts:
+                        reqs.append(build_inputs(im, q))
+
+                    index.append((k, u, jb))
+                except Exception as e:
+                    LOG.error(f"[gpu {gpu_id}] failed to decode image {k}: {e}")
+                    out_q.put(("err", k, u, f"decode-failed: {e}"))
+
+            if not reqs:
+                continue
+
+            # slightly raise temperature per attempt
+            temperature = 0.7 + (0.1 * retry_attempt)
+            sampling = get_sampling_params(temperature)
+
             try:
-                im = Image.open(io.BytesIO(jb)).convert("RGB")
-                imgs.append(im)
-                for q in prompts:
-                    reqs.append(make_req(im, q))
-                index.append((k, u))
+                outs = llm.generate(reqs, sampling)
             except Exception as e:
-                LOG.error(f"[gpu {gpu_id}] Failed to decode image {k}: {e}")
-                out_q.put(("err", k, u, str(e)))
+                LOG.error(f"[gpu {gpu_id}] batch generation failed: {e}")
+                # mark all as errored for this attempt (we won't retry the whole batch again here)
+                for k, u, _ in items_to_process:
+                    out_q.put(("err", k, u, f"batch-failed: {e}"))
+                continue
 
-        if not reqs:
-            buf = []
-            last = time.monotonic()
-            return
-
-        try:
-            outs = llm.generate(reqs, sampling)
-            # Clean outputs to remove any end tokens or continuation
+            # collect texts in order; vllm returns one result per req
             texts = [
                 (clean_output(o.outputs[0].text) if o.outputs else "") for o in outs
             ]
 
-            # Regroup per image
-            for i, (k, u) in enumerate(index):
+            # map back: 2 requests per image
+            for i, (k, u, jb) in enumerate(index):
                 d1 = texts[2 * i] if 2 * i < len(texts) else ""
-                d2 = texts[2 * i + 1] if 2 * i + 1 < len(texts) else ""
+                d2 = texts[2 * i + 1] if (2 * i + 1) < len(texts) else ""
 
-                # Skip if both are empty or very short (likely refused)
-                if len(d1) < 20 and len(d2) < 20:
-                    cap = "Digital artwork featuring stylized characters."
+                # if both look like refusals/too-short, consider retrying
+                if is_refusal(d1) and is_refusal(d2):
+                    if retry_attempt < max_retries - 1:
+                        retry_items.append((k, u, jb))
+                        LOG.debug(
+                            f"[gpu {gpu_id}] {k} queued for retry (attempt {retry_attempt + 1})"
+                        )
+                    else:
+                        out_q.put(("err", k, u, "all attempts refused/too-short"))
+                    continue
+
+                # pick valid ones, combine for richness, then final clean
+                valids = [t for t in (d1, d2) if not is_refusal(t)]
+                combined = (
+                    CaptionUtils.combine(valids)
+                    if valids
+                    else max([d1, d2], key=len, default="")
+                )
+                cap = CaptionUtils.clean_caption(combined)
+
+                # if still junk and we have retries left, retry; else emit
+                if is_refusal(cap) and retry_attempt < max_retries - 1:
+                    retry_items.append((k, u, jb))
                 else:
-                    combined = CaptionUtils.combine([d1, d2]) or max(
-                        [d1, d2], key=len, default=""
-                    )
-                    cap = CaptionUtils.clean_caption(combined)
+                    out_q.put(("ok", k, u, cap))
+                    completed_items.append(k)
 
-                out_q.put(("ok", k, u, cap))
+        LOG.info(
+            f"[gpu {gpu_id}] batch complete: {len(completed_items)} ok, "
+            f"{len(retry_items)} failed all retries"
+        )
 
-        except Exception as e:
-            LOG.error(f"[gpu {gpu_id}] Batch generation failed: {e}")
-            for k, u, _ in buf:
-                out_q.put(("err", k, u, str(e)))
-        finally:
-            buf = []
-            last = time.monotonic()
+        buf = []
+        last = time.monotonic()
 
     LOG.info(f"[gpu {gpu_id}] Ready, entering work loop")
 
@@ -414,7 +548,6 @@ def gpu_worker(
             if len(buf) >= batch_size:
                 flush()
         except queue.Empty:
-            # Coalesce window elapsed
             if buf and (time.monotonic() - last) * 1000.0 >= coalesce_ms:
                 flush()
 
@@ -447,9 +580,7 @@ def create_shard_list(dataset_repo_path: str) -> List[str]:
 def process_shard(shard_url: str, token: str, processed_keys: set) -> wds.DataPipeline:
     """Create dataset for a single shard with proper error handling"""
     # Use individual curl command for better error handling
-    url_cmd = (
-        f"pipe:curl -s -L -H 'Authorization:Bearer {shlex.quote(token)}' {shlex.quote(shard_url)} || true"
-    )
+    url_cmd = f"pipe:curl -s -L -H 'Authorization:Bearer {shlex.quote(token)}' {shlex.quote(shard_url)} || true"
 
     ds = wds.DataPipeline(
         wds.SimpleShardList(url_cmd),
@@ -511,7 +642,9 @@ def main():
         default="",
         help="Comma-separated GPU IDs; default = all visible",
     )
-    ap.add_argument("--precision", choices=["fp16", "bf16"], default="fp16")
+    ap.add_argument(
+        "--precision", choices=["fp16", "bf16", "fp8", "awq"], default="fp16"
+    )
     ap.add_argument(
         "--batch-size", type=int, default=8, help="Target batch images per GPU flush"
     )
@@ -681,9 +814,13 @@ def main():
                             image = Image.open(io.BytesIO(image_data)).convert("RGB")
                         elif isinstance(image_data, Image.Image):
                             try:
-                                image = Image.open(io.BytesIO(image_data)).convert("RGB")
+                                image = Image.open(io.BytesIO(image_data)).convert(
+                                    "RGB"
+                                )
                             except Exception as e:
-                                LOG.warning(f"Failed to open/convert image bytes for {key}: {e}")
+                                LOG.warning(
+                                    f"Failed to open/convert image bytes for {key}: {e}"
+                                )
                                 shard_errors += 1
                                 stats["errors"] = stats.get("errors", 0) + 1
                                 pbar.update(1)
@@ -692,7 +829,9 @@ def main():
                             try:
                                 image = image_data.convert("RGB")
                             except Exception as e:
-                                LOG.warning(f"Failed to convert PIL Image for {key}: {e}")
+                                LOG.warning(
+                                    f"Failed to convert PIL Image for {key}: {e}"
+                                )
                                 shard_errors += 1
                                 stats["errors"] = stats.get("errors", 0) + 1
                                 pbar.update(1)
