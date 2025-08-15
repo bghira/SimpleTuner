@@ -528,10 +528,13 @@ class Trainer:
         collected_data_backend_keys = list(StateTracker.get_data_backends().keys())
         if self.hub_manager is not None and self.accelerator.is_main_process:
             self.hub_manager.collected_data_backend_str = collected_data_backend_keys
-            self.hub_manager.set_validation_prompts(self.validation_prompt_metadata)
-            logger.debug(
-                f"Collected validation prompts: {self.validation_prompt_metadata}"
+            validation_prompt_metadata = (
+                self.validation_prompt_metadata
+                if self.validation_prompt_metadata
+                else {}
             )
+            self.hub_manager.set_validation_prompts(validation_prompt_metadata)
+            logger.debug(f"Collected validation prompts: {validation_prompt_metadata}")
         self._recalculate_training_steps()
         logger.info(
             f"Collected the following data backends: {collected_data_backend_keys}"
@@ -556,8 +559,11 @@ class Trainer:
             .get("stage")
             == 3
         ):
-            logger.error("Cannot run validations with DeepSpeed ZeRO stage 3.")
-            return
+            logger.warning(
+                "Cannot run validations with DeepSpeed ZeRO stage 3. Disabling validation."
+            )
+            self.config.validation_disable = True
+
         if self.accelerator.is_main_process and not self.config.validation_disable:
             self.validation_prompt_metadata = prepare_validation_prompt_list(
                 args=self.config,
@@ -1006,11 +1012,16 @@ class Trainer:
             self.optimizer = create_optimizer_with_param_groups(
                 self.model.get_trained_component(unwrap_model=False),
                 optimizer_class,
-                self.params_to_optimize,
+                optimizer_parameters={
+                    **extra_optimizer_args,
+                    "weight_decay": self.config.adam_weight_decay,
+                    "eps": self.config.adam_epsilon,
+                },  # Not sure which should have priority
                 use_parameter_groups=True,  # Enable weight decay separation
                 cpu_offload_config=(
                     {"offload_mechanism": self.config.optimizer_offload_mechanism}
-                    if self.config.optimizer_offload_mechanism
+                    if hasattr(self.config, "optimizer_offload_mechanism")
+                    and self.config.optimizer_offload_mechanism
                     else None
                 ),
             )
@@ -1248,8 +1259,10 @@ class Trainer:
             .get("stage")
             == 3
         ):
-            logger.error("Cannot run validations with DeepSpeed ZeRO stage 3.")
-            return
+            logger.warning(
+                "Cannot run validations with DeepSpeed ZeRO stage 3. Disabling validation."
+            )
+            self.config.validation_disable = True
         self.evaluation = None
         if self.config.validation_disable:
             return
