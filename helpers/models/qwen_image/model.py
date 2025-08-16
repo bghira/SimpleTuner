@@ -324,11 +324,23 @@ class QwenImage(ImageModelFoundation):
 
         # Qwen Image specific checks
         if self.config.aspect_bucket_alignment != 32:
-            logger.warning(
-                f"{self.NAME} requires an alignment value of 32px. "
-                "Overriding the value of --aspect_bucket_alignment."
-            )
-            self.config.aspect_bucket_alignment = 32
+            if not getattr(self.config, "i_know_what_i_am_doing", False):
+                logger.warning(
+                    f"{self.NAME} requires an alignment value of 32px. "
+                    "Overriding the value of --aspect_bucket_alignment. "
+                    "If you really want to proceed without this enforcement, "
+                    "supply `--i_know_what_i_am_doing`. -!-"
+                )
+                self.config.aspect_bucket_alignment = 32
+            else:
+                logger.warning(
+                    f"-!- {self.NAME} requires an alignment value of 32px, but you have "
+                    "supplied `--i_know_what_i_am_doing`, so this limit will not be enforced. -!-"
+                )
+                logger.warning(
+                    "Proceeding with a non-32px alignment may cause bucketting errors, "
+                    "image artifacts, or unstable training behaviour."
+                )
 
         # Ensure we're using flow matching
         if self.config.prediction_type != "flow_matching":
