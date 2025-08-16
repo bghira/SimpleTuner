@@ -261,10 +261,11 @@ def _pipeline_quanto(args, model):
 def _validation_resolution(args):
     if args.validation_resolution == "" or args.validation_resolution is None:
         return f"width=1024,\n" f"    height=1024,"
-    resolutions = [args.validation_resolution]
-    if "," in args.validation_resolution:
+    validation_resolution_str = str(args.validation_resolution)
+    resolutions = [validation_resolution_str]
+    if "," in validation_resolution_str:
         # split the resolution into a list of resolutions
-        resolutions = args.validation_resolution.split(",")
+        resolutions = validation_resolution_str.split(",")
     for resolution in resolutions:
         if "x" in resolution:
             return (
