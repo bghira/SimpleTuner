@@ -1101,7 +1101,7 @@ def get_argument_parser():
     parser.add_argument(
         "--aspect_bucket_alignment",
         type=int,
-        choices=[8, 64],
+        choices=[8, 16, 24, 32, 64],
         default=64,
         help=(
             "When training diffusion models, the image sizes generally must align to a 64 pixel interval."
