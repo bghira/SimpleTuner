@@ -302,7 +302,7 @@ def gpu_worker(
             trust_remote_code=True,
             tensor_parallel_size=1,
             max_num_seqs=512,
-            max_num_batched_tokens=8192,
+            max_num_batched_tokens=MAX_MODEL_LEN,
             max_model_len=MAX_MODEL_LEN,
             enforce_eager=True,
             enable_chunked_prefill=False,
@@ -462,7 +462,7 @@ def gpu_worker(
                 try:
                     im = Image.open(io.BytesIO(jb)).convert("RGB")
                     # keep image work cheap + consistent
-                    im.thumbnail((512, 512), Image.LANCZOS)
+                    im.thumbnail((512, 512), Image.BILINEAR)
 
                     # two prompts per image to improve robustness
                     for q in prompts:
