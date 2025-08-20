@@ -563,6 +563,8 @@ class VAECache(WebhookMixin):
                 latents_uncached, self.vae.latents_mean, self.vae.latents_std
             )
             # Override posterior sampling
+            # Use deterministic posterior sampling (mode) instead of stochastic sampling (sample)
+            # to ensure reproducibility and consistency in cached latents.
             latents_uncached = posterior.mode()
 
             # For video, return just the tensor
