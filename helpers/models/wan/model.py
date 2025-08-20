@@ -297,6 +297,7 @@ class Wan(VideoModelFoundation):
         return transforms.Compose(
             [
                 VideoToTensor() if dataset_type == "video" else transforms.ToTensor(),
+                # Normalize [0,1] input to [-1,1] range using (input - 0.5) / 0.5
                 transforms.Normalize([0.5], [0.5]),
             ]
         )
