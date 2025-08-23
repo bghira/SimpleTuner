@@ -10,6 +10,8 @@ from transformers import (
     T5TokenizerFast,
     UMT5EncoderModel,
 )
+from torchvision import transforms
+from helpers.models.common import VideoToTensor
 from diffusers import AutoencoderKLWan
 from helpers.models.wan.transformer import WanTransformer3DModel
 from helpers.models.wan.pipeline import WanPipeline
@@ -290,3 +292,12 @@ class Wan(VideoModelFoundation):
         )
 
         return output_str
+
+    def get_transforms(self, dataset_type: str = "image"):
+        return transforms.Compose(
+            [
+                VideoToTensor() if dataset_type == "video" else transforms.ToTensor(),
+                # Normalize [0,1] input to [-1,1] range using (input - 0.5) / 0.5
+                transforms.Normalize([0.5], [0.5]),
+            ]
+        )

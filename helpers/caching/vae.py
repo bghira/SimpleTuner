@@ -463,7 +463,6 @@ class VAECache(WebhookMixin):
         bucket: str,
         aspect_bucket_cache: dict,
         processed_images: dict,
-        do_shuffle: bool = True,
     ):
         """
         Given a bucket, return the relevant files for that bucket.
@@ -492,12 +491,10 @@ class VAECache(WebhookMixin):
             #     f"Reduce bucket {bucket}, adding ({len(relevant_files)}/{total_files}) {full_image_path}"
             # )
             relevant_files.append(full_image_path)
-        if do_shuffle:
-            shuffle(relevant_files)
-        # self.debug_log(
-        #     f"Reduced bucket {bucket} down from {len(aspect_bucket_cache[bucket])} to {len(relevant_files)} relevant files."
-        #     f" Our system has {len(self.local_unprocessed_files)} total images in its assigned slice for processing across all buckets."
-        # )
+        self.debug_log(
+            f"Reduced bucket {bucket} down from {len(aspect_bucket_cache[bucket])} to {len(relevant_files)} relevant files."
+            f" Our system has {len(self.local_unprocessed_files)} total images in its assigned slice for processing across all buckets."
+        )
         return relevant_files
 
     def prepare_video_latents(self, samples):
@@ -558,15 +555,17 @@ class VAECache(WebhookMixin):
             logger.debug(f"Video latent processing results: {output_cache_entry}")
             # we'll now overwrite the latents after logging.
             output_cache_entry["latents"] = latents_uncached
-        elif StateTracker.get_model_family() in ["wan", "cosmos2image"]:
+        elif StateTracker.get_model_family() in ["wan"]:
             logger.debug(
                 f"Shape for Wan VAE encode: {latents_uncached.shape} with latents_mean: {self.vae.latents_mean} and latents_std: {self.vae.latents_std}"
             )
             posterior = compute_wan_posterior(
                 latents_uncached, self.vae.latents_mean, self.vae.latents_std
             )
-            # Sample from the posterior
-            latents_uncached = posterior.sample()
+            # Override posterior sampling
+            # Use deterministic posterior sampling (mode) instead of stochastic sampling (sample)
+            # to ensure reproducibility and consistency in cached latents.
+            latents_uncached = posterior.mode()
 
             # For video, return just the tensor
             output_cache_entry = latents_uncached
@@ -680,7 +679,7 @@ class VAECache(WebhookMixin):
                 )
 
                 # For Wan, get the raw parameters (32 channels)
-                if StateTracker.get_model_family() in ["wan", "cosmos2image"]:
+                if StateTracker.get_model_family() in ["wan"]:
                     if hasattr(latents_uncached, "latent_dist"):
                         # This is 32 channels (mu + logvar)
                         latents_uncached = latents_uncached.latent_dist.parameters
@@ -1165,7 +1164,7 @@ class VAECache(WebhookMixin):
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             for bucket in shuffled_keys:
                 relevant_files = self._reduce_bucket(
-                    bucket, aspect_bucket_cache, processed_images, do_shuffle
+                    bucket, aspect_bucket_cache, processed_images
                 )
                 if len(relevant_files) == 0:
                     continue
@@ -1260,8 +1259,14 @@ class VAECache(WebhookMixin):
 
                     # Now, see if we have any futures to complete, and execute them.
                     # Cleanly removes futures from the list, once they are completed.
-                    futures = self._process_futures(futures, executor)
-
+                    try:
+                        futures = self._process_futures(futures, executor)
+                    except Exception as e:
+                        logger.error(
+                            f"Error processing futures for bucket {bucket}: {e}, traceback: {traceback.format_exc()}"
+                        )
+                        continue
+                logger.debug(f"bucket {bucket} statistics: {statistics}")
                 try:
                     # Handle remainders after processing the bucket
                     if self.read_queue.qsize() > 0:
