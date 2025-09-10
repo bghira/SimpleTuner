@@ -163,64 +163,68 @@ class Cosmos2Image(VideoModelFoundation):
             return batch
 
         # ---------- move prompt embeds & latents to device --------------
-        target_kwargs = {"device": self.accelerator.device,
-                         "dtype":  self.config.weight_dtype}
+        target_kwargs = {
+            "device": self.accelerator.device,
+            "dtype": self.config.weight_dtype,
+        }
 
         if batch.get("prompt_embeds") is not None:
             batch["encoder_hidden_states"] = batch["prompt_embeds"].to(**target_kwargs)
 
-        latents = batch["latent_batch"].to(**target_kwargs)   # clean x0
+        latents = batch["latent_batch"].to(**target_kwargs)  # clean x0
         batch["latents"] = latents
 
         # ---------- plain Gaussian noise ε ------------------------------
         noise = torch.randn_like(latents)
         batch["noise"] = noise
-        batch["input_noise"] = noise          # no extra perturbation
+        batch["input_noise"] = noise  # no extra perturbation
 
         # ---------- draw σ and form x_t ---------------------------------
         bsz = latents.size(0)
-        sigmas = self.prepare_edm_sigmas(bsz, self.accelerator.device)["sigmas"]   # (B,)
-        sigmas_exp = sigmas.view(-1, 1, 1, 1, 1)               # B×1×1×1×1
+        sigmas = self.prepare_edm_sigmas(bsz, self.accelerator.device)["sigmas"]  # (B,)
+        sigmas_exp = sigmas.view(-1, 1, 1, 1, 1)  # B×1×1×1×1
 
-        batch["sigmas"]        = sigmas_exp
-        batch["timesteps"]     = sigmas          # unused but kept for API
-        batch["noisy_latents"] = latents + sigmas_exp * noise   # x_t
+        batch["sigmas"] = sigmas_exp
+        batch["timesteps"] = sigmas  # unused but kept for API
+        batch["noisy_latents"] = latents + sigmas_exp * noise  # x_t
 
         # ---------- any ControlNet / mask specific tweaks ---------------
         batch = self.prepare_batch_conditions(batch=batch, state=state)
         return batch
 
     def model_predict(self, prepared_batch):
-        xt      = prepared_batch["noisy_latents"]
-        sigmas  = prepared_batch["sigmas"].view(-1, 1, 1, 1, 1)            # B×1×1×1×1
+        xt = prepared_batch["noisy_latents"]
+        sigmas = prepared_batch["sigmas"].view(-1, 1, 1, 1, 1)  # B×1×1×1×1
         B, _, _, H, W = xt.shape
-        device  = self.accelerator.device
-        dtype   = self.config.weight_dtype
+        device = self.accelerator.device
+        dtype = self.config.weight_dtype
 
-        inv     = 1.0 / (sigmas + 1.0)                                 # == c_in == c_skip
-        cout    = -sigmas * inv
+        inv = 1.0 / (sigmas + 1.0)  # == c_in == c_skip
+        cout = -sigmas * inv
 
-        latent_in  = xt * inv
-        timestep   = (sigmas / (sigmas + 1)).view(B).to(dtype=dtype)        # == current_t
+        latent_in = xt * inv
+        timestep = (sigmas / (sigmas + 1)).view(B).to(dtype=dtype)  # == current_t
 
-        pad_mask   = torch.zeros(B, 1, H, W, device=device, dtype=latent_in.dtype)
-        r_pred     = self.model(
-            hidden_states         = latent_in.to(dtype),
-            timestep              = timestep,
-            encoder_hidden_states = prepared_batch["encoder_hidden_states"].to(dtype),
-            padding_mask          = pad_mask,
-            return_dict           = False,
-        )[0]                                                     # transformer output
+        pad_mask = torch.zeros(B, 1, H, W, device=device, dtype=latent_in.dtype)
+        r_pred = self.model(
+            hidden_states=latent_in.to(dtype),
+            timestep=timestep,
+            encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(dtype),
+            padding_mask=pad_mask,
+            return_dict=False,
+        )[
+            0
+        ]  # transformer output
 
-        x0_pred = inv * xt + cout * r_pred.float()               # behaviour identical to NVIDIA loop
+        x0_pred = inv * xt + cout * r_pred.float()  # behaviour identical to NVIDIA loop
         return {"model_prediction": x0_pred}
 
     def loss(self, prepared_batch, model_output, apply_conditioning_mask=True):
-        x0      = prepared_batch["latents"].float()
+        x0 = prepared_batch["latents"].float()
         x0_pred = model_output["model_prediction"].float()
-        sigmas       = prepared_batch["sigmas"]
+        sigmas = prepared_batch["sigmas"]
 
-        w = (sigmas ** 2 + self.sigma_data ** 2) / (sigmas * self.sigma_data) ** 2
+        w = (sigmas**2 + self.sigma_data**2) / (sigmas * self.sigma_data) ** 2
         while w.ndim < x0.ndim:
             w = w.unsqueeze(-1)
 
@@ -231,7 +235,7 @@ class Cosmos2Image(VideoModelFoundation):
             if ctype == "mask":
                 m = prepared_batch["conditioning_pixel_values"][:, :1]
                 m = torch.nn.functional.interpolate(m, size=loss.shape[2:], mode="area")
-                loss *= (m / 2 + 0.5)
+                loss *= m / 2 + 0.5
             elif ctype == "segmentation":
                 m = prepared_batch["conditioning_pixel_values"]
                 m = torch.sum(m, dim=1, keepdim=True) / 3
@@ -241,8 +245,9 @@ class Cosmos2Image(VideoModelFoundation):
         return loss.mean()
 
     def prepare_edm_sigmas(self, bsz: int, device: torch.device) -> torch.Tensor:
-        log_min, log_max = map(torch.log10, (torch.tensor(self.sigma_min),
-                                             torch.tensor(self.sigma_max)))
+        log_min, log_max = map(
+            torch.log10, (torch.tensor(self.sigma_min), torch.tensor(self.sigma_max))
+        )
         u = torch.rand(bsz, device=device)
         return (10.0 ** (log_min + (log_max - log_min) * u)).to(device)
 

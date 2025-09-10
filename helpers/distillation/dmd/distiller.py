@@ -327,9 +327,8 @@ class DMDDistiller(DistillationBase):
 
     def on_save_checkpoint(self, step: int, ckpt_dir: str):
         """Save fake score transformer checkpoint."""
-        if (
-            self.fake_score_transformer is None
-            or (torch.distributed.is_initialized() and torch.distributed.get_rank() != 0)
+        if self.fake_score_transformer is None or (
+            torch.distributed.is_initialized() and torch.distributed.get_rank() != 0
         ):
             return
 
@@ -374,7 +373,5 @@ class DMDDistiller(DistillationBase):
                 map_location = {"cuda:0": f"cuda:{torch.cuda.current_device()}"}
             else:
                 map_location = "cpu"
-            payload = torch.load(
-                opt_path, map_location=map_location
-            )
+            payload = torch.load(opt_path, map_location=map_location)
             self.fake_score_optimizer.load_state_dict(payload["state"])

@@ -571,7 +571,7 @@ class StableDiffusionXLLoraLoaderMixin(LoraBaseMixin):
 
         user_agent = {"file_type": "attn_procs_weights", "framework": "pytorch"}
 
-        out = _fetch_state_dict(
+        out, metadata = _fetch_state_dict(
             pretrained_model_name_or_path_or_dict=pretrained_model_name_or_path_or_dict,
             weight_name=weight_name,
             use_safetensors=use_safetensors,
