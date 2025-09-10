@@ -59,13 +59,8 @@ from diffusers.pipelines.stable_diffusion_3.pipeline_output import (
 )
 
 from diffusers.image_processor import PipelineImageInput
-from diffusers.loaders.lora_base import LoraBaseMixin
+from diffusers.loaders.lora_base import _fetch_state_dict, LoraBaseMixin
 from huggingface_hub.utils import validate_hf_hub_args
-from diffusers.loaders.lora_conversion_utils import (
-    _convert_bfl_flux_control_lora_to_diffusers,
-    _convert_kohya_flux_lora_to_diffusers,
-    _convert_xlabs_flux_lora_to_diffusers,
-)
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
@@ -316,7 +311,7 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
             "framework": "pytorch",
         }
 
-        state_dict = cls._fetch_state_dict(
+        state_dict, metadata = _fetch_state_dict(
             pretrained_model_name_or_path_or_dict=pretrained_model_name_or_path_or_dict,
             weight_name=weight_name,
             use_safetensors=use_safetensors,

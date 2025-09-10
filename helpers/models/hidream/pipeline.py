@@ -45,6 +45,7 @@ from diffusers.utils import (
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from helpers.models.hidream.schedule import FlowUniPCMultistepScheduler
+from diffusers.loaders.lora_base import _fetch_state_dict
 from diffusers.loaders.lora_conversion_utils import (
     _convert_non_diffusers_hidream_lora_to_diffusers,
 )
@@ -247,7 +248,7 @@ class HiDreamImageLoraLoaderMixin(LoraBaseMixin):
 
         user_agent = {"file_type": "attn_procs_weights", "framework": "pytorch"}
 
-        state_dict, metadata = cls._fetch_state_dict(
+        state_dict, metadata = _fetch_state_dict(
             pretrained_model_name_or_path_or_dict=pretrained_model_name_or_path_or_dict,
             weight_name=weight_name,
             use_safetensors=use_safetensors,
