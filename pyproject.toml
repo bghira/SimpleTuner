@@ -58,6 +58,7 @@ imageio-ffmpeg = "^0.6.0"
 imageio = {extras = ["pyav"], version = "^2.37.0"}
 hf-xet = "^1.1.5"
 peft-singlora = "^0.2.0"
+trainingsample = "^0.1.0"
 
 [tool.poetry.group.jxl.dependencies]
 pillow-jxl-plugin = "^1.3.1"

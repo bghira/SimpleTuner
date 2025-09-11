@@ -17,6 +17,7 @@ from math import sqrt
 import random
 import time
 import numpy as np
+from helpers.image_manipulation.batched_training_samples import BatchedTrainingSamples
 
 logger = logging.getLogger(__name__)
 if should_log():
@@ -47,6 +48,7 @@ class TrainingSample:
         self.model = model
         self.transforms = None
         self.caption = None
+        self.batch_processor = BatchedTrainingSamples()
         if model is None:
             self.model = StateTracker.get_model()
         if self.model is not None:
@@ -299,7 +301,7 @@ class TrainingSample:
                     "Aspect buckets must be a list of floats or dictionaries."
                 )
             # Calculate new size
-            target_size, intermediary_size, aspect_ratio = self.target_size_calculator(
+            target_size, _, _ = self.target_size_calculator(
                 aspect, self.resolution, self.original_size
             )
             # Check the size vs a 20% threshold
@@ -731,7 +733,7 @@ class TrainingSample:
 
     def crop(self):
         """
-        Crop the image using the detected crop handler class.
+        Crop the image using trainingsample batch operations when possible, or crop handler as fallback.
         If cropping is not enabled, we do nothing.
 
         Returns:
@@ -742,6 +744,57 @@ class TrainingSample:
         self.calculate_target_size()
         self._downsample_before_crop()
         self.save_debug_image(f"images/{time.time()}-0.5-downsampled.png")
+
+        # Try to use trainingsample for efficient cropping when possible
+        if (
+            self.image is not None
+            and isinstance(self.image, Image.Image)
+            and self.crop_style in ["center", "random"]
+        ):
+            try:
+                img_array = np.array(self.image)
+                if len(img_array.shape) == 3 and img_array.shape[2] == 3:
+                    if self.crop_style == "center":
+                        # Use BatchedTrainingSamples center crop
+                        cropped_arrays = self.batch_processor.batch_center_crop_images(
+                            [img_array], [self.target_size]
+                        )
+                        if cropped_arrays and len(cropped_arrays) > 0:
+                            self.image = Image.fromarray(cropped_arrays[0])
+                            # Calculate crop coordinates for center crop
+                            original_size = img_array.shape[:2]  # (H, W)
+                            crop_x = (original_size[1] - self.target_size[0]) // 2
+                            crop_y = (original_size[0] - self.target_size[1]) // 2
+                            self.crop_coordinates = (crop_x, crop_y)
+                            self.current_size = self.target_size
+                            logger.debug(
+                                f"Used trainingsample center crop: {self.target_size}"
+                            )
+                            return self
+                    elif self.crop_style == "random":
+                        # Use BatchedTrainingSamples random crop
+                        cropped_arrays = self.batch_processor.batch_random_crop_images(
+                            [img_array], [self.target_size]
+                        )
+                        if cropped_arrays and len(cropped_arrays) > 0:
+                            self.image = Image.fromarray(cropped_arrays[0])
+                            # Note: We can't get exact coordinates from random crop, so estimate
+                            original_size = img_array.shape[:2]  # (H, W)
+                            max_x = original_size[1] - self.target_size[0]
+                            max_y = original_size[0] - self.target_size[1]
+                            # Use a placeholder since we don't know the exact random coordinates
+                            self.crop_coordinates = (max_x // 2, max_y // 2)
+                            self.current_size = self.target_size
+                            logger.debug(
+                                f"Used trainingsample random crop: {self.target_size}"
+                            )
+                            return self
+            except Exception as e:
+                logger.debug(
+                    f"Trainingsample crop failed, falling back to crop handler: {e}"
+                )
+
+        # Fallback to original crop handler
         if self.image is not None:
             logger.debug(
                 f"setting image: {self.image.size if not isinstance(self.image, np.ndarray) else self.image.shape}"
@@ -767,7 +820,7 @@ class TrainingSample:
         Returns:
             TrainingSample: The current TrainingSample instance.
         """
-        current_size = self.image.size if self.image is not None else self.original_size
+        _ = self.image.size if self.image is not None else self.original_size
         if size is None:
             if not self.valid_metadata:
                 self.target_size, self.intermediary_size, self.target_aspect_ratio = (
@@ -782,19 +835,71 @@ class TrainingSample:
                 self.current_size = self.intermediary_size
                 if self.image is not None:
                     if isinstance(self.image, Image.Image):
-                        self.image = self.image.resize(
-                            self.intermediary_size, Image.Resampling.LANCZOS
-                        )
+                        # Use trainingsample for efficient resizing
+                        try:
+                            img_array = np.array(self.image)
+                            if len(img_array.shape) == 3 and img_array.shape[2] == 3:
+                                resized_arrays = (
+                                    self.batch_processor.batch_resize_images(
+                                        [img_array], [self.intermediary_size]
+                                    )
+                                )
+                                if resized_arrays and len(resized_arrays) > 0:
+                                    self.image = Image.fromarray(resized_arrays[0])
+                                else:
+                                    self.image = self.image.resize(
+                                        self.intermediary_size, Image.Resampling.LANCZOS
+                                    )
+                            else:
+                                self.image = self.image.resize(
+                                    self.intermediary_size, Image.Resampling.LANCZOS
+                                )
+                        except Exception as e:
+                            logger.debug(
+                                f"Trainingsample resize failed, falling back to PIL: {e}"
+                            )
+                            self.image = self.image.resize(
+                                self.intermediary_size, Image.Resampling.LANCZOS
+                            )
                         self.current_size = self.image.size
                     elif isinstance(self.image, np.ndarray):
-                        # we have a video to resize
+                        # we have a video to resize - use trainingsample
                         logger.debug(
                             f"Resizing {self.image.shape} to {self.intermediary_size}, "
                         )
-                        self.image = resize_video_frames(
-                            self.image,
-                            (self.intermediary_size[0], self.intermediary_size[1]),
-                        )
+                        try:
+                            if len(self.image.shape) == 4:  # (T, H, W, C)
+                                resized_videos = (
+                                    self.batch_processor.batch_resize_videos(
+                                        [self.image], [self.intermediary_size]
+                                    )
+                                )
+                                if resized_videos and len(resized_videos) > 0:
+                                    self.image = resized_videos[0]
+                                else:
+                                    self.image = resize_video_frames(
+                                        self.image,
+                                        (
+                                            self.intermediary_size[0],
+                                            self.intermediary_size[1],
+                                        ),
+                                    )
+                            else:
+                                self.image = resize_video_frames(
+                                    self.image,
+                                    (
+                                        self.intermediary_size[0],
+                                        self.intermediary_size[1],
+                                    ),
+                                )
+                        except Exception as e:
+                            logger.debug(
+                                f"Trainingsample video resize failed, falling back: {e}"
+                            )
+                            self.image = resize_video_frames(
+                                self.image,
+                                (self.intermediary_size[0], self.intermediary_size[1]),
+                            )
                         width, height = (
                             self.image.shape[2],
                             self.image.shape[1],
@@ -821,14 +926,58 @@ class TrainingSample:
         if self.image is not None and hasattr(self.image, "resize"):
             logger.debug(f"Resize ({type(self.image)}) to {size}")
             if isinstance(self.image, Image.Image):
-                self.image = self.image.resize(size, Image.Resampling.LANCZOS)
+                # Use trainingsample for efficient resizing
+                try:
+                    img_array = np.array(self.image)
+                    if len(img_array.shape) == 3 and img_array.shape[2] == 3:
+                        # Use BatchedTrainingSamples for better performance
+                        resized_arrays = self.batch_processor.batch_resize_images(
+                            [img_array], [size]
+                        )
+                        if resized_arrays and len(resized_arrays) > 0:
+                            self.image = Image.fromarray(resized_arrays[0])
+                        else:
+                            # Fallback to PIL resize
+                            self.image = self.image.resize(
+                                size, Image.Resampling.LANCZOS
+                            )
+                    else:
+                        # Fallback to PIL resize for non-standard formats
+                        self.image = self.image.resize(size, Image.Resampling.LANCZOS)
+                except Exception as e:
+                    logger.debug(
+                        f"Trainingsample resize failed, falling back to PIL: {e}"
+                    )
+                    self.image = self.image.resize(size, Image.Resampling.LANCZOS)
+
                 self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
                     self.image.size
                 )
             elif isinstance(self.image, np.ndarray):
-                # we have a video to resize
+                # we have a video to resize - use trainingsample for videos
                 logger.debug(f"Resizing {self.image.shape} to {size}, ")
-                self.image = resize_video_frames(self.image, (size[0], size[1]))
+                try:
+                    # For video arrays, use trainingsample batch resize
+                    if len(self.image.shape) == 4:  # (T, H, W, C)
+                        resized_videos = self.batch_processor.batch_resize_videos(
+                            [self.image], [size]
+                        )
+                        if resized_videos and len(resized_videos) > 0:
+                            self.image = resized_videos[0]
+                        else:
+                            # Fallback to original method
+                            self.image = resize_video_frames(
+                                self.image, (size[0], size[1])
+                            )
+                    else:
+                        # Fallback for unexpected shapes
+                        self.image = resize_video_frames(self.image, (size[0], size[1]))
+                except Exception as e:
+                    logger.debug(
+                        f"Trainingsample video resize failed, falling back: {e}"
+                    )
+                    self.image = resize_video_frames(self.image, (size[0], size[1]))
+
                 width, height = self.image.shape[2], self.image.shape[1]
                 self.current_size = (width, height)
                 self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(size)

@@ -8,8 +8,10 @@ from tqdm import tqdm
 from pathlib import Path
 from PIL import Image
 from numpy import str_ as numpy_str
+import numpy as np
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.image_manipulation.training_sample import TrainingSample, PreparedSample
+from helpers.image_manipulation.batched_training_samples import BatchedTrainingSamples
 from helpers.data_backend.base import BaseDataBackend
 from helpers.metadata.backends.base import MetadataBackend
 from helpers.training.state_tracker import StateTracker
@@ -184,6 +186,9 @@ class VAECache(WebhookMixin):
         self.process_queue = Queue()
         self.write_queue = Queue()
         self.vae_input_queue = Queue()
+
+        # Initialize batch processing helper
+        self.batch_processor = BatchedTrainingSamples()
 
     def debug_log(self, msg: str):
         logger.debug(f"{self.rank_info}{msg}")
@@ -416,7 +421,7 @@ class VAECache(WebhookMixin):
         # )
         return results
 
-    def discover_unprocessed_files(self, directory: str = None):
+    def discover_unprocessed_files(self):
         """Identify files that haven't been processed yet."""
         all_image_files = set(StateTracker.get_image_files(data_backend_id=self.id))
         existing_cache_files = set(
@@ -538,9 +543,7 @@ class VAECache(WebhookMixin):
         output_cache_entry = latents_uncached
         if StateTracker.get_model_family() in ["ltxvideo"]:
             # hardcode patch size to 1 for LTX Video.
-            # patch_size, patch_size_t = self.transformer.config.patch_size, self.transformer.config.patch_size_t
-            patch_size, patch_size_t = 1, 1
-            _, _, num_frames, height, width = latents_uncached.shape
+            _, _, _, height, width = latents_uncached.shape
             logger.debug(f"Latents shape: {latents_uncached.shape}")
             latents_uncached = normalize_ltx_latents(
                 latents_uncached, self.vae.latents_mean, self.vae.latents_std
@@ -770,7 +773,7 @@ class VAECache(WebhookMixin):
         else:
             qlen = self.write_queue.qsize()
 
-        for idx in range(0, qlen):
+        for _ in range(0, qlen):
             if input_latents:
                 output_file, filepath, latent_vector = input_latents.pop()
             else:
@@ -798,7 +801,8 @@ class VAECache(WebhookMixin):
         image_data: list = None,
         disable_queue: bool = False,
     ) -> None:
-        """Process a queue of images. This method assumes our batch size has been reached.
+        """Process a queue of images using trainingsample for better performance.
+        Replaced complex threading with batch operations from trainingsample.
 
         Args:
             image_paths: list If given, image_data must also be supplied. This will avoid the use of the Queues.
@@ -808,9 +812,6 @@ class VAECache(WebhookMixin):
             None
         """
         try:
-            # self.debug_log(
-            #     f"Processing batch of images into VAE embeds. image_paths: {type(image_paths)}, image_data: {type(image_data)}"
-            # )
             initial_data = []
             filepaths = []
             if image_paths is not None and image_data is not None:
@@ -821,7 +822,6 @@ class VAECache(WebhookMixin):
             # First Loop: Preparation and Filtering
             for _ in range(qlen):
                 if image_paths:
-                    # retrieve image data from Generator, image_data:
                     filepath = image_paths.pop()
                     image = image_data.pop()
                     aspect_bucket = (
@@ -839,69 +839,81 @@ class VAECache(WebhookMixin):
                             f"Skipping {filepath} because it does not meet the minimum image size requirement of {self.minimum_image_size}"
                         )
                         continue
-                # image.save(f"test_{os.path.basename(filepath)}.png")
                 initial_data.append((filepath, image, aspect_bucket))
 
-            # Process Pool Execution
+            # Use BatchedTrainingSamples for efficient batch processing
             processed_images = []
-            with ThreadPoolExecutor(self.max_workers) as executor:
-                futures = [
-                    executor.submit(
-                        prepare_sample,
-                        data_backend_id=self.id,
-                        filepath=data[0],
-                        model=self.model,
-                    )
-                    for data in initial_data
-                ]
-                first_aspect_ratio = None
-                for future in futures:
-                    try:
-                        result = (
-                            future.result()
-                        )  # Returns PreparedSample or tuple(image, crop_coordinates, aspect_ratio)
-                        if result:  # Ensure result is not None or invalid
-                            processed_images.append(result)
-                            if first_aspect_ratio is None:
-                                first_aspect_ratio = result[2]
-                            elif (
-                                type(result) is PreparedSample
-                                and result.aspect_ratio is not None
-                                and first_aspect_ratio is not None
-                                and result.aspect_ratio != first_aspect_ratio
-                            ):
-                                raise ValueError(
-                                    f"({type(result)}) Image {filepath} has a different aspect ratio ({result.aspect_ratio}) than the first image in the batch ({first_aspect_ratio})."
-                                )
-                            elif (
-                                type(result) is tuple
-                                and result[2]
-                                and first_aspect_ratio is not None
-                                and result[2] != first_aspect_ratio
-                            ):
-                                raise ValueError(
-                                    f"({type(result)}) Image {filepath} has a different aspect ratio ({result[2]}) than the first image in the batch ({first_aspect_ratio})."
-                                )
 
+            # Group images by aspect ratio for batch processing
+            aspect_groups = {}
+            for filepath, image, aspect_bucket in initial_data:
+                if aspect_bucket not in aspect_groups:
+                    aspect_groups[aspect_bucket] = []
+                aspect_groups[aspect_bucket].append((filepath, image, aspect_bucket))
+
+            # Process using the batch processor
+            try:
+                batch_results = self.batch_processor.process_aspect_grouped_images(
+                    aspect_groups,
+                    metadata_backend=self.metadata_backend,
+                    resolution=self.resolution,
+                )
+
+                # Convert batch results to processed samples
+                for filepath, processed_image_array, metadata in batch_results:
+                    try:
+                        # Convert back to PIL for TrainingSample compatibility
+                        if isinstance(processed_image_array, np.ndarray):
+                            pil_image = Image.fromarray(processed_image_array)
+                        else:
+                            pil_image = processed_image_array
+
+                        result = prepare_sample(
+                            image=pil_image,
+                            data_backend_id=self.id,
+                            filepath=filepath,
+                            model=self.model,
+                        )
+                        if result:
+                            processed_images.append(result)
                     except Exception as e:
                         logger.error(
-                            f"Error processing image in pool: {e}, traceback: {traceback.format_exc()}"
+                            f"Error processing batch result {filepath}: {e}, traceback: {traceback.format_exc()}"
                         )
 
-            # Second Loop: Final Processing
-            is_final_sample = False
+            except Exception as e:
+                logger.error(
+                    f"Batch processing failed, falling back to individual processing: {e}"
+                )
+                # Fallback to individual processing
+                for filepath, image, _ in initial_data:
+                    try:
+                        result = prepare_sample(
+                            image=image,
+                            data_backend_id=self.id,
+                            filepath=filepath,
+                            model=self.model,
+                        )
+                        if result:
+                            processed_images.append(result)
+                    except Exception as e:
+                        logger.error(
+                            f"Error processing individual image {filepath}: {e}"
+                        )
+
+            # Final Processing - simplified without complex threading
             output_values = []
             first_aspect_ratio = None
             for idx, (image, crop_coordinates, new_aspect_ratio) in enumerate(
                 processed_images
             ):
-                if idx == len(processed_images) - 1:
-                    is_final_sample = True
+                is_final_sample = idx == len(processed_images) - 1
                 if first_aspect_ratio is None:
                     first_aspect_ratio = new_aspect_ratio
                 elif new_aspect_ratio != first_aspect_ratio:
                     is_final_sample = True
                     first_aspect_ratio = new_aspect_ratio
+
                 filepath, _, aspect_bucket = initial_data[idx]
                 filepaths.append(filepath)
 
@@ -914,10 +926,8 @@ class VAECache(WebhookMixin):
                     self.vae_input_queue.put(
                         (pixel_values, filepath, aspect_bucket, is_final_sample)
                     )
-                # Update the crop_coordinates in the metadata document
-                # NOTE: This is currently a no-op because the metadata is now considered 'trustworthy'.
-                #       The VAE encode uses the preexisting metadata, and the TrainingSample class will not update.
-                #       However, we'll check that the values didn't change anyway, just in case.
+
+                # Update crop coordinates metadata if needed
                 if crop_coordinates:
                     current_crop_coordinates = (
                         self.metadata_backend.get_metadata_attribute_by_filepath(
@@ -966,7 +976,7 @@ class VAECache(WebhookMixin):
                 vae_input_images, vae_input_filepaths, vae_output_filepaths = [], [], []
                 batch_aspect_bucket = None
                 count_to_process = min(qlen, self.vae_batch_size)
-                for idx in range(0, count_to_process):
+                for _ in range(0, count_to_process):
                     if image_pixel_values:
                         (
                             pixel_values,
@@ -1037,7 +1047,8 @@ class VAECache(WebhookMixin):
 
     def _read_from_storage_concurrently(self, paths, hide_errors: bool = False):
         """
-        A helper method to read files from storage concurrently, without Queues.
+        A helper method to read files from storage concurrently, using simplified approach.
+        Replaced complex threading with direct batch operations.
 
         Args:
             paths (List[str]): A list of file paths to read.
@@ -1045,72 +1056,110 @@ class VAECache(WebhookMixin):
         Returns:
             Generator[Tuple[str, Any], None, None]: Yields file path and contents.
         """
+        # For image files, we can use the backend's batch read capabilities
+        image_paths = [p for p in paths if not p.endswith(".pt")]
+        cache_paths = [p for p in paths if p.endswith(".pt")]
 
-        def read_file(path):
+        # Read images in batch if available
+        if image_paths:
             try:
-                return path, self._read_from_storage(path, hide_errors=hide_errors)
-            except Exception as e:
-                import traceback
-
-                logger.error(
-                    f"Error reading {path}: {e}, traceback: {traceback.format_exc()}"
+                available_paths, batch_images = (
+                    self.image_data_backend.read_image_batch(
+                        image_paths,
+                        delete_problematic_images=self.delete_problematic_images,
+                    )
                 )
-                # If --delete_problematic_images is supplied, we remove the image now:
-                if self.delete_problematic_images:
-                    self.metadata_backend.remove_image(path)
-                    self.image_data_backend.delete(path)
-                return path, None
+                for path, image in zip(available_paths, batch_images):
+                    yield path, image
+            except Exception as e:
+                # Fallback to individual reads
+                for path in image_paths:
+                    try:
+                        yield path, self._read_from_storage(
+                            path, hide_errors=hide_errors
+                        )
+                    except Exception as read_e:
+                        logger.error(f"Error reading {path}: {read_e}")
+                        if self.delete_problematic_images:
+                            self.metadata_backend.remove_image(path)
+                            self.image_data_backend.delete(path)
+                        yield path, None
 
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            # Map read_file operation over all paths
-            future_to_path = {executor.submit(read_file, path): path for path in paths}
-            for future in as_completed(future_to_path):
-                path = future_to_path[future]
-                try:
-                    yield future.result()
-                except Exception as exc:
-                    logger.error(f"{path} generated an exception: {exc}")
+        # Read cache files individually (they're typically small)
+        for path in cache_paths:
+            try:
+                yield path, self._read_from_storage(path, hide_errors=hide_errors)
+            except Exception as e:
+                logger.error(f"Error reading cache {path}: {e}")
+                yield path, None
 
     def read_images_in_batch(self) -> None:
-        """Immediately read a batch of images.
-
-        The images are added to a Queue, for later processing.
-
-        Args:
-            filepaths (list): A list of image file paths.
+        """Immediately read a batch of images using simplified approach.
+        Replaced complex queue management with direct batch operations.
 
         Returns:
             None
         """
         filepaths = []
+        aspect_buckets = []
         qlen = self.read_queue.qsize()
-        for idx in range(0, qlen):
+        for _ in range(0, qlen):
             read_queue_item = self.read_queue.get()
             path, aspect_bucket = read_queue_item
             filepaths.append(path)
-        available_filepaths, batch_output = self.image_data_backend.read_image_batch(
-            filepaths, delete_problematic_images=self.delete_problematic_images
-        )
-        missing_image_count = len(filepaths) - len(available_filepaths)
-        if len(available_filepaths) != len(filepaths):
-            logging.warning(
-                f"Failed to request {missing_image_count} sample{'s' if missing_image_count > 1 else ''} during batched read, out of {len(filepaths)} total samples requested."
-                " These samples likely do not exist in the storage pool any longer."
-            )
-        for filepath, element in zip(available_filepaths, batch_output):
-            if type(filepath) != str:
-                raise ValueError(
-                    f"Received unknown filepath type ({type(filepath)}) value: {filepath}"
+            aspect_buckets.append(aspect_bucket)
+
+        if not filepaths:
+            return
+
+        # Use backend batch reading capabilities
+        try:
+            available_filepaths, batch_output = (
+                self.image_data_backend.read_image_batch(
+                    filepaths, delete_problematic_images=self.delete_problematic_images
                 )
-            # Add the element to the queue for later processing.
-            # This allows us to have separate read and processing queue size limits.
-            self.process_queue.put((filepath, element, aspect_bucket))
+            )
+            missing_image_count = len(filepaths) - len(available_filepaths)
+            if len(available_filepaths) != len(filepaths):
+                logging.warning(
+                    f"Failed to request {missing_image_count} sample{'s' if missing_image_count > 1 else ''} during batched read, out of {len(filepaths)} total samples requested."
+                    " These samples likely do not exist in the storage pool any longer."
+                )
+
+            # Add to process queue with corresponding aspect buckets
+            for i, (filepath, element) in enumerate(
+                zip(available_filepaths, batch_output)
+            ):
+                if type(filepath) != str:
+                    raise ValueError(
+                        f"Received unknown filepath type ({type(filepath)}) value: {filepath}"
+                    )
+                # Find the corresponding aspect bucket
+                original_index = (
+                    filepaths.index(filepath) if filepath in filepaths else i
+                )
+                bucket = (
+                    aspect_buckets[original_index]
+                    if original_index < len(aspect_buckets)
+                    else aspect_buckets[0]
+                )
+                self.process_queue.put((filepath, element, bucket))
+        except Exception as e:
+            logger.error(f"Error in batch image reading: {e}")
+            # Fallback: process individually
+            for filepath, aspect_bucket in zip(filepaths, aspect_buckets):
+                try:
+                    image = self._read_from_storage(filepath)
+                    if image is not None:
+                        self.process_queue.put((filepath, image, aspect_bucket))
+                except Exception as read_e:
+                    logger.error(f"Error reading individual image {filepath}: {read_e}")
 
     def _process_raw_filepath(self, raw_filepath: str):
         if type(raw_filepath) == str or len(raw_filepath) == 1:
             filepath = raw_filepath
         elif len(raw_filepath) == 2:
-            basename, filepath = raw_filepath
+            _, filepath = raw_filepath
         elif type(raw_filepath) == Path or type(raw_filepath) == numpy_str:
             filepath = str(raw_filepath)
         else:
@@ -1122,7 +1171,7 @@ class VAECache(WebhookMixin):
     def _accumulate_read_queue(self, filepath, aspect_bucket):
         self.read_queue.put((filepath, aspect_bucket))
 
-    def _process_futures(self, futures: list, executor: ThreadPoolExecutor):
+    def _process_futures(self, futures: list, executor):
         completed_futures = []
         for future in as_completed(futures):
             try:
