@@ -17,7 +17,7 @@ from math import sqrt
 import random
 import time
 import numpy as np
-import trainingsample as ts
+from helpers.image_manipulation.batched_training_samples import BatchedTrainingSamples
 
 logger = logging.getLogger(__name__)
 if should_log():
@@ -48,6 +48,7 @@ class TrainingSample:
         self.model = model
         self.transforms = None
         self.caption = None
+        self.batch_processor = BatchedTrainingSamples()
         if model is None:
             self.model = StateTracker.get_model()
         if self.model is not None:
@@ -754,8 +755,8 @@ class TrainingSample:
                 img_array = np.array(self.image)
                 if len(img_array.shape) == 3 and img_array.shape[2] == 3:
                     if self.crop_style == "center":
-                        # Use trainingsample center crop
-                        cropped_arrays = ts.batch_center_crop_images(
+                        # Use BatchedTrainingSamples center crop
+                        cropped_arrays = self.batch_processor.batch_center_crop_images(
                             [img_array], [self.target_size]
                         )
                         if cropped_arrays and len(cropped_arrays) > 0:
@@ -771,8 +772,8 @@ class TrainingSample:
                             )
                             return self
                     elif self.crop_style == "random":
-                        # Use trainingsample random crop
-                        cropped_arrays = ts.batch_random_crop_images(
+                        # Use BatchedTrainingSamples random crop
+                        cropped_arrays = self.batch_processor.batch_random_crop_images(
                             [img_array], [self.target_size]
                         )
                         if cropped_arrays and len(cropped_arrays) > 0:
@@ -838,8 +839,10 @@ class TrainingSample:
                         try:
                             img_array = np.array(self.image)
                             if len(img_array.shape) == 3 and img_array.shape[2] == 3:
-                                resized_arrays = ts.batch_resize_images(
-                                    [img_array], [self.intermediary_size]
+                                resized_arrays = (
+                                    self.batch_processor.batch_resize_images(
+                                        [img_array], [self.intermediary_size]
+                                    )
                                 )
                                 if resized_arrays and len(resized_arrays) > 0:
                                     self.image = Image.fromarray(resized_arrays[0])
@@ -866,8 +869,10 @@ class TrainingSample:
                         )
                         try:
                             if len(self.image.shape) == 4:  # (T, H, W, C)
-                                resized_videos = ts.batch_resize_videos(
-                                    [self.image], [self.intermediary_size]
+                                resized_videos = (
+                                    self.batch_processor.batch_resize_videos(
+                                        [self.image], [self.intermediary_size]
+                                    )
                                 )
                                 if resized_videos and len(resized_videos) > 0:
                                     self.image = resized_videos[0]
@@ -925,8 +930,10 @@ class TrainingSample:
                 try:
                     img_array = np.array(self.image)
                     if len(img_array.shape) == 3 and img_array.shape[2] == 3:
-                        # Use trainingsample batch resize for better performance
-                        resized_arrays = ts.batch_resize_images([img_array], [size])
+                        # Use BatchedTrainingSamples for better performance
+                        resized_arrays = self.batch_processor.batch_resize_images(
+                            [img_array], [size]
+                        )
                         if resized_arrays and len(resized_arrays) > 0:
                             self.image = Image.fromarray(resized_arrays[0])
                         else:
@@ -952,7 +959,9 @@ class TrainingSample:
                 try:
                     # For video arrays, use trainingsample batch resize
                     if len(self.image.shape) == 4:  # (T, H, W, C)
-                        resized_videos = ts.batch_resize_videos([self.image], [size])
+                        resized_videos = self.batch_processor.batch_resize_videos(
+                            [self.image], [size]
+                        )
                         if resized_videos and len(resized_videos) > 0:
                             self.image = resized_videos[0]
                         else:

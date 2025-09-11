@@ -9,9 +9,9 @@ from pathlib import Path
 from PIL import Image
 from numpy import str_ as numpy_str
 import numpy as np
-import trainingsample as ts
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.image_manipulation.training_sample import TrainingSample, PreparedSample
+from helpers.image_manipulation.batched_training_samples import BatchedTrainingSamples
 from helpers.data_backend.base import BaseDataBackend
 from helpers.metadata.backends.base import MetadataBackend
 from helpers.training.state_tracker import StateTracker
@@ -187,38 +187,11 @@ class VAECache(WebhookMixin):
         self.write_queue = Queue()
         self.vae_input_queue = Queue()
 
+        # Initialize batch processing helper
+        self.batch_processor = BatchedTrainingSamples()
+
     def debug_log(self, msg: str):
         logger.debug(f"{self.rank_info}{msg}")
-
-    def calculate_batch_luminance(self, images: list) -> list:
-        """Calculate luminance for a batch of images using trainingsample.
-
-        Args:
-            images: List of PIL Images or numpy arrays
-
-        Returns:
-            List of luminance values
-        """
-        try:
-            # Convert PIL images to numpy arrays if needed
-            np_images = []
-            for img in images:
-                if isinstance(img, Image.Image):
-                    img_array = np.array(img)
-                    if len(img_array.shape) == 3 and img_array.shape[2] == 3:
-                        np_images.append(img_array)
-                elif isinstance(img, np.ndarray) and len(img.shape) == 3:
-                    np_images.append(img)
-
-            if np_images:
-                luminances = ts.batch_calculate_luminance(np_images)
-                self.debug_log(f"Calculated luminance for {len(np_images)} images")
-                return luminances
-            else:
-                return []
-        except Exception as e:
-            logger.debug(f"Batch luminance calculation failed: {e}")
-            return []
 
     def generate_vae_cache_filename(self, filepath: str) -> tuple:
         """Get the cache filename for a given image filepath and its base name."""
@@ -868,166 +841,65 @@ class VAECache(WebhookMixin):
                         continue
                 initial_data.append((filepath, image, aspect_bucket))
 
-            # Use trainingsample for efficient batch processing
+            # Use BatchedTrainingSamples for efficient batch processing
             processed_images = []
 
-            # Group images by aspect ratio for true batch processing
+            # Group images by aspect ratio for batch processing
             aspect_groups = {}
             for filepath, image, aspect_bucket in initial_data:
                 if aspect_bucket not in aspect_groups:
                     aspect_groups[aspect_bucket] = []
                 aspect_groups[aspect_bucket].append((filepath, image, aspect_bucket))
 
-            # Process each aspect group as a true batch
-            for aspect_bucket, group_data in aspect_groups.items():
-                try:
-                    # Convert PIL images to numpy arrays for batch processing
-                    batch_images = []
-                    batch_filepaths = []
-                    batch_metadata = []
+            # Process using the batch processor
+            try:
+                batch_results = self.batch_processor.process_aspect_grouped_images(
+                    aspect_groups,
+                    metadata_backend=self.metadata_backend,
+                    resolution=self.resolution,
+                )
 
-                    for filepath, image, _ in group_data:
-                        if isinstance(image, Image.Image):
-                            img_array = np.array(image)
-                            if len(img_array.shape) == 3 and img_array.shape[2] == 3:
-                                batch_images.append(img_array)
-                                batch_filepaths.append(filepath)
-                                # Get metadata for this image
-                                metadata = (
-                                    self.metadata_backend.get_metadata_by_filepath(
-                                        filepath
-                                    )
-                                )
-                                batch_metadata.append(metadata)
-                            else:
-                                logger.warning(
-                                    f"Skipping image {filepath} with unexpected shape: {img_array.shape}"
-                                )
-                        elif isinstance(image, np.ndarray):
-                            batch_images.append(image)
-                            batch_filepaths.append(filepath)
-                            metadata = self.metadata_backend.get_metadata_by_filepath(
-                                filepath
-                            )
-                            batch_metadata.append(metadata)
+                # Convert batch results to processed samples
+                for filepath, processed_image_array, metadata in batch_results:
+                    try:
+                        # Convert back to PIL for TrainingSample compatibility
+                        if isinstance(processed_image_array, np.ndarray):
+                            pil_image = Image.fromarray(processed_image_array)
+                        else:
+                            pil_image = processed_image_array
 
-                    if not batch_images:
-                        continue
+                        result = prepare_sample(
+                            image=pil_image,
+                            data_backend_id=self.id,
+                            filepath=filepath,
+                            model=self.model,
+                        )
+                        if result:
+                            processed_images.append(result)
+                    except Exception as e:
+                        logger.error(
+                            f"Error processing batch result {filepath}: {e}, traceback: {traceback.format_exc()}"
+                        )
 
-                    # Use trainingsample for batch operations where possible
-                    # Calculate batch luminance for metadata if needed
-                    if len(batch_images) > 1:
-                        try:
-                            luminances = self.calculate_batch_luminance(batch_images)
-                            if luminances:
-                                for i, (filepath, luminance) in enumerate(
-                                    zip(batch_filepaths, luminances)
-                                ):
-                                    # Update metadata with luminance if not already present
-                                    if (
-                                        batch_metadata[i]
-                                        and "luminance" not in batch_metadata[i]
-                                    ):
-                                        self.metadata_backend.update_metadata_attribute(
-                                            filepath, "luminance", luminance
-                                        )
-                        except Exception as e:
-                            logger.debug(f"Batch luminance calculation failed: {e}")
-
-                    # Check if we need resizing based on metadata
-                    needs_resize = []
-                    target_sizes = []
-
-                    for i, (filepath, metadata) in enumerate(
-                        zip(batch_filepaths, batch_metadata)
-                    ):
-                        try:
-                            # Get target size from metadata or calculate it
-                            if metadata and "target_size" in metadata:
-                                target_size = metadata["target_size"]
-                            else:
-                                # Fallback: use model resolution
-                                target_size = (self.resolution, self.resolution)
-
-                            current_shape = batch_images[i].shape[:2]  # (H, W)
-                            current_size = (
-                                current_shape[1],
-                                current_shape[0],
-                            )  # (W, H)
-
-                            if current_size != target_size:
-                                needs_resize.append(i)
-                                target_sizes.append(target_size)
-                        except Exception as e:
-                            logger.debug(f"Error checking resize for {filepath}: {e}")
-                            needs_resize.append(i)
-                            target_sizes.append((self.resolution, self.resolution))
-
-                    # Batch resize if needed
-                    if needs_resize and len(needs_resize) > 1:
-                        try:
-                            resize_images = [batch_images[i] for i in needs_resize]
-                            resize_targets = target_sizes
-
-                            resized_batch = ts.batch_resize_images(
-                                resize_images, resize_targets
-                            )
-
-                            # Update the batch with resized images
-                            for idx, resized_img in zip(needs_resize, resized_batch):
-                                batch_images[idx] = resized_img
-
-                            logger.debug(
-                                f"Batch resized {len(resized_batch)} images for aspect bucket {aspect_bucket}"
-                            )
-                        except Exception as e:
-                            logger.debug(
-                                f"Batch resize failed, falling back to individual processing: {e}"
-                            )
-
-                    # Process each image in the batch (some operations still need individual handling)
-                    for i, (filepath, image_array) in enumerate(
-                        zip(batch_filepaths, batch_images)
-                    ):
-                        try:
-                            # Convert back to PIL for TrainingSample compatibility
-                            if isinstance(image_array, np.ndarray):
-                                pil_image = Image.fromarray(image_array)
-                            else:
-                                pil_image = image_array
-
-                            result = prepare_sample(
-                                image=pil_image,
-                                data_backend_id=self.id,
-                                filepath=filepath,
-                                model=self.model,
-                            )
-                            if result:
-                                processed_images.append(result)
-                        except Exception as e:
-                            logger.error(
-                                f"Error processing image {filepath}: {e}, traceback: {traceback.format_exc()}"
-                            )
-
-                except Exception as e:
-                    logger.error(
-                        f"Error in batch processing for aspect {aspect_bucket}: {e}"
-                    )
-                    # Fallback to individual processing for this group
-                    for filepath, image, _ in group_data:
-                        try:
-                            result = prepare_sample(
-                                image=image,
-                                data_backend_id=self.id,
-                                filepath=filepath,
-                                model=self.model,
-                            )
-                            if result:
-                                processed_images.append(result)
-                        except Exception as e:
-                            logger.error(
-                                f"Error processing individual image {filepath}: {e}"
-                            )
+            except Exception as e:
+                logger.error(
+                    f"Batch processing failed, falling back to individual processing: {e}"
+                )
+                # Fallback to individual processing
+                for filepath, image, _ in initial_data:
+                    try:
+                        result = prepare_sample(
+                            image=image,
+                            data_backend_id=self.id,
+                            filepath=filepath,
+                            model=self.model,
+                        )
+                        if result:
+                            processed_images.append(result)
+                    except Exception as e:
+                        logger.error(
+                            f"Error processing individual image {filepath}: {e}"
+                        )
 
             # Final Processing - simplified without complex threading
             output_values = []
