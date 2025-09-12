@@ -1,6 +1,6 @@
 # Quickstart Guide
 
-**Note**: For more advanced configurations, see the [tutorial](/TUTORIAL.md), [dataloader configuration guide](/documentation/DATALOADER.md), and the [options breakdown](/OPTIONS.md) pages.
+**Note**: For more advanced configurations, see the [tutorial](/documentation/TUTORIAL.md), [dataloader configuration guide](/documentation/DATALOADER.md), and the [options breakdown](/documentation/OPTIONS.md) pages.
 
 ## Feature Compatibility Matrix
 

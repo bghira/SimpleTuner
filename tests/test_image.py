@@ -11,8 +11,8 @@ except ModuleNotFoundError:
     pass
 from PIL import Image
 from io import BytesIO
-from helpers.multiaspect.image import MultiaspectImage
-from helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.multiaspect.image import MultiaspectImage
+from simpletuner.helpers.training.state_tracker import StateTracker
 from tests.helpers.data import MockDataBackend
 
 
@@ -54,7 +54,9 @@ class TestMultiaspectImage(unittest.TestCase):
         test_edge_lengths = [1024, 512, 256, 64]
         # Number of random tests to perform
         num_random_tests = 1000
-        with patch("helpers.training.state_tracker.StateTracker.get_args") as mock_args:
+        with patch(
+            "simpletuner.helpers.training.state_tracker.StateTracker.get_args"
+        ) as mock_args:
             for edge_length in test_edge_lengths:
                 mock_args.return_value = Mock(
                     resolution_type="pixel",
@@ -111,7 +113,9 @@ class TestMultiaspectImage(unittest.TestCase):
             1.78,
         ]  # Example fixed aspect ratio for all test cases
 
-        with patch("helpers.training.state_tracker.StateTracker.get_args") as mock_args:
+        with patch(
+            "simpletuner.helpers.training.state_tracker.StateTracker.get_args"
+        ) as mock_args:
             for edge_length in test_edge_lengths:
                 for fixed_aspect_ratio in aspect_ratios:
                     aspect_bucket_alignment = 64 if edge_length > 64 else 8
@@ -224,13 +228,17 @@ class TestMultiaspectImage(unittest.TestCase):
         test_megapixels = [1.0, 0.5]
         # Number of random tests to perform
         num_random_tests = 100
-        with patch(
-            "helpers.training.state_tracker.StateTracker.get_args"
-        ) as mock_args, patch(
-            "helpers.training.state_tracker.StateTracker._load_from_disk"
-        ) as load_from_disk_mock, patch(
-            "helpers.training.state_tracker.StateTracker._save_to_disk"
-        ) as save_to_disk_mock:
+        with (
+            patch(
+                "simpletuner.helpers.training.state_tracker.StateTracker.get_args"
+            ) as mock_args,
+            patch(
+                "simpletuner.helpers.training.state_tracker.StateTracker._load_from_disk"
+            ) as load_from_disk_mock,
+            patch(
+                "simpletuner.helpers.training.state_tracker.StateTracker._save_to_disk"
+            ) as save_to_disk_mock,
+        ):
             load_from_disk_mock.return_value = {}
             save_to_disk_mock.return_value = True
             mock_args.return_value = Mock(
@@ -306,13 +314,17 @@ class TestMultiaspectImage(unittest.TestCase):
             1216,
         )  # Expected final size for all test cases based on a fixed aspect ratio
 
-        with patch(
-            "helpers.training.state_tracker.StateTracker.get_args"
-        ) as mock_args, patch(
-            "helpers.training.state_tracker.StateTracker._load_from_disk"
-        ) as load_from_disk_mock, patch(
-            "helpers.training.state_tracker.StateTracker._save_to_disk"
-        ) as save_to_disk_mock:
+        with (
+            patch(
+                "simpletuner.helpers.training.state_tracker.StateTracker.get_args"
+            ) as mock_args,
+            patch(
+                "simpletuner.helpers.training.state_tracker.StateTracker._load_from_disk"
+            ) as load_from_disk_mock,
+            patch(
+                "simpletuner.helpers.training.state_tracker.StateTracker._save_to_disk"
+            ) as save_to_disk_mock,
+        ):
             load_from_disk_mock.return_value = {}
             save_to_disk_mock.return_value = True
             mock_args.return_value = Mock(
@@ -360,7 +372,9 @@ class TestMultiaspectImage(unittest.TestCase):
             1024,
             1024,
         )  # Expected final size for all test cases based on a fixed aspect ratio
-        with patch("helpers.training.state_tracker.StateTracker.get_args") as mock_args:
+        with patch(
+            "simpletuner.helpers.training.state_tracker.StateTracker.get_args"
+        ) as mock_args:
             mock_args.return_value = Mock(
                 resolution_type="pixel",
                 resolution=self.resolution,
@@ -389,7 +403,9 @@ class TestMultiaspectImage(unittest.TestCase):
         Test the limit_canvas_size method to ensure it properly reduces canvas dimensions
         when they exceed the maximum allowed size.
         """
-        with patch("helpers.training.state_tracker.StateTracker.get_args") as mock_args:
+        with patch(
+            "simpletuner.helpers.training.state_tracker.StateTracker.get_args"
+        ) as mock_args:
             aspect_bucket_alignment = 64
             mock_args.return_value = Mock(
                 aspect_bucket_alignment=aspect_bucket_alignment

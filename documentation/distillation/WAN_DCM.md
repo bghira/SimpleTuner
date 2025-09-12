@@ -29,12 +29,12 @@ Same steps as the Wan guide:
 git clone --branch=release https://github.com/bghira/SimpleTuner.git
 cd SimpleTuner
 python3.12 -m venv .venv && source .venv/bin/activate
-pip install -U poetry pip
-poetry config virtualenvs.create false
-poetry install
+
+# Install with automatic platform detection
+pip install -e .
 ```
 
-> If you're on ROCm or Apple: you must instead use `poetry install -C install/variant` where `variant` is `rocm` or `apple`.
+**Note:** The setup.py automatically detects your platform (CUDA/ROCm/Apple) and installs the appropriate dependencies.
 
 ---
 

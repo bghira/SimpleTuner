@@ -8,10 +8,10 @@ except ModuleNotFoundError:
     pass
 from PIL import Image
 from pathlib import Path
-from helpers.multiaspect.dataset import MultiAspectDataset
-from helpers.metadata.backends.discovery import DiscoveryMetadataBackend
-from helpers.data_backend.base import BaseDataBackend
-from helpers.data_backend.factory import check_column_values
+from simpletuner.helpers.multiaspect.dataset import MultiAspectDataset
+from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
+from simpletuner.helpers.data_backend.base import BaseDataBackend
+from simpletuner.helpers.data_backend.factory import check_column_values
 
 
 class TestMultiAspectDataset(unittest.TestCase):

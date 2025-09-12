@@ -3,10 +3,12 @@ from unittest.mock import patch, MagicMock
 import numpy as np
 import torch
 
-from helpers.training.collate import (
+from simpletuner.helpers.training.collate import (
     collate_fn,
 )  # Adjust this import according to your project structure
-from helpers.training.state_tracker import StateTracker  # Adjust imports as needed
+from simpletuner.helpers.training.state_tracker import (
+    StateTracker,
+)  # Adjust imports as needed
 
 
 class TestCollateFn(unittest.TestCase):
@@ -37,9 +39,9 @@ class TestCollateFn(unittest.TestCase):
         fake_accelerator = MagicMock(device="cpu")
         StateTracker.set_accelerator(fake_accelerator)
 
-    @patch("helpers.training.collate.compute_latents")
-    @patch("helpers.training.collate.compute_prompt_embeddings")
-    @patch("helpers.training.collate.gather_conditional_sdxl_size_features")
+    @patch("simpletuner.helpers.training.collate.compute_latents")
+    @patch("simpletuner.helpers.training.collate.compute_prompt_embeddings")
+    @patch("simpletuner.helpers.training.collate.gather_conditional_sdxl_size_features")
     def test_collate_fn(self, mock_gather, mock_compute_embeds, mock_compute_latents):
         # Mock the responses from the compute functions
         mock_compute_latents.return_value = torch.randn(
@@ -55,7 +57,9 @@ class TestCollateFn(unittest.TestCase):
         mock_compute_latents.to = MagicMock(return_value=mock_compute_latents)
 
         # Call collate_fn with a mock batch
-        with patch("helpers.training.state_tracker.StateTracker.get_data_backend"):
+        with patch(
+            "simpletuner.helpers.training.state_tracker.StateTracker.get_data_backend"
+        ):
             # Mock get_data_backend() to return a mock object with required attributes
             StateTracker.get_data_backend.return_value = MagicMock(
                 compute_embeddings_for_legacy_prompts=MagicMock()

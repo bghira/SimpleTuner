@@ -69,3 +69,5 @@ images/
 datasets/
 .test_runner_state
 .test_runner_state.json
+.coverage
+coverage.xml

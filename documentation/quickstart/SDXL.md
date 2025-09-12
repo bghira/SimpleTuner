@@ -42,25 +42,16 @@ cd SimpleTuner
 python -m venv .venv
 
 source .venv/bin/activate
-
-pip install -U poetry pip
-
-# Necessary on some systems to prevent it from deciding it knows better than us.
-poetry config virtualenvs.create false
 ```
 
-Depending on your system, you will run one of 3 commands:
+Install SimpleTuner with automatic platform detection:
 
 ```bash
-# Linux with NVIDIA
-poetry install
-
-# MacOS
-poetry install -C install/apple
-
-# Linux with ROCM
-poetry install -C install/rocm
+# Basic installation (auto-detects CUDA/ROCm/Apple)
+pip install -e .
 ```
+
+**Note:** The setup.py automatically detects your platform (CUDA/ROCm/Apple) and installs the appropriate dependencies.
 
 #### Removing DeepSpeed & Bits n Bytes
 
@@ -236,7 +227,7 @@ bash train.sh
 
 This will begin the text embed and VAE output caching to disk.
 
-For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/TUTORIAL.md) documents.
+For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/documentation/TUTORIAL.md) documents.
 
 ### CLIP score tracking
 

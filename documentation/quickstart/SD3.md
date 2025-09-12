@@ -40,25 +40,16 @@ cd SimpleTuner
 python -m venv .venv
 
 source .venv/bin/activate
-
-pip install -U poetry pip
-
-# Necessary on some systems to prevent it from deciding it knows better than us.
-poetry config virtualenvs.create false
 ```
 
-Depending on your system, you will run one of 3 commands:
+Install SimpleTuner with automatic platform detection:
 
 ```bash
-# Linux with NVIDIA
-poetry install
-
-# MacOS
-poetry install -C install/apple
-
-# Linux with ROCM
-poetry install -C install/rocm
+# Basic installation (auto-detects CUDA/ROCm/Apple)
+pip install -e .
 ```
+
+**Note:** The setup.py automatically detects your platform (CUDA/ROCm/Apple) and installs the appropriate dependencies.
 
 #### AMD ROCm follow-up steps
 
@@ -76,7 +67,7 @@ popd
 
 These two dependencies cause numerous issues for container hosts such as RunPod and Vast.
 
-To remove them after `poetry` has installed them, run the following command in the same terminal:
+To remove them after installation, run the following command in the same terminal:
 
 ```bash
 pip uninstall -y deepspeed bitsandbytes
@@ -256,7 +247,7 @@ bash train.sh
 
 This will begin the text embed and VAE output caching to disk.
 
-For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/TUTORIAL.md) documents.
+For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/documentation/TUTORIAL.md) documents.
 
 ## Notes & troubleshooting tips
 

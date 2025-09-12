@@ -2,7 +2,7 @@
 
 This document contains notes* on configuring a 4-way 8xH100 cluster for use with SimpleTuner.
 
-> *This guide does not contain full end-to-end installation instructions. Instead, these serve as considerations to take when following the [INSTALL](/INSTALL.md) document or one of the [quickstart guides](/documentation/QUICKSTART.md).
+> *This guide does not contain full end-to-end installation instructions. Instead, these serve as considerations to take when following the [INSTALL](/documentation/INSTALL.md) document or one of the [quickstart guides](/documentation/QUICKSTART.md).
 
 ## Storage backend
 

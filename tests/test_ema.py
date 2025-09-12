@@ -2,7 +2,7 @@ import unittest
 import torch
 import tempfile
 import os
-from helpers.training.ema import EMAModel
+from simpletuner.helpers.training.ema import EMAModel
 
 
 class TestEMAModel(unittest.TestCase):

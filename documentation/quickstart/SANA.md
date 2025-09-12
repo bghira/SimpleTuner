@@ -65,10 +65,6 @@ python3.11 -m venv .venv
 
 source .venv/bin/activate
 
-pip install -U poetry pip
-
-# Necessary on some systems to prevent it from deciding it knows better than us.
-poetry config virtualenvs.create false
 ```
 
 **Note:** We're currently installing the `release` branch here; the `main` branch may contain experimental features that might have better results or lower memory use.
@@ -77,7 +73,7 @@ Depending on your system, you will run one of 3 commands:
 
 ```bash
 # Linux
-poetry install
+pip install -e .
 ```
 
 ### Setting up the environment
@@ -126,7 +122,7 @@ There, you will possibly need to modify the following variables:
 - `gradient_checkpointing` - Disabling this will go the fastest, but limits your batch sizes. It is required to enable this to get the lowest VRAM usage.
 - `gradient_checkpointing_interval` - If `gradient_checkpointing` feels like overkill on your GPU, you could set this to a value of 2 or higher to only checkpoint every _n_ blocks. A value of 2 would checkpoint half of the blocks, and 3 would be one-third.
 
-Multi-GPU users can reference [this document](/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
+Multi-GPU users can reference [this document](/documentation/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
 
 #### Validation prompts
 
@@ -321,7 +317,7 @@ From the SimpleTuner directory, one simply has to run:
 
 This will begin the text embed and VAE output caching to disk.
 
-For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/TUTORIAL.md) documents.
+For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/documentation/TUTORIAL.md) documents.
 
 ## Notes & troubleshooting tips
 

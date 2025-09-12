@@ -11,22 +11,18 @@ LCM enables:
 
 ## 📦 Installation
 
-Follow the standard SimpleTuner installation [guide](/INSTALL.md):
+Follow the standard SimpleTuner installation [guide](/documentation/INSTALL.md):
 
 ```bash
 git clone --branch=release https://github.com/bghira/SimpleTuner.git
 cd SimpleTuner
 python3.12 -m venv .venv && source .venv/bin/activate
-pip install -U poetry pip
 
-# Necessary on some systems
-poetry config virtualenvs.create false
-
-# Install based on your system:
-poetry install              # Linux with NVIDIA
-# poetry install -C install/apple  # MacOS
-# poetry install -C install/rocm   # Linux with ROCm
+# Install with automatic platform detection
+pip install -e .
 ```
+
+**Note:** The setup.py automatically detects your platform (CUDA/ROCm/Apple) and installs the appropriate dependencies.
 
 For container environments (Vast, RunPod, etc.):
 ```bash

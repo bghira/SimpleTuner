@@ -1,8 +1,8 @@
 import unittest, json
 from PIL import Image
 from unittest.mock import Mock, patch, MagicMock
-from helpers.metadata.backends.discovery import DiscoveryMetadataBackend
-from helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
+from simpletuner.helpers.training.state_tracker import StateTracker
 from tests.helpers.data import MockDataBackend
 
 
@@ -26,10 +26,13 @@ class TestMetadataBackend(unittest.TestCase):
         self.metadata_file = "/some/fake/metadata.json"
         StateTracker.set_args(MagicMock())
         # Overload cache file with json:
-        with patch(
-            "helpers.training.state_tracker.StateTracker._save_to_disk",
-            return_value=True,
-        ), patch("pathlib.Path.exists", return_value=True):
+        with (
+            patch(
+                "simpletuner.helpers.training.state_tracker.StateTracker._save_to_disk",
+                return_value=True,
+            ),
+            patch("pathlib.Path.exists", return_value=True),
+        ):
             with self.assertLogs("DiscoveryMetadataBackend", level="WARNING"):
                 self.metadata_backend = DiscoveryMetadataBackend(
                     id="foo",
@@ -54,16 +57,20 @@ class TestMetadataBackend(unittest.TestCase):
     def test_discover_new_files(self):
         # Assuming that StateTracker.get_image_files returns known files
         # and list_files should return both known and potentially new files
-        with patch(
-            "helpers.training.state_tracker.StateTracker.get_image_files",
-            return_value=["image1.jpg", "image2.png", "image3.jpg", "image4.png"],
-        ), patch(
-            "helpers.training.state_tracker.StateTracker.set_image_files",
-            return_value=None,
-        ), patch.object(
-            self.data_backend,
-            "list_files",
-            return_value=["image1.jpg", "image2.png", "image3.jpg", "image4.png"],
+        with (
+            patch(
+                "simpletuner.helpers.training.state_tracker.StateTracker.get_image_files",
+                return_value=["image1.jpg", "image2.png", "image3.jpg", "image4.png"],
+            ),
+            patch(
+                "simpletuner.helpers.training.state_tracker.StateTracker.set_image_files",
+                return_value=None,
+            ),
+            patch.object(
+                self.data_backend,
+                "list_files",
+                return_value=["image1.jpg", "image2.png", "image3.jpg", "image4.png"],
+            ),
         ):
 
             self.metadata_backend.aspect_ratio_bucket_indices = {

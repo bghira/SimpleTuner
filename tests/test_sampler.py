@@ -8,9 +8,9 @@ except ModuleNotFoundError:
 from PIL import Image
 from unittest import skip
 from unittest.mock import Mock, MagicMock, patch
-from helpers.multiaspect.sampler import MultiAspectSampler
-from helpers.metadata.backends.discovery import DiscoveryMetadataBackend
-from helpers.multiaspect.state import BucketStateManager
+from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
+from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
+from simpletuner.helpers.multiaspect.state import BucketStateManager
 from tests.helpers.data import MockDataBackend
 from accelerate import PartialState
 from PIL import Image

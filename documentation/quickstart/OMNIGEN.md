@@ -56,10 +56,6 @@ python3.12 -m venv .venv
 
 source .venv/bin/activate
 
-pip install -U poetry pip
-
-# Necessary on some systems to prevent it from deciding it knows better than us.
-poetry config virtualenvs.create false
 ```
 
 **Note:** We're currently installing the `release` branch here; the `main` branch may contain experimental features that might have better results or lower memory use.
@@ -68,7 +64,7 @@ Depending on your system, you will run one of 3 commands:
 
 ```bash
 # Linux
-poetry install
+pip install -e .
 ```
 
 ### Setting up the environment
@@ -116,7 +112,7 @@ There, you will possibly need to modify the following variables:
 - `mixed_precision` - It's recommended to set this to `bf16` for the most efficient training configuration, or `no` (but will consume more memory and be slower).
 - `gradient_checkpointing` - Disabling this will go the fastest, but limits your batch sizes. It is required to enable this to get the lowest VRAM usage.
 
-Multi-GPU users can reference [this document](/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
+Multi-GPU users can reference [this document](/documentation/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
 
 Your config.json will look something like mine by the end:
 
@@ -435,7 +431,7 @@ From the SimpleTuner directory, one simply has to run:
 
 This will begin the text embed and VAE output caching to disk.
 
-For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/TUTORIAL.md) documents.
+For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/documentation/TUTORIAL.md) documents.
 
 ## Notes & troubleshooting tips
 

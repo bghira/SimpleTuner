@@ -38,7 +38,7 @@ If you have any questions, please feel free to reach out to us there.
 
 ## Tutorial
 
-Please fully explore this README before embarking on [the tutorial](/TUTORIAL.md), as it contains vital information that you might need to know first.
+Please fully explore this README before embarking on [the tutorial](/documentation/TUTORIAL.md), as it contains vital information that you might need to know first.
 
 For a quick start without reading the full documentation, you can use the [Quick Start](/documentation/QUICKSTART.md) guide.
 
@@ -259,11 +259,11 @@ Kontext requires a bit beefier compute and memory allocation; a 4090 will go fro
 
 ## Toolkit
 
-For more information about the associated toolkit distributed with SimpleTuner, refer to [the toolkit documentation](/toolkit/README.md).
+For more information about the associated toolkit distributed with SimpleTuner, refer to [the toolkit documentation](/scripts/toolkit/README.md).
 
 ## Setup
 
-Detailed setup information is available in the [installation documentation](/INSTALL.md).
+Detailed setup information is available in the [installation documentation](/documentation/INSTALL.md).
 
 ## Troubleshooting
 
@@ -271,4 +271,4 @@ Enable debug logs for a more detailed insight by adding `export SIMPLETUNER_LOG_
 
 For performance analysis of the training loop, setting `SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL=DEBUG` will have timestamps that highlight any issues in your configuration.
 
-For a comprehensive list of options available, consult [this documentation](/OPTIONS.md).
+For a comprehensive list of options available, consult [this documentation](/documentation/OPTIONS.md).
