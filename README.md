@@ -50,10 +50,11 @@ For multi-node distributed training, [this guide](/documentation/DISTRIBUTED.md)
 
 ## Features
 
-- Multi-GPU training
+- Multi-GPU, multi-node training
+- A custom, highly optimised [image processing backend](https://github.com/bghira/TrainingSample) written in Rust
 - New token-wise dropout techniques like [TREAD](/documentation/TREAD.md) for speeding up Wan 2.1/2.2 and Flux training, including Kontext
 - Image, video, and caption features (embeds) are cached to the hard drive in advance, so that training runs faster and with less memory consumption
-- Aspect bucketing: support for a variety of image/video sizes and aspect ratios, enabling widescreen and portrait training.
+- **Fast** aspect bucketing: support for a variety of image/video sizes and aspect ratios, enabling widescreen and portrait training.
 - Refiner LoRA or full u-net training for SDXL
 - Most models are trainable on a 24G GPU, or even down to 16G at lower base resolutions.
   - LoRA/LyCORIS training for PixArt, SDXL, SD3, and SD 2.x that uses less than 16G VRAM
