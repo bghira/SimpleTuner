@@ -120,26 +120,7 @@ warnings.filterwarnings(
 )
 
 # Suppress torch autocast warnings for unsupported dtypes
-warnings.filterwarnings(
-    "ignore",
-    category=UserWarning,
-    message=".*CPU autocast.*target dtype.*not supported.*",
-)
-warnings.filterwarnings(
-    "ignore",
-    category=UserWarning,
-    message=".*MPS autocast.*target dtype.*not supported.*",
-)
-warnings.filterwarnings(
-    "ignore",
-    category=UserWarning,
-    message=".*In MPS autocast.*target dtype.*not supported.*Disabling autocast.*",
-)
-warnings.filterwarnings(
-    "ignore",
-    category=UserWarning,
-    message=".*autocast.*dtype.*torch.bfloat16.*torch.float16.*",
-)
+warnings.filterwarnings("ignore", category=UserWarning, module="torch.amp.autocast_mode")
 
 warnings.filterwarnings(
     "ignore",
