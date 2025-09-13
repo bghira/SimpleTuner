@@ -6,9 +6,9 @@ SimpleTuner CLI - Command-line interface for SimpleTuner
 import argparse
 import json
 import os
-import sys
-import subprocess
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 from typing import List, Optional
 
@@ -118,9 +118,7 @@ def copy_example(example_name: str, dest: Optional[str] = None) -> bool:
             if config_json.exists():
                 referenced_files = find_referenced_files(config_json)
                 if referenced_files:
-                    print(
-                        f"Found {len(referenced_files)} referenced file(s) to copy..."
-                    )
+                    print(f"Found {len(referenced_files)} referenced file(s) to copy...")
 
                     for ref_file in referenced_files:
                         source_file = examples_dir / ref_file
@@ -271,18 +269,25 @@ def find_accelerate_config() -> Optional[str]:
     return None
 
 
-def run_training(example: Optional[str] = None, env: Optional[str] = None) -> int:
+def run_training(example: Optional[str] = None, env: Optional[str] = None, extra_args: Optional[list] = None) -> int:
     """Run training with specified example or environment."""
-    # Setup environment
+    # Set ENV first so config.env loading works correctly
+    if env:
+        os.environ["ENV"] = env
+
+    # Load environment variables from config.env files early (like train.sh does)
+    from simpletuner.helpers.configuration.loader import load_env_variables
+
+    load_env_variables()
+
+    # Setup environment after loading config.env files
     training_env = os.environ.copy()
 
     # Check for config file if no example/env specified
     if not example and not env:
         config_file = find_config_file()
         if not config_file:
-            print(
-                "Error: No config file found in current directory or config/ subdirectory."
-            )
+            print("Error: No config file found in current directory or config/ subdirectory.")
             print("Expected: config.json, config.toml, or config.env")
             print("Or use: simpletuner train example=<example_name>")
             return 1
@@ -295,25 +300,19 @@ def run_training(example: Optional[str] = None, env: Optional[str] = None) -> in
             training_env["CONFIG_BACKEND"] = "json"
             # If config is in current directory, use absolute path
             if config_path.parent == Path("."):
-                training_env["CONFIG_PATH"] = str(
-                    Path.cwd() / config_path.with_suffix("")
-                )
+                training_env["CONFIG_PATH"] = str(Path.cwd() / config_path.with_suffix(""))
             else:
                 training_env["CONFIG_PATH"] = str(config_path.with_suffix(""))
         elif config_path.suffix == ".toml":
             training_env["CONFIG_BACKEND"] = "toml"
             if config_path.parent == Path("."):
-                training_env["CONFIG_PATH"] = str(
-                    Path.cwd() / config_path.with_suffix("")
-                )
+                training_env["CONFIG_PATH"] = str(Path.cwd() / config_path.with_suffix(""))
             else:
                 training_env["CONFIG_PATH"] = str(config_path.with_suffix(""))
         elif config_path.suffix == ".env":
             training_env["CONFIG_BACKEND"] = "env"
             if config_path.parent == Path("."):
-                training_env["CONFIG_PATH"] = str(
-                    Path.cwd() / config_path.with_suffix("")
-                )
+                training_env["CONFIG_PATH"] = str(Path.cwd() / config_path.with_suffix(""))
             else:
                 training_env["CONFIG_PATH"] = str(config_path.with_suffix(""))
 
@@ -368,8 +367,12 @@ def run_training(example: Optional[str] = None, env: Optional[str] = None) -> in
     accelerate_extra_args = training_env.get("ACCELERATE_EXTRA_ARGS", "")
     if accelerate_extra_args:
         # Insert extra args before the train.py script
-        extra_args = accelerate_extra_args.split()
-        cmd = cmd[:-1] + extra_args + cmd[-1:]
+        accel_extra = accelerate_extra_args.split()
+        cmd = cmd[:-1] + accel_extra + cmd[-1:]
+
+    # Add any extra train.py arguments after the script path
+    if extra_args:
+        cmd.extend(extra_args)
 
     print(f"Running: {' '.join(cmd)}")
 
@@ -389,6 +392,7 @@ def cmd_train(args) -> int:
     """Handle train command."""
     example = getattr(args, "example", None)
     env = getattr(args, "env", None)
+    extra_args = []
 
     # Parse key=value arguments
     if hasattr(args, "args") and args.args:
@@ -400,11 +404,16 @@ def cmd_train(args) -> int:
                 elif key == "env" and not env:
                     env = value
                 else:
-                    print(f"Warning: Unknown argument '{key}={value}'")
+                    # Pass through unknown arguments to train.py
+                    extra_args.append(f"--{key}={value}")
             else:
-                print(f"Warning: Invalid argument format '{arg}'. Expected key=value")
+                # Pass through flag-style arguments
+                if arg.startswith("--"):
+                    extra_args.append(arg)
+                else:
+                    extra_args.append(f"--{arg}")
 
-    return run_training(example=example, env=env)
+    return run_training(example=example, env=env, extra_args=extra_args)
 
 
 def cmd_examples(args) -> int:
@@ -439,10 +448,10 @@ def cmd_configure(args) -> int:
 
     # Import and run the configure module
     try:
-        from simpletuner.configure import main as configure_main
-
         # Set up sys.argv for the configure script
         import sys
+
+        from simpletuner.configure import main as configure_main
 
         original_argv = sys.argv.copy()
 
@@ -482,6 +491,7 @@ def cmd_server(args) -> int:
 
     try:
         import uvicorn
+
         from simpletuner.service_worker import app
 
         # Create necessary directories
@@ -521,9 +531,7 @@ def main():
         prog="simpletuner",
         description="SimpleTuner - Fine-tune diffusion models with ease",
     )
-    parser.add_argument(
-        "--version", "-v", action="version", version=f"SimpleTuner {get_version()}"
-    )
+    parser.add_argument("--version", "-v", action="version", version=f"SimpleTuner {get_version()}")
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
@@ -542,9 +550,7 @@ Examples:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     train_group = train_parser.add_mutually_exclusive_group()
-    train_group.add_argument(
-        "--example", "-e", help="Use example configuration (e.g., sd3.peft-lora)"
-    )
+    train_group.add_argument("--example", "-e", help="Use example configuration (e.g., sd3.peft-lora)")
     train_group.add_argument("--env", help="Use custom environment path")
     # Add support for positional arguments like example=value
     train_parser.add_argument(
@@ -556,21 +562,15 @@ Examples:
 
     # Examples command
     examples_parser = subparsers.add_parser("examples", help="Manage examples")
-    examples_subparsers = examples_parser.add_subparsers(
-        dest="action", help="Examples actions"
-    )
+    examples_subparsers = examples_parser.add_subparsers(dest="action", help="Examples actions")
 
     # examples list
     list_parser = examples_subparsers.add_parser("list", help="List available examples")
 
     # examples copy
-    copy_parser = examples_subparsers.add_parser(
-        "copy", help="Copy example to local directory"
-    )
+    copy_parser = examples_subparsers.add_parser("copy", help="Copy example to local directory")
     copy_parser.add_argument("name", help="Example name to copy")
-    copy_parser.add_argument(
-        "dest", nargs="?", help="Destination directory (default: current)"
-    )
+    copy_parser.add_argument("dest", nargs="?", help="Destination directory (default: current)")
 
     examples_parser.set_defaults(func=cmd_examples)
 
