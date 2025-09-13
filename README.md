@@ -78,7 +78,7 @@ SimpleTuner provides comprehensive training support across multiple diffusion mo
 
 ### Advanced Training Techniques
 
-- **TREAD** - Token-wise dropout for Flux and Wan models, including Kontext training
+- **TREAD** - Token-wise dropout for transformer models, including Kontext training
 - **Masked loss training** - Superior convergence with segmentation/depth guidance
 - **Prior regularization** - Enhanced training stability for character consistency
 - **Gradient checkpointing** - Configurable intervals for memory/speed optimization
