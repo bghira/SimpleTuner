@@ -1,13 +1,18 @@
 # test_trainer.py
 
-import os
 import unittest
 from unittest.mock import MagicMock, Mock, patch
 
 import torch
 
-os.environ["SIMPLETUNER_LOG_LEVEL"] = "CRITICAL"
 from simpletuner.helpers.training.trainer import Trainer
+
+# Import test configuration to suppress logging/warnings
+try:
+    from . import test_config
+except ImportError:
+    # Fallback for when running tests individually
+    import test_config
 
 
 class TestTrainer(unittest.TestCase):
@@ -206,7 +211,8 @@ class TestTrainer(unittest.TestCase):
         mock_config.weight_dtype = torch.bfloat16
         mock_load_config.return_value = mock_config
 
-        trainer = Trainer(disable_accelerator=True)
+        with test_config.QuietLogs():
+            trainer = Trainer(disable_accelerator=True)
         trainer.model = Mock()
         trainer.config = MagicMock(
             torch_num_threads=2,
