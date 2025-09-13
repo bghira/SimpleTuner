@@ -12,31 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import torch
-from torch import nn
-
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import PeftAdapterMixin
-from diffusers.utils import (
-    USE_PEFT_BACKEND,
-    is_torch_version,
-    logging,
-    scale_lora_layers,
-    unscale_lora_layers,
-)
-from diffusers.models.attention_processor import (
-    Attention,
-    AttentionProcessor,
-    AttnProcessor2_0,
-    SanaLinearAttnProcessor2_0,
-)
+from diffusers.models.attention_processor import Attention, AttentionProcessor, AttnProcessor2_0, SanaLinearAttnProcessor2_0
 from diffusers.models.embeddings import PatchEmbed, PixArtAlphaTextProjection
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import AdaLayerNormSingle, RMSNorm
+from diffusers.utils import USE_PEFT_BACKEND, is_torch_version, logging, scale_lora_layers, unscale_lora_layers
+from torch import nn
 
+from simpletuner.helpers.training.tread import TREADRouter
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -70,9 +59,7 @@ class GLUMBConv(nn.Module):
 
         self.norm = None
         if norm_type == "rms_norm":
-            self.norm = RMSNorm(
-                out_channels, eps=1e-5, elementwise_affine=True, bias=True
-            )
+            self.norm = RMSNorm(out_channels, eps=1e-5, elementwise_affine=True, bias=True)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         if self.residual_connection:
@@ -133,9 +120,7 @@ class SanaTransformerBlock(nn.Module):
 
         # 2. Cross Attention
         if cross_attention_dim is not None:
-            self.norm2 = nn.LayerNorm(
-                dim, elementwise_affine=norm_elementwise_affine, eps=norm_eps
-            )
+            self.norm2 = nn.LayerNorm(dim, elementwise_affine=norm_elementwise_affine, eps=norm_eps)
             self.attn2 = Attention(
                 query_dim=dim,
                 cross_attention_dim=cross_attention_dim,
@@ -148,9 +133,7 @@ class SanaTransformerBlock(nn.Module):
             )
 
         # 3. Feed-forward
-        self.ff = GLUMBConv(
-            dim, dim, mlp_ratio, norm_type=None, residual_connection=False
-        )
+        self.ff = GLUMBConv(dim, dim, mlp_ratio, norm_type=None, residual_connection=False)
 
         self.scale_shift_table = nn.Parameter(torch.randn(6, dim) / dim**0.5)
 
@@ -192,9 +175,7 @@ class SanaTransformerBlock(nn.Module):
         norm_hidden_states = self.norm2(hidden_states)
         norm_hidden_states = norm_hidden_states * (1 + scale_mlp) + shift_mlp
 
-        norm_hidden_states = norm_hidden_states.unflatten(1, (height, width)).permute(
-            0, 3, 1, 2
-        )
+        norm_hidden_states = norm_hidden_states.unflatten(1, (height, width)).permute(0, 3, 1, 2)
         ff_output = self.ff(norm_hidden_states)
         ff_output = ff_output.flatten(2, 3).permute(0, 2, 1)
         hidden_states = hidden_states + gate_mlp * ff_output
@@ -285,9 +266,7 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         # 2. Additional condition embeddings
         self.time_embed = AdaLayerNormSingle(inner_dim)
 
-        self.caption_projection = PixArtAlphaTextProjection(
-            in_features=caption_channels, hidden_size=inner_dim
-        )
+        self.caption_projection = PixArtAlphaTextProjection(in_features=caption_channels, hidden_size=inner_dim)
         self.caption_norm = RMSNorm(inner_dim, eps=1e-5, elementwise_affine=True)
 
         # 3. Transformer blocks
@@ -311,15 +290,22 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         )
 
         # 4. Output blocks
-        self.scale_shift_table = nn.Parameter(
-            torch.randn(2, inner_dim) / inner_dim**0.5
-        )
+        self.scale_shift_table = nn.Parameter(torch.randn(2, inner_dim) / inner_dim**0.5)
 
         self.norm_out = nn.LayerNorm(inner_dim, elementwise_affine=False, eps=1e-6)
         self.proj_out = nn.Linear(inner_dim, patch_size * patch_size * out_channels)
 
         self.gradient_checkpointing = False
         self.gradient_checkpointing_interval = None
+
+        # TREAD support
+        self._tread_router = None
+        self._tread_routes = None
+
+    def set_router(self, router: TREADRouter, routes: Optional[List[Dict]] = None):
+        """Set TREAD router and routes for token reduction during training."""
+        self._tread_router = router
+        self._tread_routes = routes
 
     def set_gradient_checkpointing_interval(self, interval: int):
         r"""
@@ -361,9 +347,7 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         return processors
 
     # Copied from diffusers.models.unets.unet_2d_condition.UNet2DConditionModel.set_attn_processor
-    def set_attn_processor(
-        self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]]
-    ):
+    def set_attn_processor(self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]]):
         r"""
         Sets the attention processor to use to compute attention.
 
@@ -405,6 +389,7 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         encoder_attention_mask: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         attention_kwargs: Optional[dict] = None,
+        force_keep_mask: Optional[torch.Tensor] = None,
         return_dict: bool = True,
     ) -> Union[Tuple[torch.Tensor, ...], Transformer2DModelOutput]:
         if attention_kwargs is not None:
@@ -417,13 +402,8 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             # weight the lora layers by setting `lora_scale` for each PEFT layer
             scale_lora_layers(self, lora_scale)
         else:
-            if (
-                attention_kwargs is not None
-                and attention_kwargs.get("scale", None) is not None
-            ):
-                logger.warning(
-                    "Passing `scale` via `attention_kwargs` when not using the PEFT backend is ineffective."
-                )
+            if attention_kwargs is not None and attention_kwargs.get("scale", None) is not None:
+                logger.warning("Passing `scale` via `attention_kwargs` when not using the PEFT backend is ineffective.")
         # ensure attention_mask is a bias, and give it a singleton query_tokens dimension.
         #   we may have done this conversion already, e.g. if we came here via UNet2DConditionModel#forward.
         #   we can tell by counting dims; if ndim == 2: it's a mask rather than a bias.
@@ -444,9 +424,7 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
 
         # convert encoder_attention_mask to a bias the same way we do for attention_mask
         if encoder_attention_mask is not None and encoder_attention_mask.ndim == 2:
-            encoder_attention_mask = (
-                1 - encoder_attention_mask.to(hidden_states.dtype)
-            ) * -10000.0
+            encoder_attention_mask = (1 - encoder_attention_mask.to(hidden_states.dtype)) * -10000.0
             encoder_attention_mask = encoder_attention_mask.unsqueeze(1)
 
         # 1. Input
@@ -456,31 +434,45 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
 
         hidden_states = self.patch_embed(hidden_states)
 
-        timestep, embedded_timestep = self.time_embed(
-            timestep, batch_size=batch_size, hidden_dtype=hidden_states.dtype
-        )
+        timestep, embedded_timestep = self.time_embed(timestep, batch_size=batch_size, hidden_dtype=hidden_states.dtype)
 
         encoder_hidden_states = self.caption_projection(encoder_hidden_states)
-        encoder_hidden_states = encoder_hidden_states.view(
-            batch_size, -1, hidden_states.shape[-1]
-        )
+        encoder_hidden_states = encoder_hidden_states.view(batch_size, -1, hidden_states.shape[-1])
 
         encoder_hidden_states = self.caption_norm(encoder_hidden_states)
 
         # 2. Transformer blocks
         use_reentrant = is_torch_version("<=", "1.11.0")
-        ckpt_kwargs = (
-            {"use_reentrant": use_reentrant} if is_torch_version(">=", "1.11.0") else {}
-        )
+        ckpt_kwargs = {"use_reentrant": use_reentrant} if is_torch_version(">=", "1.11.0") else {}
+
+        # TREAD initialization
+        routes = self._tread_routes or []
+        router = self._tread_router
+        use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
 
         for i, block in enumerate(self.transformer_blocks):
+            # TREAD routing for this layer
+            if use_routing:
+                # Check if this layer should use routing
+                for route in routes:
+                    start_idx = route["start_layer_idx"]
+                    end_idx = route["end_layer_idx"]
+                    # Handle negative indices
+                    if start_idx < 0:
+                        start_idx = len(self.transformer_blocks) + start_idx
+                    if end_idx < 0:
+                        end_idx = len(self.transformer_blocks) + end_idx
+
+                    if start_idx <= i <= end_idx:
+                        mask_info = router.get_mask(
+                            hidden_states.shape[1], route["selection_ratio"], force_keep_mask=force_keep_mask
+                        )
+                        hidden_states = router.start_route(hidden_states, mask_info)
+                        break
             if (
                 self.training
                 and self.gradient_checkpointing
-                and (
-                    self.gradient_checkpointing_interval is None
-                    or i % self.gradient_checkpointing_interval == 0
-                )
+                and (self.gradient_checkpointing_interval is None or i % self.gradient_checkpointing_interval == 0)
             ):
 
                 def create_custom_forward(module):
@@ -511,11 +503,29 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                     post_patch_width,
                 )
 
+            # TREAD end routing for this layer
+            if use_routing:
+                # Check if this layer should end routing
+                for route in routes:
+                    start_idx = route["start_layer_idx"]
+                    end_idx = route["end_layer_idx"]
+                    # Handle negative indices
+                    if start_idx < 0:
+                        start_idx = len(self.transformer_blocks) + start_idx
+                    if end_idx < 0:
+                        end_idx = len(self.transformer_blocks) + end_idx
+
+                    if start_idx <= i <= end_idx:
+                        mask_info = router.get_mask(
+                            hidden_states.shape[1], route["selection_ratio"], force_keep_mask=force_keep_mask
+                        )
+                        hidden_states = router.end_route(hidden_states, mask_info)
+                        break
+
         # 3. Normalization
-        shift, scale = (
-            self.scale_shift_table[None]
-            + embedded_timestep[:, None].to(self.scale_shift_table.device)
-        ).chunk(2, dim=1)
+        shift, scale = (self.scale_shift_table[None] + embedded_timestep[:, None].to(self.scale_shift_table.device)).chunk(
+            2, dim=1
+        )
         hidden_states = self.norm_out(hidden_states)
 
         # 4. Modulation
@@ -532,9 +542,7 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             -1,
         )
         hidden_states = hidden_states.permute(0, 5, 1, 3, 2, 4)
-        output = hidden_states.reshape(
-            batch_size, -1, post_patch_height * p, post_patch_width * p
-        )
+        output = hidden_states.reshape(batch_size, -1, post_patch_height * p, post_patch_width * p)
 
         if USE_PEFT_BACKEND:
             # remove `lora_scale` from each PEFT layer

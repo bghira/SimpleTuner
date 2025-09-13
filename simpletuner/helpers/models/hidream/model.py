@@ -1,33 +1,26 @@
-import torch, os, logging, einops, inspect
-from simpletuner.helpers.training.wrappers import (
-    gather_dict_of_tensors_shapes,
-    move_dict_of_tensors_to_device,
-)
-from simpletuner.helpers.models.common import (
-    ImageModelFoundation,
-    PredictionTypes,
-    PipelineTypes,
-    ModelTypes,
-)
-from transformers import (
-    T5EncoderModel,
-    AutoTokenizer,
-    LlamaForCausalLM,
-    CLIPTokenizer,
-    CLIPTextModelWithProjection,
-)
+import inspect
+import logging
+import os
+
+import einops
+import torch
+from transformers import AutoTokenizer, CLIPTextModelWithProjection, CLIPTokenizer, LlamaForCausalLM, T5EncoderModel
+
+from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
+from simpletuner.helpers.training.wrappers import gather_dict_of_tensors_shapes, move_dict_of_tensors_to_device
 
 HiDreamImageTransformer2DModel = None
 HiDreamImagePipeline: object = None
 HiDreamControlNetPipeline: object = None
+from diffusers import AutoencoderKL
+
+from simpletuner.helpers.models.hidream.controlnet import HiDreamControlNetPipeline
+from simpletuner.helpers.models.hidream.pipeline import HiDreamImagePipeline
 from simpletuner.helpers.models.hidream.transformer import (
     HiDreamImageTransformer2DModel,
-    get_load_balancing_loss,
     clear_load_balancing_loss,
+    get_load_balancing_loss,
 )
-from simpletuner.helpers.models.hidream.pipeline import HiDreamImagePipeline
-from simpletuner.helpers.models.hidream.controlnet import HiDreamControlNetPipeline
-from diffusers import AutoencoderKL
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -115,15 +108,11 @@ class HiDream(ImageModelFoundation):
 
         if self.config.controlnet_model_name_or_path:
             logger.info("Loading existing controlnet weights")
-            self.controlnet = HiDreamControlNetModel.from_pretrained(
-                self.config.controlnet_model_name_or_path
-            )
+            self.controlnet = HiDreamControlNetModel.from_pretrained(self.config.controlnet_model_name_or_path)
         else:
             logger.info("Initializing controlnet weights from base model")
             cn_custom_config = self.config.controlnet_custom_config or {}
-            self.controlnet = HiDreamControlNetModel.from_transformer(
-                self.unwrap_model(self.model), **cn_custom_config
-            )
+            self.controlnet = HiDreamControlNetModel.from_transformer(self.unwrap_model(self.model), **cn_custom_config)
         self.controlnet.train()
 
     def requires_conditioning_latents(self) -> bool:
@@ -139,26 +128,17 @@ class HiDream(ImageModelFoundation):
         return False
 
     def uses_shared_modules(self) -> bool:
-        if self.config.controlnet and self.config.controlnet_custom_config.get(
-            "use_shared_modules", False
-        ):
+        if self.config.controlnet and self.config.controlnet_custom_config.get("use_shared_modules", False):
             return True
         return False
 
     def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
-        if (
-            self.config.hidream_load_balancing_loss_weight is not None
-            and self.config.hidream_load_balancing_loss_weight > 0
-        ):
-            pretrained_load_args["aux_loss_alpha"] = (
-                self.config.hidream_load_balancing_loss_weight
-            )
+        if self.config.hidream_load_balancing_loss_weight is not None and self.config.hidream_load_balancing_loss_weight > 0:
+            pretrained_load_args["aux_loss_alpha"] = self.config.hidream_load_balancing_loss_weight
 
         return pretrained_load_args
 
-    def _load_pipeline(
-        self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True
-    ):
+    def _load_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
         """
         Loads the pipeline class for the model.
         """
@@ -182,9 +162,7 @@ class HiDream(ImageModelFoundation):
         if not hasattr(self, "PIPELINE_CLASSES"):
             raise NotImplementedError("Pipeline class not defined.")
         if pipeline_type not in self.PIPELINE_CLASSES:
-            raise NotImplementedError(
-                f"Pipeline type {pipeline_type} not defined in {self.__class__.__name__}."
-            )
+            raise NotImplementedError(f"Pipeline type {pipeline_type} not defined in {self.__class__.__name__}.")
         pipeline_class = self.PIPELINE_CLASSES[pipeline_type]
         if not hasattr(pipeline_class, "from_pretrained"):
             raise NotImplementedError(
@@ -211,13 +189,8 @@ class HiDream(ImageModelFoundation):
             text_encoder_config,
         ) in self.TEXT_ENCODER_CONFIGURATION.items():
             tokenizer_attr = text_encoder_attr.replace("text_encoder", "tokenizer")
-            if (
-                self.text_encoders is not None
-                and len(self.text_encoders) >= text_encoder_idx
-            ):
-                pipeline_kwargs[text_encoder_attr] = self.unwrap_model(
-                    self.text_encoders[text_encoder_idx]
-                )
+            if self.text_encoders is not None and len(self.text_encoders) >= text_encoder_idx:
+                pipeline_kwargs[text_encoder_attr] = self.unwrap_model(self.text_encoders[text_encoder_idx])
                 pipeline_kwargs[tokenizer_attr] = self.tokenizers[text_encoder_idx]
             else:
                 pipeline_kwargs[text_encoder_attr] = None
@@ -230,14 +203,36 @@ class HiDream(ImageModelFoundation):
         if self.config.controlnet:
             pipeline_kwargs["controlnet"] = self.controlnet
 
-        logger.debug(
-            f"Initialising {pipeline_class.__name__} with components: {pipeline_kwargs}"
-        )
+        logger.debug(f"Initialising {pipeline_class.__name__} with components: {pipeline_kwargs}")
         self.pipelines[pipeline_type] = pipeline_class.from_pretrained(
             **pipeline_kwargs,
         )
 
         return self.pipelines[pipeline_type]
+
+    def tread_init(self):
+        """
+        Initialize the TREAD model training method.
+        """
+        from simpletuner.helpers.training.tread import TREADRouter
+
+        if (
+            getattr(self.config, "tread_config", None) is None
+            or getattr(self.config, "tread_config", None) is {}
+            or getattr(self.config, "tread_config", {}).get("routes", None) is None
+        ):
+            logger.error("TREAD training requires you to configure the routes in the TREAD config")
+            import sys
+
+            sys.exit(1)
+
+        self.unwrap_model(model=self.model).set_router(
+            TREADRouter(
+                seed=getattr(self.config, "seed", None) or 42,
+                device=self.accelerator.device,
+            ),
+            self.config.tread_config["routes"],
+        )
 
     def _format_text_embedding(self, text_embedding: torch.Tensor):
         """
@@ -255,40 +250,23 @@ class HiDream(ImageModelFoundation):
         return {
             "t5_prompt_embeds": t5_embeds.squeeze(0).detach().clone().to("cpu"),
             "llama_prompt_embeds": llama_embeds.squeeze(0).detach().clone().to("cpu"),
-            "pooled_prompt_embeds": pooled_prompt_embeds.squeeze(0)
-            .detach()
-            .clone()
-            .to("cpu"),
+            "pooled_prompt_embeds": pooled_prompt_embeds.squeeze(0).detach().clone().to("cpu"),
         }
 
     def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
         return {
-            "t5_prompt_embeds": text_embedding["t5_prompt_embeds"]
-            .unsqueeze(0)
-            .to(self.accelerator.device),
-            "llama_prompt_embeds": text_embedding["llama_prompt_embeds"]
-            .unsqueeze(0)
-            .to(self.accelerator.device),
-            "pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"]
-            .unsqueeze(0)
-            .to(self.accelerator.device),
+            "t5_prompt_embeds": text_embedding["t5_prompt_embeds"].unsqueeze(0).to(self.accelerator.device),
+            "llama_prompt_embeds": text_embedding["llama_prompt_embeds"].unsqueeze(0).to(self.accelerator.device),
+            "pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0).to(self.accelerator.device),
         }
 
-    def convert_negative_text_embed_for_pipeline(
-        self, text_embedding: torch.Tensor, prompt: str
-    ) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
         return {
-            "negative_t5_prompt_embeds": text_embedding["t5_prompt_embeds"]
-            .unsqueeze(0)
-            .to(self.accelerator.device),
-            "negative_llama_prompt_embeds": text_embedding["llama_prompt_embeds"]
-            .unsqueeze(0)
-            .to(self.accelerator.device),
-            "negative_pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"]
-            .unsqueeze(0)
-            .to(self.accelerator.device),
+            "negative_t5_prompt_embeds": text_embedding["t5_prompt_embeds"].unsqueeze(0).to(self.accelerator.device),
+            "negative_llama_prompt_embeds": text_embedding["llama_prompt_embeds"].unsqueeze(0).to(self.accelerator.device),
+            "negative_pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0).to(self.accelerator.device),
         }
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
@@ -301,9 +279,7 @@ class HiDream(ImageModelFoundation):
         Returns:
             Text encoder output (raw)
         """
-        t5_embeds, llama_embeds, pooled_prompt_embeds = self.pipelines[
-            PipelineTypes.TEXT2IMG
-        ]._encode_prompt(
+        t5_embeds, llama_embeds, pooled_prompt_embeds = self.pipelines[PipelineTypes.TEXT2IMG]._encode_prompt(
             prompt=prompts,
             prompt_2=prompts,
             prompt_3=prompts,
@@ -319,15 +295,9 @@ class HiDream(ImageModelFoundation):
     def collate_prompt_embeds(self, text_encoder_output: dict) -> dict:
         return move_dict_of_tensors_to_device(
             {
-                "t5_prompt_embeds": torch.stack(
-                    [e["t5_prompt_embeds"] for e in text_encoder_output], dim=0
-                ),
-                "llama_prompt_embeds": torch.stack(
-                    [e["llama_prompt_embeds"] for e in text_encoder_output], dim=0
-                ),
-                "pooled_prompt_embeds": torch.stack(
-                    [e["pooled_prompt_embeds"] for e in text_encoder_output], dim=0
-                ),
+                "t5_prompt_embeds": torch.stack([e["t5_prompt_embeds"] for e in text_encoder_output], dim=0),
+                "llama_prompt_embeds": torch.stack([e["llama_prompt_embeds"] for e in text_encoder_output], dim=0),
+                "pooled_prompt_embeds": torch.stack([e["pooled_prompt_embeds"] for e in text_encoder_output], dim=0),
             },
             self.accelerator.device,
         )
@@ -353,10 +323,7 @@ class HiDream(ImageModelFoundation):
         )
 
         # Handle non-square images
-        if (
-            prepared_batch["noisy_latents"].shape[-2]
-            != prepared_batch["noisy_latents"].shape[-1]
-        ):
+        if prepared_batch["noisy_latents"].shape[-2] != prepared_batch["noisy_latents"].shape[-1]:
             B, C, H, W = prepared_batch["noisy_latents"].shape
             pH, pW = (
                 H // self.unwrap_model(model=self.model).config.patch_size,
@@ -371,12 +338,8 @@ class HiDream(ImageModelFoundation):
             img_ids_pad = torch.zeros(self.unwrap_model(model=self.model).max_seq, 3)
             img_ids_pad[: pH * pW, :] = img_ids
 
-            img_sizes = img_sizes.unsqueeze(0).to(
-                prepared_batch["noisy_latents"].device
-            )
-            img_ids = img_ids_pad.unsqueeze(0).to(
-                prepared_batch["noisy_latents"].device
-            )
+            img_sizes = img_sizes.unsqueeze(0).to(prepared_batch["noisy_latents"].device)
+            img_ids = img_ids_pad.unsqueeze(0).to(prepared_batch["noisy_latents"].device)
             img_sizes = img_sizes.repeat(B, 1)
             img_ids = img_ids.repeat(B, 1, 1)
         else:
@@ -414,15 +377,9 @@ class HiDream(ImageModelFoundation):
                     dtype=self.config.base_weight_dtype,
                 ),
                 timesteps=prepared_batch["timesteps"],
-                t5_hidden_states=prepared_batch["text_encoder_output"][
-                    "t5_prompt_embeds"
-                ],
-                llama_hidden_states=prepared_batch["text_encoder_output"][
-                    "llama_prompt_embeds"
-                ],
-                pooled_embeds=prepared_batch["text_encoder_output"][
-                    "pooled_prompt_embeds"
-                ],
+                t5_hidden_states=prepared_batch["text_encoder_output"]["t5_prompt_embeds"],
+                llama_hidden_states=prepared_batch["text_encoder_output"]["llama_prompt_embeds"],
+                pooled_embeds=prepared_batch["text_encoder_output"]["pooled_prompt_embeds"],
                 img_sizes=img_sizes,
                 img_ids=img_ids,
                 return_dict=False,
@@ -446,10 +403,7 @@ class HiDream(ImageModelFoundation):
         )
 
         # Handle non-square images for noisy latents
-        if (
-            prepared_batch["noisy_latents"].shape[-2]
-            != prepared_batch["noisy_latents"].shape[-1]
-        ):
+        if prepared_batch["noisy_latents"].shape[-2] != prepared_batch["noisy_latents"].shape[-1]:
             B, C, H, W = prepared_batch["noisy_latents"].shape
             pH, pW = (
                 H // self.unwrap_model(model=self.model).config.patch_size,
@@ -464,12 +418,8 @@ class HiDream(ImageModelFoundation):
             img_ids_pad = torch.zeros(self.unwrap_model(model=self.model).max_seq, 3)
             img_ids_pad[: pH * pW, :] = img_ids
 
-            img_sizes = img_sizes.unsqueeze(0).to(
-                prepared_batch["noisy_latents"].device
-            )
-            img_ids = img_ids_pad.unsqueeze(0).to(
-                prepared_batch["noisy_latents"].device
-            )
+            img_sizes = img_sizes.unsqueeze(0).to(prepared_batch["noisy_latents"].device)
+            img_ids = img_ids_pad.unsqueeze(0).to(prepared_batch["noisy_latents"].device)
             img_sizes = img_sizes.repeat(B, 1)
             img_ids = img_ids.repeat(B, 1, 1)
         else:
@@ -513,9 +463,7 @@ class HiDream(ImageModelFoundation):
             ),
             timesteps=prepared_batch["timesteps"],
             t5_hidden_states=prepared_batch["text_encoder_output"]["t5_prompt_embeds"],
-            llama_hidden_states=prepared_batch["text_encoder_output"][
-                "llama_prompt_embeds"
-            ],
+            llama_hidden_states=prepared_batch["text_encoder_output"]["llama_prompt_embeds"],
             pooled_embeds=prepared_batch["text_encoder_output"]["pooled_prompt_embeds"],
             img_sizes=img_sizes,
             img_ids=img_ids,
@@ -530,15 +478,9 @@ class HiDream(ImageModelFoundation):
                 dtype=self.config.base_weight_dtype,
             ),
             "timesteps": prepared_batch["timesteps"],
-            "t5_hidden_states": prepared_batch["text_encoder_output"][
-                "t5_prompt_embeds"
-            ],
-            "llama_hidden_states": prepared_batch["text_encoder_output"][
-                "llama_prompt_embeds"
-            ],
-            "pooled_embeds": prepared_batch["text_encoder_output"][
-                "pooled_prompt_embeds"
-            ],
+            "t5_hidden_states": prepared_batch["text_encoder_output"]["t5_prompt_embeds"],
+            "llama_hidden_states": prepared_batch["text_encoder_output"]["llama_prompt_embeds"],
+            "pooled_embeds": prepared_batch["text_encoder_output"]["pooled_prompt_embeds"],
             "img_sizes": img_sizes,
             "img_ids": img_ids,
             "return_dict": False,
@@ -547,27 +489,20 @@ class HiDream(ImageModelFoundation):
         # Add ControlNet outputs to kwargs
         if controlnet_block_samples is not None:
             hidream_transformer_kwargs["controlnet_block_samples"] = [
-                sample.to(
-                    device=self.accelerator.device, dtype=self.config.weight_dtype
-                )
+                sample.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
                 for sample in controlnet_block_samples
             ]
 
         if controlnet_single_block_samples is not None:
             hidream_transformer_kwargs["controlnet_single_block_samples"] = [
-                sample.to(
-                    device=self.accelerator.device, dtype=self.config.weight_dtype
-                )
+                sample.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
                 for sample in controlnet_single_block_samples
             ]
 
         # Forward pass through the transformer with ControlNet residuals
         model_pred = self.model(**hidream_transformer_kwargs)[0]
 
-        return {
-            "model_prediction": model_pred
-            * -1  # the model is trained with inverted velocity :(
-        }
+        return {"model_prediction": model_pred * -1}  # the model is trained with inverted velocity :(
 
     def get_lora_target_layers(self):
         if not self.config.controlnet:
@@ -594,13 +529,8 @@ class HiDream(ImageModelFoundation):
                 f"{self.NAME} does not support fp8-quanto. Please use fp8-torchao or int8 precision level instead."
             )
         t5_max_length = 128
-        if (
-            self.config.tokenizer_max_length is None
-            or self.config.tokenizer_max_length == 0
-        ):
-            logger.warning(
-                f"Setting T5 XXL tokeniser max length to {t5_max_length} for {self.NAME}."
-            )
+        if self.config.tokenizer_max_length is None or self.config.tokenizer_max_length == 0:
+            logger.warning(f"Setting T5 XXL tokeniser max length to {t5_max_length} for {self.NAME}.")
             self.config.tokenizer_max_length = t5_max_length
         if int(self.config.tokenizer_max_length) > t5_max_length:
             if not self.config.i_know_what_i_am_doing:
@@ -617,9 +547,7 @@ class HiDream(ImageModelFoundation):
                 )
 
         if self.config.aspect_bucket_alignment != 64:
-            logger.warning(
-                "MM-DiT requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
-            )
+            logger.warning("MM-DiT requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment.")
             self.config.aspect_bucket_alignment = 64
 
         self.config.vae_enable_tiling = True
@@ -632,19 +560,11 @@ class HiDream(ImageModelFoundation):
         if self.config.flow_schedule_shift is not None:
             output_args.append(f"shift={self.config.flow_schedule_shift}")
         if self.config.flow_use_beta_schedule:
-            output_args.append(
-                f"flow_beta_schedule_alpha={self.config.flow_beta_schedule_alpha}"
-            )
-            output_args.append(
-                f"flow_beta_schedule_beta={self.config.flow_beta_schedule_beta}"
-            )
+            output_args.append(f"flow_beta_schedule_alpha={self.config.flow_beta_schedule_alpha}")
+            output_args.append(f"flow_beta_schedule_beta={self.config.flow_beta_schedule_beta}")
         if self.config.flow_use_uniform_schedule:
             output_args.append(f"flow_use_uniform_schedule")
-        output_str = (
-            f" (extra parameters={output_args})"
-            if output_args
-            else " (no special parameters set)"
-        )
+        output_str = f" (extra parameters={output_args})" if output_args else " (no special parameters set)"
 
         return output_str
 
@@ -654,9 +574,7 @@ class HiDream(ImageModelFoundation):
 
         if aux_losses:
             # Extract and accumulate the actual loss values (first element of each tuple)
-            accumulated_aux_loss = torch.sum(
-                torch.stack([aux_tuple[0] for aux_tuple in aux_losses])
-            )
+            accumulated_aux_loss = torch.sum(torch.stack([aux_tuple[0] for aux_tuple in aux_losses]))
 
             # For logging purposes - gather these regardless of whether we add to main loss
             aux_log_info = {
@@ -672,19 +590,13 @@ class HiDream(ImageModelFoundation):
                     [torch.max(aux_tuple[2]).item() for aux_tuple in aux_losses],
                     default=0,
                 ),
-                "expert_usage_mean": sum(
-                    [torch.mean(aux_tuple[2]).item() for aux_tuple in aux_losses]
-                )
+                "expert_usage_mean": sum([torch.mean(aux_tuple[2]).item() for aux_tuple in aux_losses])
                 / max(1, len(aux_losses)),
             }
 
             # Only add to the main loss if configured to do so
             if self.config.hidream_use_load_balancing_loss:
-                total_loss = (
-                    loss
-                    + accumulated_aux_loss
-                    * self.config.hidream_load_balancing_loss_weight
-                )
+                total_loss = loss + accumulated_aux_loss * self.config.hidream_load_balancing_loss_weight
             else:
                 total_loss = loss
         else:

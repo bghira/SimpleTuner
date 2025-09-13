@@ -288,6 +288,88 @@ class TestTREADTransformers(unittest.TestCase):
             model.set_router(self.mock_router, None)
             self.assertEqual(model._tread_routes, None)
 
+    def test_hidream_tread_integration(self):
+        """Test TREAD integration in HiDream transformer."""
+        with patch("simpletuner.helpers.models.hidream.transformer.TREADRouter"):
+            from simpletuner.helpers.models.hidream.transformer import HiDreamImageTransformer2DModel
+
+            # Create model with minimal config
+            model = HiDreamImageTransformer2DModel(
+                patch_size=2,
+                in_channels=16,
+                out_channels=16,
+                num_layers=2,
+                num_single_layers=2,
+                attention_head_dim=128,
+                num_attention_heads=20,
+                caption_channels=[2304, 4096],
+                text_emb_dim=2048,
+            )
+
+            # Test set_router method
+            model.set_router(self.mock_router, self.test_routes)
+            self.assertEqual(model._tread_router, self.mock_router)
+            self.assertEqual(model._tread_routes, self.test_routes)
+
+            # Test TREAD attributes exist
+            self.assertIsNotNone(model._tread_router)
+            self.assertIsNotNone(model._tread_routes)
+
+    def test_cosmos_tread_integration(self):
+        """Test TREAD integration in Cosmos transformer."""
+        with patch("simpletuner.helpers.models.cosmos.transformer.TREADRouter"):
+            from simpletuner.helpers.models.cosmos.transformer import CosmosTransformer3DModel
+
+            # Create model with minimal config
+            model = CosmosTransformer3DModel(
+                in_channels=16,
+                out_channels=16,
+                num_attention_heads=32,
+                attention_head_dim=128,
+                num_layers=2,
+                mlp_ratio=4.0,
+                text_embed_dim=1024,
+                adaln_lora_dim=256,
+            )
+
+            # Test set_router method
+            model.set_router(self.mock_router, self.test_routes)
+            self.assertEqual(model._tread_router, self.mock_router)
+            self.assertEqual(model._tread_routes, self.test_routes)
+
+            # Test TREAD attributes exist
+            self.assertIsNotNone(model._tread_router)
+            self.assertIsNotNone(model._tread_routes)
+
+    def test_sana_tread_integration(self):
+        """Test TREAD integration in SANA transformer."""
+        with patch("simpletuner.helpers.models.sana.transformer.TREADRouter"):
+            from simpletuner.helpers.models.sana.transformer import SanaTransformer2DModel
+
+            # Create model with minimal config
+            model = SanaTransformer2DModel(
+                in_channels=32,
+                out_channels=32,
+                num_attention_heads=70,
+                attention_head_dim=32,
+                num_layers=2,
+                num_cross_attention_heads=20,
+                cross_attention_head_dim=112,
+                cross_attention_dim=2240,
+                caption_channels=2304,
+                sample_size=32,
+                patch_size=1,
+            )
+
+            # Test set_router method
+            model.set_router(self.mock_router, self.test_routes)
+            self.assertEqual(model._tread_router, self.mock_router)
+            self.assertEqual(model._tread_routes, self.test_routes)
+
+            # Test TREAD attributes exist
+            self.assertIsNotNone(model._tread_router)
+            self.assertIsNotNone(model._tread_routes)
+
 
 class TestTREADModelInitialization(unittest.TestCase):
     """Test TREAD initialization methods in model classes."""
@@ -418,6 +500,75 @@ class TestTREADModelInitialization(unittest.TestCase):
 
                     # Verify error was logged
                     mock_logger.error.assert_called_once()
+
+    def test_hidream_tread_init(self):
+        """Test TREAD initialization in HiDream model."""
+        with patch("simpletuner.helpers.training.tread.TREADRouter") as mock_tread_router:
+            with patch("simpletuner.helpers.models.hidream.model.logger"):
+                from simpletuner.helpers.models.hidream.model import HiDream
+
+                # Create mock model instance
+                model_instance = Mock()
+                model_instance.config = self.mock_config
+                model_instance.accelerator = Mock()
+                model_instance.accelerator.device = "cpu"
+                model_instance.unwrap_model.return_value = Mock()
+
+                # Test tread_init method exists
+                self.assertTrue(hasattr(HiDream, "tread_init"))
+
+                # Test successful initialization
+                model_instance.__class__ = HiDream
+                HiDream.tread_init(model_instance)
+
+                # Verify TREADRouter was called with correct parameters
+                mock_tread_router.assert_called_once_with(seed=42, device="cpu")
+
+    def test_cosmos_tread_init(self):
+        """Test TREAD initialization in Cosmos model."""
+        with patch("simpletuner.helpers.training.tread.TREADRouter") as mock_tread_router:
+            with patch("simpletuner.helpers.models.cosmos.model.logger"):
+                from simpletuner.helpers.models.cosmos.model import Cosmos2Image
+
+                # Create mock model instance
+                model_instance = Mock()
+                model_instance.config = self.mock_config
+                model_instance.accelerator = Mock()
+                model_instance.accelerator.device = "cuda"
+                model_instance.unwrap_model.return_value = Mock()
+
+                # Test tread_init method exists
+                self.assertTrue(hasattr(Cosmos2Image, "tread_init"))
+
+                # Test successful initialization
+                model_instance.__class__ = Cosmos2Image
+                Cosmos2Image.tread_init(model_instance)
+
+                # Verify TREADRouter was called with correct parameters
+                mock_tread_router.assert_called_once_with(seed=42, device="cuda")
+
+    def test_sana_tread_init(self):
+        """Test TREAD initialization in SANA model."""
+        with patch("simpletuner.helpers.training.tread.TREADRouter") as mock_tread_router:
+            with patch("simpletuner.helpers.models.sana.model.logger"):
+                from simpletuner.helpers.models.sana.model import Sana
+
+                # Create mock model instance
+                model_instance = Mock()
+                model_instance.config = self.mock_config
+                model_instance.accelerator = Mock()
+                model_instance.accelerator.device = "mps"
+                model_instance.unwrap_model.return_value = Mock()
+
+                # Test tread_init method exists
+                self.assertTrue(hasattr(Sana, "tread_init"))
+
+                # Test successful initialization
+                model_instance.__class__ = Sana
+                Sana.tread_init(model_instance)
+
+                # Verify TREADRouter was called with correct parameters
+                mock_tread_router.assert_called_once_with(seed=42, device="mps")
 
 
 if __name__ == "__main__":
