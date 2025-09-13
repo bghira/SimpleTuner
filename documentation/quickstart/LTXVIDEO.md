@@ -8,7 +8,7 @@ LTX does not require much system **or** GPU memory.
 
 When you're training every component of a rank-16 LoRA (MLP, projections, multimodal blocks), it ends up using a bit more than 12G on an M3 Mac (batch size 4).
 
-You'll need: 
+You'll need:
 - **a realistic minimum** is 16GB or, a single 3090 or V100 GPU
 - **ideally** multiple 4090, A6000, L40S, or better
 
@@ -385,7 +385,7 @@ From the SimpleTuner directory, you have several options to start training:
 
 **Option 1 (Recommended - pip install):**
 ```bash
-pip install simpletuner  
+pip install simpletuner
 simpletuner train
 ```
 

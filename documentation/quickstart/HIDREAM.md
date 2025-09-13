@@ -407,7 +407,7 @@ From the SimpleTuner directory, you have several options to start training:
 
 **Option 1 (Recommended - pip install):**
 ```bash
-pip install simpletuner  
+pip install simpletuner
 simpletuner train
 ```
 
@@ -465,7 +465,7 @@ def download_adapter(repo_id: str):
     )
 
     return path_to_adapter_file
-    
+
 adapter_file_path = download_adapter(repo_id=adapter_repo_id)
 transformer = HiDreamImageTransformer2DModel.from_pretrained(model_id, torch_dtype=torch.bfloat16, subfolder="transformer")
 pipeline = HiDreamImagePipeline.from_pretrained(

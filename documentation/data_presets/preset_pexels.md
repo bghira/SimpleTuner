@@ -52,7 +52,7 @@ def download_and_save(row):
     img_url = row['url']
     caption = row['cogvlm_caption']
     img_id = row['id']
-    
+
     try:
         # Download the image
         img_response = requests.get(img_url)
@@ -60,7 +60,7 @@ def download_and_save(row):
             img = Image.open(BytesIO(img_response.content))
             img_path = os.path.join(output_dir, f"{img_id}.png")
             img.save(img_path)
-        
+
         # Write the caption to a text file
         caption_path = os.path.join(output_dir, f"{img_id}.txt")
         with open(caption_path, 'w') as caption_file:

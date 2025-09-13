@@ -388,7 +388,7 @@ A complete example list can be found [here](/config/caption_filter_list.txt.exam
 This is a shortened example, which will be explained below:
 
 ```
-arafed 
+arafed
 this .* has a
 ^this is the beginning of the string
 s/this/will be found and replaced/

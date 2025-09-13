@@ -15,7 +15,7 @@ When you're training every component of a rank-16 LoRA (MLP, projections, multim
 - a bit more than 9G VRAM when quantising to NF4 + bf16 base/LoRA weights
 - a bit more than 9G VRAM when quantising to int2 + bf16 base/LoRA weights
 
-You'll need: 
+You'll need:
 - **the absolute minimum** is a single **3080 10G**
 - **a realistic minimum** is a single 3090 or V100 GPU
 - **ideally** multiple 4090, A6000, L40S, or better
@@ -378,7 +378,7 @@ From the SimpleTuner directory, you have several options to start training:
 
 **Option 1 (Recommended - pip install):**
 ```bash
-pip install simpletuner  
+pip install simpletuner
 simpletuner train
 ```
 
@@ -603,7 +603,7 @@ When you do these things (among others), some square grid artifacts **may** begi
 
 Some fine-tuned Flux models on Hugging Face Hub (such as Dev2Pro) lack the full directory structure, requiring these specific options be set.
 
-Make sure to set these options `flux_guidance_value`,  `validation_guidance_real` and `flux_attention_masked_training` according to the way the creator did as well if that information is available. 
+Make sure to set these options `flux_guidance_value`,  `validation_guidance_real` and `flux_attention_masked_training` according to the way the creator did as well if that information is available.
 ```json
 {
     "model_family": "flux",

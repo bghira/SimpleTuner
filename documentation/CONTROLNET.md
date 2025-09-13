@@ -270,7 +270,7 @@ Here's a complete example that generates multiple conditioning types from a sing
         "captions": ["enhance image quality", "increase resolution", "sharpen"]
       },
       {
-        "type": "jpeg_artifacts", 
+        "type": "jpeg_artifacts",
         "quality_range": [20, 40],
         "captions": ["remove compression", "fix jpeg artifacts"]
       },

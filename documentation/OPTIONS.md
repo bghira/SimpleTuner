@@ -106,7 +106,7 @@ Provided by Hugging Face, the optimum-quanto library has robust support across a
   - does not have hardware fp8 matmul yet on CUDA or ROCm devices, so it will possibly be noticeably slower than int8
     - uses MARLIN kernel for fp8 GEMM
   - incompatible with dynamo, will automatically disable dynamo if the combination is attempted.
-  
+
 #### TorchAO
 
 A newer library from Pytorch, AO allows us to replace the linears and 2D convolutions (eg. unet style models) with quantised counterparts.
@@ -225,7 +225,7 @@ A lot of settings are instead set through the [dataloader config](/documentation
 ### `--resolution_type`
 
 - **What**: This tells SimpleTuner whether to use `area` size calculations or `pixel` edge calculations. A hybrid approach of `pixel_area` is also supported, which allows using pixel instead of megapixel for `area` measurements.
-- **Options**: 
+- **Options**:
   - `resolution_type=pixel_area`
     - A `resolution` value of 1024 will be internally mapped to an accurate area measurement for efficient aspect bucketing.
     - Example resulting sizes for `1024`: 1024x1024, 1216x832, 832x1216

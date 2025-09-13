@@ -226,7 +226,7 @@ When optimising training on DeepSpeed for multi-node, using the lowest-possible 
 
 For example, an 80G NVIDIA GPU can successfully train Flux with ZeRO level 1 offload, minimising overhead substantially.
 
-Adding the following lines 
+Adding the following lines
 
 ```yaml
 # Update this from MULTI_GPU to DEEPSPEED

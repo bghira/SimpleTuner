@@ -162,7 +162,7 @@ These may be generated from the parent model.
 1. **Start without simulation**: Set `"simulate_generator_forward": false` initially
 2. **Monitor both losses**: Watch `dmd_loss` and `fake_score_loss` in wandb
 3. **Validation frequency**: DMD converges quickly, validate often
-4. **Memory management**: 
+4. **Memory management**:
    - Use `gradient_checkpointing`
    - Lower `train_batch_size` to 1
    - Consider `base_model_precision: "int8-quanto"`

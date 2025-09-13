@@ -11,7 +11,7 @@ When training a rank-16 LoRA, it uses:
 - Approximately 16-20GB VRAM for full model fine-tuning
 - About 20-30GB of system RAM during startup
 
-You'll need: 
+You'll need:
 - **Minimum**: A single RTX 3060 12GB or RTX 4060 Ti 16GB
 - **Recommended**: RTX 3090, RTX 4090, or A100 for faster training
 - **System RAM**: At least 32GB recommended
@@ -220,7 +220,7 @@ wandb login
 
 #### Login to Huggingface Hub
 
-To push checkpoints to Huggingface Hub, ensure 
+To push checkpoints to Huggingface Hub, ensure
 ```bash
 huggingface-cli login
 ```
@@ -231,7 +231,7 @@ From the SimpleTuner directory, you have several options to start training:
 
 **Option 1 (Recommended - pip install):**
 ```bash
-pip install simpletuner  
+pip install simpletuner
 simpletuner train
 ```
 

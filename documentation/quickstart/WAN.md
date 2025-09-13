@@ -29,7 +29,7 @@ Currently, image-to-video training is not supported for Wan, but T2V LoRA and Ly
 - Resolution: 1280x720
 -->
 
-You'll need: 
+You'll need:
 - **a realistic minimum** is 16GB or, a single 3090 or V100 GPU
 - **ideally** multiple 4090, A6000, L40S, or better
 
@@ -502,7 +502,7 @@ From the SimpleTuner directory, you have several options to start training:
 
 **Option 1 (Recommended - pip install):**
 ```bash
-pip install simpletuner  
+pip install simpletuner
 simpletuner train
 ```
 

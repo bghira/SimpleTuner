@@ -17,7 +17,7 @@ SimpleTuner v0.7 includes preliminary support for training SDXL using DeepSpeed 
 |  0%   43C    P2   100W / 450W |   9237MiB / 24564MiB |    100%      Default |
 |                               |                      |                  N/A |
 +-------------------------------+----------------------+----------------------+
-                                                                               
+
 +-----------------------------------------------------------------------------+
 | Processes:                                                                  |
 |  GPU   GI   CI        PID   Type   Process name                  GPU Memory |
@@ -86,20 +86,20 @@ This machine
 ----------------------------------------------------------------------------------------------------------------------------
 Which type of machine are you using?
 No distributed training
-Do you want to run your training on CPU only (even if a GPU / Apple Silicon / Ascend NPU device is available)? [yes/NO]:NO  
+Do you want to run your training on CPU only (even if a GPU / Apple Silicon / Ascend NPU device is available)? [yes/NO]:NO
 Do you wish to optimize your script with torch dynamo?[yes/NO]:NO
 Do you want to use DeepSpeed? [yes/NO]: yes
 Do you want to specify a json file to a DeepSpeed config? [yes/NO]: NO
 ----------------------------------------------------------------------------------------------------------------------------
 What should be your DeepSpeed's ZeRO optimization stage?
 1
-How many gradient accumulation steps you're passing in your script? [1]: 4                                                  
+How many gradient accumulation steps you're passing in your script? [1]: 4
 Do you want to use gradient clipping? [yes/NO]:
 Do you want to enable `deepspeed.zero.Init` when using ZeRO Stage-3 for constructing massive models? [yes/NO]:
 How many GPU(s) should be used for distributed training? [1]:
 ----------------------------------------------------------------------------------------------------------------------------
-Do you wish to use FP16 or BF16 (mixed precision)?bf16                                                                                                                        
-accelerate configuration saved at /root/.cache/huggingface/accelerate/default_config.yaml                              
+Do you wish to use FP16 or BF16 (mixed precision)?bf16
+accelerate configuration saved at /root/.cache/huggingface/accelerate/default_config.yaml
 ```
 
 This results in the following yaml file:

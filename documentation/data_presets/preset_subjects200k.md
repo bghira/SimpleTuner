@@ -22,7 +22,7 @@ Example data structure:
     'collection': 'collection_1',
     'quality_assessment': {
         'compositeStructure': 5,
-        'objectConsistency': 5, 
+        'objectConsistency': 5,
         'imageQuality': 5
     },
     'description': {

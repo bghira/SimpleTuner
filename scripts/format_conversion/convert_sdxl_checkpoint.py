@@ -1,4 +1,5 @@
-# Copied from: https://raw.githubusercontent.com/huggingface/diffusers/main/scripts/convert_diffusers_to_original_sdxl.py
+# Copied from:
+# https://raw.githubusercontent.com/huggingface/diffusers/main/scripts/convert_diffusers_to_original_sdxl.py
 # Script for converting a HF Diffusers saved pipeline to a Stable Diffusion checkpoint.
 # *Only* converts the UNet, VAE, and Text Encoder.
 # Does not convert optimizer state or any other thing.
@@ -9,7 +10,6 @@ import re
 
 import torch
 from safetensors.torch import load_file, save_file
-
 
 # =================#
 # UNet Conversion #
@@ -53,18 +53,18 @@ for i in range(3):
     for j in range(2):
         # loop over resnets/attentions for downblocks
         hf_down_res_prefix = f"down_blocks.{i}.resnets.{j}."
-        sd_down_res_prefix = f"input_blocks.{3*i + j + 1}.0."
+        sd_down_res_prefix = f"input_blocks.{3 * i + j + 1}.0."
         unet_conversion_map_layer.append((sd_down_res_prefix, hf_down_res_prefix))
 
         if i > 0:
             hf_down_atn_prefix = f"down_blocks.{i}.attentions.{j}."
-            sd_down_atn_prefix = f"input_blocks.{3*i + j + 1}.1."
+            sd_down_atn_prefix = f"input_blocks.{3 * i + j + 1}.1."
             unet_conversion_map_layer.append((sd_down_atn_prefix, hf_down_atn_prefix))
 
     for j in range(4):
         # loop over resnets/attentions for upblocks
         hf_up_res_prefix = f"up_blocks.{i}.resnets.{j}."
-        sd_up_res_prefix = f"output_blocks.{3*i + j}.0."
+        sd_up_res_prefix = f"output_blocks.{3 * i + j}.0."
         unet_conversion_map_layer.append((sd_up_res_prefix, hf_up_res_prefix))
 
         if i < 2:
@@ -76,12 +76,12 @@ for i in range(3):
     if i < 3:
         # no downsample in down_blocks.3
         hf_downsample_prefix = f"down_blocks.{i}.downsamplers.0.conv."
-        sd_downsample_prefix = f"input_blocks.{3*(i+1)}.0.op."
+        sd_downsample_prefix = f"input_blocks.{3 * (i + 1)}.0.op."
         unet_conversion_map_layer.append((sd_downsample_prefix, hf_downsample_prefix))
 
         # no upsample in up_blocks.3
         hf_upsample_prefix = f"up_blocks.{i}.upsamplers.0."
-        sd_upsample_prefix = f"output_blocks.{3*i + 2}.{1 if i == 0 else 2}."
+        sd_upsample_prefix = f"output_blocks.{3 * i + 2}.{1 if i == 0 else 2}."
         unet_conversion_map_layer.append((sd_upsample_prefix, hf_upsample_prefix))
 unet_conversion_map_layer.append(("output_blocks.2.2.conv.", "output_blocks.2.1.conv."))
 
@@ -90,7 +90,7 @@ sd_mid_atn_prefix = "middle_block.1."
 unet_conversion_map_layer.append((sd_mid_atn_prefix, hf_mid_atn_prefix))
 for j in range(2):
     hf_mid_res_prefix = f"mid_block.resnets.{j}."
-    sd_mid_res_prefix = f"middle_block.{2*j}."
+    sd_mid_res_prefix = f"middle_block.{2 * j}."
     unet_conversion_map_layer.append((sd_mid_res_prefix, hf_mid_res_prefix))
 
 
@@ -110,9 +110,7 @@ def convert_unet_state_dict(unet_state_dict):
         for sd_part, hf_part in unet_conversion_map_layer:
             v = v.replace(hf_part, sd_part)
         mapping[k] = v
-    new_state_dict = {
-        sd_name: unet_state_dict[hf_name] for hf_name, sd_name in mapping.items()
-    }
+    new_state_dict = {sd_name: unet_state_dict[hf_name] for hf_name, sd_name in mapping.items()}
     return new_state_dict
 
 
@@ -140,20 +138,20 @@ for i in range(4):
         vae_conversion_map.append((sd_downsample_prefix, hf_downsample_prefix))
 
         hf_upsample_prefix = f"up_blocks.{i}.upsamplers.0."
-        sd_upsample_prefix = f"up.{3-i}.upsample."
+        sd_upsample_prefix = f"up.{3 - i}.upsample."
         vae_conversion_map.append((sd_upsample_prefix, hf_upsample_prefix))
 
     # up_blocks have three resnets
     # also, up blocks in hf are numbered in reverse from sd
     for j in range(3):
         hf_up_prefix = f"decoder.up_blocks.{i}.resnets.{j}."
-        sd_up_prefix = f"decoder.up.{3-i}.block.{j}."
+        sd_up_prefix = f"decoder.up.{3 - i}.block.{j}."
         vae_conversion_map.append((sd_up_prefix, hf_up_prefix))
 
 # this part accounts for mid blocks in both the encoder and the decoder
 for i in range(2):
     hf_mid_res_prefix = f"mid_block.resnets.{i}."
-    sd_mid_res_prefix = f"mid.block_{i+1}."
+    sd_mid_res_prefix = f"mid.block_{i + 1}."
     vae_conversion_map.append((sd_mid_res_prefix, hf_mid_res_prefix))
 
 
@@ -247,29 +245,19 @@ def convert_openclip_text_enc_state_dict(text_enc_dict):
             capture_qkv_bias[k_pre][code2idx[k_code]] = v
             continue
 
-        relabelled_key = textenc_pattern.sub(
-            lambda m: protected[re.escape(m.group(0))], k
-        )
+        relabelled_key = textenc_pattern.sub(lambda m: protected[re.escape(m.group(0))], k)
         new_state_dict[relabelled_key] = v
 
     for k_pre, tensors in capture_qkv_weight.items():
         if None in tensors:
-            raise Exception(
-                "CORRUPTED MODEL: one of the q-k-v values for the text encoder was missing"
-            )
-        relabelled_key = textenc_pattern.sub(
-            lambda m: protected[re.escape(m.group(0))], k_pre
-        )
+            raise Exception("CORRUPTED MODEL: one of the q-k-v values for the text encoder was missing")
+        relabelled_key = textenc_pattern.sub(lambda m: protected[re.escape(m.group(0))], k_pre)
         new_state_dict[relabelled_key + ".in_proj_weight"] = torch.cat(tensors)
 
     for k_pre, tensors in capture_qkv_bias.items():
         if None in tensors:
-            raise Exception(
-                "CORRUPTED MODEL: one of the q-k-v values for the text encoder was missing"
-            )
-        relabelled_key = textenc_pattern.sub(
-            lambda m: protected[re.escape(m.group(0))], k_pre
-        )
+            raise Exception("CORRUPTED MODEL: one of the q-k-v values for the text encoder was missing")
+        relabelled_key = textenc_pattern.sub(lambda m: protected[re.escape(m.group(0))], k_pre)
         new_state_dict[relabelled_key + ".in_proj_bias"] = torch.cat(tensors)
 
     return new_state_dict
@@ -296,9 +284,7 @@ if __name__ == "__main__":
         required=True,
         help="Path to the output model.",
     )
-    parser.add_argument(
-        "--half", action="store_true", help="Save weights in half precision."
-    )
+    parser.add_argument("--half", action="store_true", help="Save weights in half precision.")
     parser.add_argument(
         "--use_safetensors",
         action="store_true",
@@ -339,30 +325,22 @@ if __name__ == "__main__":
     if osp.exists(text_enc_2_path):
         text_enc_2_dict = load_file(text_enc_2_path, device="cpu")
     else:
-        text_enc_2_path = osp.join(
-            args.model_path, "text_encoder_2", "pytorch_model.bin"
-        )
+        text_enc_2_path = osp.join(args.model_path, "text_encoder_2", "pytorch_model.bin")
         text_enc_2_dict = torch.load(text_enc_2_path, map_location="cpu")
 
     # Convert the UNet model
     unet_state_dict = convert_unet_state_dict(unet_state_dict)
-    unet_state_dict = {
-        "model.diffusion_model." + k: v for k, v in unet_state_dict.items()
-    }
+    unet_state_dict = {"model.diffusion_model." + k: v for k, v in unet_state_dict.items()}
 
     # Convert the VAE model
     vae_state_dict = convert_vae_state_dict(vae_state_dict)
     vae_state_dict = {"first_stage_model." + k: v for k, v in vae_state_dict.items()}
 
     text_enc_dict = convert_openai_text_enc_state_dict(text_enc_dict)
-    text_enc_dict = {
-        "conditioner.embedders.0.transformer." + k: v for k, v in text_enc_dict.items()
-    }
+    text_enc_dict = {"conditioner.embedders.0.transformer." + k: v for k, v in text_enc_dict.items()}
 
     text_enc_2_dict = convert_openclip_text_enc_state_dict(text_enc_2_dict)
-    text_enc_2_dict = {
-        "conditioner.embedders.1.model." + k: v for k, v in text_enc_2_dict.items()
-    }
+    text_enc_2_dict = {"conditioner.embedders.1.model." + k: v for k, v in text_enc_2_dict.items()}
 
     # Put together new checkpoint
     state_dict = {
