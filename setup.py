@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
+
+# flake8: noqa: E501
+
 import os
-import sys
 import platform
-import subprocess
 import shutil
-from setuptools import setup, find_packages
+import subprocess
+import sys
+
+from setuptools import find_packages, setup
 
 
 def run_command(cmd):
@@ -135,7 +139,7 @@ def get_platform_dependencies():
 
 # Common dependencies (same for all platforms)
 common_deps = [
-    "diffusers @ git+https://github.com/huggingface/diffusers",
+    "diffusers>=0.35.1",
     "transformers>=4.55.0",
     "datasets>=3.0.1",
     "wandb>=0.21.0",
