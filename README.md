@@ -133,14 +133,15 @@ Detailed quickstart guides are available for all supported models:
 
 **Note**: Quantization (int8/fp8/nf4) significantly reduces memory requirements. See individual [quickstart guides](#quickstart-guides) for model-specific requirements.
 
-
-## Toolkit
-
-For more information about the associated toolkit distributed with SimpleTuner, refer to [the toolkit documentation](/scripts/toolkit/README.md).
-
 ## Setup
 
-Detailed setup information is available in the [installation documentation](/documentation/INSTALL.md).
+SimpleTuner can be installed via pip for most users:
+
+```bash
+pip install simpletuner
+```
+
+For manual installation or development setup, see the [installation documentation](/documentation/INSTALL.md).
 
 ## Troubleshooting
 

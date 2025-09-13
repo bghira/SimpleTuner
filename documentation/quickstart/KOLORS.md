@@ -32,41 +32,13 @@ If `libgl1-mesa-glx` is not found, you might need to use `libgl1-mesa-dri` inste
 
 ### Installation
 
-Clone the SimpleTuner repository and set up the python venv:
+Install SimpleTuner via pip:
 
 ```bash
-git clone --branch=release https://github.com/bghira/SimpleTuner.git
-
-cd SimpleTuner
-
-python -m venv .venv
-
-source .venv/bin/activate
-
+pip install simpletuner
 ```
 
-Depending on your system, you will run one of 3 commands:
-
-```bash
-# Linux with NVIDIA
-pip install -e .
-
-# MacOS
-pip install -e . -C install/apple
-
-# Linux with ROCM
-pip install -e . -C install/rocm
-```
-
-#### Removing DeepSpeed & Bits n Bytes
-
-These two dependencies cause numerous issues for container hosts such as RunPod and Vast.
-
-To remove them after `poetry` has installed them, run the following command in the same terminal:
-
-```bash
-pip uninstall -y deepspeed bitsandbytes
-```
+For manual installation or development setup, see the [installation documentation](/documentation/INSTALL.md).
 
 ### Setting up the environment
 

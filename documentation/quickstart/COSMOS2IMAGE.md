@@ -38,29 +38,13 @@ If `libgl1-mesa-glx` is not found, you might need to use `libgl1-mesa-dri` inste
 
 ### Installation
 
-Clone the SimpleTuner repository and set up the python venv:
+Install SimpleTuner via pip:
 
 ```bash
-git clone --branch=release https://github.com/bghira/SimpleTuner.git
-
-cd SimpleTuner
-
-# if python --version shows 3.12 you can just also use the 'python' command here.
-python3.12 -m venv .venv
-
-source .venv/bin/activate
+pip install simpletuner
 ```
 
-**Note:** We're currently installing the `release` branch here; the `main` branch may contain experimental features that might have better results or lower memory use.
-
-Install SimpleTuner with automatic platform detection:
-
-```bash
-# Basic installation (auto-detects CUDA/ROCm/Apple)
-pip install -e .
-```
-
-**Note:** The setup.py automatically detects your platform (CUDA/ROCm/Apple) and installs the appropriate dependencies.
+For manual installation or development setup, see the [installation documentation](/documentation/INSTALL.md).
 
 ### Setting up the environment
 

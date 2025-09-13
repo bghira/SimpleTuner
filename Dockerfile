@@ -60,14 +60,8 @@ RUN pip3 install "huggingface_hub[cli]"
 # WanDB
 RUN pip3 install wandb
 
-# Clone SimpleTuner
-RUN git clone https://github.com/bghira/SimpleTuner --branch release
-# RUN git clone https://github.com/bghira/SimpleTuner --branch main # Uncomment to use latest (possibly unstable) version
-
 # Install SimpleTuner
-RUN pip3 install poetry
-RUN cd SimpleTuner && python3 -m venv .venv && poetry install --no-root
-RUN chmod +x SimpleTuner/train.sh
+RUN pip3 install simpletuner
 
 # Copy start script with exec permissions
 COPY --chmod=755 docker-start.sh /start.sh

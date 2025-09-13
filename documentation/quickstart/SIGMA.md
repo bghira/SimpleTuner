@@ -30,26 +30,13 @@ If `libgl1-mesa-glx` is not found, you might need to use `libgl1-mesa-dri` inste
 
 ### Installation
 
-Clone the SimpleTuner repository and set up the python venv:
+Install SimpleTuner via pip:
 
 ```bash
-git clone --branch=release https://github.com/bghira/SimpleTuner.git
-
-cd SimpleTuner
-
-python -m venv .venv
-
-source .venv/bin/activate
+pip install simpletuner
 ```
 
-Install SimpleTuner with automatic platform detection:
-
-```bash
-# Basic installation (auto-detects CUDA/ROCm/Apple)
-pip install -e .
-```
-
-**Note:** The setup.py automatically detects your platform (CUDA/ROCm/Apple) and installs the appropriate dependencies.
+For manual installation or development setup, see the [installation documentation](/documentation/INSTALL.md).
 
 #### AMD ROCm follow-up steps
 
@@ -61,16 +48,6 @@ pushd /opt/rocm/share/amd_smi
 python3 -m pip install --upgrade pip
 python3 -m pip install .
 popd
-```
-
-#### Removing DeepSpeed & Bits n Bytes
-
-These two dependencies cause numerous issues for container hosts such as RunPod and Vast.
-
-To remove them after installation, run the following command in the same terminal:
-
-```bash
-pip uninstall -y deepspeed bitsandbytes
 ```
 
 ### Setting up the environment
