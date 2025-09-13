@@ -1,25 +1,21 @@
-import torch, os, logging
+import logging
+import os
 import random
-from simpletuner.helpers.models.common import (
-    VideoModelFoundation,
-    PredictionTypes,
-    PipelineTypes,
-    ModelTypes,
-)
-from transformers import (
-    AutoTokenizer,
-    T5EncoderModel,
-)
+
+import torch
 from diffusers import AutoencoderKLLTXVideo
-from diffusers import LTXVideoTransformer3DModel
 from diffusers.pipelines import LTXPipeline
-from simpletuner.helpers.training.multi_process import _get_rank
+from transformers import AutoTokenizer, T5EncoderModel
+
+from simpletuner.helpers.models.common import ModelTypes, PipelineTypes, PredictionTypes, VideoModelFoundation
 from simpletuner.helpers.models.ltxvideo import (
-    pack_ltx_latents,
-    unpack_ltx_latents,
     apply_first_frame_protection,
     make_i2v_conditioning_mask,
+    pack_ltx_latents,
+    unpack_ltx_latents,
 )
+from simpletuner.helpers.models.ltxvideo.transformer import LTXVideoTransformer3DModel
+from simpletuner.helpers.training.multi_process import _get_rank
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -78,34 +74,26 @@ class LTXVideo(VideoModelFoundation):
                 single_frame_latents = batch["latents"][:, :, 0, :, :].unsqueeze(dim=2)
                 logger.info(f"All latents shape: {batch['latents'].shape}")
                 logger.info(f"Single frame latents shape: {single_frame_latents.shape}")
-            batch["i2v_conditioning_mask"] = make_i2v_conditioning_mask(
-                batch["latents"], protect_frame_index=0
-            )
-            batch["timesteps"], batch["noise"], new_sigmas = (
-                apply_first_frame_protection(
-                    batch["latents"],
-                    batch["timesteps"],
-                    batch["noise"],
-                    batch["i2v_conditioning_mask"],
-                    protect_first_frame=self.config.ltx_protect_first_frame,
-                    first_frame_probability=self.config.ltx_i2v_prob,
-                    partial_noise_fraction=self.config.ltx_partial_noise_fraction,
-                )
+            batch["i2v_conditioning_mask"] = make_i2v_conditioning_mask(batch["latents"], protect_frame_index=0)
+            batch["timesteps"], batch["noise"], new_sigmas = apply_first_frame_protection(
+                batch["latents"],
+                batch["timesteps"],
+                batch["noise"],
+                batch["i2v_conditioning_mask"],
+                protect_first_frame=self.config.ltx_protect_first_frame,
+                first_frame_probability=self.config.ltx_i2v_prob,
+                partial_noise_fraction=self.config.ltx_partial_noise_fraction,
             )
             if new_sigmas is not None:
                 batch["sigmas"] = new_sigmas
-            logger.info(
-                f"Applied mask {batch['i2v_conditioning_mask'].shape} to timestep {batch['timesteps'].shape}"
-            )
+            logger.info(f"Applied mask {batch['i2v_conditioning_mask'].shape} to timestep {batch['timesteps'].shape}")
 
     def update_pipeline_call_kwargs(self, pipeline_kwargs):
         """
         When we're running the pipeline, we'll update the kwargs specifically for this model here.
         """
         # Wan video should max out around 81 frames for efficiency.
-        pipeline_kwargs["num_frames"] = min(
-            125, self.config.validation_num_video_frames or 125
-        )
+        pipeline_kwargs["num_frames"] = min(125, self.config.validation_num_video_frames or 125)
         # pipeline_kwargs["output_type"] = "pil"
         # replace embeds with prompt
 
@@ -136,15 +124,11 @@ class LTXVideo(VideoModelFoundation):
             "prompt_attention_mask": text_embedding["attention_masks"].unsqueeze(0),
         }
 
-    def convert_negative_text_embed_for_pipeline(
-        self, text_embedding: torch.Tensor, prompt: str
-    ) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
         return {
             "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            "negative_prompt_attention_mask": text_embedding[
-                "attention_masks"
-            ].unsqueeze(0),
+            "negative_prompt_attention_mask": text_embedding["attention_masks"].unsqueeze(0),
         }
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
@@ -185,19 +169,13 @@ class LTXVideo(VideoModelFoundation):
             prepared_batch["noisy_latents"].shape[3] * scale_value,
             prepared_batch["noisy_latents"].shape[4] * scale_value,
         )
-        logger.debug(
-            f"Batch contents: {prepared_batch['noisy_latents'].shape} (h={height}, w={width})"
-        )
+        logger.debug(f"Batch contents: {prepared_batch['noisy_latents'].shape} (h={height}, w={width})")
         # permute to (B, T, C, H, W)
         num_frames = prepared_batch["noisy_latents"].shape[2]
 
         if "conditioning_mask" in prepared_batch:
-            conditioning_mask = pack_ltx_latents(
-                prepared_batch["conditioning_mask"]
-            ).squeeze(-1)
-        packed_noisy_latents = pack_ltx_latents(
-            prepared_batch["noisy_latents"], 1, 1
-        ).to(self.config.weight_dtype)
+            conditioning_mask = pack_ltx_latents(prepared_batch["conditioning_mask"]).squeeze(-1)
+        packed_noisy_latents = pack_ltx_latents(prepared_batch["noisy_latents"], 1, 1).to(self.config.weight_dtype)
 
         logger.debug(f"Packed batch shape: {packed_noisy_latents.shape}")
         logger.debug(
@@ -258,14 +236,10 @@ class LTXVideo(VideoModelFoundation):
             self.config.aspect_bucket_alignment = 64
 
         if self.config.prediction_type is not None:
-            logger.warning(
-                f"{self.NAME} does not support prediction type {self.config.prediction_type}."
-            )
+            logger.warning(f"{self.NAME} does not support prediction type {self.config.prediction_type}.")
 
         if self.config.tokenizer_max_length is not None:
-            logger.warning(
-                f"-!- {self.NAME} supports a max length of 226 tokens, --tokenizer_max_length is ignored -!-"
-            )
+            logger.warning(f"-!- {self.NAME} supports a max length of 226 tokens, --tokenizer_max_length is ignored -!-")
         self.config.tokenizer_max_length = 226
         if self.config.validation_num_inference_steps > 50:
             logger.warning(
@@ -292,18 +266,10 @@ class LTXVideo(VideoModelFoundation):
         if self.config.flow_schedule_shift is not None:
             output_args.append(f"shift={self.config.flow_schedule_shift}")
         if self.config.flow_use_beta_schedule:
-            output_args.append(
-                f"flow_beta_schedule_alpha={self.config.flow_beta_schedule_alpha}"
-            )
-            output_args.append(
-                f"flow_beta_schedule_beta={self.config.flow_beta_schedule_beta}"
-            )
+            output_args.append(f"flow_beta_schedule_alpha={self.config.flow_beta_schedule_alpha}")
+            output_args.append(f"flow_beta_schedule_beta={self.config.flow_beta_schedule_beta}")
         if self.config.t5_padding != "unmodified":
             output_args.append(f"t5_padding={self.config.t5_padding}")
-        output_str = (
-            f" (extra parameters={output_args})"
-            if output_args
-            else " (no special parameters set)"
-        )
+        output_str = f" (extra parameters={output_args})" if output_args else " (no special parameters set)"
 
         return output_str

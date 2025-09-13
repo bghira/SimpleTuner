@@ -1,22 +1,16 @@
-import torch
-import torch.nn.functional as F
-import random
 import logging
 import os
-from simpletuner.helpers.training.multi_process import _get_rank
-from simpletuner.helpers.models.common import (
-    ImageModelFoundation,
-    PredictionTypes,
-    PipelineTypes,
-    ModelTypes,
-)
-from transformers import Qwen2Tokenizer, Qwen2_5_VLForConditionalGeneration
-from diffusers import (
-    AutoencoderKLQwenImage,
-    QwenImageTransformer2DModel,
-    QwenImagePipeline,
-)
+import random
+
+import torch
+import torch.nn.functional as F
+from diffusers import AutoencoderKLQwenImage, QwenImagePipeline
 from diffusers.models.attention_processor import Attention
+from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer
+
+from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
+from simpletuner.helpers.models.qwen_image.transformer import QwenImageTransformer2DModel
+from simpletuner.helpers.training.multi_process import _get_rank
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -158,16 +152,10 @@ class QwenImage(ImageModelFoundation):
                 if text_embedding["prompt_embeds"].dim() == 2
                 else text_embedding["prompt_embeds"]
             ),
-            "prompt_embeds_mask": (
-                attention_mask.to(dtype=torch.int64)
-                if attention_mask is not None
-                else None
-            ),
+            "prompt_embeds_mask": (attention_mask.to(dtype=torch.int64) if attention_mask is not None else None),
         }
 
-    def convert_negative_text_embed_for_pipeline(
-        self, text_embedding: torch.Tensor, prompt: str
-    ) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
         """
         Convert negative text embeddings for pipeline use.
         """
@@ -181,11 +169,7 @@ class QwenImage(ImageModelFoundation):
                 if text_embedding["prompt_embeds"].dim() == 2
                 else text_embedding["prompt_embeds"]
             ),
-            "negative_prompt_embeds_mask": (
-                attention_mask.to(dtype=torch.int64)
-                if attention_mask is not None
-                else None
-            ),
+            "negative_prompt_embeds_mask": (attention_mask.to(dtype=torch.int64) if attention_mask is not None else None),
         }
 
     def model_predict(self, prepared_batch):
@@ -197,14 +181,10 @@ class QwenImage(ImageModelFoundation):
 
         # Handle both 4D and 5D inputs
         if latent_model_input.dim() == 5:
-            batch_size, num_channels, frames, latent_height, latent_width = (
-                latent_model_input.shape
-            )
+            batch_size, num_channels, frames, latent_height, latent_width = latent_model_input.shape
             latent_model_input = latent_model_input.squeeze(2)
         else:
-            batch_size, num_channels, latent_height, latent_width = (
-                latent_model_input.shape
-            )
+            batch_size, num_channels, latent_height, latent_width = latent_model_input.shape
 
         # Get the pipeline class to use its static methods
         pipeline_class = self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
@@ -232,9 +212,7 @@ class QwenImage(ImageModelFoundation):
         # Get attention mask
         prompt_embeds_mask = prepared_batch.get("encoder_attention_mask")
         if prompt_embeds_mask is not None:
-            prompt_embeds_mask = prompt_embeds_mask.to(
-                self.accelerator.device, dtype=torch.int64
-            )
+            prompt_embeds_mask = prompt_embeds_mask.to(self.accelerator.device, dtype=torch.int64)
             if prompt_embeds_mask.dim() == 3 and prompt_embeds_mask.size(1) == 1:
                 prompt_embeds_mask = prompt_embeds_mask.squeeze(1)
 
@@ -243,9 +221,7 @@ class QwenImage(ImageModelFoundation):
 
         # Prepare timesteps (normalize to 0-1 range)
         timesteps = (
-            torch.tensor(prepared_batch["timesteps"])
-            .expand(batch_size)
-            .to(device=self.accelerator.device)
+            torch.tensor(prepared_batch["timesteps"]).expand(batch_size).to(device=self.accelerator.device)
             / 1000.0  # Normalize to [0, 1]
         )
 
@@ -258,9 +234,7 @@ class QwenImage(ImageModelFoundation):
 
         # Forward pass through transformer
         noise_pred = self.model(
-            hidden_states=latent_model_input.to(
-                self.accelerator.device, self.config.weight_dtype
-            ),
+            hidden_states=latent_model_input.to(self.accelerator.device, self.config.weight_dtype),
             timestep=timesteps,
             guidance=None,  # Qwen Image doesn't use guidance during training
             encoder_hidden_states=prompt_embeds,
@@ -271,9 +245,7 @@ class QwenImage(ImageModelFoundation):
         )[0]
 
         # Unpack the noise prediction back to original shape
-        noise_pred = pipeline_class._unpack_latents(
-            noise_pred, pixel_height, pixel_width, self.vae_scale_factor
-        )
+        noise_pred = pipeline_class._unpack_latents(noise_pred, pixel_height, pixel_width, self.vae_scale_factor)
 
         # Remove the extra dimension that _unpack_latents adds
         if noise_pred.dim() == 5:
@@ -300,17 +272,15 @@ class QwenImage(ImageModelFoundation):
         # Remove frame dimension if present
         sample_latents = sample.latent_dist.sample()
         if sample_latents.dim() == 5:
-            sample_latents = sample_latents.squeeze(
-                2
-            )  # (B, C, 1, H, W) -> (B, C, H, W)
+            sample_latents = sample_latents.squeeze(2)  # (B, C, 1, H, W) -> (B, C, H, W)
         latents_mean = (
             torch.tensor(self.vae.config.latents_mean)
             .view(1, self.vae.config.z_dim, 1, 1)
             .to(sample_latents.device, sample_latents.dtype)
         )
-        latents_std = 1.0 / torch.tensor(self.vae.config.latents_std).view(
-            1, self.vae.config.z_dim, 1, 1
-        ).to(sample_latents.device, sample_latents.dtype)
+        latents_std = 1.0 / torch.tensor(self.vae.config.latents_std).view(1, self.vae.config.z_dim, 1, 1).to(
+            sample_latents.device, sample_latents.dtype
+        )
 
         sample_latents = (sample_latents - latents_mean) * latents_std
 
@@ -344,8 +314,5 @@ class QwenImage(ImageModelFoundation):
 
         # Ensure we're using flow matching
         if self.config.prediction_type != "flow_matching":
-            logger.warning(
-                f"{self.NAME} uses flow matching. "
-                "Overriding prediction_type to 'flow_matching'."
-            )
+            logger.warning(f"{self.NAME} uses flow matching. " "Overriding prediction_type to 'flow_matching'.")
             self.config.prediction_type = "flow_matching"
