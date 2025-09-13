@@ -23,10 +23,10 @@ jobs:
             platform: apple
             wheel-tag: macosx_10_9_universal2
           - os: macos-latest
-            python-version: "3.12" 
+            python-version: "3.12"
             platform: apple
             wheel-tag: macosx_10_9_universal2
-          
+
           # Linux CUDA wheels
           - os: ubuntu-latest
             python-version: "3.11"
@@ -34,10 +34,10 @@ jobs:
             wheel-tag: linux_x86_64
           - os: ubuntu-latest
             python-version: "3.12"
-            platform: cuda  
+            platform: cuda
             wheel-tag: linux_x86_64
-          
-          # Linux ROCm wheels  
+
+          # Linux ROCm wheels
           - os: ubuntu-latest
             python-version: "3.11"
             platform: rocm
@@ -46,10 +46,10 @@ jobs:
             python-version: "3.12"
             platform: rocm
             wheel-tag: linux_x86_64
-          
+
           # Linux CPU wheels
           - os: ubuntu-latest
-            python-version: "3.11" 
+            python-version: "3.11"
             platform: cpu
             wheel-tag: linux_x86_64
           - os: ubuntu-latest
