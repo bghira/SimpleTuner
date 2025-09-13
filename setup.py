@@ -137,8 +137,8 @@ def get_platform_dependencies():
     return deps
 
 
-# Common dependencies (same for all platforms)
-common_deps = [
+# Base dependencies (minimal, works on all platforms)
+base_deps = [
     "diffusers>=0.35.1",
     "transformers>=4.55.0",
     "datasets>=3.0.1",
@@ -179,6 +179,10 @@ common_deps = [
     "hf-xet>=1.1.5",
     "peft-singlora>=0.2.0",
     "trainingsample>=0.2.0",
+    # Minimal PyTorch for base install (CPU-only)
+    "torch>=2.7.1",
+    "torchvision>=0.22.1",
+    "torchaudio>=2.4.1",
 ]
 
 # Optional extras
@@ -195,6 +199,7 @@ extras_require = {
         "triton>=3.3.0",
         "bitsandbytes>=0.45.0",
         "deepspeed>=0.17.2",
+        "torchao>=0.12.0",
         "nvidia-cudnn-cu12",
         "nvidia-nccl-cu12",
         "lm-eval>=0.4.4",
@@ -214,9 +219,6 @@ try:
 except:
     long_description = "Stable Diffusion 2.x and XL tuner."
 
-# Combine common + platform-specific dependencies
-all_deps = common_deps + get_platform_dependencies()
-
 setup(
     name="simpletuner",
     version=get_version(),
@@ -227,8 +229,8 @@ setup(
     # license handled by pyproject.toml
     packages=find_packages(),
     python_requires=">=3.11,<3.13",
-    install_requires=all_deps,
-    # extras_require handled by pyproject.toml
+    install_requires=base_deps,
+    extras_require=extras_require,
     entry_points={
         "console_scripts": [
             "simpletuner=simpletuner.cli:main",

@@ -13,49 +13,10 @@ on:
 
 jobs:
   build-wheels:
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        include:
-          # macOS wheels (universal for both Intel + Apple Silicon)
-          - os: macos-latest
-            python-version: "3.11"
-            platform: apple
-            wheel-tag: macosx_10_9_universal2
-          - os: macos-latest
-            python-version: "3.12"
-            platform: apple
-            wheel-tag: macosx_10_9_universal2
-
-          # Linux CUDA wheels
-          - os: ubuntu-latest
-            python-version: "3.11"
-            platform: cuda
-            wheel-tag: linux_x86_64
-          - os: ubuntu-latest
-            python-version: "3.12"
-            platform: cuda
-            wheel-tag: linux_x86_64
-
-          # Linux ROCm wheels
-          - os: ubuntu-latest
-            python-version: "3.11"
-            platform: rocm
-            wheel-tag: linux_x86_64
-          - os: ubuntu-latest
-            python-version: "3.12"
-            platform: rocm
-            wheel-tag: linux_x86_64
-
-          # Linux CPU wheels
-          - os: ubuntu-latest
-            python-version: "3.11"
-            platform: cpu
-            wheel-tag: linux_x86_64
-          - os: ubuntu-latest
-            python-version: "3.12"
-            platform: cpu
-            wheel-tag: linux_x86_64
+        python-version: ["3.11", "3.12"]
 
     steps:
     - uses: actions/checkout@v4
@@ -70,27 +31,16 @@ jobs:
         python -m pip install --upgrade pip
         pip install build wheel setuptools
 
-    - name: Build wheel
+    - name: Build universal wheel
       run: |
         python -m build --wheel
       env:
-        SIMPLETUNER_PLATFORM: ${{ matrix.platform }}
-
-    - name: Rename wheel with platform suffix
-      run: |
-        cd dist
-        for wheel in *.whl; do
-          # Extract base name without .whl
-          base=$(basename "$wheel" .whl)
-          # Add platform suffix before .whl
-          mv "$wheel" "${base}+${{ matrix.platform }}.whl"
-        done
-      shell: bash
+        SIMPLETUNER_PLATFORM: cpu
 
     - name: Upload wheel artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: wheels-${{ matrix.platform }}-py${{ matrix.python-version }}
+        name: wheels-py${{ matrix.python-version }}
         path: dist/*.whl
 
   build-sdist:
