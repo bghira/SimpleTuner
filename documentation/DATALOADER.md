@@ -556,7 +556,7 @@ When training a model with a very-large dataset numbering in the hundreds of tho
 
 Using the parquet caption strategy allows you to name all of your files by their `id` value, and change their caption column via a config value rather than updating many text files, or having to rename the files to update their captions.
 
-Here is an example dataloader configuration that makes use of the captions and data in the [photo-concept-bucket](https://huggingface.co/datasets/ptx0/photo-concept-bucket) dataset:
+Here is an example dataloader configuration that makes use of the captions and data in the [photo-concept-bucket](https://huggingface.co/datasets/bghira/photo-concept-bucket) dataset:
 
 ```json
 {

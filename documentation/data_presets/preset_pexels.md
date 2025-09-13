@@ -2,7 +2,7 @@
 
 ## Details
 
-- **Hub link**: [ptx0/photo-concept-bucket](https://huggingface.co/datasets/ptx0/photo-concept-bucket)
+- **Hub link**: [bghira/photo-concept-bucket](https://huggingface.co/datasets/bghira/photo-concept-bucket)
 - **Description**: ~567,000 high quality photographs across dense concept distribution, captioned with CogVLM.
 - **Caption format(s)**: Parquet
 
@@ -15,7 +15,7 @@ An example script for downloading the dataset is provided, but you must ensure y
 To download the captions and URL list:
 
 ```bash
-huggingface-cli download --repo-type=dataset ptx0/photo-concept-bucket --local-dir=/home/user/training/photo-concept-bucket
+huggingface-cli download --repo-type=dataset bghira/photo-concept-bucket --local-dir=/home/user/training/photo-concept-bucket
 ```
 
 Place this file into `/home/user/training/photo-concept-bucket`:

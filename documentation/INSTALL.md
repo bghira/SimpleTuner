@@ -139,3 +139,73 @@ CONFIG_BACKEND=json
 ```
 
 They will be remembered upon subsequent runs. Note that these can be added in addition to the multiGPU options described [above](#multiple-gpu-training).
+
+## Training Data
+
+A publicly-available dataset is available [on Hugging Face Hub](https://huggingface.co/datasets/bghira/pseudo-camera-10k) with approximately 10k images with captions as filenames, ready for use with SimpleTuner.
+
+You can organize images in a single folder or neatly organize them into subdirectories.
+
+### Image Selection Guidelines
+
+**Quality Requirements:**
+- No JPEG artifacts or blurry images - modern models will pick these up
+- Avoid grainy CMOS sensor noise (will appear in all generated images)
+- No watermarks, badges, or signatures (these will be learned)
+- Movie frames generally don't work due to compression (use production stills instead)
+
+**Technical Specifications:**
+- Images optimally divisible by 64 (allows reuse without resizing)
+- Mix square and non-square images for balanced capabilities
+- Use varied, high-quality datasets for best results
+
+### Captioning
+
+SimpleTuner provides [captioning scripts](/scripts/toolkit/README.md) for mass-renaming files. Caption formats supported:
+- Filename as caption (default)
+- Text files with `--caption_strategy=textfile`
+- JSONL, CSV, or advanced metadata files
+
+**Recommended captioning tools:**
+- **InternVL2**: Best quality but slow (small datasets)
+- **BLIP3**: Best lightweight option with good instruction following
+- **Florence2**: Fastest but some dislike outputs
+
+### Training Batch Size
+
+Your maximum batch size depends on VRAM and resolution:
+```
+vram use = batch size * resolution + base_requirements
+```
+
+**Key principles:**
+- Use highest batch size possible without VRAM issues
+- Higher resolution = more VRAM = lower batch size
+- If batch size 1 at 128x128 doesn't work, hardware is insufficient
+
+## Publishing to Hugging Face Hub
+
+To automatically push models to Hub upon completion, add to `config/config.json`:
+
+```json
+{
+  "push_to_hub": true,
+  "hub_model_name": "your-model-name"
+}
+```
+
+Login before training:
+```bash
+huggingface-cli login
+```
+
+## Debugging
+
+Enable detailed logging by adding to `config/config.env`:
+
+```bash
+export SIMPLETUNER_LOG_LEVEL=DEBUG
+export SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL=DEBUG
+```
+
+A `debug.log` file will be created in the project root with all log entries.
