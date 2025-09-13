@@ -112,7 +112,7 @@ jobs:
       run: python -m build --sdist
 
     - name: Upload sdist artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: sdist
         path: dist/*.tar.gz
