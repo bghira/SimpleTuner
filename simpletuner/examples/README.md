@@ -14,6 +14,23 @@ We'll assume you don't have any python dependencies installed yet, and that an N
 
 To run `kontext.peft-lora` example:
 
+**Option 1 (Recommended - pip install):**
+```bash
+pip install simpletuner
+simpletuner train example=kontext.peft-lora
+```
+
+**Option 2 (Git clone method):**
+```bash
+git clone https://github.com/bghira/simpletuner
+cd simpletuner
+python3.11 -m venv .venv
+. .venv/bin/activate
+pip install -e .
+simpletuner train env=examples/kontext.peft-lora
+```
+
+**Option 3 (Legacy method - still works):**
 ```bash
 git clone https://github.com/bghira/simpletuner
 cd simpletuner
