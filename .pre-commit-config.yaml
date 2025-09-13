@@ -34,7 +34,7 @@ repos:
       - id: flake8
         name: flake8
         entry: .venv/bin/python
-        args: ['-m', 'flake8', '--max-line-length=125', '--extend-ignore=E203,W503,F841,F401,E402,F811,E722,E721,F541']
+        args: ['-m', 'flake8', '--max-line-length=125', '--extend-ignore=E501,E203,W503,F841,F401,E402,F811,E722,E721,F541']
         language: system
         types: [python]
         exclude: '^(scripts/|tests/|\.venv/)'

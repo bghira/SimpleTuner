@@ -3,17 +3,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
-from diffusers.utils import (
-    USE_PEFT_BACKEND,
-    logging,
-    scale_lora_layers,
-    unscale_lora_layers,
-    is_torch_version,
-)
-from diffusers.utils.torch_utils import maybe_allow_in_graph
 from diffusers.models.attention_processor import (
     Attention,
     AttentionProcessor,
@@ -24,7 +15,10 @@ from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import AdaLayerNormZero, FP32LayerNorm
+from diffusers.utils import USE_PEFT_BACKEND, is_torch_version, logging, scale_lora_layers, unscale_lora_layers
+from diffusers.utils.torch_utils import maybe_allow_in_graph
 
+from simpletuner.helpers.training.tread import TREADRouter
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -51,9 +45,7 @@ class AuraFlowPatchEmbed(nn.Module):
         self.pos_embed_max_size = pos_embed_max_size
 
         self.proj = nn.Linear(patch_size * patch_size * in_channels, embed_dim)
-        self.pos_embed = nn.Parameter(
-            torch.randn(1, pos_embed_max_size, embed_dim) * 0.1
-        )
+        self.pos_embed = nn.Parameter(torch.randn(1, pos_embed_max_size, embed_dim) * 0.1)
 
         self.patch_size = patch_size
         self.height, self.width = height // patch_size, width // patch_size
@@ -64,9 +56,7 @@ class AuraFlowPatchEmbed(nn.Module):
         # PE will be viewed as 2d-grid, and H/p x W/p of the PE will be selected
         # because original input are in flattened format, we have to flatten this 2d grid as well.
         h_p, w_p = h // self.patch_size, w // self.patch_size
-        h_max, w_max = int(self.pos_embed_max_size**0.5), int(
-            self.pos_embed_max_size**0.5
-        )
+        h_max, w_max = int(self.pos_embed_max_size**0.5), int(self.pos_embed_max_size**0.5)
 
         # Calculate the top-left corner indices for the centered patch grid
         starth = h_max // 2 - h_p // 2
@@ -153,13 +143,9 @@ class AuraFlowPreFinalBlock(nn.Module):
         super().__init__()
 
         self.silu = nn.SiLU()
-        self.linear = nn.Linear(
-            conditioning_embedding_dim, embedding_dim * 2, bias=False
-        )
+        self.linear = nn.Linear(conditioning_embedding_dim, embedding_dim * 2, bias=False)
 
-    def forward(
-        self, x: torch.Tensor, conditioning_embedding: torch.Tensor
-    ) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, conditioning_embedding: torch.Tensor) -> torch.Tensor:
         emb = self.linear(self.silu(conditioning_embedding).to(x.dtype))
         scale, shift = torch.chunk(emb, 2, dim=1)
         x = x * (1 + scale)[:, None, :] + shift[:, None, :]
@@ -202,9 +188,7 @@ class AuraFlowSingleTransformerBlock(nn.Module):
         attention_kwargs = attention_kwargs or {}
 
         # Norm + Projection.
-        norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(
-            hidden_states, emb=temb
-        )
+        norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(hidden_states, emb=temb)
 
         # Attention.
         attn_output = self.attn(hidden_states=norm_hidden_states, **attention_kwargs)
@@ -225,9 +209,7 @@ class AuraFlowJointTransformerBlock(nn.Module):
         super().__init__()
 
         self.norm1 = AdaLayerNormZero(dim, bias=False, norm_type="fp32_layer_norm")
-        self.norm1_context = AdaLayerNormZero(
-            dim, bias=False, norm_type="fp32_layer_norm"
-        )
+        self.norm1_context = AdaLayerNormZero(dim, bias=False, norm_type="fp32_layer_norm")
 
         processor = AuraFlowAttnProcessor2_0()
         self.attn = Attention(
@@ -267,11 +249,9 @@ class AuraFlowJointTransformerBlock(nn.Module):
         attention_kwargs = attention_kwargs or {}
 
         # Norm + Projection.
-        norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(
-            hidden_states, emb=temb
-        )
-        norm_encoder_hidden_states, c_gate_msa, c_shift_mlp, c_scale_mlp, c_gate_mlp = (
-            self.norm1_context(encoder_hidden_states, emb=temb)
+        norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(hidden_states, emb=temb)
+        norm_encoder_hidden_states, c_gate_msa, c_shift_mlp, c_scale_mlp, c_gate_mlp = self.norm1_context(
+            encoder_hidden_states, emb=temb
         )
 
         # Attention.
@@ -288,23 +268,15 @@ class AuraFlowJointTransformerBlock(nn.Module):
         hidden_states = residual + hidden_states
 
         # Process attention outputs for the `encoder_hidden_states`.
-        encoder_hidden_states = self.norm2_context(
-            residual_context + c_gate_msa.unsqueeze(1) * context_attn_output
-        )
-        encoder_hidden_states = (
-            encoder_hidden_states * (1 + c_scale_mlp[:, None]) + c_shift_mlp[:, None]
-        )
-        encoder_hidden_states = c_gate_mlp.unsqueeze(1) * self.ff_context(
-            encoder_hidden_states
-        )
+        encoder_hidden_states = self.norm2_context(residual_context + c_gate_msa.unsqueeze(1) * context_attn_output)
+        encoder_hidden_states = encoder_hidden_states * (1 + c_scale_mlp[:, None]) + c_shift_mlp[:, None]
+        encoder_hidden_states = c_gate_mlp.unsqueeze(1) * self.ff_context(encoder_hidden_states)
         encoder_hidden_states = residual_context + encoder_hidden_states
 
         return encoder_hidden_states, hidden_states
 
 
-class AuraFlowTransformer2DModel(
-    ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin
-):
+class AuraFlowTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
     """
     An updated AuraFlowTransformer2DModel with additional SD3 features like gradient checkpointing interval,
     skip layers, forward chunking, and ControlNet support.
@@ -333,6 +305,8 @@ class AuraFlowTransformer2DModel(
     ]
     _skip_layerwise_casting_patterns = ["pos_embed", "norm"]
     _supports_gradient_checkpointing = True
+    _tread_router: Optional[TREADRouter] = None
+    _tread_routes: Optional[List[Dict[str, Any]]] = None
 
     @register_to_config
     def __init__(
@@ -351,12 +325,8 @@ class AuraFlowTransformer2DModel(
     ):
         super().__init__()
         default_out_channels = in_channels
-        self.out_channels = (
-            out_channels if out_channels is not None else default_out_channels
-        )
-        self.inner_dim = (
-            self.config.num_attention_heads * self.config.attention_head_dim
-        )
+        self.out_channels = out_channels if out_channels is not None else default_out_channels
+        self.inner_dim = self.config.num_attention_heads * self.config.attention_head_dim
 
         self.pos_embed = AuraFlowPatchEmbed(
             height=self.config.sample_size,
@@ -372,12 +342,8 @@ class AuraFlowTransformer2DModel(
             self.config.caption_projection_dim,
             bias=False,
         )
-        self.time_step_embed = Timesteps(
-            num_channels=256, downscale_freq_shift=0, scale=1000, flip_sin_to_cos=True
-        )
-        self.time_step_proj = TimestepEmbedding(
-            in_channels=256, time_embed_dim=self.inner_dim
-        )
+        self.time_step_embed = Timesteps(num_channels=256, downscale_freq_shift=0, scale=1000, flip_sin_to_cos=True)
+        self.time_step_proj = TimestepEmbedding(in_channels=256, time_embed_dim=self.inner_dim)
 
         self.joint_transformer_blocks = nn.ModuleList(
             [
@@ -401,9 +367,7 @@ class AuraFlowTransformer2DModel(
         )
 
         self.norm_out = AuraFlowPreFinalBlock(self.inner_dim, self.inner_dim)
-        self.proj_out = nn.Linear(
-            self.inner_dim, patch_size * patch_size * self.out_channels, bias=False
-        )
+        self.proj_out = nn.Linear(self.inner_dim, patch_size * patch_size * self.out_channels, bias=False)
 
         # https://arxiv.org/abs/2309.16588
         # prevents artifacts in the attention maps
@@ -421,9 +385,12 @@ class AuraFlowTransformer2DModel(
         """
         self.gradient_checkpointing_interval = interval
 
-    def enable_forward_chunking(
-        self, chunk_size: Optional[int] = None, dim: int = 0
-    ) -> None:
+    def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
+        """Set the TREAD router and routing configuration."""
+        self._tread_router = router
+        self._tread_routes = routes
+
+    def enable_forward_chunking(self, chunk_size: Optional[int] = None, dim: int = 0) -> None:
         """
         Sets the attention processor to use feed forward chunking.
 
@@ -441,9 +408,7 @@ class AuraFlowTransformer2DModel(
         # By default chunk size is 1
         chunk_size = chunk_size or 1
 
-        def fn_recursive_feed_forward(
-            module: torch.nn.Module, chunk_size: int, dim: int
-        ):
+        def fn_recursive_feed_forward(module: torch.nn.Module, chunk_size: int, dim: int):
             if hasattr(module, "set_chunk_feed_forward"):
                 module.set_chunk_feed_forward(chunk_size=chunk_size, dim=dim)
 
@@ -456,9 +421,7 @@ class AuraFlowTransformer2DModel(
     def disable_forward_chunking(self):
         """Disables the forward chunking if enabled."""
 
-        def fn_recursive_feed_forward(
-            module: torch.nn.Module, chunk_size: int, dim: int
-        ):
+        def fn_recursive_feed_forward(module: torch.nn.Module, chunk_size: int, dim: int):
             if hasattr(module, "set_chunk_feed_forward"):
                 module.set_chunk_feed_forward(chunk_size=chunk_size, dim=dim)
 
@@ -490,9 +453,7 @@ class AuraFlowTransformer2DModel(
 
         return processors
 
-    def set_attn_processor(
-        self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]]
-    ):
+    def set_attn_processor(self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]]):
         count = len(self.attn_processors.keys())
 
         if isinstance(processor, dict) and len(processor) != count:
@@ -519,9 +480,7 @@ class AuraFlowTransformer2DModel(
 
         for _, attn_processor in self.attn_processors.items():
             if "Added" in str(attn_processor.__class__.__name__):
-                raise ValueError(
-                    "`fuse_qkv_projections()` is not supported for models having added KV projections."
-                )
+                raise ValueError("`fuse_qkv_projections()` is not supported for models having added KV projections.")
 
         self.original_attn_processors = self.attn_processors
 
@@ -544,6 +503,7 @@ class AuraFlowTransformer2DModel(
         block_controlnet_hidden_states: List = None,
         return_dict: bool = True,
         skip_layers: Optional[List[int]] = None,
+        force_keep_mask: Optional[torch.Tensor] = None,
     ) -> Union[torch.FloatTensor, Transformer2DModelOutput]:
         """
         The AuraFlowTransformer2DModel forward method with additional support for skip_layers and controlnet.
@@ -563,6 +523,8 @@ class AuraFlowTransformer2DModel(
                 Whether to return a dict or tuple.
             skip_layers (`list` of `int`, *optional*):
                 A list of layer indices to skip during the forward pass.
+            force_keep_mask (`torch.Tensor`, *optional*):
+                A mask tensor for TREAD routing indicating which tokens to force keep.
         """
         if attention_kwargs is not None:
             attention_kwargs = attention_kwargs.copy()
@@ -575,20 +537,13 @@ class AuraFlowTransformer2DModel(
             # weight the lora layers by setting `lora_scale` for each PEFT layer
             scale_lora_layers(self, lora_scale)
         else:
-            if (
-                attention_kwargs is not None
-                and attention_kwargs.get("scale", None) is not None
-            ):
-                logger.warning(
-                    "Passing `scale` via `attention_kwargs` when not using the PEFT backend is ineffective."
-                )
+            if attention_kwargs is not None and attention_kwargs.get("scale", None) is not None:
+                logger.warning("Passing `scale` via `attention_kwargs` when not using the PEFT backend is ineffective.")
 
         height, width = hidden_states.shape[-2:]
 
         # Apply patch embedding, timestep embedding, and project the caption embeddings.
-        hidden_states = self.pos_embed(
-            hidden_states
-        )  # takes care of adding positional embeddings too.
+        hidden_states = self.pos_embed(hidden_states)  # takes care of adding positional embeddings too.
         temb = self.time_step_embed(timestep).to(dtype=next(self.parameters()).dtype)
         temb = self.time_step_proj(temb)
         encoder_hidden_states = self.context_embedder(encoder_hidden_states)
@@ -600,34 +555,60 @@ class AuraFlowTransformer2DModel(
             dim=1,
         )
 
+        # TREAD initialization
+        routes = self._tread_routes or []
+        router = self._tread_router
+        use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
+        route_ptr = 0
+        routing_now = False
+        tread_mask_info = None
+        saved_tokens = None
+        global_idx = 0
+
+        # Handle negative route indices
+        if routes:
+            total_layers = len(self.joint_transformer_blocks) + len(self.single_transformer_blocks)
+
+            def _to_pos(idx):
+                return idx if idx >= 0 else total_layers + idx
+
+            routes = [
+                {
+                    **r,
+                    "start_layer_idx": _to_pos(r["start_layer_idx"]),
+                    "end_layer_idx": _to_pos(r["end_layer_idx"]),
+                }
+                for r in routes
+            ]
+
         # Total number of blocks for ControlNet integration
-        total_blocks = len(self.joint_transformer_blocks) + len(
-            self.single_transformer_blocks
-        )
+        total_blocks = len(self.joint_transformer_blocks) + len(self.single_transformer_blocks)
 
         # MMDiT blocks.
         for index_block, block in enumerate(self.joint_transformer_blocks):
+            # TREAD: START a route?
+            if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
+                mask_ratio = routes[route_ptr]["selection_ratio"]
+                tread_mask_info = router.get_mask(
+                    hidden_states,
+                    mask_ratio=mask_ratio,
+                    force_keep=force_keep_mask,
+                )
+                saved_tokens = hidden_states.clone()
+                hidden_states = router.start_route(hidden_states, tread_mask_info)
+                routing_now = True
+
             # Skip specified layers
             if skip_layers is not None and index_block in skip_layers:
                 if block_controlnet_hidden_states is not None:
-                    interval_control = total_blocks // len(
-                        block_controlnet_hidden_states
-                    )
-                    hidden_states = (
-                        hidden_states
-                        + block_controlnet_hidden_states[
-                            index_block // interval_control
-                        ]
-                    )
+                    interval_control = total_blocks // len(block_controlnet_hidden_states)
+                    hidden_states = hidden_states + block_controlnet_hidden_states[index_block // interval_control]
                 continue
 
             if (
                 self.training
                 and self.gradient_checkpointing
-                and (
-                    self.gradient_checkpointing_interval is None
-                    or index_block % self.gradient_checkpointing_interval == 0
-                )
+                and (self.gradient_checkpointing_interval is None or index_block % self.gradient_checkpointing_interval == 0)
             ):
 
                 def create_custom_forward(module):
@@ -636,17 +617,13 @@ class AuraFlowTransformer2DModel(
 
                     return custom_forward
 
-                ckpt_kwargs: Dict[str, Any] = (
-                    {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-                )
-                encoder_hidden_states, hidden_states = (
-                    torch.utils.checkpoint.checkpoint(
-                        create_custom_forward(block),
-                        hidden_states,
-                        encoder_hidden_states,
-                        temb,
-                        **ckpt_kwargs,
-                    )
+                ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
+                encoder_hidden_states, hidden_states = torch.utils.checkpoint.checkpoint(
+                    create_custom_forward(block),
+                    hidden_states,
+                    encoder_hidden_states,
+                    temb,
+                    **ckpt_kwargs,
                 )
             else:
                 encoder_hidden_states, hidden_states = block(
@@ -659,33 +636,63 @@ class AuraFlowTransformer2DModel(
             # controlnet residual
             if block_controlnet_hidden_states is not None:
                 interval_control = total_blocks // len(block_controlnet_hidden_states)
-                hidden_states = (
-                    hidden_states
-                    + block_controlnet_hidden_states[index_block // interval_control]
+                hidden_states = hidden_states + block_controlnet_hidden_states[index_block // interval_control]
+
+            # TREAD: END the current route?
+            if routing_now and global_idx == routes[route_ptr]["end_layer_idx"]:
+                hidden_states = router.end_route(
+                    hidden_states,
+                    tread_mask_info,
+                    original_x=saved_tokens,
                 )
+                routing_now = False
+                route_ptr += 1
+
+            global_idx += 1
 
         # Single DiT blocks that combine the `hidden_states` (image) and `encoder_hidden_states` (text)
         if len(self.single_transformer_blocks) > 0:
             encoder_seq_len = encoder_hidden_states.size(1)
-            combined_hidden_states = torch.cat(
-                [encoder_hidden_states, hidden_states], dim=1
-            )
+            combined_hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
 
             for index_block, block in enumerate(self.single_transformer_blocks):
                 actual_index = len(self.joint_transformer_blocks) + index_block
 
+                # TREAD: START a route?
+                if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
+                    mask_ratio = routes[route_ptr]["selection_ratio"]
+
+                    # For single transformer blocks, we work with combined hidden states
+                    # Extract image tokens for routing (encoder tokens remain unchanged)
+                    img_tokens = combined_hidden_states[:, encoder_seq_len:]
+
+                    fkm = force_keep_mask if force_keep_mask is not None else None
+                    tread_mask_info = router.get_mask(
+                        img_tokens,
+                        mask_ratio=mask_ratio,
+                        force_keep=fkm,
+                    )
+                    saved_tokens = img_tokens.clone()
+                    img_tokens = router.start_route(img_tokens, tread_mask_info)
+
+                    # Recombine with encoder tokens
+                    combined_hidden_states = torch.cat(
+                        [
+                            combined_hidden_states[:, :encoder_seq_len],  # encoder tokens (unchanged)
+                            img_tokens,  # routed image tokens
+                        ],
+                        dim=1,
+                    )
+                    routing_now = True
+
                 # Skip specified layers
                 if skip_layers is not None and actual_index in skip_layers:
                     if block_controlnet_hidden_states is not None:
-                        interval_control = total_blocks // len(
-                            block_controlnet_hidden_states
-                        )
+                        interval_control = total_blocks // len(block_controlnet_hidden_states)
                         combined_hidden_states = combined_hidden_states + torch.cat(
                             [
                                 torch.zeros_like(encoder_hidden_states),
-                                block_controlnet_hidden_states[
-                                    actual_index // interval_control
-                                ],
+                                block_controlnet_hidden_states[actual_index // interval_control],
                             ],
                             dim=1,
                         )
@@ -706,11 +713,7 @@ class AuraFlowTransformer2DModel(
 
                         return custom_forward
 
-                    ckpt_kwargs: Dict[str, Any] = (
-                        {"use_reentrant": False}
-                        if is_torch_version(">=", "1.11.0")
-                        else {}
-                    )
+                    ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
                     combined_hidden_states = torch.utils.checkpoint.checkpoint(
                         create_custom_forward(block),
                         combined_hidden_states,
@@ -726,20 +729,36 @@ class AuraFlowTransformer2DModel(
 
                 # controlnet residual for single transformer blocks
                 if block_controlnet_hidden_states is not None:
-                    interval_control = total_blocks // len(
-                        block_controlnet_hidden_states
-                    )
+                    interval_control = total_blocks // len(block_controlnet_hidden_states)
                     # Apply controlnet only to the hidden_states part, not to encoder_hidden_states
                     controlnet_hidden = torch.cat(
                         [
                             torch.zeros_like(encoder_hidden_states),
-                            block_controlnet_hidden_states[
-                                actual_index // interval_control
-                            ],
+                            block_controlnet_hidden_states[actual_index // interval_control],
                         ],
                         dim=1,
                     )
                     combined_hidden_states = combined_hidden_states + controlnet_hidden
+
+                # TREAD: END the current route?
+                if routing_now and global_idx == routes[route_ptr]["end_layer_idx"]:
+                    img_tokens_r = combined_hidden_states[:, encoder_seq_len:]
+                    img_tokens = router.end_route(
+                        img_tokens_r,
+                        tread_mask_info,
+                        original_x=saved_tokens,
+                    )
+                    combined_hidden_states = torch.cat(
+                        [
+                            combined_hidden_states[:, :encoder_seq_len],  # encoder tokens (unchanged)
+                            img_tokens,  # restored image tokens
+                        ],
+                        dim=1,
+                    )
+                    routing_now = False
+                    route_ptr += 1
+
+                global_idx += 1
 
             hidden_states = combined_hidden_states[:, encoder_seq_len:]
 

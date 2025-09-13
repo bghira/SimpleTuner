@@ -17,39 +17,22 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
-
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
 from diffusers.models.attention import JointTransformerBlock
-from diffusers.models.attention_processor import (
-    Attention,
-    AttentionProcessor,
-    FusedJointAttnProcessor2_0,
-)
+from diffusers.models.attention_processor import Attention, AttentionProcessor, FusedJointAttnProcessor2_0
+from diffusers.models.embeddings import CombinedTimestepTextProjEmbeddings, PatchEmbed
+from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import AdaLayerNormContinuous
-from diffusers.utils import (
-    USE_PEFT_BACKEND,
-    is_torch_version,
-    logging,
-    scale_lora_layers,
-    unscale_lora_layers,
-)
-from diffusers.models.embeddings import (
-    CombinedTimestepTextProjEmbeddings,
-    PatchEmbed,
-)
-from diffusers.models.modeling_outputs import (
-    Transformer2DModelOutput,
-)
+from diffusers.utils import USE_PEFT_BACKEND, is_torch_version, logging, scale_lora_layers, unscale_lora_layers
 
+from simpletuner.helpers.training.tread import TREADRouter
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
-class SD3Transformer2DModel(
-    ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin
-):
+class SD3Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
     """
     The Transformer model introduced in Stable Diffusion 3.
 
@@ -71,6 +54,8 @@ class SD3Transformer2DModel(
     """
 
     _supports_gradient_checkpointing = True
+    _tread_router: Optional[TREADRouter] = None
+    _tread_routes: Optional[List[Dict[str, Any]]] = None
 
     @register_to_config
     def __init__(
@@ -86,19 +71,13 @@ class SD3Transformer2DModel(
         pooled_projection_dim: int = 2048,
         out_channels: int = 16,
         pos_embed_max_size: int = 96,
-        dual_attention_layers: Tuple[
-            int, ...
-        ] = (),  # () for sd3.0; (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12) for sd3.5
+        dual_attention_layers: Tuple[int, ...] = (),  # () for sd3.0; (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12) for sd3.5
         qk_norm: Optional[str] = None,
     ):
         super().__init__()
         default_out_channels = in_channels
-        self.out_channels = (
-            out_channels if out_channels is not None else default_out_channels
-        )
-        self.inner_dim = (
-            self.config.num_attention_heads * self.config.attention_head_dim
-        )
+        self.out_channels = out_channels if out_channels is not None else default_out_channels
+        self.inner_dim = self.config.num_attention_heads * self.config.attention_head_dim
 
         self.pos_embed = PatchEmbed(
             height=self.config.sample_size,
@@ -112,9 +91,7 @@ class SD3Transformer2DModel(
             embedding_dim=self.inner_dim,
             pooled_projection_dim=self.config.pooled_projection_dim,
         )
-        self.context_embedder = nn.Linear(
-            self.config.joint_attention_dim, self.config.caption_projection_dim
-        )
+        self.context_embedder = nn.Linear(self.config.joint_attention_dim, self.config.caption_projection_dim)
 
         # `attention_head_dim` is doubled to account for the mixing.
         # It needs to crafted when we get the actual checkpoints.
@@ -132,12 +109,8 @@ class SD3Transformer2DModel(
             ]
         )
 
-        self.norm_out = AdaLayerNormContinuous(
-            self.inner_dim, self.inner_dim, elementwise_affine=False, eps=1e-6
-        )
-        self.proj_out = nn.Linear(
-            self.inner_dim, patch_size * patch_size * self.out_channels, bias=True
-        )
+        self.norm_out = AdaLayerNormContinuous(self.inner_dim, self.inner_dim, elementwise_affine=False, eps=1e-6)
+        self.proj_out = nn.Linear(self.inner_dim, patch_size * patch_size * self.out_channels, bias=True)
 
         self.gradient_checkpointing = False
         self.gradient_checkpointing_interval = None
@@ -151,10 +124,13 @@ class SD3Transformer2DModel(
         """
         self.gradient_checkpointing_interval = interval
 
+    def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
+        """Set the TREAD router and routing configuration."""
+        self._tread_router = router
+        self._tread_routes = routes
+
     # Copied from diffusers.models.unets.unet_3d_condition.UNet3DConditionModel.enable_forward_chunking
-    def enable_forward_chunking(
-        self, chunk_size: Optional[int] = None, dim: int = 0
-    ) -> None:
+    def enable_forward_chunking(self, chunk_size: Optional[int] = None, dim: int = 0) -> None:
         """
         Sets the attention processor to use [feed forward
         chunking](https://huggingface.co/blog/reformer#2-chunked-feed-forward-layers).
@@ -173,9 +149,7 @@ class SD3Transformer2DModel(
         # By default chunk size is 1
         chunk_size = chunk_size or 1
 
-        def fn_recursive_feed_forward(
-            module: torch.nn.Module, chunk_size: int, dim: int
-        ):
+        def fn_recursive_feed_forward(module: torch.nn.Module, chunk_size: int, dim: int):
             if hasattr(module, "set_chunk_feed_forward"):
                 module.set_chunk_feed_forward(chunk_size=chunk_size, dim=dim)
 
@@ -187,9 +161,7 @@ class SD3Transformer2DModel(
 
     # Copied from diffusers.models.unets.unet_3d_condition.UNet3DConditionModel.disable_forward_chunking
     def disable_forward_chunking(self):
-        def fn_recursive_feed_forward(
-            module: torch.nn.Module, chunk_size: int, dim: int
-        ):
+        def fn_recursive_feed_forward(module: torch.nn.Module, chunk_size: int, dim: int):
             if hasattr(module, "set_chunk_feed_forward"):
                 module.set_chunk_feed_forward(chunk_size=chunk_size, dim=dim)
 
@@ -229,9 +201,7 @@ class SD3Transformer2DModel(
         return processors
 
     # Copied from diffusers.models.unets.unet_2d_condition.UNet2DConditionModel.set_attn_processor
-    def set_attn_processor(
-        self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]]
-    ):
+    def set_attn_processor(self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]]):
         r"""
         Sets the attention processor to use to compute attention.
 
@@ -281,9 +251,7 @@ class SD3Transformer2DModel(
 
         for _, attn_processor in self.attn_processors.items():
             if "Added" in str(attn_processor.__class__.__name__):
-                raise ValueError(
-                    "`fuse_qkv_projections()` is not supported for models having added KV projections."
-                )
+                raise ValueError("`fuse_qkv_projections()` is not supported for models having added KV projections.")
 
         self.original_attn_processors = self.attn_processors
 
@@ -317,6 +285,7 @@ class SD3Transformer2DModel(
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
         return_dict: bool = True,
         skip_layers: Optional[List[int]] = None,
+        force_keep_mask: Optional[torch.Tensor] = None,
     ) -> Union[torch.FloatTensor, Transformer2DModelOutput]:
         """
         The [`SD3Transformer2DModel`] forward method.
@@ -341,6 +310,8 @@ class SD3Transformer2DModel(
                 tuple.
             skip_layers (`list` of `int`, *optional*):
                 A list of layer indices to skip during the forward pass.
+            force_keep_mask (`torch.Tensor`, *optional*):
+                A mask tensor for TREAD routing indicating which tokens to force keep.
 
         Returns:
             If `return_dict` is True, an [`~models.transformer_2d.Transformer2DModelOutput`] is returned, otherwise a
@@ -356,47 +327,67 @@ class SD3Transformer2DModel(
             # weight the lora layers by setting `lora_scale` for each PEFT layer
             scale_lora_layers(self, lora_scale)
         else:
-            if (
-                joint_attention_kwargs is not None
-                and joint_attention_kwargs.get("scale", None) is not None
-            ):
+            if joint_attention_kwargs is not None and joint_attention_kwargs.get("scale", None) is not None:
                 logger.warning(
                     "Passing `scale` via `joint_attention_kwargs` when not using the PEFT backend is ineffective."
                 )
 
         height, width = hidden_states.shape[-2:]
 
-        hidden_states = self.pos_embed(
-            hidden_states
-        )  # takes care of adding positional embeddings too.
+        hidden_states = self.pos_embed(hidden_states)  # takes care of adding positional embeddings too.
         temb = self.time_text_embed(timestep, pooled_projections)
         encoder_hidden_states = self.context_embedder(encoder_hidden_states)
 
+        # TREAD initialization
+        routes = self._tread_routes or []
+        router = self._tread_router
+        use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
+        route_ptr = 0
+        routing_now = False
+        tread_mask_info = None
+        saved_tokens = None
+        global_idx = 0
+
+        # Handle negative route indices
+        if routes:
+            total_layers = len(self.transformer_blocks)
+
+            def _to_pos(idx):
+                return idx if idx >= 0 else total_layers + idx
+
+            routes = [
+                {
+                    **r,
+                    "start_layer_idx": _to_pos(r["start_layer_idx"]),
+                    "end_layer_idx": _to_pos(r["end_layer_idx"]),
+                }
+                for r in routes
+            ]
+
         for index_block, block in enumerate(self.transformer_blocks):
+            # TREAD: START a route?
+            if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
+                mask_ratio = routes[route_ptr]["selection_ratio"]
+                tread_mask_info = router.get_mask(
+                    hidden_states,
+                    mask_ratio=mask_ratio,
+                    force_keep=force_keep_mask,
+                )
+                saved_tokens = hidden_states.clone()
+                hidden_states = router.start_route(hidden_states, tread_mask_info)
+                routing_now = True
+
             # Skip specified layers
             if skip_layers is not None and index_block in skip_layers:
-                if (
-                    block_controlnet_hidden_states is not None
-                    and block.context_pre_only is False
-                ):
-                    interval_control = len(self.transformer_blocks) // len(
-                        block_controlnet_hidden_states
-                    )
-                    hidden_states = (
-                        hidden_states
-                        + block_controlnet_hidden_states[
-                            index_block // interval_control
-                        ]
-                    )
+                if block_controlnet_hidden_states is not None and block.context_pre_only is False:
+                    interval_control = len(self.transformer_blocks) // len(block_controlnet_hidden_states)
+                    hidden_states = hidden_states + block_controlnet_hidden_states[index_block // interval_control]
                 continue
 
             if (
                 self.training
                 and self.gradient_checkpointing
-                and (
-                    self.gradient_checkpointing_interval is None
-                    or index_block % self.gradient_checkpointing_interval == 0
-                )
+                and (self.gradient_checkpointing_interval is None or index_block % self.gradient_checkpointing_interval == 0)
             ):
 
                 def create_custom_forward(module, return_dict=None):
@@ -408,17 +399,13 @@ class SD3Transformer2DModel(
 
                     return custom_forward
 
-                ckpt_kwargs: Dict[str, Any] = (
-                    {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-                )
-                encoder_hidden_states, hidden_states = (
-                    torch.utils.checkpoint.checkpoint(
-                        create_custom_forward(block),
-                        hidden_states,
-                        encoder_hidden_states,
-                        temb,
-                        **ckpt_kwargs,
-                    )
+                ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
+                encoder_hidden_states, hidden_states = torch.utils.checkpoint.checkpoint(
+                    create_custom_forward(block),
+                    hidden_states,
+                    encoder_hidden_states,
+                    temb,
+                    **ckpt_kwargs,
                 )
             else:
                 encoder_hidden_states, hidden_states = block(
@@ -428,17 +415,21 @@ class SD3Transformer2DModel(
                 )
 
             # controlnet residual
-            if (
-                block_controlnet_hidden_states is not None
-                and block.context_pre_only is False
-            ):
-                interval_control = len(self.transformer_blocks) // len(
-                    block_controlnet_hidden_states
+            if block_controlnet_hidden_states is not None and block.context_pre_only is False:
+                interval_control = len(self.transformer_blocks) // len(block_controlnet_hidden_states)
+                hidden_states = hidden_states + block_controlnet_hidden_states[index_block // interval_control]
+
+            # TREAD: END the current route?
+            if routing_now and global_idx == routes[route_ptr]["end_layer_idx"]:
+                hidden_states = router.end_route(
+                    hidden_states,
+                    tread_mask_info,
+                    original_x=saved_tokens,
                 )
-                hidden_states = (
-                    hidden_states
-                    + block_controlnet_hidden_states[index_block // interval_control]
-                )
+                routing_now = False
+                route_ptr += 1
+
+            global_idx += 1
 
         hidden_states = self.norm_out(hidden_states, temb)
         hidden_states = self.proj_out(hidden_states)

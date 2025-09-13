@@ -1,20 +1,19 @@
-import torch, os, logging
-from simpletuner.helpers.models.common import (
-    ImageModelFoundation,
-    PredictionTypes,
-    PipelineTypes,
-    ModelTypes,
-)
-from transformers import AutoTokenizer, T5EncoderModel
-from simpletuner.helpers.models.pixart.pipeline import (
-    PixArtSigmaPipeline,
-    PixArtSigmaControlPipeline,
-    PixArtSigmaControlNetPipeline,
-    PixArtSigmaControlNetLoraLoaderMixin,
-)
-from simpletuner.helpers.models.pixart.transformer import PixArtTransformer2DModel
+import logging
+import os
+
+import torch
 from diffusers import AutoencoderKL
 from peft.utils import get_peft_model_state_dict
+from transformers import AutoTokenizer, T5EncoderModel
+
+from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
+from simpletuner.helpers.models.pixart.pipeline import (
+    PixArtSigmaControlNetLoraLoaderMixin,
+    PixArtSigmaControlNetPipeline,
+    PixArtSigmaControlPipeline,
+    PixArtSigmaPipeline,
+)
+from simpletuner.helpers.models.pixart.transformer import PixArtTransformer2DModel
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -80,17 +79,13 @@ class PixartSigma(ImageModelFoundation):
 
         if self.config.controlnet_model_name_or_path:
             logger.info("Loading existing controlnet weights")
-            controlnet = PixArtSigmaControlNetAdapterModel.from_pretrained(
-                self.config.controlnet_model_name_or_path
-            )
+            controlnet = PixArtSigmaControlNetAdapterModel.from_pretrained(self.config.controlnet_model_name_or_path)
         else:
             logger.info("Initializing controlnet weights from base model")
             num_layers = getattr(self.config, "controlnet_num_layers", 13)
             num_layers = min(num_layers, len(base_model.transformer_blocks))
 
-            controlnet = PixArtSigmaControlNetAdapterModel.from_transformer(
-                base_model, num_layers=num_layers
-            )
+            controlnet = PixArtSigmaControlNetAdapterModel.from_transformer(base_model, num_layers=num_layers)
 
         # Create the combined model wrapper
         self.controlnet = PixArtSigmaControlNetTransformerModel(
@@ -102,6 +97,32 @@ class PixartSigma(ImageModelFoundation):
 
         # Ensure controlnet is in training mode
         self.controlnet.controlnet.train()
+
+    def tread_init(self):
+        """
+        Initialize the TREAD model training method for PixArt.
+        """
+        from simpletuner.helpers.training.tread import TREADRouter
+
+        if (
+            getattr(self.config, "tread_config", None) is None
+            or getattr(self.config, "tread_config", None) is {}
+            or getattr(self.config, "tread_config", {}).get("routes", None) is None
+        ):
+            logger.error("TREAD training requires you to configure the routes in the TREAD config")
+            import sys
+
+            sys.exit(1)
+
+        self.unwrap_model(model=self.model).set_router(
+            TREADRouter(
+                seed=getattr(self.config, "seed", None) or 42,
+                device=self.accelerator.device,
+            ),
+            self.config.tread_config["routes"],
+        )
+
+        logger.info("TREAD training is enabled for PixArt")
 
     def requires_conditioning_latents(self) -> bool:
         """
@@ -144,15 +165,11 @@ class PixartSigma(ImageModelFoundation):
             "prompt_attention_mask": text_embedding["attention_mask"].unsqueeze(0),
         }
 
-    def convert_negative_text_embed_for_pipeline(
-        self, text_embedding: torch.Tensor, prompt: str
-    ) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['attention_mask'].shape}")
         return {
             "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            "negative_prompt_attention_mask": text_embedding[
-                "attention_mask"
-            ].unsqueeze(0),
+            "negative_prompt_attention_mask": text_embedding["attention_mask"].unsqueeze(0),
         }
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
@@ -165,9 +182,7 @@ class PixartSigma(ImageModelFoundation):
         Returns:
             Text encoder output (raw)
         """
-        prompt_embeds, prompt_attention_mask, _, _ = self.pipelines[
-            PipelineTypes.TEXT2IMG
-        ].encode_prompt(
+        prompt_embeds, prompt_attention_mask, _, _ = self.pipelines[PipelineTypes.TEXT2IMG].encode_prompt(
             prompt=prompts,
             prompt_2=prompts,
             device=self.accelerator.device,
@@ -178,9 +193,9 @@ class PixartSigma(ImageModelFoundation):
         )
         if self.config.t5_padding == "zero":
             # we can zero the padding tokens if we're just going to mask them later anyway.
-            prompt_embeds = prompt_embeds * prompt_attention_mask.to(
-                device=prompt_embeds.device
-            ).unsqueeze(-1).expand(prompt_embeds.shape)
+            prompt_embeds = prompt_embeds * prompt_attention_mask.to(device=prompt_embeds.device).unsqueeze(-1).expand(
+                prompt_embeds.shape
+            )
 
         return prompt_embeds, prompt_attention_mask
 
@@ -223,13 +238,9 @@ class PixartSigma(ImageModelFoundation):
         controlnet_cond = prepared_batch.get("conditioning_latents")
 
         if controlnet_cond is None:
-            raise ValueError(
-                "conditioning_latents must be provided for ControlNet training"
-            )
+            raise ValueError("conditioning_latents must be provided for ControlNet training")
 
-        controlnet_cond = controlnet_cond.to(
-            device=self.accelerator.device, dtype=self.config.weight_dtype
-        )
+        controlnet_cond = controlnet_cond.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
 
         # Check shapes
         if controlnet_cond.shape[1] != self.LATENT_CHANNEL_COUNT:
@@ -277,22 +288,12 @@ class PixartSigma(ImageModelFoundation):
         """
         We'll check the current model config to ensure we're loading a base or refiner model.
         """
-        if (
-            "stage1" in self.config.model_flavour
-            or "stage1" in self.config.pretrained_model_name_or_path
-        ):
-            logger.info(
-                f"{self.NAME} stage1 eDiffi model is detected, enabling special training configuration settings."
-            )
+        if "stage1" in self.config.model_flavour or "stage1" in self.config.pretrained_model_name_or_path:
+            logger.info(f"{self.NAME} stage1 eDiffi model is detected, enabling special training configuration settings.")
             self.config.refiner_training = True
             self.config.refiner_training_invert_schedule = True
-        elif (
-            "stage2" in self.config.model_flavour
-            or "stage2" in self.config.pretrained_model_name_or_path
-        ):
-            logger.info(
-                f"{self.NAME} stage2 eDiffi model is detected, enabling special training configuration settings."
-            )
+        elif "stage2" in self.config.model_flavour or "stage2" in self.config.pretrained_model_name_or_path:
+            logger.info(f"{self.NAME} stage2 eDiffi model is detected, enabling special training configuration settings.")
             self.config.refiner_training = True
 
     def check_user_config(self):
@@ -313,9 +314,7 @@ class PixartSigma(ImageModelFoundation):
             )
         self.config.tokenizer_max_length = 300
         if self.config.tokenizer_max_length is not None:
-            logger.warning(
-                f"-!- {self.NAME} supports a max length of 300 tokens, --tokenizer_max_length is ignored -!-"
-            )
+            logger.warning(f"-!- {self.NAME} supports a max length of 300 tokens, --tokenizer_max_length is ignored -!-")
         if self.config.aspect_bucket_alignment != 64:
             logger.warning(
                 "{self.NAME} requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
@@ -333,9 +332,7 @@ class PixartSigma(ImageModelFoundation):
             self.config.max_grad_norm = 0.01
 
         if self.config.prediction_type is not None:
-            logger.info(
-                f"Setting {self.NAME} prediction type: {self.config.prediction_type}"
-            )
+            logger.info(f"Setting {self.NAME} prediction type: {self.config.prediction_type}")
             self.PREDICTION_TYPE = PredictionTypes.from_str(self.config.prediction_type)
             if self.config.validation_noise_scheduler is None:
                 self.config.validation_noise_scheduler = self.DEFAULT_NOISE_SCHEDULER
@@ -344,9 +341,7 @@ class PixartSigma(ImageModelFoundation):
         """
         Get LoRA target layers, with special handling for ControlNet.
         """
-        if self.config.model_type == "lora" and (
-            self.config.controlnet or self.config.control
-        ):
+        if self.config.model_type == "lora" and (self.config.controlnet or self.config.control):
             # ONLY target the controlnet adapter blocks, NOT the transformer
             num_layers = getattr(self.config, "controlnet_num_layers", 13)
             controlnet_targets = []
@@ -355,14 +350,10 @@ class PixartSigma(ImageModelFoundation):
             for i in range(num_layers):
                 # Only block 0 has before_proj
                 if i == 0:
-                    controlnet_targets.append(
-                        f"controlnet.controlnet_blocks.{i}.before_proj"
-                    )
+                    controlnet_targets.append(f"controlnet.controlnet_blocks.{i}.before_proj")
 
                 # All blocks have after_proj
-                controlnet_targets.append(
-                    f"controlnet.controlnet_blocks.{i}.after_proj"
-                )
+                controlnet_targets.append(f"controlnet.controlnet_blocks.{i}.after_proj")
 
                 # Target the attention layers in the transformer block
                 controlnet_targets.extend(
@@ -407,45 +398,29 @@ class PixartSigma(ImageModelFoundation):
         if self.config.use_soft_min_snr:
             output_args.append(f"use_soft_min_snr")
             if self.config.soft_min_snr_sigma_data:
-                output_args.append(
-                    f"soft_min_snr_sigma_data={self.config.soft_min_snr_sigma_data}"
-                )
+                output_args.append(f"soft_min_snr_sigma_data={self.config.soft_min_snr_sigma_data}")
         if self.config.rescale_betas_zero_snr:
             output_args.append(f"rescale_betas_zero_snr")
         if self.config.offset_noise:
             output_args.append(f"offset_noise")
             output_args.append(f"noise_offset={self.config.noise_offset}")
-            output_args.append(
-                f"noise_offset_probability={self.config.noise_offset_probability}"
-            )
-        output_args.append(
-            f"training_scheduler_timestep_spacing={self.config.training_scheduler_timestep_spacing}"
-        )
-        output_args.append(
-            f"inference_scheduler_timestep_spacing={self.config.inference_scheduler_timestep_spacing}"
-        )
+            output_args.append(f"noise_offset_probability={self.config.noise_offset_probability}")
+        output_args.append(f"training_scheduler_timestep_spacing={self.config.training_scheduler_timestep_spacing}")
+        output_args.append(f"inference_scheduler_timestep_spacing={self.config.inference_scheduler_timestep_spacing}")
 
         if self.config.controlnet:
             output_args.append("controlnet_enabled")
             if hasattr(self.config, "controlnet_conditioning_scale"):
-                output_args.append(
-                    f"controlnet_scale={self.config.controlnet_conditioning_scale}"
-                )
+                output_args.append(f"controlnet_scale={self.config.controlnet_conditioning_scale}")
 
-        output_str = (
-            f" (extra parameters={output_args})"
-            if output_args
-            else " (no special parameters set)"
-        )
+        output_str = f" (extra parameters={output_args})" if output_args else " (no special parameters set)"
 
         return output_str
 
     def custom_model_card_code_example(self, repo_id: str = None) -> str:
         """Provide custom code example for ControlNet models"""
         if self.config.controlnet or self.config.control:
-            from simpletuner.helpers.models.pixart.model_card_templates import (
-                pixart_sigma_controlnet_code_example,
-            )
+            from simpletuner.helpers.models.pixart.model_card_templates import pixart_sigma_controlnet_code_example
 
             return pixart_sigma_controlnet_code_example(self.config, repo_id, self)
         return None

@@ -11,27 +11,22 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Any, Dict, Optional, Union, List
+from typing import Any, Dict, List, Optional, Union
 
-import torch
-from torch import nn
 import numpy as np
-
-from diffusers.loaders import PeftAdapterMixin
+import torch
 from diffusers.configuration_utils import ConfigMixin, register_to_config
-from diffusers.utils import logging
+from diffusers.loaders import PeftAdapterMixin
 from diffusers.models.attention import BasicTransformerBlock
-from diffusers.models.attention_processor import (
-    Attention,
-    AttentionProcessor,
-    AttnProcessor,
-    FusedAttnProcessor2_0,
-)
+from diffusers.models.attention_processor import Attention, AttentionProcessor, AttnProcessor, FusedAttnProcessor2_0
 from diffusers.models.embeddings import PatchEmbed, PixArtAlphaTextProjection
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import AdaLayerNormSingle
+from diffusers.utils import logging
+from torch import nn
 
+from simpletuner.helpers.training.tread import TREADRouter
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -87,6 +82,8 @@ class PixArtTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
     _supports_gradient_checkpointing = True
     _no_split_modules = ["BasicTransformerBlock", "PatchEmbed"]
     _skip_layerwise_casting_patterns = ["pos_embed", "norm", "adaln_single"]
+    _tread_router: Optional[TREADRouter] = None
+    _tread_routes: Optional[List[Dict[str, Any]]] = None
 
     @register_to_config
     def __init__(
@@ -127,9 +124,7 @@ class PixArtTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
 
         # Set some common variables used across the board.
         self.attention_head_dim = attention_head_dim
-        self.inner_dim = (
-            self.config.num_attention_heads * self.config.attention_head_dim
-        )
+        self.inner_dim = self.config.num_attention_heads * self.config.attention_head_dim
         self.out_channels = in_channels if out_channels is None else out_channels
         if use_additional_conditions is None:
             if sample_size == 128:
@@ -181,17 +176,13 @@ class PixArtTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
 
         # 3. Output blocks.
         self.norm_out = nn.LayerNorm(self.inner_dim, elementwise_affine=False, eps=1e-6)
-        self.scale_shift_table = nn.Parameter(
-            torch.randn(2, self.inner_dim) / self.inner_dim**0.5
-        )
+        self.scale_shift_table = nn.Parameter(torch.randn(2, self.inner_dim) / self.inner_dim**0.5)
         self.proj_out = nn.Linear(
             self.inner_dim,
             self.config.patch_size * self.config.patch_size * self.out_channels,
         )
 
-        self.adaln_single = AdaLayerNormSingle(
-            self.inner_dim, use_additional_conditions=self.use_additional_conditions
-        )
+        self.adaln_single = AdaLayerNormSingle(self.inner_dim, use_additional_conditions=self.use_additional_conditions)
         self.caption_projection = None
         if self.config.caption_channels is not None:
             self.caption_projection = PixArtAlphaTextProjection(
@@ -228,9 +219,7 @@ class PixArtTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         return processors
 
     # Copied from diffusers.models.unets.unet_2d_condition.UNet2DConditionModel.set_attn_processor
-    def set_attn_processor(
-        self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]]
-    ):
+    def set_attn_processor(self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]]):
         r"""
         Sets the attention processor to use to compute attention.
 
@@ -288,9 +277,7 @@ class PixArtTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
 
         for _, attn_processor in self.attn_processors.items():
             if "Added" in str(attn_processor.__class__.__name__):
-                raise ValueError(
-                    "`fuse_qkv_projections()` is not supported for models having added KV projections."
-                )
+                raise ValueError("`fuse_qkv_projections()` is not supported for models having added KV projections.")
 
         self.original_attn_processors = self.attn_processors
 
@@ -314,6 +301,11 @@ class PixArtTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         if self.original_attn_processors is not None:
             self.set_attn_processor(self.original_attn_processors)
 
+    def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
+        """Set the TREAD router and routing configuration."""
+        self._tread_router = router
+        self._tread_routes = routes
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -326,6 +318,7 @@ class PixArtTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         controlnet_block_samples: Optional[List[torch.Tensor]] = None,
         controlnet_conditioning_scale: float = 1.0,
         return_dict: bool = True,
+        force_keep_mask: Optional[torch.Tensor] = None,
     ):
         """
         The [`PixArtTransformer2DModel`] forward method.
@@ -357,6 +350,8 @@ class PixArtTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                 above. This bias will be added to the cross-attention scores.
             controlnet_block_samples: Optional list of tensors from ControlNet blocks to be added as residuals
             controlnet_conditioning_scale: Scale factor for ControlNet influence (default: 1.0)
+            force_keep_mask (`torch.Tensor`, *optional*):
+                A mask tensor for TREAD routing indicating which tokens to force keep.
             return_dict (`bool`, *optional*, defaults to `True`):
                 Whether or not to return a [`~models.unets.unet_2d_condition.UNet2DConditionOutput`] instead of a plain
                 tuple.
@@ -366,18 +361,14 @@ class PixArtTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             `tuple` where the first element is the sample tensor.
         """
         if self.use_additional_conditions and added_cond_kwargs is None:
-            raise ValueError(
-                "`added_cond_kwargs` cannot be None when using additional conditions for `adaln_single`."
-            )
+            raise ValueError("`added_cond_kwargs` cannot be None when using additional conditions for `adaln_single`.")
 
         if attention_mask is not None and attention_mask.ndim == 2:
             attention_mask = (1 - attention_mask.to(hidden_states.dtype)) * -10000.0
             attention_mask = attention_mask.unsqueeze(1)
 
         if encoder_attention_mask is not None and encoder_attention_mask.ndim == 2:
-            encoder_attention_mask = (
-                1 - encoder_attention_mask.to(hidden_states.dtype)
-            ) * -10000.0
+            encoder_attention_mask = (1 - encoder_attention_mask.to(hidden_states.dtype)) * -10000.0
             encoder_attention_mask = encoder_attention_mask.unsqueeze(1)
 
         # 1. Input
@@ -397,12 +388,48 @@ class PixArtTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
 
         if self.caption_projection is not None:
             encoder_hidden_states = self.caption_projection(encoder_hidden_states)
-            encoder_hidden_states = encoder_hidden_states.view(
-                batch_size, -1, hidden_states.shape[-1]
-            )
+            encoder_hidden_states = encoder_hidden_states.view(batch_size, -1, hidden_states.shape[-1])
+
+        # TREAD initialization
+        routes = self._tread_routes or []
+        router = self._tread_router
+        use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
+        route_ptr = 0
+        routing_now = False
+        tread_mask_info = None
+        saved_tokens = None
+        global_idx = 0
+
+        # Handle negative route indices
+        if routes:
+            total_layers = len(self.transformer_blocks)
+
+            def _to_pos(idx):
+                return idx if idx >= 0 else total_layers + idx
+
+            routes = [
+                {
+                    **r,
+                    "start_layer_idx": _to_pos(r["start_layer_idx"]),
+                    "end_layer_idx": _to_pos(r["end_layer_idx"]),
+                }
+                for r in routes
+            ]
 
         # 2. Blocks
         for index_block, block in enumerate(self.transformer_blocks):
+            # TREAD: START a route?
+            if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
+                mask_ratio = routes[route_ptr]["selection_ratio"]
+                tread_mask_info = router.get_mask(
+                    hidden_states,
+                    mask_ratio=mask_ratio,
+                    force_keep=force_keep_mask,
+                )
+                saved_tokens = hidden_states.clone()
+                hidden_states = router.start_route(hidden_states, tread_mask_info)
+                routing_now = True
+
             if torch.is_grad_enabled() and self.gradient_checkpointing:
                 hidden_states = self._gradient_checkpointing_func(
                     block,
@@ -427,26 +454,32 @@ class PixArtTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
 
             # ControlNet residual injection
             if controlnet_block_samples is not None:
-                interval_control = len(self.transformer_blocks) / len(
-                    controlnet_block_samples
-                )
+                interval_control = len(self.transformer_blocks) / len(controlnet_block_samples)
                 interval_control = int(np.ceil(interval_control))
                 controlnet_idx = index_block // interval_control
                 if controlnet_idx < len(controlnet_block_samples):
                     hidden_states = hidden_states + (
-                        controlnet_block_samples[controlnet_idx]
-                        * controlnet_conditioning_scale
+                        controlnet_block_samples[controlnet_idx] * controlnet_conditioning_scale
                     )
 
-        shift, scale = (
-            self.scale_shift_table[None]
-            + embedded_timestep[:, None].to(self.scale_shift_table.device)
-        ).chunk(2, dim=1)
+            # TREAD: END the current route?
+            if routing_now and global_idx == routes[route_ptr]["end_layer_idx"]:
+                hidden_states = router.end_route(
+                    hidden_states,
+                    tread_mask_info,
+                    original_x=saved_tokens,
+                )
+                routing_now = False
+                route_ptr += 1
+
+            global_idx += 1
+
+        shift, scale = (self.scale_shift_table[None] + embedded_timestep[:, None].to(self.scale_shift_table.device)).chunk(
+            2, dim=1
+        )
         hidden_states = self.norm_out(hidden_states)
         # Modulation
-        hidden_states = hidden_states * (1 + scale.to(hidden_states.device)) + shift.to(
-            hidden_states.device
-        )
+        hidden_states = hidden_states * (1 + scale.to(hidden_states.device)) + shift.to(hidden_states.device)
         hidden_states = self.proj_out(hidden_states)
         hidden_states = hidden_states.squeeze(1)
 

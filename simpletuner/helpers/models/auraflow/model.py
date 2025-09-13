@@ -1,21 +1,14 @@
-import torch, os, logging
-from simpletuner.helpers.models.common import (
-    ImageModelFoundation,
-    PredictionTypes,
-    PipelineTypes,
-    ModelTypes,
-)
-from transformers import (
-    LlamaTokenizerFast,
-    UMT5EncoderModel,
-)
-from simpletuner.helpers.models.auraflow.transformer import AuraFlowTransformer2DModel
-from simpletuner.helpers.models.auraflow.pipeline import AuraFlowPipeline
-from simpletuner.helpers.models.auraflow.pipeline_controlnet import (
-    AuraFlowControlNetPipeline,
-    AuraFlowControlNetModel,
-)
+import logging
+import os
+
+import torch
 from diffusers import AutoencoderKL
+from transformers import LlamaTokenizerFast, UMT5EncoderModel
+
+from simpletuner.helpers.models.auraflow.pipeline import AuraFlowPipeline
+from simpletuner.helpers.models.auraflow.pipeline_controlnet import AuraFlowControlNetModel, AuraFlowControlNetPipeline
+from simpletuner.helpers.models.auraflow.transformer import AuraFlowTransformer2DModel
+from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -96,20 +89,14 @@ class Auraflow(ImageModelFoundation):
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
         return {
             "prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            "prompt_attention_mask": text_embedding["prompt_attention_mask"].unsqueeze(
-                0
-            ),
+            "prompt_attention_mask": text_embedding["prompt_attention_mask"].unsqueeze(0),
         }
 
-    def convert_negative_text_embed_for_pipeline(
-        self, text_embedding: torch.Tensor, prompt: str
-    ) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
         return {
             "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            "negative_prompt_attention_mask": text_embedding[
-                "prompt_attention_mask"
-            ].unsqueeze(0),
+            "negative_prompt_attention_mask": text_embedding["prompt_attention_mask"].unsqueeze(0),
         }
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
@@ -122,9 +109,7 @@ class Auraflow(ImageModelFoundation):
         Returns:
             Text encoder output (raw)
         """
-        prompt_embeds, prompt_attention_mask, _, _ = self.pipelines[
-            PipelineTypes.TEXT2IMG
-        ].encode_prompt(
+        prompt_embeds, prompt_attention_mask, _, _ = self.pipelines[PipelineTypes.TEXT2IMG].encode_prompt(
             prompt=prompts,
             negative_prompt=None,
             do_classifier_free_guidance=False,
@@ -147,19 +132,13 @@ class Auraflow(ImageModelFoundation):
             raise ValueError(
                 f"Input latent channels must be {self.LATENT_CHANNEL_COUNT}, but got {prepared_batch['noisy_latents'].shape[1]}."
             )
-        if (
-            height % self.unwrap_model().config.patch_size != 0
-            or width % self.unwrap_model().config.patch_size != 0
-        ):
+        if height % self.unwrap_model().config.patch_size != 0 or width % self.unwrap_model().config.patch_size != 0:
             raise ValueError(
                 f"Input latent height and width must be divisible by patch_size ({self.unwrap_model().config.patch_size})."
                 f" Got height={height}, width={width}."
             )
         timesteps = (
-            prepared_batch["timesteps"].to(
-                device=self.accelerator.device, dtype=self.config.weight_dtype
-            )
-            / 1000.0
+            prepared_batch["timesteps"].to(device=self.accelerator.device, dtype=self.config.weight_dtype) / 1000.0
         )  # Normalize to [0, 1]
 
         model_output = self.model(
@@ -186,13 +165,8 @@ class Auraflow(ImageModelFoundation):
                 f"{self.NAME} does not support fp8-quanto. Please use fp8-torchao or int8 precision level instead."
             )
         t5_max_length = 120
-        if (
-            self.config.tokenizer_max_length is None
-            or self.config.tokenizer_max_length == 0
-        ):
-            logger.warning(
-                f"Setting T5 XXL tokeniser max length to {t5_max_length} for {self.NAME}."
-            )
+        if self.config.tokenizer_max_length is None or self.config.tokenizer_max_length == 0:
+            logger.warning(f"Setting T5 XXL tokeniser max length to {t5_max_length} for {self.NAME}.")
             self.config.tokenizer_max_length = t5_max_length
         if int(self.config.tokenizer_max_length) > t5_max_length:
             if not self.config.i_know_what_i_am_doing:
@@ -208,9 +182,7 @@ class Auraflow(ImageModelFoundation):
                     f"The model will begin to collapse after a short period of time, if the model you are continuing from has not been tuned beyond {t5_max_length} tokens."
                 )
         if self.config.aspect_bucket_alignment != 64:
-            logger.warning(
-                "MM-DiT requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
-            )
+            logger.warning("MM-DiT requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment.")
             self.config.aspect_bucket_alignment = 64
 
     def control_init(self):
@@ -218,10 +190,7 @@ class Auraflow(ImageModelFoundation):
         Initialize AuraFlow Control parameters (similar to Flux Control).
         This modifies the model in-place to support control conditioning.
         """
-        if (
-            self.config.control
-            and self.config.pretrained_transformer_model_name_or_path is None
-        ):
+        if self.config.control and self.config.pretrained_transformer_model_name_or_path is None:
             with torch.no_grad():
                 initial_input_channels = self.get_trained_component().config.in_channels
 
@@ -235,34 +204,24 @@ class Auraflow(ImageModelFoundation):
                         device=self.get_trained_component().device,
                     )
                     new_linear.weight.zero_()
-                    new_linear.weight[:, :initial_input_channels].copy_(
-                        self.get_trained_component().x_embedder.weight
-                    )
+                    new_linear.weight[:, :initial_input_channels].copy_(self.get_trained_component().x_embedder.weight)
                     if self.get_trained_component().x_embedder.bias is not None:
-                        new_linear.bias.copy_(
-                            self.get_trained_component().x_embedder.bias
-                        )
+                        new_linear.bias.copy_(self.get_trained_component().x_embedder.bias)
                     self.get_trained_component().x_embedder = new_linear
 
                 # Modify pos_embed projection to accept concatenated input
                 if hasattr(self.get_trained_component(), "pos_embed"):
                     new_proj = torch.nn.Conv2d(
-                        in_channels=self.get_trained_component().pos_embed.proj.in_channels
-                        * 2,
+                        in_channels=self.get_trained_component().pos_embed.proj.in_channels * 2,
                         out_channels=self.get_trained_component().pos_embed.proj.out_channels,
                         kernel_size=self.get_trained_component().pos_embed.proj.kernel_size,
                         stride=self.get_trained_component().pos_embed.proj.stride,
-                        bias=self.get_trained_component().pos_embed.proj.bias
-                        is not None,
+                        bias=self.get_trained_component().pos_embed.proj.bias is not None,
                     )
                     new_proj.weight.zero_()
-                    new_proj.weight[:, :initial_input_channels].copy_(
-                        self.get_trained_component().pos_embed.proj.weight
-                    )
+                    new_proj.weight[:, :initial_input_channels].copy_(self.get_trained_component().pos_embed.proj.weight)
                     if self.get_trained_component().pos_embed.proj.bias is not None:
-                        new_proj.bias.copy_(
-                            self.get_trained_component().pos_embed.proj.bias
-                        )
+                        new_proj.bias.copy_(self.get_trained_component().pos_embed.proj.bias)
                     self.get_trained_component().pos_embed.proj = new_proj
 
                 # Update config to reflect new input channels
@@ -278,21 +237,43 @@ class Auraflow(ImageModelFoundation):
         logger.info("Creating the AuraFlow controlnet...")
         if self.config.controlnet_model_name_or_path:
             logger.info("Loading existing controlnet weights")
-            self.controlnet = AuraFlowControlNetModel.from_pretrained(
-                self.config.controlnet_model_name_or_path
-            )
+            self.controlnet = AuraFlowControlNetModel.from_pretrained(self.config.controlnet_model_name_or_path)
         else:
             logger.info("Initializing controlnet weights from base model")
             # Initialize controlnet from the transformer
-            self.controlnet = AuraFlowControlNetModel.from_transformer(
-                self.unwrap_model(self.model)
-            )
+            self.controlnet = AuraFlowControlNetModel.from_transformer(self.unwrap_model(self.model))
 
         self.controlnet.to(self.accelerator.device, self.config.weight_dtype)
 
         # Ensure controlnet is in training mode if needed
         if self.config.controlnet:
             self.controlnet.train()
+
+    def tread_init(self):
+        """
+        Initialize the TREAD model training method for AuraFlow.
+        """
+        from simpletuner.helpers.training.tread import TREADRouter
+
+        if (
+            getattr(self.config, "tread_config", None) is None
+            or getattr(self.config, "tread_config", None) is {}
+            or getattr(self.config, "tread_config", {}).get("routes", None) is None
+        ):
+            logger.error("TREAD training requires you to configure the routes in the TREAD config")
+            import sys
+
+            sys.exit(1)
+
+        self.unwrap_model(model=self.model).set_router(
+            TREADRouter(
+                seed=getattr(self.config, "seed", None) or 42,
+                device=self.accelerator.device,
+            ),
+            self.config.tread_config["routes"],
+        )
+
+        logger.info("TREAD training is enabled for AuraFlow")
 
     def requires_conditioning_latents(self) -> bool:
         """AuraFlow ControlNet requires latent inputs instead of pixels."""
@@ -320,13 +301,9 @@ class Auraflow(ImageModelFoundation):
         controlnet_cond = prepared_batch.get("conditioning_latents")
 
         if controlnet_cond is None:
-            raise ValueError(
-                "conditioning_latents must be provided for ControlNet training"
-            )
+            raise ValueError("conditioning_latents must be provided for ControlNet training")
 
-        controlnet_cond = controlnet_cond.to(
-            device=self.accelerator.device, dtype=self.config.weight_dtype
-        )
+        controlnet_cond = controlnet_cond.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
 
         # Check shapes
         if controlnet_cond.shape[1] != self.LATENT_CHANNEL_COUNT:
@@ -339,10 +316,7 @@ class Auraflow(ImageModelFoundation):
         conditioning_scale = getattr(self.config, "controlnet_conditioning_scale", 1.0)
 
         timesteps = (
-            prepared_batch["timesteps"].to(
-                device=self.accelerator.device, dtype=self.config.weight_dtype
-            )
-            / 1000.0
+            prepared_batch["timesteps"].to(device=self.accelerator.device, dtype=self.config.weight_dtype) / 1000.0
         )  # Normalize to [0, 1]
 
         # Expand timesteps to batch dimension
@@ -396,9 +370,7 @@ class Auraflow(ImageModelFoundation):
         #     }
 
         # Forward pass through the transformer with ControlNet residuals
-        model_pred = self.get_trained_component(base_model=True)(**transformer_kwargs)[
-            0
-        ]
+        model_pred = self.get_trained_component(base_model=True)(**transformer_kwargs)[0]
 
         return {"model_prediction": model_pred}
 
@@ -407,9 +379,7 @@ class Auraflow(ImageModelFoundation):
         """
         Get the target layers for LoRA training, with special handling for ControlNet.
         """
-        if self.config.model_type == "lora" and (
-            self.config.controlnet or self.config.control
-        ):
+        if self.config.model_type == "lora" and (self.config.controlnet or self.config.control):
             controlnet_block_modules = [f"controlnet_blocks.{i}" for i in range(36)]
             return controlnet_block_modules
 
@@ -418,9 +388,7 @@ class Auraflow(ImageModelFoundation):
         elif self.config.lora_type.lower() == "lycoris":
             return self.DEFAULT_LYCORIS_TARGET
         else:
-            raise NotImplementedError(
-                f"Unknown LoRA target type {self.config.lora_type}."
-            )
+            raise NotImplementedError(f"Unknown LoRA target type {self.config.lora_type}.")
 
     # Add to custom_model_card_schedule_info if needed
     def custom_model_card_schedule_info(self):
@@ -431,29 +399,19 @@ class Auraflow(ImageModelFoundation):
         if self.config.flow_schedule_shift is not None:
             output_args.append(f"shift={self.config.flow_schedule_shift}")
         if self.config.flow_use_beta_schedule:
-            output_args.append(
-                f"flow_beta_schedule_alpha={self.config.flow_beta_schedule_alpha}"
-            )
-            output_args.append(
-                f"flow_beta_schedule_beta={self.config.flow_beta_schedule_beta}"
-            )
+            output_args.append(f"flow_beta_schedule_alpha={self.config.flow_beta_schedule_alpha}")
+            output_args.append(f"flow_beta_schedule_beta={self.config.flow_beta_schedule_beta}")
         if self.config.flow_use_uniform_schedule:
             output_args.append(f"flow_use_uniform_schedule")
 
         if self.config.controlnet:
             output_args.append("controlnet_enabled")
             if hasattr(self.config, "controlnet_conditioning_scale"):
-                output_args.append(
-                    f"controlnet_scale={self.config.controlnet_conditioning_scale}"
-                )
+                output_args.append(f"controlnet_scale={self.config.controlnet_conditioning_scale}")
 
         if self.config.control:
             output_args.append("control_enabled")
 
-        output_str = (
-            f" (extra parameters={output_args})"
-            if output_args
-            else " (no special parameters set)"
-        )
+        output_str = f" (extra parameters={output_args})" if output_args else " (no special parameters set)"
 
         return output_str
