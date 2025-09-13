@@ -89,7 +89,7 @@ Multiple routing windows with different selection ratios:
 ## Compatibility
 
 ### Supported Models
-- **FLUX and Wan** - Currently the only supported model families
+- **FLUX Dev/Kontext, Wan, AuraFlow, PixArt, and SD3** - Currently the only supported model families
 - Future support planned for other diffusion transformers
 
 ### Works Well With
