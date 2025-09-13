@@ -16,7 +16,7 @@ To run `kontext.peft-lora` example:
 
 **Option 1 (Recommended - pip install):**
 ```bash
-pip install simpletuner
+pip install simpletuner[cuda]
 simpletuner train example=kontext.peft-lora
 ```
 
