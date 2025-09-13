@@ -1,33 +1,21 @@
-import torch, os, logging
-from simpletuner.helpers.models.common import (
-    ImageModelFoundation,
-    PredictionTypes,
-    PipelineTypes,
-    ModelTypes,
-)
+import logging
+import os
+
+import torch
 from diffusers import AutoencoderKL, SD3ControlNetModel
-from transformers import (
-    T5TokenizerFast,
-    T5EncoderModel,
-    CLIPTokenizer,
-    CLIPTextModelWithProjection,
-)
-from simpletuner.helpers.models.sd3.transformer import SD3Transformer2DModel
-from simpletuner.helpers.models.sd3.pipeline import (
-    StableDiffusion3Pipeline,
-    StableDiffusion3Img2ImgPipeline,
-)
+from transformers import CLIPTextModelWithProjection, CLIPTokenizer, T5EncoderModel, T5TokenizerFast
+
+from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.sd3.controlnet import StableDiffusion3ControlNetPipeline
-from diffusers import AutoencoderKL, SD3ControlNetModel
+from simpletuner.helpers.models.sd3.pipeline import StableDiffusion3Img2ImgPipeline, StableDiffusion3Pipeline
+from simpletuner.helpers.models.sd3.transformer import SD3Transformer2DModel
 
 logger = logging.getLogger(__name__)
 is_primary_process = True
 if os.environ.get("RANK") is not None:
     if int(os.environ.get("RANK")) != 0:
         is_primary_process = False
-logger.setLevel(
-    os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO") if is_primary_process else "ERROR"
-)
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO") if is_primary_process else "ERROR")
 
 
 def _encode_sd3_prompt_with_t5(
@@ -162,9 +150,7 @@ class SD3(ImageModelFoundation):
 
         if self.config.controlnet_model_name_or_path:
             logger.info("Loading existing controlnet weights")
-            self.controlnet = SD3ControlNetModel.from_pretrained(
-                self.config.controlnet_model_name_or_path
-            )
+            self.controlnet = SD3ControlNetModel.from_pretrained(self.config.controlnet_model_name_or_path)
         else:
             logger.info("Initializing controlnet weights from base model")
             # SD3ControlNetModel.from_transformer adds 1 extra conditioning channel by default
@@ -177,18 +163,38 @@ class SD3(ImageModelFoundation):
 
         self.controlnet = self.controlnet.to(
             device=self.accelerator.device,
-            dtype=(
-                self.config.base_weight_dtype
-                if hasattr(self.config, "base_weight_dtype")
-                else self.config.weight_dtype
-            ),
+            dtype=(self.config.base_weight_dtype if hasattr(self.config, "base_weight_dtype") else self.config.weight_dtype),
         )
         # Log the expected input channels for debugging
-        if hasattr(self.controlnet, "pos_embed_input") and hasattr(
-            self.controlnet.pos_embed_input, "proj"
-        ):
+        if hasattr(self.controlnet, "pos_embed_input") and hasattr(self.controlnet.pos_embed_input, "proj"):
             in_channels = self.controlnet.pos_embed_input.proj.in_channels
             logger.info(f"ControlNet expects {in_channels} input channels")
+
+    def tread_init(self):
+        """
+        Initialize the TREAD model training method for SD3.
+        """
+        from simpletuner.helpers.training.tread import TREADRouter
+
+        if (
+            getattr(self.config, "tread_config", None) is None
+            or getattr(self.config, "tread_config", None) is {}
+            or getattr(self.config, "tread_config", {}).get("routes", None) is None
+        ):
+            logger.error("TREAD training requires you to configure the routes in the TREAD config")
+            import sys
+
+            sys.exit(1)
+
+        self.unwrap_model(model=self.model).set_router(
+            TREADRouter(
+                seed=getattr(self.config, "seed", None) or 42,
+                device=self.accelerator.device,
+            ),
+            self.config.tread_config["routes"],
+        )
+
+        logger.info("TREAD training is enabled for SD3")
 
     def requires_conditioning_latents(self) -> bool:
         """
@@ -235,15 +241,11 @@ class SD3(ImageModelFoundation):
             "pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0),
         }
 
-    def convert_negative_text_embed_for_pipeline(
-        self, text_embedding: torch.Tensor, prompt: str
-    ) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
         return {
             "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            "negative_pooled_prompt_embeds": text_embedding[
-                "pooled_prompt_embeds"
-            ].unsqueeze(0),
+            "negative_pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0),
         }
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
@@ -322,9 +324,7 @@ class SD3(ImageModelFoundation):
             )[0]
         }
 
-    def prepare_controlnet_conditioning(
-        self, conditioning_latents: torch.Tensor
-    ) -> torch.Tensor:
+    def prepare_controlnet_conditioning(self, conditioning_latents: torch.Tensor) -> torch.Tensor:
         """
         Prepare conditioning inputs for SD3 ControlNet.
 
@@ -338,9 +338,7 @@ class SD3(ImageModelFoundation):
             Properly formatted conditioning tensor for the controlnet
         """
         # Check what the controlnet expects
-        if hasattr(self.controlnet, "pos_embed_input") and hasattr(
-            self.controlnet.pos_embed_input, "proj"
-        ):
+        if hasattr(self.controlnet, "pos_embed_input") and hasattr(self.controlnet.pos_embed_input, "proj"):
             # Access the weight tensor shape to determine expected channels
             # Weight shape for Conv2d is [out_channels, in_channels, kernel_h, kernel_w]
             weight_shape = self.controlnet.pos_embed_input.proj.weight.shape
@@ -367,12 +365,8 @@ class SD3(ImageModelFoundation):
                     # If you have specific control data, you can add it here:
                     # extra_channel = your_control_data.unsqueeze(1)  # shape: [batch, 1, H, W]
 
-                    conditioning_latents = torch.cat(
-                        [conditioning_latents, extra_channel], dim=1
-                    )
-                    logger.debug(
-                        f"Added extra conditioning channel, new shape: {conditioning_latents.shape}"
-                    )
+                    conditioning_latents = torch.cat([conditioning_latents, extra_channel], dim=1)
+                    logger.debug(f"Added extra conditioning channel, new shape: {conditioning_latents.shape}")
 
                 elif expected_channels < actual_channels:
                     # ControlNet expects fewer channels, might need to select specific channels
@@ -425,10 +419,7 @@ class SD3(ImageModelFoundation):
             conditioning_scale=1.0,  # You might want to make this configurable
             return_dict=False,
         )[0]
-        control_block_samples = [
-            sample.to(dtype=self.config.base_weight_dtype)
-            for sample in control_block_samples
-        ]
+        control_block_samples = [sample.to(dtype=self.config.base_weight_dtype) for sample in control_block_samples]
         model_pred = self.model(
             hidden_states=prepared_batch["noisy_latents"].to(
                 device=self.accelerator.device,
@@ -524,9 +515,7 @@ class SD3(ImageModelFoundation):
         elif self.config.lora_type.lower() == "lycoris":
             return self.DEFAULT_LYCORIS_TARGET
         else:
-            raise NotImplementedError(
-                f"Unknown LoRA target type {self.config.lora_type}."
-            )
+            raise NotImplementedError(f"Unknown LoRA target type {self.config.lora_type}.")
 
     def check_user_config(self):
         """
@@ -541,9 +530,7 @@ class SD3(ImageModelFoundation):
             self.config.tokenizer_max_length = t5_max_length
         if int(self.config.tokenizer_max_length) > t5_max_length:
             if not self.config.i_know_what_i_am_doing:
-                logger.warning(
-                    f"Updating T5 XXL tokeniser max length to {t5_max_length} for {self.NAME}."
-                )
+                logger.warning(f"Updating T5 XXL tokeniser max length to {t5_max_length} for {self.NAME}.")
                 self.config.tokenizer_max_length = t5_max_length
             else:
                 logger.warning(
@@ -555,9 +542,7 @@ class SD3(ImageModelFoundation):
         # Disable custom VAEs.
         self.config.pretrained_vae_model_name_or_path = None
         if self.config.aspect_bucket_alignment != 64:
-            logger.warning(
-                "MM-DiT requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
-            )
+            logger.warning("MM-DiT requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment.")
             self.config.aspect_bucket_alignment = 64
         if self.config.sd3_t5_uncond_behaviour is None:
             self.config.sd3_t5_uncond_behaviour = self.config.sd3_clip_uncond_behaviour
@@ -576,18 +561,10 @@ class SD3(ImageModelFoundation):
         if self.config.flow_schedule_shift is not None:
             output_args.append(f"shift={self.config.flow_schedule_shift}")
         if self.config.flow_use_beta_schedule:
-            output_args.append(
-                f"flow_beta_schedule_alpha={self.config.flow_beta_schedule_alpha}"
-            )
-            output_args.append(
-                f"flow_beta_schedule_beta={self.config.flow_beta_schedule_beta}"
-            )
+            output_args.append(f"flow_beta_schedule_alpha={self.config.flow_beta_schedule_alpha}")
+            output_args.append(f"flow_beta_schedule_beta={self.config.flow_beta_schedule_beta}")
         if self.config.flow_use_uniform_schedule:
             output_args.append(f"flow_use_uniform_schedule")
-        output_str = (
-            f" (extra parameters={output_args})"
-            if output_args
-            else " (no special parameters set)"
-        )
+        output_str = f" (extra parameters={output_args})" if output_args else " (no special parameters set)"
 
         return output_str
