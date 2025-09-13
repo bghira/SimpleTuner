@@ -227,6 +227,7 @@ setup(
     # extras_require handled by pyproject.toml
     entry_points={
         "console_scripts": [
+            "simpletuner=simpletuner.cli:main",
             "simpletuner-train=simpletuner.train:main",
             "simpletuner-configure=simpletuner.configure:main",
             "simpletuner-inference=simpletuner.inference:main",

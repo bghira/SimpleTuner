@@ -100,6 +100,7 @@ all = [
 ]
 
 [project.scripts]
+simpletuner = "simpletuner.cli:main"
 simpletuner-train = "simpletuner.train:main"
 simpletuner-configure = "simpletuner.configure:main"
 simpletuner-inference = "simpletuner.inference:main"

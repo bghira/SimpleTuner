@@ -2730,6 +2730,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
 
         with open(args.lycoris_config, "r") as f:
             lycoris_config = json.load(f)
+        assert lycoris_config is not None, "lycoris_config could not be parsed as JSON"
         assert "algo" in lycoris_config, "lycoris_config JSON must contain algo key"
         assert (
             "multiplier" in lycoris_config
