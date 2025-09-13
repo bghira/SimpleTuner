@@ -68,9 +68,10 @@ env_to_args_map = {
     "DISABLE_BENCHMARK": "--disable_benchmark",
 }
 
+import logging
 import os
 import subprocess
-import logging
+
 from simpletuner.helpers.training.multi_process import should_log
 
 logger = logging.getLogger("SimpleTuner")
@@ -78,75 +79,127 @@ if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
+def parse_env_file(file_path):
+    """
+    Parse a single .env file and return its contents as a dictionary.
+    """
+    config_file_contents = {}
+    if not os.path.isfile(file_path):
+        return config_file_contents
+
+    logger.info(f"[CONFIG.ENV] Loading environment variables from {file_path}")
+
+    with open(file_path, "r") as f:
+        for line_num, line in enumerate(f, 1):
+            # Skip comments and empty lines
+            line = line.strip()
+            if line.startswith("#") or line == "":
+                continue
+
+            # Remove 'export ' from the start (with space)
+            if line.startswith("export "):
+                line = line[7:]
+
+            # Handle `+=` for appending values
+            if "+=" in line:
+                key, value = line.split("+=", 1)
+                key, value = (
+                    key.strip(),
+                    value.strip('"').strip("'").strip().split(),
+                )
+                # Append each element to the existing key's list or create a new list
+                if key in config_file_contents:
+                    config_file_contents[key].extend(value)
+                else:
+                    config_file_contents[key] = value
+            else:
+                # Regular `=` assignment
+                if "=" in line:
+                    key, value = line.split("=", 1)
+                    key = key.strip()
+                    value = value.strip()
+
+                    # Handle quoted values
+                    if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+                        value = value[1:-1]
+
+                    # Split into words for consistency with old behavior
+                    config_file_contents[key] = value.split() if value else []
+                else:
+                    logger.warning(f"[CONFIG.ENV] Skipping malformed line {line_num} in {file_path}: {line}")
+
+    return config_file_contents
+
+
 def load_env():
     """
-    Load environment variables from .env files based on the specified environment.
+    Load environment variables from .env files using topological search.
+    Searches from specific env directory up to current directory, merging configs.
     """
-    # Define the paths to the default and environment-specific .env files
-    config_env_path = "config/config.env"
     env = os.environ.get(
         "SIMPLETUNER_ENVIRONMENT",
         os.environ.get("SIMPLETUNER_ENV", os.environ.get("ENV", None)),
     )
+
+    # Define search paths in order of precedence (later files override earlier ones)
+    search_paths = []
+
+    # 1. Root config.env (lowest precedence)
+    search_paths.append("config.env")
+
+    # 2. Base config directory
+    search_paths.append("config/config.env")
+
+    # 3. Environment-specific config (highest precedence)
     if env and env != "default":
-        config_env_path = f"config/{env}/config.env"
+        search_paths.append(f"config/{env}/config.env")
 
-    # Load default environment variables if the file exists
-    config_file_contents = {}
-    if os.path.isfile(config_env_path):
-        # Loop through, ignoring comments '#' and empty lines, while setting the env variables
-        with open(config_env_path, "r") as f:
-            for line in f:
-                # Skip comments and empty lines
-                if line.startswith("#") or line.strip() == "":
-                    continue
+    # Load and merge configs
+    merged_config = {}
+    loaded_files = []
 
-                # Remove 'export' from the start
-                if line.startswith("export"):
-                    line = line[7:]
-
-                # Handle `+=` for appending values
-                if "+=" in line:
-                    key, value = line.strip().split("+=", 1)
-                    key, value = (
-                        key.strip(),
-                        value.strip('"').strip("'").strip().split(),
-                    )
-                    # Append each element to the existing key's list or create a new list
-                    if key in config_file_contents:
-                        config_file_contents[key].extend(value)
+    for config_path in search_paths:
+        file_config = parse_env_file(config_path)
+        if file_config:  # Only merge if file exists and has content
+            loaded_files.append(config_path)
+            # Merge configs - later files override earlier ones
+            for key, value in file_config.items():
+                if "+=" in key:  # Handle append operations
+                    base_key = key.replace("+=", "").strip()
+                    if base_key in merged_config:
+                        if isinstance(merged_config[base_key], list):
+                            merged_config[base_key].extend(value)
+                        else:
+                            merged_config[base_key] = merged_config[base_key].split() + value
                     else:
-                        config_file_contents[key] = value
+                        merged_config[base_key] = value
                 else:
-                    # Regular `=` assignment
-                    c = line.strip().split("=", 1)
-                    if len(c) == 2:
-                        key, value = c
-                        config_file_contents[key.strip()] = (
-                            value.strip('"').strip("'").split()
-                        )
+                    merged_config[key] = value
 
-        # Convert lists to single string values with spaces, if needed
-        for key, value in config_file_contents.items():
-            if isinstance(value, list):
-                if value and "${" in value[0]:
-                    continue
-                config_file_contents[key] = " ".join(value)
+    # Convert lists to single string values with spaces, if needed
+    for key, value in merged_config.items():
+        if isinstance(value, list):
+            if value and "${" in str(value[0]):
+                continue
+            merged_config[key] = " ".join(value)
 
-        logger.info(f"[CONFIG.ENV] Loaded environment variables from {config_env_path}")
+    if loaded_files:
+        logger.info(f"[CONFIG.ENV] Successfully loaded config from: {', '.join(loaded_files)}")
     else:
-        logger.error(f"Cannot find config file: {config_env_path}")
+        logger.warning("[CONFIG.ENV] No config.env files found in search paths")
 
-    return config_file_contents
+    return merged_config
 
 
 def load_env_config():
     """
     Map the environment variables to command-line arguments.
+    NOTE: Environment variables from config.env files should be loaded separately
+    by the configuration loader before this function is called.
 
     :return: List of command-line arguments.
     """
-    config_file_contents = load_env()
+    # Get variables from actual environment (which should have been loaded from config.env files)
     mapped_args = []
     # Loop through the environment variable to argument mapping
     ignored_accelerate_kwargs = [
@@ -156,18 +209,19 @@ def load_env_config():
     ]
     for env_var, arg_name in env_to_args_map.items():
         if arg_name in ignored_accelerate_kwargs:
+            # These are handled by accelerate via environment variables, not command-line args
             continue
-        value = config_file_contents.get(env_var, None)
+        value = os.environ.get(env_var, None)
         # strip 's from the outside of value
         if value is not None and value.startswith("'") and value.endswith("'"):
             value = value[1:-1]
         if value is not None and value.startswith('"') and value.endswith('"'):
             value = value[1:-1]
-        is_numeric = (
-            str(value).isnumeric()
-            or str(value).isdigit()
-            or str(value).replace(".", "").isdigit()
-        )
+        try:
+            float(value)
+            is_numeric = True
+        except (ValueError, TypeError):
+            is_numeric = False
         if value is not None:
             # Handle booleans by checking their string value
             if value.lower() in ["true", "false"]:
@@ -179,8 +233,7 @@ def load_env_config():
             else:
                 # Add the argument and its value to the list
                 mapped_args.append(f"{arg_name}={value}")
-    # handle TRAINER_EXTRA_ARGS, which is like `TRAINER_EXTRA_ARGS="--num_processes=1 --num_machines=1 --dynamo_backend=local"`
-    extra_args = config_file_contents.get("TRAINER_EXTRA_ARGS", None)
+    extra_args = os.environ.get("TRAINER_EXTRA_ARGS", None)
     if extra_args:
         print(f"Extra args: {extra_args}")
         if type(extra_args) is list:

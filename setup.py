@@ -183,6 +183,7 @@ base_deps = [
     "torch>=2.7.1",
     "torchvision>=0.22.1",
     "torchaudio>=2.4.1",
+    "torchao>=0.11.0",
 ]
 
 # Optional extras

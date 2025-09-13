@@ -19,14 +19,14 @@ repos:
     hooks:
       - id: black
         language_version: python3
-        args: ['--line-length=100']
+        args: ['--line-length=125']
 
   # Import sorting with isort
   - repo: https://github.com/pycqa/isort
     rev: 5.13.2
     hooks:
       - id: isort
-        args: ['--profile=black', '--line-length=100']
+        args: ['--profile=black', '--line-length=125']
 
   # Python linting with flake8 (using local venv, enforcing 100-char limit)
   - repo: local
@@ -34,7 +34,7 @@ repos:
       - id: flake8
         name: flake8
         entry: .venv/bin/python
-        args: ['-m', 'flake8', '--max-line-length=100', '--extend-ignore=E203,W503,F841,F401,E402,F811,E722,E721,F541']
+        args: ['-m', 'flake8', '--max-line-length=125', '--extend-ignore=E203,W503,F841,F401,E402,F811,E722,E721,F541']
         language: system
         types: [python]
         exclude: '^(scripts/|tests/|\.venv/)'
