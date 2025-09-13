@@ -33,7 +33,7 @@ If `libgl1-mesa-glx` is not found, you might need to use `libgl1-mesa-dri` inste
 Install SimpleTuner via pip:
 
 ```bash
-pip install simpletuner
+pip install simpletuner[cuda]
 ```
 
 For manual installation or development setup, see the [installation documentation](/documentation/INSTALL.md).
