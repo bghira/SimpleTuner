@@ -1,45 +1,42 @@
 import inspect
-import torch
-from typing import Union
-import diffusers
-import os
-import wandb
 import logging
-import inspect
+import os
 import sys
+from typing import Union
+
+import diffusers
 import numpy as np
+import torch
 from tqdm import tqdm
+
+import wandb
+from simpletuner.helpers.models.common import ImageModelFoundation, ModelFoundation, VideoModelFoundation
 from simpletuner.helpers.training.wrappers import unwrap_model
-from simpletuner.helpers.models.common import VideoModelFoundation, ImageModelFoundation
-from simpletuner.helpers.models.common import ModelFoundation
 
 try:
     import pillow_jxl
 except ModuleNotFoundError:
     pass
-from PIL import Image
-from simpletuner.helpers.training.state_tracker import StateTracker
-from simpletuner.helpers.models.common import PredictionTypes, PipelineTypes
-from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 from diffusers.schedulers import (
-    EulerDiscreteScheduler,
-    EulerAncestralDiscreteScheduler,
-    FlowMatchEulerDiscreteScheduler,
-    UniPCMultistepScheduler,
-    DPMSolverMultistepScheduler,
     DDIMScheduler,
     DDPMScheduler,
+    DPMSolverMultistepScheduler,
+    EulerAncestralDiscreteScheduler,
+    EulerDiscreteScheduler,
+    FlowMatchEulerDiscreteScheduler,
+    UniPCMultistepScheduler,
 )
-from simpletuner.helpers.models.hidream.schedule import FlowUniPCMultistepScheduler
 from diffusers.utils.torch_utils import is_compiled_module
-from simpletuner.helpers.multiaspect.image import MultiaspectImage
-from simpletuner.helpers.image_manipulation.brightness import calculate_luminance
 from PIL import Image, ImageDraw, ImageFont
-from simpletuner.helpers.training.deepspeed import (
-    deepspeed_zero_init_disabled_context_manager,
-    prepare_model_for_deepspeed,
-)
 from transformers.utils import ContextManagers
+
+from simpletuner.helpers.image_manipulation.brightness import calculate_luminance
+from simpletuner.helpers.models.common import PipelineTypes, PredictionTypes
+from simpletuner.helpers.models.hidream.schedule import FlowUniPCMultistepScheduler
+from simpletuner.helpers.multiaspect.image import MultiaspectImage
+from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager, prepare_model_for_deepspeed
+from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
+from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -65,12 +62,11 @@ SCHEDULER_NAME_MAP = {
 import logging
 import os
 import time
+
+from diffusers import AutoencoderKL, DDIMScheduler
 from diffusers.utils import is_wandb_available
+
 from simpletuner.helpers.prompts import PromptHandler
-from diffusers import (
-    AutoencoderKL,
-    DDIMScheduler,
-)
 
 if is_wandb_available():
     import wandb
@@ -85,20 +81,14 @@ def resize_validation_images(validation_images, edge_length):
     resized_validation_samples = []
     for _sample in validation_images:
         validation_shortname, validation_prompt, _, training_sample_image = _sample
-        resize_to, crop_to, new_aspect_ratio = (
-            MultiaspectImage.calculate_new_size_by_pixel_edge(
-                aspect_ratio=MultiaspectImage.calculate_image_aspect_ratio(
-                    training_sample_image
-                ),
-                resolution=int(edge_length),
-                original_size=training_sample_image.size,
-            )
+        resize_to, crop_to, new_aspect_ratio = MultiaspectImage.calculate_new_size_by_pixel_edge(
+            aspect_ratio=MultiaspectImage.calculate_image_aspect_ratio(training_sample_image),
+            resolution=int(edge_length),
+            original_size=training_sample_image.size,
         )
         # we can be less precise here
         training_sample_image = training_sample_image.resize(crop_to)
-        resized_validation_samples.append(
-            (validation_shortname, validation_prompt, training_sample_image)
-        )
+        resized_validation_samples.append((validation_shortname, validation_prompt, training_sample_image))
     return resized_validation_samples
 
 
@@ -106,9 +96,7 @@ def reset_eval_datasets():
     eval_datasets = StateTracker.get_data_backends(_type="eval", _types=None)
     for dataset_name, dataset in eval_datasets.items():
         if "train_dataset" not in dataset:
-            logger.debug(
-                f"Skipping eval set {dataset_name} because it lacks a dataloader."
-            )
+            logger.debug(f"Skipping eval set {dataset_name} because it lacks a dataloader.")
         try:
             dataset["sampler"]._reset_buckets(raise_exhaustion_signal=False)
         except MultiDatasetExhausted as e:
@@ -142,9 +130,7 @@ def retrieve_eval_images(dataset_name=None):
         for ds_name in dataset_keys:
             dataset = eval_datasets.get(ds_name)
             if not dataset or "train_dataset" not in dataset:
-                logger.debug(
-                    f"Skipping eval set {ds_name} because it lacks a dataloader."
-                )
+                logger.debug(f"Skipping eval set {ds_name} because it lacks a dataloader.")
                 continue
             try:
                 new_sample = next(dataset["sampler"].__iter__())
@@ -156,9 +142,7 @@ def retrieve_eval_images(dataset_name=None):
                 break
 
             except MultiDatasetExhausted as e:
-                logger.debug(
-                    f"Ran out of evaluation samples for dataset {ds_name}. Resetting buckets."
-                )
+                logger.debug(f"Ran out of evaluation samples for dataset {ds_name}. Resetting buckets.")
                 dataset["sampler"]._reset_buckets(raise_exhaustion_signal=False)
                 # We re-raise if we've exhausted this dataset. If `dataset_name` is set,
                 # we effectively stop; if it's None, we move to the next dataset.
@@ -188,11 +172,7 @@ def retrieve_validation_images():
         ]
     )
     data_backends = StateTracker.get_data_backends(
-        _type=(
-            StateTracker.get_model().conditioning_validation_dataset_type()
-            if requires_cond_input
-            else "image"
-        )
+        _type=(StateTracker.get_model().conditioning_validation_dataset_type() if requires_cond_input else "image")
     )
     validation_data_backend_id = args.eval_dataset_id
     validation_set = []
@@ -204,27 +184,21 @@ def retrieve_validation_images():
         logger.debug(f"Backend {_data_backend}: {data_backend}")
         if "id" not in data_backend or (
             requires_cond_input
-            and data_backend.get("dataset_type", None)
-            != StateTracker.get_model().conditioning_validation_dataset_type()
+            and data_backend.get("dataset_type", None) != StateTracker.get_model().conditioning_validation_dataset_type()
         ):
-            logger.debug(
-                f"Skipping data backend: {_data_backend} dataset_type {data_backend.get('dataset_type', None)}"
-            )
+            logger.debug(f"Skipping data backend: {_data_backend} dataset_type {data_backend.get('dataset_type', None)}")
             continue
         logger.debug(f"Checking data backend: {data_backend['id']}")
         if (
-            validation_data_backend_id is not None
-            and data_backend["id"] != validation_data_backend_id
+            validation_data_backend_id is not None and data_backend["id"] != validation_data_backend_id
         ) or should_skip_dataset:
             logger.warning(f"Not collecting images from {data_backend['id']}")
             continue
         if "sampler" in data_backend:
-            validation_samples_from_sampler = data_backend[
-                "sampler"
-            ].retrieve_validation_set(batch_size=args.num_eval_images)
-            validation_input_image_pixel_edge_len = (
-                StateTracker.get_model().validation_image_input_edge_length()
+            validation_samples_from_sampler = data_backend["sampler"].retrieve_validation_set(
+                batch_size=args.num_eval_images
             )
+            validation_input_image_pixel_edge_len = StateTracker.get_model().validation_image_input_edge_length()
             if validation_input_image_pixel_edge_len is not None:
                 logger.debug(
                     f"Resized validation image so that pixel edge length is {validation_input_image_pixel_edge_len}."
@@ -236,9 +210,7 @@ def retrieve_validation_images():
 
             validation_set.extend(validation_samples_from_sampler)
         else:
-            logger.warning(
-                f"Data backend {data_backend['id']} does not have a sampler. Skipping."
-            )
+            logger.warning(f"Data backend {data_backend['id']} does not have a sampler. Skipping.")
     logger.info(f"Collected {len(validation_set)} validation image inputs.")
     return validation_set
 
@@ -275,12 +247,9 @@ def retrieve_validation_edit_images() -> list[tuple[str, str, list[Image.Image]]
         # Skip datasets that the user has explicitly disabled for validation or
         # that do not match the requested `--eval_dataset_id`.
         if (
-            validation_data_backend_id is not None
-            and backend.get("id") != validation_data_backend_id
+            validation_data_backend_id is not None and backend.get("id") != validation_data_backend_id
         ) or should_skip_dataset:
-            logger.debug(
-                f"Not collecting edit-validation images from {backend.get('id', backend_id)}"
-            )
+            logger.debug(f"Not collecting edit-validation images from {backend.get('id', backend_id)}")
             continue
         sampler = backend.get("sampler")
         if sampler is None:  # nothing to iterate over
@@ -305,10 +274,7 @@ def retrieve_validation_edit_images() -> list[tuple[str, str, list[Image.Image]]
                     search_dataset_types=["conditioning"],
                 )
                 image_dataset_dir_prefix = sampler.metadata_backend.instance_data_dir
-                if (
-                    image_dataset_dir_prefix is not None
-                    and image_dataset_dir_prefix in sample_path
-                ):
+                if image_dataset_dir_prefix is not None and image_dataset_dir_prefix in sample_path:
                     rel_path = sample_path.replace(image_dataset_dir_prefix, "")
                     # remove trailing '/'
                     rel_path = rel_path.lstrip("/")
@@ -326,9 +292,7 @@ def retrieve_validation_edit_images() -> list[tuple[str, str, list[Image.Image]]
 
                 reference_imgs.append(cond_sample.image)
             if len(reference_imgs) != len(cond_backends):
-                logger.warning(
-                    f"Didn't find enough conditioning samples for {rel_path}."
-                )
+                logger.warning(f"Didn't find enough conditioning samples for {rel_path}.")
                 continue
             validation_set.append((shortname, edited_prompt, reference_imgs))
 
@@ -337,14 +301,8 @@ def retrieve_validation_edit_images() -> list[tuple[str, str, list[Image.Image]]
 
 
 def prepare_validation_prompt_list(args, embed_cache, model):
-    validation_prompts = (
-        [""] if not StateTracker.get_args().validation_disable_unconditional else []
-    )
-    validation_shortnames = (
-        ["unconditional"]
-        if not StateTracker.get_args().validation_disable_unconditional
-        else []
-    )
+    validation_prompts = [""] if not StateTracker.get_args().validation_disable_unconditional else []
+    validation_shortnames = ["unconditional"] if not StateTracker.get_args().validation_disable_unconditional else []
     if not hasattr(embed_cache, "model_type"):
         raise ValueError(
             f"The default text embed cache backend was not found. You must specify 'default: true' on your text embed data backend via {StateTracker.get_args().data_backend_config}."
@@ -369,19 +327,11 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                 ncols=125,
                 desc="Precomputing validation image embeds",
             ):
-                if (
-                    isinstance(_validation_sample, tuple)
-                    and len(_validation_sample) == 3
-                ):
+                if isinstance(_validation_sample, tuple) and len(_validation_sample) == 3:
                     _, validation_prompt, _ = _validation_sample
-                elif (
-                    isinstance(_validation_sample, tuple)
-                    and len(_validation_sample) == 4
-                ):
+                elif isinstance(_validation_sample, tuple) and len(_validation_sample) == 4:
                     _, validation_prompt, _, _ = _validation_sample
-                embed_cache.compute_embeddings_for_prompts(
-                    [validation_prompt], load_from_cache=False
-                )
+                embed_cache.compute_embeddings_for_prompts([validation_prompt], load_from_cache=False)
             time.sleep(5)
 
     if args.validation_prompt_library:
@@ -395,9 +345,7 @@ def prepare_validation_prompt_list(args, embed_cache, model):
             ncols=125,
             desc="Precomputing validation prompt embeddings",
         ):
-            embed_cache.compute_embeddings_for_prompts(
-                [prompt], is_validation=True, load_from_cache=False
-            )
+            embed_cache.compute_embeddings_for_prompts([prompt], is_validation=True, load_from_cache=False)
             validation_prompts.append(prompt)
             validation_shortnames.append(shortname)
 
@@ -410,9 +358,7 @@ def prepare_validation_prompt_list(args, embed_cache, model):
             desc="Precomputing user prompt library embeddings",
         ):
             # move_text_encoders(embed_cache.text_encoders, embed_cache.accelerator.device)
-            embed_cache.compute_embeddings_for_prompts(
-                [prompt], is_validation=True, load_from_cache=False
-            )
+            embed_cache.compute_embeddings_for_prompts([prompt], is_validation=True, load_from_cache=False)
             # move_text_encoders(embed_cache.text_encoders, "cpu")
             validation_prompts.append(prompt)
             validation_shortnames.append(shortname)
@@ -421,19 +367,15 @@ def prepare_validation_prompt_list(args, embed_cache, model):
         # This will add a single prompt to the prompt library, if in use.
         validation_prompts = validation_prompts + [args.validation_prompt]
         validation_shortnames = validation_shortnames + ["validation"]
-        embed_cache.compute_embeddings_for_prompts(
-            [args.validation_prompt], is_validation=True, load_from_cache=False
-        )
+        embed_cache.compute_embeddings_for_prompts([args.validation_prompt], is_validation=True, load_from_cache=False)
     # Compute negative embed for validation prompts, if any are set, so that it's stored before we unload the text encoder.
     if validation_prompts:
         logger.info("Precomputing the negative prompt embed for validations.")
         model.log_model_devices()
-        validation_negative_prompt_text_encoder_output = (
-            embed_cache.compute_embeddings_for_prompts(
-                [StateTracker.get_args().validation_negative_prompt],
-                is_validation=True,
-                load_from_cache=False,
-            )
+        validation_negative_prompt_text_encoder_output = embed_cache.compute_embeddings_for_prompts(
+            [StateTracker.get_args().validation_negative_prompt],
+            is_validation=True,
+            load_from_cache=False,
         )
 
     logger.info("Completed validation prompt gathering.")
@@ -452,14 +394,8 @@ def get_validation_resolutions():
      - if it has comma, we will split and treat each value as above
     """
     validation_resolution_parameter = StateTracker.get_args().validation_resolution
-    if (
-        type(validation_resolution_parameter) is str
-        and "," in validation_resolution_parameter
-    ):
-        return [
-            parse_validation_resolution(res)
-            for res in validation_resolution_parameter.split(",")
-        ]
+    if type(validation_resolution_parameter) is str and "," in validation_resolution_parameter:
+        return [parse_validation_resolution(res) for res in validation_resolution_parameter.split(",")]
     return [parse_validation_resolution(validation_resolution_parameter)]
 
 
@@ -470,21 +406,15 @@ def parse_validation_resolution(input_str: str) -> tuple:
      - if it has an x in it, we will split and treat as WIDTHxHEIGHT
      - if it has comma, we will split and treat each value as above
     """
-    is_df_ii = (
-        True if str(StateTracker.get_args().model_flavour).startswith("ii-") else False
-    )
+    is_df_ii = True if str(StateTracker.get_args().model_flavour).startswith("ii-") else False
     if isinstance(input_str, int) or input_str.isdigit():
         if is_df_ii and int(input_str) < 256:
-            raise ValueError(
-                "Cannot use less than 256 resolution for DeepFloyd stage 2."
-            )
+            raise ValueError("Cannot use less than 256 resolution for DeepFloyd stage 2.")
         return (input_str, input_str)
     if "x" in input_str:
         pieces = input_str.split("x")
         if is_df_ii and (int(pieces[0]) < 256 or int(pieces[1]) < 256):
-            raise ValueError(
-                "Cannot use less than 256 resolution for DeepFloyd stage 2."
-            )
+            raise ValueError("Cannot use less than 256 resolution for DeepFloyd stage 2.")
         return (int(pieces[0]), int(pieces[1]))
 
 
@@ -503,23 +433,21 @@ def load_video_frames(video_path):
     except ImportError:
         # Fallback to opencv if imageio not available
         try:
-            import cv2
+            import trainingsample as tsr
 
-            cap = cv2.VideoCapture(video_path)
+            cap = tsr.PyVideoCapture(video_path)
             frames = []
             while True:
                 ret, frame = cap.read()
                 if not ret:
                     break
                 # Convert BGR to RGB and then to PIL
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frame_rgb = tsr.cvt_color_py(frame, 4)  # 4 = COLOR_BGR2RGB
                 frames.append(Image.fromarray(frame_rgb))
             cap.release()
             return frames
         except ImportError:
-            logger.error(
-                "Neither imageio nor opencv-python is installed. Cannot load video frames."
-            )
+            logger.error("Neither imageio nor opencv-python is installed. Cannot load video frames.")
             return None
 
 
@@ -628,13 +556,8 @@ def stitch_images_or_videos(left, right, separator_width=5, labels=None):
     if isinstance(left, list) and isinstance(right, list):
         # Both are videos - stitch frame by frame
         if len(left) != len(right):
-            raise ValueError(
-                f"Videos must have the same number of frames. Got {len(left)} and {len(right)}"
-            )
-        return [
-            _stitch_single_pair(left[i], right[i], separator_width, labels)
-            for i in range(len(left))
-        ]
+            raise ValueError(f"Videos must have the same number of frames. Got {len(left)} and {len(right)}")
+        return [_stitch_single_pair(left[i], right[i], separator_width, labels) for i in range(len(left))]
     elif not isinstance(left, list) and not isinstance(right, list):
         # Both are single images
         return _stitch_single_pair(left, right, separator_width, labels)
@@ -733,18 +656,10 @@ class Validation:
         self.ema_model = ema_model
         self.ema_enabled = False
         self.deepfloyd = True if "deepfloyd" in self.config.model_family else False
-        self.deepfloyd_stage2 = (
-            True if str(self.config.model_flavour).startswith("ii-") else False
-        )
+        self.deepfloyd_stage2 = True if str(self.config.model_flavour).startswith("ii-") else False
         self._discover_validation_input_samples()
-        self.validation_resolutions = (
-            get_validation_resolutions() if not self.deepfloyd_stage2 else [(256, 256)]
-        )
-        self.flow_matching = (
-            True
-            if self.model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING
-            else False
-        )
+        self.validation_resolutions = get_validation_resolutions() if not self.deepfloyd_stage2 else [(256, 256)]
+        self.flow_matching = True if self.model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING else False
         self.deepspeed = is_deepspeed
         if is_deepspeed:
             if args.use_ema:
@@ -754,11 +669,7 @@ class Validation:
                         " Please use --ema_validation=none or disable DeepSpeed."
                     )
                     sys.exit(1)
-        self.inference_device = (
-            accelerator.device
-            if not is_deepspeed
-            else "cuda" if torch.cuda.is_available() else "cpu"
-        )
+        self.inference_device = accelerator.device if not is_deepspeed else "cuda" if torch.cuda.is_available() else "cpu"
         self.model_evaluator = model_evaluator
         if self.model_evaluator is not None:
             logger.debug(f"Using model evaluator: {self.model_evaluator}")
@@ -807,27 +718,19 @@ class Validation:
             self.validation_image_inputs = retrieve_validation_images()
             # Validation inputs are in the format of a list of tuples:
             # [(shortname, prompt, image), ...]
-            logger.debug(
-                f"Image inputs discovered for validation: {self.validation_image_inputs}"
-            )
+            logger.debug(f"Image inputs discovered for validation: {self.validation_image_inputs}")
 
     def _pipeline_cls(self):
         if self.model is not None:
             if self.config.validation_using_datasets:
                 if PipelineTypes.IMG2IMG not in self.model.PIPELINE_CLASSES:
-                    raise ValueError(
-                        f"Cannot run {self.model.MODEL_CLASS} in Img2Img mode for validation."
-                    )
+                    raise ValueError(f"Cannot run {self.model.MODEL_CLASS} in Img2Img mode for validation.")
             if self.config.controlnet:
                 if PipelineTypes.CONTROLNET not in self.model.PIPELINE_CLASSES:
-                    raise ValueError(
-                        f"Cannot run {self.model.MODEL_CLASS} in ControlNet mode for validation."
-                    )
+                    raise ValueError(f"Cannot run {self.model.MODEL_CLASS} in ControlNet mode for validation.")
             if self.config.control:
                 if PipelineTypes.CONTROL not in self.model.PIPELINE_CLASSES:
-                    raise ValueError(
-                        f"Cannot run {self.model.MODEL_CLASS} in Control mode for validation."
-                    )
+                    raise ValueError(f"Cannot run {self.model.MODEL_CLASS} in Control mode for validation.")
 
         if self.config.validation_using_datasets:
             return self.model.PIPELINE_CLASSES[PipelineTypes.IMG2IMG]
@@ -838,16 +741,11 @@ class Validation:
         return self.model.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
 
     def _gather_prompt_embeds(self, validation_prompt: str):
-        prompt_embed = self.embed_cache.compute_embeddings_for_prompts(
-            [validation_prompt]
-        )
+        prompt_embed = self.embed_cache.compute_embeddings_for_prompts([validation_prompt])
         if prompt_embed is None:
             return
 
-        prompt_embed = {
-            k: v.to(self.inference_device) if hasattr(v, "to") else v
-            for k, v in prompt_embed.items()
-        }
+        prompt_embed = {k: v.to(self.inference_device) if hasattr(v, "to") else v for k, v in prompt_embed.items()}
 
         return self.model.convert_text_embed_for_pipeline(prompt_embed)
 
@@ -869,9 +767,7 @@ class Validation:
                     video_path = os.path.join(base_model_benchmark, filename)
                     frames = load_video_frames(video_path)
                     if frames:
-                        logger.debug(
-                            f"Loaded {len(frames)} frames from benchmark video: {filename}"
-                        )
+                        logger.debug(f"Loaded {len(frames)} frames from benchmark video: {filename}")
                         return frames
                     else:
                         logger.warning(f"Failed to load benchmark video: {filename}")
@@ -883,15 +779,11 @@ class Validation:
                     video_path = os.path.join(base_model_benchmark, filename)
                     frames = load_video_frames(video_path)
                     if frames:
-                        logger.debug(
-                            f"Loaded {len(frames)} frames from benchmark video: {filename}"
-                        )
+                        logger.debug(f"Loaded {len(frames)} frames from benchmark video: {filename}")
                         return frames
 
             # NEW: If no video found, fall back to image (video model might output images)
-            logger.debug(
-                f"No video benchmark found for {shortname}, checking for image..."
-            )
+            logger.debug(f"No video benchmark found for {shortname}, checking for image...")
 
         # Image logic (now also used as fallback for video models)
         image_filename = f"{shortname}_{resolution[0]}x{resolution[1]}.png"
@@ -914,9 +806,7 @@ class Validation:
         Handles both single images and lists of frames (videos).
         """
         # Check if both are videos (lists)
-        if isinstance(validation_image_result, list) and isinstance(
-            benchmark_image, list
-        ):
+        if isinstance(validation_image_result, list) and isinstance(benchmark_image, list):
             # Stitch frame by frame
             stitched_frames = []
             max_frames = min(len(validation_image_result), len(benchmark_image))
@@ -933,18 +823,12 @@ class Validation:
             return stitched_frames
 
         # Both are single images
-        elif hasattr(validation_image_result, "size") and hasattr(
-            benchmark_image, "size"
-        ):
-            return self._stitch_single_images(
-                benchmark_image, validation_image_result, separator_width, labels
-            )
+        elif hasattr(validation_image_result, "size") and hasattr(benchmark_image, "size"):
+            return self._stitch_single_images(benchmark_image, validation_image_result, separator_width, labels)
 
         # Type mismatch - can't stitch
         else:
-            logger.warning(
-                "Cannot stitch benchmark: type mismatch between video and image"
-            )
+            logger.warning("Cannot stitch benchmark: type mismatch between video and image")
             return validation_image_result
 
     def _stitch_single_images(
@@ -1019,9 +903,7 @@ class Validation:
                     (
                         _benchmark_image.replace(".png", ""),
                         f"Base model benchmark image {_benchmark_image}",
-                        Image.open(
-                            os.path.join(base_model_benchmark, _benchmark_image)
-                        ),
+                        Image.open(os.path.join(base_model_benchmark, _benchmark_image)),
                     )
                 )
 
@@ -1038,9 +920,7 @@ class Validation:
     def _benchmark_path(self, benchmark: str = "base_model"):
         # does the benchmark directory exist?
         if not os.path.exists(os.path.join(self.config.output_dir, "benchmarks")):
-            os.makedirs(
-                os.path.join(self.config.output_dir, "benchmarks"), exist_ok=True
-            )
+            os.makedirs(os.path.join(self.config.output_dir, "benchmarks"), exist_ok=True)
         return os.path.join(self.config.output_dir, "benchmarks", benchmark)
 
     def save_benchmark(self, benchmark: str = "base_model"):
@@ -1057,9 +937,7 @@ class Validation:
             for idx, image in enumerate(image_list):
                 # Get the validation resolution that was used for this index
                 if idx < len(self.validation_resolutions):
-                    logger.debug(
-                        f"Validation saving image for resolution idx {idx} of {len(self.validation_resolutions)}"
-                    )
+                    logger.debug(f"Validation saving image for resolution idx {idx} of {len(self.validation_resolutions)}")
                     resolution = self.validation_resolutions[idx]
                     if isinstance(resolution, str):
                         # Parse resolution string if needed
@@ -1078,25 +956,15 @@ class Validation:
                     )
                     if hasattr(image, "size"):
                         width, height = image.size
-                    elif (
-                        isinstance(image, list)
-                        and len(image) > 0
-                        and hasattr(image[0], "size")
-                    ):
+                    elif isinstance(image, list) and len(image) > 0 and hasattr(image[0], "size"):
                         width, height = image[0].size
                     else:
-                        logger.error(
-                            f"Could not determine size for image at index {idx}"
-                        )
+                        logger.error(f"Could not determine size for image at index {idx}")
                         continue
 
                 if hasattr(image, "size"):
                     # Single image - save with validation resolution in filename
-                    image.save(
-                        os.path.join(
-                            base_model_benchmark, f"{shortname}_{width}x{height}.png"
-                        )
-                    )
+                    image.save(os.path.join(base_model_benchmark, f"{shortname}_{width}x{height}.png"))
                 elif type(image) is list:
                     # Video frames - save with validation resolution in filename
                     from diffusers.utils.export_utils import export_to_video
@@ -1121,9 +989,9 @@ class Validation:
     ):
         # a wrapper for should_perform_intermediary_validation that can run in the training loop
         self._update_state()
-        return self.should_perform_intermediary_validation(
-            step, self.validation_prompt_metadata, validation_type
-        ) or (step == 0 and validation_type == "base_model")
+        return self.should_perform_intermediary_validation(step, self.validation_prompt_metadata, validation_type) or (
+            step == 0 and validation_type == "base_model"
+        )
 
     def run_validations(
         self,
@@ -1147,16 +1015,12 @@ class Validation:
         logger.debug(
             f"Should evaluate: {current_validation_will_execute}, force evaluation: {force_evaluation}, skip execution: {skip_execution}"
         )
-        if (
-            not current_validation_will_execute and not force_evaluation
-        ) or not has_validation_prompts:
+        if (not current_validation_will_execute and not force_evaluation) or not has_validation_prompts:
             return self
         if current_validation_will_execute and validation_type == "final":
             # If the validation would have fired off, we'll skip it.
             # This is useful at the end of training so we don't validate 2x.
-            logger.debug(
-                "Not running validation because intermediary might have already fired off."
-            )
+            logger.debug("Not running validation because intermediary might have already fired off.")
             return self
         if StateTracker.get_webhook_handler() is not None:
             StateTracker.get_webhook_handler().send(
@@ -1169,9 +1033,7 @@ class Validation:
             diffusers.utils.logging._tqdm_active = False
             self.setup_pipeline(validation_type)
             if self.model.pipeline is None:
-                logger.error(
-                    "Not able to run validations, we did not obtain a valid pipeline."
-                )
+                logger.error("Not able to run validations, we did not obtain a valid pipeline.")
                 self.validation_images = None
                 return self
             self.setup_scheduler()
@@ -1184,12 +1046,8 @@ class Validation:
 
         return self
 
-    def should_perform_intermediary_validation(
-        self, step, validation_prompts, validation_type
-    ):
-        if validation_prompts is None or (
-            isinstance(validation_prompts, list) and len(validation_prompts) == 0
-        ):
+    def should_perform_intermediary_validation(self, step, validation_prompts, validation_type):
+        if validation_prompts is None or (isinstance(validation_prompts, list) and len(validation_prompts) == 0):
             return False
         should_do_intermediary_validation = (
             validation_prompts
@@ -1197,9 +1055,7 @@ class Validation:
             and step % self.config.gradient_accumulation_steps == 0
             and self.global_step > self.global_resume_step
         )
-        return should_do_intermediary_validation and (
-            self.accelerator.is_main_process or self.deepseed
-        )
+        return should_do_intermediary_validation and (self.accelerator.is_main_process or self.deepseed)
 
     def setup_scheduler(self):
         if self.distiller is not None:
@@ -1222,9 +1078,7 @@ class Validation:
             # some flow-matching adjustments should be made for euler and unipc video model generations.
             if self.config.validation_noise_scheduler in ["flow_matching", "euler"]:
                 # The Beta schedule looks WAY better...
-                if not self.model.pipeline.scheduler.config.get(
-                    "use_karras_sigmas", False
-                ):
+                if not self.model.pipeline.scheduler.config.get("use_karras_sigmas", False):
                     scheduler_args["use_beta_sigmas"] = True
                 scheduler_args["shift"] = self.config.flow_schedule_shift
             if self.config.validation_noise_scheduler in ["flow_unipc", "unipc"]:
@@ -1240,10 +1094,7 @@ class Validation:
         if self.config.prediction_type is not None:
             scheduler_args["prediction_type"] = self.config.prediction_type
 
-        if (
-            self.model.pipeline is not None
-            and "variance_type" in self.model.pipeline.scheduler.config
-        ):
+        if self.model.pipeline is not None and "variance_type" in self.model.pipeline.scheduler.config:
             variance_type = self.model.pipeline.scheduler.config.variance_type
 
             if variance_type in ["learned", "learned_range"]:
@@ -1251,9 +1102,7 @@ class Validation:
 
             scheduler_args["variance_type"] = variance_type
 
-        scheduler = SCHEDULER_NAME_MAP[
-            self.config.validation_noise_scheduler
-        ].from_pretrained(
+        scheduler = SCHEDULER_NAME_MAP[self.config.validation_noise_scheduler].from_pretrained(
             self.config.pretrained_model_name_or_path,
             subfolder="scheduler",
             revision=self.config.revision,
@@ -1274,11 +1123,7 @@ class Validation:
         pipeline_type = (
             PipelineTypes.CONTROLNET
             if self.config.controlnet
-            else (
-                PipelineTypes.CONTROL
-                if self.config.control
-                else self.model.DEFAULT_PIPELINE_TYPE
-            )
+            else (PipelineTypes.CONTROL if self.config.control else self.model.DEFAULT_PIPELINE_TYPE)
         )
         self.model.pipeline = self.model.get_pipeline(
             pipeline_type=pipeline_type,
@@ -1351,9 +1196,7 @@ class Validation:
                     validation_input_image,
                 ) = prompt
             else:
-                shortname = self.validation_prompt_metadata["validation_shortnames"][
-                    idx
-                ]
+                shortname = self.validation_prompt_metadata["validation_shortnames"][idx]
             logger.debug(f"validation prompt (shortname={shortname}): '{prompt}'")
             self.validation_prompt_dict[shortname] = prompt
             logger.debug(f"Processing validation for prompt: {prompt}")
@@ -1361,9 +1204,7 @@ class Validation:
                 stitched_validation_images,
                 checkpoint_validation_images,
                 ema_validation_images,
-            ) = self.validate_prompt(
-                prompt, shortname, validation_input_image, validation_type
-            )
+            ) = self.validate_prompt(prompt, shortname, validation_input_image, validation_type)
             validation_images.update(stitched_validation_images)
             if isinstance(self.model, VideoModelFoundation):
                 self._save_videos(validation_images, shortname, prompt)
@@ -1426,9 +1267,7 @@ class Validation:
         right_width, right_height = right_image.size
 
         # Calculate new canvas dimensions
-        new_width = (
-            left_width + separator_width + middle_width + separator_width + right_width
-        )
+        new_width = left_width + separator_width + middle_width + separator_width + right_width
         new_height = max(left_height, middle_height, right_height)
 
         # Create new image with white background
@@ -1509,19 +1348,12 @@ class Validation:
             if isinstance(result, list):
                 # It's a video - stitch conditioning image to each frame
                 stitched_frames = [
-                    _stitch_single_pair(
-                        conditioning_image, frame, separator_width=5, labels=None
-                    )
-                    for frame in result
+                    _stitch_single_pair(conditioning_image, frame, separator_width=5, labels=None) for frame in result
                 ]
                 stitched_results.append(stitched_frames)
             else:
                 # It's a single image
-                stitched_results.append(
-                    _stitch_single_pair(
-                        conditioning_image, result, separator_width=5, labels=None
-                    )
-                )
+                stitched_results.append(_stitch_single_pair(conditioning_image, result, separator_width=5, labels=None))
 
         return stitched_results
 
@@ -1549,13 +1381,11 @@ class Validation:
         if isinstance(validation_input_image, list):
             # Create a composite image from the list - stack them horizontally
             total_height = max(img.size[1] for img in validation_input_image)
-            total_width = sum(
-                img.size[0] for img in validation_input_image
-            ) + separator_width * (len(validation_input_image) - 1)
-
-            composite_input = Image.new(
-                "RGB", (total_width, total_height), color="white"
+            total_width = sum(img.size[0] for img in validation_input_image) + separator_width * (
+                len(validation_input_image) - 1
             )
+
+            composite_input = Image.new("RGB", (total_width, total_height), color="white")
             x_offset = 0
             for i, img in enumerate(validation_input_image):
                 # Center each image vertically if needed
@@ -1587,20 +1417,14 @@ class Validation:
         new_image = Image.new("RGB", (new_width, new_height), color="white")
 
         # Calculate vertical positions for centering if heights differ
-        input_y_offset = (
-            (new_height - input_height) // 2 if input_height < new_height else 0
-        )
-        output_y_offset = (
-            (new_height - output_height) // 2 if output_height < new_height else 0
-        )
+        input_y_offset = (new_height - input_height) // 2 if input_height < new_height else 0
+        output_y_offset = (new_height - output_height) // 2 if output_height < new_height else 0
 
         # Paste input image on the left
         new_image.paste(validation_input_image, (0, input_y_offset))
 
         # Paste output image on the right
-        new_image.paste(
-            validation_image_result, (input_width + separator_width, output_y_offset)
-        )
+        new_image.paste(validation_image_result, (input_width + separator_width, output_y_offset))
 
         # Create drawing object for text and separator
         draw = ImageDraw.Draw(new_image)
@@ -1682,29 +1506,21 @@ class Validation:
                     or self.model.requires_conditioning_validation_inputs()
                 ):
                     # for most conditioned models, we want the input size to remain.
-                    validation_image_edge_len = (
-                        self.model.validation_image_input_edge_length()
-                    )
+                    validation_image_edge_len = self.model.validation_image_input_edge_length()
                     if validation_image_edge_len is not None:
                         # calculate the megapixels value (eg ~0.25 for 512px)
-                        validation_image_megapixels = (
-                            validation_image_edge_len**2
-                        ) / 1_000_000
+                        validation_image_megapixels = (validation_image_edge_len**2) / 1_000_000
                         validation_resolution, _, validation_aspect_ratio = (
                             MultiaspectImage.calculate_new_size_by_pixel_area(
-                                aspect_ratio=MultiaspectImage.calculate_image_aspect_ratio(
-                                    extra_validation_kwargs["image"]
-                                ),
+                                aspect_ratio=MultiaspectImage.calculate_image_aspect_ratio(extra_validation_kwargs["image"]),
                                 megapixels=validation_image_megapixels,
                                 original_size=extra_validation_kwargs["image"].size,
                             )
                         )
-                        extra_validation_kwargs["image"] = extra_validation_kwargs[
-                            "image"
-                        ].resize(validation_resolution, Image.Resampling.LANCZOS)
-                        validation_resolution_width, validation_resolution_height = (
-                            validation_resolution
+                        extra_validation_kwargs["image"] = extra_validation_kwargs["image"].resize(
+                            validation_resolution, Image.Resampling.LANCZOS
                         )
+                        validation_resolution_width, validation_resolution_height = validation_resolution
                     else:
                         if isinstance(extra_validation_kwargs["image"], list):
                             (
@@ -1717,12 +1533,8 @@ class Validation:
                                 validation_resolution_height,
                             ) = extra_validation_kwargs["image"].size
                 else:
-                    raise ValueError(
-                        "Validation input images are not supported for this model type."
-                    )
-                extra_validation_kwargs["control_image"] = extra_validation_kwargs[
-                    "image"
-                ]
+                    raise ValueError("Validation input images are not supported for this model type.")
+                extra_validation_kwargs["control_image"] = extra_validation_kwargs["image"]
             else:
                 validation_resolution_width, validation_resolution_height = resolution
 
@@ -1730,31 +1542,17 @@ class Validation:
                 extra_validation_kwargs["skip_layer_guidance_start"] = float(
                     self.config.validation_guidance_skip_layers_start
                 )
-                extra_validation_kwargs["skip_layer_guidance_stop"] = float(
-                    self.config.validation_guidance_skip_layers_stop
-                )
-                extra_validation_kwargs["skip_layer_guidance_scale"] = float(
-                    self.config.validation_guidance_skip_scale
-                )
-                extra_validation_kwargs["skip_guidance_layers"] = list(
-                    self.config.validation_guidance_skip_layers
-                )
+                extra_validation_kwargs["skip_layer_guidance_stop"] = float(self.config.validation_guidance_skip_layers_stop)
+                extra_validation_kwargs["skip_layer_guidance_scale"] = float(self.config.validation_guidance_skip_scale)
+                extra_validation_kwargs["skip_guidance_layers"] = list(self.config.validation_guidance_skip_layers)
 
-            extra_validation_kwargs["guidance_rescale"] = (
-                self.config.validation_guidance_rescale
-            )
+            extra_validation_kwargs["guidance_rescale"] = self.config.validation_guidance_rescale
 
             if StateTracker.get_args().validation_using_datasets:
-                extra_validation_kwargs["strength"] = getattr(
-                    self.config, "validation_strength", 0.2
-                )
-                logger.debug(
-                    f"Set validation image denoise strength to {extra_validation_kwargs['strength']}"
-                )
+                extra_validation_kwargs["strength"] = getattr(self.config, "validation_strength", 0.2)
+                logger.debug(f"Set validation image denoise strength to {extra_validation_kwargs['strength']}")
 
-            logger.debug(
-                f"Processing width/height: {validation_resolution_width}x{validation_resolution_height}"
-            )
+            logger.debug(f"Processing width/height: {validation_resolution_width}x{validation_resolution_height}")
             if validation_shortname not in stitched_validation_images:
                 stitched_validation_images[validation_shortname] = []
                 checkpoint_validation_images[validation_shortname] = []
@@ -1780,12 +1578,8 @@ class Validation:
                     "num_images_per_prompt": self.config.num_validation_images,
                     "num_inference_steps": self.config.validation_num_inference_steps,
                     "guidance_scale": self.config.validation_guidance,
-                    "height": MultiaspectImage._round_to_nearest_multiple(
-                        int(validation_resolution_height), 16
-                    ),
-                    "width": MultiaspectImage._round_to_nearest_multiple(
-                        int(validation_resolution_width), 16
-                    ),
+                    "height": MultiaspectImage._round_to_nearest_multiple(int(validation_resolution_height), 16),
+                    "width": MultiaspectImage._round_to_nearest_multiple(int(validation_resolution_width), 16),
                     **extra_validation_kwargs,
                 }
                 if self.model.VALIDATION_USES_NEGATIVE_PROMPT:
@@ -1815,41 +1609,24 @@ class Validation:
                             )
                         )
                     else:
-                        pipeline_kwargs["negative_prompt"] = (
-                            StateTracker.get_args().validation_negative_prompt
-                        )
+                        pipeline_kwargs["negative_prompt"] = StateTracker.get_args().validation_negative_prompt
                 # TODO: Refactor the rest so that it uses model class to update kwargs more generally.
                 if self.config.validation_guidance_real > 1.0:
-                    pipeline_kwargs["guidance_scale_real"] = float(
-                        self.config.validation_guidance_real
-                    )
-                if (
-                    isinstance(self.config.validation_no_cfg_until_timestep, int)
-                    and self.config.model_family == "flux"
-                ):
-                    pipeline_kwargs["no_cfg_until_timestep"] = (
-                        self.config.validation_no_cfg_until_timestep
-                    )
+                    pipeline_kwargs["guidance_scale_real"] = float(self.config.validation_guidance_real)
+                if isinstance(self.config.validation_no_cfg_until_timestep, int) and self.config.model_family == "flux":
+                    pipeline_kwargs["no_cfg_until_timestep"] = self.config.validation_no_cfg_until_timestep
 
-                pipeline_kwargs = self.model.update_pipeline_call_kwargs(
-                    pipeline_kwargs
-                )
-                logger.debug(
-                    f"Image being generated with parameters: {pipeline_kwargs}"
-                )
+                pipeline_kwargs = self.model.update_pipeline_call_kwargs(pipeline_kwargs)
+                logger.debug(f"Image being generated with parameters: {pipeline_kwargs}")
                 if self.config.model_family == "sana":
-                    pipeline_kwargs["complex_human_instruction"] = (
-                        self.config.sana_complex_human_instruction
-                    )
+                    pipeline_kwargs["complex_human_instruction"] = self.config.sana_complex_human_instruction
 
                 validation_types = self._validation_types()
                 all_validation_type_results = {}
                 for current_validation_type in validation_types:
                     if not self.config.validation_randomize:
                         pipeline_kwargs["generator"] = self._get_generator()
-                        logger.debug(
-                            f"Using a generator? {pipeline_kwargs['generator']}"
-                        )
+                        logger.debug(f"Using a generator? {pipeline_kwargs['generator']}")
                     if current_validation_type == "ema":
                         self.enable_ema_for_inference()
                     pipeline_kwargs = {
@@ -1858,34 +1635,20 @@ class Validation:
                                 device=self.inference_device,
                                 dtype=self.config.weight_dtype,
                             )
-                            if hasattr(v, "to")
-                            and v.dtype
-                            in (torch.bfloat16, torch.float16, torch.float32)
+                            if hasattr(v, "to") and v.dtype in (torch.bfloat16, torch.float16, torch.float32)
                             else v
                         )
                         for k, v in pipeline_kwargs.items()
                     }
 
-                    call_kwargs = inspect.signature(
-                        self.model.pipeline.__call__
-                    ).parameters
-                    logger.debug(
-                        f"Possible parameters for {type(self.model.pipeline)}: {call_kwargs}"
-                    )
+                    call_kwargs = inspect.signature(self.model.pipeline.__call__).parameters
+                    logger.debug(f"Possible parameters for {type(self.model.pipeline)}: {call_kwargs}")
                     # remove any kwargs that are not in the pipeline call
-                    pipeline_kwargs = {
-                        k: v for k, v in pipeline_kwargs.items() if k in call_kwargs
-                    }
-                    removed_kwargs = [
-                        k for k in pipeline_kwargs.keys() if k not in call_kwargs
-                    ]
-                    logger.debug(
-                        f"Running validations with inputs: {pipeline_kwargs.keys()}"
-                    )
+                    pipeline_kwargs = {k: v for k, v in pipeline_kwargs.items() if k in call_kwargs}
+                    removed_kwargs = [k for k in pipeline_kwargs.keys() if k not in call_kwargs]
+                    logger.debug(f"Running validations with inputs: {pipeline_kwargs.keys()}")
                     if removed_kwargs:
-                        logger.warning(
-                            f"Removed the following kwargs from validation pipeline: {removed_kwargs}"
-                        )
+                        logger.warning(f"Removed the following kwargs from validation pipeline: {removed_kwargs}")
                     # run in autocast ctx
                     with torch.amp.autocast(
                         self.inference_device.type,
@@ -1893,17 +1656,11 @@ class Validation:
                     ):
                         pipeline_result = self.model.pipeline(**pipeline_kwargs)
                         if hasattr(pipeline_result, "frames"):
-                            all_validation_type_results[current_validation_type] = (
-                                pipeline_result.frames
-                            )
+                            all_validation_type_results[current_validation_type] = pipeline_result.frames
                         elif hasattr(pipeline_result, "images"):
-                            all_validation_type_results[current_validation_type] = (
-                                pipeline_result.images
-                            )
+                            all_validation_type_results[current_validation_type] = pipeline_result.images
                         else:
-                            logger.error(
-                                f"Pipeline result does not have 'frames' or 'images': {pipeline_result}"
-                            )
+                            logger.error(f"Pipeline result does not have 'frames' or 'images': {pipeline_result}")
                             all_validation_type_results[current_validation_type] = []
                     if current_validation_type == "ema":
                         self.disable_ema_for_inference()
@@ -1911,9 +1668,7 @@ class Validation:
                 # Keep the original unstitched results for checkpoint storage and benchmark comparison
                 # Retrieve the default image result for stitching
                 ema_image_results = all_validation_type_results.get("ema")
-                validation_image_results = all_validation_type_results.get(
-                    "checkpoint", ema_image_results
-                )
+                validation_image_results = all_validation_type_results.get("checkpoint", ema_image_results)
                 original_validation_image_results = validation_image_results
                 display_validation_results = validation_image_results.copy()
 
@@ -1921,9 +1676,7 @@ class Validation:
                 if self.config.use_ema and ema_image_results is not None:
                     if ema_validation_images[validation_shortname] is None:
                         ema_validation_images[validation_shortname] = []
-                    ema_validation_images[validation_shortname].extend(
-                        ema_image_results
-                    )
+                    ema_validation_images[validation_shortname].extend(ema_image_results)
 
                 if validation_type != "base_model":
                     # The logic flow is:
@@ -1944,12 +1697,8 @@ class Validation:
                     # Check if we'll be adding benchmark
                     will_add_benchmark = False
                     benchmark_image = None
-                    if not self.config.disable_benchmark and self.benchmark_exists(
-                        "base_model"
-                    ):
-                        benchmark_image = self._benchmark_image(
-                            validation_shortname, resolution
-                        )
+                    if not self.config.disable_benchmark and self.benchmark_exists("base_model"):
+                        benchmark_image = self._benchmark_image(validation_shortname, resolution)
                         will_add_benchmark = benchmark_image is not None
 
                     if has_input_stitching and not will_add_benchmark:
@@ -1958,9 +1707,7 @@ class Validation:
                             self.stitch_validation_input_image(
                                 validation_image_result=img,
                                 validation_input_image=validation_input_image,
-                                labels=(
-                                    ["input", f"step {StateTracker.get_global_step()}"]
-                                ),
+                                labels=(["input", f"step {StateTracker.get_global_step()}"]),
                             )
                             for img in display_validation_results
                         ]
@@ -1977,45 +1724,33 @@ class Validation:
                     if will_add_benchmark:
                         if has_input_stitching:
                             # Three-way stitch: input | output | benchmark
-                            for idx, original_img in enumerate(
-                                original_validation_image_results
-                            ):
+                            for idx, original_img in enumerate(original_validation_image_results):
                                 labels_to_use = [
                                     "input",
                                     "base model",
                                     f"step {StateTracker.get_global_step()}",
                                 ]
 
-                                display_validation_results[idx] = (
-                                    self.stitch_three_images(
-                                        left_image=validation_input_image,
-                                        middle_image=benchmark_image,
-                                        right_image=original_img,
-                                        labels=labels_to_use,
-                                    )
+                                display_validation_results[idx] = self.stitch_three_images(
+                                    left_image=validation_input_image,
+                                    middle_image=benchmark_image,
+                                    right_image=original_img,
+                                    labels=labels_to_use,
                                 )
                         else:
                             # No input stitching, just stitch benchmark to output
-                            for idx, original_img in enumerate(
-                                original_validation_image_results
-                            ):
-                                display_validation_results[idx] = (
-                                    self.stitch_benchmark_image(
-                                        validation_image_result=original_img,
-                                        benchmark_image=benchmark_image,
-                                        labels=[
-                                            "base model",
-                                            f"step {StateTracker.get_global_step()}",
-                                        ],
-                                    )
+                            for idx, original_img in enumerate(original_validation_image_results):
+                                display_validation_results[idx] = self.stitch_benchmark_image(
+                                    validation_image_result=original_img,
+                                    benchmark_image=benchmark_image,
+                                    labels=[
+                                        "base model",
+                                        f"step {StateTracker.get_global_step()}",
+                                    ],
                                 )
 
                     # Handle EMA comparison stitching
-                    if (
-                        self.config.use_ema
-                        and self.config.ema_validation == "comparison"
-                        and ema_image_results is not None
-                    ):
+                    if self.config.use_ema and self.config.ema_validation == "comparison" and ema_image_results is not None:
                         # Create new display results that include EMA comparison
                         ema_display_results = []
                         for idx, display_img in enumerate(display_validation_results):
@@ -2038,27 +1773,19 @@ class Validation:
                     font = get_font_for_labels()
                     if font is not None:
                         # Add the validation prompt text to the bottom of each image
-                        for idx, validation_result in enumerate(
-                            display_validation_results
-                        ):
+                        for idx, validation_result in enumerate(display_validation_results):
                             display_validation_results[idx] = draw_text_on_image(
                                 validation_result, f"Prompt: {prompt}", font=font
                             )
 
                 # Use original results for checkpoint storage, display results for viewing
-                checkpoint_validation_images[validation_shortname].extend(
-                    original_validation_image_results
-                )
-                stitched_validation_images[validation_shortname].extend(
-                    display_validation_results
-                )
+                checkpoint_validation_images[validation_shortname].extend(original_validation_image_results)
+                stitched_validation_images[validation_shortname].extend(display_validation_results)
 
             except Exception as e:
                 import traceback
 
-                logger.error(
-                    f"Error generating validation image: {e}, {traceback.format_exc()}"
-                )
+                logger.error(f"Error generating validation image: {e}, {traceback.format_exc()}")
                 continue
 
         return (
@@ -2086,9 +1813,7 @@ class Validation:
                     res_label = f"{resolution}x{resolution}"
             else:
                 # Fallback to actual size if somehow out of bounds
-                logger.warning(
-                    f"Image index {validation_img_idx} exceeds validation resolutions list"
-                )
+                logger.warning(f"Image index {validation_img_idx} exceeds validation resolutions list")
                 if type(validation_image) is list:
                     size_x, size_y = validation_image[0].size
                 else:
@@ -2136,9 +1861,7 @@ class Validation:
             )
             validation_img_idx += 1
 
-    def _log_validations_to_webhook(
-        self, validation_images, validation_shortname, validation_prompt
-    ):
+    def _log_validations_to_webhook(self, validation_images, validation_shortname, validation_prompt):
         if StateTracker.get_webhook_handler() is not None:
             StateTracker.get_webhook_handler().send(
                 (
@@ -2164,9 +1887,7 @@ class Validation:
                 for shortname, image_list in validation_images.items():
                     tracker.log_images(
                         {
-                            f"{shortname} - {self.validation_resolutions[idx]}": np.moveaxis(
-                                np.array(image), -1, 0
-                            )[
+                            f"{shortname} - {self.validation_resolutions[idx]}": np.moveaxis(np.array(image), -1, 0)[
                                 np.newaxis, ...
                             ]
                             for idx, image in enumerate(image_list)
@@ -2174,9 +1895,7 @@ class Validation:
                         step=StateTracker.get_global_step(),
                     )
             elif tracker.name == "wandb":
-                resolution_list = [
-                    f"{res[0]}x{res[1]}" for res in get_validation_resolutions()
-                ]
+                resolution_list = [f"{res[0]}x{res[1]}" for res in get_validation_resolutions()]
 
                 if self.config.tracker_image_layout == "table":
                     columns = [
@@ -2190,9 +1909,7 @@ class Validation:
                     for prompt_shortname, image_list in validation_images.items():
                         wandb_images = []
                         luminance_values = []
-                        logger.debug(
-                            f"Prompt {prompt_shortname} has {len(image_list)} images"
-                        )
+                        logger.debug(f"Prompt {prompt_shortname} has {len(image_list)} images")
                         for image in image_list:
                             logger.debug(f"Adding to table: {image}")
                             wandb_image = wandb.Image(image)
@@ -2215,22 +1932,16 @@ class Validation:
                 elif self.config.tracker_image_layout == "gallery":
                     gallery_images = {}
                     for prompt_shortname, image_list in validation_images.items():
-                        logger.debug(
-                            f"Prompt {prompt_shortname} has {len(image_list)} images"
-                        )
+                        logger.debug(f"Prompt {prompt_shortname} has {len(image_list)} images")
                         for idx, image in enumerate(image_list):
                             # if it's a list of images, make a grid
-                            if isinstance(image, list) and isinstance(
-                                image[0], Image.Image
-                            ):
+                            if isinstance(image, list) and isinstance(image[0], Image.Image):
                                 image = image[0]
                             wandb_image = wandb.Image(
                                 image,
                                 caption=f"{prompt_shortname} - {resolution_list[idx]}",
                             )
-                            gallery_images[
-                                f"{prompt_shortname} - {resolution_list[idx]}"
-                            ] = wandb_image
+                            gallery_images[f"{prompt_shortname} - {resolution_list[idx]}"] = wandb_image
 
                     # Log all images in one call to prevent the global step from ticking
                     tracker.log(gallery_images, step=StateTracker.get_global_step())
@@ -2247,22 +1958,12 @@ class Validation:
                     logger.debug("Setting Lycoris multiplier to 1.0")
                     self.accelerator._lycoris_wrapped_network.set_multiplier(1.0)
                     logger.debug("Storing Lycoris weights for later recovery.")
-                    self.ema_model.store(
-                        self.accelerator._lycoris_wrapped_network.parameters()
-                    )
-                    logger.debug(
-                        "Storing the EMA weights into the Lycoris adapter for inference."
-                    )
-                    self.ema_model.copy_to(
-                        self.accelerator._lycoris_wrapped_network.parameters()
-                    )
+                    self.ema_model.store(self.accelerator._lycoris_wrapped_network.parameters())
+                    logger.debug("Storing the EMA weights into the Lycoris adapter for inference.")
+                    self.ema_model.copy_to(self.accelerator._lycoris_wrapped_network.parameters())
                 elif self.config.lora_type.lower() == "standard":
                     _trainable_parameters = [
-                        x
-                        for x in self.model.get_trained_component(
-                            unwrap_model=False
-                        ).parameters()
-                        if x.requires_grad
+                        x for x in self.model.get_trained_component(unwrap_model=False).parameters() if x.requires_grad
                     ]
                     self.ema_model.store(_trainable_parameters)
                     self.ema_model.copy_to(_trainable_parameters)
@@ -2272,9 +1973,7 @@ class Validation:
                 logger.debug("Storing the EMA weights into the model for inference.")
                 self.ema_model.copy_to(self.trainable_parameters())
         else:
-            logger.debug(
-                "Skipping EMA model setup for validation, as we are not using EMA."
-            )
+            logger.debug("Skipping EMA model setup for validation, as we are not using EMA.")
 
     def disable_ema_for_inference(self):
         if not self.ema_enabled:
@@ -2283,30 +1982,21 @@ class Validation:
         if self.config.use_ema:
             logger.debug("Disabling EMA.")
             self.ema_enabled = False
-            if (
-                self.config.model_type == "lora"
-                and self.config.lora_type.lower() == "lycoris"
-            ):
+            if self.config.model_type == "lora" and self.config.lora_type.lower() == "lycoris":
                 logger.debug("Setting Lycoris network multiplier to 1.0.")
                 self.accelerator._lycoris_wrapped_network.set_multiplier(1.0)
                 logger.debug("Restoring Lycoris weights.")
-                self.ema_model.restore(
-                    self.accelerator._lycoris_wrapped_network.parameters()
-                )
+                self.ema_model.restore(self.accelerator._lycoris_wrapped_network.parameters())
             else:
                 logger.debug("Restoring trainable parameters.")
                 self.ema_model.restore(self.trainable_parameters())
             if self.config.ema_device != "accelerator":
                 logger.debug("Moving EMA weights to CPU for storage.")
                 self.ema_model.to(self.config.ema_device)
-                self.model.get_trained_component(unwrap_model=False).to(
-                    self.inference_device
-                )
+                self.model.get_trained_component(unwrap_model=False).to(self.inference_device)
 
         else:
-            logger.debug(
-                "Skipping EMA model restoration for validation, as we are not using EMA."
-            )
+            logger.debug("Skipping EMA model restoration for validation, as we are not using EMA.")
 
     def finalize_validation(self, validation_type):
         """Cleans up and restores original state if necessary."""
@@ -2327,9 +2017,7 @@ class Validation:
                 evaluation_score = self.model_evaluator.evaluate([image], [prompt])
                 self.eval_scores[shortname] = round(float(evaluation_score), 4)
         if len(self.eval_scores) == 0:
-            logger.warning(
-                "No evaluation scores were calculated. Please check your evaluation settings."
-            )
+            logger.warning("No evaluation scores were calculated. Please check your evaluation settings.")
             return {}
         # Log the scores into dict: {"min", "max", "mean", "std"}
         result = {
@@ -2379,16 +2067,12 @@ class Evaluation:
         return sum(len(x["sampler"]) for _, x in eval_datasets.items())
 
     def get_timestep_schedule(self, noise_scheduler):
-        accept_mu = "mu" in set(
-            inspect.signature(noise_scheduler.set_timesteps).parameters.keys()
-        )
+        accept_mu = "mu" in set(inspect.signature(noise_scheduler.set_timesteps).parameters.keys())
         scheduler_kwargs = {}
         if accept_mu and self.config.flow_schedule_auto_shift:
             from simpletuner.helpers.models.sd3.pipeline import calculate_shift
 
-            scheduler_kwargs["mu"] = calculate_shift(
-                StateTracker.get_model().get_trained_component().config.max_seq
-            )
+            scheduler_kwargs["mu"] = calculate_shift(StateTracker.get_model().get_trained_component().config.max_seq)
 
         noise_scheduler.set_timesteps(self.config.eval_timesteps, **scheduler_kwargs)
         timesteps = noise_scheduler.timesteps
@@ -2441,21 +2125,14 @@ class Evaluation:
         while eval_batch is not False and evaluated_sample_count < total_batches:
             try:
                 evaluated_sample_count += 1
-                if (
-                    self.config.num_eval_images is not None
-                    and evaluated_sample_count > self.config.num_eval_images
-                ):
+                if self.config.num_eval_images is not None and evaluated_sample_count > self.config.num_eval_images:
                     reset_eval_datasets()
-                    raise MultiDatasetExhausted(
-                        "Max eval samples reached, resetting evaluations."
-                    )
+                    raise MultiDatasetExhausted("Max eval samples reached, resetting evaluations.")
                 # Pass the dataset_name so we fetch from the correct place
                 eval_batch = retrieve_eval_images(dataset_name=dataset_name)
 
             except MultiDatasetExhausted:
-                logger.info(
-                    f"Evaluation loss calculation completed for dataset: {dataset_name}"
-                )
+                logger.info(f"Evaluation loss calculation completed for dataset: {dataset_name}")
                 eval_batch = False
 
             if eval_batch is not None and eval_batch is not False:
@@ -2463,9 +2140,7 @@ class Evaluation:
                 torch.manual_seed(0)
                 prepared_eval_batch = prepare_batch(eval_batch)
                 if "latents" not in prepared_eval_batch:
-                    raise ValueError(
-                        "Error calculating eval batch: no 'latents' found."
-                    )
+                    raise ValueError("Error calculating eval batch: no 'latents' found.")
 
                 bsz = prepared_eval_batch["latents"].shape[0]
                 sample_text_str = "samples" if bsz > 1 else "sample"
@@ -2532,9 +2207,7 @@ class Evaluation:
 
         # Decide if we pool or do separate passes
         pooling = getattr(self.config, "eval_dataset_pooling")
-        eval_datasets = StateTracker.get_data_backends(
-            _type="eval", _types=None
-        )  # dict of {name: ...}
+        eval_datasets = StateTracker.get_data_backends(_type="eval", _types=None)  # dict of {name: ...}
         if len(eval_datasets) == 0:
             return {}
 
@@ -2554,9 +2227,7 @@ class Evaluation:
 
         else:
             # Multiple passes: one per dataset
-            logger.debug(
-                "Running separate eval passes for each dataset + pooled results."
-            )
+            logger.debug("Running separate eval passes for each dataset + pooled results.")
             accumulated = {}
             # We'll also keep an aggregator for the final 'pooled' pass
             from collections import defaultdict
