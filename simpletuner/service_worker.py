@@ -91,8 +91,8 @@ async def health_check():
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
 
-# Main entry point
-if __name__ == "__main__":
+def main():
+    """Main entry point for the server worker."""
     import uvicorn
 
     # Create necessary directories
@@ -103,3 +103,8 @@ if __name__ == "__main__":
 
     # Run the server
     uvicorn.run(app, host="0.0.0.0", port=8001, reload=True, log_level="info")
+
+
+# Main entry point
+if __name__ == "__main__":
+    main()

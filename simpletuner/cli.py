@@ -472,6 +472,39 @@ def cmd_configure(args) -> int:
         return 1
 
 
+def cmd_server(args) -> int:
+    """Handle server command."""
+    host = getattr(args, "host", "0.0.0.0")
+    port = getattr(args, "port", 8001)
+    reload = getattr(args, "reload", False)
+
+    print(f"Starting SimpleTuner server on {host}:{port}")
+
+    try:
+        import uvicorn
+        from simpletuner.service_worker import app
+
+        # Create necessary directories
+        os.makedirs("static/css", exist_ok=True)
+        os.makedirs("static/js", exist_ok=True)
+        os.makedirs("templates", exist_ok=True)
+        os.makedirs("configs", exist_ok=True)
+
+        # Run the server
+        uvicorn.run(app, host=host, port=port, reload=reload, log_level="info")
+        return 0
+    except KeyboardInterrupt:
+        print("\nServer stopped by user.")
+        return 130
+    except ImportError as e:
+        print(f"Error importing server dependencies: {e}")
+        print("Make sure FastAPI and uvicorn are installed.")
+        return 1
+    except Exception as e:
+        print(f"Error starting server: {e}")
+        return 1
+
+
 def get_version() -> str:
     """Get SimpleTuner version."""
     try:
@@ -554,6 +587,30 @@ Examples:
         help="Output configuration file (default: config.json)",
     )
     configure_parser.set_defaults(func=cmd_configure)
+
+    # Server command
+    server_parser = subparsers.add_parser(
+        "server",
+        help="Start SimpleTuner web server",
+        description="Start the SimpleTuner web server for training management",
+    )
+    server_parser.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="Host to bind the server to (default: 0.0.0.0)",
+    )
+    server_parser.add_argument(
+        "--port",
+        type=int,
+        default=8001,
+        help="Port to bind the server to (default: 8001)",
+    )
+    server_parser.add_argument(
+        "--reload",
+        action="store_true",
+        help="Enable auto-reload for development",
+    )
+    server_parser.set_defaults(func=cmd_server)
 
     # Parse args and run command
     args = parser.parse_args()
