@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 
+# Detect if we're running from simpletuner subdirectory or git repo top level
+if [ -f "../config/config.env" ] && [ -f "train.py" ]; then
+    # We're in simpletuner/ subdirectory
+    cd ..
+fi
+
 # Pull config from config.env
 [ -f "config/config.env" ] && source config/config.env
 
