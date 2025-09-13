@@ -1,18 +1,14 @@
-import torch, os, logging
+import logging
+import os
+
+import torch
 import torch.nn.functional as F
+from diffusers import AutoencoderKLWan
+from transformers import T5EncoderModel, T5TokenizerFast
+
+from simpletuner.helpers.models.common import ModelTypes, PipelineTypes, PredictionTypes, VideoModelFoundation
 from simpletuner.helpers.models.cosmos.pipeline import Cosmos2TextToImagePipeline
 from simpletuner.helpers.models.cosmos.transformer import CosmosTransformer3DModel
-from simpletuner.helpers.models.common import (
-    VideoModelFoundation,
-    PredictionTypes,
-    PipelineTypes,
-    ModelTypes,
-)
-from transformers import (
-    T5TokenizerFast,
-    T5EncoderModel,
-)
-from diffusers import AutoencoderKLWan
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -85,9 +81,7 @@ class Cosmos2Image(VideoModelFoundation):
             "prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
         }
 
-    def convert_negative_text_embed_for_pipeline(
-        self, text_embedding: torch.Tensor, prompt: str
-    ) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
         """Convert negative embeddings for pipeline use."""
         return {
             "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
@@ -125,9 +119,7 @@ class Cosmos2Image(VideoModelFoundation):
 
         # Encode
         with torch.no_grad():
-            prompt_embeds = self.text_encoders[0](
-                text_input_ids, attention_mask=attention_mask
-            ).last_hidden_state
+            prompt_embeds = self.text_encoders[0](text_input_ids, attention_mask=attention_mask).last_hidden_state
 
         # Apply attention mask to zero out padding tokens
         lengths = attention_mask.sum(dim=1).cpu()
@@ -144,9 +136,7 @@ class Cosmos2Image(VideoModelFoundation):
             # Single frame, add a dummy dimension for num_frames
             sample = sample.unsqueeze(2)
         elif sample.ndim != 5:
-            raise ValueError(
-                f"Cosmos T2I expects input with 4 or 5 dimensions, got {sample.ndim}."
-            )
+            raise ValueError(f"Cosmos T2I expects input with 4 or 5 dimensions, got {sample.ndim}.")
 
         return sample
 
@@ -245,9 +235,7 @@ class Cosmos2Image(VideoModelFoundation):
         return loss.mean()
 
     def prepare_edm_sigmas(self, bsz: int, device: torch.device) -> torch.Tensor:
-        log_min, log_max = map(
-            torch.log10, (torch.tensor(self.sigma_min), torch.tensor(self.sigma_max))
-        )
+        log_min, log_max = map(torch.log10, (torch.tensor(self.sigma_min), torch.tensor(self.sigma_max)))
         u = torch.rand(bsz, device=device)
         return (10.0 ** (log_min + (log_max - log_min) * u)).to(device)
 
@@ -269,9 +257,7 @@ class Cosmos2Image(VideoModelFoundation):
         # T5 tokenizer settings
         if self.config.tokenizer_max_length is None:
             self.config.tokenizer_max_length = 512
-            logger.info(
-                f"Setting tokenizer max length to {self.config.tokenizer_max_length}"
-            )
+            logger.info(f"Setting tokenizer max length to {self.config.tokenizer_max_length}")
 
         # Validation settings
         if self.config.validation_num_inference_steps < 30:
@@ -284,10 +270,7 @@ class Cosmos2Image(VideoModelFoundation):
         self.config.pretrained_vae_model_name_or_path = None
 
         # Ensure proper scheduler settings
-        if (
-            hasattr(self.config, "flow_schedule_shift")
-            and self.config.flow_schedule_shift is None
-        ):
+        if hasattr(self.config, "flow_schedule_shift") and self.config.flow_schedule_shift is None:
             self.config.flow_schedule_shift = 1.0  # Cosmos default
 
     def custom_model_card_schedule_info(self):
@@ -305,16 +288,10 @@ class Cosmos2Image(VideoModelFoundation):
         if self.config.flow_schedule_shift is not None:
             output_args.append(f"shift={self.config.flow_schedule_shift}")
         if self.config.flow_use_beta_schedule:
-            output_args.append(
-                f"flow_beta_schedule_alpha={self.config.flow_beta_schedule_alpha}"
-            )
-            output_args.append(
-                f"flow_beta_schedule_beta={self.config.flow_beta_schedule_beta}"
-            )
+            output_args.append(f"flow_beta_schedule_alpha={self.config.flow_beta_schedule_alpha}")
+            output_args.append(f"flow_beta_schedule_beta={self.config.flow_beta_schedule_beta}")
 
-        output_str = (
-            f" (parameters={output_args})" if output_args else " (default parameters)"
-        )
+        output_str = f" (parameters={output_args})" if output_args else " (default parameters)"
 
         return output_str
 
@@ -333,3 +310,27 @@ class Cosmos2Image(VideoModelFoundation):
         latent_width = width // self.vae_scale_factor_spatial
 
         return (latent_height, latent_width)
+
+    def tread_init(self):
+        """
+        Initialize the TREAD model training method.
+        """
+        from simpletuner.helpers.training.tread import TREADRouter
+
+        if (
+            getattr(self.config, "tread_config", None) is None
+            or getattr(self.config, "tread_config", None) is {}
+            or getattr(self.config, "tread_config", {}).get("routes", None) is None
+        ):
+            logger.error("TREAD training requires you to configure the routes in the TREAD config")
+            import sys
+
+            sys.exit(1)
+
+        self.unwrap_model(model=self.model).set_router(
+            TREADRouter(
+                seed=getattr(self.config, "seed", None) or 42,
+                device=self.accelerator.device,
+            ),
+            self.config.tread_config["routes"],
+        )

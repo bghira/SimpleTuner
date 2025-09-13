@@ -1,71 +1,50 @@
-from typing import Any, Dict, Optional, Tuple, List
+from typing import Any, Dict, List, Optional, Tuple
 
+import einops
+import numpy as np
 import torch
 import torch.nn as nn
-import einops
-from einops import repeat
-import numpy as np
-
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
-from diffusers.models.modeling_utils import ModelMixin
-from diffusers.utils import (
-    USE_PEFT_BACKEND,
-    is_torch_version,
-    logging,
-    scale_lora_layers,
-    unscale_lora_layers,
-)
-from diffusers.utils.torch_utils import maybe_allow_in_graph
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
+from diffusers.models.modeling_utils import ModelMixin
+from diffusers.utils import USE_PEFT_BACKEND, is_torch_version, logging, scale_lora_layers, unscale_lora_layers
+from diffusers.utils.torch_utils import maybe_allow_in_graph
+from einops import repeat
+
+from simpletuner.helpers.training.tread import TREADRouter
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 import math
+
 import torch
-from torch import nn
 import torch.nn.functional as F
+from torch import nn
 from torch.distributed.nn.functional import all_gather
 
 _LOAD_BALANCING_LOSS = []
 
 
 def save_load_balancing_loss(loss):
-    global _LOAD_BALANCING_LOSS
     _LOAD_BALANCING_LOSS.append(loss)
 
 
 def clear_load_balancing_loss():
-    global _LOAD_BALANCING_LOSS
     _LOAD_BALANCING_LOSS.clear()
 
 
 def get_load_balancing_loss():
-    global _LOAD_BALANCING_LOSS
-    return _LOAD_BALANCING_LOSS
+    return _LOAD_BALANCING_LOSS.copy()
 
 
-def batched_load_balancing_loss():
-    aux_losses_arr = get_load_balancing_loss()
-    alpha = aux_losses_arr[0][-1]
-    Pi = torch.stack([ent[1] for ent in aux_losses_arr], dim=0)
-    fi = torch.stack([ent[2] for ent in aux_losses_arr], dim=0)
-
-    fi_list = all_gather(fi)
-    fi = torch.stack(fi_list, 0).mean(0)
-
-    aux_loss = (Pi * fi).sum(-1).mean() * alpha
-    return aux_loss
-
+from typing import List, Optional
 
 import torch
-from torch import nn
-from typing import Optional
 from diffusers.models.attention_processor import Attention as VanillaAttention
+from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.utils.torch_utils import maybe_allow_in_graph
-from typing import Optional
-from typing import List
-from diffusers.models.embeddings import Timesteps, TimestepEmbedding
+from torch import nn
 
 
 # Copied from https://github.com/black-forest-labs/flux/blob/main/src/flux/math.py
@@ -120,9 +99,7 @@ class PatchEmbed(nn.Module):
         super().__init__()
         self.patch_size = patch_size
         self.out_channels = out_channels
-        self.proj = nn.Linear(
-            in_channels * patch_size * patch_size, out_channels, bias=True
-        )
+        self.proj = nn.Linear(in_channels * patch_size * patch_size, out_channels, bias=True)
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -139,9 +116,7 @@ class PatchEmbed(nn.Module):
 class PooledEmbed(nn.Module):
     def __init__(self, text_emb_dim, hidden_size):
         super().__init__()
-        self.pooled_embedder = TimestepEmbedding(
-            in_channels=text_emb_dim, time_embed_dim=hidden_size
-        )
+        self.pooled_embedder = TimestepEmbedding(in_channels=text_emb_dim, time_embed_dim=hidden_size)
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -162,9 +137,7 @@ class TimestepEmbed(nn.Module):
             flip_sin_to_cos=True,
             downscale_freq_shift=0,
         )
-        self.timestep_embedder = TimestepEmbedding(
-            in_channels=frequency_embedding_size, time_embed_dim=hidden_size
-        )
+        self.timestep_embedder = TimestepEmbedding(in_channels=frequency_embedding_size, time_embed_dim=hidden_size)
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -183,12 +156,8 @@ class OutEmbed(nn.Module):
     def __init__(self, hidden_size, patch_size, out_channels):
         super().__init__()
         self.norm_final = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        self.linear = nn.Linear(
-            hidden_size, patch_size * patch_size * out_channels, bias=True
-        )
-        self.adaLN_modulation = nn.Sequential(
-            nn.SiLU(), nn.Linear(hidden_size, 2 * hidden_size, bias=True)
-        )
+        self.linear = nn.Linear(hidden_size, patch_size * patch_size * out_channels, bias=True)
+        self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(hidden_size, 2 * hidden_size, bias=True))
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -220,9 +189,7 @@ except:
     except Exception as e:
         USE_TORCH_SDPA = True
 
-        def flash_attn_func(
-            query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False
-        ):
+        def flash_attn_func(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False):
             q = query.transpose(1, 2)
             k = key.transpose(1, 2)
             v = value.transpose(1, 2)
@@ -235,9 +202,7 @@ except:
 
 
 # Copied from https://github.com/black-forest-labs/flux/blob/main/src/flux/math.py
-def apply_rope(
-    xq: torch.Tensor, xk: torch.Tensor, freqs_cis: torch.Tensor
-) -> tuple[torch.Tensor, torch.Tensor]:
+def apply_rope(xq: torch.Tensor, xk: torch.Tensor, freqs_cis: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     xq_ = xq.float().reshape(*xq.shape[:-1], -1, 1, 2)
     xk_ = xk.float().reshape(*xk.shape[:-1], -1, 1, 2)
     xq_out = freqs_cis[..., 0] * xq_[..., 0] + freqs_cis[..., 1] * xq_[..., 1]
@@ -247,15 +212,11 @@ def apply_rope(
 
 def attention(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor):
     if USE_FLASH_ATTN3:
-        hidden_states = flash_attn_func(
-            query, key, value, causal=False, deterministic=False
-        )[0]
+        hidden_states = flash_attn_func(query, key, value, causal=False, deterministic=False)[0]
     elif USE_FLASH_ATTN2:
         hidden_states = flash_attn_func(query, key, value, dropout_p=0.0, causal=False)
     elif USE_TORCH_SDPA:
-        hidden_states = flash_attn_func(
-            query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False
-        )
+        hidden_states = flash_attn_func(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False)
     hidden_states = hidden_states.flatten(-2)
     hidden_states = hidden_states.to(query.dtype)
     return hidden_states
@@ -392,9 +353,7 @@ class HiDreamAttnProcessor_flashattn:
         hidden_states = attention(query, key, value)
 
         if not attn.single:
-            hidden_states_i, hidden_states_t = torch.split(
-                hidden_states, [num_image_tokens, num_text_tokens], dim=1
-            )
+            hidden_states_i, hidden_states_t = torch.split(hidden_states, [num_image_tokens, num_text_tokens], dim=1)
             hidden_states_i = attn.to_out(hidden_states_i)
             hidden_states_t = attn.to_out_t(hidden_states_t)
             return hidden_states_i, hidden_states_t
@@ -453,9 +412,7 @@ class MoEGate(nn.Module):
         # topk selection algorithm
         self.norm_topk_prob = False
         self.gating_dim = embed_dim
-        self.weight = nn.Parameter(
-            torch.empty((self.n_routed_experts, self.gating_dim))
-        )
+        self.weight = nn.Parameter(torch.empty((self.n_routed_experts, self.gating_dim)))
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
@@ -472,9 +429,7 @@ class MoEGate(nn.Module):
         if self.scoring_func == "softmax":
             scores = logits.softmax(dim=-1)
         else:
-            raise NotImplementedError(
-                f"insupportable scoring function for MoE gating: {self.scoring_func}"
-            )
+            raise NotImplementedError(f"insupportable scoring function for MoE gating: {self.scoring_func}")
 
         # Select top-k experts
         topk_weight, topk_idx = torch.topk(scores, k=self.top_k, dim=-1, sorted=False)
@@ -504,15 +459,11 @@ class MoEGate(nn.Module):
 
                     return compute_seq_aux_loss
 
-                ckpt_kwargs = (
-                    {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-                )
+                ckpt_kwargs = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
                 scores_for_seq_aux = scores_for_aux.view(bsz, seq_len, -1)
 
                 ce, scores_view = torch.utils.checkpoint.checkpoint(
-                    create_seq_aux_loss_fn(
-                        scores_for_seq_aux, topk_idx_for_aux_loss, hidden_states.device
-                    ),
+                    create_seq_aux_loss_fn(scores_for_seq_aux, topk_idx_for_aux_loss, hidden_states.device),
                     **ckpt_kwargs,
                 )
 
@@ -527,15 +478,11 @@ class MoEGate(nn.Module):
 
                     return compute_token_aux_loss
 
-                ckpt_kwargs = (
-                    {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-                )
+                ckpt_kwargs = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
                 scores_mean = scores_for_aux.mean(0)
 
                 ce, scores_mean = torch.utils.checkpoint.checkpoint(
-                    create_token_aux_loss_fn(
-                        scores_mean, topk_idx_for_aux_loss, self.n_routed_experts
-                    ),
+                    create_token_aux_loss_fn(scores_mean, topk_idx_for_aux_loss, self.n_routed_experts),
                     **ckpt_kwargs,
                 )
 
@@ -570,9 +517,7 @@ class MOEFeedForward(nn.Module):
     ):
         super().__init__()
         self.shared_experts = FeedForward(dim, hidden_dim // 2)
-        self.experts = nn.ModuleList(
-            [FeedForward(dim, hidden_dim) for i in range(num_routed_experts)]
-        )
+        self.experts = nn.ModuleList([FeedForward(dim, hidden_dim) for i in range(num_routed_experts)])
         self.gate = MoEGate(
             embed_dim=dim,
             num_routed_experts=num_routed_experts,
@@ -599,9 +544,7 @@ class MOEFeedForward(nn.Module):
             y = y.view(*orig_shape).to(dtype=wtype)
             # y = AddAuxiliaryLoss.apply(y, aux_loss)
         else:
-            y = self.moe_infer(x, flat_topk_idx, topk_weight.view(-1, 1)).view(
-                *orig_shape
-            )
+            y = self.moe_infer(x, flat_topk_idx, topk_weight.view(-1, 1)).view(*orig_shape)
         y = y + self.shared_experts(identity)
         return y
 
@@ -635,9 +578,7 @@ class MOEFeedForward(nn.Module):
 class TextProjection(nn.Module):
     def __init__(self, in_features, hidden_size):
         super().__init__()
-        self.linear = nn.Linear(
-            in_features=in_features, out_features=hidden_size, bias=False
-        )
+        self.linear = nn.Linear(in_features=in_features, out_features=hidden_size, bias=False)
 
     def forward(self, caption):
         hidden_states = self.linear(caption)
@@ -662,9 +603,7 @@ class HiDreamImageSingleTransformerBlock(nn.Module):
     ):
         super().__init__()
         self.num_attention_heads = num_attention_heads
-        self.adaLN_modulation = nn.Sequential(
-            nn.SiLU(), nn.Linear(dim, 6 * dim, bias=True)
-        )
+        self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(dim, 6 * dim, bias=True))
         nn.init.zeros_(self.adaLN_modulation[1].weight)
         nn.init.zeros_(self.adaLN_modulation[1].bias)
 
@@ -700,9 +639,9 @@ class HiDreamImageSingleTransformerBlock(nn.Module):
         rope: torch.FloatTensor = None,
     ) -> torch.FloatTensor:
         wtype = image_tokens.dtype
-        shift_msa_i, scale_msa_i, gate_msa_i, shift_mlp_i, scale_mlp_i, gate_mlp_i = (
-            self.adaLN_modulation(adaln_input)[:, None].chunk(6, dim=-1)
-        )
+        shift_msa_i, scale_msa_i, gate_msa_i, shift_mlp_i, scale_mlp_i, gate_mlp_i = self.adaLN_modulation(adaln_input)[
+            :, None
+        ].chunk(6, dim=-1)
 
         # 1. MM-Attention
         norm_image_tokens = self.norm1_i(image_tokens).to(dtype=wtype)
@@ -735,9 +674,7 @@ class HiDreamImageTransformerBlock(nn.Module):
     ):
         super().__init__()
         self.num_attention_heads = num_attention_heads
-        self.adaLN_modulation = nn.Sequential(
-            nn.SiLU(), nn.Linear(dim, 12 * dim, bias=True)
-        )
+        self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(dim, 12 * dim, bias=True))
         nn.init.zeros_(self.adaLN_modulation[1].weight)
         nn.init.zeros_(self.adaLN_modulation[1].bias)
 
@@ -760,6 +697,7 @@ class HiDreamImageTransformerBlock(nn.Module):
                 hidden_dim=4 * dim,
                 num_routed_experts=num_routed_experts,
                 num_activated_experts=num_activated_experts,
+                aux_loss_alpha=aux_loss_alpha,
             )
         else:
             self.ff_i = FeedForward(dim=dim, hidden_dim=4 * dim)
@@ -862,9 +800,7 @@ class HiDreamImageBlock(nn.Module):
         )
 
 
-class HiDreamImageTransformer2DModel(
-    ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin
-):
+class HiDreamImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
     _supports_gradient_checkpointing = True
     _no_split_modules = ["HiDreamImageBlock"]
 
@@ -889,9 +825,7 @@ class HiDreamImageTransformer2DModel(
     ):
         super().__init__()
         self.out_channels = out_channels or in_channels
-        self.inner_dim = (
-            self.config.num_attention_heads * self.config.attention_head_dim
-        )
+        self.inner_dim = self.config.num_attention_heads * self.config.attention_head_dim
         self.llama_layers = llama_layers
 
         self.t_embedder = TimestepEmbed(self.inner_dim)
@@ -936,20 +870,23 @@ class HiDreamImageTransformer2DModel(
         self.final_layer = OutEmbed(self.inner_dim, patch_size, self.out_channels)
 
         # Create projection layers for both T5 and Llama embeddings
-        caption_channels = [caption_channels[1]] * (num_layers + num_single_layers) + [
-            caption_channels[0]
-        ]
+        caption_channels = [caption_channels[1]] * (num_layers + num_single_layers) + [caption_channels[0]]
         caption_projection = []
         for caption_channel in caption_channels:
-            caption_projection.append(
-                TextProjection(in_features=caption_channel, hidden_size=self.inner_dim)
-            )
+            caption_projection.append(TextProjection(in_features=caption_channel, hidden_size=self.inner_dim))
         self.caption_projection = nn.ModuleList(caption_projection)
-        self.max_seq = (
-            max_resolution[0] * max_resolution[1] // (patch_size * patch_size)
-        )
+        self.max_seq = max_resolution[0] * max_resolution[1] // (patch_size * patch_size)
 
         self.gradient_checkpointing = False
+
+        # TREAD support
+        self._tread_router = None
+        self._tread_routes = None
+
+    def set_router(self, router: TREADRouter, routes: Optional[List[Dict]] = None):
+        """Set TREAD router and routes for token reduction during training."""
+        self._tread_router = router
+        self._tread_routes = routes
 
     def _set_gradient_checkpointing(self, module, value=False):
         """
@@ -999,9 +936,7 @@ class HiDreamImageTransformer2DModel(
         timesteps = timesteps.expand(batch_size)
         return timesteps
 
-    def unpatchify(
-        self, x: torch.Tensor, img_sizes: List[Tuple[int, int]], is_training: bool
-    ) -> List[torch.Tensor]:
+    def unpatchify(self, x: torch.Tensor, img_sizes: List[Tuple[int, int]], is_training: bool) -> List[torch.Tensor]:
         if 0 and is_training:
             x = einops.rearrange(
                 x,
@@ -1096,9 +1031,7 @@ class HiDreamImageTransformer2DModel(
 
         return extracted_layers
 
-    def _process_embeddings(
-        self, t5_hidden_states, extracted_llama_states, batch_size, hidden_dim
-    ):
+    def _process_embeddings(self, t5_hidden_states, extracted_llama_states, batch_size, hidden_dim):
         """
         Process T5 and Llama embeddings through projection layers.
 
@@ -1128,9 +1061,7 @@ class HiDreamImageTransformer2DModel(
 
                 return custom_forward
 
-            ckpt_kwargs = (
-                {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-            )
+            ckpt_kwargs = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
 
             # Process T5 embeddings with checkpointing
             processed_t5_embeddings = torch.utils.checkpoint.checkpoint(
@@ -1152,9 +1083,7 @@ class HiDreamImageTransformer2DModel(
         else:
             # Standard processing without checkpointing
             processed_t5_embeddings = self.caption_projection[-1](t5_hidden_states)
-            processed_t5_embeddings = processed_t5_embeddings.view(
-                batch_size, -1, hidden_dim
-            )
+            processed_t5_embeddings = processed_t5_embeddings.view(batch_size, -1, hidden_dim)
 
             processed_llama_embeddings = []
             for i, llama_emb in enumerate(extracted_llama_states):
@@ -1177,6 +1106,7 @@ class HiDreamImageTransformer2DModel(
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
         controlnet_block_samples: Optional[List[torch.Tensor]] = None,
         controlnet_single_block_samples: Optional[List[torch.Tensor]] = None,
+        force_keep_mask: Optional[torch.Tensor] = None,
         return_dict: bool = True,
     ):
         """
@@ -1210,13 +1140,8 @@ class HiDreamImageTransformer2DModel(
             # Weight the lora layers by setting lora_scale for each PEFT layer
             scale_lora_layers(self, lora_scale)
         else:
-            if (
-                joint_attention_kwargs is not None
-                and joint_attention_kwargs.get("scale", None) is not None
-            ):
-                logger.warning(
-                    "Passing scale via joint_attention_kwargs when not using the PEFT backend is ineffective."
-                )
+            if joint_attention_kwargs is not None and joint_attention_kwargs.get("scale", None) is not None:
+                logger.warning("Passing scale via joint_attention_kwargs when not using the PEFT backend is ineffective.")
 
         # Get batch size and data type
         batch_size = hidden_states.shape[0]
@@ -1238,13 +1163,9 @@ class HiDreamImageTransformer2DModel(
 
                 return custom_forward
 
-            ckpt_kwargs = (
-                {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-            )
+            ckpt_kwargs = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
 
-            timesteps = self.expand_timesteps(
-                timesteps, batch_size, hidden_states.device
-            )
+            timesteps = self.expand_timesteps(timesteps, batch_size, hidden_states.device)
             timesteps_emb = torch.utils.checkpoint.checkpoint(
                 create_custom_forward_timestep(timesteps),
                 self.t_embedder,
@@ -1259,17 +1180,13 @@ class HiDreamImageTransformer2DModel(
             adaln_input = timesteps_emb + pooled_emb
         else:
             # Standard processing without checkpointing
-            timesteps = self.expand_timesteps(
-                timesteps, batch_size, hidden_states.device
-            )
+            timesteps = self.expand_timesteps(timesteps, batch_size, hidden_states.device)
             timesteps = self.t_embedder(timesteps, hidden_states_type)
             p_embedder = self.p_embedder(pooled_embeds)
             adaln_input = timesteps + p_embedder
 
         # 2. Process input hidden states (no checkpointing for patchify)
-        hidden_states, image_tokens_masks, img_sizes = self.patchify(
-            hidden_states, self.max_seq, img_sizes
-        )
+        hidden_states, image_tokens_masks, img_sizes = self.patchify(hidden_states, self.max_seq, img_sizes)
 
         # Apply checkpointing only to the embedding step, not patchify
         if self.training and self.gradient_checkpointing:
@@ -1280,9 +1197,7 @@ class HiDreamImageTransformer2DModel(
 
                 return custom_forward
 
-            ckpt_kwargs = (
-                {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-            )
+            ckpt_kwargs = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
 
             hidden_states = torch.utils.checkpoint.checkpoint(
                 create_custom_forward_embed(hidden_states),
@@ -1296,12 +1211,8 @@ class HiDreamImageTransformer2DModel(
         if image_tokens_masks is None:
             pH, pW = img_sizes[0]
             img_ids = torch.zeros(pH, pW, 3, device=hidden_states.device)
-            img_ids[..., 1] = (
-                img_ids[..., 1] + torch.arange(pH, device=hidden_states.device)[:, None]
-            )
-            img_ids[..., 2] = (
-                img_ids[..., 2] + torch.arange(pW, device=hidden_states.device)[None, :]
-            )
+            img_ids[..., 1] = img_ids[..., 1] + torch.arange(pH, device=hidden_states.device)[:, None]
+            img_ids[..., 2] = img_ids[..., 2] + torch.arange(pW, device=hidden_states.device)[None, :]
             img_ids = repeat(img_ids, "h w c -> b (h w) c", b=batch_size)
 
         # 3. Extract and process text embeddings
@@ -1324,9 +1235,7 @@ class HiDreamImageTransformer2DModel(
 
                 return custom_forward
 
-            ckpt_kwargs = (
-                {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-            )
+            ckpt_kwargs = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
 
             # Process T5 embeddings with checkpointing
             processed_t5_embeddings = torch.utils.checkpoint.checkpoint(
@@ -1348,19 +1257,13 @@ class HiDreamImageTransformer2DModel(
         else:
             # Standard processing without checkpointing
             processed_t5_embeddings = self.caption_projection[-1](t5_hidden_states)
-            processed_t5_embeddings = processed_t5_embeddings.view(
-                batch_size, -1, hidden_states.shape[-1]
-            )
+            processed_t5_embeddings = processed_t5_embeddings.view(batch_size, -1, hidden_states.shape[-1])
 
             processed_llama_embeddings = []
             for i, llama_emb in enumerate(extracted_llama_states):
                 if i < len(self.caption_projection) - 1:  # Reserve last one for T5
-                    processed_emb = self.caption_projection[i](
-                        llama_emb.to(hidden_states.dtype)
-                    )
-                    processed_emb = processed_emb.view(
-                        batch_size, -1, hidden_states.shape[-1]
-                    )
+                    processed_emb = self.caption_projection[i](llama_emb.to(hidden_states.dtype))
+                    processed_emb = processed_emb.view(batch_size, -1, hidden_states.shape[-1])
                     processed_llama_embeddings.append(processed_emb)
 
         # Ensure we have enough processed embeddings for all blocks
@@ -1382,28 +1285,22 @@ class HiDreamImageTransformer2DModel(
 
                 return custom_forward
 
-            ckpt_kwargs = (
-                {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-            )
+            ckpt_kwargs = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
 
             txt_ids = torch.zeros(
                 batch_size,
-                processed_t5_embeddings.shape[1]
-                + processed_llama_embeddings[0].shape[1] * 2,
+                processed_t5_embeddings.shape[1] + processed_llama_embeddings[0].shape[1] * 2,
                 3,
                 device=img_ids.device,
                 dtype=img_ids.dtype,
             )
             ids = torch.cat((img_ids, txt_ids), dim=1)
 
-            rope = torch.utils.checkpoint.checkpoint(
-                create_custom_forward_rope(ids), self.pe_embedder, **ckpt_kwargs
-            )
+            rope = torch.utils.checkpoint.checkpoint(create_custom_forward_rope(ids), self.pe_embedder, **ckpt_kwargs)
         else:
             txt_ids = torch.zeros(
                 batch_size,
-                processed_t5_embeddings.shape[1]
-                + processed_llama_embeddings[0].shape[1] * 2,
+                processed_t5_embeddings.shape[1] + processed_llama_embeddings[0].shape[1] * 2,
                 3,
                 device=img_ids.device,
                 dtype=img_ids.dtype,
@@ -1413,6 +1310,11 @@ class HiDreamImageTransformer2DModel(
 
         # 5. Process through transformer blocks
         block_id = 0
+
+        # TREAD initialization
+        routes = self._tread_routes or []
+        router = self._tread_router
+        use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
 
         # Prepare initial combined embeddings for first set of blocks
         initial_encoder_hidden_states = torch.cat(
@@ -1426,6 +1328,25 @@ class HiDreamImageTransformer2DModel(
 
         # Process through double stream blocks
         for bid, block in enumerate(self.double_stream_blocks):
+            # TREAD routing for this layer
+            if use_routing:
+                # Check if this layer should use routing
+                for route in routes:
+                    start_idx = route["start_layer_idx"]
+                    end_idx = route["end_layer_idx"]
+                    # Handle negative indices
+                    if start_idx < 0:
+                        start_idx = len(self.double_stream_blocks) + start_idx
+                    if end_idx < 0:
+                        end_idx = len(self.double_stream_blocks) + end_idx
+
+                    if start_idx <= bid <= end_idx:
+                        mask_info = router.get_mask(
+                            hidden_states.shape[1], route["selection_ratio"], force_keep_mask=force_keep_mask
+                        )
+                        hidden_states = router.start_route(hidden_states, mask_info)
+                        break
+
             # Get the current Llama embedding for this block with safe indexing
             safe_idx = block_id % len(processed_llama_embeddings)
             cur_llama_embedding = processed_llama_embeddings[safe_idx]
@@ -1448,19 +1369,15 @@ class HiDreamImageTransformer2DModel(
 
                     return custom_forward
 
-                ckpt_kwargs: Dict[str, Any] = (
-                    {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-                )
-                hidden_states, initial_encoder_hidden_states = (
-                    torch.utils.checkpoint.checkpoint(
-                        create_custom_forward(block),
-                        hidden_states,
-                        image_tokens_masks,
-                        cur_encoder_hidden_states,
-                        adaln_input,
-                        rope,
-                        **ckpt_kwargs,
-                    )
+                ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
+                hidden_states, initial_encoder_hidden_states = torch.utils.checkpoint.checkpoint(
+                    create_custom_forward(block),
+                    hidden_states,
+                    image_tokens_masks,
+                    cur_encoder_hidden_states,
+                    adaln_input,
+                    rope,
+                    **ckpt_kwargs,
                 )
             else:
                 hidden_states, initial_encoder_hidden_states = block(
@@ -1472,22 +1389,32 @@ class HiDreamImageTransformer2DModel(
                 )
 
             # Keep consistent encoder states length
-            initial_encoder_hidden_states = initial_encoder_hidden_states[
-                :, :initial_encoder_hidden_states_seq_len
-            ]
+            initial_encoder_hidden_states = initial_encoder_hidden_states[:, :initial_encoder_hidden_states_seq_len]
+
+            # TREAD end routing for this layer
+            if use_routing:
+                # Check if this layer should end routing
+                for route in routes:
+                    start_idx = route["start_layer_idx"]
+                    end_idx = route["end_layer_idx"]
+                    # Handle negative indices
+                    if start_idx < 0:
+                        start_idx = len(self.double_stream_blocks) + start_idx
+                    if end_idx < 0:
+                        end_idx = len(self.double_stream_blocks) + end_idx
+
+                    if start_idx <= bid <= end_idx:
+                        mask_info = router.get_mask(
+                            hidden_states.shape[1], route["selection_ratio"], force_keep_mask=force_keep_mask
+                        )
+                        hidden_states = router.end_route(hidden_states, mask_info)
+                        break
 
             # Add ControlNet residual for double stream blocks
-            if (
-                controlnet_block_samples is not None
-                and len(controlnet_block_samples) > 0
-            ):
-                interval_control = len(self.double_stream_blocks) / len(
-                    controlnet_block_samples
-                )
+            if controlnet_block_samples is not None and len(controlnet_block_samples) > 0:
+                interval_control = len(self.double_stream_blocks) / len(controlnet_block_samples)
                 interval_control = int(np.ceil(interval_control))
-                control_idx = min(
-                    bid // interval_control, len(controlnet_block_samples) - 1
-                )
+                control_idx = min(bid // interval_control, len(controlnet_block_samples) - 1)
                 hidden_states = hidden_states + controlnet_block_samples[control_idx]
 
             block_id += 1
@@ -1502,18 +1429,43 @@ class HiDreamImageTransformer2DModel(
             attention_mask_ones = torch.ones(
                 (
                     batch_size,
-                    initial_encoder_hidden_states.shape[1]
-                    + cur_llama_embedding.shape[1],
+                    initial_encoder_hidden_states.shape[1] + cur_llama_embedding.shape[1],
                 ),
                 device=image_tokens_masks.device,
                 dtype=image_tokens_masks.dtype,
             )
-            image_tokens_masks = torch.cat(
-                [image_tokens_masks, attention_mask_ones], dim=1
-            )
+            image_tokens_masks = torch.cat([image_tokens_masks, attention_mask_ones], dim=1)
 
         # 7. Process through single stream blocks
         for bid, block in enumerate(self.single_stream_blocks):
+            # TREAD routing for single stream layers
+            if use_routing:
+                # Check if this layer should use routing
+                for route in routes:
+                    start_idx = route["start_layer_idx"]
+                    end_idx = route["end_layer_idx"]
+                    # Handle negative indices - adjust for combined block count
+                    total_blocks = len(self.double_stream_blocks) + len(self.single_stream_blocks)
+                    if start_idx < 0:
+                        start_idx = total_blocks + start_idx
+                    if end_idx < 0:
+                        end_idx = total_blocks + end_idx
+
+                    current_layer_id = len(self.double_stream_blocks) + bid
+                    if start_idx <= current_layer_id <= end_idx:
+                        # Only apply routing to image tokens portion
+                        image_portion = hidden_states[:, :image_tokens_seq_len]
+                        mask_info = router.get_mask(
+                            image_portion.shape[1],
+                            route["selection_ratio"],
+                            force_keep_mask=(
+                                force_keep_mask[:, : image_portion.shape[1]] if force_keep_mask is not None else None
+                            ),
+                        )
+                        image_portion = router.start_route(image_portion, mask_info)
+                        hidden_states = torch.cat([image_portion, hidden_states[:, image_tokens_seq_len:]], dim=1)
+                        break
+
             # Get the current Llama embedding for this block with safe indexing
             safe_idx = block_id % len(processed_llama_embeddings)
             cur_llama_embedding = processed_llama_embeddings[safe_idx]
@@ -1533,9 +1485,7 @@ class HiDreamImageTransformer2DModel(
 
                     return custom_forward
 
-                ckpt_kwargs: Dict[str, Any] = (
-                    {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-                )
+                ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
                 hidden_states = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(block),
                     hidden_states,
@@ -1557,22 +1507,42 @@ class HiDreamImageTransformer2DModel(
             # Maintain consistent hidden state length
             hidden_states = hidden_states[:, :hidden_states_seq_len]
 
+            # TREAD end routing for single stream layers
+            if use_routing:
+                # Check if this layer should end routing
+                for route in routes:
+                    start_idx = route["start_layer_idx"]
+                    end_idx = route["end_layer_idx"]
+                    # Handle negative indices - adjust for combined block count
+                    total_blocks = len(self.double_stream_blocks) + len(self.single_stream_blocks)
+                    if start_idx < 0:
+                        start_idx = total_blocks + start_idx
+                    if end_idx < 0:
+                        end_idx = total_blocks + end_idx
+
+                    current_layer_id = len(self.double_stream_blocks) + bid
+                    if start_idx <= current_layer_id <= end_idx:
+                        # Only apply routing to image tokens portion
+                        image_portion = hidden_states[:, :image_tokens_seq_len]
+                        mask_info = router.get_mask(
+                            image_portion.shape[1],
+                            route["selection_ratio"],
+                            force_keep_mask=(
+                                force_keep_mask[:, : image_portion.shape[1]] if force_keep_mask is not None else None
+                            ),
+                        )
+                        image_portion = router.end_route(image_portion, mask_info)
+                        hidden_states = torch.cat([image_portion, hidden_states[:, image_tokens_seq_len:]], dim=1)
+                        break
+
             # Add ControlNet residual for single stream blocks
-            if (
-                controlnet_single_block_samples is not None
-                and len(controlnet_single_block_samples) > 0
-            ):
-                interval_control = len(self.single_stream_blocks) / len(
-                    controlnet_single_block_samples
-                )
+            if controlnet_single_block_samples is not None and len(controlnet_single_block_samples) > 0:
+                interval_control = len(self.single_stream_blocks) / len(controlnet_single_block_samples)
                 interval_control = int(np.ceil(interval_control))
-                control_idx = min(
-                    bid // interval_control, len(controlnet_single_block_samples) - 1
-                )
+                control_idx = min(bid // interval_control, len(controlnet_single_block_samples) - 1)
                 # Only apply to image tokens portion
                 hidden_states[:, :image_tokens_seq_len] = (
-                    hidden_states[:, :image_tokens_seq_len]
-                    + controlnet_single_block_samples[control_idx]
+                    hidden_states[:, :image_tokens_seq_len] + controlnet_single_block_samples[control_idx]
                 )
 
             block_id += 1
@@ -1588,9 +1558,7 @@ class HiDreamImageTransformer2DModel(
 
                 return custom_forward
 
-            ckpt_kwargs = (
-                {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-            )
+            ckpt_kwargs = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
 
             output = torch.utils.checkpoint.checkpoint(
                 create_custom_forward_final(hidden_states),

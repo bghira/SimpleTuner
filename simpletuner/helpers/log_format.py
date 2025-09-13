@@ -1,8 +1,9 @@
-import warnings
-import torch
 import logging
 import os
-from colorama import Fore, Back, Style, init
+import warnings
+
+import torch
+from colorama import Back, Fore, Style, init
 
 
 class ColorizedFormatter(logging.Formatter):
@@ -39,12 +40,8 @@ logger.setLevel(logging.DEBUG)  # Set lowest level to capture everything
 
 # Create handlers
 console_handler = logging.StreamHandler()
-console_handler.setLevel(
-    logging.INFO
-)  # Change to ERROR if you want to suppress INFO messages too
-console_handler.setFormatter(
-    ColorizedFormatter("%(asctime)s [%(levelname)s] %(message)s")
-)
+console_handler.setLevel(logging.INFO)  # Change to ERROR if you want to suppress INFO messages too
+console_handler.setFormatter(ColorizedFormatter("%(asctime)s [%(levelname)s] %(message)s"))
 
 # blank out the existing debug.log, if exists
 if os.path.exists("debug.log"):
@@ -68,9 +65,7 @@ class RankFileFormatter(logging.Formatter):
 
 file_handler = logging.FileHandler("debug.log")
 file_handler.setLevel(logging.DEBUG)  # Capture debug and above
-file_handler.setFormatter(
-    RankFileFormatter("%(asctime)s [%(levelname)s] (%(name)s) %(message)s")
-)
+file_handler.setFormatter(RankFileFormatter("%(asctime)s [%(levelname)s] (%(name)s) %(message)s"))
 
 # Remove existing handlers
 for handler in logger.handlers[:]:
@@ -123,6 +118,9 @@ warnings.filterwarnings(
     module="torch.utils._pytree",
     message="torch.utils._pytree._register_pytree_node is deprecated. Please use torch.utils._pytree.register_pytree_node instead.",
 )
+
+# Suppress torch autocast warnings for unsupported dtypes
+warnings.filterwarnings("ignore", category=UserWarning, module="torch.amp.autocast_mode")
 
 warnings.filterwarnings(
     "ignore",
