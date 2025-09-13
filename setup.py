@@ -231,6 +231,7 @@ setup(
             "simpletuner-train=simpletuner.train:main",
             "simpletuner-configure=simpletuner.configure:main",
             "simpletuner-inference=simpletuner.inference:main",
+            "simpletuner-server=simpletuner.service_worker:main",
         ],
     },
     classifiers=[
