@@ -20,13 +20,11 @@ apt -y install python3.12 python3.12-venv
 
 #### Container image dependencies
 
-For Vast, RunPod, and TensorDock (among others), the following will work on a CUDA 12.2-12.8 image:
+For Vast, RunPod, and TensorDock (among others), the following will work on a CUDA 12.2-12.8 image to enable compiling of CUDA extensions:
 
 ```bash
-apt -y install nvidia-cuda-toolkit libgl1-mesa-glx
+apt -y install nvidia-cuda-toolkit
 ```
-
-If `libgl1-mesa-glx` is not found, you might need to use `libgl1-mesa-dri` instead. Your mileage may vary.
 
 ### Installation
 
