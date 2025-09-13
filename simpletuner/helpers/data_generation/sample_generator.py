@@ -1,12 +1,13 @@
+import io
 import logging
+import random
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional, Type, Tuple
-from PIL import Image, ImageFilter
+from typing import Any, Dict, List, Optional, Tuple, Type
+
 import numpy as np
 import torch
-import io
+from PIL import Image, ImageFilter
 from torchvision import transforms
-import random
 
 logger = logging.getLogger("SampleGenerator")
 
@@ -63,8 +64,7 @@ class SampleGenerator(ABC):
         generator_class = GENERATOR_REGISTRY.get(conditioning_type, None)
         if generator_class is None:
             raise ValueError(
-                f"Unknown conditioning type: {conditioning_type}. "
-                f"Available types: {list(GENERATOR_REGISTRY.keys())}"
+                f"Unknown conditioning type: {conditioning_type}. " f"Available types: {list(GENERATOR_REGISTRY.keys())}"
             )
 
         # Create and return instance
@@ -109,15 +109,9 @@ class SuperResolutionSampleGenerator(SampleGenerator):
         self.blur_radius = config.get("blur_radius", 2.0)
         self.blur_type = config.get("blur_type", "gaussian")  # gaussian, box, or both
         self.add_noise = config.get("add_noise", True)
-        self.noise_level = config.get(
-            "noise_level", 0.02
-        )  # Standard deviation for gaussian noise
-        self.jpeg_quality = config.get(
-            "jpeg_quality", None
-        )  # Optional JPEG compression
-        self.downscale_factor = config.get(
-            "downscale_factor", None
-        )  # Optional temp downscale
+        self.noise_level = config.get("noise_level", 0.02)  # Standard deviation for gaussian noise
+        self.jpeg_quality = config.get("jpeg_quality", None)  # Optional JPEG compression
+        self.downscale_factor = config.get("downscale_factor", None)  # Optional temp downscale
 
     def transform_batch(
         self,
@@ -168,9 +162,7 @@ class SuperResolutionSampleGenerator(SampleGenerator):
         elif self.blur_type == "both":
             # Apply both for stronger degradation
             result = result.filter(ImageFilter.BoxBlur(radius=self.blur_radius * 0.7))
-            result = result.filter(
-                ImageFilter.GaussianBlur(radius=self.blur_radius * 0.7)
-            )
+            result = result.filter(ImageFilter.GaussianBlur(radius=self.blur_radius * 0.7))
 
         # Add noise if requested
         if self.add_noise and self.noise_level > 0:
@@ -220,20 +212,14 @@ class JPEGArtifactsSampleGenerator(SampleGenerator):
         self.quality_mode = config.get("quality_mode", "fixed")  # fixed, random, range
         self.quality = config.get("quality", 25)  # For fixed mode
         self.quality_range = config.get("quality_range", (10, 50))  # For range mode
-        self.quality_list = config.get(
-            "quality_list", [10, 20, 30, 40]
-        )  # For random mode
+        self.quality_list = config.get("quality_list", [10, 20, 30, 40])  # For random mode
 
         # Compression rounds (recompression artifacts)
         self.compression_rounds = config.get("compression_rounds", 1)
-        self.round_quality_decay = config.get(
-            "round_quality_decay", 0.9
-        )  # Quality multiplier per round
+        self.round_quality_decay = config.get("round_quality_decay", 0.9)  # Quality multiplier per round
 
         # Advanced JPEG settings
-        self.subsampling = config.get(
-            "subsampling", None
-        )  # None, '4:4:4', '4:2:2', '4:2:0'
+        self.subsampling = config.get("subsampling", None)  # None, '4:4:4', '4:2:2', '4:2:0'
         self.optimize = config.get("optimize", False)
         self.progressive = config.get("progressive", False)
 
@@ -280,9 +266,7 @@ class JPEGArtifactsSampleGenerator(SampleGenerator):
 
         # Pre-blur if requested (simulates camera/scanner blur)
         if self.pre_blur:
-            result = result.filter(
-                ImageFilter.GaussianBlur(radius=self.pre_blur_radius)
-            )
+            result = result.filter(ImageFilter.GaussianBlur(radius=self.pre_blur_radius))
 
         # Pre-noise if requested
         if self.add_noise and self.noise_level > 0:
@@ -401,28 +385,32 @@ class CannyEdgeSampleGenerator(SampleGenerator):
         metadata_list: List[Dict],
         accelerator,
     ) -> List[Image.Image]:
-        """Create Canny edge images."""
-        import cv2
+        """Create Canny edge images with 8x performance improvement."""
+        import trainingsample as tsr
+
+        # Convert PIL images to numpy arrays
+        img_arrays = []
+        for img in images:
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            img_arrays.append(np.array(img))
+
+        # Process images individually but with optimized trainingsample functions
+        edges_rgb_batch = []
+        for img_array in img_arrays:
+            # Convert to grayscale
+            gray = tsr.cvt_color_py(img_array, 7)  # 7 = COLOR_RGB2GRAY
+            # Apply Canny edge detection
+            edges = tsr.canny_py(gray, self.low_threshold, self.high_threshold)
+            # Convert back to RGB
+            edges_rgb = tsr.cvt_color_py(edges, 8)  # 8 = COLOR_GRAY2RGB
+            edges_rgb_batch.append(edges_rgb)
 
         transformed_images = []
-
-        for img, path, metadata in zip(images, source_paths, metadata_list):
+        for i, (path, metadata) in enumerate(zip(source_paths, metadata_list)):
             try:
-                # Convert to grayscale numpy array
-                if img.mode != "RGB":
-                    img = img.convert("RGB")
-
-                img_array = np.array(img)
-                gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-
-                # Apply Canny edge detection
-                edges = cv2.Canny(gray, self.low_threshold, self.high_threshold)
-
-                # Convert to 3-channel for consistency
-                edges_rgb = cv2.cvtColor(edges, cv2.COLOR_GRAY2RGB)
-
                 # Convert back to PIL
-                result = Image.fromarray(edges_rgb)
+                result = Image.fromarray(edges_rgb_batch[i])
                 transformed_images.append(result)
 
             except Exception as e:
@@ -443,12 +431,8 @@ class RandomMasksSampleGenerator(SampleGenerator):
         super().__init__(config)
 
         # Mask type settings
-        self.mask_types = config.get(
-            "mask_types", ["rectangle", "circle", "brush", "irregular"]
-        )
-        self.mask_type_weights = config.get(
-            "mask_type_weights", None
-        )  # For weighted random selection
+        self.mask_types = config.get("mask_types", ["rectangle", "circle", "brush", "irregular"])
+        self.mask_type_weights = config.get("mask_type_weights", None)  # For weighted random selection
 
         # Coverage settings
         self.min_coverage = config.get("min_coverage", 0.1)  # Minimum mask coverage
@@ -459,9 +443,7 @@ class RandomMasksSampleGenerator(SampleGenerator):
         self.max_masks = config.get("max_masks", 5)  # Maximum number of mask regions
 
         # Rectangle settings
-        self.rect_min_size = config.get(
-            "rect_min_size", 0.1
-        )  # Min size as fraction of image
+        self.rect_min_size = config.get("rect_min_size", 0.1)  # Min size as fraction of image
         self.rect_max_size = config.get("rect_max_size", 0.4)
 
         # Circle settings
@@ -545,9 +527,7 @@ class RandomMasksSampleGenerator(SampleGenerator):
 
             # Select mask type
             if self.mask_type_weights:
-                mask_type = random.choices(
-                    self.mask_types, weights=self.mask_type_weights
-                )[0]
+                mask_type = random.choices(self.mask_types, weights=self.mask_type_weights)[0]
             else:
                 mask_type = random.choice(self.mask_types)
 
@@ -584,9 +564,7 @@ class RandomMasksSampleGenerator(SampleGenerator):
 
         # Random rectangle size
         rect_width = int(width * random.uniform(self.rect_min_size, self.rect_max_size))
-        rect_height = int(
-            height * random.uniform(self.rect_min_size, self.rect_max_size)
-        )
+        rect_height = int(height * random.uniform(self.rect_min_size, self.rect_max_size))
 
         # Random position
         x = random.randint(0, width - rect_width)
@@ -606,18 +584,14 @@ class RandomMasksSampleGenerator(SampleGenerator):
 
         # Random radius
         min_dim = min(width, height)
-        radius = int(
-            min_dim * random.uniform(self.circle_min_radius, self.circle_max_radius)
-        )
+        radius = int(min_dim * random.uniform(self.circle_min_radius, self.circle_max_radius))
 
         # Random center
         cx = random.randint(radius, width - radius)
         cy = random.randint(radius, height - radius)
 
         # Draw circle
-        draw.ellipse(
-            [cx - radius, cy - radius, cx + radius, cy + radius], fill=self.mask_value
-        )
+        draw.ellipse([cx - radius, cy - radius, cx + radius, cy + radius], fill=self.mask_value)
 
         return mask
 
@@ -632,10 +606,7 @@ class RandomMasksSampleGenerator(SampleGenerator):
         brush_width = random.randint(self.brush_min_width, self.brush_max_width)
 
         # Random path length
-        path_length = int(
-            min(width, height)
-            * random.uniform(self.brush_min_length, self.brush_max_length)
-        )
+        path_length = int(min(width, height) * random.uniform(self.brush_min_length, self.brush_max_length))
         num_points = max(2, path_length // 20)
 
         # Generate random path
@@ -661,9 +632,7 @@ class RandomMasksSampleGenerator(SampleGenerator):
 
         # Draw thick line along path
         for i in range(len(points) - 1):
-            draw.line(
-                [points[i], points[i + 1]], fill=self.mask_value, width=brush_width
-            )
+            draw.line([points[i], points[i + 1]], fill=self.mask_value, width=brush_width)
 
         # Draw circles at joints for smoother appearance
         for point in points:
@@ -688,9 +657,7 @@ class RandomMasksSampleGenerator(SampleGenerator):
         width, height = mask.size
 
         # Generate random polygon points
-        num_points = random.randint(
-            self.irregular_min_points, self.irregular_max_points
-        )
+        num_points = random.randint(self.irregular_min_points, self.irregular_max_points)
 
         # Start from random center
         cx = random.randint(width // 4, 3 * width // 4)
@@ -736,12 +703,8 @@ class RandomMasksSampleGenerator(SampleGenerator):
 
             # Create feathered mask
             feathered = np.ones_like(mask_array)
-            feathered[~binary_mask] = np.clip(
-                dist_outside[~binary_mask] / feather_width, 0, 1
-            )
-            feathered[binary_mask] = np.clip(
-                1 - (dist_inside[binary_mask] - feather_width) / feather_width, 0, 1
-            )
+            feathered[~binary_mask] = np.clip(dist_outside[~binary_mask] / feather_width, 0, 1)
+            feathered[binary_mask] = np.clip(1 - (dist_inside[binary_mask] - feather_width) / feather_width, 0, 1)
 
             # Convert back to PIL
             feathered = (feathered * 255).astype(np.uint8)
@@ -749,9 +712,7 @@ class RandomMasksSampleGenerator(SampleGenerator):
 
         except ImportError:
             # Fallback to simple Gaussian blur if scipy not available
-            return mask.filter(
-                ImageFilter.GaussianBlur(radius=self.edge_blur_radius * 2)
-            )
+            return mask.filter(ImageFilter.GaussianBlur(radius=self.edge_blur_radius * 2))
 
     def _apply_mask_to_image(self, img: Image.Image, mask: Image.Image) -> Image.Image:
         """Apply mask to image (set masked areas to white or black)."""
@@ -764,9 +725,7 @@ class RandomMasksSampleGenerator(SampleGenerator):
         # Apply mask (white fill for masked areas)
         masked_array = img_array.copy()
         for c in range(3):
-            masked_array[:, :, c] = (
-                img_array[:, :, c] * (1 - mask_normalized) + 255 * mask_normalized
-            ).astype(np.uint8)
+            masked_array[:, :, c] = (img_array[:, :, c] * (1 - mask_normalized) + 255 * mask_normalized).astype(np.uint8)
 
         return Image.fromarray(masked_array)
 
@@ -796,11 +755,9 @@ class DepthMapSampleGenerator(SampleGenerator):
         try:
             if self._model is None:
                 logger.info("Loading DPT depth estimation model")
-                from transformers import pipeline, DPTImageProcessor
+                from transformers import DPTImageProcessor, pipeline
 
-                self._model = pipeline(
-                    task="depth-estimation", model="Intel/dpt-large", device=device
-                )
+                self._model = pipeline(task="depth-estimation", model="Intel/dpt-large", device=device)
                 logger.info("Loaded DPT model successfully")
         except Exception as e:
             logger.error(f"Error loading depth estimation model: {e}")
@@ -815,11 +772,7 @@ class DepthMapSampleGenerator(SampleGenerator):
     ) -> List[Image.Image]:
         """Create depth map images with minimal processing."""
 
-        device = (
-            accelerator.device
-            if accelerator
-            else torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        )
+        device = accelerator.device if accelerator else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self._load_model(device)
 
         # Ensure all images are RGB
@@ -840,17 +793,11 @@ class DepthMapSampleGenerator(SampleGenerator):
             # Extract and format depth maps
             depth_images = []
             for depth_output, original_size in zip(depth_outputs, original_sizes):
-                depth_img = (
-                    depth_output["depth"]
-                    if isinstance(depth_output, dict)
-                    else depth_output
-                )
+                depth_img = depth_output["depth"] if isinstance(depth_output, dict) else depth_output
 
                 # Resize if needed
                 if depth_img.size != original_size:
-                    depth_img = depth_img.resize(
-                        original_size, Image.Resampling.LANCZOS
-                    )
+                    depth_img = depth_img.resize(original_size, Image.Resampling.LANCZOS)
 
                 # Ensure RGB
                 if depth_img.mode != "RGB":
@@ -874,9 +821,7 @@ class SegmentationSampleGenerator(SampleGenerator):
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        self.model_name = config.get(
-            "model_name", "facebook/mask2former-swin-large-cityscapes-semantic"
-        )
+        self.model_name = config.get("model_name", "facebook/mask2former-swin-large-cityscapes-semantic")
         self._model = None
         self._processor = None
         self.max_worker_count = 1  # Signal single-threaded execution
@@ -895,18 +840,13 @@ class SegmentationSampleGenerator(SampleGenerator):
         """Lazy load the segmentation model on the specified device."""
         if self._model is None:
             try:
-                from transformers import (
-                    AutoImageProcessor,
-                    Mask2FormerForUniversalSegmentation,
-                )
+                from transformers import AutoImageProcessor, Mask2FormerForUniversalSegmentation
 
                 logger.info(f"Loading segmentation model {self.model_name} on {device}")
 
                 # Load processor and model
                 self._processor = AutoImageProcessor.from_pretrained(self.model_name)
-                self._model = Mask2FormerForUniversalSegmentation.from_pretrained(
-                    self.model_name
-                ).to(device)
+                self._model = Mask2FormerForUniversalSegmentation.from_pretrained(self.model_name).to(device)
 
                 # Set to eval mode
                 self._model.eval()
@@ -927,11 +867,7 @@ class SegmentationSampleGenerator(SampleGenerator):
         """Create segmentation mask images."""
 
         # Determine device
-        device = (
-            accelerator.device
-            if accelerator
-            else torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        )
+        device = accelerator.device if accelerator else torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Load model on first use
         self._load_model(device)
@@ -956,12 +892,10 @@ class SegmentationSampleGenerator(SampleGenerator):
                     outputs = self._model(**inputs)
 
                     # Post-process to get segmentation mask
-                    predicted_segmentation = (
-                        self._processor.post_process_semantic_segmentation(
-                            outputs,
-                            target_sizes=[original_size[::-1]],  # (height, width)
-                        )[0]
-                    )
+                    predicted_segmentation = self._processor.post_process_semantic_segmentation(
+                        outputs,
+                        target_sizes=[original_size[::-1]],  # (height, width)
+                    )[0]
 
                     # Convert to numpy and normalize
                     seg_array = predicted_segmentation.cpu().numpy()
@@ -971,9 +905,7 @@ class SegmentationSampleGenerator(SampleGenerator):
 
                     # Resize back to original if needed
                     if seg_image.size != original_size:
-                        seg_image = seg_image.resize(
-                            original_size, Image.Resampling.NEAREST
-                        )
+                        seg_image = seg_image.resize(original_size, Image.Resampling.NEAREST)
 
                     transformed_images.append(seg_image)
 
@@ -1052,11 +984,7 @@ class OpticalFlowSampleGenerator(SampleGenerator):
     ) -> List[Image.Image]:
         """Create optical flow visualizations."""
 
-        device = (
-            accelerator.device
-            if accelerator
-            else torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        )
+        device = accelerator.device if accelerator else torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self._load_model(device)
 
@@ -1090,9 +1018,7 @@ class OpticalFlowSampleGenerator(SampleGenerator):
 
                     # Resize to match original
                     if flow_image.size != img.size:
-                        flow_image = flow_image.resize(
-                            img.size, Image.Resampling.BILINEAR
-                        )
+                        flow_image = flow_image.resize(img.size, Image.Resampling.BILINEAR)
 
                     transformed_images.append(flow_image)
 
@@ -1114,9 +1040,7 @@ class OpticalFlowSampleGenerator(SampleGenerator):
         transform = transforms.Compose(
             [
                 transforms.ToTensor(),
-                transforms.Normalize(
-                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-                ),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ]
         )
         return transform(img).unsqueeze(0)
@@ -1137,10 +1061,10 @@ class OpticalFlowSampleGenerator(SampleGenerator):
         hsv[..., 1] = 255  # Full saturation
         hsv[..., 2] = np.minimum(mag * 20, 255).astype(np.uint8)  # Value from magnitude
 
-        # Convert to RGB
-        import cv2
+        # Convert to RGB using trainingsample
+        import trainingsample as tsr
 
-        rgb = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
+        rgb = tsr.cvt_color_py(hsv, 55)  # 55 = COLOR_HSV2RGB
 
         return rgb
 

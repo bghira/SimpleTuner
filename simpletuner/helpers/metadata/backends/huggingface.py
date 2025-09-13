@@ -1,23 +1,26 @@
-from simpletuner.helpers.training.state_tracker import StateTracker
-from simpletuner.helpers.training import image_file_extensions
-from simpletuner.helpers.multiaspect.image import MultiaspectImage
-from simpletuner.helpers.data_backend.base import BaseDataBackend
-from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
-from simpletuner.helpers.metadata.backends.base import MetadataBackend
-from simpletuner.helpers.training.multi_process import should_log
-from tqdm import tqdm
 import json
 import logging
 import os
 import time
 import traceback
-from typing import Optional, Dict, Any, List, Union
-from PIL import Image
+from typing import Any, Dict, List, Optional, Union
+
 import numpy as np
+from PIL import Image
+from tqdm import tqdm
+
+from simpletuner.helpers.data_backend.base import BaseDataBackend
+from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
+from simpletuner.helpers.metadata.backends.base import MetadataBackend
+from simpletuner.helpers.multiaspect.image import MultiaspectImage
+from simpletuner.helpers.training import image_file_extensions
+from simpletuner.helpers.training.multi_process import should_log
+from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("HuggingfaceMetadataBackend")
+import trainingsample as tsr
+
 from simpletuner.helpers.training.multi_process import should_log
-import cv2
 
 if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -124,9 +127,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
 
         # Ensure data backend is HuggingfaceDatasetsBackend
         if not hasattr(data_backend, "dataset"):
-            raise ValueError(
-                "HuggingfaceMetadataBackend requires HuggingfaceDatasetsBackend"
-            )
+            raise ValueError("HuggingfaceMetadataBackend requires HuggingfaceDatasetsBackend")
         with accelerator.main_process_first():
             self.caption_cache = self._extract_captions_to_dict()
         accelerator.wait_for_everyone()
@@ -146,9 +147,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                 raw = self.data_backend.read(captions_cache_file)
                 if raw:
                     captions = json.loads(raw)
-                    logger.info(
-                        f"Loaded {len(captions)} captions from cache file {captions_cache_file}"
-                    )
+                    logger.info(f"Loaded {len(captions)} captions from cache file {captions_cache_file}")
                     return captions
             except Exception as e:
                 logger.warning(f"Error loading caption cache, will regenerate: {e}")
@@ -191,9 +190,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         # Save to cache file
         try:
             self.data_backend.write(captions_cache_file, json.dumps(captions))
-            logger.info(
-                f"Saved {len(captions)} captions to cache file {captions_cache_file}"
-            )
+            logger.info(f"Saved {len(captions)} captions to cache file {captions_cache_file}")
         except Exception as e:
             logger.warning(f"Error saving caption cache: {e}")
 
@@ -273,13 +270,9 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                 cache_data = json.loads(cache_data_raw)
                 logger.debug("Loaded existing aspect ratio cache.")
             except Exception as e:
-                logger.warning(
-                    f"Error loading aspect ratio bucket cache, creating new one: {e}"
-                )
+                logger.warning(f"Error loading aspect ratio bucket cache, creating new one: {e}")
                 cache_data = {}
-            self.aspect_ratio_bucket_indices = cache_data.get(
-                "aspect_ratio_bucket_indices", {}
-            )
+            self.aspect_ratio_bucket_indices = cache_data.get("aspect_ratio_bucket_indices", {})
             if set_config:
                 self.config = cache_data.get("config", {})
                 if self.config != {}:
@@ -305,13 +298,10 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             return
 
         aspect_ratio_bucket_indices_str = {
-            key: [str(path) for path in value]
-            for key, value in self.aspect_ratio_bucket_indices.items()
+            key: [str(path) for path in value] for key, value in self.aspect_ratio_bucket_indices.items()
         }
         cache_data = {
-            "config": StateTracker.get_data_backend_config(
-                data_backend_id=self.data_backend.id
-            ),
+            "config": StateTracker.get_data_backend_config(data_backend_id=self.data_backend.id),
             "aspect_ratio_bucket_indices": aspect_ratio_bucket_indices_str,
         }
         cache_data_str = json.dumps(cache_data)
@@ -344,13 +334,9 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                 if raw:
                     self.image_metadata = json.loads(raw)
                     self.image_metadata_loaded = True
-                    logger.info(
-                        f"Loaded {len(self.image_metadata)} metadata entries from {full_metadata_path}"
-                    )
+                    logger.info(f"Loaded {len(self.image_metadata)} metadata entries from {full_metadata_path}")
                 else:
-                    logger.warning(
-                        f"Metadata file exists but is empty: {full_metadata_path}"
-                    )
+                    logger.warning(f"Metadata file exists but is empty: {full_metadata_path}")
             except Exception as e:
                 logger.error(f"Error loading metadata: {e}")
         else:
@@ -370,9 +356,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         """Get caption for a virtual path."""
         return self.caption_cache.get(str(index), None)
 
-    def _discover_new_files(
-        self, for_metadata: bool = False, ignore_existing_cache: bool = False
-    ):
+    def _discover_new_files(self, for_metadata: bool = False, ignore_existing_cache: bool = False):
         """
         Discover new files that have not been processed yet.
         For HuggingFace datasets, this returns virtual paths.
@@ -463,15 +447,11 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             print(f"{video_md=}")
             if "fps" in video_md:
                 if len(video_md["fps"]) > 1:
-                    logger.warning(
-                        f"Ignoring variable FPS in video metadata: {video_md['fps']}"
-                    )
+                    logger.warning(f"Ignoring variable FPS in video metadata: {video_md['fps']}")
                 metadata["fps"] = video_md["fps"][0]
             if "duration" in video_md and "fps" in metadata:
                 if len(video_md["duration"]) > 1:
-                    logger.warning(
-                        f"Ignoring variable FPS in video metadata: {video_md['duration']}"
-                    )
+                    logger.warning(f"Ignoring variable FPS in video metadata: {video_md['duration']}")
 
                 metadata["num_frames"] = video_md["duration"][0] * metadata["fps"]
             frame_size = next(video)["data"].shape
@@ -580,22 +560,14 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                 sample_metadata = self._get_image_metadata_from_item(item)
 
                 if "original_size" not in sample_metadata:
-                    logger.warning(
-                        f"Could not determine image size for {image_path_str}"
-                    )
-                    statistics.setdefault("skipped", {}).setdefault(
-                        "metadata_missing", 0
-                    )
+                    logger.warning(f"Could not determine image size for {image_path_str}")
+                    statistics.setdefault("skipped", {}).setdefault("metadata_missing", 0)
                     statistics["skipped"]["metadata_missing"] += 1
                     return aspect_ratio_bucket_indices
                 # Check resolution requirements
-                if not self.meets_resolution_requirements(
-                    image_metadata=sample_metadata
-                ):
+                if not self.meets_resolution_requirements(image_metadata=sample_metadata):
                     if self.delete_unwanted_images:
-                        logger.debug(
-                            f"{image_path_str} does not meet resolution requirements."
-                        )
+                        logger.debug(f"{image_path_str} does not meet resolution requirements.")
                     statistics.setdefault("skipped", {}).setdefault("too_small", 0)
                     statistics["skipped"]["too_small"] += 1
                     return aspect_ratio_bucket_indices
@@ -609,12 +581,8 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             elif self.dataset_type == "video":
                 # Check video frame constraints if this is a video dataset
                 if self.video_column not in item:
-                    logger.warning(
-                        f"Video column '{self.video_column}' not found in item {image_path_str}"
-                    )
-                    statistics.setdefault("skipped", {}).setdefault(
-                        "metadata_missing", 0
-                    )
+                    logger.warning(f"Video column '{self.video_column}' not found in item {image_path_str}")
+                    statistics.setdefault("skipped", {}).setdefault("metadata_missing", 0)
                     statistics["skipped"]["metadata_missing"] += 1
                     return aspect_ratio_bucket_indices
                 sample_metadata = self._get_video_metadata_from_item(item)
@@ -625,9 +593,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                         logger.debug(
                             f"Video {image_path_str} has {num_frames} frames, below minimum {self.minimum_num_frames}"
                         )
-                        statistics.setdefault("skipped", {}).setdefault(
-                            "too_few_frames", 0
-                        )
+                        statistics.setdefault("skipped", {}).setdefault("too_few_frames", 0)
                         statistics["skipped"]["too_few_frames"] += 1
                         return aspect_ratio_bucket_indices
 
@@ -635,9 +601,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                         logger.debug(
                             f"Video {image_path_str} has {num_frames} frames, above maximum {self.maximum_num_frames}"
                         )
-                        statistics.setdefault("skipped", {}).setdefault(
-                            "too_many_frames", 0
-                        )
+                        statistics.setdefault("skipped", {}).setdefault("too_many_frames", 0)
                         statistics["skipped"]["too_many_frames"] += 1
                         return aspect_ratio_bucket_indices
                 # Create training sample

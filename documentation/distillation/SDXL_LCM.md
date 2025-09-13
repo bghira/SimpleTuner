@@ -26,7 +26,7 @@ pip install -e .
 
 For container environments (Vast, RunPod, etc.):
 ```bash
-apt -y install nvidia-cuda-toolkit libgl1-mesa-glx
+apt -y install nvidia-cuda-toolkit
 ```
 
 ---

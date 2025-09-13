@@ -1,19 +1,19 @@
 import hashlib
 import logging
-import torch
-from pathlib import Path
-from io import BytesIO
 import os
-from typing import Any, Union, Optional, BinaryIO
-from PIL import Image
+from io import BytesIO
+from pathlib import Path
+from typing import Any, BinaryIO, Optional, Union
+
 import numpy as np
+import torch
+from PIL import Image
+from torchvision.io.video_reader import VideoReader
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.image_manipulation.load import load_image, load_video
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
-
-from torchvision.io.video_reader import VideoReader
 
 logger = logging.getLogger("HuggingfaceDatasetsBackend")
 
@@ -111,9 +111,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
 
             # Check if this looks like a subset
             if len(self.dataset) == 8200:
-                logger.warning(
-                    "Dataset has exactly 8200 items - this might be a single shard!"
-                )
+                logger.warning("Dataset has exactly 8200 items - this might be a single shard!")
 
         # Apply filter if provided
         if self.filter_func and not self.streaming:
@@ -123,9 +121,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                 self.filter_func,
                 num_proc=self.num_proc,
             )
-            logger.info(
-                f"Dataset filtered from {original_size} to {len(self.dataset)} items"
-            )
+            logger.info(f"Dataset filtered from {original_size} to {len(self.dataset)} items")
 
         # Build virtual path mapping
         self._build_path_mapping()
@@ -146,9 +142,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                 if simple_path != virtual_path:
                     self._path_to_index[simple_path] = idx
         else:
-            logger.warning(
-                "Streaming mode enabled - path mapping will be built on demand"
-            )
+            logger.warning("Streaming mode enabled - path mapping will be built on demand")
 
     def _get_index_from_path(self, filepath: str) -> Optional[int]:
         """Extract index from virtual file path."""
@@ -194,9 +188,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
     ) -> "HuggingfaceDatasetsBackend":
         """Create a new HuggingfaceDatasetsBackend instance from a serialized representation."""
         if representation.get("backend_type") != "huggingface":
-            raise ValueError(
-                f"Expected backend_type 'huggingface', got {representation.get('backend_type')}"
-            )
+            raise ValueError(f"Expected backend_type 'huggingface', got {representation.get('backend_type')}")
 
         # Note: filter_func cannot be serialized/deserialized automatically
         # If needed, you'd have to implement a registry of filter functions
@@ -247,12 +239,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
 
                 # Determine cache directory based on file type (matching write logic)
                 if location.endswith(".json"):
-                    cache_path = (
-                        Path(self.cache_dir)
-                        / "huggingface_metadata"
-                        / self.id
-                        / filename
-                    )
+                    cache_path = Path(self.cache_dir) / "huggingface_metadata" / self.id / filename
                 elif any(location.endswith(ext) for ext in [".pt", ".safetensors"]):
                     cache_path = Path(self.cache_dir) / "vae" / self.id / filename
                 else:
@@ -280,9 +267,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         try:
             # Get the item from dataset
             item = self.dataset[index]
-            sample = item.get(
-                self.video_column if self.dataset_type == "video" else self.image_column
-            )
+            sample = item.get(self.video_column if self.dataset_type == "video" else self.image_column)
 
             if sample is None:
                 logger.error(
@@ -327,14 +312,14 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                 data = sample
             elif isinstance(sample, VideoReader):
                 # VideoReader - encode all frames into a video file in memory
-                import cv2
+                import trainingsample as tsr
 
                 frames = []
                 for frame in sample:
                     # frame['data'] is a torch tensor (T, H, W, C)
                     frame_np = frame["data"].numpy()
-                    # Convert from RGB to BGR for OpenCV
-                    frame_np = cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR)
+                    # Convert from RGB to BGR for video encoding
+                    frame_np = tsr.cvt_color_py(frame_np, 5)  # 5 = COLOR_RGB2BGR
                     frames.append(frame_np)
 
                 if not frames:
@@ -342,13 +327,13 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                     return None
 
                 height, width, channels = frames[0].shape
-                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                fourcc = tsr.fourcc_py("m", "p", "4", "v")
                 temp_video = BytesIO()
                 # OpenCV cannot write directly to BytesIO, so use a temp file
                 import tempfile
 
                 with tempfile.NamedTemporaryFile(suffix=".mp4", delete=True) as tmpfile:
-                    out = cv2.VideoWriter(
+                    out = tsr.PyVideoWriter(
                         tmpfile.name,
                         fourcc,
                         sample.get_metadata()["video"]["fps"][0],
@@ -394,15 +379,11 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             else:
                 # Otherwise, create a cache directory structure
                 if not hasattr(self, "cache_dir") or not self.cache_dir:
-                    raise ValueError(
-                        f"Cannot write cache file {filepath} - no cache_dir configured for HuggingFace backend"
-                    )
+                    raise ValueError(f"Cannot write cache file {filepath} - no cache_dir configured for HuggingFace backend")
 
                 # Determine subdirectory based on file type
                 if filepath.endswith(".json"):
-                    cache_subdir = (
-                        Path(self.cache_dir) / "huggingface_metadata" / self.id
-                    )
+                    cache_subdir = Path(self.cache_dir) / "huggingface_metadata" / self.id
                 elif any(filepath.endswith(ext) for ext in [".pt", ".safetensors"]):
                     # VAE cache files
                     cache_subdir = Path(self.cache_dir) / "vae" / self.id
@@ -440,12 +421,8 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
 
             logger.debug(f"Wrote cache file to {cache_path}")
         else:
-            logger.warning(
-                f"Write operations are only supported for cache files, not {filepath}"
-            )
-            raise NotImplementedError(
-                "Hugging Face datasets are read-only except for cache files"
-            )
+            logger.warning(f"Write operations are only supported for cache files, not {filepath}")
+            raise NotImplementedError("Hugging Face datasets are read-only except for cache files")
 
     def exists(self, filepath):
         """Check if the file exists (cache file or valid dataset index)."""
@@ -466,12 +443,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
 
                 # Determine cache directory based on file type (matching write logic)
                 if filepath.endswith(".json"):
-                    cache_path = (
-                        Path(self.cache_dir)
-                        / "huggingface_metadata"
-                        / self.id
-                        / filename
-                    )
+                    cache_path = Path(self.cache_dir) / "huggingface_metadata" / self.id / filename
                 elif any(filepath.endswith(ext) for ext in [".pt", ".safetensors"]):
                     cache_path = Path(self.cache_dir) / "vae" / self.id / filename
                 else:
@@ -505,9 +477,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             raise NotImplementedError("Write operations are not supported")
         return BytesIO(self.read(filepath))
 
-    def list_files(
-        self, file_extensions: list = None, instance_data_dir: str = None
-    ) -> list:
+    def list_files(self, file_extensions: list = None, instance_data_dir: str = None) -> list:
         """
         List all virtual files in the dataset or files in a real directory if instance_data_dir is provided.
         Returns format compatible with os.walk: [(root, dirs, files), ...]
@@ -527,9 +497,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                     if file_extensions:
                         ext = os.path.splitext(f)[1].lower().strip(".")
                         if ext not in file_extensions:
-                            logger.debug(
-                                f"Skipping {ext=} cuz not in {file_extensions}"
-                            )
+                            logger.debug(f"Skipping {ext=} cuz not in {file_extensions}")
                             continue
                     filtered_files.append(os.path.join(root, f))
                 result.append((root, dirs, filtered_files))
@@ -574,14 +542,10 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         except Exception as e:
             logger.error(f"Error opening image {filepath}: {e}")
             if delete_problematic_images:
-                logger.warning(
-                    "Cannot delete from HF dataset - skipping problematic image"
-                )
+                logger.warning("Cannot delete from HF dataset - skipping problematic image")
             return None
 
-    def read_image_batch(
-        self, filepaths: list, delete_problematic_images: bool = False
-    ) -> list:
+    def read_image_batch(self, filepaths: list, delete_problematic_images: bool = False) -> list:
         """Read a batch of images from the dataset."""
         output_images = []
         available_keys = []
@@ -603,9 +567,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
     def get_dataset_item(self, index: int):
         """Get the full dataset item at the given index."""
         if not self.streaming and (index < 0 or index >= len(self.dataset)):
-            logger.warning(
-                f"Retrieving {index=} for {len(self.dataset)=}, returning None"
-            )
+            logger.warning(f"Retrieving {index=} for {len(self.dataset)=}, returning None")
             return None
         return self.dataset[index]
 

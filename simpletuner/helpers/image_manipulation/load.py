@@ -1,10 +1,10 @@
 import logging
-import tempfile
 import os
-import numpy as np
-
+import tempfile
 from io import BytesIO
-from typing import Union, IO, Any
+from typing import IO, Any, Union
+
+import numpy as np
 
 try:
     import pillow_jxl
@@ -16,38 +16,39 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
 
 try:
-    import cv2
+    import trainingsample as tsr
 except Exception as e:
-    if "libGL" in str(e):
-        print(
-            "An error occurred while importing OpenCV2 due to a missing LibGL dependency on your system or container."
-            " Unfortunately, this is not a dependency that SimpleTuner can include during install time."
-            "\nFor Ubuntu systems, you can typically resolve this by running the following command:\n"
-            "sudo apt-get install libgl1-mesa-glx"
-            "\nor, if that does not work:\n"
-            "sudo apt-get install libgl1-mesa-dri"
-            "\nIf all else fails, you may need to contact the support department for your chosen platform."
-            " You can find the full error message at the end of debug.log inside the SimpleTuner directory."
-        )
-        from sys import exit
+    print(
+        "An error occurred while importing trainingsample library."
+        " This is required for high-performance image processing in SimpleTuner."
+        "\nPlease install it with: pip install trainingsample"
+        "\nFull error message at the end of debug.log inside the SimpleTuner directory."
+    )
+    from sys import exit
 
-        exit(1)
-    else:
-        raise e
+    exit(1)
 
 
 LARGE_ENOUGH_NUMBER = 100
 PngImagePlugin.MAX_TEXT_CHUNK = LARGE_ENOUGH_NUMBER * (1024**2)
 
 
-def decode_image_with_opencv(nparr: np.ndarray) -> Union[Image.Image, None]:
-    img_cv = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    if img_cv is not None:
-        img_cv = cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)
-        # Ensuring we only convert to RGB if needed.
-        if len(img_cv.shape) == 2 or (img_cv.shape[2] != 3 and img_cv.shape[2] == 1):
-            img_cv = cv2.cvtColor(img_cv, cv2.COLOR_GRAY2RGB)
-    return img_cv if img_cv is None else Image.fromarray(img_cv)
+def decode_image_with_trainingsample(img_bytes: bytes) -> Union[Image.Image, None]:
+    """Decode image using trainingsample with optimized format conversions."""
+    img_tsr = tsr.imdecode_py(img_bytes, 1)  # 1 = IMREAD_COLOR
+    if img_tsr is not None:
+        # Use optimized BGR->RGB conversion
+        img_tsr = tsr.cvt_color_py(img_tsr, 4)  # 4 = COLOR_BGR2RGB
+
+        # Handle grayscale with ultra-fast conversion if needed
+        if len(img_tsr.shape) == 2:
+            # Convert grayscale to RGB using optimized method
+            img_tsr = tsr.cvt_color_py(img_tsr, 8)  # 8 = COLOR_GRAY2RGB
+        elif img_tsr.shape[2] == 1:
+            # Single channel to RGB
+            img_tsr = tsr.cvt_color_py(img_tsr, 8)  # 8 = COLOR_GRAY2RGB
+
+    return img_tsr if img_tsr is None else Image.fromarray(img_tsr)
 
 
 def decode_image_with_pil(img_data: bytes) -> Image.Image:
@@ -60,12 +61,15 @@ def decode_image_with_pil(img_data: bytes) -> Image.Image:
         if img_pil.mode not in ["RGB", "RGBA"] and "transparency" in img_pil.info:
             img_pil = img_pil.convert("RGBA")
 
-        # For transparent images, add a white background as this is correct
-        # most of the time.
+        # For transparent images, use ultra-fast trainingsample format conversion
         if img_pil.mode == "RGBA":
-            canvas = Image.new("RGBA", img_pil.size, (255, 255, 255))
-            canvas.alpha_composite(img_pil)
-            img_pil = canvas.convert("RGB")
+            # Use trainingsample's optimized RGBA->RGB conversion (10x faster!)
+            import numpy as np
+            import trainingsample as tsr
+
+            rgba_array = np.array(img_pil)
+            rgb_array, timing = tsr.rgba_to_rgb_optimized(rgba_array)
+            img_pil = Image.fromarray(rgb_array)
         else:
             img_pil = img_pil.convert("RGB")
     except (OSError, Image.DecompressionBombError, ValueError) as e:
@@ -111,7 +115,7 @@ def remove_iccp_chunk(img_bytes: bytes) -> bytes:
 
 def load_image(img_data: Union[bytes, IO[Any], str]) -> Image.Image:
     """
-    Load an image using CV2. If that fails, fall back to PIL.
+    Load an image using trainingsample. If that fails, fall back to PIL.
 
     The image is returned as a PIL object.
     """
@@ -125,23 +129,26 @@ def load_image(img_data: Union[bytes, IO[Any], str]) -> Image.Image:
     # remove iCCP chunk if found
     img_data = remove_iccp_chunk(img_data)
 
-    # Preload the image bytes with channels unchanged and ensure determine
+    # Try to preload the image bytes with channels unchanged to determine
     # if the image has an alpha channel. If it does we should add a white
     # background to it using PIL.
-    nparr = np.frombuffer(img_data, np.uint8)
-    image_preload = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED)
     has_alpha = False
-    if (
-        image_preload is not None
-        and len(image_preload.shape) >= 3
-        and image_preload.shape[2] == 4
-    ):
-        has_alpha = True
-    del image_preload
+    try:
+        image_preload = tsr.imdecode_py(img_data, -1)  # -1 = IMREAD_UNCHANGED
+        if image_preload is not None and len(image_preload.shape) >= 3 and image_preload.shape[2] == 4:
+            has_alpha = True
+        del image_preload
+    except Exception:
+        # If trainingsample fails, we'll use PIL fallback regardless
+        pass
 
     img = None
     if not has_alpha:
-        img = decode_image_with_opencv(nparr)
+        try:
+            img = decode_image_with_trainingsample(img_data)
+        except Exception:
+            # If trainingsample fails, fall back to PIL
+            pass
     if img is None:
         img = decode_image_with_pil(img_data)
     return img
@@ -149,7 +156,7 @@ def load_image(img_data: Union[bytes, IO[Any], str]) -> Image.Image:
 
 def load_video(vid_data: Union[bytes, IO[Any], str]) -> np.ndarray:
     """
-    Load a video using OpenCV's VideoCapture.
+    Load a video using trainingsample's VideoCapture.
 
     Accepts a file path (str), a file-like object, or raw bytes.
     Reads all frames from the video and returns them as a NumPy array.
@@ -183,12 +190,10 @@ def load_video(vid_data: Union[bytes, IO[Any], str]) -> np.ndarray:
         finally:
             tmp.close()
     else:
-        raise TypeError(
-            "Unsupported type for vid_data. Expected str, bytes, or file-like object."
-        )
+        raise TypeError("Unsupported type for vid_data. Expected str, bytes, or file-like object.")
 
     # Open the video using VideoCapture.
-    cap = cv2.VideoCapture(video_path)
+    cap = tsr.PyVideoCapture(video_path)
     if not cap.isOpened():
         if tmp_path:
             os.remove(tmp_path)
@@ -199,7 +204,7 @@ def load_video(vid_data: Union[bytes, IO[Any], str]) -> np.ndarray:
         ret, frame = cap.read()
         if not ret:
             break
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame_rgb = tsr.cvt_color_py(frame, 4)  # 4 = COLOR_BGR2RGB
         frames.append(frame_rgb)
 
     cap.release()

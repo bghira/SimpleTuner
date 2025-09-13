@@ -2,22 +2,24 @@ try:
     import pillow_jxl
 except ModuleNotFoundError:
     pass
-from PIL import Image
-from PIL.ImageOps import exif_transpose
-from simpletuner.helpers.multiaspect.image import MultiaspectImage, resize_helpers
-from simpletuner.helpers.multiaspect.video import resize_video_frames
-from simpletuner.helpers.image_manipulation.cropping import crop_handlers
-from simpletuner.helpers.training.state_tracker import StateTracker
-from simpletuner.helpers.training.multi_process import should_log
-from diffusers.utils.export_utils import export_to_gif
 import logging
-import os, cv2
-from tqdm import tqdm
-from math import sqrt
+import os
 import random
 import time
+from math import sqrt
+
 import numpy as np
+from diffusers.utils.export_utils import export_to_gif
+from PIL import Image
+from PIL.ImageOps import exif_transpose
+from tqdm import tqdm
+
 from simpletuner.helpers.image_manipulation.batched_training_samples import BatchedTrainingSamples
+from simpletuner.helpers.image_manipulation.cropping import crop_handlers
+from simpletuner.helpers.multiaspect.image import MultiaspectImage, resize_helpers
+from simpletuner.helpers.multiaspect.video import resize_video_frames
+from simpletuner.helpers.training.multi_process import should_log
+from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
 if should_log():
@@ -60,9 +62,7 @@ class TrainingSample:
         self.conditioning_type = conditioning_type
         self.data_backend_id = data_backend_id
         self.image_metadata = (
-            image_metadata
-            if image_metadata
-            else StateTracker.get_metadata_by_filepath(image_path, data_backend_id)
+            image_metadata if image_metadata else StateTracker.get_metadata_by_filepath(image_path, data_backend_id)
         )
         if isinstance(image, np.ndarray):
             if len(image.shape) == 4:
@@ -72,26 +72,16 @@ class TrainingSample:
                     image.shape[1],
                 )  # mapping image.shape (F, H, W, C) to (W, H)
             elif len(image.shape) == 5:
-                raise ValueError(
-                    f"Received invalid shape: {image.shape}, expected 4D item instead"
-                )
+                raise ValueError(f"Received invalid shape: {image.shape}, expected 4D item instead")
 
-            logger.debug(
-                f"Checking on {type(image)}: {self.original_size[0]}x{self.original_size[1]}"
-            )
-            self.original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-                self.original_size
-            )
+            logger.debug(f"Checking on {type(image)}: {self.original_size[0]}x{self.original_size[1]}")
+            self.original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(self.original_size)
         elif hasattr(image, "size"):
             self.original_size = self.image.size
-            self.original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-                self.original_size
-            )
+            self.original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(self.original_size)
         elif image_metadata is not None:
             self.original_size = image_metadata.get("original_size")
-            self.original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-                self.original_size
-            )
+            self.original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(self.original_size)
         self.current_size = self.original_size
 
         if not self.original_size:
@@ -102,9 +92,7 @@ class TrainingSample:
         self.crop_enabled = self.data_backend_config.get("crop", False)
         self.crop_style = self.data_backend_config.get("crop_style", "random")
         self.crop_aspect = self.data_backend_config.get("crop_aspect", "square")
-        self.crop_aspect_buckets = self.data_backend_config.get(
-            "crop_aspect_buckets", []
-        )
+        self.crop_aspect_buckets = self.data_backend_config.get("crop_aspect_buckets", [])
         self.crop_coordinates = (0, 0)
         crop_handler_cls = crop_handlers.get(self.crop_style)
         if not crop_handler_cls:
@@ -119,12 +107,8 @@ class TrainingSample:
         ]:
             raise ValueError(f"Unknown resolution type: {self.resolution_type}")
         self._set_resolution()
-        self.target_downsample_size = self.data_backend_config.get(
-            "target_downsample_size", None
-        )
-        self.maximum_image_size = self.data_backend_config.get(
-            "maximum_image_size", None
-        )
+        self.target_downsample_size = self.data_backend_config.get("target_downsample_size", None)
+        self.maximum_image_size = self.data_backend_config.get("maximum_image_size", None)
         self._image_path = image_path
         # RGB/EXIF conversions.
         self.correct_image()
@@ -141,8 +125,9 @@ class TrainingSample:
                         path = path.replace(".png", ".mp4")
                     logger.debug(f"Not saving debug video output: {path}")
                     # write to path
-                    import imageio
                     from io import BytesIO
+
+                    import imageio
 
                     video_byte_array = BytesIO()
                     imageio.v3.imwrite(
@@ -182,19 +167,13 @@ class TrainingSample:
         training_backend = StateTracker.get_data_backend(training_dataset_id)
         cond_backend = StateTracker.get_data_backend(self.data_backend_id)
         if training_backend is None:
-            raise ValueError(
-                f"No training dataset registered for backend “{training_dataset_id}”."
-            )
+            raise ValueError(f"No training dataset registered for backend “{training_dataset_id}”.")
         training_data_dir = training_backend["config"]["instance_data_dir"]
         cond_data_dir = cond_backend["config"]["instance_data_dir"]
         cond_relpath = self._image_path.replace(cond_data_dir, training_data_dir, 1)
         if not cond_relpath:
-            raise ValueError(
-                "Cannot determine training sample path: no image path provided."
-            )
-        training_sample_path = training_backend["data_backend"].get_abs_path(
-            cond_relpath
-        )
+            raise ValueError("Cannot determine training sample path: no image path provided.")
+        training_sample_path = training_backend["data_backend"].get_abs_path(cond_relpath)
 
         return training_sample_path
 
@@ -216,9 +195,7 @@ class TrainingSample:
         if type(self.image_metadata) is not dict:
             self.valid_metadata = False
         else:
-            self.valid_metadata = all(
-                key in self.image_metadata for key in required_keys
-            )
+            self.valid_metadata = all(key in self.image_metadata for key in required_keys)
         if self.valid_metadata:
             self.original_size = self.image_metadata["original_size"]
             self.target_size = self.image_metadata["target_size"]
@@ -226,15 +203,9 @@ class TrainingSample:
             self.crop_coordinates = self.image_metadata["crop_coordinates"]
             self.aspect_ratio = self.image_metadata["aspect_ratio"]
 
-        self.original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-            self.original_size
-        )
+        self.original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(self.original_size)
 
-        if (
-            not self.valid_metadata
-            and hasattr(self.image, "size")
-            and isinstance(self.image, Image.Image)
-        ):
+        if not self.valid_metadata and hasattr(self.image, "size") and isinstance(self.image, Image.Image):
             self.original_size = self.image.size
 
         return self.valid_metadata
@@ -272,9 +243,7 @@ class TrainingSample:
             self.target_area = target_area
 
             # Store the pixel value, eg. 1024
-            self.pixel_resolution = int(
-                MultiaspectImage._round_to_nearest_multiple(sqrt(self.target_area))
-            )
+            self.pixel_resolution = int(MultiaspectImage._round_to_nearest_multiple(sqrt(self.target_area)))
             # Store the megapixel value, eg. 1.0
             self.megapixel_resolution = self.resolution
         else:
@@ -297,18 +266,11 @@ class TrainingSample:
             elif type(bucket) is float or type(bucket) is int:
                 aspect = bucket
             else:
-                raise ValueError(
-                    "Aspect buckets must be a list of floats or dictionaries."
-                )
+                raise ValueError("Aspect buckets must be a list of floats or dictionaries.")
             # Calculate new size
-            target_size, _, _ = self.target_size_calculator(
-                aspect, self.resolution, self.original_size
-            )
+            target_size, _, _ = self.target_size_calculator(aspect, self.resolution, self.original_size)
             # Check the size vs a 20% threshold
-            if (
-                target_size[0] * 1.2 < self.original_size[0]
-                and target_size[1] * 1.2 < self.original_size[1]
-            ):
+            if target_size[0] * 1.2 < self.original_size[0] and target_size[1] * 1.2 < self.original_size[1]:
                 available_buckets.append(aspect)
         return available_buckets
 
@@ -322,9 +284,7 @@ class TrainingSample:
             float: The selected aspect ratio.
         """
         if not self.crop_aspect_buckets:
-            raise ValueError(
-                "Aspect buckets are not defined in the data backend config."
-            )
+            raise ValueError("Aspect buckets are not defined in the data backend config.")
 
         if self.valid_metadata:
             self.aspect_ratio = self.image_metadata["aspect_ratio"]
@@ -334,34 +294,18 @@ class TrainingSample:
         if self.crop_aspect == "closest":
             closest_aspect = min(
                 self.crop_aspect_buckets,
-                key=lambda bucket: abs(
-                    (bucket["aspect"] if isinstance(bucket, dict) else bucket)
-                    - self.aspect_ratio
-                ),
+                key=lambda bucket: abs((bucket["aspect"] if isinstance(bucket, dict) else bucket) - self.aspect_ratio),
             )
-            closest_aspect_value = (
-                closest_aspect["aspect"]
-                if isinstance(closest_aspect, dict)
-                else closest_aspect
-            )
+            closest_aspect_value = closest_aspect["aspect"] if isinstance(closest_aspect, dict) else closest_aspect
             # logger.debug(f"Selected closest aspect: {closest_aspect_value} for aspect ratio: {self.aspect_ratio}")
             return closest_aspect_value
 
         # Handle 'random' crop_aspect mode by picking a random aspect ratio based on weights
         if self.crop_aspect == "random":
-            if (
-                len(self.crop_aspect_buckets) > 0
-                and type(self.crop_aspect_buckets[0]) is dict
-            ):
-                has_portrait_buckets = any(
-                    bucket["aspect"] < 1.0 for bucket in self.crop_aspect_buckets
-                )
-                has_landscape_buckets = any(
-                    bucket["aspect"] > 1.0 for bucket in self.crop_aspect_buckets
-                )
-                logger.error(
-                    f"has_portrait_buckets: {has_portrait_buckets}, has_landscape_buckets: {has_landscape_buckets}"
-                )
+            if len(self.crop_aspect_buckets) > 0 and type(self.crop_aspect_buckets[0]) is dict:
+                has_portrait_buckets = any(bucket["aspect"] < 1.0 for bucket in self.crop_aspect_buckets)
+                has_landscape_buckets = any(bucket["aspect"] > 1.0 for bucket in self.crop_aspect_buckets)
+                logger.error(f"has_portrait_buckets: {has_portrait_buckets}, has_landscape_buckets: {has_landscape_buckets}")
 
                 # Instead of defaulting to 1.0, use whatever buckets are available
                 aspects = [bucket["aspect"] for bucket in self.crop_aspect_buckets]
@@ -375,10 +319,7 @@ class TrainingSample:
                 selected_aspect = random.choices(aspects, weights)[0]
                 return selected_aspect
 
-            elif (
-                len(self.crop_aspect_buckets) > 0
-                and type(self.crop_aspect_buckets[0]) is float
-            ):
+            elif len(self.crop_aspect_buckets) > 0 and type(self.crop_aspect_buckets[0]) is float:
                 available_aspects = self._trim_aspect_bucket_list()
                 if len(available_aspects) == 0:
                     selected_aspect = 1.0
@@ -485,9 +426,7 @@ class TrainingSample:
                     # frames, height, width, channels (195, 360, 640, 3) as an example
                     return self.image.shape[2] * self.image.shape[1]
                 else:
-                    raise NotImplementedError(
-                        f"NumPy array shape not supported: {self.image.shape}"
-                    )
+                    raise NotImplementedError(f"NumPy array shape not supported: {self.image.shape}")
             elif hasattr(self.image, "size") and isinstance(self.image.size, tuple):
                 return self.image.size[0] * self.image.size[1]
         if self.original_size:
@@ -500,19 +439,11 @@ class TrainingSample:
         Returns:
             bool: True if the image should be resized before cropping, False otherwise.
         """
-        if (
-            not self.crop_enabled
-            or not self.maximum_image_size
-            or not self.target_downsample_size
-        ):
+        if not self.crop_enabled or not self.maximum_image_size or not self.target_downsample_size:
             return False
         if self.data_backend_config.get("resolution_type") == "pixel":
-            return (
-                self.current_size[0] > self.pixel_resolution
-                or self.current_size[1] > self.pixel_resolution
-            ) or (
-                self.current_size[0] < self.pixel_resolution
-                or self.current_size[1] < self.pixel_resolution
+            return (self.current_size[0] > self.pixel_resolution or self.current_size[1] > self.pixel_resolution) or (
+                self.current_size[0] < self.pixel_resolution or self.current_size[1] < self.pixel_resolution
             )
         elif self.data_backend_config.get("resolution_type") == "area":
             should_resize = (
@@ -524,9 +455,7 @@ class TrainingSample:
             logger.debug(f"Should resize? {should_resize}")
             return should_resize
         else:
-            raise ValueError(
-                f"Unknown resolution type: {self.data_backend_config.get('resolution_type')}"
-            )
+            raise ValueError(f"Unknown resolution type: {self.data_backend_config.get('resolution_type')}")
 
     def _limit_maximum_size(self, size_to_check: tuple) -> tuple:
         """
@@ -560,9 +489,7 @@ class TrainingSample:
         new_canvas_size = new_width * new_height
         if new_canvas_size > max_size:
             # Subtract from the larger dimension first, then the smaller if needed
-            new_canvas_details = MultiaspectImage.limit_canvas_size(
-                width=new_width, height=new_height, max_size=max_size
-            )
+            new_canvas_details = MultiaspectImage.limit_canvas_size(width=new_width, height=new_height, max_size=max_size)
             new_width, new_height, new_canvas_size = (
                 new_canvas_details["width"],
                 new_canvas_details["height"],
@@ -616,9 +543,7 @@ class TrainingSample:
         """
         if self._should_resize_before_crop():
             target_downsample_size = self._calculate_target_downsample_size()
-            logger.debug(
-                f"Calculated target_downsample_size, resizing to {target_downsample_size}"
-            )
+            logger.debug(f"Calculated target_downsample_size, resizing to {target_downsample_size}")
             self.resize(target_downsample_size)
         return self
 
@@ -630,10 +555,7 @@ class TrainingSample:
         Returns:
             TrainingSample: The current TrainingSample instance.
         """
-        if (
-            self.aspect_ratio == 1.0
-            and self.intermediary_size[0] < self.pixel_resolution
-        ):
+        if self.aspect_ratio == 1.0 and self.intermediary_size[0] < self.pixel_resolution:
             self.intermediary_size = (
                 self.pixel_resolution,
                 self.pixel_resolution,
@@ -651,9 +573,7 @@ class TrainingSample:
                 - The intermediary size as (width, height).
                 - The aspect ratio of the target size. This will likely be different from the original aspect ratio.
         """
-        self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-            self.original_size
-        )
+        self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(self.original_size)
         is_square_crop = False  # Track if we want square output
 
         if self.crop_enabled:
@@ -681,29 +601,21 @@ class TrainingSample:
                 logger.debug(f"Square crop metadata: {square_crop_metadata}")
                 return square_crop_metadata
 
-        if self.crop_enabled and (
-            self.crop_aspect == "random" or self.crop_aspect == "closest"
-        ):
+        if self.crop_enabled and (self.crop_aspect == "random" or self.crop_aspect == "closest"):
             # Grab a random aspect ratio from a list.
             self.aspect_ratio = self._select_random_aspect()
 
-        self.target_size, calculated_intermediary_size, self.aspect_ratio = (
-            self.target_size_calculator(
-                self.aspect_ratio, self.resolution, self.original_size
-            )
+        self.target_size, calculated_intermediary_size, self.aspect_ratio = self.target_size_calculator(
+            self.aspect_ratio, self.resolution, self.original_size
         )
         self.target_size = self._limit_maximum_size(self.target_size)
 
-        if (
-            self.crop_enabled and self.crop_aspect != "random"
-        ) or not self.valid_metadata:
+        if (self.crop_enabled and self.crop_aspect != "random") or not self.valid_metadata:
             self.intermediary_size = calculated_intermediary_size
 
         # Only recalculate aspect ratio if it's not a square crop
         if not is_square_crop:
-            self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-                self.target_size
-            )
+            self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(self.target_size)
         else:
             self.aspect_ratio = 1.0
 
@@ -746,19 +658,13 @@ class TrainingSample:
         self.save_debug_image(f"images/{time.time()}-0.5-downsampled.png")
 
         # Try to use trainingsample for efficient cropping when possible
-        if (
-            self.image is not None
-            and isinstance(self.image, Image.Image)
-            and self.crop_style in ["center", "random"]
-        ):
+        if self.image is not None and isinstance(self.image, Image.Image) and self.crop_style in ["center", "random"]:
             try:
                 img_array = np.array(self.image)
                 if len(img_array.shape) == 3 and img_array.shape[2] == 3:
                     if self.crop_style == "center":
                         # Use BatchedTrainingSamples center crop
-                        cropped_arrays = self.batch_processor.batch_center_crop_images(
-                            [img_array], [self.target_size]
-                        )
+                        cropped_arrays = self.batch_processor.batch_center_crop_images([img_array], [self.target_size])
                         if cropped_arrays and len(cropped_arrays) > 0:
                             self.image = Image.fromarray(cropped_arrays[0])
                             # Calculate crop coordinates for center crop
@@ -767,15 +673,11 @@ class TrainingSample:
                             crop_y = (original_size[0] - self.target_size[1]) // 2
                             self.crop_coordinates = (crop_x, crop_y)
                             self.current_size = self.target_size
-                            logger.debug(
-                                f"Used trainingsample center crop: {self.target_size}"
-                            )
+                            logger.debug(f"Used trainingsample center crop: {self.target_size}")
                             return self
                     elif self.crop_style == "random":
                         # Use BatchedTrainingSamples random crop
-                        cropped_arrays = self.batch_processor.batch_random_crop_images(
-                            [img_array], [self.target_size]
-                        )
+                        cropped_arrays = self.batch_processor.batch_random_crop_images([img_array], [self.target_size])
                         if cropped_arrays and len(cropped_arrays) > 0:
                             self.image = Image.fromarray(cropped_arrays[0])
                             # Note: We can't get exact coordinates from random crop, so estimate
@@ -785,26 +687,18 @@ class TrainingSample:
                             # Use a placeholder since we don't know the exact random coordinates
                             self.crop_coordinates = (max_x // 2, max_y // 2)
                             self.current_size = self.target_size
-                            logger.debug(
-                                f"Used trainingsample random crop: {self.target_size}"
-                            )
+                            logger.debug(f"Used trainingsample random crop: {self.target_size}")
                             return self
             except Exception as e:
-                logger.debug(
-                    f"Trainingsample crop failed, falling back to crop handler: {e}"
-                )
+                logger.debug(f"Trainingsample crop failed, falling back to crop handler: {e}")
 
         # Fallback to original crop handler
         if self.image is not None:
-            logger.debug(
-                f"setting image: {self.image.size if not isinstance(self.image, np.ndarray) else self.image.shape}"
-            )
+            logger.debug(f"setting image: {self.image.size if not isinstance(self.image, np.ndarray) else self.image.shape}")
             self.cropper.set_image(self.image)
         logger.debug(f"Cropper size updating to {self.current_size}")
         self.cropper.set_intermediary_size(self.current_size[0], self.current_size[1])
-        self.image, self.crop_coordinates = self.cropper.crop(
-            self.target_size[0], self.target_size[1]
-        )
+        self.image, self.crop_coordinates = self.cropper.crop(self.target_size[0], self.target_size[1])
         self.current_size = self.target_size
         logger.debug(
             f"Cropped to {self.image.size if self.image is not None else self.current_size} via crop coordinates {self.crop_coordinates} {'resulting in current_size of' if self.image is not None else ''} {self.current_size if self.image is not None else ''}"
@@ -823,9 +717,7 @@ class TrainingSample:
         _ = self.image.size if self.image is not None else self.original_size
         if size is None:
             if not self.valid_metadata:
-                self.target_size, self.intermediary_size, self.target_aspect_ratio = (
-                    self.calculate_target_size()
-                )
+                self.target_size, self.intermediary_size, self.target_aspect_ratio = self.calculate_target_size()
             size = self.target_size
             if self.target_size != self.intermediary_size:
                 logger.debug(
@@ -839,40 +731,26 @@ class TrainingSample:
                         try:
                             img_array = np.array(self.image)
                             if len(img_array.shape) == 3 and img_array.shape[2] == 3:
-                                resized_arrays = (
-                                    self.batch_processor.batch_resize_images(
-                                        [img_array], [self.intermediary_size]
-                                    )
+                                resized_arrays = self.batch_processor.batch_resize_images(
+                                    [img_array], [self.intermediary_size]
                                 )
                                 if resized_arrays and len(resized_arrays) > 0:
                                     self.image = Image.fromarray(resized_arrays[0])
                                 else:
-                                    self.image = self.image.resize(
-                                        self.intermediary_size, Image.Resampling.LANCZOS
-                                    )
+                                    self.image = self.image.resize(self.intermediary_size, Image.Resampling.LANCZOS)
                             else:
-                                self.image = self.image.resize(
-                                    self.intermediary_size, Image.Resampling.LANCZOS
-                                )
+                                self.image = self.image.resize(self.intermediary_size, Image.Resampling.LANCZOS)
                         except Exception as e:
-                            logger.debug(
-                                f"Trainingsample resize failed, falling back to PIL: {e}"
-                            )
-                            self.image = self.image.resize(
-                                self.intermediary_size, Image.Resampling.LANCZOS
-                            )
+                            logger.debug(f"Trainingsample resize failed, falling back to PIL: {e}")
+                            self.image = self.image.resize(self.intermediary_size, Image.Resampling.LANCZOS)
                         self.current_size = self.image.size
                     elif isinstance(self.image, np.ndarray):
                         # we have a video to resize - use trainingsample
-                        logger.debug(
-                            f"Resizing {self.image.shape} to {self.intermediary_size}, "
-                        )
+                        logger.debug(f"Resizing {self.image.shape} to {self.intermediary_size}, ")
                         try:
                             if len(self.image.shape) == 4:  # (T, H, W, C)
-                                resized_videos = (
-                                    self.batch_processor.batch_resize_videos(
-                                        [self.image], [self.intermediary_size]
-                                    )
+                                resized_videos = self.batch_processor.batch_resize_videos(
+                                    [self.image], [self.intermediary_size]
                                 )
                                 if resized_videos and len(resized_videos) > 0:
                                     self.image = resized_videos[0]
@@ -893,9 +771,7 @@ class TrainingSample:
                                     ),
                                 )
                         except Exception as e:
-                            logger.debug(
-                                f"Trainingsample video resize failed, falling back: {e}"
-                            )
+                            logger.debug(f"Trainingsample video resize failed, falling back: {e}")
                             self.image = resize_video_frames(
                                 self.image,
                                 (self.intermediary_size[0], self.intermediary_size[1]),
@@ -905,17 +781,11 @@ class TrainingSample:
                             self.image.shape[1],
                         )  # shape (F, H, W, C)
                         self.current_size = (width, height)
-                        logger.debug(
-                            f"Post resize: {self.current_size} / {self.image.shape}"
-                        )
+                        logger.debug(f"Post resize: {self.current_size} / {self.image.shape}")
                 if self.image is not None and self.cropper:
                     self.cropper.set_image(self.image)
-                self.cropper.set_intermediary_size(
-                    self.intermediary_size[0], self.intermediary_size[1]
-                )
-                self.image, self.crop_coordinates = self.cropper.crop(
-                    self.target_size[0], self.target_size[1]
-                )
+                self.cropper.set_intermediary_size(self.intermediary_size[0], self.intermediary_size[1])
+                self.image, self.crop_coordinates = self.cropper.crop(self.target_size[0], self.target_size[1])
                 logger.debug(
                     f"Cropped to {self.target_size} via crop coordinates {self.crop_coordinates} (resulting in current_size of {self.current_size})"
                 )
@@ -931,51 +801,37 @@ class TrainingSample:
                     img_array = np.array(self.image)
                     if len(img_array.shape) == 3 and img_array.shape[2] == 3:
                         # Use BatchedTrainingSamples for better performance
-                        resized_arrays = self.batch_processor.batch_resize_images(
-                            [img_array], [size]
-                        )
+                        resized_arrays = self.batch_processor.batch_resize_images([img_array], [size])
                         if resized_arrays and len(resized_arrays) > 0:
                             self.image = Image.fromarray(resized_arrays[0])
                         else:
                             # Fallback to PIL resize
-                            self.image = self.image.resize(
-                                size, Image.Resampling.LANCZOS
-                            )
+                            self.image = self.image.resize(size, Image.Resampling.LANCZOS)
                     else:
                         # Fallback to PIL resize for non-standard formats
                         self.image = self.image.resize(size, Image.Resampling.LANCZOS)
                 except Exception as e:
-                    logger.debug(
-                        f"Trainingsample resize failed, falling back to PIL: {e}"
-                    )
+                    logger.debug(f"Trainingsample resize failed, falling back to PIL: {e}")
                     self.image = self.image.resize(size, Image.Resampling.LANCZOS)
 
-                self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-                    self.image.size
-                )
+                self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(self.image.size)
             elif isinstance(self.image, np.ndarray):
                 # we have a video to resize - use trainingsample for videos
                 logger.debug(f"Resizing {self.image.shape} to {size}, ")
                 try:
                     # For video arrays, use trainingsample batch resize
                     if len(self.image.shape) == 4:  # (T, H, W, C)
-                        resized_videos = self.batch_processor.batch_resize_videos(
-                            [self.image], [size]
-                        )
+                        resized_videos = self.batch_processor.batch_resize_videos([self.image], [size])
                         if resized_videos and len(resized_videos) > 0:
                             self.image = resized_videos[0]
                         else:
                             # Fallback to original method
-                            self.image = resize_video_frames(
-                                self.image, (size[0], size[1])
-                            )
+                            self.image = resize_video_frames(self.image, (size[0], size[1]))
                     else:
                         # Fallback for unexpected shapes
                         self.image = resize_video_frames(self.image, (size[0], size[1]))
                 except Exception as e:
-                    logger.debug(
-                        f"Trainingsample video resize failed, falling back: {e}"
-                    )
+                    logger.debug(f"Trainingsample video resize failed, falling back: {e}")
                     self.image = resize_video_frames(self.image, (size[0], size[1]))
 
                 width, height = self.image.shape[2], self.image.shape[1]
@@ -983,9 +839,7 @@ class TrainingSample:
                 self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(size)
                 logger.debug(f"Now {self.image.shape} @ {self.aspect_ratio}")
         self.current_size = size
-        logger.debug(
-            f"Resized to {self.current_size} (aspect ratio: {self.aspect_ratio})"
-        )
+        logger.debug(f"Resized to {self.current_size} (aspect ratio: {self.aspect_ratio})")
         return self
 
     def get_image(self):
