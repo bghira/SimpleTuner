@@ -16,6 +16,14 @@ warnings.filterwarnings("ignore", category=UserWarning, module="torch.amp.autoca
 warnings.filterwarnings("ignore", message="NOTE: Redirects are currently not supported")
 warnings.filterwarnings("ignore", message="Warning: Detected no triton")
 
+# Suppress torch autocast warnings for unsupported dtypes
+warnings.filterwarnings("ignore", category=UserWarning, message=".*CPU autocast.*target dtype.*not supported.*")
+warnings.filterwarnings("ignore", category=UserWarning, message=".*MPS autocast.*target dtype.*not supported.*")
+warnings.filterwarnings("ignore", category=UserWarning, message=".*autocast.*dtype.*torch.bfloat16.*torch.float16.*")
+warnings.filterwarnings(
+    "ignore", category=UserWarning, message=".*In MPS autocast.*target dtype.*not supported.*Disabling autocast.*"
+)
+
 # Suppress opencv duplicate class warnings (these are harmless but noisy)
 warnings.filterwarnings("ignore", message=".*Class.*is implemented in both.*")
 
