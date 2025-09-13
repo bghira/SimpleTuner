@@ -66,7 +66,7 @@ popd
 
 ### All platforms
 
-- 2a. **Option One (Recommended)**: Run `configure.py`
+- 2a. **Option One (Recommended)**: Run `simpletuner configure`
 - 2b. **Option Two**: Copy `config/config.json.example` to `config/config.json` and then fill in the details.
 
 > ⚠️ For users located in countries where Hugging Face Hub is not readily accessible, you should add `HF_ENDPOINT=https://hf-mirror.com` to your `~/.bashrc` or `~/.zshrc` depending on which `$SHELL` your system uses.
@@ -98,13 +98,13 @@ Once that is done, any of your training sessions and validation data will be ava
 > ℹ️ If you would like to disable Weights & Biases or Tensorboard reporting entirely, use `--report-to=none`
 
 
-4. Launch the `train.sh` script; logs will be written to `debug.log`
+4. Launch training with simpletuner; logs will be written to `debug.log`
 
 ```bash
-./train.sh
+simpletuner train
 ```
 
-> ⚠️ At this point, if you used `configure.py`, you are done! If not - these commands will work, but further configuration is required. See [the tutorial](/documentation/TUTORIAL.md) for more information.
+> ⚠️ At this point, if you used `simpletuner configure`, you are done! If not - these commands will work, but further configuration is required. See [the tutorial](/documentation/TUTORIAL.md) for more information.
 
 ### Run unit tests
 
@@ -121,15 +121,15 @@ For users who train multiple models or need to quickly switch between different 
 To use them:
 
 ```bash
-env ENV=default CONFIG_BACKEND=env bash train.sh
+simpletuner train env=default config_backend=env
 ```
 
-- `ENV` will default to `default`, which points to the typical `SimpleTuner/config/` directory that this guide helped you configure
-  - Using `ENV=pixart ./train.sh` would use `SimpleTuner/config/pixart` directory to find `config.env`
-- `CONFIG_BACKEND` will default to `env`, which uses the typical `config.env` file this guide helped you configure
+- `env` will default to `default`, which points to the typical `SimpleTuner/config/` directory that this guide helped you configure
+  - Using `simpletuner train env=pixart` would use `SimpleTuner/config/pixart` directory to find `config.env`
+- `config_backend` will default to `env`, which uses the typical `config.env` file this guide helped you configure
   - Supported options: `env`, `json`, `toml`, or `cmd` if you rely on running `train.py` manually
-  - Using `CONFIG_BACKEND=json ./train.sh` would search for `SimpleTuner/config/config.json` instead of `config.env`
-  - Similarly, `CONFIG_BACKEND=toml` will use `config.env`
+  - Using `simpletuner train config_backend=json` would search for `SimpleTuner/config/config.json` instead of `config.env`
+  - Similarly, `config_backend=toml` will use `config.env`
 
 You can create `config/config.env` that contains one or both of these values:
 

@@ -227,8 +227,20 @@ huggingface-cli login
 
 ### Executing the training run
 
-From the SimpleTuner directory, run:
+From the SimpleTuner directory, you have several options to start training:
 
+**Option 1 (Recommended - pip install):**
+```bash
+pip install simpletuner  
+simpletuner train
+```
+
+**Option 2 (Git clone method):**
+```bash
+simpletuner train
+```
+
+**Option 3 (Legacy method - still works):**
 ```bash
 ./train.sh
 ```

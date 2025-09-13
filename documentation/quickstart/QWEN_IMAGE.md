@@ -79,7 +79,7 @@ An experimental script, `configure.py`, may allow you to entirely skip this sect
 To run it:
 
 ```bash
-python configure.py
+simpletuner configure
 ```
 
 > ⚠️ For users located in countries where Hugging Face Hub is not readily accessible, you should add `HF_ENDPOINT=https://hf-mirror.com` to your `~/.bashrc` or `~/.zshrc` depending on which `$SHELL` your system uses.
@@ -175,6 +175,18 @@ Your config.json will look something like this for a minimal setup:
 
 For a quick sanity check with a known working configuration:
 
+**Option 1 (Recommended - pip install):**
+```bash
+pip install simpletuner
+simpletuner train example=qwen_image.peft-lora
+```
+
+**Option 2 (Git clone method):**
+```bash
+simpletuner train env=examples/qwen_image.peft-lora
+```
+
+**Option 3 (Legacy method - still works):**
 ```bash
 ENV=examples/qwen_image.peft-lora ./train.sh
 ```

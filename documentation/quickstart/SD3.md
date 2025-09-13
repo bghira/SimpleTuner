@@ -86,7 +86,7 @@ An experimental script, `configure.py`, may allow you to entirely skip this sect
 To run it:
 
 ```bash
-python configure.py
+simpletuner configure
 ```
 
 > ⚠️ For users located in countries where Hugging Face Hub is not readily accessible, you should add `HF_ENDPOINT=https://hf-mirror.com` to your `~/.bashrc` or `~/.zshrc` depending on which `$SHELL` your system uses.

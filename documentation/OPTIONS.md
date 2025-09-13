@@ -10,14 +10,14 @@ The JSON filename expected is `config.json` and the key names are the same as th
 
 ### Easy configure script (***RECOMMENDED***)
 
-The script `configure.py` in the project root can be used via `python configure.py` to set up a `config.json` file with mostly-ideal default settings.
+The `simpletuner configure` command can be used to set up a `config.json` file with mostly-ideal default settings.
 
 #### Modifying existing configurations
 
-The `configure.py` script is capable of accepting a single argument, a compatible `config.json`, allowing interactive modification of your training setup:
+The `configure` command is capable of accepting a single argument, a compatible `config.json`, allowing interactive modification of your training setup:
 
 ```bash
-python configure.py config/foo/config.json
+simpletuner configure config/foo/config.json
 ```
 
 Where `foo` is your config environment - or just use `config/config.json` if you're not using config environments.

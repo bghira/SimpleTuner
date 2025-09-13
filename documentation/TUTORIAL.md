@@ -17,8 +17,8 @@ These steps can be followed to the best of your abilities here. If you face any 
 1. Install the required packages as per [INSTALL.md](/documentation/INSTALL.md).
 2. Follow the below section, [Training data](#training-data) to produce a set of valid training data, or to obtain example data.
 3. Copy the `config/config.json.example` file in the `SimpleTuner/` project root directory to `config/config.json` and fill it with your configuration options - use [DATALOADER](/documentation//DATALOADER.md) as a guide for this.
-  - Use `configure.py` instead if you would prefer an interactive configurator.
-4. Run the [train.sh](/train.sh) script.
+  - Use `simpletuner configure` instead if you would prefer an interactive configurator.
+4. Run training with `simpletuner train`.
 
 > ⚠️ For users located in countries where Hugging Face Hub is not readily accessible, you should add `HF_ENDPOINT=https://hf-mirror.com` to your `~/.bashrc` or `~/.zshrc` depending on which `$SHELL` your system uses.
 

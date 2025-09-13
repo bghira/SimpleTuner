@@ -61,6 +61,8 @@ To remove them after `poetry` has installed them, run the following command in t
 
 ```bash
 pip uninstall -y deepspeed bitsandbytes
+
+> **Note:** This step is for users still using the poetry/git clone method. If you installed via `pip install simpletuner`, these issues are automatically handled.
 ```
 
 ### Setting up the environment
@@ -76,7 +78,7 @@ An experimental script, `configure.py`, may allow you to entirely skip this sect
 To run it:
 
 ```bash
-python configure.py
+simpletuner configure
 ```
 > ⚠️ For users located in countries where Hugging Face Hub is not readily accessible, you should add `HF_ENDPOINT=https://hf-mirror.com` to your `~/.bashrc` or `~/.zshrc` depending on which `$SHELL` your system uses.
 

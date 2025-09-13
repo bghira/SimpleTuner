@@ -80,7 +80,7 @@ An experimental script, `configure.py`, may allow you to entirely skip this sect
 To run it:
 
 ```bash
-python configure.py
+simpletuner configure
 ```
 
 > ⚠️ For users located in countries where Hugging Face Hub is not readily accessible, you should add `HF_ENDPOINT=https://hf-mirror.com` to your `~/.bashrc` or `~/.zshrc` depending on which `$SHELL` your system uses.
@@ -423,8 +423,20 @@ Follow the instructions to log in to both services.
 
 ### Executing the training run
 
-From the SimpleTuner directory, one simply has to run:
+From the SimpleTuner directory, you have several options to start training:
 
+**Option 1 (Recommended - pip install):**
+```bash
+pip install simpletuner  
+simpletuner train
+```
+
+**Option 2 (Git clone method):**
+```bash
+simpletuner train
+```
+
+**Option 3 (Legacy method - still works):**
 ```bash
 ./train.sh
 ```
