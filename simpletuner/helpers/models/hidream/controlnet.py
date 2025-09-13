@@ -1,35 +1,51 @@
+import inspect
+import math
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
+import einops
+import numpy as np
+import PIL.Image
 import torch
 import torch.nn as nn
-from tqdm.auto import tqdm
-
 from diffusers.configuration_utils import ConfigMixin, register_to_config
-from diffusers.loaders import PeftAdapterMixin
+from diffusers.image_processor import PipelineImageInput, VaeImageProcessor
+from diffusers.loaders import FromSingleFileMixin, PeftAdapterMixin
+from diffusers.models.autoencoders import AutoencoderKL
+from diffusers.models.controlnets.controlnet import zero_module
+from diffusers.models.modeling_utils import ModelMixin
+from diffusers.pipelines.pipeline_utils import DiffusionPipeline
+from diffusers.schedulers import FlowMatchEulerDiscreteScheduler, UniPCMultistepScheduler
 from diffusers.utils import (
     USE_PEFT_BACKEND,
     BaseOutput,
+    is_torch_xla_available,
     logging,
     scale_lora_layers,
     unscale_lora_layers,
 )
-from diffusers.models.attention_processor import AttentionProcessor
-from diffusers.models.controlnets.controlnet import (
-    ControlNetConditioningEmbedding,
-    zero_module,
+from diffusers.utils.torch_utils import randn_tensor
+from transformers import (
+    CLIPTextModelWithProjection,
+    CLIPTokenizer,
+    LlamaForCausalLM,
+    PreTrainedTokenizerFast,
+    T5EncoderModel,
+    T5Tokenizer,
 )
-from diffusers.models.embeddings import (
-    CombinedTimestepGuidanceTextProjEmbeddings,
-    CombinedTimestepTextProjEmbeddings,
-)
-from diffusers.models.modeling_outputs import Transformer2DModelOutput
-from diffusers.models.modeling_utils import ModelMixin
-from simpletuner.helpers.models.hidream.transformer import (
-    HiDreamImageSingleTransformerBlock,
-    HiDreamImageTransformerBlock,
-)
+
+from simpletuner.helpers.models.flux.pipeline import retrieve_latents
 from simpletuner.helpers.models.hidream.pipeline import HiDreamImageLoraLoaderMixin
+from simpletuner.helpers.models.hidream.schedule import FlowUniPCMultistepScheduler
+from simpletuner.helpers.models.hidream.transformer import (
+    EmbedND,
+    HiDreamImageSingleTransformerBlock,
+    HiDreamImageTransformer2DModel,
+    HiDreamImageTransformerBlock,
+    PatchEmbed,
+    PooledEmbed,
+    TimestepEmbed,
+)
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -50,29 +66,6 @@ class HiDreamControlNetOutput(BaseOutput):
     controlnet_single_block_samples: Tuple[torch.Tensor]
 
 
-from simpletuner.helpers.models.hidream.transformer import (
-    PatchEmbed,
-    OutEmbed,
-    TimestepEmbed,
-    PooledEmbed,
-    EmbedND,
-    HiDreamImageTransformerBlock,
-    HiDreamImageSingleTransformerBlock,
-)
-
-
-class HiDreamControlNetOutput:
-    def __init__(self, controlnet_block_samples, controlnet_single_block_samples):
-        self.controlnet_block_samples = controlnet_block_samples
-        self.controlnet_single_block_samples = controlnet_single_block_samples
-
-
-def zero_module(module):
-    for p in module.parameters():
-        nn.init.zeros_(p)
-    return module
-
-
 class HiDreamControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
     _supports_gradient_checkpointing = True
 
@@ -91,6 +84,9 @@ class HiDreamControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         max_seq_length: int = 16384,
         conditioning_embedding_channels: Optional[int] = None,
         axes_dims_rope: Tuple[int, int] = (32, 32),
+        num_routed_experts: int = 4,
+        num_activated_experts: int = 2,
+        aux_loss_alpha: float = 0.01,
     ):
         super().__init__()
 
@@ -116,6 +112,9 @@ class HiDreamControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                     dim=self.inner_dim,
                     num_attention_heads=num_attention_heads,
                     attention_head_dim=attention_head_dim,
+                    num_routed_experts=num_routed_experts,
+                    num_activated_experts=num_activated_experts,
+                    aux_loss_alpha=aux_loss_alpha,
                 )
                 for _ in range(num_layers)
             ]
@@ -127,23 +126,20 @@ class HiDreamControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                     dim=self.inner_dim,
                     num_attention_heads=num_attention_heads,
                     attention_head_dim=attention_head_dim,
+                    num_routed_experts=num_routed_experts,
+                    num_activated_experts=num_activated_experts,
+                    aux_loss_alpha=aux_loss_alpha,
                 )
                 for _ in range(num_single_layers)
             ]
         )
 
         self.controlnet_blocks = nn.ModuleList(
-            [
-                zero_module(nn.Linear(self.inner_dim, self.inner_dim))
-                for _ in range(num_layers)
-            ]
+            [zero_module(nn.Linear(self.inner_dim, self.inner_dim)) for _ in range(num_layers)]
         )
 
         self.controlnet_single_blocks = nn.ModuleList(
-            [
-                zero_module(nn.Linear(self.inner_dim, self.inner_dim))
-                for _ in range(num_single_layers)
-            ]
+            [zero_module(nn.Linear(self.inner_dim, self.inner_dim)) for _ in range(num_single_layers)]
         )
 
         self.gradient_checkpointing = False
@@ -159,15 +155,9 @@ class HiDreamControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
     ):
         config = dict(transformer.config)
         config["joint_attention_dim"] = 4096
-        config["num_layers"] = (
-            num_layers
-            if num_layers is not None
-            else len(transformer.double_stream_blocks)
-        )
+        config["num_layers"] = num_layers if num_layers is not None else len(transformer.double_stream_blocks)
         config["num_single_layers"] = (
-            num_single_layers
-            if num_single_layers is not None
-            else len(transformer.single_stream_blocks)
+            num_single_layers if num_single_layers is not None else len(transformer.single_stream_blocks)
         )
         logger.info(
             f"ControlNet will have {config['num_layers']} double stream and {config['num_single_layers']} single stream layers."
@@ -176,7 +166,6 @@ class HiDreamControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
 
         if load_weights_from_transformer:
             if use_shared_modules:
-                ### We'll just apply shared references since its frozen:
                 controlnet.t_embedder = transformer.t_embedder
                 controlnet.p_embedder = transformer.p_embedder
                 controlnet.x_embedder = transformer.x_embedder
@@ -184,23 +173,12 @@ class HiDreamControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                 controlnet.double_stream_blocks = transformer.double_stream_blocks
                 controlnet.single_stream_blocks = transformer.single_stream_blocks
             else:
-                ### If we were to deepcopy instead:
-                controlnet.t_embedder.load_state_dict(
-                    transformer.t_embedder.state_dict()
-                )
-                controlnet.p_embedder.load_state_dict(
-                    transformer.p_embedder.state_dict()
-                )
-                controlnet.x_embedder.load_state_dict(
-                    transformer.x_embedder.state_dict()
-                )
+                controlnet.t_embedder.load_state_dict(transformer.t_embedder.state_dict())
+                controlnet.p_embedder.load_state_dict(transformer.p_embedder.state_dict())
+                controlnet.x_embedder.load_state_dict(transformer.x_embedder.state_dict())
 
-                controlnet.double_stream_blocks.load_state_dict(
-                    transformer.double_stream_blocks.state_dict(), strict=False
-                )
-                controlnet.single_stream_blocks.load_state_dict(
-                    transformer.single_stream_blocks.state_dict(), strict=False
-                )
+                controlnet.double_stream_blocks.load_state_dict(transformer.double_stream_blocks.state_dict(), strict=False)
+                controlnet.single_stream_blocks.load_state_dict(transformer.single_stream_blocks.state_dict(), strict=False)
         cp = transformer.caption_projection
         controlnet.t5_embedder = cp[-1]
         controlnet.llama_embedder = cp[0]
@@ -224,7 +202,7 @@ class HiDreamControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         B, C, H, W = hidden_states.shape
         patch_size = self.config.patch_size
         pH, pW = H // patch_size, W // patch_size
-        patch_dim = C * patch_size * patch_size
+        # patch_dim = C * patch_size * patch_size
 
         def patchify(x):
             return einops.rearrange(
@@ -237,38 +215,24 @@ class HiDreamControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         hidden_states = patchify(hidden_states)
         controlnet_cond = patchify(controlnet_cond)
 
-        hidden_states = self.x_embedder(hidden_states) + self.controlnet_x_embedder(
-            controlnet_cond
-        )
-        temb = self.t_embedder(timesteps, hidden_states.dtype) + self.p_embedder(
-            pooled_embeds
-        )
+        hidden_states = self.x_embedder(hidden_states) + self.controlnet_x_embedder(controlnet_cond)
+        temb = self.t_embedder(timesteps, hidden_states.dtype) + self.p_embedder(pooled_embeds)
 
         t5_embeds = self.t5_embedder(t5_hidden_states)
         llama_embeds = self.llama_embedder(llama_hidden_states)
         if llama_hidden_states.dim() == 5:
             llama_hidden_states = llama_hidden_states.squeeze(2)  # [B, L, S, D]
-            selected = [
-                llama_hidden_states[:, i]
-                for i in range(min(2, llama_hidden_states.shape[1]))
-            ]
+            selected = [llama_hidden_states[:, i] for i in range(min(2, llama_hidden_states.shape[1]))]
         elif llama_hidden_states.dim() == 4:
-            selected = [
-                llama_hidden_states[i]
-                for i in range(min(2, llama_hidden_states.shape[0]))
-            ]
+            selected = [llama_hidden_states[i] for i in range(min(2, llama_hidden_states.shape[0]))]
         else:
-            raise ValueError(
-                f"Unsupported llama_hidden_states shape: {llama_hidden_states.shape}"
-            )
+            raise ValueError(f"Unsupported llama_hidden_states shape: {llama_hidden_states.shape}")
         llama_embeds = [self.llama_embedder(x) for x in selected]
         llama_embeds = torch.cat(llama_embeds, dim=1)
 
         encoder_hidden_states = torch.cat([t5_embeds, llama_embeds], dim=1)
 
-        txt_ids = torch.zeros(
-            B, encoder_hidden_states.shape[1], 3, device=hidden_states.device
-        )
+        txt_ids = torch.zeros(B, encoder_hidden_states.shape[1], 3, device=hidden_states.device)
         img_ids = torch.zeros(pH, pW, 3, device=hidden_states.device)
         img_ids[..., 1] = torch.arange(pH).unsqueeze(1)
         img_ids[..., 2] = torch.arange(pW).unsqueeze(0)
@@ -278,28 +242,20 @@ class HiDreamControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
 
         block_samples = []
         for i, block in enumerate(self.double_stream_blocks):
-            hidden_states, encoder_hidden_states = block(
-                hidden_states, None, encoder_hidden_states, temb, rope
-            )
+            hidden_states, encoder_hidden_states = block(hidden_states, None, encoder_hidden_states, temb, rope)
             block_samples.append(hidden_states)
 
         hidden_states = torch.cat([hidden_states, encoder_hidden_states], dim=1)
 
         single_block_samples = []
         for block in self.single_stream_blocks:
-            rope = self.pe_embedder(
-                torch.zeros(B, hidden_states.shape[1], 3, device=hidden_states.device)
-            )
+            rope = self.pe_embedder(torch.zeros(B, hidden_states.shape[1], 3, device=hidden_states.device))
             hidden_states = block(hidden_states, None, None, temb, rope)
             single_block_samples.append(hidden_states[:, : pH * pW])
 
-        controlnet_block_samples = [
-            m(s) * conditioning_scale
-            for m, s in zip(self.controlnet_blocks, block_samples)
-        ]
+        controlnet_block_samples = [m(s) * conditioning_scale for m, s in zip(self.controlnet_blocks, block_samples)]
         controlnet_single_block_samples = [
-            m(s) * conditioning_scale
-            for m, s in zip(self.controlnet_single_blocks, single_block_samples)
+            m(s) * conditioning_scale for m, s in zip(self.controlnet_single_blocks, single_block_samples)
         ]
 
         if not return_dict:
@@ -310,46 +266,6 @@ class HiDreamControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             controlnet_single_block_samples=controlnet_single_block_samples,
         )
 
-
-import inspect
-from typing import Any, Callable, Dict, List, Optional, Union
-import math
-import einops
-import torch
-from transformers import (
-    CLIPTextModelWithProjection,
-    CLIPTokenizer,
-    T5EncoderModel,
-    T5Tokenizer,
-    LlamaForCausalLM,
-    PreTrainedTokenizerFast,
-)
-
-from diffusers.image_processor import VaeImageProcessor, PipelineImageInput
-from diffusers.loaders import FromSingleFileMixin
-from diffusers.models.autoencoders import AutoencoderKL
-from diffusers.schedulers import (
-    FlowMatchEulerDiscreteScheduler,
-    UniPCMultistepScheduler,
-)
-from diffusers.utils import (
-    USE_PEFT_BACKEND,
-    is_torch_xla_available,
-    logging,
-    scale_lora_layers,
-    unscale_lora_layers,
-)
-from diffusers.utils.torch_utils import randn_tensor
-from diffusers.pipelines.pipeline_utils import DiffusionPipeline
-from dataclasses import dataclass
-from typing import List, Union
-from diffusers.utils import BaseOutput
-from simpletuner.helpers.models.hidream.schedule import FlowUniPCMultistepScheduler
-from simpletuner.helpers.models.hidream.transformer import HiDreamImageTransformer2DModel
-from simpletuner.helpers.models.flux.pipeline import retrieve_latents
-
-import numpy as np
-import PIL.Image
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
@@ -385,13 +301,9 @@ def retrieve_timesteps(
     **kwargs,
 ):
     if timesteps is not None and sigmas is not None:
-        raise ValueError(
-            "Only one of `timesteps` or `sigmas` can be passed. Please choose one to set custom values"
-        )
+        raise ValueError("Only one of `timesteps` or `sigmas` can be passed. Please choose one to set custom values")
     if timesteps is not None:
-        accepts_timesteps = "timesteps" in set(
-            inspect.signature(scheduler.set_timesteps).parameters.keys()
-        )
+        accepts_timesteps = "timesteps" in set(inspect.signature(scheduler.set_timesteps).parameters.keys())
         if not accepts_timesteps:
             raise ValueError(
                 f"The current scheduler class {scheduler.__class__}'s `set_timesteps` does not support custom"
@@ -401,9 +313,7 @@ def retrieve_timesteps(
         timesteps = scheduler.timesteps
         num_inference_steps = len(timesteps)
     elif sigmas is not None:
-        accept_sigmas = "sigmas" in set(
-            inspect.signature(scheduler.set_timesteps).parameters.keys()
-        )
+        accept_sigmas = "sigmas" in set(inspect.signature(scheduler.set_timesteps).parameters.keys())
         if not accept_sigmas:
             raise ValueError(
                 f"The current scheduler class {scheduler.__class__}'s `set_timesteps` does not support custom"
@@ -443,9 +353,7 @@ class HiDreamControlNetPipelineOutput(BaseOutput):
     images: Union[List[PIL.Image.Image], np.ndarray]
 
 
-class HiDreamControlNetPipeline(
-    DiffusionPipeline, FromSingleFileMixin, HiDreamImageLoraLoaderMixin
-):
+class HiDreamControlNetPipeline(DiffusionPipeline, FromSingleFileMixin, HiDreamImageLoraLoaderMixin):
     r"""
     The HiDream pipeline for text-to-image generation with ControlNet.
 
@@ -478,9 +386,7 @@ class HiDreamControlNetPipeline(
             additional conditioning.
     """
 
-    model_cpu_offload_seq = (
-        "text_encoder->text_encoder_2->text_encoder_3->text_encoder_4->transformer->vae"
-    )
+    model_cpu_offload_seq = "text_encoder->text_encoder_2->text_encoder_3->text_encoder_4->transformer->vae"
     _optional_components = ["image_encoder", "feature_extractor"]
     _callback_tensor_inputs = ["latents", "prompt_embeds", "control_image"]
 
@@ -515,22 +421,12 @@ class HiDreamControlNetPipeline(
             scheduler=scheduler,
             controlnet=controlnet,
         )
-        self.default_sample_size = (
-            None  # automatically scale sample size by control input.
-        )
-        self.vae_scale_factor = (
-            2 ** (len(self.vae.config.block_out_channels) - 1)
-            if getattr(self, "vae", None)
-            else 8
-        )
+        self.default_sample_size = None  # automatically scale sample size by control input.
+        self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1) if getattr(self, "vae", None) else 8
         # HiDream latents are turned into 2x2 patches and packed. This means the latent width and height has to be divisible
         # by the patch size. So the vae scale factor is multiplied by the patch size to account for this
-        self.image_processor = VaeImageProcessor(
-            vae_scale_factor=self.vae_scale_factor * 2
-        )
-        self.tokenizer_4.pad_token = getattr(
-            self.tokenizer_4, "eos_token", "<|eot_id|>"
-        )
+        self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor * 2)
+        self.tokenizer_4.pad_token = getattr(self.tokenizer_4, "eos_token", "<|eot_id|>")
 
     def _nearest_sample_size(self, h: int, w: int) -> tuple[int, int]:
         """
@@ -570,18 +466,13 @@ class HiDreamControlNetPipeline(
         )
         text_input_ids = text_inputs.input_ids
         attention_mask = text_inputs.attention_mask
-        untruncated_ids = self.tokenizer_3(
-            prompt, padding="longest", return_tensors="pt"
-        ).input_ids
+        untruncated_ids = self.tokenizer_3(prompt, padding="longest", return_tensors="pt").input_ids
 
-        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(
-            text_input_ids, untruncated_ids
-        ):
+        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(text_input_ids, untruncated_ids):
             removed_text = self.tokenizer_3.batch_decode(
                 untruncated_ids[
                     :,
-                    min(max_sequence_length, self.tokenizer_3.model_max_length)
-                    - 1 : -1,
+                    min(max_sequence_length, self.tokenizer_3.model_max_length) - 1 : -1,
                 ]
             )
             logger.warning(
@@ -589,17 +480,13 @@ class HiDreamControlNetPipeline(
                 f" {min(max_sequence_length, self.tokenizer_3.model_max_length)} tokens: {removed_text}"
             )
 
-        prompt_embeds = self.text_encoder_3(
-            text_input_ids.to(device), attention_mask=attention_mask.to(device)
-        )[0]
+        prompt_embeds = self.text_encoder_3(text_input_ids.to(device), attention_mask=attention_mask.to(device))[0]
         prompt_embeds = prompt_embeds.to(dtype=dtype, device=device)
         _, seq_len, _ = prompt_embeds.shape
 
         # duplicate text embeddings and attention mask for each generation per prompt, using mps friendly method
         prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
-        prompt_embeds = prompt_embeds.view(
-            batch_size * num_images_per_prompt, seq_len, -1
-        )
+        prompt_embeds = prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
         return prompt_embeds
 
     def _get_clip_prompt_embeds(
@@ -628,22 +515,16 @@ class HiDreamControlNetPipeline(
         )
 
         text_input_ids = text_inputs.input_ids
-        untruncated_ids = tokenizer(
-            prompt, padding="longest", return_tensors="pt"
-        ).input_ids
+        untruncated_ids = tokenizer(prompt, padding="longest", return_tensors="pt").input_ids
 
-        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(
-            text_input_ids, untruncated_ids
-        ):
+        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(text_input_ids, untruncated_ids):
             removed_text = tokenizer.batch_decode(untruncated_ids[:, 128 - 1 : -1])
             logger.warning(
                 "The following part of your input was truncated because CLIP can only handle sequences up to"
                 f" {128} tokens: {removed_text}"
             )
 
-        prompt_embeds = text_encoder(
-            text_input_ids.to(device), output_hidden_states=True
-        )
+        prompt_embeds = text_encoder(text_input_ids.to(device), output_hidden_states=True)
 
         # Use pooled output of CLIPTextModel
         prompt_embeds = prompt_embeds[0]
@@ -680,18 +561,13 @@ class HiDreamControlNetPipeline(
         )
         text_input_ids = text_inputs.input_ids
         attention_mask = text_inputs.attention_mask
-        untruncated_ids = self.tokenizer_4(
-            prompt, padding="longest", return_tensors="pt"
-        ).input_ids
+        untruncated_ids = self.tokenizer_4(prompt, padding="longest", return_tensors="pt").input_ids
 
-        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(
-            text_input_ids, untruncated_ids
-        ):
+        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(text_input_ids, untruncated_ids):
             removed_text = self.tokenizer_4.batch_decode(
                 untruncated_ids[
                     :,
-                    min(max_sequence_length, self.tokenizer_4.model_max_length)
-                    - 1 : -1,
+                    min(max_sequence_length, self.tokenizer_4.model_max_length) - 1 : -1,
                 ]
             )
             logger.warning(
@@ -713,9 +589,7 @@ class HiDreamControlNetPipeline(
 
         # duplicate text embeddings and attention mask for each generation per prompt, using mps friendly method
         prompt_embeds = prompt_embeds.repeat(1, 1, num_images_per_prompt, 1)
-        prompt_embeds = prompt_embeds.view(
-            -1, batch_size * num_images_per_prompt, seq_len, dim
-        )
+        prompt_embeds = prompt_embeds.view(-1, batch_size * num_images_per_prompt, seq_len, dim)
         return prompt_embeds
 
     def encode_prompt(
@@ -764,30 +638,22 @@ class HiDreamControlNetPipeline(
         if prompt is not None:
             batch_size = len(prompt)
         else:
-            batch_size = (
-                t5_prompt_embeds.shape[0] if t5_prompt_embeds is not None else 1
-            )
+            batch_size = t5_prompt_embeds.shape[0] if t5_prompt_embeds is not None else 1
 
         # Check if we need to compute embeddings or use provided ones
-        if (
-            t5_prompt_embeds is None
-            or llama_prompt_embeds is None
-            or pooled_prompt_embeds is None
-        ):
-            t5_prompt_embeds, llama_prompt_embeds, pooled_prompt_embeds = (
-                self._encode_prompt(
-                    prompt=prompt,
-                    prompt_2=prompt_2,
-                    prompt_3=prompt_3,
-                    prompt_4=prompt_4,
-                    device=device,
-                    dtype=dtype,
-                    num_images_per_prompt=num_images_per_prompt,
-                    t5_prompt_embeds=t5_prompt_embeds,
-                    llama_prompt_embeds=llama_prompt_embeds,
-                    pooled_prompt_embeds=pooled_prompt_embeds,
-                    max_sequence_length=max_sequence_length,
-                )
+        if t5_prompt_embeds is None or llama_prompt_embeds is None or pooled_prompt_embeds is None:
+            t5_prompt_embeds, llama_prompt_embeds, pooled_prompt_embeds = self._encode_prompt(
+                prompt=prompt,
+                prompt_2=prompt_2,
+                prompt_3=prompt_3,
+                prompt_4=prompt_4,
+                device=device,
+                dtype=dtype,
+                num_images_per_prompt=num_images_per_prompt,
+                t5_prompt_embeds=t5_prompt_embeds,
+                llama_prompt_embeds=llama_prompt_embeds,
+                pooled_prompt_embeds=pooled_prompt_embeds,
+                max_sequence_length=max_sequence_length,
             )
 
         # Handle negative embeddings for classifier-free guidance
@@ -803,25 +669,15 @@ class HiDreamControlNetPipeline(
                 negative_prompt_4 = negative_prompt_4 or negative_prompt
 
                 # normalize str to list
-                negative_prompt = (
-                    batch_size * [negative_prompt]
-                    if isinstance(negative_prompt, str)
-                    else negative_prompt
-                )
+                negative_prompt = batch_size * [negative_prompt] if isinstance(negative_prompt, str) else negative_prompt
                 negative_prompt_2 = (
-                    batch_size * [negative_prompt_2]
-                    if isinstance(negative_prompt_2, str)
-                    else negative_prompt_2
+                    batch_size * [negative_prompt_2] if isinstance(negative_prompt_2, str) else negative_prompt_2
                 )
                 negative_prompt_3 = (
-                    batch_size * [negative_prompt_3]
-                    if isinstance(negative_prompt_3, str)
-                    else negative_prompt_3
+                    batch_size * [negative_prompt_3] if isinstance(negative_prompt_3, str) else negative_prompt_3
                 )
                 negative_prompt_4 = (
-                    batch_size * [negative_prompt_4]
-                    if isinstance(negative_prompt_4, str)
-                    else negative_prompt_4
+                    batch_size * [negative_prompt_4] if isinstance(negative_prompt_4, str) else negative_prompt_4
                 )
 
                 (
@@ -920,9 +776,7 @@ class HiDreamControlNetPipeline(
                 )
 
                 # Concatenate CLIP embeddings
-                pooled_prompt_embeds = torch.cat(
-                    [pooled_prompt_embeds_1, pooled_prompt_embeds_2], dim=-1
-                )
+                pooled_prompt_embeds = torch.cat([pooled_prompt_embeds_1, pooled_prompt_embeds_2], dim=-1)
 
             # Get T5 embeddings if needed
             if need_t5:
@@ -967,17 +821,13 @@ class HiDreamControlNetPipeline(
         callback_on_step_end_tensor_inputs=None,
         max_sequence_length=None,
     ):
-        if (
-            height % (self.vae_scale_factor * 2) != 0
-            or width % (self.vae_scale_factor * 2) != 0
-        ):
+        if height % (self.vae_scale_factor * 2) != 0 or width % (self.vae_scale_factor * 2) != 0:
             logger.warning(
                 f"`height` and `width` have to be divisible by {self.vae_scale_factor * 2} but are {height} and {width}. Dimensions will be resized accordingly"
             )
 
         if callback_on_step_end_tensor_inputs is not None and not all(
-            k in self._callback_tensor_inputs
-            for k in callback_on_step_end_tensor_inputs
+            k in self._callback_tensor_inputs for k in callback_on_step_end_tensor_inputs
         ):
             raise ValueError(
                 f"`callback_on_step_end_tensor_inputs` has to be in {self._callback_tensor_inputs}, but found {[k for k in callback_on_step_end_tensor_inputs if k not in self._callback_tensor_inputs]}"
@@ -990,9 +840,7 @@ class HiDreamControlNetPipeline(
             )
 
         if max_sequence_length is not None and max_sequence_length > 512:
-            raise ValueError(
-                f"`max_sequence_length` cannot be greater than 512 but is {max_sequence_length}"
-            )
+            raise ValueError(f"`max_sequence_length` cannot be greater than 512 but is {max_sequence_length}")
 
     def prepare_latents(
         self,
@@ -1014,14 +862,10 @@ class HiDreamControlNetPipeline(
         shape = (batch_size, num_channels_latents, height, width)
 
         if latents is None:
-            latents = randn_tensor(
-                shape, generator=generator, device=device, dtype=dtype
-            )
+            latents = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
         else:
             if latents.shape != shape:
-                raise ValueError(
-                    f"Unexpected latents shape, got {latents.shape}, expected {shape}"
-                )
+                raise ValueError(f"Unexpected latents shape, got {latents.shape}, expected {shape}")
             latents = latents.to(device)
         return latents
 
@@ -1199,27 +1043,18 @@ class HiDreamControlNetPipeline(
         pW = width // (self.vae_scale_factor * 2)
         if pH * pW > self.transformer.max_seq:
             raise ValueError(
-                f"Resolution too large: needs {pH*pW} tokens, "
-                f"but transformer.max_seq is {self.transformer.max_seq}"
+                f"Resolution too large: needs {pH*pW} tokens, " f"but transformer.max_seq is {self.transformer.max_seq}"
             )
 
         # store so scheduler / helpers can see them
         self.latent_h, self.latent_w = pH, pW
 
         # Handle control guidance scheduling
-        if not isinstance(control_guidance_start, list) and isinstance(
-            control_guidance_end, list
-        ):
-            control_guidance_start = len(control_guidance_end) * [
-                control_guidance_start
-            ]
-        elif not isinstance(control_guidance_end, list) and isinstance(
-            control_guidance_start, list
-        ):
+        if not isinstance(control_guidance_start, list) and isinstance(control_guidance_end, list):
+            control_guidance_start = len(control_guidance_end) * [control_guidance_start]
+        elif not isinstance(control_guidance_end, list) and isinstance(control_guidance_start, list):
             control_guidance_end = len(control_guidance_start) * [control_guidance_end]
-        elif not isinstance(control_guidance_start, list) and not isinstance(
-            control_guidance_end, list
-        ):
+        elif not isinstance(control_guidance_start, list) and not isinstance(control_guidance_end, list):
             # TODO: MultiControlNet support
             # mult = (
             #     len(self.controlnet.nets)
@@ -1264,18 +1099,12 @@ class HiDreamControlNetPipeline(
         elif prompt is not None and isinstance(prompt, list):
             batch_size = len(prompt)
         else:
-            batch_size = (
-                t5_prompt_embeds.shape[0] if t5_prompt_embeds is not None else 1
-            )
+            batch_size = t5_prompt_embeds.shape[0] if t5_prompt_embeds is not None else 1
 
         device = self.transformer.device
 
         # 4. Encode prompts
-        lora_scale = (
-            self.joint_attention_kwargs.get("scale", None)
-            if self.joint_attention_kwargs is not None
-            else None
-        )
+        lora_scale = self.joint_attention_kwargs.get("scale", None) if self.joint_attention_kwargs is not None else None
 
         (
             t5_prompt_embeds,
@@ -1323,12 +1152,8 @@ class HiDreamControlNetPipeline(
             height, width = control_image.shape[-2:]
 
             # Encode control image to latents
-            control_image = retrieve_latents(
-                self.vae.encode(control_image), generator=generator
-            )
-            control_image = (
-                control_image - self.vae.config.shift_factor
-            ) * self.vae.config.scaling_factor
+            control_image = retrieve_latents(self.vae.encode(control_image), generator=generator)
+            control_image = (control_image - self.vae.config.shift_factor) * self.vae.config.scaling_factor
 
         # TODO: MultiControlNet support
         # elif isinstance(self.controlnet, HiDreamMultiControlNetModel):
@@ -1363,9 +1188,7 @@ class HiDreamControlNetPipeline(
             # Format embeddings for the transformer which expects separate inputs
             # Handle T5 embeddings (shape: [batch, seq_len, dim])
             if negative_t5_prompt_embeds is not None:
-                t5_embeds_input = torch.cat(
-                    [negative_t5_prompt_embeds, t5_prompt_embeds], dim=0
-                )
+                t5_embeds_input = torch.cat([negative_t5_prompt_embeds, t5_prompt_embeds], dim=0)
             else:
                 t5_embeds_input = t5_prompt_embeds
 
@@ -1373,26 +1196,16 @@ class HiDreamControlNetPipeline(
             if negative_llama_prompt_embeds is not None:
                 # The shape handling depends on the format of llama embeddings
                 if len(llama_prompt_embeds.shape) == 4:  # [num_layers, batch, seq, dim]
-                    llama_embeds_input = torch.cat(
-                        [negative_llama_prompt_embeds, llama_prompt_embeds], dim=1
-                    )
-                elif (
-                    len(llama_prompt_embeds.shape) == 5
-                ):  # [batch, num_layers, 1, seq, dim]
-                    llama_embeds_input = torch.cat(
-                        [negative_llama_prompt_embeds, llama_prompt_embeds], dim=0
-                    )
+                    llama_embeds_input = torch.cat([negative_llama_prompt_embeds, llama_prompt_embeds], dim=1)
+                elif len(llama_prompt_embeds.shape) == 5:  # [batch, num_layers, 1, seq, dim]
+                    llama_embeds_input = torch.cat([negative_llama_prompt_embeds, llama_prompt_embeds], dim=0)
                 else:
-                    raise ValueError(
-                        f"Unexpected llama embedding shape: {llama_prompt_embeds.shape}"
-                    )
+                    raise ValueError(f"Unexpected llama embedding shape: {llama_prompt_embeds.shape}")
             else:
                 llama_embeds_input = llama_prompt_embeds
 
             # Combine embeddings for passing to transformer
-            pooled_embeds_input = torch.cat(
-                [negative_pooled_prompt_embeds, pooled_prompt_embeds], dim=0
-            )
+            pooled_embeds_input = torch.cat([negative_pooled_prompt_embeds, pooled_prompt_embeds], dim=0)
         else:
             # If not using guidance, use the embeddings directly
             t5_embeds_input = t5_prompt_embeds
@@ -1439,9 +1252,7 @@ class HiDreamControlNetPipeline(
         mu = calculate_shift(self.transformer.max_seq)
         scheduler_kwargs = {"mu": mu}
         if isinstance(self.scheduler, FlowUniPCMultistepScheduler):
-            self.scheduler.set_timesteps(
-                num_inference_steps, device=device, shift=math.exp(mu)
-            )
+            self.scheduler.set_timesteps(num_inference_steps, device=device, shift=math.exp(mu))
             timesteps = self.scheduler.timesteps
         elif isinstance(self.scheduler, UniPCMultistepScheduler):
             self.scheduler.set_timesteps(num_inference_steps, device=device)
@@ -1454,9 +1265,7 @@ class HiDreamControlNetPipeline(
                 sigmas=sigmas,
                 **scheduler_kwargs,
             )
-        num_warmup_steps = max(
-            len(timesteps) - num_inference_steps * self.scheduler.order, 0
-        )
+        num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
         self._num_timesteps = len(timesteps)
 
         # 10. Create tensor stating which controlnets to keep
@@ -1466,11 +1275,7 @@ class HiDreamControlNetPipeline(
                 1.0 - float(i / len(timesteps) < s or (i + 1) / len(timesteps) > e)
                 for s, e in zip(control_guidance_start, control_guidance_end)
             ]
-            controlnet_keep.append(
-                keeps[0]
-                if isinstance(self.controlnet, HiDreamControlNetModel)
-                else keeps
-            )
+            controlnet_keep.append(keeps[0] if isinstance(self.controlnet, HiDreamControlNetModel) else keeps)
 
         # 11. Denoising loop
         with self.progress_bar(total=num_inference_steps) as progress_bar:
@@ -1479,17 +1284,11 @@ class HiDreamControlNetPipeline(
                     continue
 
                 # Expand the latents if we are doing classifier free guidance
-                latent_model_input = (
-                    torch.cat([latents] * 2)
-                    if self.do_classifier_free_guidance
-                    else latents
-                )
+                latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents
                 # Control image expansion for guidance
                 if self.do_classifier_free_guidance:
                     if isinstance(control_image, list):
-                        control_model_input = [
-                            torch.cat([img] * 2) for img in control_image
-                        ]
+                        control_model_input = [torch.cat([img] * 2) for img in control_image]
                     else:
                         control_model_input = torch.cat([control_image] * 2)
                 else:
@@ -1500,12 +1299,7 @@ class HiDreamControlNetPipeline(
 
                 # Handle conditioning scale
                 if isinstance(controlnet_keep[i], list):
-                    cond_scale = [
-                        c * s
-                        for c, s in zip(
-                            controlnet_conditioning_scale, controlnet_keep[i]
-                        )
-                    ]
+                    cond_scale = [c * s for c, s in zip(controlnet_conditioning_scale, controlnet_keep[i])]
                 else:
                     controlnet_cond_scale = controlnet_conditioning_scale
                     if isinstance(controlnet_cond_scale, list):
@@ -1600,19 +1394,17 @@ class HiDreamControlNetPipeline(
                             out_control[:, :, 0 : pH * pW] = control_reshaped
                             control_model_input = control_image
                 # ControlNet prediction
-                controlnet_block_samples, controlnet_single_block_samples = (
-                    self.controlnet(
-                        hidden_states=latent_model_input,
-                        controlnet_cond=control_model_input,
-                        timesteps=timestep,
-                        t5_hidden_states=t5_embeds_input,
-                        llama_hidden_states=llama_embeds_input,
-                        pooled_embeds=pooled_embeds_input,
-                        img_sizes=img_sizes,
-                        img_ids=img_ids,
-                        conditioning_scale=cond_scale,
-                        return_dict=False,
-                    )
+                controlnet_block_samples, controlnet_single_block_samples = self.controlnet(
+                    hidden_states=latent_model_input,
+                    controlnet_cond=control_model_input,
+                    timesteps=timestep,
+                    t5_hidden_states=t5_embeds_input,
+                    llama_hidden_states=llama_embeds_input,
+                    pooled_embeds=pooled_embeds_input,
+                    img_sizes=img_sizes,
+                    img_ids=img_ids,
+                    conditioning_scale=cond_scale,
+                    return_dict=False,
                 )
 
                 # Transformer prediction with ControlNet conditioning
@@ -1634,15 +1426,11 @@ class HiDreamControlNetPipeline(
                 # Perform guidance
                 if self.do_classifier_free_guidance:
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                    noise_pred = noise_pred_uncond + self.guidance_scale * (
-                        noise_pred_text - noise_pred_uncond
-                    )
+                    noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
 
                 # Compute the previous noisy sample x_t -> x_t-1
                 latents_dtype = latents.dtype
-                latents = self.scheduler.step(
-                    noise_pred, t, latents, return_dict=False
-                )[0]
+                latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
 
                 if latents.dtype != latents_dtype:
                     if torch.backends.mps.is_available():
@@ -1656,21 +1444,13 @@ class HiDreamControlNetPipeline(
                     callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
 
                     latents = callback_outputs.pop("latents", latents)
-                    t5_embeds_input = callback_outputs.pop(
-                        "t5_embeds_input", t5_embeds_input
-                    )
-                    llama_embeds_input = callback_outputs.pop(
-                        "llama_embeds_input", llama_embeds_input
-                    )
-                    pooled_embeds_input = callback_outputs.pop(
-                        "pooled_embeds_input", pooled_embeds_input
-                    )
+                    t5_embeds_input = callback_outputs.pop("t5_embeds_input", t5_embeds_input)
+                    llama_embeds_input = callback_outputs.pop("llama_embeds_input", llama_embeds_input)
+                    pooled_embeds_input = callback_outputs.pop("pooled_embeds_input", pooled_embeds_input)
                     control_image = callback_outputs.pop("control_image", control_image)
 
                 # Call the callback, if provided
-                if i == len(timesteps) - 1 or (
-                    (i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0
-                ):
+                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
 
                 if XLA_AVAILABLE:
@@ -1680,9 +1460,7 @@ class HiDreamControlNetPipeline(
         if output_type == "latent":
             image = latents
         else:
-            latents = (
-                latents / self.vae.config.scaling_factor
-            ) + self.vae.config.shift_factor
+            latents = (latents / self.vae.config.scaling_factor) + self.vae.config.shift_factor
 
             image = self.vae.decode(
                 latents.to(dtype=self.vae.dtype, device=self.vae.device),
