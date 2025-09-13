@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import os
 import json
 
-from helpers.publishing.metadata import (
+from simpletuner.helpers.publishing.metadata import (
     _negative_prompt,
     _torch_device,
     _model_imports,
@@ -12,7 +12,7 @@ from helpers.publishing.metadata import (
     _skip_layers,
     _guidance_rescale,
 )
-from helpers.publishing.metadata import *
+from simpletuner.helpers.publishing.metadata import *
 
 
 class TestMetadataFunctions(unittest.TestCase):
@@ -86,7 +86,7 @@ class TestMetadataFunctions(unittest.TestCase):
         self.args.model_type = "lora"
 
         with patch(
-            "helpers.publishing.metadata.StateTracker.get_hf_username",
+            "simpletuner.helpers.publishing.metadata.StateTracker.get_hf_username",
             return_value="testuser",
         ):
             output = _model_load(self.args, repo_id="repo-id", model=self.mock_model)
@@ -181,30 +181,31 @@ class TestMetadataFunctions(unittest.TestCase):
         self.args.lora_type = "lycoris"
         self.args.base_model_precision = "int8-quanto"
         with patch(
-            "helpers.publishing.metadata.StateTracker.get_model_family",
+            "simpletuner.helpers.publishing.metadata.StateTracker.get_model_family",
             return_value="sdxl",
         ):
             with patch(
-                "helpers.publishing.metadata.StateTracker.get_data_backends",
+                "simpletuner.helpers.publishing.metadata.StateTracker.get_data_backends",
                 return_value={},
             ):
                 with patch(
-                    "helpers.publishing.metadata.StateTracker.get_epoch", return_value=1
+                    "simpletuner.helpers.publishing.metadata.StateTracker.get_epoch",
+                    return_value=1,
                 ):
                     with patch(
-                        "helpers.publishing.metadata.StateTracker.get_global_step",
+                        "simpletuner.helpers.publishing.metadata.StateTracker.get_global_step",
                         return_value=1000,
                     ):
                         with patch(
-                            "helpers.publishing.metadata.StateTracker.get_weight_dtype",
+                            "simpletuner.helpers.publishing.metadata.StateTracker.get_weight_dtype",
                             return_value=torch.bfloat16,
                         ):
                             with patch(
-                                "helpers.publishing.metadata.StateTracker.get_accelerator",
+                                "simpletuner.helpers.publishing.metadata.StateTracker.get_accelerator",
                                 return_value=MagicMock(num_processes=1),
                             ):
                                 with patch(
-                                    "helpers.training.state_tracker.StateTracker.get_args",
+                                    "simpletuner.helpers.training.state_tracker.StateTracker.get_args",
                                     return_value=self.args,
                                 ):
                                     with patch(
@@ -230,16 +231,16 @@ class TestMetadataFunctions(unittest.TestCase):
 
     def test_adapter_download_fn(self):
         with patch("huggingface_hub.hf_hub_download", return_value="path/to/adapter"):
-            from helpers.publishing.metadata import lycoris_download_info
+            from simpletuner.helpers.publishing.metadata import lycoris_download_info
 
             output = lycoris_download_info()
             self.assertIn("hf_hub_download", output)
 
     def test_pipeline_move_full_bf16(self):
-        from helpers.publishing.metadata import _pipeline_move_to
+        from simpletuner.helpers.publishing.metadata import _pipeline_move_to
 
         with patch(
-            "helpers.training.state_tracker.StateTracker.get_weight_dtype",
+            "simpletuner.helpers.training.state_tracker.StateTracker.get_weight_dtype",
             return_value=torch.bfloat16,
         ):
             output = _pipeline_move_to(args=self.args)
@@ -247,10 +248,10 @@ class TestMetadataFunctions(unittest.TestCase):
         self.assertNotIn("torch.bfloat16", output)
 
     def test_pipeline_move_lycoris_bf16(self):
-        from helpers.publishing.metadata import _pipeline_move_to
+        from simpletuner.helpers.publishing.metadata import _pipeline_move_to
 
         with patch(
-            "helpers.training.state_tracker.StateTracker.get_weight_dtype",
+            "simpletuner.helpers.training.state_tracker.StateTracker.get_weight_dtype",
             return_value=torch.bfloat16,
         ):
             self.args.model_type = "lora"
@@ -260,10 +261,10 @@ class TestMetadataFunctions(unittest.TestCase):
         self.assertNotIn("torch.bfloat16", output)
 
     def test_pipeline_move_lycoris_int8(self):
-        from helpers.publishing.metadata import _pipeline_move_to
+        from simpletuner.helpers.publishing.metadata import _pipeline_move_to
 
         with patch(
-            "helpers.training.state_tracker.StateTracker.get_weight_dtype",
+            "simpletuner.helpers.training.state_tracker.StateTracker.get_weight_dtype",
             return_value=torch.bfloat16,
         ):
             self.args.model_type = "lora"
@@ -273,7 +274,7 @@ class TestMetadataFunctions(unittest.TestCase):
         self.assertNotIn("torch.bfloat16", output)
 
     def test_pipeline_quanto_hint_unet(self):
-        from helpers.publishing.metadata import _pipeline_quanto
+        from simpletuner.helpers.publishing.metadata import _pipeline_quanto
 
         self.mock_model.MODEL_TYPE = MagicMock(value="unet")
         output = _pipeline_quanto(args=self.args, model=self.mock_model)
@@ -283,7 +284,7 @@ class TestMetadataFunctions(unittest.TestCase):
         self.assertIn("pipeline.unet", output)
 
     def test_pipeline_quanto_hint_transformer(self):
-        from helpers.publishing.metadata import _pipeline_quanto
+        from simpletuner.helpers.publishing.metadata import _pipeline_quanto
 
         self.args.model_family = "flux"
         self.mock_model.MODEL_TYPE = MagicMock(value="transformer")

@@ -1,73 +1,214 @@
-[tool.poetry]
-name = "simpletuner"
-version = "1.1.0"
-description = "Stable Diffusion 2.x and XL tuner."
-authors = ["bghira"]
-license = "AGPLv3"
-readme = "README.md"
-package-mode = false
-
-[tool.poetry.dependencies]
-python = ">=3.11,<3.13"
-torch = {version = "^2.7.1", source = "pytorch"}
-torchvision = {version = "^0.22.1", source = "pytorch"}
-diffusers = {git = "https://github.com/huggingface/diffusers"}
-transformers = "^4.55.0"
-datasets = "^3.0.1"
-bitsandbytes = "^0.45.0"
-wandb = "^0.21.0"
-requests = "^2.32.4"
-pillow = "^11.3.0"
-opencv-python = "^4.10.0.84"
-deepspeed = "^0.17.2"
-accelerate = "^1.5.2"
-safetensors = "^0.5.3"
-compel = "^2.1.1"
-clip-interrogator = "^0.6.0"
-open-clip-torch = "^2.26.1"
-iterutils = "^0.1.6"
-scipy = "^1.11.1"
-boto3 = "^1.35.83"
-pandas = "^2.2.3"
-botocore = "^1.35.83"
-urllib3 = "<1.27"
-torchaudio = "^2.4.1"
-torchsde = "^0.2.6"
-torchmetrics = "^1.1.1"
-colorama = "^0.4.6"
-numpy = "^2.2.0"
-peft = "^0.16.0"
-tensorboard = "^2.18.0"
-triton = "^3.3.0"
-sentencepiece = "^0.2.0"
-optimum-quanto = "^0.2.7"
-lycoris-lora = "^3.2.0.post2"
-torch-optimi = "^0.2.1"
-toml = "^0.10.2"
-fastapi = {extras = ["standard"], version = "^0.115.0"}
-torchao = "^0.12.0"
-lm-eval = "^0.4.4"
-nvidia-cudnn-cu12 = "*"
-nvidia-nccl-cu12 = "*"
-atomicwrites = "^1.4.1"
-beautifulsoup4 = "^4.12.3"
-prodigy-plus-schedule-free = "^1.9.2"
-tokenizers = "^0.21.0"
-huggingface-hub = "^0.34.3"
-imageio-ffmpeg = "^0.6.0"
-imageio = {extras = ["pyav"], version = "^2.37.0"}
-hf-xet = "^1.1.5"
-peft-singlora = "^0.2.0"
-trainingsample = "^0.2.0"
-
-[tool.poetry.group.jxl.dependencies]
-pillow-jxl-plugin = "^1.3.1"
-
 [build-system]
-requires = ["poetry-core", "setuptools", "wheel", "torch"]
-build-backend = "poetry.core.masonry.api"
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
 
-[[tool.poetry.source]]
-priority = "supplemental"
-name = "pytorch"
-url = "https://download.pytorch.org/whl/cu128"
+[project]
+name = "simpletuner"
+dynamic = ["version", "dependencies"]
+description = "Stable Diffusion 2.x and XL tuner."
+readme = "README.md"
+license = "AGPL-3.0-or-later"
+authors = [
+    {name = "bghira"},
+]
+maintainers = [
+    {name = "bghira"},
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Operating System :: OS Independent",
+]
+keywords = [
+    "stable-diffusion",
+    "machine-learning",
+    "deep-learning",
+    "pytorch",
+    "cuda",
+    "rocm",
+    "diffusion-models",
+    "ai",
+    "image-generation"
+]
+requires-python = ">=3.11,<3.13"
+
+# Dynamic fields are handled by setup.py above
+
+[project.optional-dependencies]
+# Platform-specific extras (for manual override)
+cuda = [
+    "triton>=3.3.0",
+    "bitsandbytes>=0.45.0",
+    "deepspeed>=0.17.2",
+    "nvidia-cudnn-cu12",
+    "nvidia-nccl-cu12",
+    "lm-eval>=0.4.4",
+]
+rocm = [
+    "torchao>=0.11.0",
+]
+apple = [
+    "torchao>=0.11.0",
+]
+
+# Feature extras
+jxl = [
+    "pillow-jxl-plugin>=1.3.1",
+]
+
+# Development extras
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+    "pre-commit>=3.0.0",
+]
+
+# Testing extras
+test = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-mock>=3.10.0",
+    "pytest-xdist>=3.0.0",
+]
+
+# Documentation extras
+docs = [
+    "sphinx>=6.0.0",
+    "sphinx-rtd-theme>=1.2.0",
+    "myst-parser>=1.0.0",
+]
+
+# All extras combined
+all = [
+    "pillow-jxl-plugin>=1.3.1",
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "flake8>=6.0.0",
+]
+
+[project.scripts]
+simpletuner = "simpletuner.cli:main"
+simpletuner-train = "simpletuner.train:main"
+simpletuner-configure = "simpletuner.configure:main"
+simpletuner-inference = "simpletuner.inference:main"
+
+[project.urls]
+Homepage = "https://github.com/bghira/SimpleTuner"
+Repository = "https://github.com/bghira/SimpleTuner.git"
+Issues = "https://github.com/bghira/SimpleTuner/issues"
+Documentation = "https://github.com/bghira/SimpleTuner/blob/main/README.md"
+Changelog = "https://github.com/bghira/SimpleTuner/releases"
+
+# Setuptools configuration
+[tool.setuptools]
+include-package-data = true
+zip-safe = false
+
+[tool.setuptools.dynamic]
+version = {attr = "simpletuner.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["simpletuner*"]
+exclude = ["tests*", "scripts*", "install*", "config*", "documentation*"]
+
+[tool.setuptools.package-data]
+simpletuner = [
+    "examples/**/*",
+    "py.typed",
+]
+
+# Development tools configuration
+[tool.black]
+line-length = 125
+target-version = ['py311', 'py312']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 125
+known_first_party = ["simpletuner"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false  # Set to true when ready for strict typing
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "torch.*",
+    "torchvision.*",
+    "transformers.*",
+    "diffusers.*",
+    "accelerate.*",
+    "wandb.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--cov=simpletuner",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-report=xml",
+]
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::UserWarning",
+    "ignore::DeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["simpletuner"]
+omit = [
+    "*/tests/*",
+    "*/test_*.py",
+    "setup.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]

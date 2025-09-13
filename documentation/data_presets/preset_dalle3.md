@@ -68,7 +68,7 @@ for file_path in tqdm(json_files):
         height = int(content['height'])
         caption = content['short_caption']
         filename = content['image_name']
-        
+
         # Append to data list
         data.append({'width': width, 'height': height, 'caption': caption, 'filename': filename})
 
@@ -105,13 +105,13 @@ import glob
 import json, os
 import pandas as pd
 from tqdm import tqdm
- 
+
 # Glob for all JSON files in the folder
 json_files = glob.glob('data/*.json')
- 
+
 data = []
 caption_field = 'short_caption'
- 
+
 # Process each JSON file
 for file_path in tqdm(json_files, desc="Extracting text captions from JSON"):
     with open(file_path, 'r') as file:

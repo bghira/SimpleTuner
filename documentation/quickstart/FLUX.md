@@ -15,7 +15,7 @@ When you're training every component of a rank-16 LoRA (MLP, projections, multim
 - a bit more than 9G VRAM when quantising to NF4 + bf16 base/LoRA weights
 - a bit more than 9G VRAM when quantising to int2 + bf16 base/LoRA weights
 
-You'll need: 
+You'll need:
 - **the absolute minimum** is a single **3080 10G**
 - **a realistic minimum** is a single 3090 or V100 GPU
 - **ideally** multiple 4090, A6000, L40S, or better
@@ -52,38 +52,13 @@ If `libgl1-mesa-glx` is not found, you might need to use `libgl1-mesa-dri` inste
 
 ### Installation
 
-Clone the SimpleTuner repository and set up the python venv:
+Install SimpleTuner via pip:
 
 ```bash
-git clone --branch=release https://github.com/bghira/SimpleTuner.git
-
-cd SimpleTuner
-
-# if python --version shows 3.11 you can just also use the 'python' command here.
-python3.11 -m venv .venv
-
-source .venv/bin/activate
-
-pip install -U poetry pip
-
-# Necessary on some systems to prevent it from deciding it knows better than us.
-poetry config virtualenvs.create false
+pip install simpletuner
 ```
 
-**Note:** We're currently installing the `release` branch here; the `main` branch may contain experimental features that might have better results or lower memory use.
-
-Depending on your system, you will run one of 3 commands:
-
-```bash
-# Linux with NVIDIA
-poetry install
-
-# MacOS
-poetry install -C install/apple
-
-# Linux with ROCM
-poetry install -C install/rocm
-```
+For manual installation or development setup, see the [installation documentation](/documentation/INSTALL.md).
 
 #### AMD ROCm follow-up steps
 
@@ -110,7 +85,7 @@ An experimental script, `configure.py`, may allow you to entirely skip this sect
 To run it:
 
 ```bash
-python configure.py
+simpletuner configure
 ```
 
 > ⚠️ For users located in countries where Hugging Face Hub is not readily accessible, you should add `HF_ENDPOINT=https://hf-mirror.com` to your `~/.bashrc` or `~/.zshrc` depending on which `$SHELL` your system uses.
@@ -156,7 +131,7 @@ There, you will possibly need to modify the following variables:
 - `gradient_checkpointing` - set this to true in practically every situation on every device
 - `gradient_checkpointing_interval` - this could be set to a value of 2 or higher on larger GPUs to only checkpoint every _n_ blocks. A value of 2 would checkpoint half of the blocks, and 3 would be one-third.
 
-Multi-GPU users can reference [this document](/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
+Multi-GPU users can reference [this document](/documentation/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
 
 #### Validation prompts
 
@@ -274,7 +249,7 @@ It's crucial to have a substantial dataset to train your model on. There are lim
 
 > ℹ️ With few enough images, you might see a message **no images detected in dataset** - increasing the `repeats` value will overcome this limitation.
 
-Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using [pseudo-camera-10k](https://huggingface.co/datasets/ptx0/pseudo-camera-10k) as the dataset.
+Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using [pseudo-camera-10k](https://huggingface.co/datasets/bghira/pseudo-camera-10k) as the dataset.
 
 Create a `--data_backend_config` (`config/multidatabackend.json`) document containing this:
 
@@ -383,15 +358,27 @@ Follow the instructions to log in to both services.
 
 ### Executing the training run
 
-From the SimpleTuner directory, one simply has to run:
+From the SimpleTuner directory, you have several options to start training:
 
+**Option 1 (Recommended - pip install):**
+```bash
+pip install simpletuner
+simpletuner train
+```
+
+**Option 2 (Git clone method):**
+```bash
+simpletuner train
+```
+
+**Option 3 (Legacy method - still works):**
 ```bash
 ./train.sh
 ```
 
 This will begin the text embed and VAE output caching to disk.
 
-For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/TUTORIAL.md) documents.
+For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/documentation/TUTORIAL.md) documents.
 
 **Note:** It's unclear whether training on multi-aspect buckets works correctly for Flux at the moment. It's recommended to use `crop_style=random` and `crop_aspect=square`.
 
@@ -600,7 +587,7 @@ When you do these things (among others), some square grid artifacts **may** begi
 
 Some fine-tuned Flux models on Hugging Face Hub (such as Dev2Pro) lack the full directory structure, requiring these specific options be set.
 
-Make sure to set these options `flux_guidance_value`,  `validation_guidance_real` and `flux_attention_masked_training` according to the way the creator did as well if that information is available. 
+Make sure to set these options `flux_guidance_value`,  `validation_guidance_real` and `flux_attention_masked_training` according to the way the creator did as well if that information is available.
 ```json
 {
     "model_family": "flux",
@@ -610,11 +597,3 @@ Make sure to set these options `flux_guidance_value`,  `validation_guidance_real
     "pretrained_transformer_subfolder": "none",
 }
 ```
-
-## Credits
-
-The users of [Terminus Research](https://huggingface.co/terminusresearch) who worked on this probably more than their day jobs to figure it out
-
-[Lambda Labs](https://lambdalabs.com) for generous compute allocations that were used for tests and verifications for large scale training runs
-
-Especially [@JimmyCarter](https://huggingface.co/jimmycarter) (incl TREAD addition) and [@kaibioinfo](https://github.com/kaibioinfo) for coming up with some of the best ideas and putting them into action, offering pull requests and running exhaustive tests for analysis - even daring to use _their own faces_ for DreamBooth experimentation.

@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch, MagicMock
 import torch
 import torch.optim as optim
-from helpers.training.custom_schedule import (
+from simpletuner.helpers.training.custom_schedule import (
     get_polynomial_decay_schedule_with_warmup,
     enforce_zero_terminal_snr,
     patch_scheduler_betas,
@@ -58,7 +58,7 @@ class TestPolynomialDecayWithWarmup(unittest.TestCase):
 
     def test_inverted_schedule(self):
         with patch(
-            "helpers.training.state_tracker.StateTracker.get_args",
+            "simpletuner.helpers.training.state_tracker.StateTracker.get_args",
             return_value=MagicMock(
                 refiner_training=True,
                 refiner_training_invert_schedule=True,
@@ -84,7 +84,7 @@ class TestPolynomialDecayWithWarmup(unittest.TestCase):
 
     def test_normal_schedule(self):
         with patch(
-            "helpers.training.state_tracker.StateTracker.get_args",
+            "simpletuner.helpers.training.state_tracker.StateTracker.get_args",
             return_value=MagicMock(
                 refiner_training=True,
                 refiner_training_invert_schedule=False,

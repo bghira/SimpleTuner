@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch, MagicMock
-from helpers.webhooks.handler import WebhookHandler
-from helpers.webhooks.config import WebhookConfig
+from simpletuner.helpers.webhooks.handler import WebhookHandler
+from simpletuner.helpers.webhooks.config import WebhookConfig
 from io import BytesIO
 from PIL import Image
 

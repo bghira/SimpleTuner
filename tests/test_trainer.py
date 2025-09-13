@@ -5,21 +5,26 @@ from unittest.mock import Mock, patch, MagicMock
 import torch, os
 
 os.environ["SIMPLETUNER_LOG_LEVEL"] = "CRITICAL"
-from helpers.training.trainer import Trainer
+from simpletuner.helpers.training.trainer import Trainer
 
 
 class TestTrainer(unittest.TestCase):
-    @patch("helpers.training.trainer.load_config")
-    @patch("helpers.training.trainer.safety_check")
-    @patch("helpers.training.state_tracker.StateTracker")
+    @patch("simpletuner.helpers.training.trainer.load_config")
+    @patch("simpletuner.helpers.training.trainer.safety_check")
+    @patch("simpletuner.helpers.training.state_tracker.StateTracker")
     @patch(
-        "helpers.training.state_tracker.StateTracker.set_model_family",
+        "simpletuner.helpers.training.state_tracker.StateTracker.set_model_family",
         return_value=True,
     )
     @patch("torch.set_num_threads")
-    @patch("helpers.training.trainer.Accelerator")
-    @patch("helpers.training.trainer.Trainer.parse_arguments", return_value=Mock())
-    @patch("helpers.training.trainer.Trainer._misc_init", return_value=Mock())
+    @patch("simpletuner.helpers.training.trainer.Accelerator")
+    @patch(
+        "simpletuner.helpers.training.trainer.Trainer.parse_arguments",
+        return_value=Mock(),
+    )
+    @patch(
+        "simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock()
+    )
     def test_config_to_obj(
         self,
         mock_misc_init,
@@ -41,9 +46,14 @@ class TestTrainer(unittest.TestCase):
         config_none = trainer._config_to_obj(None)
         self.assertIsNone(config_none)
 
-    @patch("helpers.training.trainer.Trainer._misc_init", return_value=Mock())
-    @patch("helpers.training.trainer.Trainer.parse_arguments", return_value=Mock())
-    @patch("helpers.training.trainer.set_seed")
+    @patch(
+        "simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock()
+    )
+    @patch(
+        "simpletuner.helpers.training.trainer.Trainer.parse_arguments",
+        return_value=Mock(),
+    )
+    @patch("simpletuner.helpers.training.trainer.set_seed")
     def test_init_seed_with_value(self, mock_set_seed, mock_parse_args, mock_misc_init):
         trainer = Trainer()
         trainer.model = Mock()
@@ -51,9 +61,14 @@ class TestTrainer(unittest.TestCase):
         trainer.init_seed()
         mock_set_seed.assert_called_with(42, False)
 
-    @patch("helpers.training.trainer.Trainer._misc_init", return_value=Mock())
-    @patch("helpers.training.trainer.Trainer.parse_arguments", return_value=Mock())
-    @patch("helpers.training.trainer.set_seed")
+    @patch(
+        "simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock()
+    )
+    @patch(
+        "simpletuner.helpers.training.trainer.Trainer.parse_arguments",
+        return_value=Mock(),
+    )
+    @patch("simpletuner.helpers.training.trainer.set_seed")
     def test_init_seed_none(self, mock_set_seed, mock_parse_args, mock_misc_init):
         trainer = Trainer()
         trainer.model = Mock()
@@ -61,8 +76,13 @@ class TestTrainer(unittest.TestCase):
         trainer.init_seed()
         mock_set_seed.assert_not_called()
 
-    @patch("helpers.training.trainer.Trainer._misc_init", return_value=Mock())
-    @patch("helpers.training.trainer.Trainer.parse_arguments", return_value=Mock())
+    @patch(
+        "simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock()
+    )
+    @patch(
+        "simpletuner.helpers.training.trainer.Trainer.parse_arguments",
+        return_value=Mock(),
+    )
     @patch("torch.cuda.is_available", return_value=True)
     @patch("torch.cuda.memory_allocated", return_value=1024**3)
     def test_stats_memory_used_cuda(
@@ -73,8 +93,13 @@ class TestTrainer(unittest.TestCase):
         memory_used = trainer.stats_memory_used()
         self.assertEqual(memory_used, 1.0)
 
-    @patch("helpers.training.trainer.Trainer._misc_init", return_value=Mock())
-    @patch("helpers.training.trainer.Trainer.parse_arguments", return_value=Mock())
+    @patch(
+        "simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock()
+    )
+    @patch(
+        "simpletuner.helpers.training.trainer.Trainer.parse_arguments",
+        return_value=Mock(),
+    )
     @patch("torch.cuda.is_available", return_value=False)
     @patch("torch.backends.mps.is_available", return_value=True)
     @patch("torch.mps.current_allocated_memory", return_value=1024**3)
@@ -91,11 +116,16 @@ class TestTrainer(unittest.TestCase):
         memory_used = trainer.stats_memory_used()
         self.assertEqual(memory_used, 1.0)
 
-    @patch("helpers.training.trainer.Trainer._misc_init", return_value=Mock())
-    @patch("helpers.training.trainer.Trainer.parse_arguments", return_value=Mock())
+    @patch(
+        "simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock()
+    )
+    @patch(
+        "simpletuner.helpers.training.trainer.Trainer.parse_arguments",
+        return_value=Mock(),
+    )
     @patch("torch.cuda.is_available", return_value=False)
     @patch("torch.backends.mps.is_available", return_value=False)
-    @patch("helpers.training.trainer.logger")
+    @patch("simpletuner.helpers.training.trainer.logger")
     def test_stats_memory_used_none(
         self,
         mock_logger,
@@ -113,11 +143,11 @@ class TestTrainer(unittest.TestCase):
         )
 
     @patch("torch.set_num_threads")
-    @patch("helpers.training.state_tracker.StateTracker.set_global_step")
-    @patch("helpers.training.state_tracker.StateTracker.set_args")
-    @patch("helpers.training.state_tracker.StateTracker.set_weight_dtype")
-    @patch("helpers.training.trainer.Trainer.set_model_family")
-    @patch("helpers.training.trainer.Trainer.init_noise_schedule")
+    @patch("simpletuner.helpers.training.state_tracker.StateTracker.set_global_step")
+    @patch("simpletuner.helpers.training.state_tracker.StateTracker.set_args")
+    @patch("simpletuner.helpers.training.state_tracker.StateTracker.set_weight_dtype")
+    @patch("simpletuner.helpers.training.trainer.Trainer.set_model_family")
+    @patch("simpletuner.helpers.training.trainer.Trainer.init_noise_schedule")
     @patch(
         "accelerate.accelerator.Accelerator",
         return_value=Mock(device=Mock(type="cuda")),
@@ -202,14 +232,15 @@ class TestTrainer(unittest.TestCase):
         mock_set_model_family.assert_called()
         mock_init_noise_schedule.assert_called()
 
-    @patch("helpers.training.trainer.logger")
+    @patch("simpletuner.helpers.training.trainer.logger")
     @patch(
-        "helpers.training.trainer.model_classes", {"full": ["sdxl", "sd3", "legacy"]}
+        "simpletuner.helpers.training.trainer.model_classes",
+        {"full": ["sdxl", "sd3", "legacy"]},
     )
-    @patch("helpers.training.state_tracker.StateTracker")
+    @patch("simpletuner.helpers.training.state_tracker.StateTracker")
     def test_set_model_family_default(self, mock_state_tracker, mock_logger):
-        with patch("helpers.training.trainer.Trainer._misc_init"):
-            with patch("helpers.training.trainer.Trainer.parse_arguments"):
+        with patch("simpletuner.helpers.training.trainer.Trainer._misc_init"):
+            with patch("simpletuner.helpers.training.trainer.Trainer.parse_arguments"):
                 trainer = Trainer()
         trainer.config = Mock(model_family=None)
         trainer.config.pretrained_model_name_or_path = "some/path"
@@ -221,15 +252,20 @@ class TestTrainer(unittest.TestCase):
         trainer.model = Mock()
 
         with patch(
-            "helpers.training.state_tracker.StateTracker.is_sdxl_refiner",
+            "simpletuner.helpers.training.state_tracker.StateTracker.is_sdxl_refiner",
             return_value=False,
         ):
             trainer.set_model_family()
             self.assertEqual(trainer.config.model_type_label, "Stable Diffusion XL")
             mock_logger.warning.assert_not_called()
 
-    @patch("helpers.training.trainer.Trainer._misc_init", return_value=Mock())
-    @patch("helpers.training.trainer.Trainer.parse_arguments", return_value=Mock())
+    @patch(
+        "simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock()
+    )
+    @patch(
+        "simpletuner.helpers.training.trainer.Trainer.parse_arguments",
+        return_value=Mock(),
+    )
     def test_set_model_family_invalid(self, mock_parse_args, mock_misc_init):
         trainer = Trainer()
         trainer.model = Mock()
@@ -242,10 +278,15 @@ class TestTrainer(unittest.TestCase):
             str(context.exception),
         )
 
-    @patch("helpers.training.trainer.Trainer._misc_init", return_value=Mock())
-    @patch("helpers.training.trainer.Trainer.parse_arguments", return_value=Mock())
-    @patch("helpers.training.trainer.logger")
-    @patch("helpers.training.state_tracker.StateTracker")
+    @patch(
+        "simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock()
+    )
+    @patch(
+        "simpletuner.helpers.training.trainer.Trainer.parse_arguments",
+        return_value=Mock(),
+    )
+    @patch("simpletuner.helpers.training.trainer.logger")
+    @patch("simpletuner.helpers.training.state_tracker.StateTracker")
     def test_epoch_rollover(
         self, mock_state_tracker, mock_logger, mock_parse_args, mock_misc_init
     ):
@@ -259,15 +300,20 @@ class TestTrainer(unittest.TestCase):
         )
         trainer.extra_lr_scheduler_kwargs = {}
         with patch(
-            "helpers.training.state_tracker.StateTracker.get_data_backends",
+            "simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends",
             return_value={},
         ):
             trainer._epoch_rollover(2)
             self.assertEqual(trainer.state["current_epoch"], 2)
             self.assertEqual(trainer.extra_lr_scheduler_kwargs["epoch"], 2)
 
-    @patch("helpers.training.trainer.Trainer.parse_arguments", return_value=Mock())
-    @patch("helpers.training.trainer.Trainer._misc_init", return_value=Mock())
+    @patch(
+        "simpletuner.helpers.training.trainer.Trainer.parse_arguments",
+        return_value=Mock(),
+    )
+    @patch(
+        "simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock()
+    )
     def test_epoch_rollover_same_epoch(self, mock_misc_init, mock_parse_args):
         trainer = Trainer(
             config={
@@ -282,10 +328,15 @@ class TestTrainer(unittest.TestCase):
         trainer._epoch_rollover(1)
         self.assertEqual(trainer.state["current_epoch"], 1)
 
-    @patch("helpers.training.trainer.Trainer._misc_init", return_value=Mock())
-    @patch("helpers.training.trainer.Trainer.parse_arguments", return_value=Mock())
-    @patch("helpers.training.trainer.os.makedirs")
-    @patch("helpers.training.state_tracker.StateTracker.delete_cache_files")
+    @patch(
+        "simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock()
+    )
+    @patch(
+        "simpletuner.helpers.training.trainer.Trainer.parse_arguments",
+        return_value=Mock(),
+    )
+    @patch("simpletuner.helpers.training.trainer.os.makedirs")
+    @patch("simpletuner.helpers.training.state_tracker.StateTracker.delete_cache_files")
     def test_init_clear_backend_cache_preserve(
         self, mock_delete_cache_files, mock_makedirs, mock_parse_args, mock_misc_init
     ):
@@ -298,10 +349,15 @@ class TestTrainer(unittest.TestCase):
         mock_makedirs.assert_called_with("/path/to/output", exist_ok=True)
         mock_delete_cache_files.assert_not_called()
 
-    @patch("helpers.training.trainer.Trainer._misc_init", return_value=Mock())
-    @patch("helpers.training.trainer.Trainer.parse_arguments", return_value=Mock())
-    @patch("helpers.training.trainer.os.makedirs")
-    @patch("helpers.training.state_tracker.StateTracker.delete_cache_files")
+    @patch(
+        "simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock()
+    )
+    @patch(
+        "simpletuner.helpers.training.trainer.Trainer.parse_arguments",
+        return_value=Mock(),
+    )
+    @patch("simpletuner.helpers.training.trainer.os.makedirs")
+    @patch("simpletuner.helpers.training.state_tracker.StateTracker.delete_cache_files")
     def test_init_clear_backend_cache_delete(
         self, mock_delete_cache_files, mock_makedirs, mock_parse_args, mock_misc_init
     ):
@@ -315,21 +371,29 @@ class TestTrainer(unittest.TestCase):
         mock_makedirs.assert_called_with("/path/to/output", exist_ok=True)
         mock_delete_cache_files.assert_called_with(preserve_data_backend_cache=False)
 
-    @patch("helpers.training.trainer.Trainer._misc_init", return_value=Mock())
-    @patch("helpers.training.trainer.Trainer.parse_arguments", return_value=Mock())
-    @patch("helpers.training.trainer.logger")
-    @patch("helpers.training.trainer.os.path.basename", return_value="checkpoint-100")
     @patch(
-        "helpers.training.trainer.os.listdir",
+        "simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock()
+    )
+    @patch(
+        "simpletuner.helpers.training.trainer.Trainer.parse_arguments",
+        return_value=Mock(),
+    )
+    @patch("simpletuner.helpers.training.trainer.logger")
+    @patch(
+        "simpletuner.helpers.training.trainer.os.path.basename",
+        return_value="checkpoint-100",
+    )
+    @patch(
+        "simpletuner.helpers.training.trainer.os.listdir",
         return_value=["checkpoint-100", "checkpoint-200"],
     )
     @patch(
-        "helpers.training.trainer.os.path.join",
+        "simpletuner.helpers.training.trainer.os.path.join",
         side_effect=lambda *args: "/".join(args),
     )
-    @patch("helpers.training.trainer.os.path.exists", return_value=True)
-    @patch("helpers.training.trainer.Accelerator")
-    @patch("helpers.training.state_tracker.StateTracker")
+    @patch("simpletuner.helpers.training.trainer.os.path.exists", return_value=True)
+    @patch("simpletuner.helpers.training.trainer.Accelerator")
+    @patch("simpletuner.helpers.training.state_tracker.StateTracker")
     def test_init_resume_checkpoint(
         self,
         mock_state_tracker,
@@ -365,11 +429,11 @@ class TestTrainer(unittest.TestCase):
         lr_scheduler.state_dict.return_value = {"base_lrs": [0.1], "_last_lr": [0.1]}
 
         with patch(
-            "helpers.training.state_tracker.StateTracker.get_data_backends",
+            "simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends",
             return_value={},
         ):
             with patch(
-                "helpers.training.state_tracker.StateTracker.get_global_step",
+                "simpletuner.helpers.training.state_tracker.StateTracker.get_global_step",
                 return_value=100,
             ):
                 trainer.init_resume_checkpoint(lr_scheduler=lr_scheduler)

@@ -11,22 +11,18 @@ LCM enables:
 
 ## 📦 Installation
 
-Follow the standard SimpleTuner installation [guide](/INSTALL.md):
+Follow the standard SimpleTuner installation [guide](/documentation/INSTALL.md):
 
 ```bash
 git clone --branch=release https://github.com/bghira/SimpleTuner.git
 cd SimpleTuner
 python3.12 -m venv .venv && source .venv/bin/activate
-pip install -U poetry pip
 
-# Necessary on some systems
-poetry config virtualenvs.create false
-
-# Install based on your system:
-poetry install              # Linux with NVIDIA
-# poetry install -C install/apple  # MacOS
-# poetry install -C install/rocm   # Linux with ROCm
+# Install with automatic platform detection
+pip install -e .
 ```
+
+**Note:** The setup.py automatically detects your platform (CUDA/ROCm/Apple) and installs the appropriate dependencies.
 
 For container environments (Vast, RunPod, etc.):
 ```bash
@@ -45,7 +41,7 @@ Create your `config/config.json` for SDXL LCM:
   "model_family": "sdxl",
   "output_dir": "/home/user/output/sdxl-lcm",
   "pretrained_model_name_or_path": "stabilityai/stable-diffusion-xl-base-1.0",
-  
+
   "distillation_method": "lcm",
   "distillation_config": {
     "lcm": {
@@ -57,14 +53,14 @@ Create your `config/config.json` for SDXL LCM:
       "timestep_scaling_factor": 10.0
     }
   },
-  
+
   "resolution": 1024,
   "resolution_type": "pixel",
   "validation_resolution": "1024x1024,1280x768,768x1280",
   "aspect_bucket_rounding": 64,
   "minimum_image_size": 0.5,
   "maximum_image_size": 1.0,
-  
+
   "learning_rate": 1e-4,
   "lr_scheduler": "constant_with_warmup",
   "lr_warmup_steps": 1000,
@@ -73,29 +69,29 @@ Create your `config/config.json` for SDXL LCM:
   "gradient_accumulation_steps": 4,
   "gradient_checkpointing": true,
   "mixed_precision": "bf16",
-  
+
   "lora_type": "standard",
   "lora_rank": 64,
   "lora_alpha": 64,
   "lora_dropout": 0.0,
-  
+
   "validation_steps": 250,
   "validation_num_inference_steps": 4,
   "validation_guidance": 0.0,
   "validation_prompt": "A portrait of a woman with flowers in her hair, highly detailed, professional photography",
   "validation_negative_prompt": "blurry, low quality, distorted, amateur",
-  
+
   "checkpointing_steps": 500,
   "checkpoints_total_limit": 5,
   "resume_from_checkpoint": "latest",
-  
+
   "optimizer": "adamw_bf16",
   "adam_beta1": 0.9,
   "adam_beta2": 0.999,
   "adam_weight_decay": 1e-2,
   "adam_epsilon": 1e-8,
   "max_grad_norm": 1.0,
-  
+
   "seed": 42,
   "push_to_hub": true,
   "hub_model_id": "your-username/sdxl-lcm-distilled",
@@ -225,7 +221,7 @@ Create `multidatabackend.json` in your output directory:
    ```python
    from diffusers import LCMScheduler
    scheduler = LCMScheduler.from_pretrained(
-       "stabilityai/stable-diffusion-xl-base-1.0", 
+       "stabilityai/stable-diffusion-xl-base-1.0",
        subfolder="scheduler"
    )
    ```

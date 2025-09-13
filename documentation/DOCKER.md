@@ -4,9 +4,9 @@ This Docker configuration provides a comprehensive environment for running the S
 
 ## Container Features
 
-- **CUDA-enabled Base Image**: Built from `nvidia/cuda:11.8.0-runtime-ubuntu22.04` to support GPU-accelerated applications.
+- **CUDA-enabled Base Image**: Built from `nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04` to support GPU-accelerated applications.
 - **Development Tools**: Includes Git, SSH, and various utilities like `tmux`, `vim`, `htop`.
-- **Python and Libraries**: Comes with Python 3.10 and essential libraries like `poetry` for Python package management.
+- **Python and Libraries**: Comes with Python 3.10 and SimpleTuner pre-installed via pip.
 - **Huggingface and WandB Integration**: Pre-configured for seamless integration with Huggingface Hub and WandB, facilitating model sharing and experiment tracking.
 
 ## Getting Started
@@ -56,14 +56,14 @@ SSH into the container is configured by default. Ensure you provide your SSH pub
 
 ### 6. Using SimpleTuner
 
-Navigate to the SimpleTuner directory, activate the Python virtual environment, and start using or developing the application:
+SimpleTuner is pre-installed and ready to use. You can run training commands directly:
 
 ```bash
-cd SimpleTuner
-source .venv/bin/activate
+simpletuner configure
+simpletuner train
 ```
 
-Run training scripts or other provided utilities directly within this environment.
+For configuration and setup, refer to the [installation documentation](/documentation/INSTALL.md) and [quickstart guides](/documentation/QUICKSTART.md).
 
 ## Additional Configuration
 
@@ -96,7 +96,7 @@ services:
       - "[port to connect to the container]:22"
     volumes:
       - "[path to your datasets]:/datasets"
-      - "[path to your configs]:/workspace/SimpleTuner/config"
+      - "[path to your configs]:/workspace/config"
     environment:
       HF_TOKEN: [your hugging face token]
       WANDB_API_KEY: [your wanddb token]

@@ -1,11 +1,11 @@
 from hashlib import sha256
-from helpers.caching.vae import VAECache
+from simpletuner.helpers.caching.vae import VAECache
 
 import unittest
 from PIL import Image
 import numpy as np
-from helpers.image_manipulation.training_sample import TrainingSample
-from helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
+from simpletuner.helpers.training.state_tracker import StateTracker
 from unittest.mock import MagicMock
 
 
