@@ -58,7 +58,7 @@ class WebhookHandler:
 
     def _send_request(
         self,
-        message: str,
+        message: str | dict,
         images: list = None,
         store_response: bool = False,
         raw_request: bool = False,
@@ -80,7 +80,8 @@ class WebhookHandler:
             # Prepare raw data payload for direct POST
             if raw_request:
                 # If already fully formed JSON or dict, just send raw
-                data = message
+                # Assure all values are JSON-serializable
+                data = json.loads(json.dumps(message, default=repr))
                 files = None
             else:
                 # Convert images to base64 for a generic "raw" JSON
