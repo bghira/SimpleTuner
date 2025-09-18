@@ -82,9 +82,9 @@ def get_platform_dependencies():
         deps.extend(
             [
                 # PyTorch with CUDA
-                "torch>=2.7.1",
-                "torchvision>=0.22.1",
-                "torchaudio>=2.4.1",
+                "torch>=2.8.0",
+                "torchvision>=0.23.0",
+                "torchaudio>=2.8.0",
                 # CUDA-specific
                 "triton>=3.3.0",
                 "bitsandbytes>=0.45.0",
