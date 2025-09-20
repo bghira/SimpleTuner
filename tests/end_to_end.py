@@ -855,8 +855,7 @@ def main():
     if not Path(".venv").exists():
         print("Setting up virtual environment...")
         subprocess.run([sys.executable, "-m", "venv", ".venv"], check=True)
-        subprocess.run([".venv/bin/pip", "install", "poetry"], check=True)
-        subprocess.run([".venv/bin/poetry", "install"], check=True)
+        subprocess.run([".venv/bin/pip", "install", "."], check=True)
         print("Virtual environment ready.")
 
     # Run the test runner
