@@ -17,46 +17,47 @@ Focus areas:
 - TREAD router integration
 """
 
-import unittest
-import torch
-import torch.nn as nn
-import numpy as np
-from typing import Dict, Any, List, Tuple, Optional, Union
-from unittest.mock import Mock, MagicMock, patch, create_autospec
+import os
 
 # Test base classes
 import sys
-import os
+import unittest
+from typing import Any, Dict, List, Optional, Tuple, Union
+from unittest.mock import MagicMock, Mock, create_autospec, patch
+
+import numpy as np
+import torch
+import torch.nn as nn
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "utils"))
 
 from transformer_base_test import (
-    TransformerBaseTest,
     AttentionProcessorTestMixin,
     EmbeddingTestMixin,
+    TransformerBaseTest,
     TransformerBlockTestMixin,
 )
 from transformer_test_helpers import (
-    MockDiffusersConfig,
-    TensorGenerator,
+    MockAttention,
     MockComponents,
-    TypoTestUtils,
+    MockDiffusersConfig,
+    MockingUtils,
     MockModule,
     MockNormLayer,
-    MockAttention,
-    MockingUtils,
+    TensorGenerator,
+    TypoTestUtils,
 )
 
 # Import components under test
 from simpletuner.helpers.models.qwen_image.transformer import (
-    get_timestep_embedding,
-    apply_rotary_emb_qwen,
-    QwenTimestepProjEmbeddings,
-    QwenEmbedRope,
     QwenDoubleStreamAttnProcessor2_0,
-    QwenImageTransformerBlock,
+    QwenEmbedRope,
     QwenImageTransformer2DModel,
+    QwenImageTransformerBlock,
+    QwenTimestepProjEmbeddings,
+    apply_rotary_emb_qwen,
+    get_timestep_embedding,
 )
 
 
@@ -896,10 +897,15 @@ class TestQwenImageTransformerBlock(TransformerBaseTest, TransformerBlockTestMix
         """Test FP16 overflow prevention clipping."""
         block = QwenImageTransformerBlock(512, 8, 64)
 
-        # Mock attention to return extreme values
+        # Mock attention to return extreme values without triggering construction overflow
+        def make_extreme(shape, value):
+            tensor = torch.ones(shape, dtype=torch.float16)
+            tensor *= value
+            return tensor
+
         extreme_values = (
-            torch.full((2, 128, 512), 70000, dtype=torch.float16),  # Above clipping threshold
-            torch.full((2, 77, 512), -70000, dtype=torch.float16),  # Below clipping threshold
+            make_extreme((2, 128, 512), 70000),  # Above clipping threshold
+            make_extreme((2, 77, 512), -70000),  # Below clipping threshold
         )
 
         hidden_states = torch.randn(2, 128, 512, dtype=torch.float16)

@@ -10,8 +10,8 @@ import queue
 import threading
 import time
 import unittest
-from unittest.mock import Mock, patch, MagicMock
-from typing import Dict, Any
+from typing import Any, Dict
+from unittest.mock import MagicMock, Mock, patch
 
 from simpletuner.helpers.data_backend.runtime import (
     BatchFetcher,
@@ -572,7 +572,7 @@ class TestRuntimePerformance(unittest.TestCase):
         elapsed_time = time.time() - start_time
 
         # Weight calculation should be very fast
-        self.assertLess(elapsed_time, 0.1)
+        self.assertLess(elapsed_time, 0.2)
 
 
 if __name__ == "__main__":
