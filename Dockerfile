@@ -64,15 +64,13 @@ ENV SIMPLETUNER_PLATFORM=cuda
 # Install supporting CLIs ahead of the project install
 RUN pip install --no-cache-dir "huggingface_hub[cli]" wandb
 
-# Copy project into image and install with setup.py so dependency logic is reused
-COPY . /workspace/SimpleTuner
-WORKDIR /workspace/SimpleTuner
-RUN pip install --no-cache-dir .
+# Install SimpleTuner from PyPI to match published releases
+RUN pip install --no-cache-dir simpletuner
 
 # Copy start script with exec permissions
 COPY --chmod=755 docker-start.sh /start.sh
 
-# Return to default workspace location
+# Ensure we remain in the default workspace location
 WORKDIR /workspace
 
 # Dummy entrypoint
