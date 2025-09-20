@@ -73,3 +73,5 @@ datasets/
 coverage.xml
 */htmlcov
 .simpletuner_output
+.mypy_cache
+.ruff_cache
