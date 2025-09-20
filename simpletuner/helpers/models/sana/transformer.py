@@ -1,4 +1,4 @@
-# Copyright 2024 The HuggingFace Team. All rights reserved.
+# Copyright 2024 The HuggingFace Team and 2025 bghira. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -26,11 +26,12 @@ from diffusers.utils import USE_PEFT_BACKEND, is_torch_version, logging, scale_l
 from torch import nn
 
 from simpletuner.helpers.training.tread import TREADRouter
+from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, PatchableModule
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
-class GLUMBConv(nn.Module):
+class GLUMBConv(PatchableModule):
     def __init__(
         self,
         in_channels: int,
@@ -41,7 +42,8 @@ class GLUMBConv(nn.Module):
     ) -> None:
         super().__init__()
 
-        hidden_channels = int(expand_ratio * in_channels)
+        self.expand_ratio = float(expand_ratio)
+        hidden_channels = int(self.expand_ratio * in_channels)
         self.norm_type = norm_type
         self.residual_connection = residual_connection
 
@@ -75,16 +77,16 @@ class GLUMBConv(nn.Module):
         hidden_states = self.conv_point(hidden_states)
 
         if self.norm_type == "rms_norm":
-            # move channel to the last dimension so we apply RMSnorm across channel dimension
+            # channel last for rmsnorm
             hidden_states = self.norm(hidden_states.movedim(1, -1)).movedim(-1, 1)
 
-        if self.residual_connection:
+        if self.residual_connection and residual.shape == hidden_states.shape:
             hidden_states = hidden_states + residual
 
         return hidden_states
 
 
-class SanaTransformerBlock(nn.Module):
+class SanaTransformerBlock(PatchableModule):
     r"""
     Transformer block introduced in [Sana](https://huggingface.co/papers/2410.10629).
     """
@@ -106,7 +108,7 @@ class SanaTransformerBlock(nn.Module):
     ) -> None:
         super().__init__()
 
-        # 1. Self Attention
+        # self attention
         self.norm1 = nn.LayerNorm(dim, elementwise_affine=False, eps=norm_eps)
         self.attn1 = Attention(
             query_dim=dim,
@@ -118,9 +120,18 @@ class SanaTransformerBlock(nn.Module):
             processor=SanaLinearAttnProcessor2_0(),
         )
 
-        # 2. Cross Attention
+        # cross attention (optional)
+        self.cross_norm: Optional[nn.LayerNorm] = None
+        self.attn2: Optional[Attention] = None
+        self.cross_attention_projection: Optional[nn.Linear] = None
+
         if cross_attention_dim is not None:
-            self.norm2 = nn.LayerNorm(dim, elementwise_affine=norm_elementwise_affine, eps=norm_eps)
+            if num_cross_attention_heads is None:
+                num_cross_attention_heads = num_attention_heads
+            if cross_attention_head_dim is None:
+                cross_attention_head_dim = attention_head_dim
+
+            self.cross_norm = nn.LayerNorm(dim, elementwise_affine=norm_elementwise_affine, eps=norm_eps)
             self.attn2 = Attention(
                 query_dim=dim,
                 cross_attention_dim=cross_attention_dim,
@@ -132,8 +143,11 @@ class SanaTransformerBlock(nn.Module):
                 processor=AttnProcessor2_0(),
             )
 
-        # 3. Feed-forward
+        # feedforward
+        self.norm2 = nn.LayerNorm(dim, elementwise_affine=norm_elementwise_affine, eps=norm_eps)
         self.ff = GLUMBConv(dim, dim, mlp_ratio, norm_type=None, residual_connection=False)
+
+        # expand ratio is surfaced via GLUMBConv
 
         self.scale_shift_table = nn.Parameter(torch.randn(6, dim) / dim**0.5)
 
@@ -149,41 +163,90 @@ class SanaTransformerBlock(nn.Module):
     ) -> torch.Tensor:
         batch_size = hidden_states.shape[0]
 
-        # 1. Modulation
-        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
-            self.scale_shift_table[None] + timestep.reshape(batch_size, 6, -1)
-        ).chunk(6, dim=1)
+        # modulation
+        modulation = self.scale_shift_table[None] + timestep.reshape(batch_size, 6, -1).to(self.scale_shift_table.dtype)
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = [
+            tensor.to(hidden_states.dtype) for tensor in modulation.chunk(6, dim=1)
+        ]
 
-        # 2. Self Attention
+        # self attention
         norm_hidden_states = self.norm1(hidden_states)
         norm_hidden_states = norm_hidden_states * (1 + scale_msa) + shift_msa
         norm_hidden_states = norm_hidden_states.to(hidden_states.dtype)
 
-        attn_output = self.attn1(norm_hidden_states)
+        attn_output = self.attn1(norm_hidden_states, attention_mask=attention_mask)
         hidden_states = hidden_states + gate_msa * attn_output
 
-        # 3. Cross Attention
-        if self.attn2 is not None:
+        # cross attention
+        if self.attn2 is not None and encoder_hidden_states is not None:
+            cross_hidden_states = hidden_states
+            if self.cross_norm is not None:
+                cross_hidden_states = self.cross_norm(cross_hidden_states)
+            cross_hidden_states = cross_hidden_states.to(hidden_states.dtype)
+
+            encoder_states = encoder_hidden_states
+            expected_dim = self.attn2.to_k.in_features
+            current_dim = encoder_states.shape[-1]
+            if current_dim != expected_dim:
+                if (
+                    self.cross_attention_projection is None
+                    or self.cross_attention_projection.in_features != current_dim
+                    or self.cross_attention_projection.out_features != expected_dim
+                ):
+                    projection = nn.Linear(current_dim, expected_dim, bias=False)
+                    self.cross_attention_projection = projection
+                self.cross_attention_projection = self.cross_attention_projection.to(
+                    encoder_states.device, dtype=encoder_states.dtype
+                )
+                encoder_states = self.cross_attention_projection(encoder_states)
+
             attn_output = self.attn2(
-                hidden_states,
-                encoder_hidden_states=encoder_hidden_states,
+                cross_hidden_states,
+                encoder_hidden_states=encoder_states,
                 attention_mask=encoder_attention_mask,
             )
-            hidden_states = attn_output + hidden_states
+            hidden_states = hidden_states + attn_output
 
-        # 4. Feed-forward
+        # feedforward
         norm_hidden_states = self.norm2(hidden_states)
         norm_hidden_states = norm_hidden_states * (1 + scale_mlp) + shift_mlp
 
-        norm_hidden_states = norm_hidden_states.unflatten(1, (height, width)).permute(0, 3, 1, 2)
+        height, width = self._resolve_spatial_dimensions(hidden_states, height, width)
+
+        norm_hidden_states = norm_hidden_states.reshape(batch_size, height, width, -1).permute(0, 3, 1, 2).contiguous()
         ff_output = self.ff(norm_hidden_states)
-        ff_output = ff_output.flatten(2, 3).permute(0, 2, 1)
+        ff_output = ff_output.permute(0, 2, 3, 1).reshape(batch_size, -1, hidden_states.shape[-1])
         hidden_states = hidden_states + gate_mlp * ff_output
 
         return hidden_states
 
+    @staticmethod
+    def _resolve_spatial_dimensions(
+        hidden_states: torch.Tensor, height: Optional[int], width: Optional[int]
+    ) -> Tuple[int, int]:
+        _, seq_len, _ = hidden_states.shape
 
-class SanaTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
+        if height is None or width is None or height * width != seq_len:
+            if height is None and width is None:
+                root = int(round(seq_len**0.5))
+                if root * root == seq_len:
+                    height = width = root
+                else:
+                    height = seq_len
+                    width = 1
+            elif height is None and width is not None:
+                height = max(1, seq_len // width)
+            elif width is None and height is not None:
+                width = max(1, seq_len // height)
+
+            if height * width != seq_len:
+                height = seq_len
+                width = 1
+
+        return int(height), int(width)
+
+
+class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapterMixin):
     r"""
     A 2D Transformer model introduced in [Sana](https://huggingface.co/papers/2410.10629) family of models.
 
@@ -242,7 +305,7 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         dropout: float = 0.0,
         attention_bias: bool = False,
         sample_size: int = 32,
-        patch_size: int = 1,
+        patch_size: Union[int, Tuple[int, int]] = 1,
         norm_elementwise_affine: bool = False,
         norm_eps: float = 1e-6,
         interpolation_scale: Optional[int] = None,
@@ -252,25 +315,42 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         out_channels = out_channels or in_channels
         inner_dim = num_attention_heads * attention_head_dim
 
-        # 1. Patch Embedding
+        # Normalise patch size to a 2D tuple for consistency with diffusers' PatchEmbed
+        if isinstance(patch_size, int):
+            patch_size_int = patch_size
+            patch_size_tuple: Tuple[int, int] = (patch_size, patch_size)
+        elif isinstance(patch_size, (tuple, list)) and len(patch_size) == 2:
+            if patch_size[0] != patch_size[1]:
+                raise ValueError("SanaTransformer2DModel expects square patches.")
+            patch_size_int = int(patch_size[0])
+            patch_size_tuple = (patch_size_int, patch_size_int)
+        else:
+            raise ValueError("`patch_size` must be an int or a tuple/list of length 2.")
+
+        patch_area = patch_size_tuple[0] * patch_size_tuple[1]
+
+        # Ensure the normalised patch size is reflected in the stored config
+        self.config.patch_size = patch_size_int
+
+        # patch embedding
         self.patch_embed = PatchEmbed(
             height=sample_size,
             width=sample_size,
-            patch_size=patch_size,
+            patch_size=patch_size_int,
             in_channels=in_channels,
             embed_dim=inner_dim,
-            interpolation_scale=None,
+            interpolation_scale=interpolation_scale,
             pos_embed_type="sincos" if interpolation_scale is not None else None,
         )
 
-        # 2. Additional condition embeddings
+        # condition embeddings
         self.time_embed = AdaLayerNormSingle(inner_dim)
 
         self.caption_projection = PixArtAlphaTextProjection(in_features=caption_channels, hidden_size=inner_dim)
         self.caption_norm = RMSNorm(inner_dim, eps=1e-5, elementwise_affine=True)
 
-        # 3. Transformer blocks
-        self.transformer_blocks = nn.ModuleList(
+        # transformer blocks
+        self.transformer_blocks = MutableModuleList(
             [
                 SanaTransformerBlock(
                     inner_dim,
@@ -289,16 +369,16 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             ]
         )
 
-        # 4. Output blocks
+        # output blocks
         self.scale_shift_table = nn.Parameter(torch.randn(2, inner_dim) / inner_dim**0.5)
 
         self.norm_out = nn.LayerNorm(inner_dim, elementwise_affine=False, eps=1e-6)
-        self.proj_out = nn.Linear(inner_dim, patch_size * patch_size * out_channels)
+        self.proj_out = nn.Linear(inner_dim, patch_area * out_channels)
 
         self.gradient_checkpointing = False
         self.gradient_checkpointing_interval = None
 
-        # TREAD support
+        # tread support
         self._tread_router = None
         self._tread_routes = None
 
@@ -316,6 +396,16 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                 The interval at which to checkpoint the gradients.
         """
         self.gradient_checkpointing_interval = interval
+
+    @staticmethod
+    def _coerce_module_output(output: Union[torch.Tensor, Transformer2DModelOutput, Tuple, List]):
+        if isinstance(output, Transformer2DModelOutput):
+            return output.sample
+        if isinstance(output, dict):
+            return output.get("sample", next(iter(output.values())))
+        if isinstance(output, (list, tuple)):
+            return SanaTransformer2DModel._coerce_module_output(output[0])
+        return output
 
     @property
     # Copied from diffusers.models.unets.unet_2d_condition.UNet2DConditionModel.attn_processors
@@ -344,7 +434,7 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         for name, module in self.named_children():
             fn_recursive_add_processors(name, module, processors)
 
-        return processors
+        return CallableDict(processors)
 
     # Copied from diffusers.models.unets.unet_2d_condition.UNet2DConditionModel.set_attn_processor
     def set_attn_processor(self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]]):
@@ -399,7 +489,7 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             lora_scale = 1.0
 
         if USE_PEFT_BACKEND:
-            # weight the lora layers by setting `lora_scale` for each PEFT layer
+            # scale lora layers
             scale_lora_layers(self, lora_scale)
         else:
             if attention_kwargs is not None and attention_kwargs.get("scale", None) is not None:
@@ -427,7 +517,7 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             encoder_attention_mask = (1 - encoder_attention_mask.to(hidden_states.dtype)) * -10000.0
             encoder_attention_mask = encoder_attention_mask.unsqueeze(1)
 
-        # 1. Input
+        # input
         batch_size, num_channels, height, width = hidden_states.shape
         p = self.config.patch_size
         post_patch_height, post_patch_width = height // p, width // p
@@ -441,23 +531,23 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
 
         encoder_hidden_states = self.caption_norm(encoder_hidden_states)
 
-        # 2. Transformer blocks
+        # transformer blocks
         use_reentrant = is_torch_version("<=", "1.11.0")
         ckpt_kwargs = {"use_reentrant": use_reentrant} if is_torch_version(">=", "1.11.0") else {}
 
-        # TREAD initialization
+        # tread init
         routes = self._tread_routes or []
         router = self._tread_router
         use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
 
         for i, block in enumerate(self.transformer_blocks):
-            # TREAD routing for this layer
+            mask_info = None
+            original_hidden_states = None
+
             if use_routing:
-                # Check if this layer should use routing
                 for route in routes:
                     start_idx = route["start_layer_idx"]
                     end_idx = route["end_layer_idx"]
-                    # Handle negative indices
                     if start_idx < 0:
                         start_idx = len(self.transformer_blocks) + start_idx
                     if end_idx < 0:
@@ -465,8 +555,11 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
 
                     if start_idx <= i <= end_idx:
                         mask_info = router.get_mask(
-                            hidden_states.shape[1], route["selection_ratio"], force_keep_mask=force_keep_mask
+                            hidden_states,
+                            route["selection_ratio"],
+                            force_keep=force_keep_mask,
                         )
+                        original_hidden_states = hidden_states
                         hidden_states = router.start_route(hidden_states, mask_info)
                         break
             if (
@@ -503,36 +596,28 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                     post_patch_width,
                 )
 
-            # TREAD end routing for this layer
-            if use_routing:
-                # Check if this layer should end routing
-                for route in routes:
-                    start_idx = route["start_layer_idx"]
-                    end_idx = route["end_layer_idx"]
-                    # Handle negative indices
-                    if start_idx < 0:
-                        start_idx = len(self.transformer_blocks) + start_idx
-                    if end_idx < 0:
-                        end_idx = len(self.transformer_blocks) + end_idx
+            hidden_states = self._coerce_module_output(hidden_states)
 
-                    if start_idx <= i <= end_idx:
-                        mask_info = router.get_mask(
-                            hidden_states.shape[1], route["selection_ratio"], force_keep_mask=force_keep_mask
-                        )
-                        hidden_states = router.end_route(hidden_states, mask_info)
-                        break
+            if mask_info is not None and router is not None:
+                hidden_states = router.end_route(hidden_states, mask_info, original_x=original_hidden_states)
 
-        # 3. Normalization
-        shift, scale = (self.scale_shift_table[None] + embedded_timestep[:, None].to(self.scale_shift_table.device)).chunk(
-            2, dim=1
+        tokens = hidden_states.shape[1]
+        expected_tokens = post_patch_height * post_patch_width
+        if tokens != expected_tokens:
+            post_patch_height, post_patch_width = self._infer_token_grid(tokens, post_patch_height, post_patch_width)
+
+        # normalization
+        modulation_out = self.scale_shift_table[None].to(hidden_states.dtype) + embedded_timestep[:, None].to(
+            hidden_states.dtype
         )
+        shift, scale = modulation_out.chunk(2, dim=1)
         hidden_states = self.norm_out(hidden_states)
 
-        # 4. Modulation
+        # modulation
         hidden_states = hidden_states * (1 + scale) + shift
         hidden_states = self.proj_out(hidden_states)
 
-        # 5. Unpatchify
+        # unpatchify
         hidden_states = hidden_states.reshape(
             batch_size,
             post_patch_height,
@@ -545,9 +630,22 @@ class SanaTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         output = hidden_states.reshape(batch_size, -1, post_patch_height * p, post_patch_width * p)
 
         if USE_PEFT_BACKEND:
-            # remove `lora_scale` from each PEFT layer
+            # unscale lora layers
             unscale_lora_layers(self, lora_scale)
 
         if not return_dict:
             return (output,)
         return Transformer2DModelOutput(sample=output)
+
+    @staticmethod
+    def _infer_token_grid(num_tokens: int, target_height: int, target_width: int) -> Tuple[int, int]:
+        if target_height > 0 and num_tokens % target_height == 0:
+            return int(target_height), int(num_tokens // target_height)
+        if target_width > 0 and num_tokens % target_width == 0:
+            return int(num_tokens // target_width), int(target_width)
+
+        root = int(round(num_tokens**0.5))
+        if root > 0 and root * root == num_tokens:
+            return root, root
+
+        return num_tokens, 1

@@ -1,4 +1,9 @@
-import accelerate, logging, os, contextlib, transformers
+import contextlib
+import logging
+import os
+
+import accelerate
+import transformers
 from accelerate.state import AcceleratorState
 from transformers.integrations import HfDeepSpeedConfig
 
@@ -20,27 +25,19 @@ from transformers.integrations.deepspeed import (
 @contextlib.contextmanager
 def temporarily_disable_deepspeed_zero3():
     # https://github.com/huggingface/transformers/issues/28106
-    deepspeed_plugin = (
-        AcceleratorState().deepspeed_plugin
-        if accelerate.state.is_initialized()
-        else None
-    )
+    deepspeed_plugin = AcceleratorState().deepspeed_plugin if accelerate.state.is_initialized() else None
     if deepspeed_plugin is None:
         print("DeepSpeed was not enabled.")
         return []
 
     if deepspeed_plugin and is_deepspeed_zero3_enabled():
         print("DeepSpeed being disabled.")
-        _hf_deepspeed_config_weak_ref = (
-            transformers.integrations.deepspeed._hf_deepspeed_config_weak_ref
-        )
+        _hf_deepspeed_config_weak_ref = transformers.integrations.deepspeed._hf_deepspeed_config_weak_ref
         unset_hf_deepspeed_config()
         yield
         print("DeepSpeed being enabled.")
         set_hf_deepspeed_config(HfDeepSpeedConfig(deepspeed_plugin.deepspeed_config))
-        transformers.integrations.deepspeed._hf_deepspeed_config_weak_ref = (
-            _hf_deepspeed_config_weak_ref
-        )
+        transformers.integrations.deepspeed._hf_deepspeed_config_weak_ref = _hf_deepspeed_config_weak_ref
     else:
         print(f"Doing nothing, deepspeed zero3 was not enabled?")
         yield
@@ -50,18 +47,12 @@ def deepspeed_zero_init_disabled_context_manager():
     """
     returns either a context list that includes one that will disable zero.Init or an empty context list
     """
-    deepspeed_plugin = (
-        AcceleratorState().deepspeed_plugin
-        if accelerate.state.is_initialized()
-        else None
-    )
+    deepspeed_plugin = AcceleratorState().deepspeed_plugin if accelerate.state.is_initialized() else None
     if deepspeed_plugin is None:
         logger.debug("DeepSpeed context manager disabled, no DeepSpeed detected.")
         return []
 
-    logger.debug(
-        f"DeepSpeed context manager enabled, DeepSpeed detected: {deepspeed_plugin}"
-    )
+    logger.debug(f"DeepSpeed context manager enabled, DeepSpeed detected: {deepspeed_plugin}")
     return [
         deepspeed_plugin.zero3_init_context_manager(enable=False),
         temporarily_disable_deepspeed_zero3(),
@@ -76,12 +67,8 @@ def prepare_model_for_deepspeed(accelerator, args):
         and hasattr(accelerator.state, "deepspeed_plugin")
         and getattr(accelerator.state, "deepspeed_plugin") is not None
     ):
-        offload_param = accelerator.state.deepspeed_plugin.deepspeed_config[
-            "zero_optimization"
-        ]["offload_param"]
-        accelerator.state.deepspeed_plugin.deepspeed_config["zero_optimization"][
-            "offload_param"
-        ]["pin_memory"] = True
+        offload_param = accelerator.state.deepspeed_plugin.deepspeed_config["zero_optimization"]["offload_param"]
+        accelerator.state.deepspeed_plugin.deepspeed_config["zero_optimization"]["offload_param"]["pin_memory"] = True
         if offload_param["device"] == "nvme":
             if offload_param["nvme_path"] == "none":
                 if args.offload_param_path is None:
@@ -93,15 +80,13 @@ def prepare_model_for_deepspeed(accelerator, args):
                     if args.model_family in ["flux"]:
                         # flux is big
                         offload_buffer = 131600000.0
-                    logger.info(
-                        f"Attempting to allocate {offload_buffer} size byte buffer."
-                    )
-                    accelerator.state.deepspeed_plugin.deepspeed_config[
-                        "zero_optimization"
-                    ]["offload_param"]["buffer_size"] = offload_buffer
-                    accelerator.state.deepspeed_plugin.deepspeed_config[
-                        "zero_optimization"
-                    ]["offload_param"]["nvme_path"] = args.offload_param_path
+                    logger.info(f"Attempting to allocate {offload_buffer} size byte buffer.")
+                    accelerator.state.deepspeed_plugin.deepspeed_config["zero_optimization"]["offload_param"][
+                        "buffer_size"
+                    ] = offload_buffer
+                    accelerator.state.deepspeed_plugin.deepspeed_config["zero_optimization"]["offload_param"][
+                        "nvme_path"
+                    ] = args.offload_param_path
             logger.info(
                 f"Using DeepSpeed NVMe offload at {accelerator.state.deepspeed_plugin.deepspeed_config['zero_optimization']['offload_param']['nvme_path']}."
             )

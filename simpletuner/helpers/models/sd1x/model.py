@@ -1,17 +1,16 @@
-import torch, os, logging
-from simpletuner.helpers.models.common import (
-    ImageModelFoundation,
-    PredictionTypes,
-    PipelineTypes,
-    ModelTypes,
-)
-from transformers import CLIPTokenizer, CLIPTextModel
+import logging
+import os
+
+import torch
+from diffusers import AutoencoderKL, ControlNetModel, UNet2DConditionModel
+from transformers import CLIPTextModel, CLIPTokenizer
+
+from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.sd1x.pipeline import (
-    StableDiffusionPipeline,
-    StableDiffusionImg2ImgPipeline,
     StableDiffusionControlNetPipeline,
+    StableDiffusionImg2ImgPipeline,
+    StableDiffusionPipeline,
 )
-from diffusers import AutoencoderKL, UNet2DConditionModel, ControlNetModel
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -83,9 +82,7 @@ class StableDiffusion1(ImageModelFoundation):
             "prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
         }
 
-    def convert_negative_text_embed_for_pipeline(
-        self, text_embedding: torch.Tensor, prompt: str
-    ) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
         return {
             "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
         }
@@ -113,9 +110,7 @@ class StableDiffusion1(ImageModelFoundation):
         logger.info("Creating the controlnet..")
         if self.config.controlnet_model_name_or_path:
             logger.info("Loading existing controlnet weights")
-            self.controlnet = ControlNetModel.from_pretrained(
-                self.config.controlnet_model_name_or_path
-            )
+            self.controlnet = ControlNetModel.from_pretrained(self.config.controlnet_model_name_or_path)
         else:
             logger.info("Initializing controlnet weights from base model")
             self.controlnet = ControlNetModel.from_unet(self.unwrap_model(self.model))
@@ -128,9 +123,7 @@ class StableDiffusion1(ImageModelFoundation):
         )
         logger.debug(f"Image shape: {controlnet_image.shape}")
         down_block_res_samples, mid_block_res_sample = self.controlnet(
-            prepared_batch["noisy_latents"].to(
-                device=self.accelerator.device, dtype=self.config.base_weight_dtype
-            ),
+            prepared_batch["noisy_latents"].to(device=self.accelerator.device, dtype=self.config.base_weight_dtype),
             prepared_batch["timesteps"],
             encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(
                 device=self.accelerator.device, dtype=self.config.base_weight_dtype
@@ -153,9 +146,7 @@ class StableDiffusion1(ImageModelFoundation):
                 ),
                 # added_cond_kwargs=added_cond_kwargs,
                 down_block_additional_residuals=[
-                    sample.to(
-                        device=self.accelerator.device, dtype=self.config.weight_dtype
-                    )
+                    sample.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
                     for sample in down_block_res_samples
                 ],
                 mid_block_additional_residual=mid_block_res_sample.to(
@@ -199,9 +190,7 @@ class StableDiffusion1(ImageModelFoundation):
                 f"{self.NAME} does not support fp8-quanto. Please use fp8-torchao or int8 precision level instead."
             )
         if self.config.tokenizer_max_length is not None:
-            logger.warning(
-                f"-!- {self.NAME} supports a max length of 77 tokens, --tokenizer_max_length is ignored -!-"
-            )
+            logger.warning(f"-!- {self.NAME} supports a max length of 77 tokens, --tokenizer_max_length is ignored -!-")
         if self.config.aspect_bucket_alignment != 64:
             logger.warning(
                 "{self.NAME} requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
@@ -209,9 +198,7 @@ class StableDiffusion1(ImageModelFoundation):
             self.config.aspect_bucket_alignment = 64
 
         if self.config.prediction_type is not None:
-            logger.info(
-                f"Setting {self.NAME} prediction type: {self.config.prediction_type}"
-            )
+            logger.info(f"Setting {self.NAME} prediction type: {self.config.prediction_type}")
             self.PREDICTION_TYPE = PredictionTypes.from_str(self.config.prediction_type)
             if self.config.validation_noise_scheduler is None:
                 self.config.validation_noise_scheduler = self.DEFAULT_NOISE_SCHEDULER
@@ -226,28 +213,16 @@ class StableDiffusion1(ImageModelFoundation):
         if self.config.use_soft_min_snr:
             output_args.append(f"use_soft_min_snr")
             if self.config.soft_min_snr_sigma_data:
-                output_args.append(
-                    f"soft_min_snr_sigma_data={self.config.soft_min_snr_sigma_data}"
-                )
+                output_args.append(f"soft_min_snr_sigma_data={self.config.soft_min_snr_sigma_data}")
         if self.config.rescale_betas_zero_snr:
             output_args.append(f"rescale_betas_zero_snr")
         if self.config.offset_noise:
             output_args.append(f"offset_noise")
             output_args.append(f"noise_offset={self.config.noise_offset}")
-            output_args.append(
-                f"noise_offset_probability={self.config.noise_offset_probability}"
-            )
-        output_args.append(
-            f"training_scheduler_timestep_spacing={self.config.training_scheduler_timestep_spacing}"
-        )
-        output_args.append(
-            f"inference_scheduler_timestep_spacing={self.config.inference_scheduler_timestep_spacing}"
-        )
-        output_str = (
-            f" (extra parameters={output_args})"
-            if output_args
-            else " (no special parameters set)"
-        )
+            output_args.append(f"noise_offset_probability={self.config.noise_offset_probability}")
+        output_args.append(f"training_scheduler_timestep_spacing={self.config.training_scheduler_timestep_spacing}")
+        output_args.append(f"inference_scheduler_timestep_spacing={self.config.inference_scheduler_timestep_spacing}")
+        output_str = f" (extra parameters={output_args})" if output_args else " (no special parameters set)"
 
         return output_str
 
@@ -284,9 +259,7 @@ class StableDiffusion2(StableDiffusion1):
                 f"{self.NAME} does not support fp8-quanto. Please use fp8-torchao or int8 precision level instead."
             )
         if self.config.tokenizer_max_length is not None:
-            logger.warning(
-                f"-!- {self.NAME} supports a max length of 77 tokens, --tokenizer_max_length is ignored -!-"
-            )
+            logger.warning(f"-!- {self.NAME} supports a max length of 77 tokens, --tokenizer_max_length is ignored -!-")
         if self.config.aspect_bucket_alignment != 64:
             logger.warning(
                 "{self.NAME} requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
@@ -301,9 +274,7 @@ class StableDiffusion2(StableDiffusion1):
             self.config.training_scheduler_timestep_spacing = "trailing"
 
         if self.config.prediction_type is not None:
-            logger.info(
-                f"Setting {self.NAME} prediction type: {self.config.prediction_type}"
-            )
+            logger.info(f"Setting {self.NAME} prediction type: {self.config.prediction_type}")
             self.PREDICTION_TYPE = PredictionTypes.from_str(self.config.prediction_type)
             if self.config.validation_noise_scheduler is None:
                 self.config.validation_noise_scheduler = self.DEFAULT_NOISE_SCHEDULER

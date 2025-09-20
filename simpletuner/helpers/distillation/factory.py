@@ -1,7 +1,7 @@
 # helpers/distillation/factory.py
 import logging
-from typing import Dict, Any, Optional, Union
 from enum import Enum
+from typing import Any, Dict, Optional, Union
 
 from simpletuner.helpers.distillation.common import DistillationBase
 
@@ -57,14 +57,12 @@ class DistillerFactory:
         Returns:
             Configured distiller instance or None if method is None
         """
-        # Convert string to enum if needed
         if isinstance(method, str):
             method = DistillationMethod.from_string(method)
 
         if method is None:
             return None
 
-        # Extract distillation-specific config
         distill_config = {}
         if config.get("distillation_config") is not None:
             # Check for method-specific config first
@@ -74,7 +72,6 @@ class DistillerFactory:
                 # Fall back to general distillation config
                 distill_config = config["distillation_config"]
 
-        # Route to appropriate distiller
         if method == DistillationMethod.DCM:
             return DistillerFactory._create_dcm_distiller(
                 teacher_model=teacher_model,
@@ -117,15 +114,11 @@ class DistillerFactory:
         prediction_type: Optional[str],
         student_model=None,
     ) -> DistillationBase:
-        """Create and configure a DMD distiller."""
         try:
             from simpletuner.helpers.distillation.dmd.distiller import DMDDistiller
         except ImportError:
-            raise ImportError(
-                "DMD distiller not found. Please ensure simpletuner.helpers.distillation.dmd is available."
-            )
+            raise ImportError("DMD distiller not found. Please ensure simpletuner.helpers.distillation.dmd is available.")
 
-        # Build DMD-specific config with defaults
         dmd_config = {
             "model_family": model_family or "wan",
             "dmd_denoising_steps": "1000,757,522",  # 3-step default
@@ -139,17 +132,13 @@ class DistillerFactory:
             "min_lr_ratio": 0.5,
         }
 
-        # Add flow-matching specific defaults if applicable
+        # flow-matching models need shift parameter
         if prediction_type and "flow" in prediction_type.lower():
-            dmd_config["shift"] = 5.0  # FastVideo uses shift=5 for Wan models
+            dmd_config["shift"] = 5.0
 
-        # Override with user config
         dmd_config.update(distill_config)
 
-        logger.info(f"Creating DMD distiller with config: {dmd_config}")
-
         if model_type == "lora":
-            logger.info("Loading DMD distillation via low-rank adapter training.")
             return DMDDistiller(
                 teacher_model=teacher_model,
                 student_model=None,  # Use teacher with adapters
@@ -158,14 +147,7 @@ class DistillerFactory:
             )
         elif model_type == "full":
             if student_model is None:
-                # For DMD, we can use the teacher as base for student
-                logger.info(
-                    "DMD full model distillation: initializing student from teacher."
-                )
-            else:
-                logger.info(
-                    "Loading DMD distillation with separate teacher/student models."
-                )
+                pass
             return DMDDistiller(
                 teacher_model=teacher_model,
                 student_model=student_model,
@@ -185,15 +167,11 @@ class DistillerFactory:
         prediction_type: Optional[str],
         student_model=None,
     ) -> DistillationBase:
-        """Create and configure a DCM distiller."""
         try:
             from simpletuner.helpers.distillation.dcm.distiller import DCMDistiller
         except ImportError:
-            raise ImportError(
-                "DCM distiller not found. Please ensure simpletuner.helpers.distillation.dcm is available."
-            )
+            raise ImportError("DCM distiller not found. Please ensure simpletuner.helpers.distillation.dcm is available.")
 
-        # Build DCM-specific config
         dcm_config = {
             "model_family": model_family,
             "model_type": model_type,
@@ -202,21 +180,13 @@ class DistillerFactory:
             "is_regularisation_data": True,  # Default to regularization approach
         }
 
-        # Override with user config
         dcm_config.update(distill_config)
 
-        # Validate required parameters
+        # dcm requires model_family for flow-matching setup
         if dcm_config.get("model_family") is None:
-            raise ValueError(
-                "DCM requires 'model_family' to be specified (e.g., 'wan', 'hunyuan')"
-            )
-
-        logger.info(f"Creating DCM distiller with config: {dcm_config}")
+            raise ValueError("DCM requires 'model_family' to be specified (e.g., 'wan', 'hunyuan')")
 
         if model_type == "lora":
-            logger.info(
-                "Loading DCM flow-matching distillation via low-rank adapter training."
-            )
             return DCMDistiller(
                 teacher_model=teacher_model,
                 student_model=None,  # Use teacher with adapters
@@ -225,12 +195,8 @@ class DistillerFactory:
             )
         elif model_type == "full":
             if student_model is None:
-                raise ValueError(
-                    "Full model DCM distillation requires a separate student model."
-                )
-            logger.info(
-                "Loading DCM distillation with separate teacher/student models."
-            )
+                raise ValueError("Full model DCM distillation requires a separate student model.")
+            pass
             return DCMDistiller(
                 teacher_model=teacher_model,
                 student_model=student_model,
@@ -249,15 +215,11 @@ class DistillerFactory:
         prediction_type: Optional[str],
         student_model=None,
     ) -> DistillationBase:
-        """Create and configure an LCM distiller."""
         try:
             from simpletuner.helpers.distillation.lcm.distiller import LCMDistiller
         except ImportError:
-            raise ImportError(
-                "LCM distiller not found. Please ensure simpletuner.helpers.distillation.lcm is available."
-            )
+            raise ImportError("LCM distiller not found. Please ensure simpletuner.helpers.distillation.lcm is available.")
 
-        # Build LCM-specific config with defaults
         lcm_config = {
             "num_ddim_timesteps": 50,
             "w_min": 1.0,
@@ -267,17 +229,13 @@ class DistillerFactory:
             "timestep_scaling_factor": 10.0,
         }
 
-        # Add flow-matching specific defaults if applicable
+        # flow-matching models need shift parameter
         if prediction_type and "flow" in prediction_type.lower():
             lcm_config["shift"] = 7.0
 
-        # Override with user config
         lcm_config.update(distill_config)
 
-        logger.info(f"Creating LCM distiller with config: {lcm_config}")
-
         if model_type == "lora":
-            logger.info("Loading LCM distillation via low-rank adapter training.")
             return LCMDistiller(
                 teacher_model=teacher_model,
                 student_model=None,  # Use teacher with adapters
@@ -286,12 +244,8 @@ class DistillerFactory:
             )
         elif model_type == "full":
             if student_model is None:
-                raise ValueError(
-                    "Full model LCM distillation requires a separate student model."
-                )
-            logger.info(
-                "Loading LCM distillation with separate teacher/student models."
-            )
+                raise ValueError("Full model LCM distillation requires a separate student model.")
+            pass
             return LCMDistiller(
                 teacher_model=teacher_model,
                 student_model=student_model,
@@ -324,16 +278,15 @@ def init_distillation(trainer_instance):
     if hasattr(trainer_instance.model, "PREDICTION_TYPE"):
         prediction_type = trainer_instance.model.PREDICTION_TYPE.value
 
-    # Create distiller using factory
     trainer_instance.distiller = DistillerFactory.create_distiller(
         method=trainer_instance.config.distillation_method,
         teacher_model=trainer_instance.model,
         noise_scheduler=trainer_instance.noise_scheduler,
-        config=vars(trainer_instance.config),  # Convert config object to dict
+        config=vars(trainer_instance.config),
         model_type=trainer_instance.config.model_type,
         model_family=getattr(trainer_instance.config, "model_family", None),
         prediction_type=prediction_type,
-        student_model=None,  # Add logic here if you have separate student models
+        student_model=None,
     )
 
     return trainer_instance.distiller

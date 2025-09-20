@@ -1,0 +1,8 @@
+[
+    {
+        "id": "invalid_aws",
+        "type": "aws",
+        "dataset_type": "image",
+        "aws_bucket_name": "test-bucket"
+    }
+]

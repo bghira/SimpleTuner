@@ -1,6 +1,7 @@
-import torch
-import random
 import json
+import random
+
+import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
 
@@ -15,14 +16,8 @@ class PromptExpander:
         """
         Initializes the language model, tokenizer, and text generation pipeline.
         """
-        device = (
-            "cuda"
-            if torch.cuda.is_available()
-            else "mps" if torch.backends.mps.is_available() else "cpu"
-        )
-        PromptExpander.model = AutoModelForCausalLM.from_pretrained(model_path).to(
-            device
-        )
+        device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+        PromptExpander.model = AutoModelForCausalLM.from_pretrained(model_path).to(device)
         PromptExpander.tokenizer = AutoTokenizer.from_pretrained(model_path)
         PromptExpander.generator = pipeline(
             "text-generation",
@@ -162,9 +157,7 @@ class PromptExpander:
             # Randomly select a prompt template and style
             prompt_template = None
             style = None
-            while (prompt_template is None or prompt_template in used_templates) or (
-                style is None or style in used_styles
-            ):
+            while (prompt_template is None or prompt_template in used_templates) or (style is None or style in used_styles):
                 prompt_template = random.choice(prompt_templates)
                 style = random.choice(styles)
 
@@ -267,9 +260,7 @@ if __name__ == "__main__":
     PromptExpander.initialize_model()
 
     # Generate prompts with your trigger phrase
-    user_prompt_library = PromptExpander.generate_prompts(
-        trigger_phrase="your_trigger_phrase_here", num_prompts=25
-    )
+    user_prompt_library = PromptExpander.generate_prompts(trigger_phrase="your_trigger_phrase_here", num_prompts=25)
 
     # Write to disk
     with open("config/user_prompt_library.json", "w") as f:

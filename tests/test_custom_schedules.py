@@ -1,10 +1,12 @@
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 import torch
 import torch.optim as optim
+
 from simpletuner.helpers.training.custom_schedule import (
-    get_polynomial_decay_schedule_with_warmup,
     enforce_zero_terminal_snr,
+    get_polynomial_decay_schedule_with_warmup,
     patch_scheduler_betas,
     segmented_timestep_selection,
 )
@@ -13,9 +15,7 @@ from simpletuner.helpers.training.custom_schedule import (
 class TestPolynomialDecayWithWarmup(unittest.TestCase):
     def test_polynomial_decay_schedule_with_warmup(self):
         optimizer = optim.SGD([torch.randn(2, 2, requires_grad=True)], lr=0.1)
-        scheduler = get_polynomial_decay_schedule_with_warmup(
-            optimizer, num_warmup_steps=10, num_training_steps=100
-        )
+        scheduler = get_polynomial_decay_schedule_with_warmup(optimizer, num_warmup_steps=10, num_training_steps=100)
 
         # Test warmup
         ranges = [0, 0.01, 0.02, 0.03, 0.04, 0.05]

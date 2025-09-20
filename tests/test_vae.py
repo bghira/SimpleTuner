@@ -1,12 +1,13 @@
-from hashlib import sha256
-from simpletuner.helpers.caching.vae import VAECache
-
 import unittest
-from PIL import Image
+from hashlib import sha256
+from unittest.mock import MagicMock
+
 import numpy as np
+from PIL import Image
+
+from simpletuner.helpers.caching.vae import VAECache
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.training.state_tracker import StateTracker
-from unittest.mock import MagicMock
 
 
 class TestVaeCache(unittest.TestCase):
@@ -71,9 +72,7 @@ class TestVaeCache(unittest.TestCase):
                 model=MagicMock(),
             )
             generated = vae_cache.generate_vae_cache_filename(filepath)[0]
-            self.assertEqual(
-                generated, expected, f"Test {i} failed: {generated} != {expected}"
-            )
+            self.assertEqual(generated, expected, f"Test {i} failed: {generated} != {expected}")
 
 
 if __name__ == "__main__":

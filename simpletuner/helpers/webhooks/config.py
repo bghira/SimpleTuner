@@ -21,20 +21,15 @@ def check_raw_webhook_config(config: dict) -> bool:
             missing_fields.append(config_field)
     if missing_fields:
         raise ValueError(f"Missing fields on webhook config: {missing_fields}")
-    return False
+    return True
 
 
 class WebhookConfig:
     def __init__(self, config_path: str):
         self.config_path = config_path
         self.values = self.load_config()
-        if (
-            "webhook_type" not in self.values
-            or self.values["webhook_type"] not in supported_webhooks
-        ):
-            raise ValueError(
-                f"Invalid webhook type specified in config. Supported values: {supported_webhooks}"
-            )
+        if "webhook_type" not in self.values or self.values["webhook_type"] not in supported_webhooks:
+            raise ValueError(f"Invalid webhook type specified in config. Supported values: {supported_webhooks}")
         if check_discord_webhook_config(self.values):
             self.webhook_type = "discord"
         elif check_raw_webhook_config(self.values):

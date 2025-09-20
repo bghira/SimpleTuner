@@ -1,19 +1,12 @@
-import torch, os, logging
-from simpletuner.helpers.models.common import (
-    ImageModelFoundation,
-    PredictionTypes,
-    PipelineTypes,
-    ModelTypes,
-)
-from transformers import (
-    PreTrainedTokenizerFast,
-    Gemma2Model,
-)
-from diffusers import AutoencoderKL
-from diffusers.models.attention_processor import Attention
-from diffusers import Lumina2Transformer2DModel, Lumina2Pipeline
+import logging
+import os
 
-from simpletuner.helpers.training.multi_process import _get_rank
+import torch
+from diffusers import AutoencoderKL, Lumina2Pipeline, Lumina2Transformer2DModel
+from diffusers.models.attention_processor import Attention
+from transformers import Gemma2Model, PreTrainedTokenizerFast
+
+from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.training.multi_process import _get_rank
 
 logger = logging.getLogger(__name__)
@@ -123,9 +116,7 @@ class Lumina2(ImageModelFoundation):
         # Only unsqueeze if it's missing the batch dimension
         prompt_embeds = text_embedding["prompt_embeds"]
         if prompt_embeds.dim() == 2:  # Shape: [seq_len, hidden_dim]
-            prompt_embeds = prompt_embeds.unsqueeze(
-                0
-            )  # Shape: [1, seq_len, hidden_dim]
+            prompt_embeds = prompt_embeds.unsqueeze(0)  # Shape: [1, seq_len, hidden_dim]
 
         attention_mask = text_embedding.get("prompt_attention_mask", None)
         if attention_mask is not None and attention_mask.dim() == 1:  # Shape: [seq_len]
@@ -136,14 +127,9 @@ class Lumina2(ImageModelFoundation):
             "prompt_attention_mask": attention_mask.to(torch.int32),
         }
 
-    def convert_negative_text_embed_for_pipeline(
-        self, text_embedding: torch.Tensor, prompt: str
-    ) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
         """Convert negative text embeddings for pipeline usage"""
-        if (
-            self.config.validation_guidance is None
-            or self.config.validation_guidance <= 1.0
-        ):
+        if self.config.validation_guidance is None or self.config.validation_guidance <= 1.0:
             # CFG is disabled, no negative prompts.
             return {}
 
@@ -177,9 +163,7 @@ class Lumina2(ImageModelFoundation):
             prompts = [self.SYSTEM_PROMPT + " <Prompt Start> " + p for p in prompts]
 
         # Use the pipeline's encode method
-        prompt_embeds, prompt_attention_mask = self.pipelines[
-            PipelineTypes.TEXT2IMG
-        ]._get_gemma_prompt_embeds(
+        prompt_embeds, prompt_attention_mask = self.pipelines[PipelineTypes.TEXT2IMG]._get_gemma_prompt_embeds(
             prompt=prompts,
             device=self.accelerator.device,
             max_sequence_length=int(self.config.tokenizer_max_length),
@@ -264,9 +248,7 @@ class Lumina2(ImageModelFoundation):
         if self.config.tokenizer_max_length is None:
             self.config.tokenizer_max_length = 256
         elif self.config.tokenizer_max_length > 512:
-            logger.warning(
-                f"{self.NAME} has a maximum token length of 512. Setting to 512."
-            )
+            logger.warning(f"{self.NAME} has a maximum token length of 512. Setting to 512.")
             self.config.tokenizer_max_length = 512
 
         # Lumina2 default inference steps
@@ -283,9 +265,7 @@ class Lumina2(ImageModelFoundation):
         elif self.config.lora_type.lower() == "lycoris":
             return self.DEFAULT_LYCORIS_TARGET
         else:
-            raise NotImplementedError(
-                f"Unknown LoRA target type {self.config.lora_type}."
-            )
+            raise NotImplementedError(f"Unknown LoRA target type {self.config.lora_type}.")
 
     def custom_model_card_schedule_info(self):
         """Custom model card info for Lumina2"""

@@ -1,18 +1,18 @@
+import json
+import os
 import unittest
 from unittest.mock import MagicMock, patch
-import os
-import json
 
+from simpletuner.helpers.publishing.metadata import *
 from simpletuner.helpers.publishing.metadata import (
-    _negative_prompt,
-    _torch_device,
+    _guidance_rescale,
     _model_imports,
     _model_load,
-    _validation_resolution,
+    _negative_prompt,
     _skip_layers,
-    _guidance_rescale,
+    _torch_device,
+    _validation_resolution,
 )
-from simpletuner.helpers.publishing.metadata import *
 
 
 class TestMetadataFunctions(unittest.TestCase):
@@ -208,9 +208,7 @@ class TestMetadataFunctions(unittest.TestCase):
                                     "simpletuner.helpers.training.state_tracker.StateTracker.get_args",
                                     return_value=self.args,
                                 ):
-                                    with patch(
-                                        "builtins.open", unittest.mock.mock_open()
-                                    ) as mock_file:
+                                    with patch("builtins.open", unittest.mock.mock_open()) as mock_file:
                                         save_model_card(
                                             repo_id="test-repo",
                                             images=None,

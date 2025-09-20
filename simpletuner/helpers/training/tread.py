@@ -1,6 +1,7 @@
-import torch
 from dataclasses import dataclass
-from typing import Optional, Any
+from typing import Any, Optional
+
+import torch
 
 
 @dataclass
@@ -118,9 +119,7 @@ class TREADRouter:
         Permute tokens so the kept ones come first, then truncate.
         """
         # x: (B,S,D)
-        x_shuf = torch.take_along_dim(
-            x, info.ids_shuffle.unsqueeze(-1).expand_as(x), dim=1
-        )
+        x_shuf = torch.take_along_dim(x, info.ids_shuffle.unsqueeze(-1).expand_as(x), dim=1)
         return x_shuf[:, : info.ids_keep.size(1), :]
 
     def end_route(
@@ -156,7 +155,5 @@ class TREADRouter:
             x_shuf[:, routed_x.size(1) :, :].fill_(mask_token)
 
         # Undo the permutation
-        x_full = torch.take_along_dim(
-            x_shuf, info.ids_restore.unsqueeze(-1).expand_as(x_shuf), dim=1
-        )
+        x_full = torch.take_along_dim(x_shuf, info.ids_restore.unsqueeze(-1).expand_as(x_shuf), dim=1)
         return x_full

@@ -1,27 +1,21 @@
 #!/usr/bin/env python3
+import curses
+import json
 import os
 import sys
-import json
-import curses
 import textwrap
-from typing import Dict, Any, List, Tuple, Optional
 import traceback
+from typing import Any, Dict, List, Optional, Tuple
+
 import huggingface_hub
 import torch
-from simpletuner.helpers.training import quantised_precision_levels, lycoris_defaults
+
+from simpletuner.helpers.training import lycoris_defaults, quantised_precision_levels
 from simpletuner.helpers.training.optimizer_param import optimizer_choices
 
 # Constants
-bf16_only_optims = [
-    key
-    for key, value in optimizer_choices.items()
-    if value.get("precision", "any") == "bf16"
-]
-any_precision_optims = [
-    key
-    for key, value in optimizer_choices.items()
-    if value.get("precision", "any") == "any"
-]
+bf16_only_optims = [key for key, value in optimizer_choices.items() if value.get("precision", "any") == "bf16"]
+any_precision_optims = [key for key, value in optimizer_choices.items() if value.get("precision", "any") == "any"]
 
 model_classes = {
     "full": [
@@ -176,16 +170,12 @@ class ConfigState:
                 self.lora_rank = loaded_config["lora_rank"]
 
             # Load LyCORIS config if specified
-            if "lycoris_config" in loaded_config and os.path.exists(
-                loaded_config["lycoris_config"]
-            ):
+            if "lycoris_config" in loaded_config and os.path.exists(loaded_config["lycoris_config"]):
                 with open(loaded_config["lycoris_config"], "r", encoding="utf-8") as f:
                     self.lycoris_config = json.load(f)
 
             # Load dataset config if specified
-            backend_config = loaded_config.get(
-                "data_backend_config", "config/multidatabackend.json"
-            )
+            backend_config = loaded_config.get("data_backend_config", "config/multidatabackend.json")
             if os.path.exists(backend_config):
                 with open(backend_config, "r", encoding="utf-8") as f:
                     self.dataset_config = json.load(f)
@@ -197,10 +187,7 @@ class ConfigState:
                 self.completed_steps.add(0)  # Basic setup
             if "model_type" in loaded_config:
                 self.completed_steps.add(1)  # Model type
-            if (
-                "max_train_steps" in loaded_config
-                or "num_train_epochs" in loaded_config
-            ):
+            if "max_train_steps" in loaded_config or "num_train_epochs" in loaded_config:
                 self.completed_steps.add(2)  # Training config
             if "model_family" in loaded_config:
                 self.completed_steps.add(5)  # Model selection
@@ -240,9 +227,7 @@ class MenuNavigator:
             self.stdscr.addstr(2, 2, "─" * (self.w - 4))
 
             # Instructions
-            self.stdscr.addstr(
-                3, 2, "↑/↓: Navigate  Enter: Select  ←/Backspace: Back  q: Quit"
-            )
+            self.stdscr.addstr(3, 2, "↑/↓: Navigate  Enter: Select  ←/Backspace: Back  q: Quit")
             self.stdscr.addstr(4, 2, "─" * (self.w - 4))
 
             # Menu items
@@ -419,7 +404,6 @@ class SimpleTunerNCurses:
         max_visible = h - start_y - 2
         scroll_offset = 0
 
-        # Calculate scroll offset if needed
         if selected >= max_visible:
             scroll_offset = selected - max_visible + 1
 
@@ -479,9 +463,7 @@ class SimpleTunerNCurses:
         error_h = len(error_lines) + 4
         error_w = min(80, w - 4)
 
-        error_win = curses.newwin(
-            error_h, error_w, (h - error_h) // 2, (w - error_w) // 2
-        )
+        error_win = curses.newwin(error_h, error_w, (h - error_h) // 2, (w - error_w) // 2)
         error_win.box()
         error_win.addstr(0, 2, " Error ", curses.A_BOLD | curses.color_pair(1))
 
@@ -539,9 +521,7 @@ class SimpleTunerNCurses:
             curses.noecho()
             curses.curs_set(0)
 
-    def show_options(
-        self, stdscr, prompt: str, options: List[str], default: int = 0
-    ) -> int:
+    def show_options(self, stdscr, prompt: str, options: List[str], default: int = 0) -> int:
         """Show a list of options and return the selected index"""
         stdscr.clear()
         h, w = stdscr.getmaxyx()
@@ -629,9 +609,7 @@ class SimpleTunerNCurses:
             return True
 
         elif selected == 1:  # Manual entry
-            config_path = self.get_input(
-                stdscr, "Enter path to config.json:", "config/config.json"
-            )
+            config_path = self.get_input(stdscr, "Enter path to config.json:", "config/config.json")
             if os.path.exists(config_path):
                 if self.state.load_from_file(config_path):
                     self.show_message(stdscr, f"Successfully loaded: {config_path}")
@@ -679,19 +657,11 @@ class SimpleTunerNCurses:
         while True:
             # Get current values
             current_values = {
-                "Output Directory": self.state.env_contents.get(
-                    "output_dir", "output/models"
-                ),
-                "Resume from Checkpoint": self.state.env_contents.get(
-                    "resume_from_checkpoint", "latest"
-                ),
-                "Aspect Bucket Rounding": str(
-                    self.state.env_contents.get("aspect_bucket_rounding", 2)
-                ),
+                "Output Directory": self.state.env_contents.get("output_dir", "output/models"),
+                "Resume from Checkpoint": self.state.env_contents.get("resume_from_checkpoint", "latest"),
+                "Aspect Bucket Rounding": str(self.state.env_contents.get("aspect_bucket_rounding", 2)),
                 "Seed": str(self.state.env_contents.get("seed", 42)),
-                "Minimum Image Size": str(
-                    self.state.env_contents.get("minimum_image_size", 0)
-                ),
+                "Minimum Image Size": str(self.state.env_contents.get("minimum_image_size", 0)),
             }
 
             menu_items = [
@@ -772,9 +742,7 @@ class SimpleTunerNCurses:
     def _configure_aspect_rounding(self, stdscr):
         """Configure aspect bucket rounding"""
         current = str(self.state.env_contents.get("aspect_bucket_rounding", 2))
-        value = self.get_input(
-            stdscr, "Set aspect bucket rounding (1-8, higher = more precise):", current
-        )
+        value = self.get_input(stdscr, "Set aspect bucket rounding (1-8, higher = more precise):", current)
         try:
             self.state.env_contents["aspect_bucket_rounding"] = int(value)
         except ValueError:
@@ -783,9 +751,7 @@ class SimpleTunerNCurses:
     def _configure_seed(self, stdscr):
         """Configure training seed"""
         current = str(self.state.env_contents.get("seed", 42))
-        value = self.get_input(
-            stdscr, "Set training seed (for reproducibility):", current
-        )
+        value = self.get_input(stdscr, "Set training seed (for reproducibility):", current)
         try:
             self.state.env_contents["seed"] = int(value)
         except ValueError:
@@ -794,9 +760,7 @@ class SimpleTunerNCurses:
     def _configure_min_image_size(self, stdscr):
         """Configure minimum image size"""
         current = str(self.state.env_contents.get("minimum_image_size", 0))
-        value = self.get_input(
-            stdscr, "Set minimum image size (0 to disable filtering):", current
-        )
+        value = self.get_input(stdscr, "Set minimum image size (0 to disable filtering):", current)
         try:
             self.state.env_contents["minimum_image_size"] = int(value)
         except ValueError:
@@ -821,31 +785,19 @@ class SimpleTunerNCurses:
             if current_type == "lora":
                 # Add LoRA-specific options
                 lora_type = self.state.env_contents.get("lora_type", "standard")
-                current_values["LoRA Type"] = (
-                    "LyCORIS" if lora_type == "lycoris" else "Standard"
-                )
+                current_values["LoRA Type"] = "LyCORIS" if lora_type == "lycoris" else "Standard"
                 menu_items.append(("LoRA Type", self._configure_lora_type))
 
                 if lora_type == "lycoris":
-                    current_values["LyCORIS Algorithm"] = (
-                        "Configured" if self.state.lycoris_config else "Not configured"
-                    )
+                    current_values["LyCORIS Algorithm"] = "Configured" if self.state.lycoris_config else "Not configured"
                     menu_items.append(("LyCORIS Algorithm", self.configure_lycoris))
                 else:
                     # Standard LoRA options
-                    use_dora = (
-                        self.state.env_contents.get("use_dora", "false") == "true"
-                    )
+                    use_dora = self.state.env_contents.get("use_dora", "false") == "true"
                     current_values["DoRA"] = "Enabled" if use_dora else "Disabled"
-                    current_values["LoRA Rank"] = str(
-                        self.state.env_contents.get("lora_rank", 64)
-                    )
-                    current_values["LoRA Alpha"] = str(
-                        self.state.env_contents.get("lora_alpha", 64)
-                    )
-                    current_values["LoRA Dropout"] = str(
-                        self.state.env_contents.get("lora_dropout", 0.0)
-                    )
+                    current_values["LoRA Rank"] = str(self.state.env_contents.get("lora_rank", 64))
+                    current_values["LoRA Alpha"] = str(self.state.env_contents.get("lora_alpha", 64))
+                    current_values["LoRA Dropout"] = str(self.state.env_contents.get("lora_dropout", 0.0))
                     menu_items.extend(
                         [
                             ("DoRA", self._configure_dora),
@@ -860,9 +812,7 @@ class SimpleTunerNCurses:
                 current_values["EMA"] = "Enabled" if use_ema else "Disabled"
                 menu_items.append(("EMA", self._configure_ema))
 
-            selected = nav.show_menu(
-                "Model Type & LoRA/LyCORIS Configuration", menu_items, current_values
-            )
+            selected = nav.show_menu("Model Type & LoRA/LyCORIS Configuration", menu_items, current_values)
 
             if selected == -1:  # Quit
                 if self.confirm_quit(stdscr):
@@ -1025,20 +975,14 @@ class SimpleTunerNCurses:
                 current_values["Block Size"] = str(config.get("block_size", 0))
                 menu_items.append(("Block Size", self._configure_lycoris_block_size))
             elif algo in ["diag-oft", "boft"]:
-                current_values["Constraint"] = (
-                    "Yes" if config.get("constraint", False) else "No"
-                )
-                current_values["Rescaled"] = (
-                    "Yes" if config.get("rescaled", False) else "No"
-                )
+                current_values["Constraint"] = "Yes" if config.get("constraint", False) else "No"
+                current_values["Rescaled"] = "Yes" if config.get("rescaled", False) else "No"
                 menu_items.append(("Constraint", self._configure_lycoris_constraint))
                 menu_items.append(("Rescaled", self._configure_lycoris_rescaled))
 
             menu_items.append(("Save Configuration", self._save_lycoris_config))
 
-            selected = nav.show_menu(
-                "LyCORIS Configuration", menu_items, current_values
-            )
+            selected = nav.show_menu("LyCORIS Configuration", menu_items, current_values)
 
             if selected == -1:  # Quit
                 if self.confirm_quit(stdscr):
@@ -1216,29 +1160,15 @@ class SimpleTunerNCurses:
             # Get current values
             current_values = {}
 
-            if (
-                "max_train_steps" in self.state.env_contents
-                and self.state.env_contents["max_train_steps"] > 0
-            ):
-                current_values["Training Duration"] = (
-                    f"{self.state.env_contents['max_train_steps']} steps"
-                )
-            elif (
-                "num_train_epochs" in self.state.env_contents
-                and self.state.env_contents["num_train_epochs"] > 0
-            ):
-                current_values["Training Duration"] = (
-                    f"{self.state.env_contents['num_train_epochs']} epochs"
-                )
+            if "max_train_steps" in self.state.env_contents and self.state.env_contents["max_train_steps"] > 0:
+                current_values["Training Duration"] = f"{self.state.env_contents['max_train_steps']} steps"
+            elif "num_train_epochs" in self.state.env_contents and self.state.env_contents["num_train_epochs"] > 0:
+                current_values["Training Duration"] = f"{self.state.env_contents['num_train_epochs']} epochs"
             else:
                 current_values["Training Duration"] = "Not configured"
 
-            current_values["Checkpointing Interval"] = (
-                f"{self.state.env_contents.get('checkpointing_steps', 500)} steps"
-            )
-            current_values["Checkpoints to Keep"] = str(
-                self.state.env_contents.get("checkpoints_total_limit", 5)
-            )
+            current_values["Checkpointing Interval"] = f"{self.state.env_contents.get('checkpointing_steps', 500)} steps"
+            current_values["Checkpoints to Keep"] = str(self.state.env_contents.get("checkpoints_total_limit", 5))
 
             # Scheduler configuration
             current_values["Training Scheduler"] = self.state.env_contents.get(
@@ -1249,9 +1179,7 @@ class SimpleTunerNCurses:
             )
 
             # Timestep bias
-            current_values["Timestep Bias"] = self.state.env_contents.get(
-                "timestep_bias_strategy", "none"
-            )
+            current_values["Timestep Bias"] = self.state.env_contents.get("timestep_bias_strategy", "none")
 
             menu_items = [
                 ("Training Duration", self._configure_training_duration),
@@ -1264,18 +1192,12 @@ class SimpleTunerNCurses:
 
             # Add timestep bias options if enabled
             if self.state.env_contents.get("timestep_bias_strategy", "none") != "none":
-                current_values["Bias Multiplier"] = str(
-                    self.state.env_contents.get("timestep_bias_multiplier", 1.0)
-                )
+                current_values["Bias Multiplier"] = str(self.state.env_contents.get("timestep_bias_multiplier", 1.0))
                 menu_items.append(("Bias Multiplier", self._configure_bias_multiplier))
 
                 if self.state.env_contents.get("timestep_bias_strategy") == "range":
-                    current_values["Bias Begin"] = str(
-                        self.state.env_contents.get("timestep_bias_begin", 0)
-                    )
-                    current_values["Bias End"] = str(
-                        self.state.env_contents.get("timestep_bias_end", 1000)
-                    )
+                    current_values["Bias Begin"] = str(self.state.env_contents.get("timestep_bias_begin", 0))
+                    current_values["Bias End"] = str(self.state.env_contents.get("timestep_bias_end", 1000))
                     menu_items.extend(
                         [
                             ("Bias Begin", self._configure_bias_begin),
@@ -1283,9 +1205,7 @@ class SimpleTunerNCurses:
                         ]
                     )
 
-            selected = nav.show_menu(
-                "Training Configuration", menu_items, current_values
-            )
+            selected = nav.show_menu("Training Configuration", menu_items, current_values)
 
             if selected == -1:  # Quit
                 if self.confirm_quit(stdscr):
@@ -1305,9 +1225,7 @@ class SimpleTunerNCurses:
         )
 
         if count_type_idx == 0:
-            max_steps = self.get_input(
-                stdscr, "Set the maximum number of steps:", "10000"
-            )
+            max_steps = self.get_input(stdscr, "Set the maximum number of steps:", "10000")
             try:
                 self.state.env_contents["max_train_steps"] = int(max_steps)
                 self.state.env_contents["num_train_epochs"] = 0
@@ -1315,9 +1233,7 @@ class SimpleTunerNCurses:
                 self.state.env_contents["max_train_steps"] = 10000
                 self.state.env_contents["num_train_epochs"] = 0
         else:
-            max_epochs = self.get_input(
-                stdscr, "Set the maximum number of epochs:", "100"
-            )
+            max_epochs = self.get_input(stdscr, "Set the maximum number of epochs:", "100")
             try:
                 self.state.env_contents["num_train_epochs"] = int(max_epochs)
                 self.state.env_contents["max_train_steps"] = 0
@@ -1332,9 +1248,7 @@ class SimpleTunerNCurses:
             if self.state.env_contents["max_train_steps"] < default_interval:
                 default_interval = self.state.env_contents["max_train_steps"] // 10
 
-        checkpoint_interval = self.get_input(
-            stdscr, "Set the checkpointing interval (in steps):", str(default_interval)
-        )
+        checkpoint_interval = self.get_input(stdscr, "Set the checkpointing interval (in steps):", str(default_interval))
 
         try:
             self.state.env_contents["checkpointing_steps"] = int(checkpoint_interval)
@@ -1343,9 +1257,7 @@ class SimpleTunerNCurses:
 
     def _configure_checkpoint_limit(self, stdscr):
         """Configure checkpoint limit"""
-        checkpoint_limit = self.get_input(
-            stdscr, "How many checkpoints do you want to keep?", "5"
-        )
+        checkpoint_limit = self.get_input(stdscr, "How many checkpoints do you want to keep?", "5")
 
         try:
             self.state.env_contents["checkpoints_total_limit"] = int(checkpoint_limit)
@@ -1355,9 +1267,7 @@ class SimpleTunerNCurses:
     def _configure_training_scheduler(self, stdscr):
         """Configure training scheduler timestep spacing"""
         options = ["leading", "linspace", "trailing"]
-        current = self.state.env_contents.get(
-            "training_scheduler_timestep_spacing", "trailing"
-        )
+        current = self.state.env_contents.get("training_scheduler_timestep_spacing", "trailing")
 
         default_idx = 2  # trailing
         if current in options:
@@ -1371,16 +1281,12 @@ class SimpleTunerNCurses:
         )
 
         if selected >= 0:
-            self.state.env_contents["training_scheduler_timestep_spacing"] = options[
-                selected
-            ]
+            self.state.env_contents["training_scheduler_timestep_spacing"] = options[selected]
 
     def _configure_inference_scheduler(self, stdscr):
         """Configure inference scheduler timestep spacing"""
         options = ["leading", "linspace", "trailing"]
-        current = self.state.env_contents.get(
-            "inference_scheduler_timestep_spacing", "trailing"
-        )
+        current = self.state.env_contents.get("inference_scheduler_timestep_spacing", "trailing")
 
         default_idx = 2  # trailing
         if current in options:
@@ -1394,9 +1300,7 @@ class SimpleTunerNCurses:
         )
 
         if selected >= 0:
-            self.state.env_contents["inference_scheduler_timestep_spacing"] = options[
-                selected
-            ]
+            self.state.env_contents["inference_scheduler_timestep_spacing"] = options[selected]
 
     def _configure_timestep_bias(self, stdscr):
         """Configure timestep bias strategy"""
@@ -1469,15 +1373,9 @@ class SimpleTunerNCurses:
                 "Loss Type": self.state.env_contents.get("loss_type", "l2"),
                 "SNR Gamma": str(self.state.env_contents.get("snr_gamma", 5.0)),
                 "Noise Offset": str(self.state.env_contents.get("noise_offset", 0.0)),
-                "Noise Offset Probability": str(
-                    self.state.env_contents.get("noise_offset_probability", 0.25)
-                ),
-                "Input Perturbation": str(
-                    self.state.env_contents.get("input_perturbation", 0.0)
-                ),
-                "Masked Loss Probability": str(
-                    self.state.env_contents.get("masked_loss_probability", 0.0)
-                ),
+                "Noise Offset Probability": str(self.state.env_contents.get("noise_offset_probability", 0.25)),
+                "Input Perturbation": str(self.state.env_contents.get("input_perturbation", 0.0)),
+                "Masked Loss Probability": str(self.state.env_contents.get("masked_loss_probability", 0.0)),
             }
 
             menu_items = [
@@ -1491,12 +1389,8 @@ class SimpleTunerNCurses:
 
             # Add Huber-specific options if Huber loss is selected
             if self.state.env_contents.get("loss_type") == "huber":
-                current_values["Huber Schedule"] = self.state.env_contents.get(
-                    "huber_schedule", "snr"
-                )
-                current_values["Huber C"] = str(
-                    self.state.env_contents.get("huber_c", 0.1)
-                )
+                current_values["Huber Schedule"] = self.state.env_contents.get("huber_schedule", "snr")
+                current_values["Huber C"] = str(self.state.env_contents.get("huber_c", 0.1))
                 menu_items.extend(
                     [
                         ("Huber Schedule", self._configure_huber_schedule),
@@ -1507,20 +1401,14 @@ class SimpleTunerNCurses:
             # Add soft min SNR option if SNR gamma is set
             if self.state.env_contents.get("snr_gamma", 0) > 0:
                 current_values["Use Soft Min SNR"] = (
-                    "Yes"
-                    if self.state.env_contents.get("use_soft_min_snr", False)
-                    else "No"
+                    "Yes" if self.state.env_contents.get("use_soft_min_snr", False) else "No"
                 )
                 menu_items.append(("Use Soft Min SNR", self._configure_soft_min_snr))
 
             # Add input perturbation steps if perturbation is enabled
             if self.state.env_contents.get("input_perturbation", 0) > 0:
-                current_values["Perturbation Steps"] = str(
-                    self.state.env_contents.get("input_perturbation_steps", 0)
-                )
-                menu_items.append(
-                    ("Perturbation Steps", self._configure_perturbation_steps)
-                )
+                current_values["Perturbation Steps"] = str(self.state.env_contents.get("input_perturbation_steps", 0))
+                menu_items.append(("Perturbation Steps", self._configure_perturbation_steps))
 
             selected = nav.show_menu("Loss Configuration", menu_items, current_values)
 
@@ -1602,8 +1490,7 @@ class SimpleTunerNCurses:
         current = str(self.state.env_contents.get("input_perturbation", 0.0))
         value = self.get_input(
             stdscr,
-            f"Input perturbation (0 to disable, 0.1 suggested)\n"
-            "Helps training converge faster\n(Current: {current})",
+            f"Input perturbation (0 to disable, 0.1 suggested)\n" "Helps training converge faster\n(Current: {current})",
             current,
         )
         try:
@@ -1726,9 +1613,7 @@ class SimpleTunerNCurses:
 
             if login_idx == 0:
                 stdscr.clear()
-                stdscr.addstr(
-                    2, 2, "Please login to Hugging Face Hub in your terminal..."
-                )
+                stdscr.addstr(2, 2, "Please login to Hugging Face Hub in your terminal...")
                 stdscr.addstr(4, 2, "Press any key when done...")
                 stdscr.refresh()
                 stdscr.getch()
@@ -1747,11 +1632,7 @@ class SimpleTunerNCurses:
             # Build current values
             current_values = {
                 "Logged in as": self.state.whoami["name"],
-                "Push to Hub": (
-                    "Yes"
-                    if self.state.env_contents.get("push_to_hub", "false") == "true"
-                    else "No"
-                ),
+                "Push to Hub": ("Yes" if self.state.env_contents.get("push_to_hub", "false") == "true" else "No"),
             }
 
             menu_items = [
@@ -1763,16 +1644,10 @@ class SimpleTunerNCurses:
                     "hub_model_id", f"simpletuner-{self.state.model_type}"
                 )
                 current_values["Push Checkpoints"] = (
-                    "Yes"
-                    if self.state.env_contents.get("push_checkpoints_to_hub", "false")
-                    == "true"
-                    else "No"
+                    "Yes" if self.state.env_contents.get("push_checkpoints_to_hub", "false") == "true" else "No"
                 )
                 current_values["Safe for Work"] = (
-                    "Yes"
-                    if self.state.env_contents.get("model_card_safe_for_work", "false")
-                    == "true"
-                    else "No"
+                    "Yes" if self.state.env_contents.get("model_card_safe_for_work", "false") == "true" else "No"
                 )
 
                 menu_items.extend(
@@ -1783,9 +1658,7 @@ class SimpleTunerNCurses:
                     ]
                 )
 
-            selected = nav.show_menu(
-                "Hugging Face Hub Configuration", menu_items, current_values
-            )
+            selected = nav.show_menu("Hugging Face Hub Configuration", menu_items, current_values)
 
             if selected == -1:  # Quit
                 if self.confirm_quit(stdscr):
@@ -1821,9 +1694,7 @@ class SimpleTunerNCurses:
 
     def _configure_model_id(self, stdscr):
         """Configure model ID"""
-        current_model_id = self.state.env_contents.get(
-            "hub_model_id", f"simpletuner-{self.state.model_type}"
-        )
+        current_model_id = self.state.env_contents.get("hub_model_id", f"simpletuner-{self.state.model_type}")
 
         model_id = self.get_input(
             stdscr,
@@ -1835,9 +1706,7 @@ class SimpleTunerNCurses:
 
     def _configure_push_checkpoints(self, stdscr):
         """Configure push checkpoints"""
-        current_push_ckpt = (
-            self.state.env_contents.get("push_checkpoints_to_hub", "false") == "true"
-        )
+        current_push_ckpt = self.state.env_contents.get("push_checkpoints_to_hub", "false") == "true"
 
         push_checkpoints_idx = self.show_options(
             stdscr,
@@ -1853,9 +1722,7 @@ class SimpleTunerNCurses:
 
     def _configure_sfw(self, stdscr):
         """Configure SFW setting"""
-        current_sfw = (
-            self.state.env_contents.get("model_card_safe_for_work", "false") == "true"
-        )
+        current_sfw = self.state.env_contents.get("model_card_safe_for_work", "false") == "true"
 
         safe_idx = self.show_options(
             stdscr,
@@ -1876,12 +1743,8 @@ class SimpleTunerNCurses:
         while True:
             # Get current values
             current_values = {
-                "Model Family": self.state.env_contents.get(
-                    "model_family", "Not selected"
-                ),
-                "Model Name": self.state.env_contents.get(
-                    "pretrained_model_name_or_path", "Not selected"
-                ),
+                "Model Family": self.state.env_contents.get("model_family", "Not selected"),
+                "Model Name": self.state.env_contents.get("pretrained_model_name_or_path", "Not selected"),
             }
 
             menu_items = [
@@ -1895,20 +1758,13 @@ class SimpleTunerNCurses:
                 and self.state.model_type == "lora"
                 and not self.state.use_lycoris
             ):
-                current_values["Flux LoRA Target"] = self.state.env_contents.get(
-                    "flux_lora_target", "all"
-                )
+                current_values["Flux LoRA Target"] = self.state.env_contents.get("flux_lora_target", "all")
                 menu_items.append(("Flux LoRA Target", self._configure_flux_target))
 
             # Add prediction type if applicable
             model_families_with_prediction = ["sdxl", "sd2x", "sd1x"]
-            if (
-                self.state.env_contents.get("model_family")
-                in model_families_with_prediction
-            ):
-                current_values["Prediction Type"] = self.state.env_contents.get(
-                    "prediction_type", "epsilon"
-                )
+            if self.state.env_contents.get("model_family") in model_families_with_prediction:
+                current_values["Prediction Type"] = self.state.env_contents.get("prediction_type", "epsilon")
                 menu_items.append(("Prediction Type", self._configure_prediction_type))
 
             selected = nav.show_menu("Model Selection", menu_items, current_values)
@@ -1950,14 +1806,10 @@ class SimpleTunerNCurses:
             return
 
         default_model = default_models.get(model_class, "")
-        current_model = self.state.env_contents.get(
-            "pretrained_model_name_or_path", default_model
-        )
+        current_model = self.state.env_contents.get("pretrained_model_name_or_path", default_model)
 
         while True:
-            model_name = self.get_input(
-                stdscr, "Enter the model name from Hugging Face Hub:", current_model
-            )
+            model_name = self.get_input(stdscr, "Enter the model name from Hugging Face Hub:", current_model)
 
             stdscr.clear()
             stdscr.addstr(2, 2, f"Checking model: {model_name}...")
@@ -1990,9 +1842,7 @@ class SimpleTunerNCurses:
         if current_target in flux_targets:
             default_idx = flux_targets.index(current_target)
 
-        target_idx = self.show_options(
-            stdscr, "Set Flux target layers:", flux_targets, default_idx
-        )
+        target_idx = self.show_options(stdscr, "Set Flux target layers:", flux_targets, default_idx)
 
         if target_idx >= 0:
             self.state.env_contents["flux_lora_target"] = flux_targets[target_idx]
@@ -2025,17 +1875,10 @@ class SimpleTunerNCurses:
             current_values = {
                 "Batch Size": str(self.state.env_contents.get("train_batch_size", 1)),
                 "Gradient Checkpointing": (
-                    "Enabled"
-                    if self.state.env_contents.get("gradient_checkpointing", "true")
-                    == "true"
-                    else "Disabled"
+                    "Enabled" if self.state.env_contents.get("gradient_checkpointing", "true") == "true" else "Disabled"
                 ),
-                "Caption Dropout": str(
-                    self.state.env_contents.get("caption_dropout_probability", 0.1)
-                ),
-                "Resolution Type": self.state.env_contents.get(
-                    "resolution_type", "pixel_area"
-                ),
+                "Caption Dropout": str(self.state.env_contents.get("caption_dropout_probability", 0.1)),
+                "Resolution Type": self.state.env_contents.get("resolution_type", "pixel_area"),
                 "Resolution": str(self.state.env_contents.get("resolution", "1024")),
             }
 
@@ -2054,21 +1897,13 @@ class SimpleTunerNCurses:
                 "sd3",
                 "sana",
             ]:
-                gc_interval = self.state.env_contents.get(
-                    "gradient_checkpointing_interval", 0
-                )
-                current_values["GC Interval"] = (
-                    str(gc_interval) if gc_interval > 0 else "Disabled"
-                )
+                gc_interval = self.state.env_contents.get("gradient_checkpointing_interval", 0)
+                current_values["GC Interval"] = str(gc_interval) if gc_interval > 0 else "Disabled"
                 menu_items.insert(2, ("GC Interval", self._configure_gc_interval))
 
             # Add gradient accumulation
-            current_values["Gradient Accumulation"] = str(
-                self.state.env_contents.get("gradient_accumulation_steps", 1)
-            )
-            menu_items.append(
-                ("Gradient Accumulation", self._configure_gradient_accumulation)
-            )
+            current_values["Gradient Accumulation"] = str(self.state.env_contents.get("gradient_accumulation_steps", 1))
+            menu_items.append(("Gradient Accumulation", self._configure_gradient_accumulation))
 
             selected = nav.show_menu("Training Parameters", menu_items, current_values)
 
@@ -2085,8 +1920,7 @@ class SimpleTunerNCurses:
         current = str(self.state.env_contents.get("train_batch_size", 1))
         batch_size = self.get_input(
             stdscr,
-            "Set the training batch size.\n"
-            "Larger values will require larger datasets, more VRAM, and slow things down.",
+            "Set the training batch size.\n" "Larger values will require larger datasets, more VRAM, and slow things down.",
             current,
         )
 
@@ -2097,9 +1931,7 @@ class SimpleTunerNCurses:
 
     def _configure_gradient_checkpointing(self, stdscr):
         """Configure gradient checkpointing"""
-        current = (
-            self.state.env_contents.get("gradient_checkpointing", "true") == "true"
-        )
+        current = self.state.env_contents.get("gradient_checkpointing", "true") == "true"
 
         gc_idx = self.show_options(
             stdscr,
@@ -2140,12 +1972,8 @@ class SimpleTunerNCurses:
 
     def _configure_caption_dropout(self, stdscr):
         """Configure caption dropout"""
-        default_dropout = (
-            "0.05" if any([self.state.use_lora, self.state.use_lycoris]) else "0.1"
-        )
-        current = str(
-            self.state.env_contents.get("caption_dropout_probability", default_dropout)
-        )
+        default_dropout = "0.05" if any([self.state.use_lora, self.state.use_lycoris]) else "0.1"
+        current = str(self.state.env_contents.get("caption_dropout_probability", default_dropout))
 
         caption_dropout = self.get_input(
             stdscr,
@@ -2156,13 +1984,9 @@ class SimpleTunerNCurses:
         )
 
         try:
-            self.state.env_contents["caption_dropout_probability"] = float(
-                caption_dropout
-            )
+            self.state.env_contents["caption_dropout_probability"] = float(caption_dropout)
         except ValueError:
-            self.state.env_contents["caption_dropout_probability"] = float(
-                default_dropout
-            )
+            self.state.env_contents["caption_dropout_probability"] = float(default_dropout)
 
     def _configure_resolution_type(self, stdscr):
         """Configure resolution type"""
@@ -2215,8 +2039,7 @@ class SimpleTunerNCurses:
         current = str(self.state.env_contents.get("gradient_accumulation_steps", 1))
         value = self.get_input(
             stdscr,
-            f"Gradient accumulation steps (1 = disabled)\n"
-            "Simulates larger batch sizes\n(Current: {current})",
+            f"Gradient accumulation steps (1 = disabled)\n" "Simulates larger batch sizes\n(Current: {current})",
             current,
         )
         try:
@@ -2235,20 +2058,12 @@ class SimpleTunerNCurses:
         while True:
             # Get current values
             current_values = {
-                "Mixed Precision": self.state.env_contents.get(
-                    "mixed_precision", "bf16"
-                ),
+                "Mixed Precision": self.state.env_contents.get("mixed_precision", "bf16"),
                 "Optimizer": self.state.env_contents.get("optimizer", "adamw_bf16"),
                 "Learning Rate": self.state.env_contents.get("learning_rate", "1e-4"),
-                "LR Scheduler": self.state.env_contents.get(
-                    "lr_scheduler", "polynomial"
-                ),
-                "Warmup Steps": str(
-                    self.state.env_contents.get("lr_warmup_steps", 100)
-                ),
-                "Gradient Precision": self.state.env_contents.get(
-                    "gradient_precision", "unmodified"
-                ),
+                "LR Scheduler": self.state.env_contents.get("lr_scheduler", "polynomial"),
+                "Warmup Steps": str(self.state.env_contents.get("lr_warmup_steps", 100)),
+                "Gradient Precision": self.state.env_contents.get("gradient_precision", "unmodified"),
                 "Max Grad Norm": str(self.state.env_contents.get("max_grad_norm", 1.0)),
             }
 
@@ -2270,36 +2085,25 @@ class SimpleTunerNCurses:
 
             # Add quantization option
             if "base_model_precision" in self.state.env_contents:
-                current_values["Quantization"] = self.state.env_contents[
-                    "base_model_precision"
-                ]
+                current_values["Quantization"] = self.state.env_contents["base_model_precision"]
             else:
                 current_values["Quantization"] = "Disabled"
             menu_items.append(("Quantization", self._configure_quantization))
 
             # Add text encoder precision options if quantization is enabled
-            if (
-                self.state.env_contents.get("base_model_precision", "no_change")
-                != "no_change"
-            ):
+            if self.state.env_contents.get("base_model_precision", "no_change") != "no_change":
                 for i in range(1, 5):
                     key = f"text_encoder_{i}_precision"
                     if key in self.state.env_contents:
-                        current_values[f"Text Encoder {i}"] = self.state.env_contents[
-                            key
-                        ]
+                        current_values[f"Text Encoder {i}"] = self.state.env_contents[key]
                     menu_items.append(
                         (
                             f"Text Encoder {i} Precision",
-                            lambda s, idx=i: self._configure_text_encoder_precision(
-                                s, idx
-                            ),
+                            lambda s, idx=i: self._configure_text_encoder_precision(s, idx),
                         )
                     )
 
-            selected = nav.show_menu(
-                "Optimization Settings", menu_items, current_values
-            )
+            selected = nav.show_menu("Optimization Settings", menu_items, current_values)
 
             if selected == -1:  # Quit
                 if self.confirm_quit(stdscr):
@@ -2343,9 +2147,7 @@ class SimpleTunerNCurses:
         )
 
         if mixed_precision_idx >= 0:
-            self.state.env_contents["mixed_precision"] = precision_values[
-                mixed_precision_idx
-            ]
+            self.state.env_contents["mixed_precision"] = precision_values[mixed_precision_idx]
 
     def _configure_optimizer(self, stdscr):
         """Configure optimizer"""
@@ -2355,9 +2157,7 @@ class SimpleTunerNCurses:
         else:
             compatible_optims = any_precision_optims
 
-        current_optimizer = self.state.env_contents.get(
-            "optimizer", compatible_optims[0]
-        )
+        current_optimizer = self.state.env_contents.get("optimizer", compatible_optims[0])
         default_optim_idx = 0
         if current_optimizer in compatible_optims:
             default_optim_idx = compatible_optims.index(current_optimizer)
@@ -2389,8 +2189,7 @@ class SimpleTunerNCurses:
 
         lr = self.get_input(
             stdscr,
-            f"Set the learning rate:\n"
-            f"(Current: {current_lr}, Suggested for your config: {default_lr})",
+            f"Set the learning rate:\n" f"(Current: {current_lr}, Suggested for your config: {default_lr})",
             current_lr,
         )
 
@@ -2428,18 +2227,14 @@ class SimpleTunerNCurses:
                     self.state.extra_args.append("lr_end=1e-8")
             else:
                 # Remove lr_end if switching away from polynomial
-                self.state.extra_args = [
-                    arg for arg in self.state.extra_args if not arg.startswith("lr_end")
-                ]
+                self.state.extra_args = [arg for arg in self.state.extra_args if not arg.startswith("lr_end")]
 
     def _configure_warmup_steps(self, stdscr):
         """Configure warmup steps"""
         # Dynamic default
         default_warmup = "100"
         if self.state.env_contents.get("max_train_steps", 0) > 0:
-            calculated_warmup = max(
-                100, int(self.state.env_contents["max_train_steps"]) // 10
-            )
+            calculated_warmup = max(100, int(self.state.env_contents["max_train_steps"]) // 10)
             default_warmup = str(calculated_warmup)
 
         current_warmup = self.state.env_contents.get("lr_warmup_steps", default_warmup)
@@ -2468,8 +2263,7 @@ class SimpleTunerNCurses:
 
         selected = self.show_options(
             stdscr,
-            f"Gradient precision\n(Current: {current})\n\n"
-            "fp32 is slower but more accurate for gradient accumulation",
+            f"Gradient precision\n(Current: {current})\n\n" "fp32 is slower but more accurate for gradient accumulation",
             options,
             default_idx,
         )
@@ -2514,18 +2308,14 @@ class SimpleTunerNCurses:
             # Handle DoRA disabling
             if self.state.env_contents.get("use_dora") == "true":
                 stdscr.clear()
-                stdscr.addstr(
-                    2, 2, "Note: DoRA will be disabled for quantisation.", curses.A_BOLD
-                )
+                stdscr.addstr(2, 2, "Note: DoRA will be disabled for quantisation.", curses.A_BOLD)
                 stdscr.addstr(4, 2, "Press any key to continue...")
                 stdscr.refresh()
                 stdscr.getch()
                 del self.state.env_contents["use_dora"]
 
             # Get quantization type
-            current_quant_type = self.state.env_contents.get(
-                "base_model_precision", "int8-quanto"
-            )
+            current_quant_type = self.state.env_contents.get("base_model_precision", "int8-quanto")
             quant_types = list(quantised_precision_levels)
             default_quant_idx = 0
 
@@ -2540,9 +2330,7 @@ class SimpleTunerNCurses:
             )
 
             if quant_type_idx >= 0:
-                self.state.env_contents["base_model_precision"] = quant_types[
-                    quant_type_idx
-                ]
+                self.state.env_contents["base_model_precision"] = quant_types[quant_type_idx]
         else:
             # Remove quantization if disabled
             if "base_model_precision" in self.state.env_contents:
@@ -2580,24 +2368,10 @@ class SimpleTunerNCurses:
             current_values = {
                 "VAE Dtype": self.state.env_contents.get("vae_dtype", "default"),
                 "VAE Batch Size": str(self.state.env_contents.get("vae_batch_size", 4)),
-                "VAE Tiling": (
-                    "Enabled"
-                    if self.state.env_contents.get("vae_enable_tiling", False)
-                    else "Disabled"
-                ),
-                "VAE Slicing": (
-                    "Enabled"
-                    if self.state.env_contents.get("vae_enable_slicing", False)
-                    else "Disabled"
-                ),
-                "Keep VAE Loaded": (
-                    "Yes"
-                    if self.state.env_contents.get("keep_vae_loaded", False)
-                    else "No"
-                ),
-                "Cache Scan Behaviour": self.state.env_contents.get(
-                    "vae_cache_scan_behaviour", "recreate"
-                ),
+                "VAE Tiling": ("Enabled" if self.state.env_contents.get("vae_enable_tiling", False) else "Disabled"),
+                "VAE Slicing": ("Enabled" if self.state.env_contents.get("vae_enable_slicing", False) else "Disabled"),
+                "Keep VAE Loaded": ("Yes" if self.state.env_contents.get("keep_vae_loaded", False) else "No"),
+                "Cache Scan Behaviour": self.state.env_contents.get("vae_cache_scan_behaviour", "recreate"),
             }
 
             menu_items = [
@@ -2630,9 +2404,7 @@ class SimpleTunerNCurses:
 
         selected = self.show_options(
             stdscr,
-            f"VAE dtype\n(Current: {current})\n\n"
-            "bf16 is default for SDXL due to NaN issues\n"
-            "fp16 is not recommended",
+            f"VAE dtype\n(Current: {current})\n\n" "bf16 is default for SDXL due to NaN issues\n" "fp16 is not recommended",
             options,
             default_idx,
         )
@@ -2645,8 +2417,7 @@ class SimpleTunerNCurses:
         current = str(self.state.env_contents.get("vae_batch_size", 4))
         value = self.get_input(
             stdscr,
-            f"VAE batch size for pre-caching\n"
-            "Lower values help with VRAM issues\n(Current: {current})",
+            f"VAE batch size for pre-caching\n" "Lower values help with VRAM issues\n(Current: {current})",
             current,
         )
         try:
@@ -2692,8 +2463,7 @@ class SimpleTunerNCurses:
 
         selected = self.show_options(
             stdscr,
-            f"Keep VAE loaded in memory?\n"
-            "Reduces disk churn but uses VRAM\n(Current: {'Yes' if current else 'No'})",
+            f"Keep VAE loaded in memory?\n" "Reduces disk churn but uses VRAM\n(Current: {'Yes' if current else 'No'})",
             ["No", "Yes"],
             1 if current else 0,
         )
@@ -2738,18 +2508,10 @@ class SimpleTunerNCurses:
 
         while True:
             current_values = {
-                "Sigmoid Scale": str(
-                    self.state.env_contents.get("flow_sigmoid_scale", 1.0)
-                ),
+                "Sigmoid Scale": str(self.state.env_contents.get("flow_sigmoid_scale", 1.0)),
                 "Schedule Type": self._get_flow_schedule_type(),
-                "Schedule Shift": str(
-                    self.state.env_contents.get("flow_schedule_shift", 3.0)
-                ),
-                "Auto Shift": (
-                    "Enabled"
-                    if self.state.env_contents.get("flow_schedule_auto_shift", False)
-                    else "Disabled"
-                ),
+                "Schedule Shift": str(self.state.env_contents.get("flow_schedule_shift", 3.0)),
+                "Auto Shift": ("Enabled" if self.state.env_contents.get("flow_schedule_auto_shift", False) else "Disabled"),
             }
 
             menu_items = [
@@ -2762,19 +2524,11 @@ class SimpleTunerNCurses:
             # Add Flux-specific options
             if self.state.env_contents.get("model_family") == "flux":
                 current_values["Flux Fast Schedule"] = (
-                    "Enabled"
-                    if self.state.env_contents.get("flux_fast_schedule", False)
-                    else "Disabled"
+                    "Enabled" if self.state.env_contents.get("flux_fast_schedule", False) else "Disabled"
                 )
-                current_values["Guidance Mode"] = self.state.env_contents.get(
-                    "flux_guidance_mode", "constant"
-                )
+                current_values["Guidance Mode"] = self.state.env_contents.get("flux_guidance_mode", "constant")
                 current_values["Attention Masking"] = (
-                    "Enabled"
-                    if self.state.env_contents.get(
-                        "flux_attention_masked_training", False
-                    )
-                    else "Disabled"
+                    "Enabled" if self.state.env_contents.get("flux_attention_masked_training", False) else "Disabled"
                 )
 
                 menu_items.extend(
@@ -2787,19 +2541,11 @@ class SimpleTunerNCurses:
 
                 # Add guidance value options based on mode
                 if self.state.env_contents.get("flux_guidance_mode") == "constant":
-                    current_values["Guidance Value"] = str(
-                        self.state.env_contents.get("flux_guidance_value", 1.0)
-                    )
-                    menu_items.append(
-                        ("Guidance Value", self._configure_flux_guidance_value)
-                    )
+                    current_values["Guidance Value"] = str(self.state.env_contents.get("flux_guidance_value", 1.0))
+                    menu_items.append(("Guidance Value", self._configure_flux_guidance_value))
                 else:
-                    current_values["Guidance Min"] = str(
-                        self.state.env_contents.get("flux_guidance_min", 1.0)
-                    )
-                    current_values["Guidance Max"] = str(
-                        self.state.env_contents.get("flux_guidance_max", 4.0)
-                    )
+                    current_values["Guidance Min"] = str(self.state.env_contents.get("flux_guidance_min", 1.0))
+                    current_values["Guidance Max"] = str(self.state.env_contents.get("flux_guidance_max", 4.0))
                     menu_items.extend(
                         [
                             ("Guidance Min", self._configure_flux_guidance_min),
@@ -2809,12 +2555,8 @@ class SimpleTunerNCurses:
 
             # Add beta schedule options if using beta
             if self.state.env_contents.get("flow_use_beta_schedule", False):
-                current_values["Beta Alpha"] = str(
-                    self.state.env_contents.get("flow_beta_schedule_alpha", 2.0)
-                )
-                current_values["Beta Beta"] = str(
-                    self.state.env_contents.get("flow_beta_schedule_beta", 2.0)
-                )
+                current_values["Beta Alpha"] = str(self.state.env_contents.get("flow_beta_schedule_alpha", 2.0))
+                current_values["Beta Beta"] = str(self.state.env_contents.get("flow_beta_schedule_beta", 2.0))
                 menu_items.extend(
                     [
                         ("Beta Alpha", self._configure_beta_alpha),
@@ -2822,9 +2564,7 @@ class SimpleTunerNCurses:
                     ]
                 )
 
-            selected = nav.show_menu(
-                "Flow Matching Configuration", menu_items, current_values
-            )
+            selected = nav.show_menu("Flow Matching Configuration", menu_items, current_values)
 
             if selected == -1:  # Quit
                 if self.confirm_quit(stdscr):
@@ -2966,8 +2706,7 @@ class SimpleTunerNCurses:
         current = str(self.state.env_contents.get("flux_guidance_value", 1.0))
         value = self.get_input(
             stdscr,
-            f"Flux guidance value\n"
-            "1.0 preserves CFG distillation for Dev model\n(Current: {current})",
+            f"Flux guidance value\n" "1.0 preserves CFG distillation for Dev model\n(Current: {current})",
             current,
         )
         try:
@@ -3013,10 +2752,7 @@ class SimpleTunerNCurses:
         )
         if selected == 1:
             self.state.env_contents["flux_attention_masked_training"] = True
-        elif (
-            selected == 0
-            and "flux_attention_masked_training" in self.state.env_contents
-        ):
+        elif selected == 0 and "flux_attention_masked_training" in self.state.env_contents:
             del self.state.env_contents["flux_attention_masked_training"]
 
     def _configure_beta_alpha(self, stdscr):
@@ -3057,25 +2793,15 @@ class SimpleTunerNCurses:
                     "validation_steps",
                     str(self.state.env_contents.get("checkpointing_steps", 500)),
                 ),
-                "Validation Resolution": self.state.env_contents.get(
-                    "validation_resolution", "1024x1024"
-                ),
-                "Guidance Scale": self.state.env_contents.get(
-                    "validation_guidance", "3.0"
-                ),
-                "Guidance Rescale": self.state.env_contents.get(
-                    "validation_guidance_rescale", "0.0"
-                ),
-                "Inference Steps": self.state.env_contents.get(
-                    "validation_num_inference_steps", "20"
-                ),
-                "Validation Prompt": self.state.env_contents.get(
-                    "validation_prompt", "A photo-realistic image of a cat"
-                )[:40]
+                "Validation Resolution": self.state.env_contents.get("validation_resolution", "1024x1024"),
+                "Guidance Scale": self.state.env_contents.get("validation_guidance", "3.0"),
+                "Guidance Rescale": self.state.env_contents.get("validation_guidance_rescale", "0.0"),
+                "Inference Steps": self.state.env_contents.get("validation_num_inference_steps", "20"),
+                "Validation Prompt": self.state.env_contents.get("validation_prompt", "A photo-realistic image of a cat")[
+                    :40
+                ]
                 + "...",
-                "Evaluation Type": self.state.env_contents.get(
-                    "evaluation_type", "none"
-                ),
+                "Evaluation Type": self.state.env_contents.get("evaluation_type", "none"),
             }
 
             menu_items = [
@@ -3090,16 +2816,12 @@ class SimpleTunerNCurses:
             ]
 
             # Add noise scheduler option
-            current_values["Noise Scheduler"] = self.state.env_contents.get(
-                "validation_noise_scheduler", "default"
-            )
+            current_values["Noise Scheduler"] = self.state.env_contents.get("validation_noise_scheduler", "default")
             menu_items.append(("Noise Scheduler", self._configure_val_noise_scheduler))
 
             # Add torch compile option
             current_values["Torch Compile"] = (
-                "Enabled"
-                if self.state.env_contents.get("validation_torch_compile", False)
-                else "Disabled"
+                "Enabled" if self.state.env_contents.get("validation_torch_compile", False) else "Disabled"
             )
             menu_items.append(("Torch Compile", self._configure_val_torch_compile))
 
@@ -3123,9 +2845,7 @@ class SimpleTunerNCurses:
         """Configure validation steps"""
         default_val_steps = str(self.state.env_contents.get("checkpointing_steps", 500))
         current = self.state.env_contents.get("validation_steps", default_val_steps)
-        val_steps = self.get_input(
-            stdscr, "How many steps between validation outputs?", current
-        )
+        val_steps = self.get_input(stdscr, "How many steps between validation outputs?", current)
         self.state.env_contents["validation_steps"] = val_steps
 
     def _configure_val_resolution(self, stdscr):
@@ -3146,9 +2866,7 @@ class SimpleTunerNCurses:
         default_cfg_val = str(default_cfg.get(model_family, 3.0))
         current = self.state.env_contents.get("validation_guidance", default_cfg_val)
 
-        val_guidance = self.get_input(
-            stdscr, "Set guidance scale for validation:", current
-        )
+        val_guidance = self.get_input(stdscr, "Set guidance scale for validation:", current)
         self.state.env_contents["validation_guidance"] = val_guidance
 
     def _configure_val_rescale(self, stdscr):
@@ -3164,16 +2882,12 @@ class SimpleTunerNCurses:
     def _configure_val_inference_steps(self, stdscr):
         """Configure validation inference steps"""
         current = self.state.env_contents.get("validation_num_inference_steps", "20")
-        val_inf_steps = self.get_input(
-            stdscr, "Set number of inference steps for validation:", current
-        )
+        val_inf_steps = self.get_input(stdscr, "Set number of inference steps for validation:", current)
         self.state.env_contents["validation_num_inference_steps"] = val_inf_steps
 
     def _configure_val_prompt(self, stdscr):
         """Configure validation prompt"""
-        current = self.state.env_contents.get(
-            "validation_prompt", "A photo-realistic image of a cat"
-        )
+        current = self.state.env_contents.get("validation_prompt", "A photo-realistic image of a cat")
         val_prompt = self.get_input(stdscr, "Set the validation prompt:", current)
         self.state.env_contents["validation_prompt"] = val_prompt
 
@@ -3188,8 +2902,7 @@ class SimpleTunerNCurses:
 
         selected = self.show_options(
             stdscr,
-            f"Enable CLIP evaluation?\n(Current: {current})\n\n"
-            "CLIP scores measure prompt adherence",
+            f"Enable CLIP evaluation?\n(Current: {current})\n\n" "CLIP scores measure prompt adherence",
             options,
             default_idx,
         )
@@ -3221,9 +2934,7 @@ class SimpleTunerNCurses:
                 if "validation_noise_scheduler" in self.state.env_contents:
                     del self.state.env_contents["validation_noise_scheduler"]
             else:
-                self.state.env_contents["validation_noise_scheduler"] = options[
-                    selected
-                ]
+                self.state.env_contents["validation_noise_scheduler"] = options[selected]
 
     def _configure_val_torch_compile(self, stdscr):
         """Configure validation torch compile"""
@@ -3249,29 +2960,14 @@ class SimpleTunerNCurses:
             # Get current values
             current_values = {
                 "Tracking": self.state.env_contents.get("report_to", "none"),
-                "SageAttention": self.state.env_contents.get(
-                    "attention_mechanism", "diffusers"
-                ),
-                "Disk Cache Compression": (
-                    "Enabled"
-                    if "compress_disk_cache" in self.state.extra_args
-                    else "Disabled"
-                ),
+                "SageAttention": self.state.env_contents.get("attention_mechanism", "diffusers"),
+                "Disk Cache Compression": ("Enabled" if "compress_disk_cache" in self.state.extra_args else "Disabled"),
                 "Torch Compile": (
-                    "Enabled"
-                    if self.state.env_contents.get("validation_torch_compile", "false")
-                    == "true"
-                    else "Disabled"
+                    "Enabled" if self.state.env_contents.get("validation_torch_compile", "false") == "true" else "Disabled"
                 ),
-                "Prompt Library": (
-                    "Configured"
-                    if "user_prompt_library" in self.state.env_contents
-                    else "Not configured"
-                ),
+                "Prompt Library": ("Configured" if "user_prompt_library" in self.state.env_contents else "Not configured"),
                 "Rescale Betas Zero SNR": (
-                    "Enabled"
-                    if self.state.env_contents.get("rescale_betas_zero_snr", False)
-                    else "Disabled"
+                    "Enabled" if self.state.env_contents.get("rescale_betas_zero_snr", False) else "Disabled"
                 ),
             }
 
@@ -3327,9 +3023,7 @@ class SimpleTunerNCurses:
                     ]
                 )
 
-            selected = nav.show_menu(
-                "Tracking Configuration", menu_items, current_values
-            )
+            selected = nav.show_menu("Tracking Configuration", menu_items, current_values)
 
             if selected == -1:  # Quit
                 if self.confirm_quit(stdscr):
@@ -3352,9 +3046,7 @@ class SimpleTunerNCurses:
         elif "wandb" in current and "tensorboard" in current:
             default_idx = 3
 
-        selected = self.show_options(
-            stdscr, "Select tracking services:", options, default_idx
-        )
+        selected = self.show_options(stdscr, "Select tracking services:", options, default_idx)
 
         if selected == 0:
             self.state.env_contents["report_to"] = "none"
@@ -3367,9 +3059,7 @@ class SimpleTunerNCurses:
 
     def _configure_project_name(self, stdscr):
         """Configure tracking project name"""
-        current = self.state.env_contents.get(
-            "tracker_project_name", f"{self.state.model_type}-training"
-        )
+        current = self.state.env_contents.get("tracker_project_name", f"{self.state.model_type}-training")
         project_name = self.get_input(
             stdscr,
             "Enter the name of your Weights & Biases project:",
@@ -3379,9 +3069,7 @@ class SimpleTunerNCurses:
 
     def _configure_run_name(self, stdscr):
         """Configure tracking run name"""
-        current = self.state.env_contents.get(
-            "tracker_run_name", f"simpletuner-{self.state.model_type}"
-        )
+        current = self.state.env_contents.get("tracker_run_name", f"simpletuner-{self.state.model_type}")
         run_name = self.get_input(
             stdscr,
             "Enter the name of your Weights & Biases runs.\n"
@@ -3392,9 +3080,7 @@ class SimpleTunerNCurses:
 
     def _configure_sageattention(self, stdscr):
         """Configure SageAttention"""
-        current_mechanism = self.state.env_contents.get(
-            "attention_mechanism", "diffusers"
-        )
+        current_mechanism = self.state.env_contents.get("attention_mechanism", "diffusers")
 
         sage_idx = self.show_options(
             stdscr,
@@ -3407,9 +3093,7 @@ class SimpleTunerNCurses:
             self.state.env_contents["attention_mechanism"] = "sageattention"
 
             # Configure usage scope
-            current_usage = self.state.env_contents.get(
-                "sageattention_usage", "inference"
-            )
+            current_usage = self.state.env_contents.get("sageattention_usage", "inference")
 
             # Show detailed warning for training usage
             stdscr.clear()
@@ -3438,9 +3122,7 @@ class SimpleTunerNCurses:
                     stdscr.addstr(y, 2, line)
                     y += 1
 
-            sage_training_idx = self.show_options(
-                stdscr, "", ["No (Inference only)", "Yes (Training + Inference)"], 0
-            )
+            sage_training_idx = self.show_options(stdscr, "", ["No (Inference only)", "Yes (Training + Inference)"], 0)
 
             if sage_training_idx == 1:
                 self.state.env_contents["sageattention_usage"] = "both"
@@ -3466,15 +3148,11 @@ class SimpleTunerNCurses:
             if "compress_disk_cache" not in self.state.extra_args:
                 self.state.extra_args.append("compress_disk_cache")
         else:
-            self.state.extra_args = [
-                arg for arg in self.state.extra_args if arg != "compress_disk_cache"
-            ]
+            self.state.extra_args = [arg for arg in self.state.extra_args if arg != "compress_disk_cache"]
 
     def _configure_torch_compile(self, stdscr):
         """Configure torch compile"""
-        current = (
-            self.state.env_contents.get("validation_torch_compile", "false") == "true"
-        )
+        current = self.state.env_contents.get("validation_torch_compile", "false") == "true"
 
         compile_idx = self.show_options(
             stdscr,
@@ -3483,9 +3161,7 @@ class SimpleTunerNCurses:
             1 if current else 0,
         )
 
-        self.state.env_contents["validation_torch_compile"] = (
-            "true" if compile_idx == 1 else "false"
-        )
+        self.state.env_contents["validation_torch_compile"] = "true" if compile_idx == 1 else "false"
 
     def _configure_prompt_library(self, stdscr):
         """Configure prompt library generation"""
@@ -3510,9 +3186,7 @@ class SimpleTunerNCurses:
                 "Character Name",
             )
 
-            num_prompts = self.get_input(
-                stdscr, "How many prompts would you like to generate?", "8"
-            )
+            num_prompts = self.get_input(stdscr, "How many prompts would you like to generate?", "8")
 
             try:
                 num_prompts_int = int(num_prompts)
@@ -3532,26 +3206,18 @@ class SimpleTunerNCurses:
                 stdscr.addstr(6, 2, "Generating prompts...")
                 stdscr.refresh()
 
-                user_prompt_library = PromptExpander.generate_prompts(
-                    trigger_phrase=trigger, num_prompts=num_prompts_int
-                )
+                user_prompt_library = PromptExpander.generate_prompts(trigger_phrase=trigger, num_prompts=num_prompts_int)
 
                 # Save the prompt library
-                with open(
-                    "config/user_prompt_library.json", "w", encoding="utf-8"
-                ) as f:
+                with open("config/user_prompt_library.json", "w", encoding="utf-8") as f:
                     json.dump(user_prompt_library, f, indent=4)
 
-                self.state.env_contents["user_prompt_library"] = (
-                    "config/user_prompt_library.json"
-                )
+                self.state.env_contents["user_prompt_library"] = "config/user_prompt_library.json"
 
                 self.show_message(stdscr, "Prompt library generated successfully!")
 
             except Exception as e:
-                self.show_error(
-                    stdscr, f"(warning) Failed to generate prompt library: {str(e)}"
-                )
+                self.show_error(stdscr, f"(warning) Failed to generate prompt library: {str(e)}")
 
     def _configure_rescale_betas(self, stdscr):
         """Configure rescale betas zero SNR"""
@@ -3576,12 +3242,8 @@ class SimpleTunerNCurses:
 
         while True:
             current_values = {
-                "Freeze Strategy": self.state.env_contents.get(
-                    "freeze_encoder_strategy", "none"
-                ),
-                "Layer Freeze Strategy": self.state.env_contents.get(
-                    "layer_freeze_strategy", "none"
-                ),
+                "Freeze Strategy": self.state.env_contents.get("freeze_encoder_strategy", "none"),
+                "Layer Freeze Strategy": self.state.env_contents.get("layer_freeze_strategy", "none"),
             }
 
             menu_items = [
@@ -3593,19 +3255,13 @@ class SimpleTunerNCurses:
             strategy = self.state.env_contents.get("freeze_encoder_strategy", "none")
             if strategy in ["before", "after", "between"]:
                 if strategy in ["before", "between"]:
-                    current_values["Freeze Before"] = str(
-                        self.state.env_contents.get("freeze_encoder_before", 17)
-                    )
+                    current_values["Freeze Before"] = str(self.state.env_contents.get("freeze_encoder_before", 17))
                     menu_items.append(("Freeze Before", self._configure_freeze_before))
                 if strategy in ["after", "between"]:
-                    current_values["Freeze After"] = str(
-                        self.state.env_contents.get("freeze_encoder_after", 17)
-                    )
+                    current_values["Freeze After"] = str(self.state.env_contents.get("freeze_encoder_after", 17))
                     menu_items.append(("Freeze After", self._configure_freeze_after))
 
-            selected = nav.show_menu(
-                "Freeze Encoder Settings", menu_items, current_values
-            )
+            selected = nav.show_menu("Freeze Encoder Settings", menu_items, current_values)
 
             if selected == -1:  # Quit
                 if self.confirm_quit(stdscr):
@@ -3721,10 +3377,7 @@ class SimpleTunerNCurses:
 
     def controlnet_config(self, stdscr):
         """Step 13: ControlNet Configuration"""
-        current_control = (
-            "control" in self.state.env_contents
-            or "controlnet" in self.state.env_contents
-        )
+        current_control = "control" in self.state.env_contents or "controlnet" in self.state.env_contents
 
         use_control = self.show_options(
             stdscr,
@@ -3764,9 +3417,7 @@ class SimpleTunerNCurses:
                 del self.state.env_contents["control"]
 
             # Configure ControlNet model path
-            current_path = self.state.env_contents.get(
-                "controlnet_model_name_or_path", ""
-            )
+            current_path = self.state.env_contents.get("controlnet_model_name_or_path", "")
             model_path = self.get_input(
                 stdscr,
                 "Enter ControlNet model path (optional):",
@@ -3776,9 +3427,7 @@ class SimpleTunerNCurses:
                 self.state.env_contents["controlnet_model_name_or_path"] = model_path
 
         # Configure conditioning dataset sampling
-        current_sampling = self.state.env_contents.get(
-            "conditioning_multidataset_sampling", "random"
-        )
+        current_sampling = self.state.env_contents.get("conditioning_multidataset_sampling", "random")
         sampling_idx = self.show_options(
             stdscr,
             f"Conditioning dataset sampling\n(Current: {current_sampling})",
@@ -3807,16 +3456,10 @@ class SimpleTunerNCurses:
 
             # LTX Video options
             if model_family == "ltxvideo":
-                current_values["Train Mode"] = self.state.env_contents.get(
-                    "ltx_train_mode", "i2v"
-                )
-                current_values["I2V Probability"] = str(
-                    self.state.env_contents.get("ltx_i2v_prob", 0.1)
-                )
+                current_values["Train Mode"] = self.state.env_contents.get("ltx_train_mode", "i2v")
+                current_values["I2V Probability"] = str(self.state.env_contents.get("ltx_i2v_prob", 0.1))
                 current_values["Protect First Frame"] = (
-                    "Yes"
-                    if self.state.env_contents.get("ltx_protect_first_frame", False)
-                    else "No"
+                    "Yes" if self.state.env_contents.get("ltx_protect_first_frame", False) else "No"
                 )
 
                 menu_items.extend(
@@ -3831,18 +3474,14 @@ class SimpleTunerNCurses:
                     current_values["Partial Noise Fraction"] = str(
                         self.state.env_contents.get("ltx_partial_noise_fraction", 0.05)
                     )
-                    menu_items.append(
-                        ("Partial Noise Fraction", self._configure_ltx_partial_noise)
-                    )
+                    menu_items.append(("Partial Noise Fraction", self._configure_ltx_partial_noise))
 
             # SD3 options
             elif model_family == "sd3":
                 current_values["CLIP Uncond Behaviour"] = self.state.env_contents.get(
                     "sd3_clip_uncond_behaviour", "empty_string"
                 )
-                current_values["T5 Uncond Behaviour"] = self.state.env_contents.get(
-                    "sd3_t5_uncond_behaviour", "follow_clip"
-                )
+                current_values["T5 Uncond Behaviour"] = self.state.env_contents.get("sd3_t5_uncond_behaviour", "follow_clip")
 
                 menu_items.extend(
                     [
@@ -3853,33 +3492,21 @@ class SimpleTunerNCurses:
 
             # T5 padding (for models with T5)
             if model_family in ["flux", "sd3", "pixart_sigma"]:
-                current_values["T5 Padding"] = self.state.env_contents.get(
-                    "t5_padding", "unmodified"
-                )
+                current_values["T5 Padding"] = self.state.env_contents.get("t5_padding", "unmodified")
                 menu_items.append(("T5 Padding", self._configure_t5_padding))
 
             # Sana options
             elif model_family == "sana":
                 current_values["Complex Human Instruction"] = (
-                    "Enabled"
-                    if self.state.env_contents.get(
-                        "sana_complex_human_instruction", True
-                    )
-                    else "Disabled"
+                    "Enabled" if self.state.env_contents.get("sana_complex_human_instruction", True) else "Disabled"
                 )
-                menu_items.append(
-                    ("Complex Human Instruction", self._configure_sana_instruction)
-                )
+                menu_items.append(("Complex Human Instruction", self._configure_sana_instruction))
 
             if not menu_items:
-                self.show_message(
-                    stdscr, f"No specific options available for {model_family}."
-                )
+                self.show_message(stdscr, f"No specific options available for {model_family}.")
                 return
 
-            selected = nav.show_menu(
-                f"{model_family.upper()} Specific Options", menu_items, current_values
-            )
+            selected = nav.show_menu(f"{model_family.upper()} Specific Options", menu_items, current_values)
 
             if selected == -1:  # Quit
                 if self.confirm_quit(stdscr):
@@ -3898,9 +3525,7 @@ class SimpleTunerNCurses:
 
         selected = self.show_options(
             stdscr,
-            f"LTX training mode\n(Current: {current})\n\n"
-            "t2v: Text-to-video\n"
-            "i2v: Image-to-video",
+            f"LTX training mode\n(Current: {current})\n\n" "t2v: Text-to-video\n" "i2v: Image-to-video",
             options,
             default_idx,
         )
@@ -3913,8 +3538,7 @@ class SimpleTunerNCurses:
         current = str(self.state.env_contents.get("ltx_i2v_prob", 0.1))
         value = self.get_input(
             stdscr,
-            f"I2V probability (0.0-1.0)\n"
-            "Chance of applying i2v style training\n(Current: {current})",
+            f"I2V probability (0.0-1.0)\n" "Chance of applying i2v style training\n(Current: {current})",
             current,
         )
         try:
@@ -3947,8 +3571,7 @@ class SimpleTunerNCurses:
         current = str(self.state.env_contents.get("ltx_partial_noise_fraction", 0.05))
         value = self.get_input(
             stdscr,
-            f"Maximum noise fraction for first frame (0.0-1.0)\n"
-            "0.05 = 5% noise, 95% original\n(Current: {current})",
+            f"Maximum noise fraction for first frame (0.0-1.0)\n" "0.05 = 5% noise, 95% original\n(Current: {current})",
             current,
         )
         try:
@@ -3963,9 +3586,7 @@ class SimpleTunerNCurses:
     def _configure_sd3_clip_uncond(self, stdscr):
         """Configure SD3 CLIP uncond behaviour"""
         options = ["empty_string", "zero"]
-        current = self.state.env_contents.get(
-            "sd3_clip_uncond_behaviour", "empty_string"
-        )
+        current = self.state.env_contents.get("sd3_clip_uncond_behaviour", "empty_string")
 
         default_idx = 0 if current == "empty_string" else 1
 
@@ -4033,17 +3654,12 @@ class SimpleTunerNCurses:
 
         if selected == 0:
             self.state.env_contents["sana_complex_human_instruction"] = False
-        elif (
-            selected == 1
-            and "sana_complex_human_instruction" in self.state.env_contents
-        ):
+        elif selected == 1 and "sana_complex_human_instruction" in self.state.env_contents:
             del self.state.env_contents["sana_complex_human_instruction"]
 
     def dataset_config(self, stdscr):
         """Step 15: Dataset Configuration - Comprehensive version"""
-        config_idx = self.show_options(
-            stdscr, "Would you like to configure your dataloader?", ["Yes", "No"], 0
-        )
+        config_idx = self.show_options(stdscr, "Would you like to configure your dataloader?", ["Yes", "No"], 0)
 
         if config_idx == 1:
             return
@@ -4071,9 +3687,7 @@ class SimpleTunerNCurses:
                 ("Apply Configuration", self._apply_all_datasets),
             ]
 
-            selected = nav.show_menu(
-                "Dataset Configuration Manager", menu_items, current_values
-            )
+            selected = nav.show_menu("Dataset Configuration Manager", menu_items, current_values)
 
             if selected == -1:  # Quit
                 if self.confirm_quit(stdscr):
@@ -4165,9 +3779,7 @@ class SimpleTunerNCurses:
 
             # Add backend-specific values
             if dataset["type"] == "local":
-                current_values["Data Directory"] = dataset.get(
-                    "instance_data_dir", "Not set"
-                )
+                current_values["Data Directory"] = dataset.get("instance_data_dir", "Not set")
                 current_values["VAE Cache"] = dataset.get("cache_dir_vae", "Not set")
             elif dataset["type"] == "aws":
                 current_values["S3 Bucket"] = dataset.get("aws_bucket_name", "Not set")
@@ -4240,9 +3852,7 @@ class SimpleTunerNCurses:
                     )
                 )
 
-            selected = nav.show_menu(
-                f"Configure Image Dataset: {dataset['id']}", menu_items, current_values
-            )
+            selected = nav.show_menu(f"Configure Image Dataset: {dataset['id']}", menu_items, current_values)
 
             if selected == -1:  # Quit
                 if self.confirm_quit(stdscr):
@@ -4262,9 +3872,7 @@ class SimpleTunerNCurses:
                 "Disabled": "Yes" if dataset.get("disabled", False) else "No",
                 "Probability": str(dataset.get("probability", 1.0)),
                 "Repeats": str(dataset.get("repeats", 0)),
-                "Regularization Data": (
-                    "Yes" if dataset.get("is_regularisation_data", False) else "No"
-                ),
+                "Regularization Data": ("Yes" if dataset.get("is_regularisation_data", False) else "No"),
             }
 
             menu_items = [
@@ -4278,9 +3886,7 @@ class SimpleTunerNCurses:
                 ),
             ]
 
-            selected = nav.show_menu(
-                "Basic Dataset Settings", menu_items, current_values
-            )
+            selected = nav.show_menu("Basic Dataset Settings", menu_items, current_values)
 
             if selected == -1 or selected == -2:
                 return
@@ -4297,14 +3903,10 @@ class SimpleTunerNCurses:
                 "Resolution Type": dataset.get("resolution_type", "pixel_area"),
                 "Min Image Size": str(dataset.get("minimum_image_size", 0)),
                 "Max Image Size": (
-                    str(dataset.get("maximum_image_size", 0))
-                    if dataset.get("maximum_image_size")
-                    else "Not set"
+                    str(dataset.get("maximum_image_size", 0)) if dataset.get("maximum_image_size") else "Not set"
                 ),
                 "Target Downsample": (
-                    str(dataset.get("target_downsample_size", 0))
-                    if dataset.get("target_downsample_size")
-                    else "Not set"
+                    str(dataset.get("target_downsample_size", 0)) if dataset.get("target_downsample_size") else "Not set"
                 ),
                 "Min Aspect Ratio": str(dataset.get("minimum_aspect_ratio", 0.5)),
                 "Max Aspect Ratio": str(dataset.get("maximum_aspect_ratio", 3.0)),
@@ -4337,20 +3939,14 @@ class SimpleTunerNCurses:
             current_values = {
                 "Caption Strategy": dataset.get("caption_strategy", "textfile"),
                 "Instance Prompt": dataset.get("instance_prompt", "Not set"),
-                "Prepend Instance": (
-                    "Yes" if dataset.get("prepend_instance_prompt", False) else "No"
-                ),
-                "Only Instance": (
-                    "Yes" if dataset.get("only_instance_prompt", False) else "No"
-                ),
+                "Prepend Instance": ("Yes" if dataset.get("prepend_instance_prompt", False) else "No"),
+                "Only Instance": ("Yes" if dataset.get("only_instance_prompt", False) else "No"),
             }
 
             # Add parquet settings if applicable
             if dataset.get("caption_strategy") == "parquet":
                 if "parquet" in dataset:
-                    current_values["Parquet File"] = dataset["parquet"].get(
-                        "path", "Not set"
-                    )
+                    current_values["Parquet File"] = dataset["parquet"].get("path", "Not set")
                 else:
                     current_values["Parquet File"] = "Not configured"
 
@@ -4369,14 +3965,10 @@ class SimpleTunerNCurses:
 
             # Add strategy-specific options
             if dataset.get("caption_strategy") == "parquet":
-                menu_items.append(
-                    ("Parquet Settings", lambda s: self._configure_parquet(s, dataset))
-                )
+                menu_items.append(("Parquet Settings", lambda s: self._configure_parquet(s, dataset)))
 
             # Add caption filter list option for text datasets
-            menu_items.append(
-                ("Caption Filter List", lambda s: self._set_caption_filter(s, dataset))
-            )
+            menu_items.append(("Caption Filter List", lambda s: self._set_caption_filter(s, dataset)))
 
             selected = nav.show_menu("Caption Settings", menu_items, current_values)
 
@@ -4424,16 +4016,10 @@ class SimpleTunerNCurses:
         while True:
             current_values = {
                 "VAE Cache Dir": dataset.get("cache_dir_vae", "Not set"),
-                "Clear VAE Each Epoch": (
-                    "Yes" if dataset.get("vae_cache_clear_each_epoch", False) else "No"
-                ),
-                "Hash Filenames": (
-                    "Yes" if dataset.get("hash_filenames", False) else "No"
-                ),
+                "Clear VAE Each Epoch": ("Yes" if dataset.get("vae_cache_clear_each_epoch", False) else "No"),
+                "Hash Filenames": ("Yes" if dataset.get("hash_filenames", False) else "No"),
                 "Skip Discovery": dataset.get("skip_file_discovery", "None"),
-                "Preserve Cache": (
-                    "Yes" if dataset.get("preserve_data_backend_cache", False) else "No"
-                ),
+                "Preserve Cache": ("Yes" if dataset.get("preserve_data_backend_cache", False) else "No"),
                 "Text Embeds": dataset.get("text_embeds", "default"),
                 "Image Embeds": dataset.get("image_embeds", "Not set"),
             }
@@ -4484,15 +4070,11 @@ class SimpleTunerNCurses:
         )
 
         # Set as default?
-        default_idx = self.show_options(
-            stdscr, "Set as default text embeds dataset?", ["No", "Yes"], 0
-        )
+        default_idx = self.show_options(stdscr, "Set as default text embeds dataset?", ["No", "Yes"], 0)
         dataset["default"] = default_idx == 1
 
         # Storage backend
-        backend_idx = self.show_options(
-            stdscr, "Storage backend:", ["Local", "AWS S3"], 0
-        )
+        backend_idx = self.show_options(stdscr, "Storage backend:", ["Local", "AWS S3"], 0)
 
         if backend_idx == 0:
             dataset["type"] = "local"
@@ -4506,9 +4088,7 @@ class SimpleTunerNCurses:
             self._configure_aws_settings(stdscr, dataset)
 
         # Write batch size
-        batch_size = self.get_input(
-            stdscr, "Write batch size:", str(dataset["write_batch_size"])
-        )
+        batch_size = self.get_input(stdscr, "Write batch size:", str(dataset["write_batch_size"]))
         try:
             dataset["write_batch_size"] = int(batch_size)
         except ValueError:
@@ -4532,9 +4112,7 @@ class SimpleTunerNCurses:
         )
 
         # Storage backend
-        backend_idx = self.show_options(
-            stdscr, "Storage backend:", ["Local", "AWS S3"], 0
-        )
+        backend_idx = self.show_options(stdscr, "Storage backend:", ["Local", "AWS S3"], 0)
 
         if backend_idx == 0:
             dataset["type"] = "local"
@@ -4552,10 +4130,7 @@ class SimpleTunerNCurses:
             return
 
         # Validate configuration
-        has_text_embeds = any(
-            d.get("dataset_type") == "text_embeds" and d.get("default")
-            for d in self._datasets
-        )
+        has_text_embeds = any(d.get("dataset_type") == "text_embeds" and d.get("default") for d in self._datasets)
 
         if not has_text_embeds:
             # Auto-create default text embeds
@@ -4576,9 +4151,7 @@ class SimpleTunerNCurses:
             "data_backend_config", "config/multidatabackend.json"
         )
 
-        self.show_message(
-            stdscr, f"Applied {len(self._datasets)} dataset configurations!"
-        )
+        self.show_message(stdscr, f"Applied {len(self._datasets)} dataset configurations!")
 
     # Helper methods for all the configuration options...
     def _set_dataset_id(self, stdscr, dataset):
@@ -4627,38 +4200,26 @@ class SimpleTunerNCurses:
                 "Caption Column": parquet.get("caption_column", "caption"),
                 "Width Column": parquet.get("width_column", "Not set"),
                 "Height Column": parquet.get("height_column", "Not set"),
-                "ID Has Extension": (
-                    "Yes"
-                    if parquet.get("identifier_includes_extension", False)
-                    else "No"
-                ),
+                "ID Has Extension": ("Yes" if parquet.get("identifier_includes_extension", False) else "No"),
             }
 
             menu_items = [
                 ("Parquet File Path", lambda s: self._set_parquet_path(s, parquet)),
                 (
                     "Filename Column",
-                    lambda s: self._set_parquet_column(
-                        s, parquet, "filename_column", "Filename column name:"
-                    ),
+                    lambda s: self._set_parquet_column(s, parquet, "filename_column", "Filename column name:"),
                 ),
                 (
                     "Caption Column",
-                    lambda s: self._set_parquet_column(
-                        s, parquet, "caption_column", "Caption column name:"
-                    ),
+                    lambda s: self._set_parquet_column(s, parquet, "caption_column", "Caption column name:"),
                 ),
                 (
                     "Width Column",
-                    lambda s: self._set_parquet_column(
-                        s, parquet, "width_column", "Width column name (optional):"
-                    ),
+                    lambda s: self._set_parquet_column(s, parquet, "width_column", "Width column name (optional):"),
                 ),
                 (
                     "Height Column",
-                    lambda s: self._set_parquet_column(
-                        s, parquet, "height_column", "Height column name (optional):"
-                    ),
+                    lambda s: self._set_parquet_column(s, parquet, "height_column", "Height column name (optional):"),
                 ),
                 (
                     "Fallback Caption",
@@ -4675,9 +4236,7 @@ class SimpleTunerNCurses:
                 ),
             ]
 
-            selected = nav.show_menu(
-                "Parquet Configuration", menu_items, current_values
-            )
+            selected = nav.show_menu("Parquet Configuration", menu_items, current_values)
 
             if selected == -1 or selected == -2:
                 dataset["metadata_backend"] = "parquet"
@@ -4714,17 +4273,13 @@ class SimpleTunerNCurses:
         stdscr.clear()
         stdscr.addstr(1, 2, "Caption Strategy Selection", curses.A_BOLD)
         stdscr.addstr(3, 2, "How should the dataloader handle captions?")
-        stdscr.addstr(
-            5, 2, "-> 'filename' will use the names of your image files as the caption"
-        )
+        stdscr.addstr(5, 2, "-> 'filename' will use the names of your image files as the caption")
         stdscr.addstr(
             6,
             2,
             "-> 'textfile' requires a image.txt file to go next to your image.png file",
         )
-        stdscr.addstr(
-            7, 2, "-> 'instanceprompt' will just use one trigger phrase for all images"
-        )
+        stdscr.addstr(7, 2, "-> 'instanceprompt' will just use one trigger phrase for all images")
         stdscr.refresh()
 
         caption_strategies = ["filename", "textfile", "instanceprompt"]
@@ -4803,9 +4358,7 @@ class SimpleTunerNCurses:
                         2,
                         "Most models do not play well with multi-resolution training,",
                     )
-                    stdscr.addstr(
-                        5, 2, "resulting in degraded outputs and broken hearts."
-                    )
+                    stdscr.addstr(5, 2, "resulting in degraded outputs and broken hearts.")
                     stdscr.addstr(6, 2, "Proceed with caution.")
                     stdscr.addstr(8, 2, "Press any key to continue...")
                     stdscr.refresh()
@@ -4815,9 +4368,7 @@ class SimpleTunerNCurses:
 
             self._dataset_values["resolutions"] = resolutions
         except ValueError:
-            self.show_error(
-                stdscr, "Invalid resolution value. Keeping current settings."
-            )
+            self.show_error(stdscr, "Invalid resolution value. Keeping current settings.")
 
     def _configure_cache_dir(self, stdscr):
         """Configure cache directory"""
@@ -4861,9 +4412,7 @@ class SimpleTunerNCurses:
         stdscr.addstr(1, 2, "Dataset Configuration Summary", curses.A_BOLD)
         stdscr.addstr(3, 2, f"Dataset ID: {self._dataset_values['id']}")
         stdscr.addstr(4, 2, f"Dataset Path: {self._dataset_values['path']}")
-        stdscr.addstr(
-            5, 2, f"Caption Strategy: {self._dataset_values['caption_strategy']}"
-        )
+        stdscr.addstr(5, 2, f"Caption Strategy: {self._dataset_values['caption_strategy']}")
         stdscr.addstr(6, 2, f"Repeats: {self._dataset_values['repeats']}")
         stdscr.addstr(
             7,
@@ -4873,9 +4422,7 @@ class SimpleTunerNCurses:
         stdscr.addstr(8, 2, f"Cache Directory: {self._dataset_values['cache_dir']}")
 
         if self._dataset_values.get("instance_prompt"):
-            stdscr.addstr(
-                9, 2, f"Instance Prompt: {self._dataset_values['instance_prompt']}"
-            )
+            stdscr.addstr(9, 2, f"Instance Prompt: {self._dataset_values['instance_prompt']}")
 
         stdscr.addstr(
             11,
@@ -4940,24 +4487,16 @@ class SimpleTunerNCurses:
                 "dataset_type": "text_embeds",
                 "default": True,
                 "type": "local",
-                "cache_dir": os.path.abspath(
-                    os.path.join(
-                        cache_dir, self.state.env_contents["model_family"], "text"
-                    )
-                ),
+                "cache_dir": os.path.abspath(os.path.join(cache_dir, self.state.env_contents["model_family"], "text")),
                 "write_batch_size": 128,
             }
         ]
 
         def create_dataset(resolution, template):
             dataset = template.copy()
-            dataset.update(
-                resolution_configs.get(resolution, {"resolution": resolution})
-            )
+            dataset.update(resolution_configs.get(resolution, {"resolution": resolution}))
             dataset["id"] = (
-                f"{dataset_id}-{resolution}"
-                if "crop" not in dataset["id"]
-                else f"{dataset_id}-crop-{resolution}"
+                f"{dataset_id}-{resolution}" if "crop" not in dataset["id"] else f"{dataset_id}-crop-{resolution}"
             )
             dataset["instance_data_dir"] = os.path.abspath(dataset_path)
             dataset["repeats"] = dataset_repeats
@@ -5000,9 +4539,7 @@ class SimpleTunerNCurses:
             if i + 3 < h:
                 stdscr.addstr(i + 3, 2, line)
 
-        stdscr.addstr(
-            h - 3, 2, "Press 's' to save, 'b' to go back, 'q' to quit without saving"
-        )
+        stdscr.addstr(h - 3, 2, "Press 's' to save, 'b' to go back, 'q' to quit without saving")
         stdscr.refresh()
 
         while True:
@@ -5029,9 +4566,7 @@ class SimpleTunerNCurses:
                     "Save to default (config/config.json)",
                 ]
 
-                save_choice = self.show_options(
-                    stdscr, "Where would you like to save?", save_options, 0
-                )
+                save_choice = self.show_options(stdscr, "Where would you like to save?", save_options, 0)
 
                 if save_choice == 0:
                     save_path = self.state.loaded_config_path
@@ -5041,7 +4576,6 @@ class SimpleTunerNCurses:
                         "Enter save path for config.json:",
                         "config/my-preset/config.json",
                     )
-                    # Create directory if needed
                     save_dir = os.path.dirname(save_path)
                     if save_dir and not os.path.exists(save_dir):
                         os.makedirs(save_dir, exist_ok=True)
@@ -5059,9 +4593,7 @@ class SimpleTunerNCurses:
 
             # Save dataset config if configured
             if self.state.dataset_config:
-                backend_path = self.state.env_contents.get(
-                    "data_backend_config", "config/multidatabackend.json"
-                )
+                backend_path = self.state.env_contents.get("data_backend_config", "config/multidatabackend.json")
                 backend_dir = os.path.dirname(backend_path)
                 if backend_dir and not os.path.exists(backend_dir):
                     os.makedirs(backend_dir, exist_ok=True)
@@ -5115,26 +4647,18 @@ class SimpleTunerNCurses:
             current_values = {
                 "Num Frames": str(video_config.get("num_frames", 125)),
                 "Min Frames": str(video_config.get("min_frames", 125)),
-                "Max Frames": (
-                    str(video_config.get("max_frames", 0))
-                    if video_config.get("max_frames")
-                    else "Not set"
-                ),
+                "Max Frames": (str(video_config.get("max_frames", 0)) if video_config.get("max_frames") else "Not set"),
                 "Is I2V": "Yes" if video_config.get("is_i2v", True) else "No",
             }
 
             menu_items = [
                 (
                     "Number of Frames",
-                    lambda s: self._set_video_frames(
-                        s, video_config, "num_frames", "Number of frames to train on:"
-                    ),
+                    lambda s: self._set_video_frames(s, video_config, "num_frames", "Number of frames to train on:"),
                 ),
                 (
                     "Minimum Frames",
-                    lambda s: self._set_video_frames(
-                        s, video_config, "min_frames", "Minimum video length (frames):"
-                    ),
+                    lambda s: self._set_video_frames(s, video_config, "min_frames", "Minimum video length (frames):"),
                 ),
                 (
                     "Maximum Frames",
@@ -5148,9 +4672,7 @@ class SimpleTunerNCurses:
                 ("I2V Training", lambda s: self._toggle_i2v(s, video_config)),
             ]
 
-            selected = nav.show_menu(
-                "Video-Specific Settings", menu_items, current_values
-            )
+            selected = nav.show_menu("Video-Specific Settings", menu_items, current_values)
 
             if selected == -1 or selected == -2:
                 return
@@ -5160,9 +4682,7 @@ class SimpleTunerNCurses:
     def _configure_conditioning_dataset(self, stdscr, dataset):
         """Configure a conditioning dataset"""
         # Set conditioning type
-        cond_type_idx = self.show_options(
-            stdscr, "Select conditioning type:", ["ControlNet", "Mask"], 0
-        )
+        cond_type_idx = self.show_options(stdscr, "Select conditioning type:", ["ControlNet", "Mask"], 0)
 
         if cond_type_idx < 0:
             return
@@ -5180,9 +4700,7 @@ class SimpleTunerNCurses:
         nav = MenuNavigator(stdscr)
 
         while True:
-            current_values = {
-                "Conditioning Types": f"{len(dataset['conditioning'])} configured"
-            }
+            current_values = {"Conditioning Types": f"{len(dataset['conditioning'])} configured"}
 
             menu_items = [
                 (
@@ -5199,9 +4717,7 @@ class SimpleTunerNCurses:
                 ),
             ]
 
-            selected = nav.show_menu(
-                "Auto-Generate Conditioning", menu_items, current_values
-            )
+            selected = nav.show_menu("Auto-Generate Conditioning", menu_items, current_values)
 
             if selected == -1 or selected == -2:
                 return
@@ -5265,9 +4781,7 @@ class SimpleTunerNCurses:
             num_captions = self.get_input(stdscr, "How many random captions?", "5")
             captions = []
             for i in range(int(num_captions)):
-                caption = self.get_input(
-                    stdscr, f"Enter caption {i+1}:", f"conditioning variant {i+1}"
-                )
+                caption = self.get_input(stdscr, f"Enter caption {i+1}:", f"conditioning variant {i+1}")
                 captions.append(caption)
             cond_config["captions"] = captions
 
@@ -5316,9 +4830,7 @@ class SimpleTunerNCurses:
 
     def _configure_csv_settings(self, stdscr, dataset):
         """Configure CSV dataset settings"""
-        dataset["csv_file"] = self.get_input(
-            stdscr, "Enter path to CSV file:", dataset.get("csv_file", "dataset.csv")
-        )
+        dataset["csv_file"] = self.get_input(stdscr, "Enter path to CSV file:", dataset.get("csv_file", "dataset.csv"))
 
         dataset["csv_caption_column"] = self.get_input(
             stdscr,
@@ -5343,13 +4855,9 @@ class SimpleTunerNCurses:
             dataset.get("dataset_name", ""),
         )
 
-        dataset["image_column"] = self.get_input(
-            stdscr, "Image column name:", dataset.get("image_column", "image")
-        )
+        dataset["image_column"] = self.get_input(stdscr, "Image column name:", dataset.get("image_column", "image"))
 
-        dataset["caption_column"] = self.get_input(
-            stdscr, "Caption column name:", dataset.get("caption_column", "caption")
-        )
+        dataset["caption_column"] = self.get_input(stdscr, "Caption column name:", dataset.get("caption_column", "caption"))
 
         # Optional subset
         subset = self.get_input(
@@ -5401,9 +4909,7 @@ class SimpleTunerNCurses:
         current = dataset.get("resolution_type", "pixel_area")
         default_idx = types.index(current) if current in types else 0
 
-        idx = self.show_options(
-            stdscr, "Resolution measurement type:", descriptions, default_idx
-        )
+        idx = self.show_options(stdscr, "Resolution measurement type:", descriptions, default_idx)
 
         if idx >= 0:
             dataset["resolution_type"] = types[idx]
@@ -5477,15 +4983,9 @@ class SimpleTunerNCurses:
     def _set_aspect_buckets(self, stdscr, dataset):
         """Set custom aspect ratio buckets"""
         current = dataset.get("crop_aspect_buckets", [])
-        current_str = (
-            ", ".join(map(str, current))
-            if current
-            else "0.5, 0.75, 1.0, 1.33, 1.5, 2.0"
-        )
+        current_str = ", ".join(map(str, current)) if current else "0.5, 0.75, 1.0, 1.33, 1.5, 2.0"
 
-        value = self.get_input(
-            stdscr, "Aspect ratio buckets (comma-separated):", current_str
-        )
+        value = self.get_input(stdscr, "Aspect ratio buckets (comma-separated):", current_str)
 
         try:
             buckets = [float(x.strip()) for x in value.split(",")]
@@ -5496,15 +4996,11 @@ class SimpleTunerNCurses:
     # AWS helpers
     def _set_aws_bucket(self, stdscr, dataset):
         """Set AWS bucket name"""
-        dataset["aws_bucket_name"] = self.get_input(
-            stdscr, "S3 bucket name:", dataset.get("aws_bucket_name", "my-bucket")
-        )
+        dataset["aws_bucket_name"] = self.get_input(stdscr, "S3 bucket name:", dataset.get("aws_bucket_name", "my-bucket"))
 
     def _set_aws_credentials(self, stdscr, dataset):
         """Set AWS credentials"""
-        use_env = self.show_options(
-            stdscr, "AWS credentials source:", ["Environment/IAM", "Specify here"], 0
-        )
+        use_env = self.show_options(stdscr, "AWS credentials source:", ["Environment/IAM", "Specify here"], 0)
 
         if use_env == 0:
             # Clear any stored credentials
@@ -5512,9 +5008,7 @@ class SimpleTunerNCurses:
                 if key in dataset:
                     del dataset[key]
         else:
-            dataset["aws_access_key_id"] = self.get_input(
-                stdscr, "AWS Access Key ID:", dataset.get("aws_access_key_id", "")
-            )
+            dataset["aws_access_key_id"] = self.get_input(stdscr, "AWS Access Key ID:", dataset.get("aws_access_key_id", ""))
             dataset["aws_secret_access_key"] = self.get_input(
                 stdscr,
                 "AWS Secret Access Key:",
@@ -5550,8 +5044,7 @@ class SimpleTunerNCurses:
             stdscr.addstr(
                 y + 1,
                 4,
-                f"Type: {dataset.get('type', 'local')}, "
-                f"Resolution: {dataset.get('resolution', 'N/A')}",
+                f"Type: {dataset.get('type', 'local')}, " f"Resolution: {dataset.get('resolution', 'N/A')}",
             )
             if dataset.get("disabled", False):
                 stdscr.addstr(y + 1, w - 20, "[DISABLED]", curses.A_DIM)
@@ -5569,9 +5062,7 @@ class SimpleTunerNCurses:
         # Show dataset list
         options = []
         for i, ds in enumerate(self._datasets):
-            options.append(
-                f"{ds.get('id', 'unnamed')} ({ds.get('dataset_type', 'image')}, {ds.get('type', 'local')})"
-            )
+            options.append(f"{ds.get('id', 'unnamed')} ({ds.get('dataset_type', 'image')}, {ds.get('type', 'local')})")
 
         idx = self.show_options(stdscr, "Select dataset to edit:", options, 0)
 
@@ -5602,17 +5093,13 @@ class SimpleTunerNCurses:
         # Show dataset list
         options = []
         for i, ds in enumerate(self._datasets):
-            options.append(
-                f"{ds.get('id', 'unnamed')} ({ds.get('dataset_type', 'image')})"
-            )
+            options.append(f"{ds.get('id', 'unnamed')} ({ds.get('dataset_type', 'image')})")
 
         idx = self.show_options(stdscr, "Select dataset to remove:", options, 0)
 
         if idx >= 0:
             removed = self._datasets.pop(idx)
-            self.show_message(
-                stdscr, f"Removed dataset: {removed.get('id', 'unnamed')}"
-            )
+            self.show_message(stdscr, f"Removed dataset: {removed.get('id', 'unnamed')}")
 
 
 def main():
@@ -5636,9 +5123,7 @@ def main():
             sys.exit(1)
         print(f"Loaded configuration from: {config_path}")
     elif configurator.state.loaded_config_path:
-        print(
-            f"Loaded existing configuration from: {configurator.state.loaded_config_path}"
-        )
+        print(f"Loaded existing configuration from: {configurator.state.loaded_config_path}")
     else:
         print("No existing configuration found. Starting fresh setup.")
 

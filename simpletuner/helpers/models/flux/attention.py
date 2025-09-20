@@ -1,9 +1,9 @@
 import torch
-from torch import Tensor, FloatTensor
-from torch.nn import functional as F
-from einops import rearrange
 from diffusers.models.attention_processor import Attention
 from diffusers.models.embeddings import apply_rotary_emb
+from einops import rearrange
+from torch import FloatTensor, Tensor
+from torch.nn import functional as F
 
 try:
     from flash_attn_interface import flash_attn_func, flash_attn_qkvpacked_func
@@ -29,9 +29,7 @@ class FluxSingleAttnProcessor3_0:
 
     def __init__(self):
         if not hasattr(F, "scaled_dot_product_attention"):
-            raise ImportError(
-                "AttnProcessor2_0 requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0."
-            )
+            raise ImportError("AttnProcessor2_0 requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0.")
 
     def __call__(
         self,
@@ -45,15 +43,9 @@ class FluxSingleAttnProcessor3_0:
 
         if input_ndim == 4:
             batch_size, channel, height, width = hidden_states.shape
-            hidden_states = hidden_states.view(
-                batch_size, channel, height * width
-            ).transpose(1, 2)
+            hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
 
-        batch_size, _, _ = (
-            hidden_states.shape
-            if encoder_hidden_states is None
-            else encoder_hidden_states.shape
-        )
+        batch_size, _, _ = hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
 
         query = attn.to_q(hidden_states)
         if encoder_hidden_states is None:
@@ -86,15 +78,11 @@ class FluxSingleAttnProcessor3_0:
         hidden_states = fa3_sdpa(query, key, value)
         hidden_states = rearrange(hidden_states, "B H L D -> B L (H D)")
 
-        hidden_states = hidden_states.transpose(1, 2).reshape(
-            batch_size, -1, attn.heads * head_dim
-        )
+        hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
         hidden_states = hidden_states.to(query.dtype)
 
         if input_ndim == 4:
-            hidden_states = hidden_states.transpose(-1, -2).reshape(
-                batch_size, channel, height, width
-            )
+            hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
 
         return hidden_states
 
@@ -104,9 +92,7 @@ class FluxAttnProcessor3_0:
 
     def __init__(self):
         if not hasattr(F, "scaled_dot_product_attention"):
-            raise ImportError(
-                "FluxAttnProcessor3_0 requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0."
-            )
+            raise ImportError("FluxAttnProcessor3_0 requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0.")
 
     def __call__(
         self,
@@ -119,15 +105,11 @@ class FluxAttnProcessor3_0:
         input_ndim = hidden_states.ndim
         if input_ndim == 4:
             batch_size, channel, height, width = hidden_states.shape
-            hidden_states = hidden_states.view(
-                batch_size, channel, height * width
-            ).transpose(1, 2)
+            hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
         context_input_ndim = encoder_hidden_states.ndim
         if context_input_ndim == 4:
             batch_size, channel, height, width = encoder_hidden_states.shape
-            encoder_hidden_states = encoder_hidden_states.view(
-                batch_size, channel, height * width
-            ).transpose(1, 2)
+            encoder_hidden_states = encoder_hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
 
         batch_size = encoder_hidden_states.shape[0]
 
@@ -156,21 +138,17 @@ class FluxAttnProcessor3_0:
         encoder_hidden_states_query_proj = encoder_hidden_states_query_proj.view(
             batch_size, -1, attn.heads, head_dim
         ).transpose(1, 2)
-        encoder_hidden_states_key_proj = encoder_hidden_states_key_proj.view(
-            batch_size, -1, attn.heads, head_dim
-        ).transpose(1, 2)
+        encoder_hidden_states_key_proj = encoder_hidden_states_key_proj.view(batch_size, -1, attn.heads, head_dim).transpose(
+            1, 2
+        )
         encoder_hidden_states_value_proj = encoder_hidden_states_value_proj.view(
             batch_size, -1, attn.heads, head_dim
         ).transpose(1, 2)
 
         if attn.norm_added_q is not None:
-            encoder_hidden_states_query_proj = attn.norm_added_q(
-                encoder_hidden_states_query_proj
-            )
+            encoder_hidden_states_query_proj = attn.norm_added_q(encoder_hidden_states_query_proj)
         if attn.norm_added_k is not None:
-            encoder_hidden_states_key_proj = attn.norm_added_k(
-                encoder_hidden_states_key_proj
-            )
+            encoder_hidden_states_key_proj = attn.norm_added_k(encoder_hidden_states_key_proj)
 
         # attention
         query = torch.cat([encoder_hidden_states_query_proj, query], dim=2)
@@ -186,9 +164,7 @@ class FluxAttnProcessor3_0:
         hidden_states = fa3_sdpa(query, key, value)
         hidden_states = rearrange(hidden_states, "B H L D -> B L (H D)")
 
-        hidden_states = hidden_states.transpose(1, 2).reshape(
-            batch_size, -1, attn.heads * head_dim
-        )
+        hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
         hidden_states = hidden_states.to(query.dtype)
 
         encoder_hidden_states, hidden_states = (
@@ -203,13 +179,9 @@ class FluxAttnProcessor3_0:
         encoder_hidden_states = attn.to_add_out(encoder_hidden_states)
 
         if input_ndim == 4:
-            hidden_states = hidden_states.transpose(-1, -2).reshape(
-                batch_size, channel, height, width
-            )
+            hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
         if context_input_ndim == 4:
-            encoder_hidden_states = encoder_hidden_states.transpose(-1, -2).reshape(
-                batch_size, channel, height, width
-            )
+            encoder_hidden_states = encoder_hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
 
         return hidden_states, encoder_hidden_states
 
@@ -243,24 +215,14 @@ class FluxFusedFlashAttnProcessor3(object):
         input_ndim = hidden_states.ndim
         if input_ndim == 4:
             batch_size, channel, height, width = hidden_states.shape
-            hidden_states = hidden_states.view(
-                batch_size, channel, height * width
-            ).transpose(1, 2)
+            hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
 
-        context_input_ndim = (
-            encoder_hidden_states.ndim if encoder_hidden_states is not None else None
-        )
+        context_input_ndim = encoder_hidden_states.ndim if encoder_hidden_states is not None else None
         if context_input_ndim == 4:
             batch_size, channel, height, width = encoder_hidden_states.shape
-            encoder_hidden_states = encoder_hidden_states.view(
-                batch_size, channel, height * width
-            ).transpose(1, 2)
+            encoder_hidden_states = encoder_hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
 
-        batch_size = (
-            encoder_hidden_states.shape[0]
-            if encoder_hidden_states is not None
-            else hidden_states.shape[0]
-        )
+        batch_size = encoder_hidden_states.shape[0] if encoder_hidden_states is not None else hidden_states.shape[0]
         seq_len = hidden_states.shape[1]
 
         # Fused QKV projection
@@ -284,9 +246,7 @@ class FluxFusedFlashAttnProcessor3(object):
                 k = attn.norm_k(k)
 
             # Repack: back to (batch, seq_len, 3, heads, head_dim)
-            qkv = torch.stack(
-                [q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)], dim=2
-            )
+            qkv = torch.stack([q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)], dim=2)
 
         # Handle encoder states if present
         if encoder_hidden_states is not None:
@@ -294,9 +254,7 @@ class FluxFusedFlashAttnProcessor3(object):
 
             # Fused encoder QKV
             encoder_qkv = attn.to_added_qkv(encoder_hidden_states)
-            encoder_qkv = encoder_qkv.view(
-                batch_size, encoder_seq_len, 3, attn.heads, head_dim
-            )
+            encoder_qkv = encoder_qkv.view(batch_size, encoder_seq_len, 3, attn.heads, head_dim)
 
             # Apply norms if needed
             if attn.norm_added_q is not None or attn.norm_added_k is not None:
@@ -320,9 +278,7 @@ class FluxFusedFlashAttnProcessor3(object):
                 )
 
             # Concatenate along sequence dimension
-            qkv = torch.cat(
-                [encoder_qkv, qkv], dim=1
-            )  # (batch, encoder_seq + seq, 3, heads, head_dim)
+            qkv = torch.cat([encoder_qkv, qkv], dim=1)  # (batch, encoder_seq + seq, 3, heads, head_dim)
 
         # Apply RoPE if needed
         if image_rotary_emb is not None:
@@ -338,9 +294,7 @@ class FluxFusedFlashAttnProcessor3(object):
             k = apply_rotary_emb(k, image_rotary_emb)
 
             # Transpose back and repack
-            qkv = torch.stack(
-                [q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)], dim=2
-            )
+            qkv = torch.stack([q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)], dim=2)
 
         # Flash Attention 3 with packed QKV
         # Input shape: (batch, seq_len, 3, heads, head_dim)
@@ -368,20 +322,14 @@ class FluxFusedFlashAttnProcessor3(object):
 
             # Reshape if needed
             if input_ndim == 4:
-                hidden_states = hidden_states.transpose(-1, -2).reshape(
-                    batch_size, channel, height, width
-                )
+                hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
             if context_input_ndim == 4:
-                encoder_hidden_states = encoder_hidden_states.transpose(-1, -2).reshape(
-                    batch_size, channel, height, width
-                )
+                encoder_hidden_states = encoder_hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
 
             return hidden_states, encoder_hidden_states
         else:
             if input_ndim == 4:
-                hidden_states = hidden_states.transpose(-1, -2).reshape(
-                    batch_size, channel, height, width
-                )
+                hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
             return hidden_states
 
 
@@ -393,9 +341,7 @@ class FluxFusedSDPAProcessor:
 
     def __init__(self):
         if not hasattr(F, "scaled_dot_product_attention"):
-            raise ImportError(
-                "FluxFusedSDPAProcessor requires PyTorch 2.0+ for scaled_dot_product_attention"
-            )
+            raise ImportError("FluxFusedSDPAProcessor requires PyTorch 2.0+ for scaled_dot_product_attention")
 
     def __call__(
         self,
@@ -408,24 +354,14 @@ class FluxFusedSDPAProcessor:
         input_ndim = hidden_states.ndim
         if input_ndim == 4:
             batch_size, channel, height, width = hidden_states.shape
-            hidden_states = hidden_states.view(
-                batch_size, channel, height * width
-            ).transpose(1, 2)
+            hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
 
-        context_input_ndim = (
-            encoder_hidden_states.ndim if encoder_hidden_states is not None else None
-        )
+        context_input_ndim = encoder_hidden_states.ndim if encoder_hidden_states is not None else None
         if context_input_ndim == 4:
             batch_size, channel, height, width = encoder_hidden_states.shape
-            encoder_hidden_states = encoder_hidden_states.view(
-                batch_size, channel, height * width
-            ).transpose(1, 2)
+            encoder_hidden_states = encoder_hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
 
-        batch_size = (
-            encoder_hidden_states.shape[0]
-            if encoder_hidden_states is not None
-            else hidden_states.shape[0]
-        )
+        batch_size = encoder_hidden_states.shape[0] if encoder_hidden_states is not None else hidden_states.shape[0]
 
         # Single attention case (no encoder states)
         if encoder_hidden_states is None:
@@ -437,9 +373,7 @@ class FluxFusedSDPAProcessor:
 
             # Split and reshape
             qkv = qkv.view(batch_size, seq_len, 3, attn.heads, head_dim)
-            query, key, value = qkv.unbind(
-                dim=2
-            )  # Each is (batch, seq_len, heads, head_dim)
+            query, key, value = qkv.unbind(dim=2)  # Each is (batch, seq_len, heads, head_dim)
 
             # Transpose to (batch, heads, seq_len, head_dim)
             query = query.transpose(1, 2)
@@ -468,15 +402,11 @@ class FluxFusedSDPAProcessor:
             )
 
             # Reshape back
-            hidden_states = hidden_states.transpose(1, 2).reshape(
-                batch_size, -1, attn.heads * head_dim
-            )
+            hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
             hidden_states = hidden_states.to(query.dtype)
 
             if input_ndim == 4:
-                hidden_states = hidden_states.transpose(-1, -2).reshape(
-                    batch_size, channel, height, width
-                )
+                hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
 
             return hidden_states
 
@@ -505,9 +435,7 @@ class FluxFusedSDPAProcessor:
             # Process encoder QKV
             encoder_seq_len = encoder_hidden_states.shape[1]
             encoder_qkv = attn.to_added_qkv(encoder_hidden_states)
-            encoder_qkv = encoder_qkv.view(
-                batch_size, encoder_seq_len, 3, attn.heads, head_dim
-            )
+            encoder_qkv = encoder_qkv.view(batch_size, encoder_seq_len, 3, attn.heads, head_dim)
             encoder_query, encoder_key, encoder_value = encoder_qkv.unbind(dim=2)
 
             # Transpose to (batch, heads, seq_len, head_dim)
@@ -542,9 +470,7 @@ class FluxFusedSDPAProcessor:
             )
 
             # Reshape: (batch, heads, seq_len, head_dim) -> (batch, seq_len, heads * head_dim)
-            hidden_states = hidden_states.transpose(1, 2).reshape(
-                batch_size, -1, attn.heads * head_dim
-            )
+            hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
             hidden_states = hidden_states.to(query.dtype)
 
             # Split encoder and self outputs
@@ -558,13 +484,9 @@ class FluxFusedSDPAProcessor:
 
             # Reshape if needed
             if input_ndim == 4:
-                hidden_states = hidden_states.transpose(-1, -2).reshape(
-                    batch_size, channel, height, width
-                )
+                hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
             if context_input_ndim == 4:
-                encoder_hidden_states = encoder_hidden_states.transpose(-1, -2).reshape(
-                    batch_size, channel, height, width
-                )
+                encoder_hidden_states = encoder_hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
 
             return hidden_states, encoder_hidden_states
 
@@ -577,9 +499,7 @@ class FluxSingleFusedSDPAProcessor:
 
     def __init__(self):
         if not hasattr(F, "scaled_dot_product_attention"):
-            raise ImportError(
-                "FluxSingleFusedSDPAProcessor requires PyTorch 2.0+ for scaled_dot_product_attention"
-            )
+            raise ImportError("FluxSingleFusedSDPAProcessor requires PyTorch 2.0+ for scaled_dot_product_attention")
 
     def __call__(
         self,
@@ -592,9 +512,7 @@ class FluxSingleFusedSDPAProcessor:
         input_ndim = hidden_states.ndim
         if input_ndim == 4:
             batch_size, channel, height, width = hidden_states.shape
-            hidden_states = hidden_states.view(
-                batch_size, channel, height * width
-            ).transpose(1, 2)
+            hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
 
         batch_size, seq_len, _ = hidden_states.shape
 
@@ -606,9 +524,7 @@ class FluxSingleFusedSDPAProcessor:
         # Split and reshape in one go
         qkv = qkv.view(batch_size, seq_len, 3, attn.heads, head_dim)
         qkv = qkv.permute(2, 0, 3, 1, 4)  # (3, B, H, L, D) – still strided
-        query, key, value = [
-            t.contiguous() for t in qkv.unbind(0)  # make each view dense
-        ]
+        query, key, value = [t.contiguous() for t in qkv.unbind(0)]  # make each view dense
         # Now each is (batch, heads, seq_len, head_dim)
 
         # Apply norms if needed
@@ -632,8 +548,6 @@ class FluxSingleFusedSDPAProcessor:
         hidden_states = hidden_states.to(query.dtype)
 
         if input_ndim == 4:
-            hidden_states = hidden_states.transpose(-1, -2).reshape(
-                batch_size, channel, height, width
-            )
+            hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
 
         return hidden_states

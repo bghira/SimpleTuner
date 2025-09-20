@@ -38,15 +38,7 @@ class TrainingSample:
         conditioning_type: str = None,
         model=None,
     ):
-        """
-        Initializes a new TrainingSample instance with a provided PIL.Image object and a data backend identifier.
-
-        Args:
-            image (Image.Image): A PIL Image object.
-            data_backend_id (str): Identifier for the data backend used for additional operations.
-            metadata (dict): Optional metadata associated with the image.
-        """
-        # Torchvision transforms turn the pixels into a Tensor and normalize them for the VAE.
+        # transforms normalize pixels for VAE
         self.model = model
         self.transforms = None
         self.caption = None
@@ -74,7 +66,6 @@ class TrainingSample:
             elif len(image.shape) == 5:
                 raise ValueError(f"Received invalid shape: {image.shape}, expected 4D item instead")
 
-            logger.debug(f"Checking on {type(image)}: {self.original_size[0]}x{self.original_size[1]}")
             self.original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(self.original_size)
         elif hasattr(image, "size"):
             self.original_size = self.image.size
@@ -87,7 +78,7 @@ class TrainingSample:
         if not self.original_size:
             raise Exception(f"Original size not found in metadata: {image_metadata}")
 
-        # Backend config details
+        # backend config
         self.data_backend_config = StateTracker.get_data_backend_config(data_backend_id)
         self.crop_enabled = self.data_backend_config.get("crop", False)
         self.crop_style = self.data_backend_config.get("crop_style", "random")
@@ -110,7 +101,7 @@ class TrainingSample:
         self.target_downsample_size = self.data_backend_config.get("target_downsample_size", None)
         self.maximum_image_size = self.data_backend_config.get("maximum_image_size", None)
         self._image_path = image_path
-        # RGB/EXIF conversions.
+        # RGB/EXIF conversion
         self.correct_image()
         self._validate_image_metadata()
 
@@ -146,24 +137,12 @@ class TrainingSample:
 
     @staticmethod
     def from_image_path(image_path: str, data_backend_id: str):
-        """
-        Create a new TrainingSample instance from an image path.
-
-        Args:
-            image_path (str): The path to the image.
-            data_backend_id (str): Identifier for the data backend used for additional operations.
-
-        Returns:
-            TrainingSample: A new TrainingSample instance.
-        """
         data_backend = StateTracker.get_data_backend(data_backend_id)
         image = data_backend["data_backend"].read_image(image_path)
         return TrainingSample(image, data_backend_id, image_path=image_path)
 
     def training_sample_path(self, training_dataset_id: str) -> str:
-        """
-        For a conditioning sample, this will return the primary training sample counterpart path inside training_dataset_id dataset.
-        """
+        """get primary training sample path for conditioning sample"""
         training_backend = StateTracker.get_data_backend(training_dataset_id)
         cond_backend = StateTracker.get_data_backend(self.data_backend_id)
         if training_backend is None:
@@ -178,12 +157,8 @@ class TrainingSample:
         return training_sample_path
 
     def _validate_image_metadata(self) -> bool:
-        """
-        Determine whether all required keys exist for prepare() to skip calculations.
-        This is useful because randomised aspect buckets must be preserved across runs to avoid mismatched tensor dimensions.
-
-        Returns:
-            bool: True if the metadata is valid, False otherwise.
+        """check if metadata has required keys to skip calculations
+        preserves randomized aspect buckets across runs to avoid tensor shape mismatches
         """
         required_keys = [
             "original_size",
@@ -250,17 +225,10 @@ class TrainingSample:
             raise Exception(f"Unknown resolution type: {self.resolution_type}")
 
     def _trim_aspect_bucket_list(self):
-        """
-        Momentarily return a temporarily list of pruned buckets that'll work for this image.
-        An aspect bucket will "work" if the image must be upscaled less than 20% to fit into it.
-
-        Returns:
-            list[float]: The list of available aspect buckets
-        """
+        """filter buckets to avoid upscaling >20%"""
         available_buckets = []
         for bucket in self.crop_aspect_buckets:
-            # We want to ensure we don't upscale images beyond about 20% of their original size.
-            # If any of the aspect buckets will result in that, we'll ignore it.
+            # skip buckets that would upscale >20%
             if type(bucket) is dict:
                 aspect = bucket["aspect_ratio"]
             elif type(bucket) is float or type(bucket) is int:
@@ -269,20 +237,13 @@ class TrainingSample:
                 raise ValueError("Aspect buckets must be a list of floats or dictionaries.")
             # Calculate new size
             target_size, _, _ = self.target_size_calculator(aspect, self.resolution, self.original_size)
-            # Check the size vs a 20% threshold
+            # check 20% upscale threshold
             if target_size[0] * 1.2 < self.original_size[0] and target_size[1] * 1.2 < self.original_size[1]:
                 available_buckets.append(aspect)
         return available_buckets
 
     def _select_random_aspect(self):
-        """
-        This method returns an aspect bucket based on the crop_aspect configuration.
-        If crop_aspect is "closest", it returns the closest aspect ratio.
-        If crop_aspect is "random", it returns a random aspect ratio based on weights.
-
-        Returns:
-            float: The selected aspect ratio.
-        """
+        """select aspect bucket based on crop_aspect config (closest/random)"""
         if not self.crop_aspect_buckets:
             raise ValueError("Aspect buckets are not defined in the data backend config.")
 
@@ -488,7 +449,6 @@ class TrainingSample:
         new_height = MultiaspectImage._round_to_nearest_multiple(new_height)
         new_canvas_size = new_width * new_height
         if new_canvas_size > max_size:
-            # Subtract from the larger dimension first, then the smaller if needed
             new_canvas_details = MultiaspectImage.limit_canvas_size(width=new_width, height=new_height, max_size=max_size)
             new_width, new_height, new_canvas_size = (
                 new_canvas_details["width"],
@@ -598,7 +558,6 @@ class TrainingSample:
                     self.intermediary_size,
                     self.aspect_ratio,
                 )
-                logger.debug(f"Square crop metadata: {square_crop_metadata}")
                 return square_crop_metadata
 
         if self.crop_enabled and (self.crop_aspect == "random" or self.crop_aspect == "closest"):
@@ -694,26 +653,13 @@ class TrainingSample:
 
         # Fallback to original crop handler
         if self.image is not None:
-            logger.debug(f"setting image: {self.image.size if not isinstance(self.image, np.ndarray) else self.image.shape}")
             self.cropper.set_image(self.image)
-        logger.debug(f"Cropper size updating to {self.current_size}")
         self.cropper.set_intermediary_size(self.current_size[0], self.current_size[1])
         self.image, self.crop_coordinates = self.cropper.crop(self.target_size[0], self.target_size[1])
         self.current_size = self.target_size
-        logger.debug(
-            f"Cropped to {self.image.size if self.image is not None else self.current_size} via crop coordinates {self.crop_coordinates} {'resulting in current_size of' if self.image is not None else ''} {self.current_size if self.image is not None else ''}"
-        )
         return self
 
     def resize(self, size: tuple = None):
-        """
-        Resize the image to a new size. If one is not provided, we will use the precalculated self.target_size
-
-        Args:
-            (optional) target_size (tuple): The target size as (width, height).
-        Returns:
-            TrainingSample: The current TrainingSample instance.
-        """
         _ = self.image.size if self.image is not None else self.original_size
         if size is None:
             if not self.valid_metadata:
@@ -794,7 +740,6 @@ class TrainingSample:
                 return self
 
         if self.image is not None and hasattr(self.image, "resize"):
-            logger.debug(f"Resize ({type(self.image)}) to {size}")
             if isinstance(self.image, Image.Image):
                 # Use trainingsample for efficient resizing
                 try:
@@ -839,17 +784,10 @@ class TrainingSample:
                 self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(size)
                 logger.debug(f"Now {self.image.shape} @ {self.aspect_ratio}")
         self.current_size = size
-        logger.debug(f"Resized to {self.current_size} (aspect ratio: {self.aspect_ratio})")
         return self
 
     def get_image(self):
-        """
-        Returns the current state of the image.
-        If using the `parquet` metadata backend, this value may be None during the initial aspect bucketing phase.
-
-        Returns:
-            Image.Image: The current image.
-        """
+        """get current image (may be None during parquet bucketing)"""
         return self.image
 
     def is_conditioning_sample(self):
@@ -859,14 +797,7 @@ class TrainingSample:
         return self.conditioning_type
 
     def cache_path(self):
-        """
-        Given an image path, manipulate the prefix and suffix to return its counterpart cache path.
-        The image extension will be stripped and replaced with the appropriate value (.pt).
-        If the instance_data_dir is found in the path, it will be replaced with the cache_dir.
-
-        Returns:
-            str: The cache path for the image.
-        """
+        """get VAE cache path for image"""
         vae_cache = StateTracker.get_data_backend(self.data_backend_id)["vaecache"]
 
         return vae_cache.image_path_to_vae_path.get(self._image_path, None)
@@ -896,13 +827,6 @@ class PreparedSample:
         aspect_ratio: float,
         crop_coordinates: tuple,
     ):
-        """
-        Initializes a new PreparedSample instance with a provided PIL.Image object and optional metadata.
-
-        Args:
-        image (Image.Image): A PIL Image object.
-        metadata (dict): Optional metadata associated with the image.
-        """
         self.image = image
         self.image_metadata = image_metadata if image_metadata else {}
         self.original_size = original_size

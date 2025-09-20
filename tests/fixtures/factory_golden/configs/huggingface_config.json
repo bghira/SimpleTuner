@@ -1,0 +1,26 @@
+[
+    {
+        "id": "text_embeds",
+        "type": "local",
+        "dataset_type": "text_embeds",
+        "default": true,
+        "cache_dir": "/tmp/text_cache"
+    },
+    {
+        "id": "hf_dataset",
+        "type": "huggingface",
+        "dataset_type": "image",
+        "dataset_name": "username/test-dataset",
+        "split": "train",
+        "revision": "main",
+        "text_embeds": "text_embeds",
+        "caption_strategy": "huggingface",
+        "metadata_backend": "huggingface",
+        "huggingface": {
+            "cache_dir": "/tmp/hf_cache",
+            "image_column": "image",
+            "caption_column": "text",
+            "streaming": true
+        }
+    }
+]

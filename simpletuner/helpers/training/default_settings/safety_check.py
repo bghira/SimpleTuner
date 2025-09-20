@@ -1,8 +1,12 @@
-import logging, sys, os
+import logging
+import os
+import sys
 from os import environ
+
 from diffusers.utils import is_wandb_available
-from simpletuner.helpers.training.multi_process import _get_rank as get_rank
 from torch.version import cuda as cuda_version
+
+from simpletuner.helpers.training.multi_process import _get_rank as get_rank
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -29,25 +33,17 @@ def safety_check(args, accelerator):
     if (
         args.base_model_precision in ["fp8-quanto", "int4-quanto"]
         or (args.base_model_precision != "no_change" and args.quantize_activations)
-    ) and (
-        accelerator is not None
-        and accelerator.state.dynamo_plugin.backend.lower() == "inductor"
-    ):
-        logger.warning(
-            f"{args.base_model_precision} is not supported with Dynamo backend. Disabling Dynamo."
-        )
+    ) and (accelerator is not None and accelerator.state.dynamo_plugin.backend.lower() == "inductor"):
+        logger.warning(f"{args.base_model_precision} is not supported with Dynamo backend. Disabling Dynamo.")
         from accelerate.utils import DynamoBackend
 
         accelerator.state.dynamo_plugin.backend = DynamoBackend.NO
     if args.report_to == "wandb":
         if not is_wandb_available():
-            raise ImportError(
-                "Make sure to install wandb if you want to use it for logging during training."
-            )
+            raise ImportError("Make sure to install wandb if you want to use it for logging during training.")
         import wandb
     if accelerator is not None and (
-        hasattr(accelerator.state, "deepspeed_plugin")
-        and accelerator.state.deepspeed_plugin is not None
+        hasattr(accelerator.state, "deepspeed_plugin") and accelerator.state.deepspeed_plugin is not None
     ):
         validate_deepspeed_compat_from_args(accelerator, args)
     if args.controlnet:
@@ -91,7 +87,9 @@ def safety_check(args, accelerator):
                 "--query-gpu=memory.total",
                 "--format=csv,noheader,nounits",
             ]
-        ).split(b"\n")[get_rank()]
+        ).split(
+            b"\n"
+        )[get_rank()]
         total_memory = int(output.decode().strip()) / 1024
         from math import ceil
 
@@ -117,11 +115,7 @@ def safety_check(args, accelerator):
         )
         sys.exit(1)
 
-    if (
-        args.flow_schedule_shift is not None
-        and args.flow_schedule_shift > 0
-        and args.flow_schedule_auto_shift
-    ):
+    if args.flow_schedule_shift is not None and args.flow_schedule_shift > 0 and args.flow_schedule_auto_shift:
         logger.error(
             f"--flow_schedule_auto_shift cannot be combined with --flow_schedule_shift. Please set --flow_schedule_shift to 0 if you want to train with --flow_schedule_auto_shift."
         )
@@ -140,24 +134,13 @@ def safety_check(args, accelerator):
 
     gradient_checkpointing_interval_supported_models = ["flux", "sana", "sdxl", "sd3"]
     if args.gradient_checkpointing_interval is not None:
-        if (
-            args.model_family.lower()
-            not in gradient_checkpointing_interval_supported_models
-        ):
+        if args.model_family.lower() not in gradient_checkpointing_interval_supported_models:
             logger.error(
                 f"Gradient checkpointing interval is not supported with {args.model_family} models. Please disable --gradient_checkpointing_interval by setting it to None, or remove it from your configuration. Currently supported models: {gradient_checkpointing_interval_supported_models}"
             )
             sys.exit(1)
         if args.gradient_checkpointing_interval == 0:
-            raise ValueError(
-                "Gradient checkpointing interval must be greater than 0. Please set it to a positive integer."
-            )
+            raise ValueError("Gradient checkpointing interval must be greater than 0. Please set it to a positive integer.")
 
-    if (
-        args.report_to == "none"
-        and args.eval_steps_interval is not None
-        and args.eval_steps_interval > 0
-    ):
-        logger.warning(
-            "Evaluation steps interval is set, but no reporting is enabled. Evaluation will not be logged."
-        )
+    if args.report_to == "none" and args.eval_steps_interval is not None and args.eval_steps_interval > 0:
+        logger.warning("Evaluation steps interval is set, but no reporting is enabled. Evaluation will not be logged.")

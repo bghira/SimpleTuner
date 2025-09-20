@@ -13,33 +13,22 @@
 # limitations under the License.
 
 import math
-from typing import Any, Dict, Optional, Tuple, Union, List
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from simpletuner.helpers.training.tread import TREADRouter
-
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
-from diffusers.utils import (
-    USE_PEFT_BACKEND,
-    logging,
-    scale_lora_layers,
-    unscale_lora_layers,
-)
 from diffusers.models.attention import FeedForward
 from diffusers.models.attention_processor import Attention
-from diffusers.models.embeddings import (
-    PixArtAlphaTextProjection,
-    TimestepEmbedding,
-    Timesteps,
-    get_1d_rotary_pos_embed,
-)
+from diffusers.models.embeddings import PixArtAlphaTextProjection, TimestepEmbedding, Timesteps, get_1d_rotary_pos_embed
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import FP32LayerNorm
+from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscale_lora_layers
 
+from simpletuner.helpers.training.tread import TREADRouter
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -57,9 +46,7 @@ def _apply_rotary_emb_anyshape(x, rotary_emb, use_real=False):
         rotary_emb = rotary_emb.squeeze(1)  # (B, S, D)
         # Convert to complex for Wan's rotary application
         x_rotated = torch.view_as_complex(
-            x.to(
-                torch.float32 if torch.backends.mps.is_available() else torch.float64
-            ).unflatten(3, (-1, 2))
+            x.to(torch.float32 if torch.backends.mps.is_available() else torch.float64).unflatten(3, (-1, 2))
         )
         # Expand rotary_emb for heads dimension
         rotary_emb_exp = rotary_emb.unsqueeze(1).expand(-1, x.size(1), -1, -1)
@@ -68,9 +55,7 @@ def _apply_rotary_emb_anyshape(x, rotary_emb, use_real=False):
     else:  # Original case - (1, 1, S, D)
         # Use original Wan rotary embedding application
         x_rotated = torch.view_as_complex(
-            x.to(
-                torch.float32 if torch.backends.mps.is_available() else torch.float64
-            ).unflatten(3, (-1, 2))
+            x.to(torch.float32 if torch.backends.mps.is_available() else torch.float64).unflatten(3, (-1, 2))
         )
         x_out = torch.view_as_real(x_rotated * rotary_emb).flatten(3, 4)
         return x_out.type_as(x)
@@ -79,9 +64,7 @@ def _apply_rotary_emb_anyshape(x, rotary_emb, use_real=False):
 class WanAttnProcessor2_0:
     def __init__(self):
         if not hasattr(F, "scaled_dot_product_attention"):
-            raise ImportError(
-                "WanAttnProcessor2_0 requires PyTorch 2.0. To use it, please upgrade PyTorch to 2.0."
-            )
+            raise ImportError("WanAttnProcessor2_0 requires PyTorch 2.0. To use it, please upgrade PyTorch to 2.0.")
 
     def __call__(
         self,
@@ -177,17 +160,11 @@ class WanTimeTextImageEmbedding(nn.Module):
     ):
         super().__init__()
 
-        self.timesteps_proj = Timesteps(
-            num_channels=time_freq_dim, flip_sin_to_cos=True, downscale_freq_shift=0
-        )
-        self.time_embedder = TimestepEmbedding(
-            in_channels=time_freq_dim, time_embed_dim=dim
-        )
+        self.timesteps_proj = Timesteps(num_channels=time_freq_dim, flip_sin_to_cos=True, downscale_freq_shift=0)
+        self.time_embedder = TimestepEmbedding(in_channels=time_freq_dim, time_embed_dim=dim)
         self.act_fn = nn.SiLU()
         self.time_proj = nn.Linear(dim, time_proj_dim)
-        self.text_embedder = PixArtAlphaTextProjection(
-            text_embed_dim, dim, act_fn="gelu_tanh"
-        )
+        self.text_embedder = PixArtAlphaTextProjection(text_embed_dim, dim, act_fn="gelu_tanh")
 
         self.image_embedder = None
         if image_embed_dim is not None:
@@ -209,9 +186,7 @@ class WanTimeTextImageEmbedding(nn.Module):
 
         encoder_hidden_states = self.text_embedder(encoder_hidden_states)
         if encoder_hidden_states_image is not None:
-            encoder_hidden_states_image = self.image_embedder(
-                encoder_hidden_states_image
-            )
+            encoder_hidden_states_image = self.image_embedder(encoder_hidden_states_image)
 
         return temb, timestep_proj, encoder_hidden_states, encoder_hidden_states_image
 
@@ -241,11 +216,7 @@ class WanRotaryPosEmbed(nn.Module):
                 theta,
                 use_real=False,
                 repeat_interleave_real=False,
-                freqs_dtype=(
-                    torch.float32
-                    if torch.backends.mps.is_available()
-                    else torch.float64
-                ),
+                freqs_dtype=(torch.float32 if torch.backends.mps.is_available() else torch.float64),
             )
             freqs.append(freq)
         self.freqs = torch.cat(freqs, dim=1)
@@ -268,9 +239,7 @@ class WanRotaryPosEmbed(nn.Module):
         freqs_f = freqs[0][:ppf].view(ppf, 1, 1, -1).expand(ppf, pph, ppw, -1)
         freqs_h = freqs[1][:pph].view(1, pph, 1, -1).expand(ppf, pph, ppw, -1)
         freqs_w = freqs[2][:ppw].view(1, 1, ppw, -1).expand(ppf, pph, ppw, -1)
-        freqs = torch.cat([freqs_f, freqs_h, freqs_w], dim=-1).reshape(
-            1, 1, ppf * pph * ppw, -1
-        )
+        freqs = torch.cat([freqs_f, freqs_h, freqs_w], dim=-1).reshape(1, 1, ppf * pph * ppw, -1)
         return freqs
 
 
@@ -317,11 +286,7 @@ class WanTransformerBlock(nn.Module):
             added_proj_bias=True,
             processor=WanAttnProcessor2_0(),
         )
-        self.norm2 = (
-            FP32LayerNorm(dim, eps, elementwise_affine=True)
-            if cross_attn_norm
-            else nn.Identity()
-        )
+        self.norm2 = FP32LayerNorm(dim, eps, elementwise_affine=True) if cross_attn_norm else nn.Identity()
 
         # 3. Feed-forward
         self.ffn = FeedForward(dim, inner_dim=ffn_dim, activation_fn="gelu-approximate")
@@ -336,20 +301,14 @@ class WanTransformerBlock(nn.Module):
         temb: torch.Tensor,
         rotary_emb: torch.Tensor,
     ) -> torch.Tensor:
-        shift_msa, scale_msa, gate_msa, c_shift_msa, c_scale_msa, c_gate_msa = (
-            self.scale_shift_table + temb.float()
-        ).chunk(6, dim=1)
+        shift_msa, scale_msa, gate_msa, c_shift_msa, c_scale_msa, c_gate_msa = (self.scale_shift_table + temb.float()).chunk(
+            6, dim=1
+        )
 
         # 1. Self-attention
-        norm_hidden_states = (
-            self.norm1(hidden_states.float()) * (1 + scale_msa) + shift_msa
-        ).type_as(hidden_states)
-        attn_output = self.attn1(
-            hidden_states=norm_hidden_states, rotary_emb=rotary_emb
-        )
-        hidden_states = (hidden_states.float() + attn_output * gate_msa).type_as(
-            hidden_states
-        )
+        norm_hidden_states = (self.norm1(hidden_states.float()) * (1 + scale_msa) + shift_msa).type_as(hidden_states)
+        attn_output = self.attn1(hidden_states=norm_hidden_states, rotary_emb=rotary_emb)
+        hidden_states = (hidden_states.float() + attn_output * gate_msa).type_as(hidden_states)
 
         # 2. Cross-attention
         norm_hidden_states = self.norm2(hidden_states.float()).type_as(hidden_states)
@@ -360,20 +319,14 @@ class WanTransformerBlock(nn.Module):
         hidden_states = hidden_states + attn_output
 
         # 3. Feed-forward
-        norm_hidden_states = (
-            self.norm3(hidden_states.float()) * (1 + c_scale_msa) + c_shift_msa
-        ).type_as(hidden_states)
+        norm_hidden_states = (self.norm3(hidden_states.float()) * (1 + c_scale_msa) + c_shift_msa).type_as(hidden_states)
         ff_output = self.ffn(norm_hidden_states)
-        hidden_states = (
-            hidden_states.float() + ff_output.float() * c_gate_msa
-        ).type_as(hidden_states)
+        hidden_states = (hidden_states.float() + ff_output.float() * c_gate_msa).type_as(hidden_states)
 
         return hidden_states
 
 
-class WanTransformer3DModel(
-    ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin
-):
+class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
     r"""
     A Transformer model for video-like data used in the Wan model.
 
@@ -450,9 +403,7 @@ class WanTransformer3DModel(
 
         # 1. Patch & position embedding
         self.rope = WanRotaryPosEmbed(attention_head_dim, patch_size, rope_max_seq_len)
-        self.patch_embedding = nn.Conv3d(
-            in_channels, inner_dim, kernel_size=patch_size, stride=patch_size
-        )
+        self.patch_embedding = nn.Conv3d(in_channels, inner_dim, kernel_size=patch_size, stride=patch_size)
 
         # 2. Condition embeddings
         # image_embedding_dim=1280 for I2V model
@@ -483,9 +434,7 @@ class WanTransformer3DModel(
         # 4. Output norm & projection
         self.norm_out = FP32LayerNorm(inner_dim, eps, elementwise_affine=False)
         self.proj_out = nn.Linear(inner_dim, out_channels * math.prod(patch_size))
-        self.scale_shift_table = nn.Parameter(
-            torch.randn(1, 2, inner_dim) / inner_dim**0.5
-        )
+        self.scale_shift_table = nn.Parameter(torch.randn(1, 2, inner_dim) / inner_dim**0.5)
 
         self.gradient_checkpointing = False
 
@@ -513,9 +462,7 @@ class WanTransformer3DModel(
             # Expand to batch size
             rB = r_squeeze.unsqueeze(0).expand(batch, -1, -1)  # (B, S, D)
             # Apply shuffle - this maintains the token-position correspondence
-            shuf = torch.take_along_dim(
-                rB, info.ids_shuffle.unsqueeze(-1).expand_as(rB), dim=1
-            )
+            shuf = torch.take_along_dim(rB, info.ids_shuffle.unsqueeze(-1).expand_as(rB), dim=1)
             # Keep only the selected tokens and add back the extra dimension
             return shuf[:, :keep_len, :].unsqueeze(1)  # (B, 1, keep_len, D)
 
@@ -541,13 +488,8 @@ class WanTransformer3DModel(
         if USE_PEFT_BACKEND:
             scale_lora_layers(self, lora_scale)
         else:
-            if (
-                attention_kwargs is not None
-                and attention_kwargs.get("scale", None) is not None
-            ):
-                logger.warning(
-                    "Passing `scale` via `attention_kwargs` when not using the PEFT backend is ineffective."
-                )
+            if attention_kwargs is not None and attention_kwargs.get("scale", None) is not None:
+                logger.warning("Passing `scale` via `attention_kwargs` when not using the PEFT backend is ineffective.")
 
         batch_size, num_channels, num_frames, height, width = hidden_states.shape
         p_t, p_h, p_w = self.config.patch_size
@@ -560,17 +502,13 @@ class WanTransformer3DModel(
         hidden_states = self.patch_embedding(hidden_states)
         hidden_states = hidden_states.flatten(2).transpose(1, 2)
 
-        temb, timestep_proj, encoder_hidden_states, encoder_hidden_states_image = (
-            self.condition_embedder(
-                timestep, encoder_hidden_states, encoder_hidden_states_image
-            )
+        temb, timestep_proj, encoder_hidden_states, encoder_hidden_states_image = self.condition_embedder(
+            timestep, encoder_hidden_states, encoder_hidden_states_image
         )
         timestep_proj = timestep_proj.unflatten(1, (6, -1))
 
         if encoder_hidden_states_image is not None:
-            encoder_hidden_states = torch.concat(
-                [encoder_hidden_states_image, encoder_hidden_states], dim=1
-            )
+            encoder_hidden_states = torch.concat([encoder_hidden_states_image, encoder_hidden_states], dim=1)
 
         # TREAD initialization
         # Note: In Wan, video tokens and text tokens are kept separate
@@ -605,11 +543,7 @@ class WanTransformer3DModel(
         # Transformer blocks with TREAD routing
         for i, block in enumerate(self.blocks):
             # TREAD: START a route?
-            if (
-                use_routing
-                and route_ptr < len(routes)
-                and i == routes[route_ptr]["start_layer_idx"]
-            ):
+            if use_routing and route_ptr < len(routes) and i == routes[route_ptr]["start_layer_idx"]:
                 mask_ratio = routes[route_ptr]["selection_ratio"]
 
                 # Apply routing to video tokens only
@@ -651,9 +585,7 @@ class WanTransformer3DModel(
                     current_rope,  # rotary embeddings (possibly routed)
                 )
             else:
-                hidden_states = block(
-                    hidden_states, encoder_hidden_states, timestep_proj, current_rope
-                )
+                hidden_states = block(hidden_states, encoder_hidden_states, timestep_proj, current_rope)
 
             # TREAD: END the current route?
             if routing_now and i == routes[route_ptr]["end_layer_idx"]:
@@ -671,9 +603,7 @@ class WanTransformer3DModel(
         shift = shift.to(hidden_states.device)
         scale = scale.to(hidden_states.device)
 
-        hidden_states = (
-            self.norm_out(hidden_states.float()) * (1 + scale) + shift
-        ).type_as(hidden_states)
+        hidden_states = (self.norm_out(hidden_states.float()) * (1 + scale) + shift).type_as(hidden_states)
         hidden_states = self.proj_out(hidden_states)
 
         hidden_states = hidden_states.reshape(

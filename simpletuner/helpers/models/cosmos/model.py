@@ -171,7 +171,14 @@ class Cosmos2Image(VideoModelFoundation):
 
         # ---------- draw σ and form x_t ---------------------------------
         bsz = latents.size(0)
-        sigmas = self.prepare_edm_sigmas(bsz, self.accelerator.device)["sigmas"]  # (B,)
+        sigmas_info = self.prepare_edm_sigmas(bsz, self.accelerator.device)
+        if isinstance(sigmas_info, dict):
+            sigmas = sigmas_info.get("sigmas")
+        else:
+            sigmas = sigmas_info
+        if sigmas is None:
+            raise RuntimeError("prepare_edm_sigmas must return a tensor or a dict containing 'sigmas'.")
+        sigmas = sigmas.to(self.accelerator.device)
         sigmas_exp = sigmas.view(-1, 1, 1, 1, 1)  # B×1×1×1×1
 
         batch["sigmas"] = sigmas_exp
@@ -234,10 +241,12 @@ class Cosmos2Image(VideoModelFoundation):
 
         return loss.mean()
 
-    def prepare_edm_sigmas(self, bsz: int, device: torch.device) -> torch.Tensor:
-        log_min, log_max = map(torch.log10, (torch.tensor(self.sigma_min), torch.tensor(self.sigma_max)))
+    def prepare_edm_sigmas(self, bsz: int, device: torch.device):
+        log_min = torch.log10(torch.tensor(self.sigma_min, device=device))
+        log_max = torch.log10(torch.tensor(self.sigma_max, device=device))
         u = torch.rand(bsz, device=device)
-        return (10.0 ** (log_min + (log_max - log_min) * u)).to(device)
+        sigmas = 10.0 ** (log_min + (log_max - log_min) * u)
+        return {"sigmas": sigmas.to(device)}
 
     def check_user_config(self):
         """

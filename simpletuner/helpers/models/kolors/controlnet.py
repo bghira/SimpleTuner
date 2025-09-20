@@ -1,4 +1,4 @@
-# Copyright 2024 The HuggingFace Team. All rights reserved.
+# Copyright 2024 The HuggingFace Team and 2025 bghira. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,12 +15,8 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
-from torch import nn
-from torch.nn import functional as F
-
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders.single_file_model import FromOriginalModelMixin
-from diffusers.utils import BaseOutput, logging
 from diffusers.models.attention_processor import (
     ADDED_KV_ATTENTION_PROCESSORS,
     CROSS_ATTENTION_PROCESSORS,
@@ -36,6 +32,9 @@ from diffusers.models.embeddings import (
     Timesteps,
 )
 from diffusers.models.modeling_utils import ModelMixin
+from diffusers.utils import BaseOutput, logging
+from torch import nn
+from torch.nn import functional as F
 
 try:
     from diffusers.unets.unet_2d_blocks import (
@@ -98,21 +97,15 @@ class ControlNetConditioningEmbedding(nn.Module):
     ):
         super().__init__()
 
-        self.conv_in = nn.Conv2d(
-            conditioning_channels, block_out_channels[0], kernel_size=3, padding=1
-        )
+        self.conv_in = nn.Conv2d(conditioning_channels, block_out_channels[0], kernel_size=3, padding=1)
 
         self.blocks = nn.ModuleList([])
 
         for i in range(len(block_out_channels) - 1):
             channel_in = block_out_channels[i]
             channel_out = block_out_channels[i + 1]
-            self.blocks.append(
-                nn.Conv2d(channel_in, channel_in, kernel_size=3, padding=1)
-            )
-            self.blocks.append(
-                nn.Conv2d(channel_in, channel_out, kernel_size=3, padding=1, stride=2)
-            )
+            self.blocks.append(nn.Conv2d(channel_in, channel_in, kernel_size=3, padding=1))
+            self.blocks.append(nn.Conv2d(channel_in, channel_out, kernel_size=3, padding=1, stride=2))
 
         self.conv_out = zero_module(
             nn.Conv2d(
@@ -255,12 +248,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
     ):
         super().__init__()
 
-        # If `num_attention_heads` is not defined (which is the case for most models)
-        # it will default to `attention_head_dim`. This looks weird upon first reading it and it is.
-        # The reason for this behavior is to correct for incorrectly named variables that were introduced
-        # when this library was created. The incorrect naming was only discovered much later in https://github.com/huggingface/diffusers/issues/2011#issuecomment-1547958131
-        # Changing `attention_head_dim` to `num_attention_heads` for 40,000+ configurations is too backwards breaking
-        # which is why we correct for the naming here.
+        # backwards compatibility: attention_head_dim defaults to num_attention_heads
         num_attention_heads = num_attention_heads or attention_head_dim
 
         # Check inputs
@@ -269,24 +257,18 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 f"Must provide the same number of `block_out_channels` as `down_block_types`. `block_out_channels`: {block_out_channels}. `down_block_types`: {down_block_types}."
             )
 
-        if not isinstance(only_cross_attention, bool) and len(
-            only_cross_attention
-        ) != len(down_block_types):
+        if not isinstance(only_cross_attention, bool) and len(only_cross_attention) != len(down_block_types):
             raise ValueError(
                 f"Must provide the same number of `only_cross_attention` as `down_block_types`. `only_cross_attention`: {only_cross_attention}. `down_block_types`: {down_block_types}."
             )
 
-        if not isinstance(num_attention_heads, int) and len(num_attention_heads) != len(
-            down_block_types
-        ):
+        if not isinstance(num_attention_heads, int) and len(num_attention_heads) != len(down_block_types):
             raise ValueError(
                 f"Must provide the same number of `num_attention_heads` as `down_block_types`. `num_attention_heads`: {num_attention_heads}. `down_block_types`: {down_block_types}."
             )
 
         if isinstance(transformer_layers_per_block, int):
-            transformer_layers_per_block = [transformer_layers_per_block] * len(
-                down_block_types
-            )
+            transformer_layers_per_block = [transformer_layers_per_block] * len(down_block_types)
 
         # input
         conv_in_kernel = 3
@@ -311,9 +293,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         if encoder_hid_dim_type is None and encoder_hid_dim is not None:
             encoder_hid_dim_type = "text_proj"
             self.register_to_config(encoder_hid_dim_type=encoder_hid_dim_type)
-            logger.info(
-                "encoder_hid_dim_type defaults to 'text_proj' as `encoder_hid_dim` is defined."
-            )
+            logger.info("encoder_hid_dim_type defaults to 'text_proj' as `encoder_hid_dim` is defined.")
 
         if encoder_hid_dim is None and encoder_hid_dim_type is not None:
             raise ValueError(
@@ -333,9 +313,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             )
 
         elif encoder_hid_dim_type is not None:
-            raise ValueError(
-                f"encoder_hid_dim_type: {encoder_hid_dim_type} must be None, 'text_proj' or 'text_image_proj'."
-            )
+            raise ValueError(f"encoder_hid_dim_type: {encoder_hid_dim_type} must be None, 'text_proj' or 'text_image_proj'.")
         else:
             self.encoder_hid_proj = None
 
@@ -348,9 +326,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             self.class_embedding = nn.Identity(time_embed_dim, time_embed_dim)
         elif class_embed_type == "projection":
             if projection_class_embeddings_input_dim is None:
-                raise ValueError(
-                    "`class_embed_type`: 'projection' requires `projection_class_embeddings_input_dim` be set"
-                )
+                raise ValueError("`class_embed_type`: 'projection' requires `projection_class_embeddings_input_dim` be set")
             # The projection `class_embed_type` is the same as the timestep `class_embed_type` except
             # 1. the `class_labels` inputs are not first converted to sinusoidal embeddings
             # 2. it projects from an arbitrary input dimension.
@@ -358,9 +334,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             # Note that `TimestepEmbedding` is quite general, being mainly linear layers and activations.
             # When used for embedding actual timesteps, the timesteps are first converted to sinusoidal embeddings.
             # As a result, `TimestepEmbedding` can be passed arbitrary vectors.
-            self.class_embedding = TimestepEmbedding(
-                projection_class_embeddings_input_dim, time_embed_dim
-            )
+            self.class_embedding = TimestepEmbedding(projection_class_embeddings_input_dim, time_embed_dim)
         else:
             self.class_embedding = None
 
@@ -385,17 +359,11 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 time_embed_dim=time_embed_dim,
             )
         elif addition_embed_type == "text_time":
-            self.add_time_proj = Timesteps(
-                addition_time_embed_dim, flip_sin_to_cos, freq_shift
-            )
-            self.add_embedding = TimestepEmbedding(
-                projection_class_embeddings_input_dim, time_embed_dim
-            )
+            self.add_time_proj = Timesteps(addition_time_embed_dim, flip_sin_to_cos, freq_shift)
+            self.add_embedding = TimestepEmbedding(projection_class_embeddings_input_dim, time_embed_dim)
 
         elif addition_embed_type is not None:
-            raise ValueError(
-                f"addition_embed_type: {addition_embed_type} must be None, 'text' or 'text_image'."
-            )
+            raise ValueError(f"addition_embed_type: {addition_embed_type} must be None, 'text' or 'text_image'.")
 
         # control net conditioning embedding
         self.controlnet_cond_embedding = ControlNetConditioningEmbedding(
@@ -441,11 +409,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 resnet_groups=norm_num_groups,
                 cross_attention_dim=cross_attention_dim,
                 num_attention_heads=num_attention_heads[i],
-                attention_head_dim=(
-                    attention_head_dim[i]
-                    if attention_head_dim[i] is not None
-                    else output_channel
-                ),
+                attention_head_dim=(attention_head_dim[i] if attention_head_dim[i] is not None else output_channel),
                 downsample_padding=downsample_padding,
                 use_linear_projection=use_linear_projection,
                 only_cross_attention=only_cross_attention[i],
@@ -455,25 +419,19 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             self.down_blocks.append(down_block)
 
             for _ in range(layers_per_block):
-                controlnet_block = nn.Conv2d(
-                    output_channel, output_channel, kernel_size=1
-                )
+                controlnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
                 controlnet_block = zero_module(controlnet_block)
                 self.controlnet_down_blocks.append(controlnet_block)
 
             if not is_final_block:
-                controlnet_block = nn.Conv2d(
-                    output_channel, output_channel, kernel_size=1
-                )
+                controlnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
                 controlnet_block = zero_module(controlnet_block)
                 self.controlnet_down_blocks.append(controlnet_block)
 
         # mid
         mid_block_channel = block_out_channels[-1]
 
-        controlnet_block = nn.Conv2d(
-            mid_block_channel, mid_block_channel, kernel_size=1
-        )
+        controlnet_block = nn.Conv2d(mid_block_channel, mid_block_channel, kernel_size=1)
         controlnet_block = zero_module(controlnet_block)
         self.controlnet_mid_block = controlnet_block
 
@@ -530,28 +488,12 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 where applicable.
         """
         transformer_layers_per_block = (
-            unet.config.transformer_layers_per_block
-            if "transformer_layers_per_block" in unet.config
-            else 1
+            unet.config.transformer_layers_per_block if "transformer_layers_per_block" in unet.config else 1
         )
-        encoder_hid_dim = (
-            unet.config.encoder_hid_dim if "encoder_hid_dim" in unet.config else None
-        )
-        encoder_hid_dim_type = (
-            unet.config.encoder_hid_dim_type
-            if "encoder_hid_dim_type" in unet.config
-            else None
-        )
-        addition_embed_type = (
-            unet.config.addition_embed_type
-            if "addition_embed_type" in unet.config
-            else None
-        )
-        addition_time_embed_dim = (
-            unet.config.addition_time_embed_dim
-            if "addition_time_embed_dim" in unet.config
-            else None
-        )
+        encoder_hid_dim = unet.config.encoder_hid_dim if "encoder_hid_dim" in unet.config else None
+        encoder_hid_dim_type = unet.config.encoder_hid_dim_type if "encoder_hid_dim_type" in unet.config else None
+        addition_embed_type = unet.config.addition_embed_type if "addition_embed_type" in unet.config else None
+        addition_time_embed_dim = unet.config.addition_time_embed_dim if "addition_time_embed_dim" in unet.config else None
 
         controlnet = cls(
             encoder_hid_dim=encoder_hid_dim,
@@ -592,14 +534,10 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             controlnet.time_embedding.load_state_dict(unet.time_embedding.state_dict())
 
             if controlnet.class_embedding:
-                controlnet.class_embedding.load_state_dict(
-                    unet.class_embedding.state_dict()
-                )
+                controlnet.class_embedding.load_state_dict(unet.class_embedding.state_dict())
 
             if hasattr(controlnet, "add_embedding"):
-                controlnet.add_embedding.load_state_dict(
-                    unet.add_embedding.state_dict()
-                )
+                controlnet.add_embedding.load_state_dict(unet.add_embedding.state_dict())
 
             controlnet.down_blocks.load_state_dict(unet.down_blocks.state_dict())
             controlnet.mid_block.load_state_dict(unet.mid_block.state_dict())
@@ -636,9 +574,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         return processors
 
     # Copied from diffusers.models.unets.unet_2d_condition.UNet2DConditionModel.set_attn_processor
-    def set_attn_processor(
-        self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]]
-    ):
+    def set_attn_processor(self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]]):
         r"""
         Sets the attention processor to use to compute attention.
 
@@ -674,18 +610,9 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
 
     # Copied from diffusers.models.unets.unet_2d_condition.UNet2DConditionModel.set_default_attn_processor
     def set_default_attn_processor(self):
-        """
-        Disables custom attention processors and sets the default attention implementation.
-        """
-        if all(
-            proc.__class__ in ADDED_KV_ATTENTION_PROCESSORS
-            for proc in self.attn_processors.values()
-        ):
+        if all(proc.__class__ in ADDED_KV_ATTENTION_PROCESSORS for proc in self.attn_processors.values()):
             processor = AttnAddedKVProcessor()
-        elif all(
-            proc.__class__ in CROSS_ATTENTION_PROCESSORS
-            for proc in self.attn_processors.values()
-        ):
+        elif all(proc.__class__ in CROSS_ATTENTION_PROCESSORS for proc in self.attn_processors.values()):
             processor = AttnProcessor()
         else:
             raise ValueError(
@@ -732,11 +659,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             # make smallest slice possible
             slice_size = num_sliceable_layers * [1]
 
-        slice_size = (
-            num_sliceable_layers * [slice_size]
-            if not isinstance(slice_size, list)
-            else slice_size
-        )
+        slice_size = num_sliceable_layers * [slice_size] if not isinstance(slice_size, list) else slice_size
 
         if len(slice_size) != len(sliceable_head_dims):
             raise ValueError(
@@ -750,12 +673,8 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             if size is not None and size > dim:
                 raise ValueError(f"size {size} has to be smaller or equal to {dim}.")
 
-        # Recursively walk through all the children.
-        # Any children which exposes the set_attention_slice method
-        # gets the message
-        def fn_recursive_set_attention_slice(
-            module: torch.nn.Module, slice_size: List[int]
-        ):
+        # recursively apply set_attention_slice to children
+        def fn_recursive_set_attention_slice(module: torch.nn.Module, slice_size: List[int]):
             if hasattr(module, "set_attention_slice"):
                 module.set_attention_slice(slice_size.pop())
 
@@ -824,36 +743,26 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 If `return_dict` is `True`, a [`~models.controlnet.ControlNetOutput`] is returned, otherwise a tuple is
                 returned where the first element is the sample tensor.
         """
-        # check channel order
         channel_order = self.config.controlnet_conditioning_channel_order
 
         if channel_order == "rgb":
-            # in rgb order by default
             ...
         elif channel_order == "bgr":
             controlnet_cond = torch.flip(controlnet_cond, dims=[1])
         else:
-            raise ValueError(
-                f"unknown `controlnet_conditioning_channel_order`: {channel_order}"
-            )
+            raise ValueError(f"unknown `controlnet_conditioning_channel_order`: {channel_order}")
 
-        # prepare attention_mask
         if attention_mask is not None:
             attention_mask = (1 - attention_mask.to(sample.dtype)) * -10000.0
             attention_mask = attention_mask.unsqueeze(1)
 
-        # Todo
-        if (
-            self.encoder_hid_proj is not None
-            and self.config.encoder_hid_dim_type == "text_proj"
-        ):
+        if self.encoder_hid_proj is not None and self.config.encoder_hid_dim_type == "text_proj":
             encoder_hidden_states = self.encoder_hid_proj(encoder_hidden_states)
 
         # 1. time
         timesteps = timestep
         if not torch.is_tensor(timesteps):
-            # TODO: this requires sync between CPU and GPU. So try to pass timesteps as tensors if you can
-            # This would be a good case for the `match` statement (Python 3.10+)
+            # avoid CPU/GPU sync by passing timesteps as tensors
             is_mps = sample.device.type == "mps"
             if isinstance(timestep, float):
                 dtype = torch.float32 if is_mps else torch.float64
@@ -863,14 +772,11 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         elif len(timesteps.shape) == 0:
             timesteps = timesteps[None].to(sample.device)
 
-        # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
         timesteps = timesteps.expand(sample.shape[0])
 
         t_emb = self.time_proj(timesteps)
 
-        # timesteps does not contain any weights and will always return f32 tensors
-        # but time_embedding might actually be running in fp16. so we need to cast here.
-        # there might be better ways to encapsulate this.
+        # cast timestep embedding to sample dtype
         t_emb = t_emb.to(dtype=sample.dtype)
 
         emb = self.time_embedding(t_emb, timestep_cond)
@@ -878,9 +784,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
 
         if self.class_embedding is not None:
             if class_labels is None:
-                raise ValueError(
-                    "class_labels should be provided when num_class_embeds > 0"
-                )
+                raise ValueError("class_labels should be provided when num_class_embeds > 0")
 
             if self.config.class_embed_type == "timestep":
                 class_labels = self.time_proj(class_labels)
@@ -921,10 +825,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         # 3. down
         down_block_res_samples = (sample,)
         for downsample_block in self.down_blocks:
-            if (
-                hasattr(downsample_block, "has_cross_attention")
-                and downsample_block.has_cross_attention
-            ):
+            if hasattr(downsample_block, "has_cross_attention") and downsample_block.has_cross_attention:
                 sample, res_samples = downsample_block(
                     hidden_states=sample,
                     temb=emb,
@@ -939,10 +840,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
 
         # 4. mid
         if self.mid_block is not None:
-            if (
-                hasattr(self.mid_block, "has_cross_attention")
-                and self.mid_block.has_cross_attention
-            ):
+            if hasattr(self.mid_block, "has_cross_attention") and self.mid_block.has_cross_attention:
                 sample = self.mid_block(
                     sample,
                     emb,
@@ -957,13 +855,9 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
 
         controlnet_down_block_res_samples = ()
 
-        for down_block_res_sample, controlnet_block in zip(
-            down_block_res_samples, self.controlnet_down_blocks
-        ):
+        for down_block_res_sample, controlnet_block in zip(down_block_res_samples, self.controlnet_down_blocks):
             down_block_res_sample = controlnet_block(down_block_res_sample)
-            controlnet_down_block_res_samples = controlnet_down_block_res_samples + (
-                down_block_res_sample,
-            )
+            controlnet_down_block_res_samples = controlnet_down_block_res_samples + (down_block_res_sample,)
 
         down_block_res_samples = controlnet_down_block_res_samples
 
@@ -971,28 +865,17 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
 
         # 6. scaling
         if guess_mode and not self.config.global_pool_conditions:
-            scales = torch.logspace(
-                -1, 0, len(down_block_res_samples) + 1, device=sample.device
-            )  # 0.1 to 1.0
+            scales = torch.logspace(-1, 0, len(down_block_res_samples) + 1, device=sample.device)  # 0.1 to 1.0
             scales = scales * conditioning_scale
-            down_block_res_samples = [
-                sample * scale for sample, scale in zip(down_block_res_samples, scales)
-            ]
+            down_block_res_samples = [sample * scale for sample, scale in zip(down_block_res_samples, scales)]
             mid_block_res_sample = mid_block_res_sample * scales[-1]  # last one
         else:
-            down_block_res_samples = [
-                sample * conditioning_scale for sample in down_block_res_samples
-            ]
+            down_block_res_samples = [sample * conditioning_scale for sample in down_block_res_samples]
             mid_block_res_sample = mid_block_res_sample * conditioning_scale
 
         if self.config.global_pool_conditions:
-            down_block_res_samples = [
-                torch.mean(sample, dim=(2, 3), keepdim=True)
-                for sample in down_block_res_samples
-            ]
-            mid_block_res_sample = torch.mean(
-                mid_block_res_sample, dim=(2, 3), keepdim=True
-            )
+            down_block_res_samples = [torch.mean(sample, dim=(2, 3), keepdim=True) for sample in down_block_res_samples]
+            mid_block_res_sample = torch.mean(mid_block_res_sample, dim=(2, 3), keepdim=True)
 
         if not return_dict:
             return (down_block_res_samples, mid_block_res_sample)

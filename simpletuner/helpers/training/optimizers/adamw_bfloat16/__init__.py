@@ -15,10 +15,7 @@ should be suitable for different backends.
 import torch
 from torch.optim.optimizer import Optimizer
 
-from .stochastic import (
-    add_stochastic_,
-    addcdiv_stochastic_,
-)
+from .stochastic import add_stochastic_, addcdiv_stochastic_
 
 
 class AdamWBF16(Optimizer):
@@ -67,24 +64,16 @@ class AdamWBF16(Optimizer):
                         assert p.dtype == torch.bfloat16, "only bfloat 16 is supported."
                         state["step"] = 0.0
                         # Exponential moving average of gradient values
-                        state["exp_avg"] = torch.zeros_like(
-                            p, memory_format=torch.preserve_format
-                        )
+                        state["exp_avg"] = torch.zeros_like(p, memory_format=torch.preserve_format)
                         # Exponential moving average of squared gradient values
-                        state["exp_avg_sq"] = torch.zeros_like(
-                            p, memory_format=torch.preserve_format
-                        )
+                        state["exp_avg_sq"] = torch.zeros_like(p, memory_format=torch.preserve_format)
                         # accumulated shift that should be added to p, but wasn't because of truncation
                         # true value is p + shift
-                        state["shift"] = torch.zeros_like(
-                            p, memory_format=torch.preserve_format
-                        )
+                        state["shift"] = torch.zeros_like(p, memory_format=torch.preserve_format)
                         # using decay at each step will work only for float32, so we just remember how much owe to decay
                         # and decay once in n iterations
                         # Each weight has its own starting point to avoid simultaneous updates in all weights
-                        state["accumulated_decay"] = float(
-                            torch.rand([]) * self.decay_threshold
-                        )
+                        state["accumulated_decay"] = float(torch.rand([]) * self.decay_threshold)
 
                     grad = p.grad
                     state["step"] += 1
@@ -92,9 +81,7 @@ class AdamWBF16(Optimizer):
 
                     state["accumulated_decay"] += group["weight_decay"] * lr
                     accum_decay = state["accumulated_decay"]
-                    decay_this_iteration = (
-                        accum_decay > self.decay_threshold
-                    ) * accum_decay
+                    decay_this_iteration = (accum_decay > self.decay_threshold) * accum_decay
                     state["accumulated_decay"] -= decay_this_iteration
 
                     _make_step(

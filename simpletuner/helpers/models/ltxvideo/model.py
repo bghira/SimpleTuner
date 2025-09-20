@@ -3,7 +3,6 @@ import os
 import random
 
 import torch
-from diffusers import AutoencoderKLLTXVideo
 from diffusers.pipelines import LTXPipeline
 from transformers import AutoTokenizer, T5EncoderModel
 
@@ -14,6 +13,7 @@ from simpletuner.helpers.models.ltxvideo import (
     pack_ltx_latents,
     unpack_ltx_latents,
 )
+from simpletuner.helpers.models.ltxvideo.autoencoder import AutoencoderKLLTXVideo
 from simpletuner.helpers.models.ltxvideo.transformer import LTXVideoTransformer3DModel
 from simpletuner.helpers.training.multi_process import _get_rank
 
@@ -247,7 +247,7 @@ class LTXVideo(VideoModelFoundation):
             )
         if self.config.validation_num_inference_steps < 40:
             logger.warning(
-                f"{self.NAME} {self.config.model_flavour} expects around 40 or more inference steps. Consider increasing --validation_num_inference_steps to 40."
+                f"{self.NAME} {self.config.model_flavour or self.DEFAULT_MODEL_FLAVOUR} expects around 40 or more inference steps. Consider increasing --validation_num_inference_steps to 40."
             )
         if not self.config.validation_disable_unconditional:
             logger.info("Disabling unconditional validation to save on time.")

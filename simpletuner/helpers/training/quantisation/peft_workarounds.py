@@ -18,14 +18,12 @@ import warnings
 from typing import Any, Optional
 
 import torch
-from torch import nn
-from torch.nn import functional as F
-
 from peft.import_utils import is_quanto_available
 from peft.tuners.lora.layer import LoraLayer
 from peft.tuners.tuners_utils import BaseTunerLayer, check_adapters_to_merge
 from peft.utils.other import transpose
-
+from torch import nn
+from torch.nn import functional as F
 
 if is_quanto_available:
     # ensure that there are no quanto imports unless optimum.quanto is installed
@@ -51,26 +49,20 @@ class QuantoLoraLinear(torch.nn.Module, LoraLayer):
         **kwargs,
     ):
         if use_dora:
-            raise ValueError(
-                f"{self.__class__.__name__} does not support DoRA yet, please set it to False"
-            )
+            raise ValueError(f"{self.__class__.__name__} does not support DoRA yet, please set it to False")
 
         super().__init__()
         LoraLayer.__init__(self, base_layer)
         self.fan_in_fan_out = fan_in_fan_out
 
         self._active_adapter = adapter_name
-        self.update_layer(
-            adapter_name, r, lora_alpha, lora_dropout, init_lora_weights, use_rslora
-        )
+        self.update_layer(adapter_name, r, lora_alpha, lora_dropout, init_lora_weights, use_rslora)
 
     def forward(self, x: torch.Tensor, *args: Any, **kwargs: Any) -> torch.Tensor:
         result = self.base_layer(x)
         adapter_names = kwargs.pop("adapter_names", None)
         if adapter_names is not None:
-            raise ValueError(
-                f"{self.__class__.__name__} does not support mixed_batch_forward yet."
-            )
+            raise ValueError(f"{self.__class__.__name__} does not support mixed_batch_forward yet.")
 
         if self.disable_adapters:
             return result
@@ -112,9 +104,7 @@ class QuantoLoraLinear(torch.nn.Module, LoraLayer):
             * self.scaling[adapter]
         )
 
-    def merge(
-        self, safe_merge: bool = False, adapter_names: Optional[list[str]] = None
-    ) -> None:
+    def merge(self, safe_merge: bool = False, adapter_names: Optional[list[str]] = None) -> None:
         from optimum.quanto import quantize_weight
 
         adapter_names = check_adapters_to_merge(self, adapter_names)
@@ -131,12 +121,8 @@ class QuantoLoraLinear(torch.nn.Module, LoraLayer):
             new_weight_data = orig_weight + delta_weight
             if safe_merge:
                 if torch.isfinite(new_weight_data).all():
-                    raise ValueError(
-                        f"NaNs detected in the merged weights. The adapter {active_adapter} seems to be broken"
-                    )
-            quantized = quantize_weight(
-                new_weight_data, qtype=orig_weight.qtype, axis=orig_weight.axis
-            )
+                    raise ValueError(f"NaNs detected in the merged weights. The adapter {active_adapter} seems to be broken")
+            quantized = quantize_weight(new_weight_data, qtype=orig_weight.qtype, axis=orig_weight.axis)
             base_layer.weight._data = quantized._data
             base_layer.weight._scale = quantized._scale
             self.merged_adapters.append(active_adapter)
@@ -156,9 +142,7 @@ class QuantoLoraLinear(torch.nn.Module, LoraLayer):
             base_layer = self.get_base_layer()
             orig_weight = base_layer.weight
             new_weight_data = orig_weight - self.get_delta_weight(active_adapter)
-            quantized = quantize_weight(
-                new_weight_data, qtype=orig_weight.qtype, axis=orig_weight.axis
-            )
+            quantized = quantize_weight(new_weight_data, qtype=orig_weight.qtype, axis=orig_weight.axis)
             base_layer.weight._data = quantized._data
             base_layer.weight._scale = quantized._scale
 
@@ -183,17 +167,13 @@ class QuantoLoraConv2d(torch.nn.Module, LoraLayer):
         **kwargs,
     ):
         if use_dora:
-            raise ValueError(
-                f"{self.__class__.__name__} does not support DoRA yet, please set it to False"
-            )
+            raise ValueError(f"{self.__class__.__name__} does not support DoRA yet, please set it to False")
 
         super().__init__()
         LoraLayer.__init__(self, base_layer)
 
         self._active_adapter = adapter_name
-        self.update_layer(
-            adapter_name, r, lora_alpha, lora_dropout, init_lora_weights, use_rslora
-        )
+        self.update_layer(adapter_name, r, lora_alpha, lora_dropout, init_lora_weights, use_rslora)
 
     def update_layer(
         self,
@@ -207,9 +187,7 @@ class QuantoLoraConv2d(torch.nn.Module, LoraLayer):
     ):
         # same as lora.layer.Conv2d
         if r <= 0:
-            raise ValueError(
-                f"`r` should be a positive integer value but the value passed is {r}"
-            )
+            raise ValueError(f"`r` should be a positive integer value but the value passed is {r}")
 
         self.r[adapter_name] = r
         self.lora_alpha[adapter_name] = lora_alpha
@@ -224,12 +202,8 @@ class QuantoLoraConv2d(torch.nn.Module, LoraLayer):
         kernel_size = base_layer.kernel_size
         stride = base_layer.stride
         padding = base_layer.padding
-        self.lora_A[adapter_name] = nn.Conv2d(
-            self.in_features, r, kernel_size, stride, padding, bias=False
-        )
-        self.lora_B[adapter_name] = nn.Conv2d(
-            r, self.out_features, (1, 1), (1, 1), bias=False
-        )
+        self.lora_A[adapter_name] = nn.Conv2d(self.in_features, r, kernel_size, stride, padding, bias=False)
+        self.lora_B[adapter_name] = nn.Conv2d(r, self.out_features, (1, 1), (1, 1), bias=False)
         if use_rslora:
             self.scaling[adapter_name] = lora_alpha / math.sqrt(r)
         else:
@@ -256,9 +230,7 @@ class QuantoLoraConv2d(torch.nn.Module, LoraLayer):
         result = self.base_layer(x)
         adapter_names = kwargs.pop("adapter_names", None)
         if adapter_names is not None:
-            raise ValueError(
-                f"{self.__class__.__name__} does not support mixed_batch_forward yet."
-            )
+            raise ValueError(f"{self.__class__.__name__} does not support mixed_batch_forward yet.")
 
         if self.disable_adapters:
             return result
@@ -299,9 +271,7 @@ class QuantoLoraConv2d(torch.nn.Module, LoraLayer):
         # In case users wants to merge the adapter weights that are in
         # (b)float16 while being on CPU, we need to cast the weights to float32, perform the merge and then cast back to
         # (b)float16 because some CPUs have slow bf16/fp16 matmuls.
-        cast_to_fp32 = device.type == "cpu" and (
-            dtype == torch.float16 or dtype == torch.bfloat16
-        )
+        cast_to_fp32 = device.type == "cpu" and (dtype == torch.float16 or dtype == torch.bfloat16)
 
         weight_A = self.lora_A[adapter].weight
         weight_B = self.lora_B[adapter].weight
@@ -313,9 +283,9 @@ class QuantoLoraConv2d(torch.nn.Module, LoraLayer):
         # https://github.com/bmaltais/kohya_ss/blob/feb6728762a8f463d15ba936d189d4c3abfaa1ab/networks/lora.py#L117
         if self.get_base_layer().weight.size()[2:4] == (1, 1):
             # conv2d 1x1
-            output_tensor = (
-                weight_B.squeeze(3).squeeze(2) @ weight_A.squeeze(3).squeeze(2)
-            ).unsqueeze(2).unsqueeze(3) * self.scaling[adapter]
+            output_tensor = (weight_B.squeeze(3).squeeze(2) @ weight_A.squeeze(3).squeeze(2)).unsqueeze(2).unsqueeze(
+                3
+            ) * self.scaling[adapter]
         else:
             # conv2d 3x3
             output_tensor = (
@@ -335,9 +305,7 @@ class QuantoLoraConv2d(torch.nn.Module, LoraLayer):
 
         return output_tensor
 
-    def merge(
-        self, safe_merge: bool = False, adapter_names: Optional[list[str]] = None
-    ) -> None:
+    def merge(self, safe_merge: bool = False, adapter_names: Optional[list[str]] = None) -> None:
         # same as lora.quanto.QuantoLoraLinear
         from optimum.quanto import quantize_weight
 
@@ -355,12 +323,8 @@ class QuantoLoraConv2d(torch.nn.Module, LoraLayer):
             new_weight_data = orig_weight + delta_weight
             if safe_merge:
                 if torch.isfinite(new_weight_data).all():
-                    raise ValueError(
-                        f"NaNs detected in the merged weights. The adapter {active_adapter} seems to be broken"
-                    )
-            quantized = quantize_weight(
-                new_weight_data, qtype=orig_weight.qtype, axis=orig_weight.axis
-            )
+                    raise ValueError(f"NaNs detected in the merged weights. The adapter {active_adapter} seems to be broken")
+            quantized = quantize_weight(new_weight_data, qtype=orig_weight.qtype, axis=orig_weight.axis)
             base_layer.weight._data = quantized._data
             base_layer.weight._scale = quantized._scale
             self.merged_adapters.append(active_adapter)
@@ -381,9 +345,7 @@ class QuantoLoraConv2d(torch.nn.Module, LoraLayer):
             base_layer = self.get_base_layer()
             orig_weight = base_layer.weight
             new_weight_data = orig_weight - self.get_delta_weight(active_adapter)
-            quantized = quantize_weight(
-                new_weight_data, qtype=orig_weight.qtype, axis=orig_weight.axis
-            )
+            quantized = quantize_weight(new_weight_data, qtype=orig_weight.qtype, axis=orig_weight.axis)
             base_layer.weight._data = quantized._data
             base_layer.weight._scale = quantized._scale
 

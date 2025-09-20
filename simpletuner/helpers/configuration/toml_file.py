@@ -1,6 +1,7 @@
-import os
-import toml
 import logging
+import os
+
+import toml
 
 # Set up logging
 from simpletuner.helpers.training.multi_process import _get_rank
@@ -69,8 +70,6 @@ def load_toml_config():
             logger.error(f"Failed to parse TOML file {config_toml_path}: {e}")
             toml_config = {}
     normalized_config = normalize_args(toml_config)
-    logger.info(
-        f"[CONFIG] Loaded and normalized TOML configuration: {normalized_config}"
-    )
+    logger.info(f"[CONFIG] Loaded and normalized TOML configuration: {normalized_config}")
 
     return normalized_config

@@ -1,27 +1,27 @@
-import os
-import torch
+import gc
 import hashlib
 import logging
+import os
+import queue
 import time
-import gc
+from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
+from threading import Thread
+
+import torch
 from tqdm import tqdm
+
 from simpletuner.helpers.data_backend.base import BaseDataBackend
-from simpletuner.helpers.training.state_tracker import StateTracker
-from simpletuner.helpers.training.wrappers import (
-    move_dict_of_tensors_to_device,
-    gather_dict_of_tensors_shapes,
-)
+from simpletuner.helpers.models.common import ModelFoundation
 from simpletuner.helpers.prompts import PromptHandler
 from simpletuner.helpers.training.multi_process import rank_info
-from queue import Queue
-import queue
-from threading import Thread
-from concurrent.futures import ThreadPoolExecutor
+from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.training.wrappers import gather_dict_of_tensors_shapes, move_dict_of_tensors_to_device
 from simpletuner.helpers.webhooks.mixin import WebhookMixin
-from simpletuner.helpers.models.common import ModelFoundation
 
 logger = logging.getLogger("TextEmbeddingCache")
-from simpletuner.helpers.training.multi_process import _get_rank as get_rank, should_log
+from simpletuner.helpers.training.multi_process import _get_rank as get_rank
+from simpletuner.helpers.training.multi_process import should_log
 
 if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -52,9 +52,7 @@ class TextEmbeddingCache(WebhookMixin):
     ):
         self.id = id
         if data_backend.id != id:
-            raise ValueError(
-                f"TextEmbeddingCache received incorrect data_backend: {data_backend}"
-            )
+            raise ValueError(f"TextEmbeddingCache received incorrect data_backend: {data_backend}")
         self.should_abort = False
         self.data_backend = data_backend
         self.text_encoders = text_encoders
@@ -112,9 +110,7 @@ class TextEmbeddingCache(WebhookMixin):
 
     def discover_all_files(self):
         """Identify all files in the data backend."""
-        logger.info(
-            f"{self.rank_info}(id={self.id}) Listing all text embed cache entries"
-        )
+        logger.info(f"{self.rank_info}(id={self.id}) Listing all text embed cache entries")
         # This isn't returned, because we merely check if it's stored, or, store it.
         (
             StateTracker.get_text_cache_files(data_backend_id=self.id)
@@ -152,9 +148,7 @@ class TextEmbeddingCache(WebhookMixin):
                 batch = [first_item]
 
                 # Try to get more items without blocking
-                while (
-                    not self.write_queue.empty() and len(batch) < self.write_batch_size
-                ):
+                while not self.write_queue.empty() and len(batch) < self.write_batch_size:
                     logger.debug("Retrieving more items from the queue.")
                     items = self.write_queue.get_nowait()
                     batch.append(items)
@@ -171,9 +165,7 @@ class TextEmbeddingCache(WebhookMixin):
                     if len(batch) > 0:
                         self.process_write_batch(batch)
                         self.write_thread_bar.update(len(batch))
-                    logger.debug(
-                        f"Exiting batch write thread, no more work to do after writing {written_elements} elements"
-                    )
+                    logger.debug(f"Exiting batch write thread, no more work to do after writing {written_elements} elements")
                     break
                 # logger.debug(
                 #     f"Queue is empty. Retrieving new entries. Should retrieve? {self.process_write_batches}"
@@ -188,9 +180,7 @@ class TextEmbeddingCache(WebhookMixin):
         logger.debug(f"Writing {len(batch)} items to disk")
         # logger.debug(f"Batch: {batch}")
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = [
-                executor.submit(self.data_backend.torch_save, *args) for args in batch
-            ]
+            futures = [executor.submit(self.data_backend.torch_save, *args) for args in batch]
             for future in futures:
                 future.result()  # Wait for all writes to complete
         logger.debug(f"Completed write batch of {len(batch)} items")
@@ -257,15 +247,11 @@ class TextEmbeddingCache(WebhookMixin):
             self.batch_write_thread = Thread(target=self.batch_write_embeddings)
             self.batch_write_thread.start()
 
-        existing_cache_filenames = list(
-            StateTracker.get_text_cache_files(data_backend_id=self.id).keys()
-        )
+        existing_cache_filenames = list(StateTracker.get_text_cache_files(data_backend_id=self.id).keys())
 
         # Parallel processing for hashing
         with ThreadPoolExecutor() as executor:
-            all_cache_filenames = list(
-                executor.map(self.hash_prompt_with_path, all_prompts)
-            )
+            all_cache_filenames = list(executor.map(self.hash_prompt_with_path, all_prompts))
 
         # Create a set for faster lookups
         existing_cache_filenames_set = set(existing_cache_filenames)
@@ -300,9 +286,7 @@ class TextEmbeddingCache(WebhookMixin):
                 is_negative_prompt=is_negative_prompt,
             )
         else:
-            raise ValueError(
-                f"No such text encoding backend for model type '{self.model_type}'"
-            )
+            raise ValueError(f"No such text encoding backend for model type '{self.model_type}'")
         # logger.debug(f"Returning output: {output}")
         return output
 
@@ -328,16 +312,10 @@ class TextEmbeddingCache(WebhookMixin):
         should_encode = not load_from_cache
         args = StateTracker.get_args()
         if should_encode:
-            local_caption_split = self.split_captions_between_processes(
-                prompts or self.prompts
-            )
+            local_caption_split = self.split_captions_between_processes(prompts or self.prompts)
         else:
             local_caption_split = prompts or self.prompts
-        if (
-            hasattr(args, "cache_clear_validation_prompts")
-            and args.cache_clear_validation_prompts
-            and is_validation
-        ):
+        if hasattr(args, "cache_clear_validation_prompts") and args.cache_clear_validation_prompts and is_validation:
             # If --cache_clear_validation_prompts was provided, we will forcibly overwrite them.
             load_from_cache = False
             should_encode = True
@@ -383,9 +361,7 @@ class TextEmbeddingCache(WebhookMixin):
                     try:
                         # We attempt to load.
                         text_encoder_output = self.load_from_cache(filename)
-                        embed_shapes = gather_dict_of_tensors_shapes(
-                            tensors=text_encoder_output
-                        )
+                        embed_shapes = gather_dict_of_tensors_shapes(tensors=text_encoder_output)
                         logger.debug(f"Cached text embeds: {embed_shapes}")
                         logger.debug(
                             f"Filename {filename} prompt embeds: {embed_shapes}, keys: {text_encoder_output.keys()}"
@@ -408,9 +384,7 @@ class TextEmbeddingCache(WebhookMixin):
                     self.debug_log(
                         f"Encoding filename {filename} :: device {self.text_encoders[0].device} :: prompt {prompt}"
                     )
-                    text_encoder_output = self.model.encode_text_batch(
-                        [prompt], is_negative_prompt=is_negative_prompt
-                    )
+                    text_encoder_output = self.model.encode_text_batch([prompt], is_negative_prompt=is_negative_prompt)
                     logger.debug(
                         f"Filename {filename} prompt embeds: {gather_dict_of_tensors_shapes(tensors=text_encoder_output)}, keys: {text_encoder_output.keys()}"
                     )
@@ -429,21 +403,12 @@ class TextEmbeddingCache(WebhookMixin):
 
                     if (
                         self.webhook_handler is not None
-                        and int(
-                            self.write_thread_bar.n % self.webhook_progress_interval
-                        )
-                        < 10
+                        and int(self.write_thread_bar.n % self.webhook_progress_interval) < 10
                     ):
-                        last_reported_index = int(
-                            self.write_thread_bar.n % self.webhook_progress_interval
-                        )
+                        last_reported_index = int(self.write_thread_bar.n % self.webhook_progress_interval)
                         self.send_progress_update(
                             type="init_cache_text_embeds_status_update",
-                            progress=int(
-                                self.write_thread_bar.n
-                                // len(local_caption_split)
-                                * 100
-                            ),
+                            progress=int(self.write_thread_bar.n // len(local_caption_split) * 100),
                             total=len(local_caption_split),
                             current=0,
                         )
@@ -455,9 +420,7 @@ class TextEmbeddingCache(WebhookMixin):
                         )
                     else:
                         # if we're not returning them, we'll just nuke them
-                        text_encoder_output = move_dict_of_tensors_to_device(
-                            tensors=text_encoder_output, device="meta"
-                        )
+                        text_encoder_output = move_dict_of_tensors_to_device(tensors=text_encoder_output, device="meta")
                         del text_encoder_output
                         continue
 
@@ -483,26 +446,12 @@ class TextEmbeddingCache(WebhookMixin):
                 return
 
             logger.debug(f"Returning all {(len(prompt_embeds_all))} prompt embeds")
-            if (
-                text_encoder_output is not None
-                and "prompt_embeds" in text_encoder_output
-            ):
-                all_prompt_embeds = tuple(
-                    [v for v in text_encoder_output["prompt_embeds"]]
-                )
-                text_encoder_output["prompt_embeds"] = torch.cat(
-                    all_prompt_embeds, dim=0
-                )
-            if (
-                text_encoder_output is not None
-                and "add_text_embeds" in text_encoder_output
-            ):
-                all_pooled_embeds = tuple(
-                    [v for v in text_encoder_output["add_text_embeds"]]
-                )
-                text_encoder_output["add_text_embeds"] = torch.cat(
-                    all_pooled_embeds, dim=0
-                )
+            if text_encoder_output is not None and "prompt_embeds" in text_encoder_output:
+                all_prompt_embeds = tuple([v for v in text_encoder_output["prompt_embeds"]])
+                text_encoder_output["prompt_embeds"] = torch.cat(all_prompt_embeds, dim=0)
+            if text_encoder_output is not None and "add_text_embeds" in text_encoder_output:
+                all_pooled_embeds = tuple([v for v in text_encoder_output["add_text_embeds"]])
+                text_encoder_output["add_text_embeds"] = torch.cat(all_pooled_embeds, dim=0)
 
         return text_encoder_output
 

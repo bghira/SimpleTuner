@@ -1,4 +1,4 @@
-# Copyright 2024 The HuggingFace Team. All rights reserved.
+# Copyright 2024 The HuggingFace Team and 2025 bghira. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
-
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
 from diffusers.models.attention_processor import (
@@ -26,21 +25,15 @@ from diffusers.models.attention_processor import (
     AuraFlowAttnProcessor2_0,
     FusedAuraFlowAttnProcessor2_0,
 )
+from diffusers.models.controlnet import zero_module
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import AdaLayerNormZero, FP32LayerNorm
-from diffusers.utils import (
-    USE_PEFT_BACKEND,
-    is_torch_version,
-    logging,
-    scale_lora_layers,
-    unscale_lora_layers,
-)
+from diffusers.utils import USE_PEFT_BACKEND, BaseOutput, is_torch_version, logging, scale_lora_layers, unscale_lora_layers
 from diffusers.utils.torch_utils import maybe_allow_in_graph
-from diffusers.utils import BaseOutput
-from diffusers.models.controlnet import zero_module
 
+from simpletuner.helpers.utils.patching import CallableDict
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -53,55 +46,21 @@ def find_multiple(n: int, k: int) -> int:
 
 # Import or redefine the necessary AuraFlow components
 from simpletuner.helpers.models.auraflow.transformer import (
-    AuraFlowPatchEmbed,
-    AuraFlowSingleTransformerBlock,
-    AuraFlowJointTransformerBlock,
-    AuraFlowPreFinalBlock,
     AuraFlowFeedForward,
+    AuraFlowJointTransformerBlock,
+    AuraFlowPatchEmbed,
+    AuraFlowPreFinalBlock,
+    AuraFlowSingleTransformerBlock,
 )
 
 
 @dataclass
 class AuraFlowControlNetOutput(BaseOutput):
-    """
-    The output of [`AuraFlowControlNetModel`].
-
-    Args:
-        controlnet_block_samples (`tuple[torch.Tensor]`):
-            A tuple of tensors that are added to the residuals of AuraFlow transformer blocks.
-    """
 
     controlnet_block_samples: Tuple[torch.Tensor]
 
 
-class AuraFlowControlNetModel(
-    ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin
-):
-    """
-    A ControlNet model for AuraFlow.
-
-    This model inherits from [`ModelMixin`]. Check the superclass documentation for the generic methods
-    implemented for all models (downloading, saving, etc.).
-
-    Parameters:
-        sample_size (`int`): The width of the latent images. This is fixed during training since
-            it is used to learn a number of position embeddings.
-        patch_size (`int`): Patch size to turn the input data into small patches.
-        in_channels (`int`, *optional*, defaults to 4): The number of channels in the input.
-        num_mmdit_layers (`int`, *optional*, defaults to 4): The number of MMDiT Transformer blocks to use.
-        num_single_dit_layers (`int`, *optional*, defaults to 32):
-            The number of single DiT Transformer blocks to use.
-        attention_head_dim (`int`, *optional*, defaults to 256): The number of channels in each head.
-        num_attention_heads (`int`, *optional*, defaults to 12): The number of heads to use for multi-head attention.
-        joint_attention_dim (`int`, *optional*, defaults to 2048): The number of `encoder_hidden_states` dimensions to use.
-        caption_projection_dim (`int`, *optional*, defaults to 3072): Number of dimensions to use when projecting the `encoder_hidden_states`.
-        out_channels (`int`, defaults to 4): Number of output channels.
-        pos_embed_max_size (`int`, defaults to 1024): Maximum positions to embed from the image latents.
-        num_layers (`int`, *optional*): The number of layers of transformer blocks to use. If not provided,
-            defaults to num_mmdit_layers + num_single_dit_layers.
-        extra_conditioning_channels (`int`, defaults to 0): Number of extra conditioning channels to add to the input.
-            If non-zero, pos_embed_input will be initialized to handle the extra channels.
-    """
+class AuraFlowControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
 
     _supports_gradient_checkpointing = True
     _no_split_modules = [
@@ -130,14 +89,12 @@ class AuraFlowControlNetModel(
         super().__init__()
 
         default_out_channels = in_channels
-        self.out_channels = (
-            out_channels if out_channels is not None else default_out_channels
-        )
+        self.out_channels = out_channels if out_channels is not None else default_out_channels
         self.inner_dim = num_attention_heads * attention_head_dim
 
-        # If num_layers is specified, use it to limit the number of blocks
+        # limit blocks if num_layers specified
         if num_layers is not None:
-            # Distribute layers between joint and single blocks proportionally
+            # distribute layers proportionally
             total_layers = num_mmdit_layers + num_single_dit_layers
             mmdit_ratio = num_mmdit_layers / total_layers
 
@@ -149,7 +106,6 @@ class AuraFlowControlNetModel(
 
         self.num_layers = actual_num_mmdit_layers + actual_num_single_dit_layers
 
-        # Standard components matching the base AuraFlow transformer
         self.pos_embed = AuraFlowPatchEmbed(
             height=sample_size,
             width=sample_size,
@@ -165,14 +121,9 @@ class AuraFlowControlNetModel(
             bias=False,
         )
 
-        self.time_step_embed = Timesteps(
-            num_channels=256, downscale_freq_shift=0, scale=1000, flip_sin_to_cos=True
-        )
-        self.time_step_proj = TimestepEmbedding(
-            in_channels=256, time_embed_dim=self.inner_dim
-        )
+        self.time_step_embed = Timesteps(num_channels=256, downscale_freq_shift=0, scale=1000, flip_sin_to_cos=True)
+        self.time_step_proj = TimestepEmbedding(in_channels=256, time_embed_dim=self.inner_dim)
 
-        # Joint transformer blocks
         self.joint_transformer_blocks = nn.ModuleList(
             [
                 AuraFlowJointTransformerBlock(
@@ -184,7 +135,6 @@ class AuraFlowControlNetModel(
             ]
         )
 
-        # Single transformer blocks
         self.single_transformer_blocks = nn.ModuleList(
             [
                 AuraFlowSingleTransformerBlock(
@@ -196,19 +146,15 @@ class AuraFlowControlNetModel(
             ]
         )
 
-        # ControlNet specific components
-        # Create zero-initialized linear layers for each transformer block
+        # zero-initialized linear layers for each transformer block
         self.controlnet_blocks = nn.ModuleList([])
-        total_blocks = len(self.joint_transformer_blocks) + len(
-            self.single_transformer_blocks
-        )
+        total_blocks = len(self.joint_transformer_blocks) + len(self.single_transformer_blocks)
 
         for _ in range(total_blocks):
             controlnet_block = nn.Linear(self.inner_dim, self.inner_dim)
             controlnet_block = zero_module(controlnet_block)
             self.controlnet_blocks.append(controlnet_block)
 
-        # Additional conditioning embedding
         if extra_conditioning_channels > 0:
             self.pos_embed_input = AuraFlowPatchEmbed(
                 height=sample_size,
@@ -222,25 +168,17 @@ class AuraFlowControlNetModel(
         else:
             self.pos_embed_input = None
 
-        # Register tokens (matching AuraFlow)
         self.register_tokens = nn.Parameter(torch.randn(1, 8, self.inner_dim) * 0.02)
 
         self.gradient_checkpointing = False
 
-    def enable_forward_chunking(
-        self, chunk_size: Optional[int] = None, dim: int = 0
-    ) -> None:
-        """
-        Sets the attention processor to use feed forward chunking.
-        """
+    def enable_forward_chunking(self, chunk_size: Optional[int] = None, dim: int = 0) -> None:
         if dim not in [0, 1]:
             raise ValueError(f"Make sure to set `dim` to either 0 or 1, not {dim}")
 
         chunk_size = chunk_size or 1
 
-        def fn_recursive_feed_forward(
-            module: torch.nn.Module, chunk_size: int, dim: int
-        ):
+        def fn_recursive_feed_forward(module: torch.nn.Module, chunk_size: int, dim: int):
             if hasattr(module, "set_chunk_feed_forward"):
                 module.set_chunk_feed_forward(chunk_size=chunk_size, dim=dim)
 
@@ -251,11 +189,8 @@ class AuraFlowControlNetModel(
             fn_recursive_feed_forward(module, chunk_size, dim)
 
     def disable_forward_chunking(self):
-        """Disables the forward chunking if enabled."""
 
-        def fn_recursive_feed_forward(
-            module: torch.nn.Module, chunk_size: int, dim: int
-        ):
+        def fn_recursive_feed_forward(module: torch.nn.Module, chunk_size: int, dim: int):
             if hasattr(module, "set_chunk_feed_forward"):
                 module.set_chunk_feed_forward(chunk_size=chunk_size, dim=dim)
 
@@ -285,11 +220,9 @@ class AuraFlowControlNetModel(
         for name, module in self.named_children():
             fn_recursive_add_processors(name, module, processors)
 
-        return processors
+        return CallableDict(processors)
 
-    def set_attn_processor(
-        self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]]
-    ):
+    def set_attn_processor(self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]]):
         count = len(self.attn_processors.keys())
 
         if isinstance(processor, dict) and len(processor) != count:
@@ -323,19 +256,8 @@ class AuraFlowControlNetModel(
         num_extra_conditioning_channels: int = 0,
         load_weights_from_transformer: bool = True,
     ):
-        """
-        Create a ControlNet model from a pre-trained transformer model.
-
-        Args:
-            transformer: The transformer model to use as a base.
-            num_layers: The number of transformer layers to use. If None, uses all layers.
-            num_extra_conditioning_channels: Number of extra channels for controlnet conditioning.
-            load_weights_from_transformer: Whether to load weights from the transformer.
-        """
-        # Extract config parameters from transformer
         config = transformer.config
 
-        # Build config dict for controlnet initialization
         controlnet_config = {
             "sample_size": config.sample_size,
             "patch_size": config.patch_size,
@@ -350,39 +272,25 @@ class AuraFlowControlNetModel(
             "pos_embed_max_size": config.pos_embed_max_size,
         }
 
-        # Update with controlnet-specific settings
         if num_layers is not None:
             controlnet_config["num_layers"] = num_layers
-        controlnet_config["extra_conditioning_channels"] = (
-            num_extra_conditioning_channels
-        )
+        controlnet_config["extra_conditioning_channels"] = num_extra_conditioning_channels
 
-        # Create the controlnet model
         controlnet = cls(**controlnet_config)
 
         if load_weights_from_transformer:
-            # Load weights from transformer
-            # Handle different number of layers gracefully
+            # load weights from transformer, handle layer differences
             if hasattr(transformer, "pos_embed"):
                 controlnet.pos_embed.load_state_dict(transformer.pos_embed.state_dict())
             if hasattr(transformer, "time_step_embed"):
-                controlnet.time_step_embed.load_state_dict(
-                    transformer.time_step_embed.state_dict()
-                )
+                controlnet.time_step_embed.load_state_dict(transformer.time_step_embed.state_dict())
             if hasattr(transformer, "time_step_proj"):
-                controlnet.time_step_proj.load_state_dict(
-                    transformer.time_step_proj.state_dict()
-                )
+                controlnet.time_step_proj.load_state_dict(transformer.time_step_proj.state_dict())
             if hasattr(transformer, "context_embedder"):
-                controlnet.context_embedder.load_state_dict(
-                    transformer.context_embedder.state_dict()
-                )
+                controlnet.context_embedder.load_state_dict(transformer.context_embedder.state_dict())
             if hasattr(transformer, "register_tokens"):
-                controlnet.register_tokens.data = (
-                    transformer.register_tokens.data.clone()
-                )
+                controlnet.register_tokens.data = transformer.register_tokens.data.clone()
 
-            # Load transformer blocks (up to the number of layers in controlnet)
             for i in range(len(controlnet.joint_transformer_blocks)):
                 if i < len(transformer.joint_transformer_blocks):
                     controlnet.joint_transformer_blocks[i].load_state_dict(
@@ -395,7 +303,6 @@ class AuraFlowControlNetModel(
                         transformer.single_transformer_blocks[i].state_dict()
                     )
 
-            # Zero initialize the pos_embed_input if it exists
             if controlnet.pos_embed_input is not None:
                 controlnet.pos_embed_input = zero_module(controlnet.pos_embed_input)
 
@@ -411,29 +318,6 @@ class AuraFlowControlNetModel(
         attention_kwargs: Optional[Dict[str, Any]] = None,
         return_dict: bool = True,
     ) -> Union[AuraFlowControlNetOutput, Tuple]:
-        """
-        The [`AuraFlowControlNetModel`] forward method.
-
-        Args:
-            hidden_states (`torch.FloatTensor` of shape `(batch size, channel, height, width)`):
-                Input `hidden_states`.
-            controlnet_cond (`torch.Tensor`):
-                The conditional input tensor of shape `(batch_size, channel, height, width)`.
-            conditioning_scale (`float`, defaults to `1.0`):
-                The scale factor for ControlNet outputs.
-            encoder_hidden_states (`torch.FloatTensor` of shape `(batch size, sequence_len, embed_dims)`):
-                Conditional embeddings (embeddings computed from the input conditions such as prompts) to use.
-            timestep (`torch.LongTensor`):
-                Used to indicate denoising step.
-            attention_kwargs (`dict`, *optional*):
-                Additional keyword arguments for the attention processors.
-            return_dict (`bool`, *optional*, defaults to `True`):
-                Whether or not to return a [`~AuraFlowControlNetOutput`] instead of a plain tuple.
-
-        Returns:
-            If `return_dict` is True, an [`~AuraFlowControlNetOutput`] is returned, otherwise a `tuple` where the
-            first element is the controlnet block samples.
-        """
         if attention_kwargs is not None:
             attention_kwargs = attention_kwargs.copy()
             lora_scale = attention_kwargs.pop("scale", 1.0)
@@ -442,29 +326,19 @@ class AuraFlowControlNetModel(
             attention_kwargs = {}
 
         if USE_PEFT_BACKEND:
-            # weight the lora layers by setting `lora_scale` for each PEFT layer
             scale_lora_layers(self, lora_scale)
         else:
-            if (
-                attention_kwargs is not None
-                and attention_kwargs.get("scale", None) is not None
-            ):
-                logger.warning(
-                    "Passing `scale` via `attention_kwargs` when not using the PEFT backend is ineffective."
-                )
+            if attention_kwargs is not None and attention_kwargs.get("scale", None) is not None:
+                logger.warning("Passing `scale` via `attention_kwargs` when not using the PEFT backend is ineffective.")
 
-        # Apply initial embeddings
         hidden_states = self.pos_embed(hidden_states)
 
-        # Add controlnet conditioning if we have extra channels
         if self.pos_embed_input is not None:
             hidden_states = hidden_states + self.pos_embed_input(controlnet_cond)
 
-        # Time embedding
         temb = self.time_step_embed(timestep).to(dtype=next(self.parameters()).dtype)
         temb = self.time_step_proj(temb)
 
-        # Context embedding
         encoder_hidden_states = self.context_embedder(encoder_hidden_states)
         encoder_hidden_states = torch.cat(
             [
@@ -476,7 +350,6 @@ class AuraFlowControlNetModel(
 
         block_res_samples = []
 
-        # Process through joint transformer blocks
         for block in self.joint_transformer_blocks:
             if self.training and self.gradient_checkpointing:
 
@@ -486,17 +359,13 @@ class AuraFlowControlNetModel(
 
                     return custom_forward
 
-                ckpt_kwargs: Dict[str, Any] = (
-                    {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-                )
-                encoder_hidden_states, hidden_states = (
-                    torch.utils.checkpoint.checkpoint(
-                        create_custom_forward(block),
-                        hidden_states,
-                        encoder_hidden_states,
-                        temb,
-                        **ckpt_kwargs,
-                    )
+                ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
+                encoder_hidden_states, hidden_states = torch.utils.checkpoint.checkpoint(
+                    create_custom_forward(block),
+                    hidden_states,
+                    encoder_hidden_states,
+                    temb,
+                    **ckpt_kwargs,
                 )
             else:
                 encoder_hidden_states, hidden_states = block(
@@ -508,12 +377,9 @@ class AuraFlowControlNetModel(
 
             block_res_samples.append(hidden_states)
 
-        # Process through single transformer blocks
         if len(self.single_transformer_blocks) > 0:
             encoder_seq_len = encoder_hidden_states.size(1)
-            combined_hidden_states = torch.cat(
-                [encoder_hidden_states, hidden_states], dim=1
-            )
+            combined_hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
 
             for block in self.single_transformer_blocks:
                 if self.training and self.gradient_checkpointing:
@@ -524,11 +390,7 @@ class AuraFlowControlNetModel(
 
                         return custom_forward
 
-                    ckpt_kwargs: Dict[str, Any] = (
-                        {"use_reentrant": False}
-                        if is_torch_version(">=", "1.11.0")
-                        else {}
-                    )
+                    ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
                     combined_hidden_states = torch.utils.checkpoint.checkpoint(
                         create_custom_forward(block),
                         combined_hidden_states,
@@ -542,26 +404,19 @@ class AuraFlowControlNetModel(
                         attention_kwargs=attention_kwargs,
                     )
 
-                # Extract the hidden states part (not the encoder hidden states)
                 hidden_states = combined_hidden_states[:, encoder_seq_len:]
                 block_res_samples.append(hidden_states)
 
-        # Apply controlnet blocks and scaling
         controlnet_block_res_samples = []
-        for block_res_sample, controlnet_block in zip(
-            block_res_samples, self.controlnet_blocks
-        ):
+        for block_res_sample, controlnet_block in zip(block_res_samples, self.controlnet_blocks):
             block_res_sample = controlnet_block(block_res_sample)
             block_res_sample = block_res_sample * conditioning_scale
             controlnet_block_res_samples.append(block_res_sample)
 
         if USE_PEFT_BACKEND:
-            # remove `lora_scale` from each PEFT layer
             unscale_lora_layers(self, lora_scale)
 
         if not return_dict:
             return (controlnet_block_res_samples,)
 
-        return AuraFlowControlNetOutput(
-            controlnet_block_samples=controlnet_block_res_samples
-        )
+        return AuraFlowControlNetOutput(controlnet_block_samples=controlnet_block_res_samples)

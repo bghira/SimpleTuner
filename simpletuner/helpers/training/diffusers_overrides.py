@@ -1,7 +1,8 @@
+import logging
+
 import torch
 import torch.nn as nn
 from diffusers.models.attention import Attention
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -29,22 +30,16 @@ def fuse_projections_smart(self, fuse=True, permanent=None):
 
     if not self.is_cross_attention:
         # Fuse Q, K, V for self-attention
-        concatenated_weights = torch.cat(
-            [self.to_q.weight.data, self.to_k.weight.data, self.to_v.weight.data]
-        )
+        concatenated_weights = torch.cat([self.to_q.weight.data, self.to_k.weight.data, self.to_v.weight.data])
         in_features = concatenated_weights.shape[1]
         out_features = concatenated_weights.shape[0]
 
         # Create fused layer
-        self.to_qkv = nn.Linear(
-            in_features, out_features, bias=self.use_bias, device=device, dtype=dtype
-        )
+        self.to_qkv = nn.Linear(in_features, out_features, bias=self.use_bias, device=device, dtype=dtype)
         self.to_qkv.weight.copy_(concatenated_weights)
 
         if self.use_bias:
-            concatenated_bias = torch.cat(
-                [self.to_q.bias.data, self.to_k.bias.data, self.to_v.bias.data]
-            )
+            concatenated_bias = torch.cat([self.to_q.bias.data, self.to_k.bias.data, self.to_v.bias.data])
             self.to_qkv.bias.copy_(concatenated_bias)
 
         if is_permanent:
@@ -67,9 +62,7 @@ def fuse_projections_smart(self, fuse=True, permanent=None):
         in_features = concatenated_weights.shape[1]
         out_features = concatenated_weights.shape[0]
 
-        self.to_kv = nn.Linear(
-            in_features, out_features, bias=self.use_bias, device=device, dtype=dtype
-        )
+        self.to_kv = nn.Linear(in_features, out_features, bias=self.use_bias, device=device, dtype=dtype)
         self.to_kv.weight.copy_(concatenated_weights)
 
         if self.use_bias:
@@ -175,9 +168,7 @@ def unfuse_projections_smart(self):
         v_dim = self.inner_kv_dim
 
         # Verify dimensions
-        assert (
-            total_dim == q_dim + k_dim + v_dim
-        ), f"Dimension mismatch: {total_dim} != {q_dim} + {k_dim} + {v_dim}"
+        assert total_dim == q_dim + k_dim + v_dim, f"Dimension mismatch: {total_dim} != {q_dim} + {k_dim} + {v_dim}"
 
         # Split the weights
         q_weight = concatenated_weights[:q_dim]
@@ -185,9 +176,7 @@ def unfuse_projections_smart(self):
         v_weight = concatenated_weights[q_dim + k_dim :]
 
         # Create individual linear layers
-        self.to_q = nn.Linear(
-            self.query_dim, q_dim, bias=self.use_bias, device=device, dtype=dtype
-        )
+        self.to_q = nn.Linear(self.query_dim, q_dim, bias=self.use_bias, device=device, dtype=dtype)
         self.to_k = nn.Linear(
             self.cross_attention_dim,
             k_dim,
@@ -209,11 +198,7 @@ def unfuse_projections_smart(self):
         self.to_v.weight.data.copy_(v_weight)
 
         # Handle biases if they exist
-        if (
-            self.use_bias
-            and hasattr(self.to_qkv, "bias")
-            and self.to_qkv.bias is not None
-        ):
+        if self.use_bias and hasattr(self.to_qkv, "bias") and self.to_qkv.bias is not None:
             concatenated_bias = self.to_qkv.bias.data
             q_bias = concatenated_bias[:q_dim]
             k_bias = concatenated_bias[q_dim : q_dim + k_dim]
@@ -244,9 +229,7 @@ def unfuse_projections_smart(self):
         k_dim = self.inner_kv_dim
         v_dim = self.inner_kv_dim
 
-        assert (
-            total_dim == k_dim + v_dim
-        ), f"Dimension mismatch for KV: {total_dim} != {k_dim} + {v_dim}"
+        assert total_dim == k_dim + v_dim, f"Dimension mismatch for KV: {total_dim} != {k_dim} + {v_dim}"
 
         # Split weights
         k_weight = concatenated_weights[:k_dim]
@@ -273,11 +256,7 @@ def unfuse_projections_smart(self):
         self.to_v.weight.data.copy_(v_weight)
 
         # Handle biases
-        if (
-            self.use_bias
-            and hasattr(self.to_kv, "bias")
-            and self.to_kv.bias is not None
-        ):
+        if self.use_bias and hasattr(self.to_kv, "bias") and self.to_kv.bias is not None:
             concatenated_bias = self.to_kv.bias.data
             k_bias = concatenated_bias[:k_dim]
             v_bias = concatenated_bias[k_dim:]
@@ -345,11 +324,7 @@ def unfuse_projections_smart(self):
         self.add_v_proj.weight.data.copy_(add_v_weight)
 
         # Handle biases
-        if (
-            self.added_proj_bias
-            and hasattr(self.to_added_qkv, "bias")
-            and self.to_added_qkv.bias is not None
-        ):
+        if self.added_proj_bias and hasattr(self.to_added_qkv, "bias") and self.to_added_qkv.bias is not None:
             concatenated_bias = self.to_added_qkv.bias.data
             add_q_bias = concatenated_bias[:q_dim]
             add_k_bias = concatenated_bias[q_dim : q_dim + k_dim]
@@ -375,17 +350,13 @@ def patch_attention_flexible():
     """Apply flexible fusion/unfusion patches to Attention class"""
     # Store originals
     Attention._original_fuse_projections = Attention.fuse_projections
-    Attention._original_unfuse_projections = getattr(
-        Attention, "unfuse_projections", None
-    )
+    Attention._original_unfuse_projections = getattr(Attention, "unfuse_projections", None)
 
     # Apply our versions
     Attention.fuse_projections = fuse_projections_smart
     Attention.unfuse_projections = unfuse_projections_smart
 
-    logger.info(
-        f"Patched Attention with flexible fusion (permanent={PERMANENT_FUSION})"
-    )
+    logger.info(f"Patched Attention with flexible fusion (permanent={PERMANENT_FUSION})")
 
 
 # Convenience functions for different use cases

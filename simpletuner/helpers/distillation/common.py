@@ -1,8 +1,9 @@
+import copy
+import logging
+from typing import Any, Callable, Dict, Optional, Union
+
 import torch
 import torch.nn.functional as F
-import logging
-from typing import Dict, Any, Optional, Union, Callable
-import copy
 
 
 class DistillationBase:
@@ -24,9 +25,7 @@ class DistillationBase:
             config: Configuration dictionary for distillation-specific parameters
         """
         self.teacher_model = teacher_model
-        self.student_model = (
-            student_model or teacher_model
-        )  # Use teacher if student not provided
+        self.student_model = student_model or teacher_model  # Use teacher if student not provided
 
         # Flag to check if we're using the same model with adapters
         self.low_rank_distillation = student_model is None
@@ -54,9 +53,7 @@ class DistillationBase:
         # Detect model type (flow matching vs. DDPM)
         from simpletuner.helpers.models.common import PredictionTypes
 
-        self.is_flow_matching = (
-            self.teacher_model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING
-        )
+        self.is_flow_matching = self.teacher_model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING
 
         # Store scheduler configurations for later use
         if hasattr(self.teacher_model, "noise_schedule"):
@@ -86,9 +83,7 @@ class DistillationBase:
 
         if self.teacher_model.config.lora_type.lower() == "lycoris":
             # Handle LyCORIS adapter
-            lycoris_wrapped_network = getattr(
-                self.teacher_model.accelerator, "_lycoris_wrapped_network", None
-            )
+            lycoris_wrapped_network = getattr(self.teacher_model.accelerator, "_lycoris_wrapped_network", None)
             if lycoris_wrapped_network:
                 lycoris_wrapped_network.set_multiplier(1.0 if enable else 0.0)
         else:

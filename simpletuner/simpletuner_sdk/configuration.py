@@ -1,18 +1,24 @@
-import json, logging, os
+import json
+import logging
+import os
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
+
 if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 else:
     logger.setLevel("ERROR")
-from fastapi import APIRouter, HTTPException, status, BackgroundTasks
+import os
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 from pydantic import BaseModel
-from simpletuner.helpers.training.trainer import Trainer
-from simpletuner.simpletuner_sdk.api_state import APIState
+
 from simpletuner.helpers.configuration.cmd_args import get_default_config
 from simpletuner.helpers.configuration.json_file import normalize_args
-from simpletuner.simpletuner_sdk.thread_keeper import submit_job, get_thread_status
+from simpletuner.helpers.training.trainer import Trainer
+from simpletuner.simpletuner_sdk.api_state import APIState
+from simpletuner.simpletuner_sdk.thread_keeper import get_thread_status, submit_job
 
 
 # Define a Pydantic model for input validation
@@ -65,9 +71,7 @@ class Configuration:
     def _config_save(self, job_config: ConfigModel):
         with open("config/multidatabackend.json", mode="w") as file_handler:
             json.dump(job_config.dataloader_config, file_handler, indent=4)
-            job_config.trainer_config["data_backend_config"] = (
-                "config/multidatabackend.json"
-            )
+            job_config.trainer_config["data_backend_config"] = "config/multidatabackend.json"
 
         with open("config/webhooks.json", mode="w") as file_handler:
             json.dump(job_config.webhooks_config, file_handler, indent=4)
@@ -77,21 +81,15 @@ class Configuration:
             print(f"LyCORIS config present: {job_config.lycoris_config}")
             with open("config/lycoris_config.json", "w") as f:
                 f.write(json.dumps(job_config.lycoris_config, indent=4))
-                job_config.trainer_config["lycoris_config"] = (
-                    "config/lycoris_config.json"
-                )
+                job_config.trainer_config["lycoris_config"] = "config/lycoris_config.json"
 
-        user_prompt_library_path = job_config.trainer_config.get(
-            "--user_prompt_library", None
-        )
+        user_prompt_library_path = job_config.trainer_config.get("--user_prompt_library", None)
         print(f"User prompt library path: {user_prompt_library_path}")
         if user_prompt_library_path and hasattr(job_config, "user_prompt_library"):
             print(f"User prompt library present: {job_config.user_prompt_library}")
             with open(user_prompt_library_path, "w") as f:
                 f.write(json.dumps(job_config.user_prompt_library, indent=4))
-                job_config.trainer_config["user_prompt_library"] = (
-                    "config/user_prompt_library.json"
-                )
+                job_config.trainer_config["user_prompt_library"] = "config/user_prompt_library.json"
 
     async def check(self, job_config: ConfigModel):
         """
@@ -128,9 +126,14 @@ class Configuration:
 
     async def run(self, job_config: ConfigModel) -> dict:
         """
-        Run the training job in a separate thread.
+        Run the training job in a separate thread or subprocess.
         """
         logger.info("Received call")
+
+        # Check execution mode from environment
+        execution_mode = os.environ.get("SIMPLETUNER_EXECUTION_MODE", "thread")
+        if execution_mode == "process":
+            return await self._run_subprocess(job_config)
         trainer = APIState.get_trainer()
         current_job_id = APIState.get_state("current_job_id")
         job_id = job_config.job_id
@@ -144,9 +147,7 @@ class Configuration:
         self._config_save(job_config)
         try:
             logger.info("Creating new Trainer instance..")
-            trainer = Trainer(
-                config=normalize_args(job_config.trainer_config), job_id=job_id
-            )
+            trainer = Trainer(config=normalize_args(job_config.trainer_config), job_id=job_id)
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -180,4 +181,57 @@ class Configuration:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Error starting training run: {str(e)}",
+            )
+
+    async def _run_subprocess(self, job_config: ConfigModel) -> dict:
+        """Run training in a subprocess."""
+        from simpletuner.simpletuner_sdk.process_keeper import get_process_status
+        from simpletuner.simpletuner_sdk.process_keeper import submit_job as submit_process_job
+
+        current_job_id = APIState.get_state("current_job_id")
+        job_id = job_config.job_id
+
+        # Check if job is already running
+        if current_job_id:
+            current_status = get_process_status(current_job_id)
+            if current_status in ["running", "pending"]:
+                return {
+                    "status": False,
+                    "result": f"Could not run job, '{current_job_id}' is already {current_status}.",
+                }
+
+        self._config_clear()
+        self._config_save(job_config)
+
+        # Prepare config for subprocess
+        config_dict = {
+            "trainer_config": job_config.trainer_config,
+            "dataloader_config": job_config.dataloader_config,
+            "webhooks_config": job_config.webhooks_config,
+            "job_id": job_id,
+        }
+
+        APIState.set_job(job_id, job_config.__dict__)
+        APIState.set_state("status", "pending")
+
+        try:
+            # Submit to process manager
+            logger.info(f"Submitting job {job_id} to subprocess..")
+
+            # trainer_func will be handled by subprocess wrapper
+            from simpletuner.helpers.training.trainer import Trainer
+
+            process = submit_process_job(job_id, Trainer, config_dict["trainer_config"])
+
+            APIState.set_state("status", "running")
+            APIState.set_state("execution_mode", "process")
+
+            return {
+                "status": "success",
+                "result": f"Started training run with job ID {job_id} in subprocess.",
+            }
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Error starting subprocess training: {str(e)}",
             )

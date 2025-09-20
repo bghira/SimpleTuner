@@ -1,33 +1,31 @@
-import torch
 import inspect
-import torch.nn.functional as F
-import random
 import logging
-import inspect
+import math
 import os
-from torchvision import transforms
+import random
+from abc import ABC, abstractmethod
+from enum import Enum
+
+import numpy as np
+import torch
+import torch.nn.functional as F
 from diffusers import DiffusionPipeline
+from peft import LoraConfig
+from PIL import Image
 from torch.distributions import Beta
-from simpletuner.helpers.training.wrappers import unwrap_model
-from simpletuner.helpers.training.multi_process import _get_rank
+from torchvision import transforms
+from transformers.utils import ContextManagers
+
+from simpletuner.helpers.training.adapter import load_lora_weights
 from simpletuner.helpers.training.custom_schedule import (
     apply_flow_schedule_shift,
     generate_timestep_weights,
     segmented_timestep_selection,
 )
+from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager, prepare_model_for_deepspeed
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
-from transformers.utils import ContextManagers
-from simpletuner.helpers.training.adapter import load_lora_weights
-from simpletuner.helpers.training.deepspeed import (
-    deepspeed_zero_init_disabled_context_manager,
-    prepare_model_for_deepspeed,
-)
-from abc import ABC, abstractmethod
-from enum import Enum
-from peft import LoraConfig
-import numpy as np
-from torchvision import transforms
-from PIL import Image
+from simpletuner.helpers.training.multi_process import _get_rank
+from simpletuner.helpers.training.wrappers import unwrap_model
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -58,9 +56,7 @@ def get_model_config_path(model_family: str, model_path: str):
             return upstream_config_sources[model_family]
         else:
             raise ValueError(
-                "Cannot find noise schedule config for .safetensors file in architecture {}".format(
-                    model_family
-                )
+                "Cannot find noise schedule config for .safetensors file in architecture {}".format(model_family)
             )
 
     return model_path
@@ -160,17 +156,11 @@ class ModelFoundation(ABC):
                     raise ValueError(
                         f"Model flavour {self.config.model_flavour} not found in {self.HUGGINGFACE_PATHS.keys()}"
                     )
-                self.config.pretrained_model_name_or_path = self.HUGGINGFACE_PATHS.get(
-                    self.config.model_flavour
-                )
+                self.config.pretrained_model_name_or_path = self.HUGGINGFACE_PATHS.get(self.config.model_flavour)
             else:
-                raise ValueError(
-                    f"Model flavour {self.config.model_flavour} not found in {self.HUGGINGFACE_PATHS.keys()}"
-                )
+                raise ValueError(f"Model flavour {self.config.model_flavour} not found in {self.HUGGINGFACE_PATHS.keys()}")
         if self.config.pretrained_vae_model_name_or_path is None:
-            self.config.pretrained_vae_model_name_or_path = (
-                self.config.pretrained_model_name_or_path
-            )
+            self.config.pretrained_vae_model_name_or_path = self.config.pretrained_model_name_or_path
         if self.config.vae_path is None:
             self.config.vae_path = self.config.pretrained_model_name_or_path
 
@@ -180,18 +170,14 @@ class ModelFoundation(ABC):
         Run a forward pass on the model.
         Must be implemented by the subclass.
         """
-        raise NotImplementedError(
-            "model_predict must be implemented in the child class."
-        )
+        raise NotImplementedError("model_predict must be implemented in the child class.")
 
     def requires_conditioning_dataset(self) -> bool:
-        # Most models don't require a conditioning dataset.
         if self.config.controlnet or self.config.control:
             return True
         return False
 
     def requires_conditioning_latents(self) -> bool:
-        # ControlNet requires pixel inputs instead of encoded latents.
         return False
 
     def requires_validation_edit_captions(self) -> bool:
@@ -202,11 +188,9 @@ class ModelFoundation(ABC):
         return False
 
     def requires_conditioning_validation_inputs(self) -> bool:
-        # Whether this model / flavour requires conditioning inputs during validation.
         return False
 
     def conditioning_validation_dataset_type(self) -> bool:
-        # Most conditioning inputs (ControlNet) etc require "conditioning" dataset.
         return "conditioning"
 
     def validation_image_input_edge_length(self):
@@ -219,27 +203,21 @@ class ModelFoundation(ABC):
         This is distinct from ControlNet.
         This is a stub and should be implemented in subclasses.
         """
-        raise NotImplementedError(
-            "control_init must be implemented in the child class."
-        )
+        raise NotImplementedError("control_init must be implemented in the child class.")
 
     def controlnet_init(self):
         """
         Initialize the controlnet model.
         This is a stub and should be implemented in subclasses.
         """
-        raise NotImplementedError(
-            "controlnet_init must be implemented in the child class."
-        )
+        raise NotImplementedError("controlnet_init must be implemented in the child class.")
 
     def controlnet_predict(self, prepared_batch, custom_timesteps: list = None):
         """
         Run a forward pass on the model.
         Must be implemented by the subclass.
         """
-        raise NotImplementedError(
-            "model_predict must be implemented in the child class."
-        )
+        raise NotImplementedError("model_predict must be implemented in the child class.")
 
     def tread_init(self):
         """
@@ -254,37 +232,27 @@ class ModelFoundation(ABC):
         Encodes a batch of text using the text encoder.
         Must be implemented by the subclass.
         """
-        raise NotImplementedError(
-            "_encode_prompts must be implemented in the child class."
-        )
+        raise NotImplementedError("_encode_prompts must be implemented in the child class.")
 
     @abstractmethod
-    def convert_text_embed_for_pipeline(
-        self, text_embedding: torch.Tensor, prompt: str
-    ) -> dict:
+    def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
         """
         Converts the text embedding to the format expected by the pipeline.
         This is a stub and should be implemented in subclasses.
 
         Prompt may be useful to inspect if your pipeline requires eg. zeroing empty inputs.
         """
-        raise NotImplementedError(
-            "convert_text_embed_for_pipeline must be implemented in the child class."
-        )
+        raise NotImplementedError("convert_text_embed_for_pipeline must be implemented in the child class.")
 
     @abstractmethod
-    def convert_negative_text_embed_for_pipeline(
-        self, text_embedding: torch.Tensor, prompt: str
-    ) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
         """
         Converts the text embedding to the format expected by the pipeline for negative prompt inputs.
         This is a stub and should be implemented in subclasses.
 
         Prompt may be useful to inspect if your pipeline requires eg. zeroing empty inputs.
         """
-        raise NotImplementedError(
-            "convert_text_embed_for_pipeline must be implemented in the child class."
-        )
+        raise NotImplementedError("convert_text_embed_for_pipeline must be implemented in the child class.")
 
     def collate_prompt_embeds(self, text_encoder_output: dict) -> dict:
         """
@@ -308,9 +276,7 @@ class ModelFoundation(ABC):
         dataset_type is passed in for models that support transforming videos or images etc.
         """
         if dataset_type in ["video"]:
-            raise ValueError(
-                f"{dataset_type} transforms are not supported by {self.NAME}."
-            )
+            raise ValueError(f"{dataset_type} transforms are not supported by {self.NAME}.")
         return transforms.Compose(
             [
                 transforms.ToTensor(),
@@ -326,36 +292,29 @@ class ModelFoundation(ABC):
         3) Convert & load them into the unwrapped PyTorch modules with set_peft_model_state_dict().
         4) Optionally handle text_encoder_x using the diffusers _set_state_dict_into_text_encoder() helper.
         """
-        # We'll track whichever sub-model is our 'denoiser' (UNet or Transformer).
         denoiser = None
         text_encoder_one_ = None
         text_encoder_two_ = None
 
-        # 1. Identify models by type comparison
         while len(models) > 0:
             model = models.pop()
             unwrapped_model = self.unwrap_model(model)
 
-            # Compare unwrapped type to main model's unwrapped type
             if isinstance(unwrapped_model, type(self.unwrap_model(self.model))):
-                denoiser = model  # e.g., the "transformer" or "unet"
+                denoiser = model
             elif isinstance(unwrapped_model, type(self.unwrap_model(self.controlnet))):
-                denoiser = model  # e.g., the "controlnet"
+                denoiser = model
             # If your text_encoders exist:
             elif (
                 getattr(self, "text_encoders", None)
                 and len(self.text_encoders) > 0
-                and isinstance(
-                    unwrapped_model, type(self.unwrap_model(self.text_encoders[0]))
-                )
+                and isinstance(unwrapped_model, type(self.unwrap_model(self.text_encoders[0])))
             ):
                 text_encoder_one_ = model
             elif (
                 getattr(self, "text_encoders", None)
                 and len(self.text_encoders) > 1
-                and isinstance(
-                    unwrapped_model, type(self.unwrap_model(self.text_encoders[1]))
-                )
+                and isinstance(unwrapped_model, type(self.unwrap_model(self.text_encoders[1])))
             ):
                 text_encoder_two_ = model
             else:
@@ -365,26 +324,13 @@ class ModelFoundation(ABC):
                     f"Expected main model type {type(self.unwrap_model(self.model))}"
                 )
 
-        # 2. Get the LoRA state dict from the pipeline's directory
-        #    Usually you call something like self.PIPELINE_CLASSES[...] but
-        #    whichever pipeline is relevant. For example:
         pipeline_cls = self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
         lora_state_dict = pipeline_cls.lora_state_dict(input_dir)
-        if (
-            type(lora_state_dict) is tuple
-            and len(lora_state_dict) == 2
-            and lora_state_dict[1] is None
-        ):
+        if type(lora_state_dict) is tuple and len(lora_state_dict) == 2 and lora_state_dict[1] is None:
             logger.debug("Overriding ControlNet LoRA state dict with correct structure")
             lora_state_dict = lora_state_dict[0]
 
-        # 3. Extract keys for the main model (which uses self.MODEL_TYPE.value as the prefix)
-        #    For example, "transformer." or "unet." is stripped out.
-        key_to_replace = (
-            self.CONTROLNET_LORA_STATE_DICT_PREFIX
-            if self.config.controlnet
-            else self.MODEL_TYPE.value
-        )
+        key_to_replace = self.CONTROLNET_LORA_STATE_DICT_PREFIX if self.config.controlnet else self.MODEL_TYPE.value
         prefix = f"{key_to_replace}."
         denoiser_sd = {}
         for k, v in lora_state_dict.items():
@@ -392,28 +338,19 @@ class ModelFoundation(ABC):
                 new_key = k.replace(prefix, "")
                 denoiser_sd[new_key] = v
 
-        # Convert them to "PEFT" format if needed.
-        # (Typically we call convert_unet_state_dict_to_peft on the denoiser's keys.)
         from diffusers.utils import convert_unet_state_dict_to_peft
 
         denoiser_sd = convert_unet_state_dict_to_peft(denoiser_sd)
 
-        # 4. Load them into the denoiser (the main model)
         from peft.utils import set_peft_model_state_dict
 
-        incompatible_keys = set_peft_model_state_dict(
-            denoiser, denoiser_sd, adapter_name="default"
-        )
+        incompatible_keys = set_peft_model_state_dict(denoiser, denoiser_sd, adapter_name="default")
 
         if incompatible_keys is not None:
-            # check only for unexpected keys
             unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
             if unexpected_keys:
-                logger.warning(
-                    f"LoRA loading found unexpected keys not in the denoiser model: {unexpected_keys}"
-                )
+                logger.warning(f"LoRA loading found unexpected keys not in the denoiser model: {unexpected_keys}")
 
-        # 5. If we also train text encoders, apply them
         if getattr(self.config, "train_text_encoder", False):
             from diffusers.training_utils import _set_state_dict_into_text_encoder
 
@@ -439,11 +376,7 @@ class ModelFoundation(ABC):
 
     def save_lora_weights(self, *args, **kwargs):
         self.PIPELINE_CLASSES[
-            (
-                PipelineTypes.TEXT2IMG
-                if not self.config.controlnet
-                else PipelineTypes.CONTROLNET
-            )
+            (PipelineTypes.TEXT2IMG if not self.config.controlnet else PipelineTypes.CONTROLNET)
         ].save_lora_weights(*args, **kwargs)
 
     def pre_ema_creation(self):
@@ -509,11 +442,7 @@ class ModelFoundation(ABC):
         """
         if not getattr(self, "AUTOENCODER_CLASS", None):
             return
-        if (
-            not hasattr(self, "vae")
-            or self.vae is None
-            or getattr(self.vae, "device", None) == "meta"
-        ):
+        if not hasattr(self, "vae") or self.vae is None or getattr(self.vae, "device", None) == "meta":
             self.load_vae()
         return self.vae
 
@@ -521,14 +450,10 @@ class ModelFoundation(ABC):
         if not getattr(self, "AUTOENCODER_CLASS", None):
             return
 
-        logger.info(
-            f"Loading {self.AUTOENCODER_CLASS.__name__} from {self.config.vae_path}"
-        )
+        logger.info(f"Loading {self.AUTOENCODER_CLASS.__name__} from {self.config.vae_path}")
         self.vae = None
         self.config.vae_kwargs = {
-            "pretrained_model_name_or_path": get_model_config_path(
-                self.config.model_family, self.config.vae_path
-            ),
+            "pretrained_model_name_or_path": get_model_config_path(self.config.model_family, self.config.vae_path),
             "subfolder": "vae",
             "revision": self.config.revision,
             "force_upcast": False,
@@ -536,59 +461,41 @@ class ModelFoundation(ABC):
         }
         with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
             try:
-                self.vae = self.AUTOENCODER_CLASS.from_pretrained(
-                    **self.config.vae_kwargs
-                )
+                self.vae = self.AUTOENCODER_CLASS.from_pretrained(**self.config.vae_kwargs)
             except Exception as e:
                 self.config.vae_kwargs["subfolder"] = None
-                self.vae = self.AUTOENCODER_CLASS.from_pretrained(
-                    **self.config.vae_kwargs
-                )
+                self.vae = self.AUTOENCODER_CLASS.from_pretrained(**self.config.vae_kwargs)
         if self.vae is None:
-            raise ValueError(
-                "Could not load VAE. Please check the model path and ensure the VAE is compatible."
-            )
+            raise ValueError("Could not load VAE. Please check the model path and ensure the VAE is compatible.")
         if self.config.vae_enable_tiling:
             if hasattr(self.vae, "enable_tiling"):
                 logger.info("Enabling VAE tiling.")
                 self.vae.enable_tiling()
             else:
-                logger.warning(
-                    f"VAE tiling is enabled, but not yet supported by {self.config.model_family}."
-                )
+                logger.warning(f"VAE tiling is enabled, but not yet supported by {self.config.model_family}.")
         if self.config.vae_enable_slicing:
             if hasattr(self.vae, "enable_slicing"):
                 logger.info("Enabling VAE slicing.")
                 self.vae.enable_slicing()
             else:
-                logger.warning(
-                    f"VAE slicing is enabled, but not yet supported by {self.config.model_family}."
-                )
+                logger.warning(f"VAE slicing is enabled, but not yet supported by {self.config.model_family}.")
         if move_to_device and self.vae.device != self.accelerator.device:
-            # The VAE is in bfloat16 to avoid NaN losses.
             _vae_dtype = torch.bfloat16
             if hasattr(self.config, "vae_dtype"):
                 # Let's use a case-switch for convenience: bf16, fp16, fp32, none/default
                 if self.config.vae_dtype == "bf16":
                     _vae_dtype = torch.bfloat16
                 elif self.config.vae_dtype == "fp16":
-                    raise ValueError(
-                        "fp16 is not supported for SDXL's VAE. Please use bf16 or fp32."
-                    )
+                    raise ValueError("fp16 is not supported for SDXL's VAE. Please use bf16 or fp32.")
                 elif self.config.vae_dtype == "fp32":
                     _vae_dtype = torch.float32
-                elif (
-                    self.config.vae_dtype == "none"
-                    or self.config.vae_dtype == "default"
-                ):
+                elif self.config.vae_dtype == "none" or self.config.vae_dtype == "default":
                     _vae_dtype = torch.bfloat16
             logger.info(
                 f"Moving {self.AUTOENCODER_CLASS.__name__} to accelerator, converting from {self.vae.dtype} to {_vae_dtype}"
             )
             self.vae.to(self.accelerator.device, dtype=_vae_dtype)
-        self.AUTOENCODER_SCALING_FACTOR = getattr(
-            self.vae.config, "scaling_factor", 1.0
-        )
+        self.AUTOENCODER_SCALING_FACTOR = getattr(self.vae.config, "scaling_factor", 1.0)
         self.post_vae_load_setup()
 
     def post_vae_load_setup(self):
@@ -622,10 +529,7 @@ class ModelFoundation(ABC):
             self.vae = None
 
     def load_text_tokenizer(self):
-        if (
-            self.TEXT_ENCODER_CONFIGURATION is None
-            or len(self.TEXT_ENCODER_CONFIGURATION) == 0
-        ):
+        if self.TEXT_ENCODER_CONFIGURATION is None or len(self.TEXT_ENCODER_CONFIGURATION) == 0:
             return
         self.tokenizers = []
         tokenizer_kwargs = {
@@ -637,30 +541,21 @@ class ModelFoundation(ABC):
         for attr_name, text_encoder_config in self.TEXT_ENCODER_CONFIGURATION.items():
             tokenizer_idx += 1
             tokenizer_cls = text_encoder_config.get("tokenizer")
-            tokenizer_kwargs["subfolder"] = text_encoder_config.get(
-                "tokenizer_subfolder", "tokenizer"
-            )
+            tokenizer_kwargs["subfolder"] = text_encoder_config.get("tokenizer_subfolder", "tokenizer")
             tokenizer_kwargs["use_fast"] = text_encoder_config.get("use_fast", False)
             tokenizer_kwargs["pretrained_model_name_or_path"] = get_model_config_path(
                 self.config.model_family, self.config.pretrained_model_name_or_path
             )
             if text_encoder_config.get("path", None) is not None:
-                tokenizer_kwargs["pretrained_model_name_or_path"] = (
-                    text_encoder_config.get("path")
-                )
-            logger.info(
-                f"Loading tokenizer {tokenizer_idx}: {tokenizer_cls.__name__} with args: {tokenizer_kwargs}"
-            )
+                tokenizer_kwargs["pretrained_model_name_or_path"] = text_encoder_config.get("path")
+            logger.info(f"Loading tokenizer {tokenizer_idx}: {tokenizer_cls.__name__} with args: {tokenizer_kwargs}")
             tokenizer = tokenizer_cls.from_pretrained(**tokenizer_kwargs)
             self.tokenizers.append(tokenizer)
             setattr(self, f"tokenizer_{tokenizer_idx}", tokenizer)
 
     def load_text_encoder(self, move_to_device: bool = True):
         self.text_encoders = []
-        if (
-            self.TEXT_ENCODER_CONFIGURATION is None
-            or len(self.TEXT_ENCODER_CONFIGURATION) == 0
-        ):
+        if self.TEXT_ENCODER_CONFIGURATION is None or len(self.TEXT_ENCODER_CONFIGURATION) == 0:
             return
         self.load_text_tokenizer()
 
@@ -682,46 +577,29 @@ class ModelFoundation(ABC):
                 )
                 if text_encoder_config.get("path", None) is not None:
                     text_encoder_path = text_encoder_config.get("path")
-                requires_quant = text_encoder_config.get(
-                    "required_quantisation_level", None
-                )
+                requires_quant = text_encoder_config.get("required_quantisation_level", None)
                 if requires_quant is not None and requires_quant == "int4_weight_only":
-                    # we'll use the QuantizationConfig.
                     from torchao.quantization import Int4WeightOnlyConfig
                     from transformers import TorchAoConfig
 
                     extra_kwargs["device_map"] = "auto"
                     quant_config = Int4WeightOnlyConfig(group_size=128)
-                    extra_kwargs["quantization_config"] = TorchAoConfig(
-                        quant_type=quant_config
-                    )
+                    extra_kwargs["quantization_config"] = TorchAoConfig(quant_type=quant_config)
 
                 text_encoder = text_encoder_config["model"].from_pretrained(
                     text_encoder_path,
                     variant=self.config.variant,
                     revision=self.config.revision,
-                    subfolder=text_encoder_config.get("subfolder", "text_encoder")
-                    or "",
+                    subfolder=text_encoder_config.get("subfolder", "text_encoder") or "",
                     **extra_kwargs,
                 )
                 if text_encoder.__class__.__name__ in [
                     "UMT5EncoderModel",
                     "T5EncoderModel",
                 ]:
-                    # maybe the user enabled NovelAI T5.
-                    # if self.config.t5_encoder_implementation == "novelai":
-                    #     from simpletuner.helpers.models.t5 import NovelAIT5EncoderModel
-
-                    #     logger.info(
-                    #         f"Converting {text_encoder.__class__.__name__} to NovelAI T5 implementation.."
-                    #     )
-                    #     text_encoder = NovelAIT5EncoderModel.from_hf_model(text_encoder)
                     pass
 
-                if move_to_device and getattr(
-                    self.config, f"{attr_name}_precision", None
-                ) in ["no_change", None]:
-                    logger.info(f"Moving {text_encoder_config.get('name')} to GPU")
+                if move_to_device and getattr(self.config, f"{attr_name}_precision", None) in ["no_change", None]:
                     text_encoder.to(
                         self.accelerator.device,
                         dtype=self.config.weight_dtype,
@@ -771,17 +649,12 @@ class ModelFoundation(ABC):
             else self.config.pretrained_unet_model_name_or_path
         ) or self.config.pretrained_model_name_or_path
         if self.config.pretrained_model_name_or_path.endswith(".safetensors"):
-            self.config.pretrained_model_name_or_path = get_model_config_path(
-                self.config.model_family, model_path
-            )
+            self.config.pretrained_model_name_or_path = get_model_config_path(self.config.model_family, model_path)
         if model_path.endswith(".safetensors"):
             loader_fn = self.MODEL_CLASS.from_single_file
         pretrained_load_args = self.pretrained_load_args(pretrained_load_args)
         model_subfolder = self.MODEL_SUBFOLDER
-        if (
-            self.MODEL_TYPE is ModelTypes.TRANSFORMER
-            and self.config.pretrained_transformer_model_name_or_path == model_path
-        ):
+        if self.MODEL_TYPE is ModelTypes.TRANSFORMER and self.config.pretrained_transformer_model_name_or_path == model_path:
             # we're using a custom transformer, let's check its subfolder
             if str(self.config.pretrained_transformer_subfolder).lower() == "none":
                 model_subfolder = None
@@ -789,10 +662,7 @@ class ModelFoundation(ABC):
                 model_subfolder = self.MODEL_SUBFOLDER
             else:
                 model_subfolder = self.config.pretrained_transformer_subfolder
-        elif (
-            self.MODEL_TYPE is ModelTypes.UNET
-            and self.config.pretrained_unet_model_name_or_path == model_path
-        ):
+        elif self.MODEL_TYPE is ModelTypes.UNET and self.config.pretrained_unet_model_name_or_path == model_path:
             # we're using a custom transformer, let's check its subfolder
             if str(self.config.pretrained_unet_model_name_or_path).lower() == "none":
                 model_subfolder = None
@@ -819,22 +689,13 @@ class ModelFoundation(ABC):
                     self.config.gradient_checkpointing_interval
                 )
             )
-            # monkey-patch the gradient checkpointing function for pytorch to run every nth call only.
-            # definitely one of the more awful things I've ever done while programming, but it's easier than
-            # modifying every one of the unet blocks' forward calls in Diffusers to make it work properly.
-            from simpletuner.helpers.training.gradient_checkpointing_interval import (
-                set_checkpoint_interval,
-            )
+            # monkey-patch gradient checkpointing for nth call intervals - easier than modifying diffusers blocks
+            from simpletuner.helpers.training.gradient_checkpointing_interval import set_checkpoint_interval
 
             set_checkpoint_interval(int(self.config.gradient_checkpointing_interval))
 
-        if (
-            self.config.gradient_checkpointing_interval is not None
-            and self.config.gradient_checkpointing_interval > 1
-        ):
-            if self.model is not None and hasattr(
-                self.model, "set_gradient_checkpointing_interval"
-            ):
+        if self.config.gradient_checkpointing_interval is not None and self.config.gradient_checkpointing_interval > 1:
+            if self.model is not None and hasattr(self.model, "set_gradient_checkpointing_interval"):
                 logger.info("Setting gradient checkpointing interval..")
                 self.unwrap_model(model=self.model).set_gradient_checkpointing_interval(
                     int(self.config.gradient_checkpointing_interval)
@@ -872,14 +733,12 @@ class ModelFoundation(ABC):
         pass
 
     def set_prepared_model(self, model, base_model: bool = False):
-        # after accelerate prepare, we'll set the model again.
         if self.config.controlnet and not base_model:
             self.controlnet = model
         else:
             self.model = model
 
     def freeze_components(self):
-        # Freeze vae and text_encoders
         if self.vae is not None:
             self.vae.requires_grad_(False)
         if self.text_encoders is not None and len(self.text_encoders) > 0:
@@ -892,21 +751,14 @@ class ModelFoundation(ABC):
             self.controlnet.train()
 
     def uses_shared_modules(self):
-        # shared modules may be when ControlNet reuses base model layers, eg. HiDream.
         return False
 
-    def get_trained_component(
-        self, base_model: bool = False, unwrap_model: bool = True
-    ):
+    def get_trained_component(self, base_model: bool = False, unwrap_model: bool = True):
         if unwrap_model:
             return self.unwrap_model(model=self.model if base_model else None)
-        return (
-            self.controlnet if self.config.controlnet and not base_model else self.model
-        )
+        return self.controlnet if self.config.controlnet and not base_model else self.model
 
-    def _load_pipeline(
-        self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True
-    ):
+    def _load_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
         """
         Loads the pipeline class for the model.
         """
@@ -931,14 +783,10 @@ class ModelFoundation(ABC):
         if not hasattr(self, "PIPELINE_CLASSES"):
             raise NotImplementedError("Pipeline class not defined.")
         if pipeline_type not in self.PIPELINE_CLASSES:
-            raise NotImplementedError(
-                f"Pipeline type {pipeline_type} not defined in {self.__class__.__name__}."
-            )
+            raise NotImplementedError(f"Pipeline type {pipeline_type} not defined in {self.__class__.__name__}.")
         pipeline_class = self.PIPELINE_CLASSES[pipeline_type]
         if not hasattr(pipeline_class, "from_pretrained"):
-            raise NotImplementedError(
-                f"Pipeline class {pipeline_class} does not have from_pretrained method."
-            )
+            raise NotImplementedError(f"Pipeline class {pipeline_class} does not have from_pretrained method.")
         signature = inspect.signature(pipeline_class.from_pretrained)
         if "watermarker" in signature.parameters:
             pipeline_kwargs["watermarker"] = None
@@ -960,13 +808,8 @@ class ModelFoundation(ABC):
             text_encoder_config,
         ) in self.TEXT_ENCODER_CONFIGURATION.items():
             tokenizer_attr = text_encoder_attr.replace("text_encoder", "tokenizer")
-            if (
-                self.text_encoders is not None
-                and len(self.text_encoders) >= text_encoder_idx
-            ):
-                pipeline_kwargs[text_encoder_attr] = self.unwrap_model(
-                    self.text_encoders[text_encoder_idx]
-                )
+            if self.text_encoders is not None and len(self.text_encoders) >= text_encoder_idx:
+                pipeline_kwargs[text_encoder_attr] = self.unwrap_model(self.text_encoders[text_encoder_idx])
                 logger.info(f"Adding {tokenizer_attr}")
                 pipeline_kwargs[tokenizer_attr] = self.tokenizers[text_encoder_idx]
             else:
@@ -978,23 +821,16 @@ class ModelFoundation(ABC):
         if self.config.controlnet and pipeline_type is PipelineTypes.CONTROLNET:
             pipeline_kwargs["controlnet"] = self.controlnet
 
-        logger.debug(
-            f"Initialising {pipeline_class.__name__} with components: {pipeline_kwargs}"
-        )
+        logger.debug(f"Initialising {pipeline_class.__name__} with components: {pipeline_kwargs}")
         self.pipelines[pipeline_type] = pipeline_class.from_pretrained(
             **pipeline_kwargs,
         )
 
         return self.pipelines[pipeline_type]
 
-    def get_pipeline(
-        self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True
-    ) -> DiffusionPipeline:
+    def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True) -> DiffusionPipeline:
         possibly_cached_pipeline = self._load_pipeline(pipeline_type, load_base_model)
-        if (
-            self.model is not None
-            and getattr(possibly_cached_pipeline, self.MODEL_TYPE.value, None) is None
-        ):
+        if self.model is not None and getattr(possibly_cached_pipeline, self.MODEL_TYPE.value, None) is None:
             # if the transformer or unet aren't in the cached pipeline, we'll add it.
             setattr(
                 possibly_cached_pipeline,
@@ -1042,9 +878,7 @@ class ModelFoundation(ABC):
             from diffusers import FlowMatchEulerDiscreteScheduler
 
             self.noise_schedule = FlowMatchEulerDiscreteScheduler.from_pretrained(
-                get_model_config_path(
-                    self.config.model_family, self.config.pretrained_model_name_or_path
-                ),
+                get_model_config_path(self.config.model_family, self.config.pretrained_model_name_or_path),
                 subfolder="scheduler",
                 shift=self.config.flow_schedule_shift,
             )
@@ -1057,9 +891,7 @@ class ModelFoundation(ABC):
             from diffusers import DDPMScheduler
 
             self.noise_schedule = DDPMScheduler.from_pretrained(
-                get_model_config_path(
-                    self.config.model_family, self.config.pretrained_model_name_or_path
-                ),
+                get_model_config_path(self.config.model_family, self.config.pretrained_model_name_or_path),
                 subfolder="scheduler",
                 rescale_betas_zero_snr=self.config.rescale_betas_zero_snr,
                 timestep_spacing=self.config.training_scheduler_timestep_spacing,
@@ -1067,9 +899,7 @@ class ModelFoundation(ABC):
             if self.config.prediction_type is None:
                 self.config.prediction_type = self.noise_schedule.config.prediction_type
         else:
-            raise NotImplementedError(
-                f"Unknown prediction type {self.PREDICTION_TYPE}."
-            )
+            raise NotImplementedError(f"Unknown prediction type {self.PREDICTION_TYPE}.")
 
         return self.config, self.noise_schedule
 
@@ -1100,15 +930,9 @@ class ModelFoundation(ABC):
 
     def prepare_batch_conditions(self, batch: dict, state: dict) -> dict:
         # it's a list, but most models will expect it to be a length-1 list containing a tensor, which is what they actually want
-        if (
-            isinstance(batch.get("conditioning_pixel_values"), list)
-            and len(batch["conditioning_pixel_values"]) > 0
-        ):
+        if isinstance(batch.get("conditioning_pixel_values"), list) and len(batch["conditioning_pixel_values"]) > 0:
             batch["conditioning_pixel_values"] = batch["conditioning_pixel_values"][0]
-        if (
-            isinstance(batch.get("conditioning_latents"), list)
-            and len(batch["conditioning_latents"]) > 0
-        ):
+        if isinstance(batch.get("conditioning_latents"), list) and len(batch["conditioning_latents"]) > 0:
             batch["conditioning_latents"] = batch["conditioning_latents"][0]
         return batch
 
@@ -1135,18 +959,14 @@ class ModelFoundation(ABC):
         logger.debug(f"Preparing batch: {batch.keys()}")
         # Ensure the encoder hidden states are on device
         if batch["prompt_embeds"] is not None and hasattr(batch["prompt_embeds"], "to"):
-            batch["encoder_hidden_states"] = batch["prompt_embeds"].to(
-                **target_device_kwargs
-            )
+            batch["encoder_hidden_states"] = batch["prompt_embeds"].to(**target_device_kwargs)
 
         # Process additional conditioning if provided
         pooled_embeds = batch.get("add_text_embeds")
         time_ids = batch.get("batch_time_ids")
         batch["added_cond_kwargs"] = {}
         if pooled_embeds is not None and hasattr(pooled_embeds, "to"):
-            batch["added_cond_kwargs"]["text_embeds"] = pooled_embeds.to(
-                **target_device_kwargs
-            )
+            batch["added_cond_kwargs"]["text_embeds"] = pooled_embeds.to(**target_device_kwargs)
         if time_ids is not None and hasattr(time_ids, "to"):
             batch["added_cond_kwargs"]["time_ids"] = time_ids.to(**target_device_kwargs)
 
@@ -1158,19 +978,14 @@ class ModelFoundation(ABC):
 
         encoder_attention_mask = batch.get("encoder_attention_mask")
         if encoder_attention_mask is not None and hasattr(encoder_attention_mask, "to"):
-            batch["encoder_attention_mask"] = encoder_attention_mask.to(
-                **target_device_kwargs
-            )
+            batch["encoder_attention_mask"] = encoder_attention_mask.to(**target_device_kwargs)
 
         # Sample noise
         noise = torch.randn_like(batch["latents"])
         bsz = batch["latents"].shape[0]
         # If not flow matching, possibly apply an offset to noise
         if not self.config.flow_matching and self.config.offset_noise:
-            if (
-                self.config.noise_offset_probability == 1.0
-                or random.random() < self.config.noise_offset_probability
-            ):
+            if self.config.noise_offset_probability == 1.0 or random.random() < self.config.noise_offset_probability:
                 noise = noise + self.config.noise_offset * torch.randn(
                     latents.shape[0],
                     latents.shape[1],
@@ -1187,16 +1002,11 @@ class ModelFoundation(ABC):
         ):
             input_perturbation = self.config.input_perturbation
             if getattr(self.config, "input_perturbation_steps", None):
-                input_perturbation *= 1.0 - (
-                    state["global_step"] / self.config.input_perturbation_steps
-                )
-            batch["input_noise"] = noise + input_perturbation * torch.randn_like(
-                batch["latents"]
-            )
+                input_perturbation *= 1.0 - (state["global_step"] / self.config.input_perturbation_steps)
+            batch["input_noise"] = noise + input_perturbation * torch.randn_like(batch["latents"])
         else:
             batch["input_noise"] = noise
 
-        # Flow matching branch: set sigmas and timesteps.
         if self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
             if not self.config.flux_fast_schedule and not any(
                 [
@@ -1205,8 +1015,7 @@ class ModelFoundation(ABC):
                 ]
             ):
                 batch["sigmas"] = torch.sigmoid(
-                    self.config.flow_sigmoid_scale
-                    * torch.randn((bsz,), device=self.accelerator.device)
+                    self.config.flow_sigmoid_scale * torch.randn((bsz,), device=self.accelerator.device)
                 )
                 batch["sigmas"] = apply_flow_schedule_shift(
                     self.config, self.noise_schedule, batch["sigmas"], batch["noise"]
@@ -1220,9 +1029,7 @@ class ModelFoundation(ABC):
                 alpha = self.config.flow_beta_schedule_alpha
                 beta = self.config.flow_beta_schedule_beta
                 beta_dist = Beta(alpha, beta)
-                batch["sigmas"] = beta_dist.sample((bsz,)).to(
-                    device=self.accelerator.device
-                )
+                batch["sigmas"] = beta_dist.sample((bsz,)).to(device=self.accelerator.device)
                 batch["sigmas"] = apply_flow_schedule_shift(
                     self.config, self.noise_schedule, batch["sigmas"], batch["noise"]
                 )
@@ -1233,34 +1040,28 @@ class ModelFoundation(ABC):
                     device=self.accelerator.device,
                 )
             batch["timesteps"] = batch["sigmas"] * 1000.0
-            # Ensure sigmas is reshaped appropriately (default is 4D, may be overriden in video subclass)
             self.expand_sigmas(batch)
-            batch["noisy_latents"] = (1 - batch["sigmas"]) * batch["latents"] + batch[
-                "sigmas"
-            ] * batch["input_noise"]
+            batch["noisy_latents"] = (1 - batch["sigmas"]) * batch["latents"] + batch["sigmas"] * batch["input_noise"]
         else:
-            weights = generate_timestep_weights(
-                self.config, self.noise_schedule.config.num_train_timesteps
-            ).to(self.accelerator.device)
+            weights = generate_timestep_weights(self.config, self.noise_schedule.config.num_train_timesteps).to(
+                self.accelerator.device
+            )
             if bsz > 1 and not self.config.disable_segmented_timestep_sampling:
                 batch["timesteps"] = segmented_timestep_selection(
                     actual_num_timesteps=self.noise_schedule.config.num_train_timesteps,
                     bsz=bsz,
                     weights=weights,
                     config=self.config,
-                    use_refiner_range=False,  # You can override in subclass if needed.
+                    use_refiner_range=False,
                 ).to(self.accelerator.device)
             else:
-                batch["timesteps"] = torch.multinomial(
-                    weights, bsz, replacement=True
-                ).long()
+                batch["timesteps"] = torch.multinomial(weights, bsz, replacement=True).long()
             batch["noisy_latents"] = self.noise_schedule.add_noise(
                 batch["latents"].float(),
                 batch["input_noise"].float(),
                 batch["timesteps"],
             ).to(device=self.accelerator.device, dtype=self.config.weight_dtype)
 
-        # any model-specific augmentation can occur inside prepare_batch_conditions.
         batch = self.prepare_batch_conditions(batch=batch, state=state)
 
         return batch
@@ -1308,11 +1109,7 @@ class ModelFoundation(ABC):
         if loss_type == "l2":
             loss = F.mse_loss(model_pred, target, reduction=reduction)
         elif loss_type == "huber":
-            loss = (
-                2
-                * huber_c
-                * (torch.sqrt((model_pred - target) ** 2 + huber_c**2) - huber_c)
-            )
+            loss = 2 * huber_c * (torch.sqrt((model_pred - target) ** 2 + huber_c**2) - huber_c)
             if reduction == "mean":
                 loss = torch.mean(loss)
             elif reduction == "sum":
@@ -1364,8 +1161,7 @@ class ModelFoundation(ABC):
             # SNR-based scheduling
             snr = compute_snr(timesteps, self.noise_schedule)
             sigmas = (
-                (1.0 - self.noise_schedule.alphas_cumprod[timesteps])
-                / self.noise_schedule.alphas_cumprod[timesteps]
+                (1.0 - self.noise_schedule.alphas_cumprod[timesteps]) / self.noise_schedule.alphas_cumprod[timesteps]
             ) ** 0.5
             huber_c = (1 - base_huber_c) / (1 + sigmas) ** 2 + base_huber_c
             return huber_c
@@ -1373,9 +1169,7 @@ class ModelFoundation(ABC):
         else:
             raise NotImplementedError(f"Unknown Huber loss schedule {huber_schedule}")
 
-    def loss(
-        self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True
-    ):
+    def loss(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
         """
         Computes the loss between the model prediction and the target.
         Optionally applies SNR weighting and a conditioning mask.
@@ -1407,9 +1201,7 @@ class ModelFoundation(ABC):
 
                     for i in range(batch_size):
                         # Get scheduled huber_c for this timestep
-                        huber_c = self.compute_scheduled_huber_c(
-                            timesteps[i : i + 1]
-                        ).item()
+                        huber_c = self.compute_scheduled_huber_c(timesteps[i : i + 1]).item()
 
                         # Compute loss for this sample
                         sample_loss = self.conditional_loss(
@@ -1437,17 +1229,13 @@ class ModelFoundation(ABC):
                 if self.config.snr_gamma is not None and self.config.snr_gamma > 0:
                     snr = compute_snr(prepared_batch["timesteps"], self.noise_schedule)
                     snr_divisor = snr
-                    if (
-                        self.noise_schedule.config.prediction_type
-                        == PredictionTypes.V_PREDICTION.value
-                    ):
+                    if self.noise_schedule.config.prediction_type == PredictionTypes.V_PREDICTION.value:
                         snr_divisor = snr + 1
                     mse_loss_weights = (
                         torch.stack(
                             [
                                 snr,
-                                self.config.snr_gamma
-                                * torch.ones_like(prepared_batch["timesteps"]),
+                                self.config.snr_gamma * torch.ones_like(prepared_batch["timesteps"]),
                             ],
                             dim=1,
                         ).min(dim=1)[0]
@@ -1458,66 +1246,47 @@ class ModelFoundation(ABC):
 
             else:
                 if self.config.snr_gamma is None or self.config.snr_gamma == 0:
-                    loss = self.config.snr_weight * F.mse_loss(
-                        model_pred.float(), target.float(), reduction="none"
-                    )
+                    loss = self.config.snr_weight * F.mse_loss(model_pred.float(), target.float(), reduction="none")
                 else:
                     snr = compute_snr(prepared_batch["timesteps"], self.noise_schedule)
                     snr_divisor = snr
-                    if (
-                        self.noise_schedule.config.prediction_type
-                        == PredictionTypes.V_PREDICTION.value
-                    ):
+                    if self.noise_schedule.config.prediction_type == PredictionTypes.V_PREDICTION.value:
                         snr_divisor = snr + 1
                     mse_loss_weights = (
                         torch.stack(
                             [
                                 snr,
-                                self.config.snr_gamma
-                                * torch.ones_like(prepared_batch["timesteps"]),
+                                self.config.snr_gamma * torch.ones_like(prepared_batch["timesteps"]),
                             ],
                             dim=1,
                         ).min(dim=1)[0]
                         / snr_divisor
                     )
-                    loss = F.mse_loss(
-                        model_pred.float(), target.float(), reduction="none"
-                    )
+                    loss = F.mse_loss(model_pred.float(), target.float(), reduction="none")
                     mse_loss_weights = mse_loss_weights.view(-1, 1, 1, 1)
                     loss = loss * mse_loss_weights
         else:
-            raise NotImplementedError(
-                f"Loss calculation not implemented for prediction type {self.PREDICTION_TYPE}."
-            )
+            raise NotImplementedError(f"Loss calculation not implemented for prediction type {self.PREDICTION_TYPE}.")
 
         # Apply conditioning mask if needed
         conditioning_type = prepared_batch.get("conditioning_type")
         if conditioning_type == "mask" and apply_conditioning_mask:
             logger.debug("Applying conditioning mask to loss.")
             mask_image = (
-                prepared_batch["conditioning_pixel_values"]
-                .to(dtype=loss.dtype, device=loss.device)[:, 0]
-                .unsqueeze(1)
+                prepared_batch["conditioning_pixel_values"].to(dtype=loss.dtype, device=loss.device)[:, 0].unsqueeze(1)
             )
-            mask_image = torch.nn.functional.interpolate(
-                mask_image, size=loss.shape[2:], mode="area"
-            )
+            mask_image = torch.nn.functional.interpolate(mask_image, size=loss.shape[2:], mode="area")
             mask_image = mask_image / 2 + 0.5
             loss = loss * mask_image
         elif conditioning_type == "segmentation" and apply_conditioning_mask:
             if random.random() < self.config.masked_loss_probability:
-                mask_image = prepared_batch["conditioning_pixel_values"].to(
-                    dtype=loss.dtype, device=loss.device
-                )
+                mask_image = prepared_batch["conditioning_pixel_values"].to(dtype=loss.dtype, device=loss.device)
                 mask_image = torch.sum(mask_image, dim=1, keepdim=True) / 3
-                mask_image = torch.nn.functional.interpolate(
-                    mask_image, size=loss.shape[2:], mode="area"
-                )
+                mask_image = torch.nn.functional.interpolate(mask_image, size=loss.shape[2:], mode="area")
                 mask_image = mask_image / 2 + 0.5
                 mask_image = (mask_image > 0).to(dtype=loss.dtype, device=loss.device)
                 loss = loss * mask_image
 
-        # Average over channels and spatial dims, then over batch.
         loss = loss.mean(dim=list(range(1, len(loss.shape)))).mean()
         return loss
 
@@ -1535,7 +1304,6 @@ class ImageModelFoundation(ModelFoundation):
     Handles typical VAE, text encoder loading and a UNet forward pass.
     """
 
-    # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     DEFAULT_CONTROLNET_LORA_TARGET = [
         "to_q",
@@ -1573,10 +1341,7 @@ class ImageModelFoundation(ModelFoundation):
         "controlnet_down_blocks.8",
         "controlnet_mid_block",
     ]
-    SHARED_MODULE_PREFIXES = (
-        None  # No shared modules by default, but can be overridden in subclasses.
-    )
-    # A bit more than the default, but some will need to override this to just Attention layers, like SD3.
+    SHARED_MODULE_PREFIXES = None
     DEFAULT_LYCORIS_TARGET = ["Attention", "FeedForward"]
     DEFAULT_PIPELINE_TYPE = PipelineTypes.TEXT2IMG
     VALIDATION_USES_NEGATIVE_PROMPT = True
@@ -1585,7 +1350,6 @@ class ImageModelFoundation(ModelFoundation):
         super().__init__(config, accelerator)
         self.has_vae = True
         self.has_text_encoder = True
-        # These will be set by your loading methods
         self.vae = None
         self.model = None
         self.controlnet = None
@@ -1601,7 +1365,6 @@ class ImageModelFoundation(ModelFoundation):
         return None
 
     def get_lora_target_layers(self):
-        # Some models, eg. Flux should override this with more complex config-driven logic.
         if self.config.lora_type.lower() == "standard":
             if self.config.controlnet:
                 return self.DEFAULT_CONTROLNET_LORA_TARGET
@@ -1609,16 +1372,13 @@ class ImageModelFoundation(ModelFoundation):
         elif self.config.lora_type.lower() == "lycoris":
             return self.DEFAULT_LYCORIS_TARGET
         else:
-            raise NotImplementedError(
-                f"Unknown LoRA target type {self.config.lora_type}."
-            )
+            raise NotImplementedError(f"Unknown LoRA target type {self.config.lora_type}.")
 
     def add_lora_adapter(self):
         target_modules = self.get_lora_target_layers()
         save_modules = self.get_lora_save_layers()
         addkeys, misskeys = [], []
 
-        # Force LyCORIS for ControlNet on UNet models to support Conv2d
         if self.config.controlnet and self.MODEL_TYPE.value == "unet":
             logger.warning(
                 "ControlNet with UNet requires Conv2d layer support. "
@@ -1628,11 +1388,7 @@ class ImageModelFoundation(ModelFoundation):
 
             self.lora_config = LoHaConfig(
                 r=self.config.lora_rank,
-                alpha=(
-                    self.config.lora_alpha
-                    if self.config.lora_alpha is not None
-                    else self.config.lora_rank
-                ),
+                alpha=(self.config.lora_alpha if self.config.lora_alpha is not None else self.config.lora_rank),
                 rank_dropout=self.config.lora_dropout,
                 module_dropout=0.0,
                 use_effective_conv2d=True,  # Critical for Conv2d support
@@ -1641,12 +1397,11 @@ class ImageModelFoundation(ModelFoundation):
                 # init_weights defaults to True, which is what we want
             )
         else:
-            # Standard LoRA for everything else
             lora_config_cls = LoraConfig
             lora_config_kwargs = {}
             if self.config.peft_lora_mode is not None:
                 if self.config.peft_lora_mode.lower() == "singlora":
-                    from peft_singlora import setup_singlora, SingLoRAConfig
+                    from peft_singlora import SingLoRAConfig, setup_singlora
 
                     lora_config_cls = SingLoRAConfig
                     lora_config_kwargs = {
@@ -1657,11 +1412,7 @@ class ImageModelFoundation(ModelFoundation):
                     setup_singlora()
             self.lora_config = lora_config_cls(
                 r=self.config.lora_rank,
-                lora_alpha=(
-                    self.config.lora_alpha
-                    if self.config.lora_alpha is not None
-                    else self.config.lora_rank
-                ),
+                lora_alpha=(self.config.lora_alpha if self.config.lora_alpha is not None else self.config.lora_rank),
                 lora_dropout=self.config.lora_dropout,
                 init_lora_weights=self.config.lora_initialisation_style,
                 target_modules=target_modules,
@@ -1670,25 +1421,15 @@ class ImageModelFoundation(ModelFoundation):
                 **lora_config_kwargs,
             )
 
-        # Apply adapter
         if self.config.controlnet:
             self.controlnet.add_adapter(self.lora_config)
         else:
             self.model.add_adapter(self.lora_config)
 
         if self.config.init_lora:
-            # Note: use_dora only applies to LoraConfig, not LoHaConfig
-            use_dora = (
-                self.config.use_dora
-                if isinstance(self.lora_config, LoraConfig)
-                else False
-            )
+            use_dora = self.config.use_dora if isinstance(self.lora_config, LoraConfig) else False
             addkeys, misskeys = load_lora_weights(
-                {
-                    self.MODEL_TYPE: (
-                        self.controlnet if self.config.controlnet else self.model
-                    )
-                },
+                {self.MODEL_TYPE: (self.controlnet if self.config.controlnet else self.model)},
                 self.config.init_lora,
                 use_dora=use_dora,
             )
@@ -1724,12 +1465,10 @@ class VideoToTensor:
                 # Convert frame to PIL Image if not already.
                 if not isinstance(frame, Image.Image):
                     frame = Image.fromarray(frame)
-                # Apply the standard ToTensor transform.
                 frame_tensor = transforms.functional.to_tensor(frame)
                 frames.append(frame_tensor)
             return torch.stack(frames)
         elif isinstance(video, list):
-            # If video is a list of frames, process similarly.
             frames = []
             for frame in video:
                 if not isinstance(frame, Image.Image):
@@ -1757,15 +1496,6 @@ class VideoModelFoundation(ImageModelFoundation):
         """
         super().__init__(config, accelerator)
         self.config = config
-        # Optionally, store or initialize text encoders here.
-        # But do NOT automatically do it unless your code requires it.
-
-        # For example, if you have a dictionary of text-encoder descriptors:
-        # self.text_encoders = {
-        #     "encoder1": {"class": MyTextEncoderClass, "attr_name": "text_encoder_1"},
-        #     "encoder2": {"class": AnotherTextEncoder, "attr_name": "text_encoder_2"},
-        # }
-        # The trainer or child class might call self._init_text_encoders() at the right time.
 
     def get_transforms(self, dataset_type: str = "image"):
         return transforms.Compose(
@@ -1776,13 +1506,10 @@ class VideoModelFoundation(ImageModelFoundation):
 
     def expand_sigmas(self, batch):
         if len(batch["latents"].shape) == 5:
-            # ltxvideo and others with 5D tensors need expansion to match dims here i think
             logger.debug(
                 f"Latents shape vs sigmas, timesteps: {batch['latents'].shape}, {batch['sigmas'].shape}, {batch['timesteps'].shape}"
             )
-            batch["sigmas"] = batch["sigmas"].reshape(
-                batch["latents"].shape[0], 1, 1, 1, 1
-            )
+            batch["sigmas"] = batch["sigmas"].reshape(batch["latents"].shape[0], 1, 1, 1, 1)
 
     def apply_i2v_augmentation(self, batch):
         pass
@@ -1794,7 +1521,4 @@ class VideoModelFoundation(ImageModelFoundation):
 
         You can reshape or permute as needed for the underlying model.
         """
-        # Pseudocode for typical flattening:
-        # B, F, C, H, W = tensor.shape
-        # return tensor.view(B * F, C, H, W)
         return tensor

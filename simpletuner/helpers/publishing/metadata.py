@@ -1,13 +1,15 @@
-import os
-import logging
 import json
-import torch
-from simpletuner.helpers.training.state_tracker import StateTracker
+import logging
+import os
 from typing import Union
+
 import numpy as np
-from PIL import Image
+import torch
 from diffusers.utils.export_utils import export_to_gif
+from PIL import Image
+
 from simpletuner.helpers.models.common import ModelFoundation
+from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -173,9 +175,7 @@ def _model_load(args, repo_id: str = None, model=None):
             if args.peft_lora_mode == "singlora":
                 # we'll import the SingLoRA setup function
                 lora_imports += "from peft_singlora import setup_singlora\n"
-                lora_imports += (
-                    "setup_singlora() # overwrites the nn.Linear mapping in PEFT.\n\n"
-                )
+                lora_imports += "setup_singlora() # overwrites the nn.Linear mapping in PEFT.\n\n"
 
             output = (
                 f"{lora_imports}"
@@ -246,7 +246,9 @@ def _pipeline_quanto(args, model):
     was_quantised = "The model was quantised during training, and so it is recommended to do the same during inference time."
     if args.base_model_precision == "no_change":
         comment_character = "#"
-        was_quantised = "The model was not quantised during training, so it is not necessary to quantise it during inference time."
+        was_quantised = (
+            "The model was not quantised during training, so it is not necessary to quantise it during inference time."
+        )
     output = f"""
 ## Optional: quantise the model to save on vram.
 ## Note: {was_quantised}
@@ -268,10 +270,7 @@ def _validation_resolution(args):
         resolutions = validation_resolution_str.split(",")
     for resolution in resolutions:
         if "x" in resolution:
-            return (
-                f"width={resolution.split('x')[0]},\n"
-                f"    height={resolution.split('x')[1]},"
-            )
+            return f"width={resolution.split('x')[0]},\n" f"    height={resolution.split('x')[1]},"
         return f"width={resolution},\n" f"    height={resolution},"
 
 
@@ -470,9 +469,7 @@ def save_model_card(
                 widget_str += "\n  parameters:"
                 widget_str += f"\n    negative_prompt: '{negative_prompt_text}'"
                 widget_str += "\n  output:"
-                widget_str += (
-                    f"\n    url: ./assets/image_{idx}_{sub_idx}.{image_extension}"
-                )
+                widget_str += f"\n    url: ./assets/image_{idx}_{sub_idx}.{image_extension}"
                 idx += 1
                 sub_idx += 1
 

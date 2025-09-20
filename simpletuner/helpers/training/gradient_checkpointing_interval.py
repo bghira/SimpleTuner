@@ -1,10 +1,9 @@
 import torch
 from torch.utils.checkpoint import checkpoint as original_checkpoint
 
-
 # Global variables to keep track of the checkpointing state
 _checkpoint_call_count = 0
-_checkpoint_interval = 4  # You can set this to any interval you prefer
+_checkpoint_interval = 4
 
 
 def reset_checkpoint_counter():
@@ -19,19 +18,15 @@ def set_checkpoint_interval(n):
     _checkpoint_interval = n
 
 
-def checkpoint_wrapper(function, *args, use_reentrant=True, **kwargs):
+def checkpoint_wrapper(function, *args, **kwargs):
     """Wrapper function for torch.utils.checkpoint.checkpoint."""
-    global _checkpoint_call_count, _checkpoint_interval
+    global _checkpoint_call_count
     _checkpoint_call_count += 1
+    use_reentrant = kwargs.pop("use_reentrant", False)
 
-    if (
-        _checkpoint_interval > 0
-        and (_checkpoint_call_count % _checkpoint_interval) == 0
-    ):
+    if _checkpoint_interval > 0 and (_checkpoint_call_count % _checkpoint_interval) == 0:
         # Use the original checkpoint function
-        return original_checkpoint(
-            function, *args, use_reentrant=use_reentrant, **kwargs
-        )
+        return original_checkpoint(function, *args, use_reentrant=use_reentrant, **kwargs)
     else:
         # Skip checkpointing: execute the function directly
         # Do not pass 'use_reentrant' to the function
