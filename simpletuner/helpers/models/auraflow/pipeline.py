@@ -1,4 +1,4 @@
-# Copyright 2024 AuraFlow Authors and The HuggingFace Team. All rights reserved.
+# Copyright 2024 AuraFlow Authors and The HuggingFace Team and 2025 bghira. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,8 +15,8 @@ import inspect
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
-from transformers import T5Tokenizer, UMT5EncoderModel
-
+from diffusers.callbacks import MultiPipelineCallbacks, PipelineCallback
+from diffusers.image_processor import VaeImageProcessor
 from diffusers.loaders.lora_base import (  # noqa
     LORA_WEIGHT_NAME,
     LORA_WEIGHT_NAME_SAFE,
@@ -24,14 +24,9 @@ from diffusers.loaders.lora_base import (  # noqa
     _fetch_state_dict,
     _load_lora_into_text_encoder,
 )
-from diffusers.callbacks import MultiPipelineCallbacks, PipelineCallback
-from diffusers.image_processor import VaeImageProcessor
 from diffusers.models import AuraFlowTransformer2DModel, AutoencoderKL
-from diffusers.models.attention_processor import (
-    AttnProcessor2_0,
-    FusedAttnProcessor2_0,
-    XFormersAttnProcessor,
-)
+from diffusers.models.attention_processor import AttnProcessor2_0, FusedAttnProcessor2_0, XFormersAttnProcessor
+from diffusers.pipelines.pipeline_utils import DiffusionPipeline, ImagePipelineOutput
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from diffusers.utils import (
     USE_PEFT_BACKEND,
@@ -42,8 +37,7 @@ from diffusers.utils import (
     unscale_lora_layers,
 )
 from diffusers.utils.torch_utils import randn_tensor
-from diffusers.pipelines.pipeline_utils import DiffusionPipeline, ImagePipelineOutput
-
+from transformers import T5Tokenizer, UMT5EncoderModel
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
@@ -79,37 +73,10 @@ def retrieve_timesteps(
     sigmas: Optional[List[float]] = None,
     **kwargs,
 ):
-    r"""
-    Calls the scheduler's `set_timesteps` method and retrieves timesteps from the scheduler after the call. Handles
-    custom timesteps. Any kwargs will be supplied to `scheduler.set_timesteps`.
-
-    Args:
-        scheduler (`SchedulerMixin`):
-            The scheduler to get timesteps from.
-        num_inference_steps (`int`):
-            The number of diffusion steps used when generating samples with a pre-trained model. If used, `timesteps`
-            must be `None`.
-        device (`str` or `torch.device`, *optional*):
-            The device to which the timesteps should be moved to. If `None`, the timesteps are not moved.
-        timesteps (`List[int]`, *optional*):
-            Custom timesteps used to override the timestep spacing strategy of the scheduler. If `timesteps` is passed,
-            `num_inference_steps` and `sigmas` must be `None`.
-        sigmas (`List[float]`, *optional*):
-            Custom sigmas used to override the timestep spacing strategy of the scheduler. If `sigmas` is passed,
-            `num_inference_steps` and `timesteps` must be `None`.
-
-    Returns:
-        `Tuple[torch.Tensor, int]`: A tuple where the first element is the timestep schedule from the scheduler and the
-        second element is the number of inference steps.
-    """
     if timesteps is not None and sigmas is not None:
-        raise ValueError(
-            "Only one of `timesteps` or `sigmas` can be passed. Please choose one to set custom values"
-        )
+        raise ValueError("Only one of `timesteps` or `sigmas` can be passed. Please choose one to set custom values")
     if timesteps is not None:
-        accepts_timesteps = "timesteps" in set(
-            inspect.signature(scheduler.set_timesteps).parameters.keys()
-        )
+        accepts_timesteps = "timesteps" in set(inspect.signature(scheduler.set_timesteps).parameters.keys())
         if not accepts_timesteps:
             raise ValueError(
                 f"The current scheduler class {scheduler.__class__}'s `set_timesteps` does not support custom"
@@ -119,9 +86,7 @@ def retrieve_timesteps(
         timesteps = scheduler.timesteps
         num_inference_steps = len(timesteps)
     elif sigmas is not None:
-        accept_sigmas = "sigmas" in set(
-            inspect.signature(scheduler.set_timesteps).parameters.keys()
-        )
+        accept_sigmas = "sigmas" in set(inspect.signature(scheduler.set_timesteps).parameters.keys())
         if not accept_sigmas:
             raise ValueError(
                 f"The current scheduler class {scheduler.__class__}'s `set_timesteps` does not support custom"
@@ -136,22 +101,20 @@ def retrieve_timesteps(
     return timesteps, num_inference_steps
 
 
-# Function from SD3 for CFG Zero* optimization
+# cfg zero* optimization from sd3
 def optimized_scale(positive_flat, negative_flat):
-    # Compute the norm of the positive and negative prompts
     positive_norm = torch.norm(positive_flat, dim=1, keepdim=True)
     negative_norm = torch.norm(negative_flat, dim=1, keepdim=True)
 
-    # Compute the cosine similarity between positive and negative prompts
     pos_dot_neg = torch.sum(positive_flat * negative_flat, dim=1, keepdim=True)
     similarity = pos_dot_neg / (positive_norm * negative_norm + 1e-8)
 
-    # Compute the scaling factors
     alpha = torch.clamp(similarity, 0, 1)
     return alpha
 
 
 import os
+
 import PIL
 from diffusers.utils import (
     USE_PEFT_BACKEND,
@@ -183,10 +146,6 @@ if is_torch_version(">=", "1.9.0"):
 
 
 class AuraFlowLoraLoaderMixin(LoraBaseMixin):
-    r"""
-    Load LoRA layers into [`AuraFlowTransformer2DModel`] and optionally [`ControlNetModel`].
-    Specific to [`AuraFlowPipeline`].
-    """
 
     _lora_loadable_modules = ["transformer", "controlnet"]
     transformer_name = TRANSFORMER_NAME
@@ -200,53 +159,6 @@ class AuraFlowLoraLoaderMixin(LoraBaseMixin):
         pretrained_model_name_or_path_or_dict: Union[str, Dict[str, torch.Tensor]],
         **kwargs,
     ):
-        r"""
-        Return state dict for lora weights and the network alphas.
-
-        <Tip warning={true}>
-
-        We support loading A1111 formatted LoRA checkpoints in a limited capacity.
-
-        This function is experimental and might change in the future.
-
-        </Tip>
-
-        Parameters:
-            pretrained_model_name_or_path_or_dict (`str` or `os.PathLike` or `dict`):
-                Can be either:
-
-                    - A string, the *model id* (for example `google/ddpm-celebahq-256`) of a pretrained model hosted on
-                      the Hub.
-                    - A path to a *directory* (for example `./my_model_directory`) containing the model weights saved
-                      with [`ModelMixin.save_pretrained`].
-                    - A [torch state
-                      dict](https://pytorch.org/tutorials/beginner/saving_loading_models.html#what-is-a-state-dict).
-
-            cache_dir (`Union[str, os.PathLike]`, *optional*):
-                Path to a directory where a downloaded pretrained model configuration is cached if the standard cache
-                is not used.
-            force_download (`bool`, *optional*, defaults to `False`):
-                Whether or not to force the (re-)download of the model weights and configuration files, overriding the
-                cached versions if they exist.
-
-            proxies (`Dict[str, str]`, *optional*):
-                A dictionary of proxy servers to use by protocol or endpoint, for example, `{'http': 'foo.bar:3128',
-                'http://hostname': 'foo.bar:4012'}`. The proxies are used on each request.
-            local_files_only (`bool`, *optional*, defaults to `False`):
-                Whether to only load local model weights and configuration files or not. If set to `True`, the model
-                won't be downloaded from the Hub.
-            token (`str` or *bool*, *optional*):
-                The token to use as HTTP bearer authorization for remote files. If `True`, the token generated from
-                `diffusers-cli login` (stored in `~/.huggingface`) is used.
-            revision (`str`, *optional*, defaults to `"main"`):
-                The specific model version to use. It can be a branch name, a tag name, a commit id, or any identifier
-                allowed by Git.
-            subfolder (`str`, *optional*, defaults to `""`):
-                The subfolder location of a model file within a larger model repository on the Hub or locally.
-
-        """
-        # Load the main state dict first which has the LoRA layers for either of
-        # transformer and text encoder or both.
         cache_dir = kwargs.pop("cache_dir", None)
         force_download = kwargs.pop("force_download", False)
         proxies = kwargs.pop("proxies", None)
@@ -297,31 +209,10 @@ class AuraFlowLoraLoaderMixin(LoraBaseMixin):
         adapter_name=None,
         **kwargs,
     ):
-        """
-        Load LoRA weights specified in `pretrained_model_name_or_path_or_dict` into `self.transformer` and
-        optionally `self.controlnet`. All kwargs are forwarded to `self.lora_state_dict`. See
-        [`~loaders.StableDiffusionLoraLoaderMixin.lora_state_dict`] for more details on how the state dict is loaded.
-        See [`~loaders.StableDiffusionLoraLoaderMixin.load_lora_into_transformer`] for more details on how the state
-        dict is loaded into `self.transformer`.
-
-        Parameters:
-            pretrained_model_name_or_path_or_dict (`str` or `os.PathLike` or `dict`):
-                See [`~loaders.StableDiffusionLoraLoaderMixin.lora_state_dict`].
-            adapter_name (`str`, *optional*):
-                Adapter name to be used for referencing the loaded adapter model. If not specified, it will use
-                `default_{i}` where i is the total number of adapters being loaded.
-            low_cpu_mem_usage (`bool`, *optional*):
-                Speed up model loading by only loading the pretrained LoRA weights and not initializing the random
-                weights.
-            kwargs (`dict`, *optional*):
-                See [`~loaders.StableDiffusionLoraLoaderMixin.lora_state_dict`].
-        """
         if not USE_PEFT_BACKEND:
             raise ValueError("PEFT backend is required for this method.")
 
-        low_cpu_mem_usage = kwargs.pop(
-            "low_cpu_mem_usage", _LOW_CPU_MEM_USAGE_DEFAULT_LORA
-        )
+        low_cpu_mem_usage = kwargs.pop("low_cpu_mem_usage", _LOW_CPU_MEM_USAGE_DEFAULT_LORA)
         if low_cpu_mem_usage and is_peft_version("<", "0.13.0"):
             raise ValueError(
                 "`low_cpu_mem_usage=True` is not compatible with this `peft` version. Please update it with `pip install -U peft`."
@@ -329,14 +220,10 @@ class AuraFlowLoraLoaderMixin(LoraBaseMixin):
 
         # if a dict is passed, copy it instead of modifying it inplace
         if isinstance(pretrained_model_name_or_path_or_dict, dict):
-            pretrained_model_name_or_path_or_dict = (
-                pretrained_model_name_or_path_or_dict.copy()
-            )
+            pretrained_model_name_or_path_or_dict = pretrained_model_name_or_path_or_dict.copy()
 
         # First, ensure that the checkpoint is a compatible one and can be successfully loaded.
-        state_dict = self.lora_state_dict(
-            pretrained_model_name_or_path_or_dict, **kwargs
-        )
+        state_dict = self.lora_state_dict(pretrained_model_name_or_path_or_dict, **kwargs)
 
         is_correct_format = all("lora" in key for key in state_dict.keys())
         if not is_correct_format:
@@ -357,11 +244,7 @@ class AuraFlowLoraLoaderMixin(LoraBaseMixin):
         if transformer_state_dict:
             self.load_lora_into_transformer(
                 transformer_state_dict,
-                transformer=(
-                    getattr(self, self.transformer_name)
-                    if not hasattr(self, "transformer")
-                    else self.transformer
-                ),
+                transformer=(getattr(self, self.transformer_name) if not hasattr(self, "transformer") else self.transformer),
                 adapter_name=adapter_name,
                 _pipeline=self,
                 low_cpu_mem_usage=low_cpu_mem_usage,
@@ -453,38 +336,18 @@ class AuraFlowLoraLoaderMixin(LoraBaseMixin):
         _pipeline=None,
         low_cpu_mem_usage=False,
     ):
-        """
-        This will load the LoRA layers specified in `state_dict` into `controlnet`.
-
-        Parameters:
-            state_dict (`dict`):
-                A standard state dict containing the lora layer parameters.
-            controlnet:
-                The ControlNet model to load the LoRA layers into.
-            adapter_name (`str`, *optional*):
-                Adapter name to be used for referencing the loaded adapter model.
-            low_cpu_mem_usage (`bool`, *optional*):
-                Speed up model loading by only loading the pretrained LoRA weights.
-        """
         if low_cpu_mem_usage and is_peft_version("<", "0.13.0"):
             raise ValueError(
                 "`low_cpu_mem_usage=True` is not compatible with this `peft` version. Please update it with `pip install -U peft`."
             )
 
-        # Extract controlnet keys
         keys = list(state_dict.keys())
         controlnet_keys = [k for k in keys if k.startswith(cls.controlnet_name)]
-        state_dict = {
-            k.replace(f"{cls.controlnet_name}.", ""): v
-            for k, v in state_dict.items()
-            if k in controlnet_keys
-        }
+        state_dict = {k.replace(f"{cls.controlnet_name}.", ""): v for k, v in state_dict.items() if k in controlnet_keys}
 
         if len(state_dict.keys()) > 0:
-            # Load the layers corresponding to ControlNet.
             logger.info(f"Loading {cls.controlnet_name}.")
 
-            # Check if controlnet has load_lora_adapter method
             if hasattr(controlnet, "load_lora_adapter"):
                 controlnet.load_lora_adapter(
                     state_dict,
@@ -494,10 +357,9 @@ class AuraFlowLoraLoaderMixin(LoraBaseMixin):
                     low_cpu_mem_usage=low_cpu_mem_usage,
                 )
             else:
-                # Fallback for models that use a different loading mechanism
+                # fallback mechanism
                 logger.warning(
-                    f"ControlNet does not have load_lora_adapter method. "
-                    f"Attempting to use load_attn_procs if available."
+                    f"ControlNet does not have load_lora_adapter method. " f"Attempting to use load_attn_procs if available."
                 )
                 if hasattr(controlnet, "load_attn_procs"):
                     controlnet.load_attn_procs(
@@ -549,19 +411,13 @@ class AuraFlowLoraLoaderMixin(LoraBaseMixin):
         state_dict = {}
 
         if not (transformer_lora_layers or controlnet_lora_layers):
-            raise ValueError(
-                "You must pass at least one of `transformer_lora_layers` or `controlnet_lora_layers`."
-            )
+            raise ValueError("You must pass at least one of `transformer_lora_layers` or `controlnet_lora_layers`.")
 
         if transformer_lora_layers:
-            state_dict.update(
-                cls.pack_weights(transformer_lora_layers, cls.transformer_name)
-            )
+            state_dict.update(cls.pack_weights(transformer_lora_layers, cls.transformer_name))
 
         if controlnet_lora_layers:
-            state_dict.update(
-                cls.pack_weights(controlnet_lora_layers, cls.controlnet_name)
-            )
+            state_dict.update(cls.pack_weights(controlnet_lora_layers, cls.controlnet_name))
 
         # Save the model
         cls.write_lora_layers(
@@ -622,9 +478,7 @@ class AuraFlowLoraLoaderMixin(LoraBaseMixin):
         )
 
     # Copied from diffusers.loaders.lora_pipeline.SanaLoraLoaderMixin.unfuse_lora
-    def unfuse_lora(
-        self, components: List[str] = ["transformer", "text_encoder"], **kwargs
-    ):
+    def unfuse_lora(self, components: List[str] = ["transformer", "text_encoder"], **kwargs):
         r"""
         Reverses the effect of
         [`pipe.fuse_lora()`](https://huggingface.co/docs/diffusers/main/en/api/loaders#diffusers.loaders.LoraBaseMixin.fuse_lora).
@@ -686,15 +540,9 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
             scheduler=scheduler,
         )
 
-        self.vae_scale_factor = (
-            2 ** (len(self.vae.config.block_out_channels) - 1)
-            if getattr(self, "vae", None)
-            else 8
-        )
+        self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1) if getattr(self, "vae", None) else 8
         self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor)
-        self.patch_size = (
-            2  # AuraFlow default patch size (similar to SD3's patch_size attribute)
-        )
+        self.patch_size = 2  # AuraFlow default patch size (similar to SD3's patch_size attribute)
         self._interrupt = False  # Adding interrupt property for compatibility with SD3
 
     def check_inputs(
@@ -709,18 +557,14 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
         negative_prompt_attention_mask=None,
         callback_on_step_end_tensor_inputs=None,
     ):
-        if (
-            height % (self.vae_scale_factor * self.patch_size) != 0
-            or width % (self.vae_scale_factor * self.patch_size) != 0
-        ):
+        if height % (self.vae_scale_factor * self.patch_size) != 0 or width % (self.vae_scale_factor * self.patch_size) != 0:
             raise ValueError(
                 f"`height` and `width` have to be divisible by {self.vae_scale_factor * self.patch_size} but are {height} and {width}."
                 f"You can use height {height - height % (self.vae_scale_factor * self.patch_size)} and width {width - width % (self.vae_scale_factor * self.patch_size)}."
             )
 
         if callback_on_step_end_tensor_inputs is not None and not all(
-            k in self._callback_tensor_inputs
-            for k in callback_on_step_end_tensor_inputs
+            k in self._callback_tensor_inputs for k in callback_on_step_end_tensor_inputs
         ):
             raise ValueError(
                 f"`callback_on_step_end_tensor_inputs` has to be in {self._callback_tensor_inputs}, but found {[k for k in callback_on_step_end_tensor_inputs if k not in self._callback_tensor_inputs]}"
@@ -734,12 +578,8 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
             raise ValueError(
                 "Provide either `prompt` or `prompt_embeds`. Cannot leave both `prompt` and `prompt_embeds` undefined."
             )
-        elif prompt is not None and (
-            not isinstance(prompt, str) and not isinstance(prompt, list)
-        ):
-            raise ValueError(
-                f"`prompt` has to be of type `str` or `list` but is {type(prompt)}"
-            )
+        elif prompt is not None and (not isinstance(prompt, str) and not isinstance(prompt, list)):
+            raise ValueError(f"`prompt` has to be of type `str` or `list` but is {type(prompt)}")
 
         if prompt is not None and negative_prompt_embeds is not None:
             raise ValueError(
@@ -754,17 +594,10 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
             )
 
         if prompt_embeds is not None and prompt_attention_mask is None:
-            raise ValueError(
-                "Must provide `prompt_attention_mask` when specifying `prompt_embeds`."
-            )
+            raise ValueError("Must provide `prompt_attention_mask` when specifying `prompt_embeds`.")
 
-        if (
-            negative_prompt_embeds is not None
-            and negative_prompt_attention_mask is None
-        ):
-            raise ValueError(
-                "Must provide `negative_prompt_attention_mask` when specifying `negative_prompt_embeds`."
-            )
+        if negative_prompt_embeds is not None and negative_prompt_attention_mask is None:
+            raise ValueError("Must provide `negative_prompt_attention_mask` when specifying `negative_prompt_embeds`.")
 
         if prompt_embeds is not None and negative_prompt_embeds is not None:
             if prompt_embeds.shape != negative_prompt_embeds.shape:
@@ -850,16 +683,10 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
                 return_tensors="pt",
             )
             text_input_ids = text_inputs["input_ids"]
-            untruncated_ids = self.tokenizer(
-                prompt, padding="longest", return_tensors="pt"
-            ).input_ids
+            untruncated_ids = self.tokenizer(prompt, padding="longest", return_tensors="pt").input_ids
 
-            if untruncated_ids.shape[-1] >= text_input_ids.shape[
-                -1
-            ] and not torch.equal(text_input_ids, untruncated_ids):
-                removed_text = self.tokenizer.batch_decode(
-                    untruncated_ids[:, max_length - 1 : -1]
-                )
+            if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(text_input_ids, untruncated_ids):
+                removed_text = self.tokenizer.batch_decode(untruncated_ids[:, max_length - 1 : -1])
                 logger.warning(
                     "The following part of your input was truncated because T5 can only handle sequences up to"
                     f" {max_length} tokens: {removed_text}"
@@ -882,20 +709,14 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
         bs_embed, seq_len, _ = prompt_embeds.shape
         # duplicate text embeddings and attention mask for each generation per prompt, using mps friendly method
         prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
-        prompt_embeds = prompt_embeds.view(
-            bs_embed * num_images_per_prompt, seq_len, -1
-        )
+        prompt_embeds = prompt_embeds.view(bs_embed * num_images_per_prompt, seq_len, -1)
         prompt_attention_mask = prompt_attention_mask.reshape(bs_embed, -1)
         prompt_attention_mask = prompt_attention_mask.repeat(num_images_per_prompt, 1)
 
         # get unconditional embeddings for classifier free guidance
         if do_classifier_free_guidance and negative_prompt_embeds is None:
             negative_prompt = negative_prompt or ""
-            uncond_tokens = (
-                [negative_prompt] * batch_size
-                if isinstance(negative_prompt, str)
-                else negative_prompt
-            )
+            uncond_tokens = [negative_prompt] * batch_size if isinstance(negative_prompt, str) else negative_prompt
             max_length = prompt_embeds.shape[1]
             uncond_input = self.tokenizer(
                 uncond_tokens,
@@ -907,35 +728,21 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
             uncond_input = {k: v.to(device) for k, v in uncond_input.items()}
             negative_prompt_embeds = self.text_encoder(**uncond_input)[0]
             negative_prompt_attention_mask = (
-                uncond_input["attention_mask"]
-                .unsqueeze(-1)
-                .expand(negative_prompt_embeds.shape)
+                uncond_input["attention_mask"].unsqueeze(-1).expand(negative_prompt_embeds.shape)
             )
-            negative_prompt_embeds = (
-                negative_prompt_embeds * negative_prompt_attention_mask
-            )
+            negative_prompt_embeds = negative_prompt_embeds * negative_prompt_attention_mask
 
         if do_classifier_free_guidance:
             # duplicate unconditional embeddings for each generation per prompt, using mps friendly method
             seq_len = negative_prompt_embeds.shape[1]
 
-            negative_prompt_embeds = negative_prompt_embeds.to(
-                dtype=dtype, device=device
-            )
+            negative_prompt_embeds = negative_prompt_embeds.to(dtype=dtype, device=device)
 
-            negative_prompt_embeds = negative_prompt_embeds.repeat(
-                1, num_images_per_prompt, 1
-            )
-            negative_prompt_embeds = negative_prompt_embeds.view(
-                batch_size * num_images_per_prompt, seq_len, -1
-            )
+            negative_prompt_embeds = negative_prompt_embeds.repeat(1, num_images_per_prompt, 1)
+            negative_prompt_embeds = negative_prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
 
-            negative_prompt_attention_mask = negative_prompt_attention_mask.reshape(
-                bs_embed, -1
-            )
-            negative_prompt_attention_mask = negative_prompt_attention_mask.repeat(
-                num_images_per_prompt, 1
-            )
+            negative_prompt_attention_mask = negative_prompt_attention_mask.reshape(bs_embed, -1)
+            negative_prompt_attention_mask = negative_prompt_attention_mask.repeat(num_images_per_prompt, 1)
         else:
             negative_prompt_embeds = None
             negative_prompt_attention_mask = None
@@ -1039,9 +846,7 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
 
         if image is None or is_strength_max:
             # Generate random latents if no image provided or strength is 1.0
-            latents = randn_tensor(
-                shape, generator=generator, device=device, dtype=dtype
-            )
+            latents = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
 
             # If image is provided but strength is 1.0, we still need to encode the image
             # but we'll apply full noise to it, so the result will be just noise
@@ -1054,9 +859,7 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
             image_latents = image_latents.to(device=device, dtype=dtype)
 
             # Add noise to image latents based on timestep
-            noise = randn_tensor(
-                image_latents.shape, generator=generator, device=device, dtype=dtype
-            )
+            noise = randn_tensor(image_latents.shape, generator=generator, device=device, dtype=dtype)
 
             # Apply noise to latents according to timestep
             latents = self.scheduler.add_noise(image_latents, noise, timestep)
@@ -1084,12 +887,8 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
         image_latents = self.vae.encode(image).latent_dist.sample(generator=generator)
 
         # Scale and shift latents according to VAE configuration
-        if hasattr(self.vae.config, "scaling_factor") and hasattr(
-            self.vae.config, "shift_factor"
-        ):
-            image_latents = (
-                image_latents - self.vae.config.shift_factor
-            ) * self.vae.config.scaling_factor
+        if hasattr(self.vae.config, "scaling_factor") and hasattr(self.vae.config, "shift_factor"):
+            image_latents = (image_latents - self.vae.config.shift_factor) * self.vae.config.scaling_factor
         else:
             # Fallback for older VAE models
             image_latents = image_latents * 0.18215
@@ -1136,9 +935,7 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
         use_zero_init: Optional[bool] = True,
         zero_steps: Optional[int] = 0,
         # New img2img parameters
-        image: Optional[
-            Union[torch.FloatTensor, PIL.Image.Image, List[PIL.Image.Image]]
-        ] = None,
+        image: Optional[Union[torch.FloatTensor, PIL.Image.Image, List[PIL.Image.Image]]] = None,
         strength: Optional[float] = 1.0,
     ) -> Union[ImagePipelineOutput, Tuple]:
         r"""
@@ -1237,7 +1034,6 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
                 `strength` = 0 means the input image is returned as-is, while `strength` = 1 means the input image is
                 completely transformed according to the prompt.
         """
-        # 1. Check inputs. Raise error if not correct
         height = height or self.transformer.config.sample_size * self.vae_scale_factor
         width = width or self.transformer.config.sample_size * self.vae_scale_factor
 
@@ -1253,30 +1049,17 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
             callback_on_step_end_tensor_inputs=callback_on_step_end_tensor_inputs,
         )
 
-        # 1.1 Check image and strength inputs for img2img
         if strength < 0 or strength > 1:
-            raise ValueError(
-                f"The value of strength should be in [0.0, 1.0] but is {strength}"
-            )
+            raise ValueError(f"The value of strength should be in [0.0, 1.0] but is {strength}")
 
-        if image is not None and not isinstance(
-            image, (torch.Tensor, PIL.Image.Image, list)
-        ):
-            raise ValueError(
-                f"image must be of type `torch.Tensor`, `PIL.Image.Image` or list but is {type(image)}"
-            )
-
-        if image is not None and isinstance(image, list) and len(image) != batch_size:
-            raise ValueError(
-                f"If image is a list, it must have the same length as the batch size {batch_size}, but got {len(image)} images."
-            )
+        if image is not None and not isinstance(image, (torch.Tensor, PIL.Image.Image, list)):
+            raise ValueError(f"image must be of type `torch.Tensor`, `PIL.Image.Image` or list but is {type(image)}")
 
         self._guidance_scale = guidance_scale
         self._attention_kwargs = attention_kwargs
         self._skip_layer_guidance_scale = skip_layer_guidance_scale
         self._interrupt = False  # Initialize interrupt property
 
-        # 2. Determine batch size.
         if prompt is not None and isinstance(prompt, str):
             batch_size = 1
         elif prompt is not None and isinstance(prompt, list):
@@ -1284,19 +1067,16 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
         else:
             batch_size = prompt_embeds.shape[0]
 
-        device = self.transformer.device
-        lora_scale = (
-            self.attention_kwargs.get("scale", None)
-            if self.attention_kwargs is not None
-            else None
-        )
+        if image is not None and isinstance(image, list) and len(image) != batch_size:
+            raise ValueError(
+                f"If image is a list, it must have the same image count as the number of prompts, but got {len(image)} images."
+            )
 
-        # here `guidance_scale` is defined analog to the guidance weight `w` of equation (2)
-        # of the Imagen paper: https://arxiv.org/pdf/2205.11487.pdf . `guidance_scale = 1`
-        # corresponds to doing no classifier free guidance.
+        device = self.transformer.device
+        lora_scale = self.attention_kwargs.get("scale", None) if self.attention_kwargs is not None else None
+
         do_classifier_free_guidance = guidance_scale > 1.0
 
-        # 3. Encode input prompt
         (
             prompt_embeds,
             prompt_attention_mask,
@@ -1318,22 +1098,17 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
 
         if do_classifier_free_guidance:
             if skip_guidance_layers is not None:
-                # Store original prompt embeds for skip layer guidance
                 original_prompt_embeds = prompt_embeds
             prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
 
-        # 4. Prepare timesteps
-        # Handle dynamic shifting if needed
+        # handle dynamic shifting if needed
         scheduler_kwargs = {}
         if (
             hasattr(self.scheduler.config, "use_dynamic_shifting")
             and self.scheduler.config.get("use_dynamic_shifting", None)
             and mu is None
         ):
-            _, _, height, width = (
-                latents.shape if latents is not None else (None, None, height, width)
-            )
-            # If dynamic shifting is supported, calculate mu based on image dimensions
+            _, _, height, width = latents.shape if latents is not None else (None, None, height, width)
             if hasattr(self.scheduler.config, "base_image_seq_len"):
                 image_seq_len = (height // self.patch_size) * (width // self.patch_size)
                 mu = self._calculate_shift(
@@ -1356,25 +1131,18 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
             **scheduler_kwargs,
         )
 
-        # 5. Set timesteps for img2img if needed
-        # Img2img: Modify timestep sequence based on strength
+        # img2img: modify timestep sequence based on strength
         if image is not None and strength < 1.0:
-            # Get the original timestep to start from based on strength
-            init_timestep = min(
-                int(num_inference_steps * (1.0 - strength)), num_inference_steps
-            )
+            init_timestep = min(int(num_inference_steps * (1.0 - strength)), num_inference_steps)
             t_start = max(num_inference_steps - init_timestep, 0)
 
-            # Get the corresponding timestep value
             timesteps = timesteps[t_start:]
             num_inference_steps = len(timesteps)
 
-            # Get starting timestep for prepare_latents
             timestep_for_latents = timesteps[0]
         else:
             timestep_for_latents = None
 
-        # 6. Prepare latents.
         latent_channels = self.transformer.config.in_channels
         latents = self.prepare_latents(
             batch_size * num_images_per_prompt,
@@ -1390,27 +1158,19 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
             is_strength_max=strength >= 1.0,
         )
 
-        # 7. Denoising loop
-        num_warmup_steps = max(
-            len(timesteps) - num_inference_steps * self.scheduler.order, 0
-        )
+        num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
         self._num_timesteps = len(timesteps)
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 if self.interrupt:
                     continue
 
-                # expand the latents if we are doing classifier free guidance
-                latent_model_input = (
-                    torch.cat([latents] * 2) if do_classifier_free_guidance else latents
-                )
+                latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
 
-                # aura use timestep value between 0 and 1, with t=1 as noise and t=0 as the image
-                # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
+                # aura timesteps: t=1 noise, t=0 image
                 timestep = torch.tensor([t / 1000]).expand(latent_model_input.shape[0])
                 timestep = timestep.to(latents.device, dtype=latents.dtype)
 
-                # predict noise model_output
                 noise_pred = self.transformer(
                     latent_model_input,
                     encoder_hidden_states=prompt_embeds,
@@ -1419,12 +1179,10 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
                     # attention_kwargs=self.attention_kwargs,
                 )[0]
 
-                # perform guidance
                 if do_classifier_free_guidance:
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
 
                     if use_cfg_zero_star:
-                        # CFG Zero* optimization from SD3
                         positive_flat = noise_pred_text.view(batch_size, -1)
                         negative_flat = noise_pred_uncond.view(batch_size, -1)
 
@@ -1439,12 +1197,8 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
                                 noise_pred_text - noise_pred_uncond * alpha
                             )
                     else:
-                        # Standard CFG
-                        noise_pred = noise_pred_uncond + guidance_scale * (
-                            noise_pred_text - noise_pred_uncond
-                        )
+                        noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
-                    # Skip layer guidance (SLG) implementation
                     should_skip_layers = (
                         True
                         if skip_guidance_layers is not None
@@ -1454,17 +1208,11 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
                     )
 
                     if should_skip_layers:
-                        # Only run inference on the original prompt with skip_layers
-                        timestep_single = torch.tensor([t / 1000]).expand(
-                            latents.shape[0]
-                        )
-                        timestep_single = timestep_single.to(
-                            latents.device, dtype=latents.dtype
-                        )
+                        timestep_single = torch.tensor([t / 1000]).expand(latents.shape[0])
+                        timestep_single = timestep_single.to(latents.device, dtype=latents.dtype)
 
                         latent_model_input_single = latents
 
-                        # Add skip_layers parameter to transformer call
                         noise_pred_skip_layers = self.transformer(
                             latent_model_input_single,
                             encoder_hidden_states=original_prompt_embeds,
@@ -1474,23 +1222,17 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
                             skip_layers=skip_guidance_layers,
                         )[0]
 
-                        # Apply skip layer guidance
                         noise_pred = (
-                            noise_pred
-                            + (noise_pred_text - noise_pred_skip_layers)
-                            * self._skip_layer_guidance_scale
+                            noise_pred + (noise_pred_text - noise_pred_skip_layers) * self._skip_layer_guidance_scale
                         )
 
-                # compute the previous noisy sample x_t -> x_t-1
                 latents_dtype = latents.dtype
-                latents = self.scheduler.step(
-                    noise_pred, t, latents, return_dict=False
-                )[0]
+                latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
 
-                # Handle dtype mismatch that can occur on some platforms
+                # handle dtype mismatch on some platforms
                 if latents.dtype != latents_dtype:
                     if torch.backends.mps.is_available():
-                        # Some platforms (eg. apple mps) misbehave due to a pytorch bug
+                        # apple mps workaround for pytorch bug
                         latents = latents.to(latents_dtype)
 
                 if callback_on_step_end is not None:
@@ -1502,14 +1244,9 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
                     latents = callback_outputs.pop("latents", latents)
                     prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
                     if "negative_prompt_embeds" in callback_outputs:
-                        negative_prompt_embeds = callback_outputs.pop(
-                            "negative_prompt_embeds"
-                        )
+                        negative_prompt_embeds = callback_outputs.pop("negative_prompt_embeds")
 
-                # call the callback, if provided
-                if i == len(timesteps) - 1 or (
-                    (i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0
-                ):
+                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
 
                 if XLA_AVAILABLE:
@@ -1518,35 +1255,26 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
         if output_type == "latent":
             image = latents
         else:
-            # Scale and shift latents according to VAE configuration
             if (
                 hasattr(self.vae.config, "scaling_factor")
                 and hasattr(self.vae.config, "shift_factor")
                 and getattr(self.vae.config, "shift_factor", None) is not None
             ):
-                latents = (
-                    latents / self.vae.config.scaling_factor
-                ) + self.vae.config.shift_factor
+                latents = (latents / self.vae.config.scaling_factor) + self.vae.config.shift_factor
             else:
-                # Fallback for older VAE models
+                # fallback for older vae models
                 latents = latents / self.vae.config.scaling_factor
 
-            # make sure the VAE is in float32 mode, as it overflows in float16
-            needs_upcasting = self.vae.dtype == torch.float16 and getattr(
-                self.vae.config, "force_upcast", False
-            )
+            # vae in float32 mode, overflows in float16
+            needs_upcasting = self.vae.dtype == torch.float16 and getattr(self.vae.config, "force_upcast", False)
             if needs_upcasting:
                 self.upcast_vae()
-                latents = latents.to(
-                    next(iter(self.vae.post_quant_conv.parameters())).dtype
-                )
+                latents = latents.to(next(iter(self.vae.post_quant_conv.parameters())).dtype)
 
-            # Handle special SDPA attention types if available
+            # handle sdpa attention types
             if hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa"):
-                # we have SageAttention loaded. fallback to SDPA for decode.
-                torch.nn.functional.scaled_dot_product_attention = (
-                    torch.nn.functional.scaled_dot_product_attention_sdpa
-                )
+                # sageattention loaded, fallback to sdpa for decode
+                torch.nn.functional.scaled_dot_product_attention = torch.nn.functional.scaled_dot_product_attention_sdpa
 
             image = self.vae.decode(
                 latents.to(device=self.vae.device, dtype=self.vae.dtype),
@@ -1554,14 +1282,11 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
             )[0]
 
             if hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa"):
-                # reenable SageAttention for training.
-                torch.nn.functional.scaled_dot_product_attention = (
-                    torch.nn.functional.scaled_dot_product_attention_sage
-                )
+                # reenable sageattention for training
+                torch.nn.functional.scaled_dot_product_attention = torch.nn.functional.scaled_dot_product_attention_sage
 
             image = self.image_processor.postprocess(image, output_type=output_type)
 
-        # Offload all models
         self.maybe_free_model_hooks()
 
         if not return_dict:

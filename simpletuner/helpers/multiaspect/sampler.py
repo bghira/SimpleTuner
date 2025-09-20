@@ -1,17 +1,19 @@
-import torch
 import logging
-import random
 import os
-from simpletuner.helpers.training.multi_process import rank_info
-from simpletuner.helpers.metadata.backends.base import MetadataBackend
+import random
+
+import torch
+from accelerate.logging import get_logger
+
+from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
+from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.multiaspect.state import BucketStateManager
-from simpletuner.helpers.data_backend.base import BaseDataBackend
-from simpletuner.helpers.training.state_tracker import StateTracker
-from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 from simpletuner.helpers.prompts import PromptHandler
-from accelerate.logging import get_logger
+from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
+from simpletuner.helpers.training.multi_process import rank_info
+from simpletuner.helpers.training.state_tracker import StateTracker
 
 pil_logger = logging.getLogger("PIL.Image")
 pil_logger.setLevel(logging.WARNING)
@@ -89,9 +91,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 "reference_strict",
                 "reference_loose",
             ]:
-                raise ValueError(
-                    f"Unknown conditioning image type: {conditioning_type}"
-                )
+                raise ValueError(f"Unknown conditioning image type: {conditioning_type}")
         self.data_backend = data_backend
         self.source_dataset_id = source_dataset_id
         self.current_bucket = None
@@ -110,9 +110,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.exhausted_buckets = []
         self.buckets = self.load_buckets()
         self.state_manager = BucketStateManager(self.id)
-        self._val_master_list = sorted(
-            sum(self.metadata_backend.aspect_ratio_bucket_indices.values(), [])
-        )
+        self._val_master_list = sorted(sum(self.metadata_backend.aspect_ratio_bucket_indices.values(), []))
 
     def save_state(self, state_path: str):
         """
@@ -138,27 +136,19 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             raise e
         self.exhausted_buckets = []
         if "exhausted_buckets" in previous_state:
-            self.logger.info(
-                f"Previous checkpoint had {len(previous_state['exhausted_buckets'])} exhausted buckets."
-            )
+            self.logger.info(f"Previous checkpoint had {len(previous_state['exhausted_buckets'])} exhausted buckets.")
             self.exhausted_buckets = previous_state["exhausted_buckets"]
         self.current_epoch = 1
         if "current_epoch" in previous_state:
-            self.logger.info(
-                f"Previous checkpoint was on epoch {previous_state['current_epoch']}."
-            )
+            self.logger.info(f"Previous checkpoint was on epoch {previous_state['current_epoch']}.")
             self.current_epoch = previous_state["current_epoch"]
         # Merge seen_images into self.state_manager.seen_images Manager.dict:
         if "seen_images" in previous_state:
-            self.logger.info(
-                f"Previous checkpoint had {len(previous_state['seen_images'])} seen {self.sample_type_strs}."
-            )
+            self.logger.info(f"Previous checkpoint had {len(previous_state['seen_images'])} seen {self.sample_type_strs}.")
             self.metadata_backend.seen_images.update(previous_state["seen_images"])
 
     def load_buckets(self):
-        return list(
-            self.metadata_backend.aspect_ratio_bucket_indices.keys()
-        )  # These keys are a float value, eg. 1.78.
+        return list(self.metadata_backend.aspect_ratio_bucket_indices.keys())  # These keys are a float value, eg. 1.78.
 
     def retrieve_validation_set(self, batch_size: int):
         """
@@ -214,12 +204,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             }
             if self.source_dataset_id is not None:
                 # we'll retrieve captions from the source dataset.
-                training_sample_path = training_sample.training_sample_path(
-                    training_dataset_id=self.source_dataset_id
-                )
-                source_dataset: "MultiAspectSampler" = StateTracker.get_data_backend(
-                    self.source_dataset_id
-                )["sampler"]
+                training_sample_path = training_sample.training_sample_path(training_dataset_id=self.source_dataset_id)
+                source_dataset: "MultiAspectSampler" = StateTracker.get_data_backend(self.source_dataset_id)["sampler"]
                 prompt_kwargs.update(
                     {
                         "caption_strategy": source_dataset.caption_strategy,
@@ -234,9 +220,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.logger.debug(f"Using prompt kwargs: {prompt_kwargs}")
             validation_prompt = PromptHandler.magic_prompt(**prompt_kwargs)
             if type(validation_prompt) == list:
-                self.debug_log(
-                    f"Selecting random prompt from list: {validation_prompt}"
-                )
+                self.debug_log(f"Selecting random prompt from list: {validation_prompt}")
                 validation_prompt = random.choice(validation_prompt)
             results.append(
                 (
@@ -278,18 +262,14 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         if self._val_cursor >= len(self._val_master_list):
             self._val_cursor = 0
             if len(self._val_master_list) == 0:
-                raise MultiDatasetExhausted(
-                    "No validation images available. Please check your dataset."
-                )
+                raise MultiDatasetExhausted("No validation images available. Please check your dataset.")
         path = self._val_master_list[self._val_cursor]
         self._val_cursor = (self._val_cursor + 1) % len(self._val_master_list)
         return path
 
     def _yield_random_image(self):
         bucket = random.choice(self.buckets)
-        image_path = random.choice(
-            self.metadata_backend.aspect_ratio_bucket_indices[bucket]
-        )
+        image_path = random.choice(self.metadata_backend.aspect_ratio_bucket_indices[bucket])
         return image_path
 
     def yield_single_image(self, filepath: str):
@@ -322,19 +302,14 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         return self.buckets.index(str(bucket_name))
 
     def _reset_buckets(self, raise_exhaustion_signal: bool = True):
-        if (
-            len(self.metadata_backend.seen_images) == 0
-            and len(self._get_unseen_images()) == 0
-        ):
+        if len(self.metadata_backend.seen_images) == 0 and len(self._get_unseen_images()) == 0:
             raise Exception(
                 f"No images found in the dataset: {self.metadata_backend.aspect_ratio_bucket_indices}"
                 f"\n-> Unseen {self.sample_type_strs}: {self._get_unseen_images()}"
                 f"\n-> Seen {self.sample_type_strs}: {self.metadata_backend.seen_images}"
             )
         if StateTracker.get_args().print_sampler_statistics:
-            self.logger.info(
-                f"Resetting seen {self.sample_type_str} list and refreshing buckets. State before reset:"
-            )
+            self.logger.info(f"Resetting seen {self.sample_type_str} list and refreshing buckets. State before reset:")
             self.log_state()
         # All buckets are exhausted, so we will move onto the next epoch.
         self.current_epoch += 1
@@ -352,11 +327,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         """
         if bucket and bucket in self.metadata_backend.aspect_ratio_bucket_indices:
             return [
-                (
-                    os.path.join(self.metadata_backend.instance_data_dir, image)
-                    if not image.startswith("http")
-                    else image
-                )
+                (os.path.join(self.metadata_backend.instance_data_dir, image) if not image.startswith("http") else image)
                 for image in self.metadata_backend.aspect_ratio_bucket_indices[bucket]
                 if not self.metadata_backend.is_seen(image)
             ]
@@ -382,10 +353,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         """
         Handle buckets with insufficient images. Return True if we changed or reset the bucket.
         """
-        if (
-            len(self.metadata_backend.aspect_ratio_bucket_indices[bucket])
-            < self.batch_size
-        ):
+        if len(self.metadata_backend.aspect_ratio_bucket_indices[bucket]) < self.batch_size:
             self.debug_log(
                 f"Bucket {bucket} has insufficient ({len(self.metadata_backend.aspect_ratio_bucket_indices[bucket])}) images."
             )
@@ -407,9 +375,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         Get the next bucket excluding the exhausted ones.
         If all buckets are exhausted, first reset the seen {self.sample_type_strs} and exhausted buckets.
         """
-        available_buckets = [
-            bucket for bucket in self.buckets if bucket not in self.exhausted_buckets
-        ]
+        available_buckets = [bucket for bucket in self.buckets if bucket not in self.exhausted_buckets]
         if not available_buckets:
             # Raise MultiDatasetExhausted
             self._reset_buckets()
@@ -456,9 +422,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         if alt_stats:
             # Return an overview instead of a snapshot.
             # Eg. return totals, and not "as it is now"
-            total_image_count = len(self.metadata_backend.seen_images) + len(
-                self._get_unseen_images()
-            )
+            total_image_count = len(self.metadata_backend.seen_images) + len(self._get_unseen_images())
             if self.accelerator.num_processes > 1:
                 # We don't know the direct count without more work, so we'll estimate it here for multi-GPU training.
                 total_image_count *= self.accelerator.num_processes
@@ -534,18 +498,14 @@ class MultiAspectSampler(torch.utils.data.Sampler):
     def _clear_batch_accumulator(self):
         self.batch_accumulator = []
 
-    def get_conditioning_sample(
-        self, original_sample_path: str
-    ) -> TrainingSample | None:
+    def get_conditioning_sample(self, original_sample_path: str) -> TrainingSample | None:
         """
         Given an original dataset sample path, return a TrainingSample
         """
         # strip leading /
         original_sample_path = original_sample_path.lstrip("/")
         if self.metadata_backend.instance_data_dir not in original_sample_path:
-            full_path = os.path.join(
-                self.metadata_backend.instance_data_dir, original_sample_path
-            )
+            full_path = os.path.join(self.metadata_backend.instance_data_dir, original_sample_path)
         else:
             full_path = original_sample_path
         try:
@@ -557,9 +517,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.debug_log(f"Could not fetch conditioning sample from {full_path}.")
             return None
 
-        conditioning_sample_metadata = self.metadata_backend.get_metadata_by_filepath(
-            full_path
-        )
+        conditioning_sample_metadata = self.metadata_backend.get_metadata_by_filepath(full_path)
         conditioning_sample = TrainingSample(
             image=conditioning_sample_data,
             data_backend_id=self.id,
@@ -580,12 +538,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         }
         if self.source_dataset_id is not None and self.caption_strategy is None:
             # we'll retrieve captions from the source dataset.
-            training_sample_path = conditioning_sample.training_sample_path(
-                training_dataset_id=self.source_dataset_id
-            )
-            source_dataset: "MultiAspectSampler" = StateTracker.get_data_backend(
-                self.source_dataset_id
-            )["sampler"]
+            training_sample_path = conditioning_sample.training_sample_path(training_dataset_id=self.source_dataset_id)
+            source_dataset: "MultiAspectSampler" = StateTracker.get_data_backend(self.source_dataset_id)["sampler"]
             prompt_kwargs.update(
                 {
                     "caption_strategy": source_dataset.caption_strategy,
@@ -613,9 +567,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             return samples
 
         # Get sampling mode from args
-        sampling_mode = getattr(
-            StateTracker.get_args(), "conditioning_multidataset_sampling", "combined"
-        )
+        sampling_mode = getattr(StateTracker.get_args(), "conditioning_multidataset_sampling", "combined")
 
         # Override to combined mode for validation to ensure consistency
         is_validation = getattr(self, "_is_validation_pass", False)
@@ -629,13 +581,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             # Random mode: select one conditioning dataset per training sample
             for sample in samples:
                 sample_path: str = sample["image_path"]
-                if (
-                    self.metadata_backend.instance_data_dir is not None
-                    and self.metadata_backend.instance_data_dir != ""
-                ):
-                    sample_path = sample_path.split(
-                        self.metadata_backend.instance_data_dir
-                    )[-1]
+                if self.metadata_backend.instance_data_dir is not None and self.metadata_backend.instance_data_dir != "":
+                    sample_path = sample_path.split(self.metadata_backend.instance_data_dir)[-1]
 
                 # Deterministic selection based on hash of image path and current epoch
                 # This ensures the same image gets the same conditioning dataset within an epoch
@@ -659,32 +606,25 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 else:
                     # Try other datasets if the selected one doesn't have this sample
                     found = False
-                    for fallback_idx, fallback_dataset in enumerate(
-                        conditioning_datasets
-                    ):
+                    for fallback_idx, fallback_dataset in enumerate(conditioning_datasets):
                         if fallback_idx == selected_idx:
                             continue  # Skip the one we already tried
 
                         fallback_sampler = fallback_dataset["sampler"]
-                        conditioning_sample = fallback_sampler.get_conditioning_sample(
-                            sample_path
-                        )
+                        conditioning_sample = fallback_sampler.get_conditioning_sample(sample_path)
                         if conditioning_sample is not None:
                             self.logger.warning(
                                 f"Sample {sample_path} not found in {selected_dataset['id']}, "
                                 f"using fallback from {fallback_dataset['id']}"
                             )
-                            conditioning_sample._source_dataset_id = fallback_dataset[
-                                "id"
-                            ]
+                            conditioning_sample._source_dataset_id = fallback_dataset["id"]
                             outputs.append(conditioning_sample)
                             found = True
                             break
 
                     if not found:
                         self.logger.error(
-                            f"Could not find conditioning sample for {sample_path} "
-                            f"in any conditioning dataset"
+                            f"Could not find conditioning sample for {sample_path} " f"in any conditioning dataset"
                         )
 
         elif sampling_mode == "combined" or len(conditioning_datasets) == 1:
@@ -697,13 +637,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
                 for sample in samples:
                     sample_path: str = sample["image_path"]
-                    if (
-                        self.metadata_backend.instance_data_dir is not None
-                        and self.metadata_backend.instance_data_dir != ""
-                    ):
-                        sample_path = sample_path.split(
-                            self.metadata_backend.instance_data_dir
-                        )[-1]
+                    if self.metadata_backend.instance_data_dir is not None and self.metadata_backend.instance_data_dir != "":
+                        sample_path = sample_path.split(self.metadata_backend.instance_data_dir)[-1]
 
                     conditioning_sample = sampler.get_conditioning_sample(sample_path)
                     if conditioning_sample is not None:
@@ -715,8 +650,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                         missing_samples.append((sample_path, dataset["id"]))
 
                 self.debug_log(
-                    f"Added {dataset_samples_added}/{len(samples)} conditioning samples "
-                    f"from dataset {dataset['id']}"
+                    f"Added {dataset_samples_added}/{len(samples)} conditioning samples " f"from dataset {dataset['id']}"
                 )
 
             # Report missing samples in batch if there are any
@@ -728,14 +662,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
         else:
             raise ValueError(
-                f"Unknown conditioning_multidataset_sampling mode: {sampling_mode}. "
-                "Must be 'random' or 'combined'."
+                f"Unknown conditioning_multidataset_sampling mode: {sampling_mode}. " "Must be 'random' or 'combined'."
             )
 
         # Validate output count
-        expected_conditioning_count = len(samples) * (
-            1 if sampling_mode == "random" else len(conditioning_datasets)
-        )
+        expected_conditioning_count = len(samples) * (1 if sampling_mode == "random" else len(conditioning_datasets))
         actual_conditioning_count = len(outputs) - len(samples)
 
         if actual_conditioning_count != expected_conditioning_count:
@@ -759,9 +690,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             # Loop through all buckets to find one with sufficient images
             for _ in range(len(self.buckets)):
                 self._clear_batch_accumulator()
-                available_images = self._get_unseen_images(
-                    self.buckets[self.current_bucket]
-                )
+                available_images = self._get_unseen_images(self.buckets[self.current_bucket])
                 self.debug_log(
                     f"From {len(self.buckets)} buckets, selected {self.buckets[self.current_bucket]} ({self.buckets[self.current_bucket]}) -> {len(available_images)} available images, and our accumulator has {len(self.batch_accumulator)} images ready for yielding."
                 )
@@ -778,30 +707,18 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     self.debug_log(
                         f"Bucket {self.buckets[self.current_bucket]} has {len(available_images)} available images, but we need {need_image_count} more."
                     )
-                    to_yield = self._yield_n_from_exhausted_bucket(
-                        need_image_count, self.buckets[self.current_bucket]
-                    )
+                    to_yield = self._yield_n_from_exhausted_bucket(need_image_count, self.buckets[self.current_bucket])
                     # add the available images
                     to_yield.extend(
-                        self._validate_and_yield_images_from_samples(
-                            available_images, self.buckets[self.current_bucket]
-                        )
+                        self._validate_and_yield_images_from_samples(available_images, self.buckets[self.current_bucket])
                     )
                 else:
                     all_buckets_exhausted = False  # Found a non-exhausted bucket
-                    samples = random.sample(
-                        available_images, k=min(len(available_images), self.batch_size)
-                    )
-                    to_yield = self._validate_and_yield_images_from_samples(
-                        samples, self.buckets[self.current_bucket]
-                    )
-                self.debug_log(
-                    f"Building batch with {len(self.batch_accumulator)} samples."
-                )
+                    samples = random.sample(available_images, k=min(len(available_images), self.batch_size))
+                    to_yield = self._validate_and_yield_images_from_samples(samples, self.buckets[self.current_bucket])
+                self.debug_log(f"Building batch with {len(self.batch_accumulator)} samples.")
                 if len(self.batch_accumulator) < self.batch_size:
-                    remaining_entries_needed = self.batch_size - len(
-                        self.batch_accumulator
-                    )
+                    remaining_entries_needed = self.batch_size - len(self.batch_accumulator)
                     # Now we'll add only remaining_entries_needed amount to the accumulator:
                     if "target_size" in to_yield[0]:
                         self.debug_log(
@@ -814,9 +731,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     self.debug_log(
                         f"Yielding samples and marking {len(final_yield)} images as seen, we have {len(self.metadata_backend.seen_images.values())} seen {self.sample_type_strs} before adding."
                     )
-                    self.metadata_backend.mark_batch_as_seen(
-                        [instance["image_path"] for instance in final_yield]
-                    )
+                    self.metadata_backend.mark_batch_as_seen([instance["image_path"] for instance in final_yield])
                     # if applicable, we'll append TrainingSample(s) to the end for conditioning inputs.
                     final_yield = self.connect_conditioning_samples(final_yield)
                     yield tuple(final_yield)
@@ -826,9 +741,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     break
 
                 # Update available images after yielding
-                available_images = self._get_unseen_images(
-                    self.buckets[self.current_bucket]
-                )
+                available_images = self._get_unseen_images(self.buckets[self.current_bucket])
                 self.debug_log(
                     f"Bucket {self.buckets[self.current_bucket]} now has {len(available_images)} available images after yielding."
                 )
@@ -857,11 +770,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         multiplier = repeats + 1 if repeats > 0 else 1
 
         total_samples = (
-            sum(
-                len(indices)
-                for indices in self.metadata_backend.aspect_ratio_bucket_indices.values()
-            )
-            * multiplier
+            sum(len(indices) for indices in self.metadata_backend.aspect_ratio_bucket_indices.values()) * multiplier
         )
 
         # Calculate the total number of full batches
@@ -870,9 +779,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         return total_batches
 
     @staticmethod
-    def convert_to_human_readable(
-        aspect_ratio_float: float, bucket: iter, resolution: int = 1024
-    ):
+    def convert_to_human_readable(aspect_ratio_float: float, bucket: iter, resolution: int = 1024):
 
         if aspect_ratio_float < 1:
             ratio_width = resolution

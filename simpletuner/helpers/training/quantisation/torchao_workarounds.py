@@ -1,7 +1,8 @@
-import torchao, torch
-
-from torch import Tensor
 from typing import Optional
+
+import torch
+import torchao
+from torch import Tensor
 from torchao.prototype.quantized_training.int8 import Int8QuantizedTrainingLinearWeight
 
 
@@ -25,28 +26,19 @@ class _Int8WeightOnlyLinear(torch.autograd.Function):
     def backward(ctx, grad_output):
         input, weight = ctx.saved_tensors
 
-        grad_input = (grad_output * weight.scale) @ weight.int_data.to(
-            grad_output.dtype
-        )
+        grad_input = (grad_output * weight.scale) @ weight.int_data.to(grad_output.dtype)
         # print(f"dtypes: grad_output {grad_output.dtype}, input {input.dtype}, weight {weight.dtype}")
         # here is the patch: we will cast the input to the grad_output dtype.
-        grad_weight = grad_output.reshape(-1, weight.shape[0]).T @ input.to(
-            grad_output.dtype
-        ).reshape(-1, weight.shape[1])
-        grad_bias = (
-            grad_output.reshape(-1, weight.shape[0]).sum(0) if ctx.bias else None
-        )
+        grad_weight = grad_output.reshape(-1, weight.shape[0]).T @ input.to(grad_output.dtype).reshape(-1, weight.shape[1])
+        grad_bias = grad_output.reshape(-1, weight.shape[0]).sum(0) if ctx.bias else None
         return grad_input, grad_weight, grad_bias
 
 
 torchao.prototype.quantized_training.int8._Int8WeightOnlyLinear = _Int8WeightOnlyLinear
 
 try:
-    from torchao.prototype.quantized_training.int8 import (
-        Int8QuantizedTrainingLinearWeight,
-        implements,
-    )
     import torch
+    from torchao.prototype.quantized_training.int8 import Int8QuantizedTrainingLinearWeight, implements
 
     # Check if cat is already implemented
     test_tensor = Int8QuantizedTrainingLinearWeight.from_float(torch.randn(2, 2))
@@ -62,9 +54,7 @@ try:
             dim = args[1] if len(args) > 1 else kwargs.get("dim", 0)
 
             # First, check if we have any Int8QuantizedTrainingLinearWeight tensors
-            has_int8 = any(
-                isinstance(t, Int8QuantizedTrainingLinearWeight) for t in tensors
-            )
+            has_int8 = any(isinstance(t, Int8QuantizedTrainingLinearWeight) for t in tensors)
             if not has_int8:
                 # No int8 tensors, use regular cat
                 return func(tensors, dim, **kwargs)
@@ -96,9 +86,7 @@ try:
                 return func(flattened, 0, **kwargs)
 
             # If all have same dimensions, proceed with type checking
-            all_int8 = all(
-                isinstance(t, Int8QuantizedTrainingLinearWeight) for t in tensors
-            )
+            all_int8 = all(isinstance(t, Int8QuantizedTrainingLinearWeight) for t in tensors)
 
             if not all_int8:
                 # Mixed types with same dimensions - dequantize int8 tensors
@@ -134,9 +122,7 @@ try:
                 dequantized = [t.dequantize() for t in tensors]
                 return func(dequantized, dim, **kwargs)
 
-        print(
-            "✓ Monkeypatched aten.cat for Int8QuantizedTrainingLinearWeight - DDP enabled!"
-        )
+        print("✓ Monkeypatched aten.cat for Int8QuantizedTrainingLinearWeight - DDP enabled!")
 
 except ImportError:
     # torchao int8 not being used

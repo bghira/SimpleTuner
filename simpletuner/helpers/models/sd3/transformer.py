@@ -1,4 +1,4 @@
-# Copyright 2024 Stability AI, The HuggingFace Team and The InstantX Team. All rights reserved.
+# Copyright 2024 Stability AI, The HuggingFace Team and The InstantX Team and 2025 bghira. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -28,11 +28,12 @@ from diffusers.models.normalization import AdaLayerNormContinuous
 from diffusers.utils import USE_PEFT_BACKEND, is_torch_version, logging, scale_lora_layers, unscale_lora_layers
 
 from simpletuner.helpers.training.tread import TREADRouter
+from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, PatchableModule
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
-class SD3Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
+class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
     """
     The Transformer model introduced in Stable Diffusion 3.
 
@@ -95,7 +96,7 @@ class SD3Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
 
         # `attention_head_dim` is doubled to account for the mixing.
         # It needs to crafted when we get the actual checkpoints.
-        self.transformer_blocks = nn.ModuleList(
+        self.transformer_blocks = MutableModuleList(
             [
                 JointTransformerBlock(
                     dim=self.inner_dim,
@@ -116,16 +117,9 @@ class SD3Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
         self.gradient_checkpointing_interval = None
 
     def set_gradient_checkpointing_interval(self, interval: int):
-        """
-        Sets the interval for gradient checkpointing.
-
-        Parameters:
-            interval (`int`): The interval for gradient checkpointing.
-        """
         self.gradient_checkpointing_interval = interval
 
     def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
-        """Set the TREAD router and routing configuration."""
         self._tread_router = router
         self._tread_routes = routes
 
@@ -198,7 +192,7 @@ class SD3Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
         for name, module in self.named_children():
             fn_recursive_add_processors(name, module, processors)
 
-        return processors
+        return CallableDict(processors)
 
     # Copied from diffusers.models.unets.unet_2d_condition.UNet2DConditionModel.set_attn_processor
     def set_attn_processor(self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]]):

@@ -1,25 +1,21 @@
-import torch, os, logging
+import logging
+import os
 import random
-from simpletuner.helpers.models.common import (
-    VideoModelFoundation,
-    PredictionTypes,
-    PipelineTypes,
-    ModelTypes,
-)
-from transformers import (
-    T5TokenizerFast,
-    UMT5EncoderModel,
-)
-from torchvision import transforms
-from simpletuner.helpers.models.common import VideoToTensor
+
+import torch
 from diffusers import AutoencoderKLWan
-from simpletuner.helpers.models.wan.transformer import WanTransformer3DModel
+from torchvision import transforms
+from transformers import T5TokenizerFast, UMT5EncoderModel
+
+from simpletuner.helpers.models.common import ModelTypes, PipelineTypes, PredictionTypes, VideoModelFoundation, VideoToTensor
 from simpletuner.helpers.models.wan.pipeline import WanPipeline
+from simpletuner.helpers.models.wan.transformer import WanTransformer3DModel
 
 logger = logging.getLogger(__name__)
+from torch.nn import functional as F
+
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.tread import TREADRouter
-from torch.nn import functional as F
 
 if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -77,9 +73,7 @@ class Wan(VideoModelFoundation):
             or getattr(self.config, "tread_config", None) is {}
             or getattr(self.config, "tread_config", {}).get("routes", None) is None
         ):
-            logger.error(
-                "TREAD training requires you to configure the routes in the TREAD config"
-            )
+            logger.error("TREAD training requires you to configure the routes in the TREAD config")
             import sys
 
             sys.exit(1)
@@ -99,9 +93,7 @@ class Wan(VideoModelFoundation):
         When we're running the pipeline, we'll update the kwargs specifically for this model here.
         """
         # Wan video should max out around 81 frames for efficiency.
-        pipeline_kwargs["num_frames"] = min(
-            81, self.config.validation_num_video_frames or 81
-        )
+        pipeline_kwargs["num_frames"] = min(81, self.config.validation_num_video_frames or 81)
         pipeline_kwargs["output_type"] = "pil"
         # replace embeds with prompt
 
@@ -136,9 +128,7 @@ class Wan(VideoModelFoundation):
             # ),
         }
 
-    def convert_negative_text_embed_for_pipeline(
-        self, text_embedding: torch.Tensor, prompt: str
-    ) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
         return {
             "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
@@ -165,9 +155,7 @@ class Wan(VideoModelFoundation):
         )
         if self.config.t5_padding == "zero":
             # we can zero the padding tokens if we're just going to mask them later anyway.
-            prompt_embeds = prompt_embeds * masks.to(
-                device=prompt_embeds.device
-            ).unsqueeze(-1).expand(prompt_embeds.shape)
+            prompt_embeds = prompt_embeds * masks.to(device=prompt_embeds.device).unsqueeze(-1).expand(prompt_embeds.shape)
 
         return prompt_embeds, masks
 
@@ -176,12 +164,8 @@ class Wan(VideoModelFoundation):
         Modify the existing model_predict to support TREAD with masked training.
         """
         wan_transformer_kwargs = {
-            "hidden_states": prepared_batch["noisy_latents"].to(
-                self.config.weight_dtype
-            ),
-            "encoder_hidden_states": prepared_batch["encoder_hidden_states"].to(
-                self.config.weight_dtype
-            ),
+            "hidden_states": prepared_batch["noisy_latents"].to(self.config.weight_dtype),
+            "encoder_hidden_states": prepared_batch["encoder_hidden_states"].to(self.config.weight_dtype),
             "timestep": prepared_batch["timesteps"],
             "return_dict": False,
         }
@@ -202,9 +186,7 @@ class Wan(VideoModelFoundation):
                 h_tokens = h // 2  # height patches
                 w_tokens = w // 2  # width patches
 
-                mask_vid = prepared_batch[
-                    "conditioning_pixel_values"
-                ]  # (B,C,T,H,W) for video
+                mask_vid = prepared_batch["conditioning_pixel_values"]  # (B,C,T,H,W) for video
                 # fuse channels → single channel, map to [0,1]
                 mask_vid = (mask_vid.mean(1, keepdim=True) + 1) / 2
                 # downsample to match token dimensions
@@ -243,14 +225,10 @@ class Wan(VideoModelFoundation):
             self.config.aspect_bucket_alignment = 32
 
         if self.config.prediction_type is not None:
-            logger.warning(
-                f"{self.NAME} does not support prediction type {self.config.prediction_type}."
-            )
+            logger.warning(f"{self.NAME} does not support prediction type {self.config.prediction_type}.")
 
         if self.config.tokenizer_max_length is not None:
-            logger.warning(
-                f"-!- {self.NAME} supports a max length of 512 tokens, --tokenizer_max_length is ignored -!-"
-            )
+            logger.warning(f"-!- {self.NAME} supports a max length of 512 tokens, --tokenizer_max_length is ignored -!-")
         self.config.tokenizer_max_length = 512
         if self.config.validation_num_inference_steps > 50:
             logger.warning(
@@ -277,19 +255,11 @@ class Wan(VideoModelFoundation):
         if self.config.flow_schedule_shift is not None:
             output_args.append(f"shift={self.config.flow_schedule_shift}")
         if self.config.flow_use_beta_schedule:
-            output_args.append(
-                f"flow_beta_schedule_alpha={self.config.flow_beta_schedule_alpha}"
-            )
-            output_args.append(
-                f"flow_beta_schedule_beta={self.config.flow_beta_schedule_beta}"
-            )
+            output_args.append(f"flow_beta_schedule_alpha={self.config.flow_beta_schedule_alpha}")
+            output_args.append(f"flow_beta_schedule_beta={self.config.flow_beta_schedule_beta}")
         if self.config.t5_padding != "unmodified":
             output_args.append(f"t5_padding={self.config.t5_padding}")
-        output_str = (
-            f" (extra parameters={output_args})"
-            if output_args
-            else " (no special parameters set)"
-        )
+        output_str = f" (extra parameters={output_args})" if output_args else " (no special parameters set)"
 
         return output_str
 

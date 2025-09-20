@@ -1,17 +1,6 @@
-# Note: AuraFlowMultiControlNetModel is defined at the bottom of this file
-# You can move it to a separate file if needed# Copyright 2024 The HuggingFace Team. All rights reserved.
+# Copyright 2025 bghira. All rights reserved.
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# AuraFlowMultiControlNetModel is defined at the bottom of this file
 
 """
 AuraFlow ControlNet Pipeline
@@ -32,26 +21,13 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
-from transformers import T5EncoderModel, T5TokenizerFast
-
 from diffusers.callbacks import MultiPipelineCallbacks, PipelineCallback
 from diffusers.image_processor import PipelineImageInput, VaeImageProcessor
-
-# Note: If AuraFlowLoraLoaderMixin doesn't exist yet, you can use the generic LoraLoaderMixin
-# or create AuraFlowLoraLoaderMixin similar to SD3LoraLoaderMixin
 from diffusers.loaders import FromSingleFileMixin
-from simpletuner.helpers.models.auraflow.pipeline import AuraFlowLoraLoaderMixin
-from diffusers.models import AutoencoderKL, AuraFlowTransformer2DModel
-from diffusers.models.attention_processor import (
-    AttnProcessor2_0,
-    FusedAttnProcessor2_0,
-    XFormersAttnProcessor,
-)
+from diffusers.models import AuraFlowTransformer2DModel, AutoencoderKL
+from diffusers.models.attention_processor import AttnProcessor2_0, FusedAttnProcessor2_0, XFormersAttnProcessor
 from diffusers.models.modeling_utils import ModelMixin
-from simpletuner.helpers.models.auraflow.controlnet import (
-    AuraFlowControlNetModel,
-    AuraFlowControlNetOutput,
-)
+from diffusers.pipelines.pipeline_utils import DiffusionPipeline, ImagePipelineOutput
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from diffusers.utils import (
     USE_PEFT_BACKEND,
@@ -62,8 +38,10 @@ from diffusers.utils import (
     unscale_lora_layers,
 )
 from diffusers.utils.torch_utils import randn_tensor
-from diffusers.pipelines.pipeline_utils import DiffusionPipeline, ImagePipelineOutput
+from transformers import T5EncoderModel, T5TokenizerFast
 
+from simpletuner.helpers.models.auraflow.controlnet import AuraFlowControlNetModel, AuraFlowControlNetOutput
+from simpletuner.helpers.models.auraflow.pipeline import AuraFlowLoraLoaderMixin
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
@@ -91,7 +69,7 @@ EXAMPLE_DOC_STRING = """
         ...     "fal/AuraFlow", controlnet=controlnet, torch_dtype=torch.float16
         ... )
         >>> pipe.to("cuda")
-        
+
         >>> control_image = load_image(
         ...     "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/diffusers/controlnet_condition.png"
         ... )
@@ -112,37 +90,10 @@ def retrieve_timesteps(
     sigmas: Optional[List[float]] = None,
     **kwargs,
 ):
-    """
-    Calls the scheduler's `set_timesteps` method and retrieves timesteps from the scheduler after the call. Handles
-    custom timesteps. Any kwargs will be supplied to `scheduler.set_timesteps`.
-
-    Args:
-        scheduler (`SchedulerMixin`):
-            The scheduler to get timesteps from.
-        num_inference_steps (`int`):
-            The number of diffusion steps used when generating samples with a pre-trained model. If used, `timesteps`
-            must be `None`.
-        device (`str` or `torch.device`, *optional*):
-            The device to which the timesteps should be moved to. If `None`, the timesteps are not moved.
-        timesteps (`List[int]`, *optional*):
-            Custom timesteps used to override the timestep spacing strategy of the scheduler. If `timesteps` is passed,
-            `num_inference_steps` and `sigmas` must be `None`.
-        sigmas (`List[float]`, *optional*):
-            Custom sigmas used to override the timestep spacing strategy of the scheduler. If `sigmas` is passed,
-            `num_inference_steps` and `timesteps` must be `None`.
-
-    Returns:
-        `Tuple[torch.Tensor, int]`: A tuple where the first element is the timestep schedule from the scheduler and the
-        second element is the number of inference steps.
-    """
     if timesteps is not None and sigmas is not None:
-        raise ValueError(
-            "Only one of `timesteps` or `sigmas` can be passed. Please choose one to set custom values"
-        )
+        raise ValueError("Only one of `timesteps` or `sigmas` can be passed. Please choose one to set custom values")
     if timesteps is not None:
-        accepts_timesteps = "timesteps" in set(
-            inspect.signature(scheduler.set_timesteps).parameters.keys()
-        )
+        accepts_timesteps = "timesteps" in set(inspect.signature(scheduler.set_timesteps).parameters.keys())
         if not accepts_timesteps:
             raise ValueError(
                 f"The current scheduler class {scheduler.__class__}'s `set_timesteps` does not support custom"
@@ -152,9 +103,7 @@ def retrieve_timesteps(
         timesteps = scheduler.timesteps
         num_inference_steps = len(timesteps)
     elif sigmas is not None:
-        accept_sigmas = "sigmas" in set(
-            inspect.signature(scheduler.set_timesteps).parameters.keys()
-        )
+        accept_sigmas = "sigmas" in set(inspect.signature(scheduler.set_timesteps).parameters.keys())
         if not accept_sigmas:
             raise ValueError(
                 f"The current scheduler class {scheduler.__class__}'s `set_timesteps` does not support custom"
@@ -169,8 +118,6 @@ def retrieve_timesteps(
     return timesteps, num_inference_steps
 
 
-# Note: AuraFlowMultiControlNetModel is defined at the bottom of this file
-# to handle multiple controlnets. You can move it to a separate file if needed.
 class AuraFlowControlNetPipeline(
     DiffusionPipeline,
     AuraFlowLoraLoaderMixin,
@@ -213,7 +160,6 @@ class AuraFlowControlNetPipeline(
     ):
         super().__init__()
 
-        # Handle multiple controlnets
         if isinstance(controlnet, (list, tuple)):
             controlnet = AuraFlowMultiControlNetModel(controlnet)
 
@@ -226,11 +172,7 @@ class AuraFlowControlNetPipeline(
             controlnet=controlnet,
         )
 
-        self.vae_scale_factor = (
-            2 ** (len(self.vae.config.block_out_channels) - 1)
-            if getattr(self, "vae", None)
-            else 8
-        )
+        self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1) if getattr(self, "vae", None) else 8
         self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor)
         self.patch_size = 2  # AuraFlow default patch size
         self._interrupt = False  # For compatibility with SD3
@@ -251,17 +193,13 @@ class AuraFlowControlNetPipeline(
         control_guidance_end=1.0,
         callback_on_step_end_tensor_inputs=None,
     ):
-        if (
-            height % (self.vae_scale_factor * self.patch_size) != 0
-            or width % (self.vae_scale_factor * self.patch_size) != 0
-        ):
+        if height % (self.vae_scale_factor * self.patch_size) != 0 or width % (self.vae_scale_factor * self.patch_size) != 0:
             raise ValueError(
                 f"`height` and `width` have to be divisible by {self.vae_scale_factor * self.patch_size} but are {height} and {width}."
             )
 
         if callback_on_step_end_tensor_inputs is not None and not all(
-            k in self._callback_tensor_inputs
-            for k in callback_on_step_end_tensor_inputs
+            k in self._callback_tensor_inputs for k in callback_on_step_end_tensor_inputs
         ):
             raise ValueError(
                 f"`callback_on_step_end_tensor_inputs` has to be in {self._callback_tensor_inputs}, but found {[k for k in callback_on_step_end_tensor_inputs if k not in self._callback_tensor_inputs]}"
@@ -276,12 +214,8 @@ class AuraFlowControlNetPipeline(
             raise ValueError(
                 "Provide either `prompt` or `prompt_embeds`. Cannot leave both `prompt` and `prompt_embeds` undefined."
             )
-        elif prompt is not None and (
-            not isinstance(prompt, str) and not isinstance(prompt, list)
-        ):
-            raise ValueError(
-                f"`prompt` has to be of type `str` or `list` but is {type(prompt)}"
-            )
+        elif prompt is not None and (not isinstance(prompt, str) and not isinstance(prompt, list)):
+            raise ValueError(f"`prompt` has to be of type `str` or `list` but is {type(prompt)}")
 
         if prompt is not None and negative_prompt_embeds is not None:
             raise ValueError(
@@ -296,22 +230,14 @@ class AuraFlowControlNetPipeline(
             )
 
         if prompt_embeds is not None and prompt_attention_mask is None:
-            raise ValueError(
-                "Must provide `prompt_attention_mask` when specifying `prompt_embeds`."
-            )
+            raise ValueError("Must provide `prompt_attention_mask` when specifying `prompt_embeds`.")
 
-        if (
-            negative_prompt_embeds is not None
-            and negative_prompt_attention_mask is None
-        ):
-            raise ValueError(
-                "Must provide `negative_prompt_attention_mask` when specifying `negative_prompt_embeds`."
-            )
+        if negative_prompt_embeds is not None and negative_prompt_attention_mask is None:
+            raise ValueError("Must provide `negative_prompt_attention_mask` when specifying `negative_prompt_embeds`.")
 
         if control_image is None:
             raise ValueError("Provide `control_image`.")
 
-        # Check control guidance settings
         if not isinstance(control_guidance_start, (tuple, list)):
             control_guidance_start = [control_guidance_start]
         if not isinstance(control_guidance_end, (tuple, list)):
@@ -332,13 +258,9 @@ class AuraFlowControlNetPipeline(
                     f"control guidance start: {start} cannot be larger or equal to control guidance end: {end}."
                 )
             if start < 0.0:
-                raise ValueError(
-                    f"control guidance start: {start} can't be smaller than 0."
-                )
+                raise ValueError(f"control guidance start: {start} can't be smaller than 0.")
             if end > 1.0:
-                raise ValueError(
-                    f"control guidance end: {end} can't be larger than 1.0."
-                )
+                raise ValueError(f"control guidance end: {end} can't be larger than 1.0.")
 
     def encode_prompt(
         self,
@@ -401,11 +323,8 @@ class AuraFlowControlNetPipeline(
         else:
             batch_size = prompt_embeds.shape[0]
 
-        # Define tokenizers and text encoders
         tokenizers = self.tokenizer if self.tokenizer is not None else self.tokenizer
-        text_encoders = (
-            self.text_encoder if self.text_encoder is not None else self.text_encoder
-        )
+        text_encoders = self.text_encoder if self.text_encoder is not None else self.text_encoder
 
         if prompt_embeds is None:
             text_inputs = tokenizers(
@@ -416,16 +335,10 @@ class AuraFlowControlNetPipeline(
                 return_tensors="pt",
             )
             text_input_ids = text_inputs.input_ids
-            untruncated_ids = tokenizers(
-                prompt, padding="longest", return_tensors="pt"
-            ).input_ids
+            untruncated_ids = tokenizers(prompt, padding="longest", return_tensors="pt").input_ids
 
-            if untruncated_ids.shape[-1] >= text_input_ids.shape[
-                -1
-            ] and not torch.equal(text_input_ids, untruncated_ids):
-                removed_text = tokenizers.batch_decode(
-                    untruncated_ids[:, max_sequence_length - 1 : -1]
-                )
+            if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(text_input_ids, untruncated_ids):
+                removed_text = tokenizers.batch_decode(untruncated_ids[:, max_sequence_length - 1 : -1])
                 logger.warning(
                     "The following part of your input was truncated because T5 can only handle sequences up to"
                     f" {max_sequence_length} tokens: {removed_text}"
@@ -434,14 +347,10 @@ class AuraFlowControlNetPipeline(
             text_input_ids = text_input_ids.to(device)
             prompt_embeds = text_encoders(text_input_ids)[0]
 
-            # Apply attention mask
             prompt_attention_mask = text_inputs.attention_mask.to(device)
-            prompt_attention_mask = prompt_attention_mask.unsqueeze(-1).expand(
-                prompt_embeds.shape
-            )
+            prompt_attention_mask = prompt_attention_mask.unsqueeze(-1).expand(prompt_embeds.shape)
             prompt_embeds = prompt_embeds * prompt_attention_mask
 
-        # Cast to dtype of text encoder
         if text_encoders is not None:
             prompt_embeds_dtype = text_encoders.dtype
         elif self.transformer is not None:
@@ -452,19 +361,13 @@ class AuraFlowControlNetPipeline(
         prompt_embeds = prompt_embeds.to(dtype=prompt_embeds_dtype, device=device)
 
         bs_embed, seq_len, _ = prompt_embeds.shape
-        # duplicate text embeddings for each generation per prompt
         prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
-        prompt_embeds = prompt_embeds.view(
-            bs_embed * num_images_per_prompt, seq_len, -1
-        )
+        prompt_embeds = prompt_embeds.view(bs_embed * num_images_per_prompt, seq_len, -1)
 
         if prompt_attention_mask is not None:
             prompt_attention_mask = prompt_attention_mask.view(bs_embed, -1)
-            prompt_attention_mask = prompt_attention_mask.repeat(
-                num_images_per_prompt, 1
-            )
+            prompt_attention_mask = prompt_attention_mask.repeat(num_images_per_prompt, 1)
 
-        # Get unconditional embeddings for classifier free guidance
         if do_classifier_free_guidance and negative_prompt_embeds is None:
             uncond_tokens = negative_prompt if negative_prompt is not None else ""
             if isinstance(uncond_tokens, str):
@@ -474,7 +377,6 @@ class AuraFlowControlNetPipeline(
                     f"`negative_prompt` should be a string or list of strings, but got {type(negative_prompt)}."
                 )
 
-            # max_length = prompt_embeds.shape[1]
             uncond_input = tokenizers(
                 uncond_tokens,
                 padding="max_length",
@@ -485,44 +387,28 @@ class AuraFlowControlNetPipeline(
             uncond_input_ids = uncond_input.input_ids.to(device)
             negative_prompt_embeds = text_encoders(uncond_input_ids)[0]
 
-            # Apply attention mask
             negative_prompt_attention_mask = uncond_input.attention_mask.to(device)
-            negative_prompt_attention_mask = negative_prompt_attention_mask.unsqueeze(
-                -1
-            ).expand(negative_prompt_embeds.shape)
-            negative_prompt_embeds = (
-                negative_prompt_embeds * negative_prompt_attention_mask
+            negative_prompt_attention_mask = negative_prompt_attention_mask.unsqueeze(-1).expand(
+                negative_prompt_embeds.shape
             )
+            negative_prompt_embeds = negative_prompt_embeds * negative_prompt_attention_mask
 
         if do_classifier_free_guidance:
-            # duplicate unconditional embeddings for each generation per prompt
             seq_len = negative_prompt_embeds.shape[1]
 
-            negative_prompt_embeds = negative_prompt_embeds.to(
-                dtype=prompt_embeds_dtype, device=device
-            )
-            negative_prompt_embeds = negative_prompt_embeds.repeat(
-                1, num_images_per_prompt, 1
-            )
-            negative_prompt_embeds = negative_prompt_embeds.view(
-                batch_size * num_images_per_prompt, seq_len, -1
-            )
+            negative_prompt_embeds = negative_prompt_embeds.to(dtype=prompt_embeds_dtype, device=device)
+            negative_prompt_embeds = negative_prompt_embeds.repeat(1, num_images_per_prompt, 1)
+            negative_prompt_embeds = negative_prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
 
             if negative_prompt_attention_mask is not None:
-                negative_prompt_attention_mask = negative_prompt_attention_mask.view(
-                    bs_embed, -1
-                )
-                negative_prompt_attention_mask = negative_prompt_attention_mask.repeat(
-                    num_images_per_prompt, 1
-                )
+                negative_prompt_attention_mask = negative_prompt_attention_mask.view(bs_embed, -1)
+                negative_prompt_attention_mask = negative_prompt_attention_mask.repeat(num_images_per_prompt, 1)
         else:
             negative_prompt_embeds = None
             negative_prompt_attention_mask = None
 
-        # Unscale LoRA layers
         if self.text_encoder is not None:
             if isinstance(self, AuraFlowLoraLoaderMixin) and USE_PEFT_BACKEND:
-                # Retrieve the original scale by scaling back the LoRA layers
                 unscale_lora_layers(self.text_encoder, lora_scale)
 
         return (
@@ -556,9 +442,7 @@ class AuraFlowControlNetPipeline(
             )
 
         if latents is None:
-            latents = randn_tensor(
-                shape, generator=generator, device=device, dtype=dtype
-            )
+            latents = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
         else:
             latents = latents.to(device)
 
@@ -744,7 +628,6 @@ class AuraFlowControlNetPipeline(
                 If `return_dict` is `True`, [`~pipelines.ImagePipelineOutput`] is returned, otherwise a `tuple` is
                 returned where the first element is a list with the generated images.
         """
-        # 1. Check inputs
         height = height or self.transformer.config.sample_size * self.vae_scale_factor
         width = width or self.transformer.config.sample_size * self.vae_scale_factor
 
@@ -768,7 +651,6 @@ class AuraFlowControlNetPipeline(
         self._attention_kwargs = attention_kwargs
         self._interrupt = False
 
-        # 2. Define call parameters
         if prompt is not None and isinstance(prompt, str):
             batch_size = 1
         elif prompt is not None and isinstance(prompt, list):
@@ -777,13 +659,8 @@ class AuraFlowControlNetPipeline(
             batch_size = prompt_embeds.shape[0]
 
         device = self._execution_device
-        lora_scale = (
-            self.attention_kwargs.get("scale", None)
-            if self.attention_kwargs is not None
-            else None
-        )
+        lora_scale = self.attention_kwargs.get("scale", None) if self.attention_kwargs is not None else None
 
-        # 3. Encode input prompt
         do_classifier_free_guidance = self.do_classifier_free_guidance
         (
             prompt_embeds,
@@ -807,7 +684,6 @@ class AuraFlowControlNetPipeline(
         if do_classifier_free_guidance:
             prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
 
-        # 4. Prepare control image
         if isinstance(self.controlnet, AuraFlowControlNetModel):
             control_image = self.prepare_control_image(
                 image=control_image,
@@ -820,7 +696,6 @@ class AuraFlowControlNetPipeline(
                 do_classifier_free_guidance=do_classifier_free_guidance,
                 guess_mode=False,
             )
-            # Encode control image to latent space
             control_image = self.vae.encode(control_image).latent_dist.sample()
             control_image = control_image * self.vae.config.scaling_factor
         elif isinstance(self.controlnet, AuraFlowMultiControlNetModel):
@@ -837,7 +712,6 @@ class AuraFlowControlNetPipeline(
                     do_classifier_free_guidance=do_classifier_free_guidance,
                     guess_mode=False,
                 )
-                # Encode control image to latent space
                 control_image_ = self.vae.encode(control_image_).latent_dist.sample()
                 control_image_ = control_image_ * self.vae.config.scaling_factor
                 control_images.append(control_image_)
@@ -845,15 +719,13 @@ class AuraFlowControlNetPipeline(
         else:
             raise ValueError(f"Unsupported controlnet type: {type(self.controlnet)}")
 
-        # 5. Prepare timesteps
-        # Handle dynamic shifting if needed
+        # handle dynamic shifting if needed
         scheduler_kwargs = {}
         if (
             hasattr(self.scheduler.config, "use_dynamic_shifting")
             and self.scheduler.config.get("use_dynamic_shifting", None)
             and mu is None
         ):
-            # Calculate mu based on image dimensions if dynamic shifting is supported
             if hasattr(self.scheduler.config, "base_image_seq_len"):
                 image_seq_len = (height // self.patch_size) * (width // self.patch_size)
                 mu = self._calculate_shift(
@@ -876,7 +748,6 @@ class AuraFlowControlNetPipeline(
             **scheduler_kwargs,
         )
 
-        # 6. Prepare latent variables
         num_channels_latents = self.transformer.config.in_channels
         latents = self.prepare_latents(
             batch_size * num_images_per_prompt,
@@ -889,26 +760,13 @@ class AuraFlowControlNetPipeline(
             latents,
         )
 
-        # 7. Create tensor stating which controlnets to keep
-        # Align format for control guidance lists
-        if not isinstance(control_guidance_start, list) and isinstance(
-            control_guidance_end, list
-        ):
-            control_guidance_start = len(control_guidance_end) * [
-                control_guidance_start
-            ]
-        elif not isinstance(control_guidance_end, list) and isinstance(
-            control_guidance_start, list
-        ):
+        # align format for control guidance lists
+        if not isinstance(control_guidance_start, list) and isinstance(control_guidance_end, list):
+            control_guidance_start = len(control_guidance_end) * [control_guidance_start]
+        elif not isinstance(control_guidance_end, list) and isinstance(control_guidance_start, list):
             control_guidance_end = len(control_guidance_start) * [control_guidance_end]
-        elif not isinstance(control_guidance_start, list) and not isinstance(
-            control_guidance_end, list
-        ):
-            mult = (
-                len(self.controlnet.nets)
-                if isinstance(self.controlnet, AuraFlowMultiControlNetModel)
-                else 1
-            )
+        elif not isinstance(control_guidance_start, list) and not isinstance(control_guidance_end, list):
+            mult = len(self.controlnet.nets) if isinstance(self.controlnet, AuraFlowMultiControlNetModel) else 1
             control_guidance_start, control_guidance_end = (
                 mult * [control_guidance_start],
                 mult * [control_guidance_end],
@@ -920,16 +778,9 @@ class AuraFlowControlNetPipeline(
                 1.0 - float(i / len(timesteps) < s or (i + 1) / len(timesteps) > e)
                 for s, e in zip(control_guidance_start, control_guidance_end)
             ]
-            controlnet_keep.append(
-                keeps[0]
-                if isinstance(self.controlnet, AuraFlowControlNetModel)
-                else keeps
-            )
+            controlnet_keep.append(keeps[0] if isinstance(self.controlnet, AuraFlowControlNetModel) else keeps)
 
-        # 8. Denoising loop
-        num_warmup_steps = max(
-            len(timesteps) - num_inference_steps * self.scheduler.order, 0
-        )
+        num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
         self._num_timesteps = len(timesteps)
 
         with self.progress_bar(total=num_inference_steps) as progress_bar:
@@ -937,31 +788,20 @@ class AuraFlowControlNetPipeline(
                 if self.interrupt:
                     continue
 
-                # expand the latents if we are doing classifier free guidance
-                latent_model_input = (
-                    torch.cat([latents] * 2) if do_classifier_free_guidance else latents
-                )
+                latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
 
-                # aura uses timestep value between 0 and 1, with t=1 as noise and t=0 as the image
-                # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
+                # aura timesteps: t=1 noise, t=0 image
                 timestep = torch.tensor([t / 1000]).expand(latent_model_input.shape[0])
                 timestep = timestep.to(latents.device, dtype=latents.dtype)
 
-                # Controlnet conditioning scale
                 if isinstance(controlnet_keep[i], list):
-                    cond_scale = [
-                        c * s
-                        for c, s in zip(
-                            controlnet_conditioning_scale, controlnet_keep[i]
-                        )
-                    ]
+                    cond_scale = [c * s for c, s in zip(controlnet_conditioning_scale, controlnet_keep[i])]
                 else:
                     controlnet_cond_scale = controlnet_conditioning_scale
                     if isinstance(controlnet_cond_scale, list):
                         controlnet_cond_scale = controlnet_cond_scale[0]
                     cond_scale = controlnet_cond_scale * controlnet_keep[i]
 
-                # controlnet inference
                 control_block_samples = self.controlnet(
                     hidden_states=latent_model_input,
                     controlnet_cond=control_image,
@@ -972,7 +812,6 @@ class AuraFlowControlNetPipeline(
                     return_dict=False,
                 )[0]
 
-                # transformer inference with controlnet
                 noise_pred = self.transformer(
                     latent_model_input,
                     encoder_hidden_states=prompt_embeds,
@@ -982,23 +821,16 @@ class AuraFlowControlNetPipeline(
                     attention_kwargs=self.attention_kwargs,
                 )[0]
 
-                # perform guidance
                 if do_classifier_free_guidance:
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                    noise_pred = noise_pred_uncond + guidance_scale * (
-                        noise_pred_text - noise_pred_uncond
-                    )
+                    noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
-                # compute the previous noisy sample x_t -> x_t-1
                 latents_dtype = latents.dtype
-                latents = self.scheduler.step(
-                    noise_pred, t, latents, return_dict=False
-                )[0]
+                latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
 
-                # handle dtype casting
                 if latents.dtype != latents_dtype:
                     if torch.backends.mps.is_available():
-                        # some platforms (eg. apple mps) misbehave due to a pytorch bug
+                        # apple mps workaround for pytorch bug
                         latents = latents.to(latents_dtype)
 
                 if callback_on_step_end is not None:
@@ -1009,14 +841,9 @@ class AuraFlowControlNetPipeline(
 
                     latents = callback_outputs.pop("latents", latents)
                     prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
-                    negative_prompt_embeds = callback_outputs.pop(
-                        "negative_prompt_embeds", negative_prompt_embeds
-                    )
+                    negative_prompt_embeds = callback_outputs.pop("negative_prompt_embeds", negative_prompt_embeds)
 
-                # call the callback, if provided
-                if i == len(timesteps) - 1 or (
-                    (i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0
-                ):
+                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
 
                 if XLA_AVAILABLE:
@@ -1025,22 +852,15 @@ class AuraFlowControlNetPipeline(
         if output_type == "latent":
             image = latents
         else:
-            # Make sure the VAE is in float32 mode, as it overflows in float16
-            needs_upcasting = self.vae.dtype == torch.float16 and getattr(
-                self.vae.config, "force_upcast", False
-            )
+            # vae in float32 mode, overflows in float16
+            needs_upcasting = self.vae.dtype == torch.float16 and getattr(self.vae.config, "force_upcast", False)
             if needs_upcasting:
                 self.upcast_vae()
-                latents = latents.to(
-                    next(iter(self.vae.post_quant_conv.parameters())).dtype
-                )
+                latents = latents.to(next(iter(self.vae.post_quant_conv.parameters())).dtype)
 
-            image = self.vae.decode(
-                latents / self.vae.config.scaling_factor, return_dict=False
-            )[0]
+            image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
             image = self.image_processor.postprocess(image, output_type=output_type)
 
-        # Offload all models
         self.maybe_free_model_hooks()
 
         if not return_dict:
@@ -1049,26 +869,12 @@ class AuraFlowControlNetPipeline(
         return ImagePipelineOutput(images=image)
 
 
-# Simple MultiControlNet implementation for AuraFlow
-# This would typically be in a separate file but included here for completeness
+# simple multicontrolnet implementation for auraflow
 class AuraFlowMultiControlNetModel(ModelMixin):
-    r"""
-    `AuraFlowControlNetModel` wrapper class for Multi-AuraFlowControlNet
-
-    This module is a wrapper for multiple instances of the `AuraFlowControlNetModel`. The `forward()` API is designed
-    to be compatible with `AuraFlowControlNetModel`.
-
-    Args:
-        controlnets (`List[AuraFlowControlNetModel]`):
-            Provides additional conditioning to the transformer during the denoising process. You must set multiple
-            `AuraFlowControlNetModel` as a list.
-    """
 
     def __init__(
         self,
-        controlnets: Union[
-            List[AuraFlowControlNetModel], Tuple[AuraFlowControlNetModel]
-        ],
+        controlnets: Union[List[AuraFlowControlNetModel], Tuple[AuraFlowControlNetModel]],
     ):
         super().__init__()
         self.nets = nn.ModuleList(controlnets)
@@ -1083,9 +889,7 @@ class AuraFlowMultiControlNetModel(ModelMixin):
         attention_kwargs: Optional[Dict[str, Any]] = None,
         return_dict: bool = True,
     ) -> Union[Tuple, AuraFlowControlNetOutput]:
-        for i, (image, scale, controlnet) in enumerate(
-            zip(controlnet_cond, conditioning_scale, self.nets)
-        ):
+        for i, (image, scale, controlnet) in enumerate(zip(controlnet_cond, conditioning_scale, self.nets)):
             block_samples = controlnet(
                 hidden_states=hidden_states,
                 timestep=timestep,
@@ -1096,7 +900,6 @@ class AuraFlowMultiControlNetModel(ModelMixin):
                 return_dict=return_dict,
             )
 
-            # merge samples
             if i == 0:
                 control_block_samples = block_samples
             else:
@@ -1112,9 +915,7 @@ class AuraFlowMultiControlNetModel(ModelMixin):
                     control_block_samples = (
                         tuple(
                             control_block_sample + block_sample
-                            for control_block_sample, block_sample in zip(
-                                control_block_samples[0], block_samples[0]
-                            )
+                            for control_block_sample, block_sample in zip(control_block_samples[0], block_samples[0])
                         ),
                     )
 
@@ -1128,12 +929,9 @@ class AuraFlowMultiControlNetModel(ModelMixin):
         base_shift,
         max_shift,
     ):
-        """Calculate dynamic shift value based on image sequence length."""
-        # Calculate shift based on the ratio of current to base sequence length
-        ratio = (image_seq_len - base_image_seq_len) / (
-            max_image_seq_len - base_image_seq_len
-        )
-        ratio = max(0, min(1, ratio))  # Clamp to [0, 1]
+        # calculate shift based on ratio of current to base sequence length
+        ratio = (image_seq_len - base_image_seq_len) / (max_image_seq_len - base_image_seq_len)
+        ratio = max(0, min(1, ratio))  # clamp to [0, 1]
         shift = base_shift + (max_shift - base_shift) * ratio
         return shift
 
@@ -1149,8 +947,7 @@ class AuraFlowMultiControlNetModel(ModelMixin):
                 FusedAttnProcessor2_0,
             ),
         )
-        # if xformers or torch_2_0 is used attention block does not need
-        # to be in float32 which can save lots of memory
+        # xformers/torch_2_0 attention can stay in original dtype
         if use_torch_2_0_or_xformers:
             self.vae.post_quant_conv.to(dtype)
             self.vae.decoder.conv_in.to(dtype)

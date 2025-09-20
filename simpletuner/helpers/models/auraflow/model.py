@@ -68,16 +68,6 @@ class Auraflow(ImageModelFoundation):
     }
 
     def _format_text_embedding(self, text_embedding: torch.Tensor):
-        """
-        Models can optionally format the stored text embedding, eg. in a dict, or
-        filter certain outputs from appearing in the file cache.
-
-        self.config:
-            text_embedding (torch.Tensor): The embed to adjust.
-
-        Returns:
-            torch.Tensor: The adjusted embed. By default, this method does nothing.
-        """
         prompt_embeds, prompt_attention_mask = text_embedding
 
         return {
@@ -100,15 +90,6 @@ class Auraflow(ImageModelFoundation):
         }
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
-        """
-        Encode a prompt for a model.
-
-        Args:
-            prompts: The list of prompts to encode.
-
-        Returns:
-            Text encoder output (raw)
-        """
         prompt_embeds, prompt_attention_mask, _, _ = self.pipelines[PipelineTypes.TEXT2IMG].encode_prompt(
             prompt=prompts,
             negative_prompt=None,
@@ -139,7 +120,7 @@ class Auraflow(ImageModelFoundation):
             )
         timesteps = (
             prepared_batch["timesteps"].to(device=self.accelerator.device, dtype=self.config.weight_dtype) / 1000.0
-        )  # Normalize to [0, 1]
+        )  # normalize to [0, 1]
 
         model_output = self.model(
             prepared_batch["noisy_latents"].to(
@@ -157,9 +138,6 @@ class Auraflow(ImageModelFoundation):
         return {"model_prediction": model_output}
 
     def check_user_config(self):
-        """
-        Checks self.config values against important issues. Optionally implemented in child class.
-        """
         if self.config.base_model_precision == "fp8-quanto":
             raise ValueError(
                 f"{self.NAME} does not support fp8-quanto. Please use fp8-torchao or int8 precision level instead."
@@ -186,10 +164,7 @@ class Auraflow(ImageModelFoundation):
             self.config.aspect_bucket_alignment = 64
 
     def control_init(self):
-        """
-        Initialize AuraFlow Control parameters (similar to Flux Control).
-        This modifies the model in-place to support control conditioning.
-        """
+        """modify model in-place to support control conditioning"""
         if self.config.control and self.config.pretrained_transformer_model_name_or_path is None:
             with torch.no_grad():
                 initial_input_channels = self.get_trained_component().config.in_channels
@@ -231,9 +206,6 @@ class Auraflow(ImageModelFoundation):
                 )
 
     def controlnet_init(self):
-        """
-        Initialize AuraFlow ControlNet.
-        """
         logger.info("Creating the AuraFlow controlnet...")
         if self.config.controlnet_model_name_or_path:
             logger.info("Loading existing controlnet weights")
@@ -245,14 +217,10 @@ class Auraflow(ImageModelFoundation):
 
         self.controlnet.to(self.accelerator.device, self.config.weight_dtype)
 
-        # Ensure controlnet is in training mode if needed
         if self.config.controlnet:
             self.controlnet.train()
 
     def tread_init(self):
-        """
-        Initialize the TREAD model training method for AuraFlow.
-        """
         from simpletuner.helpers.training.tread import TREADRouter
 
         if (
@@ -276,28 +244,18 @@ class Auraflow(ImageModelFoundation):
         logger.info("TREAD training is enabled for AuraFlow")
 
     def requires_conditioning_latents(self) -> bool:
-        """AuraFlow ControlNet requires latent inputs instead of pixels."""
+        # auraflow controlnet uses latents not pixels
         if self.config.controlnet or self.config.control:
             return True
         return False
 
     def requires_conditioning_validation_inputs(self) -> bool:
-        """Whether this model requires conditioning inputs during validation."""
         if self.config.controlnet or self.config.control:
             return True
         return False
 
     def controlnet_predict(self, prepared_batch: dict) -> dict:
-        """
-        Perform a forward pass with ControlNet for AuraFlow model.
-
-        Args:
-            prepared_batch: Dictionary containing the batch data including conditioning_latents
-
-        Returns:
-            Dictionary containing the model prediction
-        """
-        # ControlNet conditioning - AuraFlow uses latents
+        # controlnet uses latents
         controlnet_cond = prepared_batch.get("conditioning_latents")
 
         if controlnet_cond is None:
@@ -305,24 +263,20 @@ class Auraflow(ImageModelFoundation):
 
         controlnet_cond = controlnet_cond.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
 
-        # Check shapes
         if controlnet_cond.shape[1] != self.LATENT_CHANNEL_COUNT:
             raise ValueError(
                 f"ControlNet conditioning latents must have {self.LATENT_CHANNEL_COUNT} channels. "
                 f"Got {controlnet_cond.shape[1]} channels."
             )
 
-        # Get conditioning scale (default to 1.0 if not specified)
         conditioning_scale = getattr(self.config, "controlnet_conditioning_scale", 1.0)
 
         timesteps = (
             prepared_batch["timesteps"].to(device=self.accelerator.device, dtype=self.config.weight_dtype) / 1000.0
-        )  # Normalize to [0, 1]
+        )  # normalize to [0, 1]
 
-        # Expand timesteps to batch dimension
         timesteps = timesteps.expand(prepared_batch["noisy_latents"].shape[0])
 
-        # ControlNet forward pass
         controlnet_kwargs = {
             "hidden_states": prepared_batch["noisy_latents"].to(
                 device=self.accelerator.device,
@@ -338,17 +292,8 @@ class Auraflow(ImageModelFoundation):
             "return_dict": False,
         }
 
-        # Add attention mask if using masked training
-        # if self.config.auraflow_attention_masked_training:
-        #     controlnet_kwargs["attention_kwargs"] = {
-        #         "attention_mask": prepared_batch["encoder_attention_mask"]
-        #     }
-
-        # Get controlnet block samples
-        # AuraFlow's forward expects block_controlnet_hidden_states as a list
         block_controlnet_hidden_states = self.controlnet(**controlnet_kwargs)[0]
 
-        # Prepare kwargs for the main transformer
         transformer_kwargs = {
             "hidden_states": prepared_batch["noisy_latents"].to(
                 device=self.accelerator.device,
@@ -363,22 +308,11 @@ class Auraflow(ImageModelFoundation):
             "return_dict": False,
         }
 
-        # Add attention mask if using masked training
-        # if self.config.auraflow_attention_masked_training:
-        #     transformer_kwargs["attention_kwargs"] = {
-        #         "attention_mask": prepared_batch["encoder_attention_mask"]
-        #     }
-
-        # Forward pass through the transformer with ControlNet residuals
         model_pred = self.get_trained_component(base_model=True)(**transformer_kwargs)[0]
 
         return {"model_prediction": model_pred}
 
-    # Update get_lora_target_layers method to handle controlnet
     def get_lora_target_layers(self):
-        """
-        Get the target layers for LoRA training, with special handling for ControlNet.
-        """
         if self.config.model_type == "lora" and (self.config.controlnet or self.config.control):
             controlnet_block_modules = [f"controlnet_blocks.{i}" for i in range(36)]
             return controlnet_block_modules
@@ -390,9 +324,7 @@ class Auraflow(ImageModelFoundation):
         else:
             raise NotImplementedError(f"Unknown LoRA target type {self.config.lora_type}.")
 
-    # Add to custom_model_card_schedule_info if needed
     def custom_model_card_schedule_info(self):
-        """Add controlnet info to model card if needed."""
         output_args = []
         if self.config.flow_schedule_auto_shift:
             output_args.append("flow_schedule_auto_shift")

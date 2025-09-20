@@ -1,18 +1,19 @@
-import os
 import logging
-import traceback
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from multiprocessing import Process, Manager
-from random import shuffle
-from tqdm import tqdm
-from pathlib import Path
-from PIL import Image
-from numpy import str_ as numpy_str
-from queue import Queue
-from hashlib import sha256
-from typing import List, Dict, Tuple, Any, Optional
 import multiprocessing as mp
+import os
+import time
+import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from hashlib import sha256
+from multiprocessing import Manager, Process
+from pathlib import Path
+from queue import Queue
+from random import shuffle
+from typing import Any, Dict, List, Optional, Tuple
+
+from numpy import str_ as numpy_str
+from PIL import Image
+from tqdm import tqdm
 
 # Set up module-level logger
 logger = logging.getLogger("DataGenerator")
@@ -35,32 +36,24 @@ def transform_worker_process(
     delete_problematic_images: bool = False,
 ):
     """
-    Worker process for CPU-bound image transformations.
-
-    - Reconstructs data backends in the subprocess.
-    - Uses SampleGenerator to apply transformations.
-    - Writes transformed images directly to target backend to avoid pickling overhead.
-    - Reports successes or errors via done_queue.
+    worker process for cpu-bound transforms - reconstructs backends in subprocess
+    to avoid pickling overhead during multiprocessing
     """
     import io
     import logging
+
     from simpletuner.helpers.data_backend.factory import from_instance_representation
     from simpletuner.helpers.data_generation.sample_generator import SampleGenerator
 
-    # Initialize subprocess-specific logger
     logger = logging.getLogger(f"TransformWorker-{worker_id}")
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-
-    # Reconstruct backends and transformer
     try:
         source_data_backend = from_instance_representation(source_backend_repr)
         target_data_backend = from_instance_representation(target_backend_repr)
 
-        sample_generator = SampleGenerator.from_backend(
-            {"conditioning_config": sample_generator_config}
-        )
+        sample_generator = SampleGenerator.from_backend({"conditioning_config": sample_generator_config})
 
-        # Minimal accelerator stub for consistency
+        # minimal accelerator stub - subprocesses can't access main accelerator
         class MinimalAccelerator:
             def __init__(self, device):
                 self.device = device
@@ -71,7 +64,6 @@ def transform_worker_process(
         logger.error(f"Worker {worker_id} init failed: {e}")
         return
 
-    # Main worker loop
     while True:
         try:
             work_item = work_queue.get(timeout=30.0)
@@ -82,14 +74,12 @@ def transform_worker_process(
             batch_items = work_item["batch_items"]
             batch_id = work_item.get("batch_id", 0)
 
-            # Unpack batch elements
             source_paths = [item[0] for item in batch_items]
             target_paths = [item[1] for item in batch_items]
             images = [item[2] for item in batch_items]
             metadata_list = [item[3] for item in batch_items]
 
             try:
-                # Apply batch transformation
                 transformed = sample_generator.transform_batch(
                     images=images,
                     source_paths=source_paths,
@@ -121,12 +111,9 @@ def transform_worker_process(
                     else:
                         logger.error(f"Unexpected type in transform: {type(img)}")
 
-                # Write batch if any succeeded
                 if filepaths:
                     target_data_backend.write_batch(filepaths, data_items)
                     logger.debug(f"Worker {worker_id} wrote {len(filepaths)} files")
-
-                # Report completion
                 done_queue.put(
                     {
                         "batch_id": batch_id,
@@ -150,21 +137,17 @@ def transform_worker_process(
                 )
 
         except Exception as e:
-            # Ignore timeout; log unexpected errors
+            # ignore timeout exceptions, log others
             if "Empty" not in str(e) and "timeout" not in str(e).lower():
                 logger.error(f"Worker {worker_id} queue error: {e}")
 
 
 class DataGenerator:
     """
-    DataGenerator orchestrates reading, transforming, and writing image datasets.
-
-    Workflow:
-    1. discover_all_files: find unprocessed source files
-    2. process_buckets: coordinate I/O and CPU-bound transforms
-       - ThreadPoolExecutor handles I/O (read_images_in_batch)
-       - Pool of subprocess workers handles CPU transforms
-    3. generate_dataset: high-level entry point
+    orchestrates dataset generation pipeline:
+    - discover unprocessed files
+    - coordinate I/O (threads) and CPU transforms (subprocesses)
+    - write transformed results
     """
 
     def __init__(
@@ -183,19 +166,15 @@ class DataGenerator:
         hash_filenames: bool = False,
         conditioning_type: str = None,
     ):
-        # Save parameters
         self.id = id
         self.source_backend = source_backend
         self.target_backend = target_backend
         self.accelerator = accelerator
-
-        # Configure data and metadata backends
         self.source_data_backend = source_backend.get("data_backend")
         self.target_data_backend = target_backend.get("data_backend")
         self.source_metadata_backend = source_backend.get("metadata_backend")
         self.target_metadata_backend = target_backend.get("metadata_backend")
 
-        # Pipeline settings
         self.webhook_progress_interval = webhook_progress_interval
         self.read_batch_size = read_batch_size
         self.process_queue_size = process_queue_size
@@ -204,72 +183,48 @@ class DataGenerator:
         self.delete_problematic_images = delete_problematic_images
         self.hash_filenames = hash_filenames
         self.conditioning_type = conditioning_type
-
-        # Prepare directories
         self.source_instance_dir = source_backend.get("instance_data_dir")
         self.target_instance_dir = target_backend.get("instance_data_dir")
         if self.target_data_backend.type == "local":
             os.makedirs(self.target_instance_dir, exist_ok=True)
 
-        # Multi-GPU rank info
-        from simpletuner.helpers.training.multi_process import rank_info, _get_rank
+        from simpletuner.helpers.training.multi_process import _get_rank, rank_info
 
         self.rank_info = rank_info()
         self.rank = _get_rank()
-
-        # Instantiate sample generator to detect GPU requirement
         from simpletuner.helpers.data_generation.sample_generator import SampleGenerator
 
         cfg = self.target_backend["config"].get("conditioning_config", {})
-        self.sample_generator = SampleGenerator.from_backend(
-            {"conditioning_config": cfg}
-        )
+        self.sample_generator = SampleGenerator.from_backend({"conditioning_config": cfg})
         self.gpu_mode = getattr(self.sample_generator, "requires_gpu", False)
 
-        # Queues for pipeline coordination
         self.read_queue = Queue()
         self.process_queue = Queue()
 
         if not self.gpu_mode:
-            # Multiprocessing setup for CPU-bound transforms
+            # multiprocessing for cpu-bound transforms
             self.manager = Manager()
             self.transform_queue = self.manager.Queue()
             self.done_queue = self.manager.Queue()
             self.transform_workers = []
             self.num_transform_workers = (
-                max(1, min(mp.cpu_count() - 2, 8))
-                if num_transform_workers is None
-                else num_transform_workers
+                max(1, min(mp.cpu_count() - 2, 8)) if num_transform_workers is None else num_transform_workers
             )
         else:
-            logger.info(
-                f"GPU mode enabled ({self.conditioning_type}), transforms in main process"
-            )
+            logger.info(f"GPU mode enabled ({self.conditioning_type}), transforms in main process")
             self.transform_workers = []
             self.num_transform_workers = 0
 
-        # Path mappings for source -> target
         self.source_to_target_path = {}
         self.target_to_source_path = {}
 
-        # Load metadata caches if needed
-        if (
-            self.source_metadata_backend
-            and not self.source_metadata_backend.image_metadata_loaded
-        ):
+        if self.source_metadata_backend and not self.source_metadata_backend.image_metadata_loaded:
             self.source_metadata_backend.load_image_metadata()
-        if (
-            self.target_metadata_backend
-            and not self.target_metadata_backend.image_metadata_loaded
-        ):
+        if self.target_metadata_backend and not self.target_metadata_backend.image_metadata_loaded:
             self.target_metadata_backend.load_image_metadata()
 
     def _start_transform_workers(self):
-        """
-        Launch worker subprocesses for CPU-bound image transforms.
-
-        Each process runs transform_worker_process and communicates via transform_queue and done_queue.
-        """
+        """launch subprocess workers for cpu-bound transforms"""
         if self.gpu_mode:
             return
 
@@ -297,10 +252,7 @@ class DataGenerator:
         self.debug_log(f"Launched {self.num_transform_workers} transform workers")
 
     def _stop_transform_workers(self):
-        """
-        Send shutdown signals (None) and join all transform workers.
-        Force-terminate any that do not exit within 30s.
-        """
+        """shutdown transform workers, force-kill if needed after 30s"""
         if self.gpu_mode:
             return
 
@@ -316,10 +268,7 @@ class DataGenerator:
         self.debug_log("All transform workers stopped")
 
     def _check_completion_queue(self) -> int:
-        """
-        Drain done_queue and sum up successfully processed images.
-        Returns the count of newly completed items.
-        """
+        """drain completion queue and return count of newly finished items"""
         if self.gpu_mode:
             return 0
         completed = 0
@@ -327,19 +276,13 @@ class DataGenerator:
             res = self.done_queue.get_nowait()
             if "error" not in res:
                 completed += res.get("successful", 0)
-                self.debug_log(
-                    f"Batch {res['batch_id']} done: {res['successful']} of {res['total']}"
-                )
+                self.debug_log(f"Batch {res['batch_id']} done: {res['successful']} of {res['total']}")
             else:
                 logger.error(f"Batch {res['batch_id']} failed: {res['error']}")
         return completed
 
     def _process_images_gpu_mode(self, batch_items: List) -> int:
-        """
-        Apply transformations in the main process when GPU is available.
-        Writes results directly via target_data_backend.
-        Returns the count of successful writes.
-        """
+        """process transforms in main thread when gpu required"""
         import io
 
         if not batch_items:
@@ -390,11 +333,7 @@ class DataGenerator:
             raise
 
     def _process_images_in_batch(self, batch_id: int) -> int:
-        """
-        Prepare and dispatch a batch of images for transformation.
-        In CPU mode, sends to worker queue; in GPU mode, calls direct processing.
-        Returns the number of items dispatched or processed.
-        """
+        """dispatch batch to workers (cpu mode) or process directly (gpu mode)"""
         try:
             qlen = self.process_queue.qsize()
             if qlen == 0:
@@ -403,12 +342,10 @@ class DataGenerator:
             batch_items = []
             for _ in range(min(qlen, self.transform_batch_size)):
                 path, img, meta = self.process_queue.get()
-                # Skip images not meeting resolution criteria
+                # skip images below resolution requirements
                 if hasattr(
                     self.source_metadata_backend, "meets_resolution_requirements"
-                ) and not self.source_metadata_backend.meets_resolution_requirements(
-                    image_path=path
-                ):
+                ) and not self.source_metadata_backend.meets_resolution_requirements(image_path=path):
                     self.debug_log(f"Skipped {path}: resolution requirement")
                     continue
 
@@ -421,7 +358,7 @@ class DataGenerator:
             if self.gpu_mode:
                 return self._process_images_gpu_mode(batch_items)
 
-            # CPU mode: enqueue work for subprocesses
+            # cpu mode: send to worker queue
             self.transform_queue.put({"batch_items": batch_items, "batch_id": batch_id})
             return len(batch_items)
 
@@ -430,14 +367,10 @@ class DataGenerator:
             raise
 
     def discover_all_files(self) -> List[str]:
-        """
-        Identify source files to process and map them to target paths.
-        Returns list of unprocessed source file paths.
-        """
-        from simpletuner.helpers.training.state_tracker import StateTracker
+        """find unprocessed source files and build path mappings"""
         from simpletuner.helpers.training import image_file_extensions
+        from simpletuner.helpers.training.state_tracker import StateTracker
 
-        # Retrieve or cache list of source image files
         source_files = StateTracker.get_image_files(
             data_backend_id=self.source_backend["id"]
         ) or StateTracker.set_image_files(
@@ -447,18 +380,13 @@ class DataGenerator:
             ),
             data_backend_id=self.source_backend["id"],
         )
-
-        # List existing target files
         target_files = self.target_data_backend.list_files(
             instance_data_dir=self.target_instance_dir,
             file_extensions=image_file_extensions,
         )
 
-        self.debug_log(
-            f"Found {len(source_files)} source and {len(target_files)} existing target images"
-        )
+        self.debug_log(f"Found {len(source_files)} source and {len(target_files)} existing target images")
 
-        # Build filename mappings
         self.source_to_target_path.clear()
         self.target_to_source_path.clear()
         for src in source_files:
@@ -468,32 +396,19 @@ class DataGenerator:
             self.source_to_target_path[src] = tgt
             self.target_to_source_path[tgt] = src
 
-        # Filter out files already processed
-        unprocessed = [
-            src
-            for src in source_files
-            if not self.target_data_backend.exists(self.source_to_target_path[src])
-        ]
+        unprocessed = [src for src in source_files if not self.target_data_backend.exists(self.source_to_target_path[src])]
         self.local_unprocessed_files = unprocessed
         self.debug_log(f"{len(unprocessed)} files to process")
         return unprocessed
 
     def generate_target_filename(self, source_filepath: str) -> Tuple[str, str]:
-        """
-        Create a corresponding target filename for a given source file.
-        Preserves directory structure and file extension, with optional hashing.
-        Returns (full_target_path, base_filename).
-        """
+        """map source path to target path, preserving structure"""
         base, ext = os.path.splitext(os.path.basename(source_filepath))
         filename = f"{base}{ext}"
 
         subpath = ""
         if self.source_instance_dir:
-            subpath = (
-                os.path.dirname(source_filepath)
-                .replace(self.source_instance_dir, "")
-                .lstrip(os.sep)
-            )
+            subpath = os.path.dirname(source_filepath).replace(self.source_instance_dir, "").lstrip(os.sep)
 
         full_path = (
             os.path.join(self.target_instance_dir, subpath, filename)
@@ -503,10 +418,7 @@ class DataGenerator:
         return full_path, filename
 
     def read_images_in_batch(self):
-        """
-        Read a batch of images from the source backend (I/O-bound).
-        Enqueues the results into process_queue for transformation.
-        """
+        """read batch from source backend and queue for transform"""
         filepaths, meta_map = [], {}
         qlen = self.read_queue.qsize()
         for _ in range(qlen):
@@ -523,16 +435,11 @@ class DataGenerator:
             logger.warning(f"Read failure: {missing}/{len(filepaths)} images missing")
 
         for fp, img_data in zip(available, data_batch):
-            meta = meta_map.get(
-                fp
-            ) or self.source_metadata_backend.get_metadata_by_filepath(fp)
+            meta = meta_map.get(fp) or self.source_metadata_backend.get_metadata_by_filepath(fp)
             self.process_queue.put((fp, img_data, meta))
 
     def _process_futures(self, futures: List, executor: ThreadPoolExecutor) -> List:
-        """
-        Clean up completed ThreadPoolExecutor futures, logging errors if any.
-        Returns list of remaining futures.
-        """
+        """cleanup completed futures and log errors"""
         done, remain = [], []
         for f in as_completed(futures):
             try:
@@ -544,16 +451,7 @@ class DataGenerator:
         return [f for f in futures if f not in done]
 
     def process_buckets(self):
-        """
-        Main loop:
-        - Start transform workers
-        - For each aspect bucket:
-          - Read files in batches via threads
-          - Dispatch transform batches
-          - Collect completed transforms
-          - Send optional webhook updates
-        - Shutdown workers
-        """
+        """main processing loop - coordinate reads, transforms, and writes"""
         self._start_transform_workers()
         try:
             futures, batch_id = [], 0
@@ -562,7 +460,6 @@ class DataGenerator:
             if os.environ.get("SIMPLETUNER_SHUFFLE_ASPECTS", "true").lower() == "true":
                 shuffle(buckets)
 
-            # Optional initial progress webhook
             if hasattr(self, "webhook_handler") and self.webhook_handler:
                 total = sum(len(v) for v in aspect_cache.values())
                 self.send_progress_update(
@@ -574,17 +471,10 @@ class DataGenerator:
 
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 for bucket in buckets:
-                    files = [
-                        fp
-                        for fp in aspect_cache[bucket]
-                        if fp in self.local_unprocessed_files
-                    ]
+                    files = [fp for fp in aspect_cache[bucket] if fp in self.local_unprocessed_files]
                     if not files:
                         continue
-                    if (
-                        os.environ.get("SIMPLETUNER_SHUFFLE_ASPECTS", "true").lower()
-                        == "true"
-                    ):
+                    if os.environ.get("SIMPLETUNER_SHUFFLE_ASPECTS", "true").lower() == "true":
                         shuffle(files)
 
                     stats = {
@@ -595,71 +485,47 @@ class DataGenerator:
                     }
                     last_report = 0
 
-                    for fp in tqdm(
-                        files, desc=f"Bucket {bucket}", position=self.rank, leave=False
-                    ):
+                    for fp in tqdm(files, desc=f"Bucket {bucket}", position=self.rank, leave=False):
                         try:
-                            if self.target_data_backend.exists(
-                                self.source_to_target_path[fp]
-                            ):
+                            if self.target_data_backend.exists(self.source_to_target_path[fp]):
                                 stats["skipped"] += 1
                                 continue
-                            meta = (
-                                self.source_metadata_backend.get_metadata_by_filepath(
-                                    fp
-                                )
-                            )
+                            meta = self.source_metadata_backend.get_metadata_by_filepath(fp)
                             self.read_queue.put((fp, meta))
 
-                            # Trigger read batch
                             if self.read_queue.qsize() >= self.read_batch_size:
-                                futures.append(
-                                    executor.submit(self.read_images_in_batch)
-                                )
-
-                            # Trigger transform batch dispatch
+                                futures.append(executor.submit(self.read_images_in_batch))
                             if self.process_queue.qsize() >= self.process_queue_size:
                                 batch_id += 1
                                 sent = self._process_images_in_batch(batch_id)
                                 if self.gpu_mode and sent:
                                     stats["processed"] += sent
                                 elif sent:
-                                    self.debug_log(
-                                        f"Dispatched batch {batch_id} ({sent} items)"
-                                    )
+                                    self.debug_log(f"Dispatched batch {batch_id} ({sent} items)")
 
-                            # Collect completed work
                             if not self.gpu_mode:
                                 done = self._check_completion_queue()
                                 stats["processed"] += done
-
-                            # Periodic webhook
                             if (
                                 hasattr(self, "webhook_handler")
                                 and self.webhook_handler
-                                and stats["processed"] // self.webhook_progress_interval
-                                > last_report
+                                and stats["processed"] // self.webhook_progress_interval > last_report
                             ):
-                                last_report = (
-                                    stats["processed"] // self.webhook_progress_interval
-                                )
+                                last_report = stats["processed"] // self.webhook_progress_interval
                                 self.send_progress_update(
                                     type="data_generation",
-                                    progress=int(
-                                        stats["processed"] / stats["total"] * 100
-                                    ),
+                                    progress=int(stats["processed"] / stats["total"] * 100),
                                     total=stats["total"],
                                     current=stats["processed"],
                                 )
 
-                            # Process finished read tasks
                             futures = self._process_futures(futures, executor)
 
                         except Exception as e:
                             logger.error(f"Error processing {fp}: {e}")
                             stats["errors"] += 1
 
-                    # Flush remaining reads and transforms
+                    # flush remaining work
                     if self.read_queue.qsize():
                         futures.append(executor.submit(self.read_images_in_batch))
                     futures = self._process_futures(futures, executor)
@@ -668,13 +534,9 @@ class DataGenerator:
                         self._process_images_in_batch(batch_id)
                     if not self.gpu_mode:
                         start = time.time()
-                        while (
-                            self.transform_queue.qsize() or not self.done_queue.empty()
-                        ) and time.time() - start < 30:
+                        while (self.transform_queue.qsize() or not self.done_queue.empty()) and time.time() - start < 30:
                             stats["processed"] += self._check_completion_queue()
                             time.sleep(0.1)
-
-                    # Final log and webhook for bucket
                     msg = f"(id={self.id}) Bucket {bucket} done: {stats}"
                     if self.rank == 0:
                         logger.info(msg)
@@ -693,9 +555,7 @@ class DataGenerator:
             self._stop_transform_workers()
 
     def generate_dataset(self):
-        """
-        High-level entry point to run the full dataset generation pipeline.
-        """
+        """main entry point for dataset generation"""
         self.debug_log("Starting dataset generation")
         files = self.discover_all_files()
         if not files:
@@ -706,10 +566,8 @@ class DataGenerator:
         self.debug_log("Dataset generation complete")
 
     def send_progress_update(self, **kwargs):
-        """Invoke webhook handler if configured."""
         if hasattr(self, "webhook_handler") and self.webhook_handler:
             self.webhook_handler.send_progress_update(**kwargs)
 
     def debug_log(self, msg: str):
-        """Helper to include rank info in debug logs."""
         logger.debug(f"{self.rank_info}{msg}")

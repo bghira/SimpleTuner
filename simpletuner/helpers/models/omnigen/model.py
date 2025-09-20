@@ -1,15 +1,12 @@
-import torch
 import logging
-from simpletuner.helpers.models.common import (
-    ImageModelFoundation,
-    PredictionTypes,
-    ModelTypes,
-    PipelineTypes,
-)
+
+import torch
 from diffusers import AutoencoderKL, OmniGenPipeline
-from transformers import AutoTokenizer
 from diffusers.models.transformers import OmniGenTransformer2DModel
 from diffusers.pipelines.omnigen.processor_omnigen import OmniGenMultiModalProcessor
+from transformers import AutoTokenizer
+
+from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.omnigen.collator import OmniGenTrainingCollator
 
 logger = logging.getLogger(__name__)
@@ -43,17 +40,13 @@ class OmniGen(ImageModelFoundation):
         return transforms.Compose(
             [
                 transforms.ToTensor(),
-                transforms.Normalize(
-                    mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True
-                ),
+                transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True),
             ]
         )
 
     def _encode_prompts(self, prompts, is_negative_prompt=False):
         # OmniGen uses token IDs directly; the text encoder caching is skipped during factory init.
-        raise NotImplementedError(
-            "OmniGen does not use encode_prompts during training."
-        )
+        raise NotImplementedError("OmniGen does not use encode_prompts during training.")
 
     def convert_negative_text_embed_for_pipeline(self, negative_text_embed):
         # OmniGen does not use negative text embeddings
@@ -75,9 +68,7 @@ class OmniGen(ImageModelFoundation):
                 revision=self.config.revision,
             )
         ]
-        self.processor = OmniGenMultiModalProcessor(
-            self.tokenizers[0], max_image_size=1024
-        )
+        self.processor = OmniGenMultiModalProcessor(self.tokenizers[0], max_image_size=1024)
         self.processor.collator = OmniGenTrainingCollator(
             # keep_raw_resolution=self.config.keep_raw_resolution,
         )
@@ -106,10 +97,7 @@ class OmniGen(ImageModelFoundation):
             # Create noisy samples using OmniGen's formulation
             # xt = t * x1 + (1-t) * x0
             # where x1 = clean latents, x0 = noise
-            batch["noisy_latents"] = (
-                t_view * batch["latents"].float()
-                + (1.0 - t_view) * batch["noise"].float()
-            )
+            batch["noisy_latents"] = t_view * batch["latents"].float() + (1.0 - t_view) * batch["noise"].float()
 
             # Store t for potential debugging
             batch["t"] = t
@@ -127,9 +115,7 @@ class OmniGen(ImageModelFoundation):
         # print(f"Target: min={target.min().item():.4f}, max={target.max().item():.4f}, mean={target.mean().item():.4f}, std={target.std().item():.4f}")
         # print(f"Loss contribution: {((model_pred - target)**2).mean().item():.4f}")
         # Calculate MSE loss
-        loss = torch.nn.functional.mse_loss(
-            model_pred.float(), target.float(), reduction="none"
-        )
+        loss = torch.nn.functional.mse_loss(model_pred.float(), target.float(), reduction="none")
 
         # Average over all dimensions
         loss = loss.mean()
@@ -143,9 +129,7 @@ class OmniGen(ImageModelFoundation):
         # Build list of input text and image features
         all_features = []
         for prompt, latents in zip(prepared_batch["prompts"], batch_latents):
-            prompt_dict = self.processor.process_multi_modal_prompt(
-                prompt, input_images=None
-            )
+            prompt_dict = self.processor.process_multi_modal_prompt(prompt, input_images=None)
             features = (prompt_dict, latents)  # Pass latents directly
             all_features.append(features)
 

@@ -1,9 +1,9 @@
 # helpers/distillation/lcm/distiller.py
-import os
 import logging
-from typing import Any, Dict, Optional, Union, Tuple
-import numpy as np
+import os
+from typing import Any, Dict, Optional, Tuple, Union
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from diffusers import DDPMScheduler, FlowMatchEulerDiscreteScheduler, LCMScheduler
@@ -19,13 +19,9 @@ class DDIMSolver:
     def __init__(self, alpha_cumprods, timesteps=1000, ddim_timesteps=50):
         # DDIM sampling parameters
         step_ratio = timesteps // ddim_timesteps
-        self.ddim_timesteps = (
-            np.arange(1, ddim_timesteps + 1) * step_ratio
-        ).round().astype(np.int64) - 1
+        self.ddim_timesteps = (np.arange(1, ddim_timesteps + 1) * step_ratio).round().astype(np.int64) - 1
         self.ddim_alpha_cumprods = alpha_cumprods[self.ddim_timesteps]
-        self.ddim_alpha_cumprods_prev = np.asarray(
-            [alpha_cumprods[0]] + alpha_cumprods[self.ddim_timesteps[:-1]].tolist()
-        )
+        self.ddim_alpha_cumprods_prev = np.asarray([alpha_cumprods[0]] + alpha_cumprods[self.ddim_timesteps[:-1]].tolist())
         # Convert to torch tensors
         self.ddim_timesteps = torch.from_numpy(self.ddim_timesteps).long()
         self.ddim_alpha_cumprods = torch.from_numpy(self.ddim_alpha_cumprods)
@@ -38,9 +34,7 @@ class DDIMSolver:
         return self
 
     def ddim_step(self, pred_x0, pred_noise, timestep_index):
-        alpha_cumprod_prev = extract_into_tensor(
-            self.ddim_alpha_cumprods_prev, timestep_index, pred_x0.shape
-        )
+        alpha_cumprod_prev = extract_into_tensor(self.ddim_alpha_cumprods_prev, timestep_index, pred_x0.shape)
         dir_xt = (1.0 - alpha_cumprod_prev).sqrt() * pred_noise
         x_prev = alpha_cumprod_prev.sqrt() * pred_x0 + dir_xt
         return x_prev
@@ -82,9 +76,7 @@ def append_dims(x, target_dims):
     """Appends dimensions to the end of a tensor until it has target_dims dimensions."""
     dims_to_append = target_dims - x.ndim
     if dims_to_append < 0:
-        raise ValueError(
-            f"input has {x.ndim} dims but target_dims is {target_dims}, which is less"
-        )
+        raise ValueError(f"input has {x.ndim} dims but target_dims is {target_dims}, which is less")
     return x[(...,) + (None,) * dims_to_append]
 
 
@@ -137,9 +129,7 @@ class LCMDistiller(DistillationBase):
                 sigmas = noise_scheduler.sigmas.cpu()
             else:
                 # Create sigmas for flow matching if not provided
-                timesteps = torch.linspace(
-                    0, 1, noise_scheduler.config.num_train_timesteps + 1
-                )
+                timesteps = torch.linspace(0, 1, noise_scheduler.config.num_train_timesteps + 1)
                 sigmas = timesteps.flip(0)
 
             self.solver = FlowMatchingSolver(
@@ -174,39 +164,24 @@ class LCMDistiller(DistillationBase):
 
         # Sample random solver timestep indices
         if self.is_flow_matching:
-            index = torch.randint(
-                0, len(self.solver.timesteps), (B,), device=device
-            ).long()
+            index = torch.randint(0, len(self.solver.timesteps), (B,), device=device).long()
             start_timesteps = self.solver.timesteps[index]
-            timesteps = self.solver.timesteps[
-                torch.clamp(index + 1, max=len(self.solver.timesteps) - 1)
-            ]
+            timesteps = self.solver.timesteps[torch.clamp(index + 1, max=len(self.solver.timesteps) - 1)]
         else:
             # DDPM: use DDIM timesteps
-            topk = (
-                self.noise_scheduler.config.num_train_timesteps
-                // self.config["num_ddim_timesteps"]
-            )
-            index = torch.randint(
-                0, self.config["num_ddim_timesteps"], (B,), device=device
-            ).long()
+            topk = self.noise_scheduler.config.num_train_timesteps // self.config["num_ddim_timesteps"]
+            index = torch.randint(0, self.config["num_ddim_timesteps"], (B,), device=device).long()
             start_timesteps = self.solver.ddim_timesteps[index]
             timesteps = start_timesteps - topk
-            timesteps = torch.where(
-                timesteps < 0, torch.zeros_like(timesteps), timesteps
-            )
+            timesteps = torch.where(timesteps < 0, torch.zeros_like(timesteps), timesteps)
 
         # Get boundary condition scalings
         c_skip_start, c_out_start = scalings_for_boundary_conditions(
             start_timesteps, timestep_scaling=self.config["timestep_scaling_factor"]
         )
-        c_skip_start, c_out_start = [
-            append_dims(x, latents.ndim) for x in [c_skip_start, c_out_start]
-        ]
+        c_skip_start, c_out_start = [append_dims(x, latents.ndim) for x in [c_skip_start, c_out_start]]
 
-        c_skip, c_out = scalings_for_boundary_conditions(
-            timesteps, timestep_scaling=self.config["timestep_scaling_factor"]
-        )
+        c_skip, c_out = scalings_for_boundary_conditions(timesteps, timestep_scaling=self.config["timestep_scaling_factor"])
         c_skip, c_out = [append_dims(x, latents.ndim) for x in [c_skip, c_out]]
 
         # Add noise to create starting point
@@ -218,14 +193,10 @@ class LCMDistiller(DistillationBase):
             noisy_latents = sigma * noise + (1 - sigma) * latents
         else:
             # DDPM: use the standard noising process
-            noisy_latents = self.noise_scheduler.add_noise(
-                latents, noise, start_timesteps
-            )
+            noisy_latents = self.noise_scheduler.add_noise(latents, noise, start_timesteps)
 
         # Sample guidance scale
-        w = (self.config["w_max"] - self.config["w_min"]) * torch.rand(
-            (B,)
-        ) + self.config["w_min"]
+        w = (self.config["w_max"] - self.config["w_min"]) * torch.rand((B,)) + self.config["w_min"]
         w = w.reshape(B, 1, 1, 1).to(device=device, dtype=latents.dtype)
 
         # Get teacher predictions with CFG
@@ -272,12 +243,8 @@ class LCMDistiller(DistillationBase):
                 target = c_skip * x_prev + c_out * target_v
             else:
                 # DDPM case: convert predictions to x0 and epsilon
-                pred_x0 = self._get_predicted_original_sample(
-                    noise_pred, start_timesteps, noisy_latents
-                )
-                pred_epsilon = self._get_predicted_noise(
-                    noise_pred, start_timesteps, noisy_latents
-                )
+                pred_x0 = self._get_predicted_original_sample(noise_pred, start_timesteps, noisy_latents)
+                pred_epsilon = self._get_predicted_noise(noise_pred, start_timesteps, noisy_latents)
 
                 # DDIM step to get x_prev
                 x_prev = self.solver.ddim_step(pred_x0, pred_epsilon, index)
@@ -290,9 +257,7 @@ class LCMDistiller(DistillationBase):
                     return_dict=False,
                 )[0]
 
-                pred_x0_target = self._get_predicted_original_sample(
-                    target_noise_pred, timesteps, x_prev
-                )
+                pred_x0_target = self._get_predicted_original_sample(target_noise_pred, timesteps, x_prev)
                 target = c_skip * x_prev + c_out * pred_x0_target
 
         self.toggle_adapter(enable=True)
@@ -337,9 +302,7 @@ class LCMDistiller(DistillationBase):
                 prepared_batch["timesteps"],
                 prepared_batch["noisy_latents"],
             )
-            model_pred = (
-                c_skip_start * prepared_batch["noisy_latents"] + c_out_start * pred_x0
-            )
+            model_pred = c_skip_start * prepared_batch["noisy_latents"] + c_out_start * pred_x0
 
         # Target from teacher
         target = prepared_batch["target"]
@@ -349,11 +312,7 @@ class LCMDistiller(DistillationBase):
             loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
         elif self.config["loss_type"] == "huber":
             loss = torch.mean(
-                torch.sqrt(
-                    (model_pred.float() - target.float()) ** 2
-                    + self.config["huber_c"] ** 2
-                )
-                - self.config["huber_c"]
+                torch.sqrt((model_pred.float() - target.float()) ** 2 + self.config["huber_c"] ** 2) - self.config["huber_c"]
             )
         else:
             raise ValueError(f"Unknown loss type: {self.config['loss_type']}")
@@ -377,9 +336,7 @@ class LCMDistiller(DistillationBase):
         elif self.noise_scheduler.config.prediction_type == "v_prediction":
             pred_x0 = alphas * sample - sigmas * model_output
         else:
-            raise ValueError(
-                f"Unknown prediction type: {self.noise_scheduler.config.prediction_type}"
-            )
+            raise ValueError(f"Unknown prediction type: {self.noise_scheduler.config.prediction_type}")
 
         return pred_x0
 
@@ -395,9 +352,7 @@ class LCMDistiller(DistillationBase):
         elif self.noise_scheduler.config.prediction_type == "v_prediction":
             pred_epsilon = alphas * model_output + sigmas * sample
         else:
-            raise ValueError(
-                f"Unknown prediction type: {self.noise_scheduler.config.prediction_type}"
-            )
+            raise ValueError(f"Unknown prediction type: {self.noise_scheduler.config.prediction_type}")
 
         return pred_epsilon
 

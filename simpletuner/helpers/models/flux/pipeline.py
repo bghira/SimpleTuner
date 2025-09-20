@@ -1,4 +1,4 @@
-# Copyright 2024 Black Forest Labs and The HuggingFace Team. All rights reserved.
+# Copyright 2024 Black Forest Labs and The HuggingFace Team and 2025 bghira. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,74 +12,58 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 import inspect
-from typing import Any, Callable, Dict, List, Optional, Union, Tuple
+import os
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
-from transformers import (
-    CLIPImageProcessor,
-    CLIPVisionModelWithProjection,
-    CLIPTextModel,
-    CLIPTokenizer,
-    T5EncoderModel,
-    T5TokenizerFast,
-)
-
 from diffusers.image_processor import PipelineImageInput, VaeImageProcessor
-from PIL import Image
-from pathlib import Path
-from diffusers.models.autoencoders import AutoencoderKL
-from diffusers.models.transformers import FluxTransformer2DModel
-from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
-from diffusers.utils import (
-    USE_PEFT_BACKEND,
-    is_torch_xla_available,
-    replace_example_docstring,
-    scale_lora_layers,
-    BaseOutput,
-    unscale_lora_layers,
-    is_peft_available,
-    is_peft_version,
-    is_torch_version,
-    is_transformers_available,
-    is_transformers_version,
-    get_peft_kwargs,
-    get_adapter_name,
-    convert_unet_state_dict_to_peft,
-    convert_state_dict_to_diffusers,
-    convert_state_dict_to_peft,
-    logging,
-)
-from diffusers.loaders.lora_base import _fetch_state_dict
-from diffusers.models.lora import (
-    text_encoder_attn_modules,
-    text_encoder_mlp_modules,
-)
-from diffusers.utils.torch_utils import randn_tensor
-from diffusers.pipelines.pipeline_utils import DiffusionPipeline
-
-
-from diffusers.loaders import (
-    FluxIPAdapterMixin,
-    FromSingleFileMixin,
-    TextualInversionLoaderMixin,
-)
-from diffusers.models.controlnets.controlnet_flux import (
-    FluxControlNetModel,
-    FluxMultiControlNetModel,
-)
-from diffusers.models.transformers import FluxTransformer2DModel
-from diffusers.pipelines.pipeline_utils import DiffusionPipeline
-from diffusers.pipelines.flux.pipeline_output import FluxPipelineOutput
-from diffusers.loaders.lora_base import LoraBaseMixin
-from huggingface_hub.utils import validate_hf_hub_args
+from diffusers.loaders import FluxIPAdapterMixin, FromSingleFileMixin, TextualInversionLoaderMixin
+from diffusers.loaders.lora_base import LoraBaseMixin, _fetch_state_dict
 from diffusers.loaders.lora_conversion_utils import (
     _convert_bfl_flux_control_lora_to_diffusers,
     _convert_kohya_flux_lora_to_diffusers,
     _convert_xlabs_flux_lora_to_diffusers,
+)
+from diffusers.models.autoencoders import AutoencoderKL
+from diffusers.models.controlnets.controlnet_flux import FluxControlNetModel, FluxMultiControlNetModel
+from diffusers.models.lora import text_encoder_attn_modules, text_encoder_mlp_modules
+from diffusers.models.transformers import FluxTransformer2DModel
+from diffusers.pipelines.flux.pipeline_output import FluxPipelineOutput
+from diffusers.pipelines.pipeline_utils import DiffusionPipeline
+from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
+from diffusers.utils import (
+    USE_PEFT_BACKEND,
+    BaseOutput,
+    convert_state_dict_to_diffusers,
+    convert_state_dict_to_peft,
+    convert_unet_state_dict_to_peft,
+    get_adapter_name,
+    get_peft_kwargs,
+    is_peft_available,
+    is_peft_version,
+    is_torch_version,
+    is_torch_xla_available,
+    is_transformers_available,
+    is_transformers_version,
+    logging,
+    replace_example_docstring,
+    scale_lora_layers,
+    unscale_lora_layers,
+)
+from diffusers.utils.torch_utils import randn_tensor
+from huggingface_hub.utils import validate_hf_hub_args
+from PIL import Image
+from transformers import (
+    CLIPImageProcessor,
+    CLIPTextModel,
+    CLIPTokenizer,
+    CLIPVisionModelWithProjection,
+    T5EncoderModel,
+    T5TokenizerFast,
 )
 
 if is_torch_xla_available():
@@ -141,6 +125,7 @@ def calculate_shift(
 
 from dataclasses import dataclass
 from typing import List, Union
+
 import PIL.Image
 from diffusers.utils import BaseOutput
 
@@ -210,13 +195,9 @@ def retrieve_timesteps(
         second element is the number of inference steps.
     """
     if timesteps is not None and sigmas is not None:
-        raise ValueError(
-            "Only one of `timesteps` or `sigmas` can be passed. Please choose one to set custom values"
-        )
+        raise ValueError("Only one of `timesteps` or `sigmas` can be passed. Please choose one to set custom values")
     if timesteps is not None:
-        accepts_timesteps = "timesteps" in set(
-            inspect.signature(scheduler.set_timesteps).parameters.keys()
-        )
+        accepts_timesteps = "timesteps" in set(inspect.signature(scheduler.set_timesteps).parameters.keys())
         if not accepts_timesteps:
             raise ValueError(
                 f"The current scheduler class {scheduler.__class__}'s `set_timesteps` does not support custom"
@@ -226,9 +207,7 @@ def retrieve_timesteps(
         timesteps = scheduler.timesteps
         num_inference_steps = len(timesteps)
     elif sigmas is not None:
-        accept_sigmas = "sigmas" in set(
-            inspect.signature(scheduler.set_timesteps).parameters.keys()
-        )
+        accept_sigmas = "sigmas" in set(inspect.signature(scheduler.set_timesteps).parameters.keys())
         if not accept_sigmas:
             raise ValueError(
                 f"The current scheduler class {scheduler.__class__}'s `set_timesteps` does not support custom"
@@ -386,10 +365,7 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
         for k in keys:
             if "alpha" in k:
                 alpha_value = state_dict.get(k)
-                if (
-                    torch.is_tensor(alpha_value)
-                    and torch.is_floating_point(alpha_value)
-                ) or isinstance(alpha_value, float):
+                if (torch.is_tensor(alpha_value) and torch.is_floating_point(alpha_value)) or isinstance(alpha_value, float):
                     network_alphas[k] = state_dict.pop(k)
                 else:
                     raise ValueError(
@@ -414,9 +390,7 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
         if not USE_PEFT_BACKEND:
             raise ValueError("PEFT backend is required for this method.")
 
-        low_cpu_mem_usage = kwargs.pop(
-            "low_cpu_mem_usage", _LOW_CPU_MEM_USAGE_DEFAULT_LORA
-        )
+        low_cpu_mem_usage = kwargs.pop("low_cpu_mem_usage", _LOW_CPU_MEM_USAGE_DEFAULT_LORA)
         if low_cpu_mem_usage and not is_peft_version(">=", "0.13.1"):
             raise ValueError(
                 "`low_cpu_mem_usage=True` is not compatible with this `peft` version. Please update it with `pip install -U peft`."
@@ -424,9 +398,7 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
 
         # if a dict is passed, copy it instead of modifying it inplace
         if isinstance(pretrained_model_name_or_path_or_dict, dict):
-            pretrained_model_name_or_path_or_dict = (
-                pretrained_model_name_or_path_or_dict.copy()
-            )
+            pretrained_model_name_or_path_or_dict = pretrained_model_name_or_path_or_dict.copy()
 
         # First, ensure that the checkpoint is a compatible one and can be successfully loaded.
         state_dict, network_alphas = self.lora_state_dict(
@@ -456,11 +428,7 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
             self.load_lora_into_transformer(
                 transformer_state_dict,
                 network_alphas=network_alphas,
-                transformer=(
-                    getattr(self, self.transformer_name)
-                    if not hasattr(self, "transformer")
-                    else self.transformer
-                ),
+                transformer=(getattr(self, self.transformer_name) if not hasattr(self, "transformer") else self.transformer),
                 adapter_name=adapter_name,
                 _pipeline=self,
                 low_cpu_mem_usage=low_cpu_mem_usage,
@@ -514,11 +482,7 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
         controlnet_key = getattr(cls, "controlnet_name", "controlnet")
 
         controlnet_keys = [k for k in keys if k.startswith(controlnet_key)]
-        state_dict = {
-            k.replace(f"{controlnet_key}.", ""): v
-            for k, v in state_dict.items()
-            if k in controlnet_keys
-        }
+        state_dict = {k.replace(f"{controlnet_key}.", ""): v for k, v in state_dict.items() if k in controlnet_keys}
 
         if len(state_dict.keys()) > 0:
             # check with first key if is not in peft format
@@ -537,18 +501,12 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
                     rank[key] = val.shape[1]
 
             if network_alphas is not None and len(network_alphas) >= 1:
-                alpha_keys = [
-                    k for k in network_alphas.keys() if k.startswith(controlnet_key)
-                ]
+                alpha_keys = [k for k in network_alphas.keys() if k.startswith(controlnet_key)]
                 network_alphas = {
-                    k.replace(f"{controlnet_key}.", ""): v
-                    for k, v in network_alphas.items()
-                    if k in alpha_keys
+                    k.replace(f"{controlnet_key}.", ""): v for k, v in network_alphas.items() if k in alpha_keys
                 }
 
-            lora_config_kwargs = get_peft_kwargs(
-                rank, network_alpha_dict=network_alphas, peft_state_dict=state_dict
-            )
+            lora_config_kwargs = get_peft_kwargs(rank, network_alpha_dict=network_alphas, peft_state_dict=state_dict)
             if "use_dora" in lora_config_kwargs:
                 if lora_config_kwargs["use_dora"] and is_peft_version("<", "0.9.0"):
                     raise ValueError(
@@ -563,25 +521,17 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
                 adapter_name = get_adapter_name(controlnet)
 
             # In case the pipeline has been already offloaded to CPU - temporarily remove the hooks
-            is_model_cpu_offload, is_sequential_cpu_offload = (
-                cls._optionally_disable_offloading(_pipeline)
-            )
+            is_model_cpu_offload, is_sequential_cpu_offload = cls._optionally_disable_offloading(_pipeline)
 
             peft_kwargs = {}
             if is_peft_version(">=", "0.13.1"):
                 peft_kwargs["low_cpu_mem_usage"] = low_cpu_mem_usage
 
-            inject_adapter_in_model(
-                lora_config, controlnet, adapter_name=adapter_name, **peft_kwargs
-            )
-            incompatible_keys = set_peft_model_state_dict(
-                controlnet, state_dict, adapter_name, **peft_kwargs
-            )
+            inject_adapter_in_model(lora_config, controlnet, adapter_name=adapter_name, **peft_kwargs)
+            incompatible_keys = set_peft_model_state_dict(controlnet, state_dict, adapter_name, **peft_kwargs)
 
             if incompatible_keys is not None:
-                logger.info(
-                    f"Loaded ControlNet LoRA with incompatible keys: {incompatible_keys}"
-                )
+                logger.info(f"Loaded ControlNet LoRA with incompatible keys: {incompatible_keys}")
 
             # Offload back.
             if is_model_cpu_offload:
@@ -628,11 +578,7 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
         keys = list(state_dict.keys())
 
         transformer_keys = [k for k in keys if k.startswith(cls.transformer_name)]
-        state_dict = {
-            k.replace(f"{cls.transformer_name}.", ""): v
-            for k, v in state_dict.items()
-            if k in transformer_keys
-        }
+        state_dict = {k.replace(f"{cls.transformer_name}.", ""): v for k, v in state_dict.items() if k in transformer_keys}
 
         if len(state_dict.keys()) > 0:
             # check with first key if is not in peft format
@@ -652,20 +598,10 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
 
             if network_alphas is not None and len(network_alphas) >= 1:
                 prefix = cls.transformer_name
-                alpha_keys = [
-                    k
-                    for k in network_alphas.keys()
-                    if k.startswith(prefix) and k.split(".")[0] == prefix
-                ]
-                network_alphas = {
-                    k.replace(f"{prefix}.", ""): v
-                    for k, v in network_alphas.items()
-                    if k in alpha_keys
-                }
+                alpha_keys = [k for k in network_alphas.keys() if k.startswith(prefix) and k.split(".")[0] == prefix]
+                network_alphas = {k.replace(f"{prefix}.", ""): v for k, v in network_alphas.items() if k in alpha_keys}
 
-            lora_config_kwargs = get_peft_kwargs(
-                rank, network_alpha_dict=network_alphas, peft_state_dict=state_dict
-            )
+            lora_config_kwargs = get_peft_kwargs(rank, network_alpha_dict=network_alphas, peft_state_dict=state_dict)
             if "use_dora" in lora_config_kwargs:
                 if lora_config_kwargs["use_dora"] and is_peft_version("<", "0.9.0"):
                     raise ValueError(
@@ -681,29 +617,21 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
 
             # In case the pipeline has been already offloaded to CPU - temporarily remove the hooks
             # otherwise loading LoRA weights will lead to an error
-            is_model_cpu_offload, is_sequential_cpu_offload = (
-                cls._optionally_disable_offloading(_pipeline)
-            )
+            is_model_cpu_offload, is_sequential_cpu_offload = cls._optionally_disable_offloading(_pipeline)
 
             peft_kwargs = {}
             if is_peft_version(">=", "0.13.1"):
                 peft_kwargs["low_cpu_mem_usage"] = low_cpu_mem_usage
 
-            inject_adapter_in_model(
-                lora_config, transformer, adapter_name=adapter_name, **peft_kwargs
-            )
-            incompatible_keys = set_peft_model_state_dict(
-                transformer, state_dict, adapter_name, **peft_kwargs
-            )
+            inject_adapter_in_model(lora_config, transformer, adapter_name=adapter_name, **peft_kwargs)
+            incompatible_keys = set_peft_model_state_dict(transformer, state_dict, adapter_name, **peft_kwargs)
 
             warn_msg = ""
             if incompatible_keys is not None:
                 # Check only for unexpected keys.
                 unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
                 if unexpected_keys:
-                    lora_unexpected_keys = [
-                        k for k in unexpected_keys if "lora_" in k and adapter_name in k
-                    ]
+                    lora_unexpected_keys = [k for k in unexpected_keys if "lora_" in k and adapter_name in k]
                     if lora_unexpected_keys:
                         warn_msg = (
                             f"Loading adapter weights from state_dict led to unexpected keys found in the model:"
@@ -713,9 +641,7 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
                 # Filter missing keys specific to the current adapter.
                 missing_keys = getattr(incompatible_keys, "missing_keys", None)
                 if missing_keys:
-                    lora_missing_keys = [
-                        k for k in missing_keys if "lora_" in k and adapter_name in k
-                    ]
+                    lora_missing_keys = [k for k in missing_keys if "lora_" in k and adapter_name in k]
                     if lora_missing_keys:
                         warn_msg += (
                             f"Loading adapter weights from state_dict led to missing keys in the model:"
@@ -796,26 +722,18 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
         # Safe prefix to check with.
         if any(cls.text_encoder_name in key for key in keys):
             # Load the layers corresponding to text encoder and make necessary adjustments.
-            text_encoder_keys = [
-                k for k in keys if k.startswith(prefix) and k.split(".")[0] == prefix
-            ]
+            text_encoder_keys = [k for k in keys if k.startswith(prefix) and k.split(".")[0] == prefix]
             text_encoder_lora_state_dict = {
-                k.replace(f"{prefix}.", ""): v
-                for k, v in state_dict.items()
-                if k in text_encoder_keys
+                k.replace(f"{prefix}.", ""): v for k, v in state_dict.items() if k in text_encoder_keys
             }
 
             if len(text_encoder_lora_state_dict) > 0:
                 logger.info(f"Loading {prefix}.")
                 rank = {}
-                text_encoder_lora_state_dict = convert_state_dict_to_diffusers(
-                    text_encoder_lora_state_dict
-                )
+                text_encoder_lora_state_dict = convert_state_dict_to_diffusers(text_encoder_lora_state_dict)
 
                 # convert state dict
-                text_encoder_lora_state_dict = convert_state_dict_to_peft(
-                    text_encoder_lora_state_dict
-                )
+                text_encoder_lora_state_dict = convert_state_dict_to_peft(text_encoder_lora_state_dict)
 
                 for name, _ in text_encoder_attn_modules(text_encoder):
                     for module in ("out_proj", "q_proj", "k_proj", "v_proj"):
@@ -832,20 +750,10 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
                         rank[rank_key] = text_encoder_lora_state_dict[rank_key].shape[1]
 
                 if network_alphas is not None:
-                    alpha_keys = [
-                        k
-                        for k in network_alphas.keys()
-                        if k.startswith(prefix) and k.split(".")[0] == prefix
-                    ]
-                    network_alphas = {
-                        k.replace(f"{prefix}.", ""): v
-                        for k, v in network_alphas.items()
-                        if k in alpha_keys
-                    }
+                    alpha_keys = [k for k in network_alphas.keys() if k.startswith(prefix) and k.split(".")[0] == prefix]
+                    network_alphas = {k.replace(f"{prefix}.", ""): v for k, v in network_alphas.items() if k in alpha_keys}
 
-                lora_config_kwargs = get_peft_kwargs(
-                    rank, network_alphas, text_encoder_lora_state_dict, is_unet=False
-                )
+                lora_config_kwargs = get_peft_kwargs(rank, network_alphas, text_encoder_lora_state_dict, is_unet=False)
                 if "use_dora" in lora_config_kwargs:
                     if lora_config_kwargs["use_dora"]:
                         if is_peft_version("<", "0.9.0"):
@@ -861,9 +769,7 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
                 if adapter_name is None:
                     adapter_name = get_adapter_name(text_encoder)
 
-                is_model_cpu_offload, is_sequential_cpu_offload = (
-                    cls._optionally_disable_offloading(_pipeline)
-                )
+                is_model_cpu_offload, is_sequential_cpu_offload = cls._optionally_disable_offloading(_pipeline)
 
                 # inject LoRA layers and load the state dict
                 # in transformers we automatically check whether the adapter name is already in use or not
@@ -924,30 +830,20 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
         """
         state_dict = {}
 
-        if not (
-            transformer_lora_layers
-            or text_encoder_lora_layers
-            or controlnet_lora_layers
-        ):
+        if not (transformer_lora_layers or text_encoder_lora_layers or controlnet_lora_layers):
             raise ValueError(
                 "You must pass at least one of `transformer_lora_layers`, `text_encoder_lora_layers`, or `controlnet_lora_layers`."
             )
 
         if transformer_lora_layers:
-            state_dict.update(
-                cls.pack_weights(transformer_lora_layers, cls.transformer_name)
-            )
+            state_dict.update(cls.pack_weights(transformer_lora_layers, cls.transformer_name))
 
         if text_encoder_lora_layers:
-            state_dict.update(
-                cls.pack_weights(text_encoder_lora_layers, cls.text_encoder_name)
-            )
+            state_dict.update(cls.pack_weights(text_encoder_lora_layers, cls.text_encoder_name))
 
         if controlnet_lora_layers:
             controlnet_prefix = "controlnet"
-            state_dict.update(
-                cls.pack_weights(controlnet_lora_layers, controlnet_prefix)
-            )
+            state_dict.update(cls.pack_weights(controlnet_lora_layers, controlnet_prefix))
 
         # Save the model
         cls.write_lora_layers(
@@ -1006,9 +902,7 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
             adapter_names=adapter_names,
         )
 
-    def unfuse_lora(
-        self, components: List[str] = ["transformer", "text_encoder"], **kwargs
-    ):
+    def unfuse_lora(self, components: List[str] = ["transformer", "text_encoder"], **kwargs):
         r"""
         Reverses the effect of
         [`pipe.fuse_lora()`](https://huggingface.co/docs/diffusers/main/en/api/loaders#diffusers.loaders.LoraBaseMixin.fuse_lora).
@@ -1096,15 +990,11 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             scheduler=scheduler,
         )
         self.vae_scale_factor = (
-            2 ** (len(self.vae.config.block_out_channels))
-            if hasattr(self, "vae") and self.vae is not None
-            else 16
+            2 ** (len(self.vae.config.block_out_channels)) if hasattr(self, "vae") and self.vae is not None else 16
         )
         self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor)
         self.tokenizer_max_length = (
-            self.tokenizer.model_max_length
-            if hasattr(self, "tokenizer") and self.tokenizer is not None
-            else 77
+            self.tokenizer.model_max_length if hasattr(self, "tokenizer") and self.tokenizer is not None else 77
         )
         self.default_sample_size = 64
 
@@ -1133,24 +1023,16 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         )
         prompt_attention_mask = text_inputs.attention_mask
         text_input_ids = text_inputs.input_ids
-        untruncated_ids = self.tokenizer_2(
-            prompt, padding="longest", return_tensors="pt"
-        ).input_ids
+        untruncated_ids = self.tokenizer_2(prompt, padding="longest", return_tensors="pt").input_ids
 
-        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(
-            text_input_ids, untruncated_ids
-        ):
-            removed_text = self.tokenizer_2.batch_decode(
-                untruncated_ids[:, self.tokenizer_max_length - 1 : -1]
-            )
+        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(text_input_ids, untruncated_ids):
+            removed_text = self.tokenizer_2.batch_decode(untruncated_ids[:, self.tokenizer_max_length - 1 : -1])
             # logger.warning(
             #     "The following part of your input was truncated because `max_sequence_length` is set to "
             #     f" {max_sequence_length} tokens: {removed_text}"
             # )
 
-        prompt_embeds = self.text_encoder_2(
-            text_input_ids.to(device), output_hidden_states=False
-        )[0]
+        prompt_embeds = self.text_encoder_2(text_input_ids.to(device), output_hidden_states=False)[0]
 
         dtype = self.text_encoder_2.dtype
         prompt_embeds = prompt_embeds.to(dtype=dtype, device=device)
@@ -1159,9 +1041,7 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
 
         # duplicate text embeddings and attention mask for each generation per prompt, using mps friendly method
         prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
-        prompt_embeds = prompt_embeds.view(
-            batch_size * num_images_per_prompt, seq_len, -1
-        )
+        prompt_embeds = prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
 
         return prompt_embeds, prompt_attention_mask
 
@@ -1187,22 +1067,14 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         )
 
         text_input_ids = text_inputs.input_ids
-        untruncated_ids = self.tokenizer(
-            prompt, padding="longest", return_tensors="pt"
-        ).input_ids
-        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(
-            text_input_ids, untruncated_ids
-        ):
-            removed_text = self.tokenizer.batch_decode(
-                untruncated_ids[:, self.tokenizer_max_length - 1 : -1]
-            )
+        untruncated_ids = self.tokenizer(prompt, padding="longest", return_tensors="pt").input_ids
+        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(text_input_ids, untruncated_ids):
+            removed_text = self.tokenizer.batch_decode(untruncated_ids[:, self.tokenizer_max_length - 1 : -1])
             # logger.warning(
             #     "The following part of your input was truncated because CLIP can only handle sequences up to"
             #     f" {self.tokenizer_max_length} tokens: {removed_text}"
             # )
-        prompt_embeds = self.text_encoder(
-            text_input_ids.to(device), output_hidden_states=False
-        )
+        prompt_embeds = self.text_encoder(text_input_ids.to(device), output_hidden_states=False)
 
         # Use pooled output of CLIPTextModel
         prompt_embeds = prompt_embeds.pooler_output
@@ -1296,9 +1168,7 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                 # Retrieve the original scale by scaling back the LoRA layers
                 unscale_lora_layers(self.text_encoder_2, lora_scale)
 
-        text_ids = torch.zeros(batch_size, prompt_embeds.shape[1], 3).to(
-            device=device, dtype=prompt_embeds.dtype
-        )
+        text_ids = torch.zeros(batch_size, prompt_embeds.shape[1], 3).to(device=device, dtype=prompt_embeds.dtype)
 
         return prompt_embeds, pooled_prompt_embeds, text_ids, prompt_attention_mask
 
@@ -1314,13 +1184,10 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         max_sequence_length=None,
     ):
         if height % 8 != 0 or width % 8 != 0:
-            raise ValueError(
-                f"`height` and `width` have to be divisible by 8 but are {height} and {width}."
-            )
+            raise ValueError(f"`height` and `width` have to be divisible by 8 but are {height} and {width}.")
 
         if callback_on_step_end_tensor_inputs is not None and not all(
-            k in self._callback_tensor_inputs
-            for k in callback_on_step_end_tensor_inputs
+            k in self._callback_tensor_inputs for k in callback_on_step_end_tensor_inputs
         ):
             raise ValueError(
                 f"`callback_on_step_end_tensor_inputs` has to be in {self._callback_tensor_inputs}, but found {[k for k in callback_on_step_end_tensor_inputs if k not in self._callback_tensor_inputs]}"
@@ -1340,18 +1207,10 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             raise ValueError(
                 "Provide either `prompt` or `prompt_embeds`. Cannot leave both `prompt` and `prompt_embeds` undefined."
             )
-        elif prompt is not None and (
-            not isinstance(prompt, str) and not isinstance(prompt, list)
-        ):
-            raise ValueError(
-                f"`prompt` has to be of type `str` or `list` but is {type(prompt)}"
-            )
-        elif prompt_2 is not None and (
-            not isinstance(prompt_2, str) and not isinstance(prompt_2, list)
-        ):
-            raise ValueError(
-                f"`prompt_2` has to be of type `str` or `list` but is {type(prompt_2)}"
-            )
+        elif prompt is not None and (not isinstance(prompt, str) and not isinstance(prompt, list)):
+            raise ValueError(f"`prompt` has to be of type `str` or `list` but is {type(prompt)}")
+        elif prompt_2 is not None and (not isinstance(prompt_2, str) and not isinstance(prompt_2, list)):
+            raise ValueError(f"`prompt_2` has to be of type `str` or `list` but is {type(prompt_2)}")
 
         if prompt_embeds is not None and pooled_prompt_embeds is None:
             raise ValueError(
@@ -1359,23 +1218,15 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             )
 
         if max_sequence_length is not None and max_sequence_length > 512:
-            raise ValueError(
-                f"`max_sequence_length` cannot be greater than 512 but is {max_sequence_length}"
-            )
+            raise ValueError(f"`max_sequence_length` cannot be greater than 512 but is {max_sequence_length}")
 
     @staticmethod
     def _prepare_latent_image_ids(batch_size, height, width, device, dtype):
         latent_image_ids = torch.zeros(height // 2, width // 2, 3)
-        latent_image_ids[..., 1] = (
-            latent_image_ids[..., 1] + torch.arange(height // 2)[:, None]
-        )
-        latent_image_ids[..., 2] = (
-            latent_image_ids[..., 2] + torch.arange(width // 2)[None, :]
-        )
+        latent_image_ids[..., 1] = latent_image_ids[..., 1] + torch.arange(height // 2)[:, None]
+        latent_image_ids[..., 2] = latent_image_ids[..., 2] + torch.arange(width // 2)[None, :]
 
-        latent_image_id_height, latent_image_id_width, latent_image_id_channels = (
-            latent_image_ids.shape
-        )
+        latent_image_id_height, latent_image_id_width, latent_image_id_channels = latent_image_ids.shape
 
         latent_image_ids = latent_image_ids[None, :].repeat(batch_size, 1, 1, 1)
         latent_image_ids = latent_image_ids.reshape(
@@ -1388,13 +1239,9 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
 
     @staticmethod
     def _pack_latents(latents, batch_size, num_channels_latents, height, width):
-        latents = latents.view(
-            batch_size, num_channels_latents, height // 2, 2, width // 2, 2
-        )
+        latents = latents.view(batch_size, num_channels_latents, height // 2, 2, width // 2, 2)
         latents = latents.permute(0, 2, 4, 1, 3, 5)
-        latents = latents.reshape(
-            batch_size, (height // 2) * (width // 2), num_channels_latents * 4
-        )
+        latents = latents.reshape(batch_size, (height // 2) * (width // 2), num_channels_latents * 4)
 
         return latents
 
@@ -1408,9 +1255,7 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         latents = latents.view(batch_size, height, width, channels // 4, 2, 2)
         latents = latents.permute(0, 3, 1, 4, 2, 5)
 
-        latents = latents.reshape(
-            batch_size, channels // (2 * 2), height * 2, width * 2
-        )
+        latents = latents.reshape(batch_size, channels // (2 * 2), height * 2, width * 2)
 
         return latents
 
@@ -1431,9 +1276,7 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         shape = (batch_size, num_channels_latents, height, width)
 
         if latents is not None:
-            latent_image_ids = self._prepare_latent_image_ids(
-                batch_size, height, width, device, dtype
-            )
+            latent_image_ids = self._prepare_latent_image_ids(batch_size, height, width, device, dtype)
             return latents.to(device=device, dtype=dtype), latent_image_ids
 
         if isinstance(generator, list) and len(generator) != batch_size:
@@ -1443,13 +1286,9 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             )
 
         latents = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
-        latents = self._pack_latents(
-            latents, batch_size, num_channels_latents, height, width
-        )
+        latents = self._pack_latents(latents, batch_size, num_channels_latents, height, width)
 
-        latent_image_ids = self._prepare_latent_image_ids(
-            batch_size, height, width, device, dtype
-        )
+        latent_image_ids = self._prepare_latent_image_ids(batch_size, height, width, device, dtype)
 
         return latents, latent_image_ids
 
@@ -1475,9 +1314,7 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         self,
         prompt: Union[str, List[str]] = None,
         prompt_mask: Optional[Union[torch.FloatTensor, List[torch.FloatTensor]]] = None,
-        negative_mask: Optional[
-            Union[torch.FloatTensor, List[torch.FloatTensor]]
-        ] = None,
+        negative_mask: Optional[Union[torch.FloatTensor, List[torch.FloatTensor]]] = None,
         prompt_2: Optional[Union[str, List[str]]] = None,
         height: Optional[int] = None,
         width: Optional[int] = None,
@@ -1605,11 +1442,7 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
 
         device = self._execution_device
 
-        lora_scale = (
-            self.joint_attention_kwargs.get("scale", None)
-            if self.joint_attention_kwargs is not None
-            else None
-        )
+        lora_scale = self.joint_attention_kwargs.get("scale", None) if self.joint_attention_kwargs is not None else None
         (
             prompt_embeds,
             pooled_prompt_embeds,
@@ -1630,9 +1463,7 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             negative_prompt_2 = negative_prompt
 
         negative_text_ids = text_ids
-        if guidance_scale_real > 1.0 and (
-            negative_prompt_embeds is None or negative_pooled_prompt_embeds is None
-        ):
+        if guidance_scale_real > 1.0 and (negative_prompt_embeds is None or negative_pooled_prompt_embeds is None):
             (
                 negative_prompt_embeds,
                 negative_pooled_prompt_embeds,
@@ -1680,9 +1511,7 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             sigmas,
             mu=mu,
         )
-        num_warmup_steps = max(
-            len(timesteps) - num_inference_steps * self.scheduler.order, 0
-        )
+        num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
         self._num_timesteps = len(timesteps)
 
         latents = latents.to(self.transformer.device)
@@ -1701,9 +1530,7 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
 
                 # handle guidance
                 if self.transformer.config.guidance_embeds:
-                    guidance = torch.tensor(
-                        [guidance_scale], device=self.transformer.device
-                    )
+                    guidance = torch.tensor([guidance_scale], device=self.transformer.device)
                     guidance = guidance.expand(latents.shape[0])
                 else:
                     guidance = None
@@ -1715,9 +1542,7 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                         prompt_mask = prompt_mask.squeeze(1)  # [1, 1, 512] -> [1, 512]
                     if prompt_mask.size(0) == 1 and latents.size(0) > 1:
                         prompt_mask = prompt_mask.expand(latents.size(0), -1, -1)
-                    extra_transformer_args["attention_mask"] = prompt_mask.to(
-                        device=self.transformer.device
-                    )
+                    extra_transformer_args["attention_mask"] = prompt_mask.to(device=self.transformer.device)
 
                 noise_pred = self.transformer(
                     hidden_states=latents.to(
@@ -1743,16 +1568,10 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                 if guidance_scale_real > 1.0 and i >= no_cfg_until_timestep:
                     if negative_mask is not None:
                         if negative_mask.dim() == 3 and negative_mask.size(1) == 1:
-                            negative_mask = negative_mask.squeeze(
-                                1
-                            )  # [1, 1, 512] -> [1, 512]
+                            negative_mask = negative_mask.squeeze(1)  # [1, 1, 512] -> [1, 512]
                         if negative_mask.size(0) == 1 and latents.size(0) > 1:
-                            negative_mask = negative_mask.expand(
-                                latents.size(0), -1, -1
-                            )
-                        extra_transformer_args["attention_mask"] = negative_mask.to(
-                            device=self.transformer.device
-                        )
+                            negative_mask = negative_mask.expand(latents.size(0), -1, -1)
+                        extra_transformer_args["attention_mask"] = negative_mask.to(device=self.transformer.device)
                     noise_pred_uncond = self.transformer(
                         hidden_states=latents.to(
                             device=self.transformer.device  # , dtype=self.transformer.dtype     # can't cast dtype like this because of NF4
@@ -1773,15 +1592,11 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                         return_dict=False,
                     )[0]
 
-                    noise_pred = noise_pred_uncond + guidance_scale_real * (
-                        noise_pred - noise_pred_uncond
-                    )
+                    noise_pred = noise_pred_uncond + guidance_scale_real * (noise_pred - noise_pred_uncond)
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents_dtype = latents.dtype
-                latents = self.scheduler.step(
-                    noise_pred, t, latents, return_dict=False
-                )[0]
+                latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
 
                 if latents.dtype != latents_dtype:
                     if torch.backends.mps.is_available():
@@ -1798,9 +1613,7 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                     prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
 
                 # call the callback, if provided
-                if i == len(timesteps) - 1 or (
-                    (i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0
-                ):
+                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
 
                 if XLA_AVAILABLE:
@@ -1810,27 +1623,17 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             image = latents
 
         else:
-            latents = self._unpack_latents(
-                latents, height, width, self.vae_scale_factor
-            )
-            latents = (
-                latents / self.vae.config.scaling_factor
-            ) + self.vae.config.shift_factor
+            latents = self._unpack_latents(latents, height, width, self.vae_scale_factor)
+            latents = (latents / self.vae.config.scaling_factor) + self.vae.config.shift_factor
             if hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa"):
                 # we have SageAttention loaded. fallback to SDPA for decode.
-                torch.nn.functional.scaled_dot_product_attention = (
-                    torch.nn.functional.scaled_dot_product_attention_sdpa
-                )
+                torch.nn.functional.scaled_dot_product_attention = torch.nn.functional.scaled_dot_product_attention_sdpa
 
-            image = self.vae.decode(
-                latents.to(dtype=self.vae.dtype), return_dict=False
-            )[0]
+            image = self.vae.decode(latents.to(dtype=self.vae.dtype), return_dict=False)[0]
 
             if hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa"):
                 # reenable SageAttention for training.
-                torch.nn.functional.scaled_dot_product_attention = (
-                    torch.nn.functional.scaled_dot_product_attention_sage
-                )
+                torch.nn.functional.scaled_dot_product_attention = torch.nn.functional.scaled_dot_product_attention_sage
 
             image = self.image_processor.postprocess(image, output_type=output_type)
 
@@ -1900,20 +1703,14 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             scheduler=scheduler,
         )
         self.vae_scale_factor = (
-            2 ** (len(self.vae.config.block_out_channels))
-            if hasattr(self, "vae") and self.vae is not None
-            else 16
+            2 ** (len(self.vae.config.block_out_channels)) if hasattr(self, "vae") and self.vae is not None else 16
         )
         self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor)
         self.tokenizer_max_length = (
-            self.tokenizer.model_max_length
-            if hasattr(self, "tokenizer") and self.tokenizer is not None
-            else 77
+            self.tokenizer.model_max_length if hasattr(self, "tokenizer") and self.tokenizer is not None else 77
         )
         self.default_sample_size = 64
-        self.latent_channels = (
-            self.vae.config.latent_channels if getattr(self, "vae", None) else 16
-        )
+        self.latent_channels = self.vae.config.latent_channels if getattr(self, "vae", None) else 16
 
     def _get_t5_prompt_embeds(
         self,
@@ -1940,24 +1737,16 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         )
         prompt_attention_mask = text_inputs.attention_mask
         text_input_ids = text_inputs.input_ids
-        untruncated_ids = self.tokenizer_2(
-            prompt, padding="longest", return_tensors="pt"
-        ).input_ids
+        untruncated_ids = self.tokenizer_2(prompt, padding="longest", return_tensors="pt").input_ids
 
-        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(
-            text_input_ids, untruncated_ids
-        ):
-            removed_text = self.tokenizer_2.batch_decode(
-                untruncated_ids[:, self.tokenizer_max_length - 1 : -1]
-            )
+        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(text_input_ids, untruncated_ids):
+            removed_text = self.tokenizer_2.batch_decode(untruncated_ids[:, self.tokenizer_max_length - 1 : -1])
             # logger.warning(
             #     "The following part of your input was truncated because `max_sequence_length` is set to "
             #     f" {max_sequence_length} tokens: {removed_text}"
             # )
 
-        prompt_embeds = self.text_encoder_2(
-            text_input_ids.to(device), output_hidden_states=False
-        )[0]
+        prompt_embeds = self.text_encoder_2(text_input_ids.to(device), output_hidden_states=False)[0]
 
         dtype = self.text_encoder_2.dtype
         prompt_embeds = prompt_embeds.to(dtype=dtype, device=device)
@@ -1966,9 +1755,7 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
 
         # duplicate text embeddings and attention mask for each generation per prompt, using mps friendly method
         prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
-        prompt_embeds = prompt_embeds.view(
-            batch_size * num_images_per_prompt, seq_len, -1
-        )
+        prompt_embeds = prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
 
         return prompt_embeds, prompt_attention_mask
 
@@ -1994,22 +1781,14 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         )
 
         text_input_ids = text_inputs.input_ids
-        untruncated_ids = self.tokenizer(
-            prompt, padding="longest", return_tensors="pt"
-        ).input_ids
-        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(
-            text_input_ids, untruncated_ids
-        ):
-            removed_text = self.tokenizer.batch_decode(
-                untruncated_ids[:, self.tokenizer_max_length - 1 : -1]
-            )
+        untruncated_ids = self.tokenizer(prompt, padding="longest", return_tensors="pt").input_ids
+        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(text_input_ids, untruncated_ids):
+            removed_text = self.tokenizer.batch_decode(untruncated_ids[:, self.tokenizer_max_length - 1 : -1])
             # logger.warning(
             #     "The following part of your input was truncated because CLIP can only handle sequences up to"
             #     f" {self.tokenizer_max_length} tokens: {removed_text}"
             # )
-        prompt_embeds = self.text_encoder(
-            text_input_ids.to(device), output_hidden_states=False
-        )
+        prompt_embeds = self.text_encoder(text_input_ids.to(device), output_hidden_states=False)
 
         # Use pooled output of CLIPTextModel
         prompt_embeds = prompt_embeds.pooler_output
@@ -2103,9 +1882,7 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                 # Retrieve the original scale by scaling back the LoRA layers
                 unscale_lora_layers(self.text_encoder_2, lora_scale)
 
-        text_ids = torch.zeros(batch_size, prompt_embeds.shape[1], 3).to(
-            device=device, dtype=prompt_embeds.dtype
-        )
+        text_ids = torch.zeros(batch_size, prompt_embeds.shape[1], 3).to(device=device, dtype=prompt_embeds.dtype)
 
         return prompt_embeds, pooled_prompt_embeds, text_ids, prompt_attention_mask
 
@@ -2121,13 +1898,10 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         max_sequence_length=None,
     ):
         if height % 8 != 0 or width % 8 != 0:
-            raise ValueError(
-                f"`height` and `width` have to be divisible by 8 but are {height} and {width}."
-            )
+            raise ValueError(f"`height` and `width` have to be divisible by 8 but are {height} and {width}.")
 
         if callback_on_step_end_tensor_inputs is not None and not all(
-            k in self._callback_tensor_inputs
-            for k in callback_on_step_end_tensor_inputs
+            k in self._callback_tensor_inputs for k in callback_on_step_end_tensor_inputs
         ):
             raise ValueError(
                 f"`callback_on_step_end_tensor_inputs` has to be in {self._callback_tensor_inputs}, but found {[k for k in callback_on_step_end_tensor_inputs if k not in self._callback_tensor_inputs]}"
@@ -2147,18 +1921,10 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             raise ValueError(
                 "Provide either `prompt` or `prompt_embeds`. Cannot leave both `prompt` and `prompt_embeds` undefined."
             )
-        elif prompt is not None and (
-            not isinstance(prompt, str) and not isinstance(prompt, list)
-        ):
-            raise ValueError(
-                f"`prompt` has to be of type `str` or `list` but is {type(prompt)}"
-            )
-        elif prompt_2 is not None and (
-            not isinstance(prompt_2, str) and not isinstance(prompt_2, list)
-        ):
-            raise ValueError(
-                f"`prompt_2` has to be of type `str` or `list` but is {type(prompt_2)}"
-            )
+        elif prompt is not None and (not isinstance(prompt, str) and not isinstance(prompt, list)):
+            raise ValueError(f"`prompt` has to be of type `str` or `list` but is {type(prompt)}")
+        elif prompt_2 is not None and (not isinstance(prompt_2, str) and not isinstance(prompt_2, list)):
+            raise ValueError(f"`prompt_2` has to be of type `str` or `list` but is {type(prompt_2)}")
 
         if prompt_embeds is not None and pooled_prompt_embeds is None:
             raise ValueError(
@@ -2166,23 +1932,15 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             )
 
         if max_sequence_length is not None and max_sequence_length > 512:
-            raise ValueError(
-                f"`max_sequence_length` cannot be greater than 512 but is {max_sequence_length}"
-            )
+            raise ValueError(f"`max_sequence_length` cannot be greater than 512 but is {max_sequence_length}")
 
     @staticmethod
     def _prepare_latent_image_ids(batch_size, height, width, device, dtype):
         latent_image_ids = torch.zeros(height // 2, width // 2, 3)
-        latent_image_ids[..., 1] = (
-            latent_image_ids[..., 1] + torch.arange(height // 2)[:, None]
-        )
-        latent_image_ids[..., 2] = (
-            latent_image_ids[..., 2] + torch.arange(width // 2)[None, :]
-        )
+        latent_image_ids[..., 1] = latent_image_ids[..., 1] + torch.arange(height // 2)[:, None]
+        latent_image_ids[..., 2] = latent_image_ids[..., 2] + torch.arange(width // 2)[None, :]
 
-        latent_image_id_height, latent_image_id_width, latent_image_id_channels = (
-            latent_image_ids.shape
-        )
+        latent_image_id_height, latent_image_id_width, latent_image_id_channels = latent_image_ids.shape
 
         latent_image_ids = latent_image_ids[None, :].repeat(batch_size, 1, 1, 1)
         latent_image_ids = latent_image_ids.reshape(
@@ -2193,9 +1951,7 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
 
         return latent_image_ids.to(device=device, dtype=dtype)
 
-    def _encode_conditioning_image(
-        self, pil_images: list[Image.Image], device, dtype
-    ):  # -> (seq_latents, seq_ids)
+    def _encode_conditioning_image(self, pil_images: list[Image.Image], device, dtype):  # -> (seq_latents, seq_ids)
         packed_latents = []
         packed_ids = []
         offset_x = 0
@@ -2204,18 +1960,13 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             # -- pick the closest resolution from the Kontext training set -------------
             w, h = image.size
             aspect = w / h
-            _, W, H = min(
-                (abs(aspect - w0 / h0), w0, h0)
-                for w0, h0 in PREFERED_KONTEXT_RESOLUTIONS
-            )
+            _, W, H = min((abs(aspect - w0 / h0), w0, h0) for w0, h0 in PREFERED_KONTEXT_RESOLUTIONS)
             W, H = 2 * (W // 16), 2 * (H // 16)  # multiple of 16
             image = image.resize((8 * W, 8 * H), Image.Resampling.LANCZOS)
 
             # -- VAE-encode & pack to (1, S, C*4) --------------------------------------
             # might be nice to be able to batch the latents here
-            img = torch.tensor(np.asarray(image), dtype=dtype, device=device).permute(
-                2, 0, 1
-            )
+            img = torch.tensor(np.asarray(image), dtype=dtype, device=device).permute(2, 0, 1)
             img = (img / 127.5 - 1.0).unsqueeze(0).to(dtype)
             if self.vae.device != device:
                 self.vae.to(device)
@@ -2224,9 +1975,7 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
 
             # CRITICAL: Pack the latents properly!
             z = z.view(1, self.latent_channels, H // 2, 2, W // 2, 2)
-            z = z.permute(0, 2, 4, 1, 3, 5).reshape(
-                1, (H // 2) * (W // 2), self.latent_channels * 4
-            )
+            z = z.permute(0, 2, 4, 1, 3, 5).reshape(1, (H // 2) * (W // 2), self.latent_channels * 4)
 
             # -- seq IDs where ids[...,0] = 1 -----------------------------------------
             # offset using the comfy scheme
@@ -2246,13 +1995,9 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
 
     @staticmethod
     def _pack_latents(latents, batch_size, num_channels_latents, height, width):
-        latents = latents.view(
-            batch_size, num_channels_latents, height // 2, 2, width // 2, 2
-        )
+        latents = latents.view(batch_size, num_channels_latents, height // 2, 2, width // 2, 2)
         latents = latents.permute(0, 2, 4, 1, 3, 5)
-        latents = latents.reshape(
-            batch_size, (height // 2) * (width // 2), num_channels_latents * 4
-        )
+        latents = latents.reshape(batch_size, (height // 2) * (width // 2), num_channels_latents * 4)
 
         return latents
 
@@ -2266,9 +2011,7 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         latents = latents.view(batch_size, height, width, channels // 4, 2, 2)
         latents = latents.permute(0, 3, 1, 4, 2, 5)
 
-        latents = latents.reshape(
-            batch_size, channels // (2 * 2), height * 2, width * 2
-        )
+        latents = latents.reshape(batch_size, channels // (2 * 2), height * 2, width * 2)
 
         return latents
 
@@ -2289,9 +2032,7 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         shape = (batch_size, num_channels_latents, height, width)
 
         if latents is not None:
-            latent_image_ids = self._prepare_latent_image_ids(
-                batch_size, height, width, device, dtype
-            )
+            latent_image_ids = self._prepare_latent_image_ids(batch_size, height, width, device, dtype)
             return latents.to(device=device, dtype=dtype), latent_image_ids
 
         if isinstance(generator, list) and len(generator) != batch_size:
@@ -2301,13 +2042,9 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             )
 
         latents = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
-        latents = self._pack_latents(
-            latents, batch_size, num_channels_latents, height, width
-        )
+        latents = self._pack_latents(latents, batch_size, num_channels_latents, height, width)
 
-        latent_image_ids = self._prepare_latent_image_ids(
-            batch_size, height, width, device, dtype
-        )
+        latent_image_ids = self._prepare_latent_image_ids(batch_size, height, width, device, dtype)
 
         return latents, latent_image_ids
 
@@ -2332,13 +2069,9 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         self,
         prompt: Union[str, List[str]] = None,
         prompt_mask: Optional[Union[torch.FloatTensor, List[torch.FloatTensor]]] = None,
-        negative_mask: Optional[
-            Union[torch.FloatTensor, List[torch.FloatTensor]]
-        ] = None,
+        negative_mask: Optional[Union[torch.FloatTensor, List[torch.FloatTensor]]] = None,
         prompt_2: Optional[Union[str, List[str]]] = None,
-        conditioning_image: Union[
-            None, str, Image.Image, list[str], list[Image.Image]
-        ] = None,
+        conditioning_image: Union[None, str, Image.Image, list[str], list[Image.Image]] = None,
         cond_start_step: int = 0,
         cond_end_step: Optional[int] = None,
         height: Optional[int] = None,
@@ -2479,11 +2212,7 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
 
         device = self._execution_device
 
-        lora_scale = (
-            self.joint_attention_kwargs.get("scale", None)
-            if self.joint_attention_kwargs is not None
-            else None
-        )
+        lora_scale = self.joint_attention_kwargs.get("scale", None) if self.joint_attention_kwargs is not None else None
         (
             prompt_embeds,
             pooled_prompt_embeds,
@@ -2504,9 +2233,7 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             negative_prompt_2 = negative_prompt
 
         negative_text_ids = text_ids
-        if guidance_scale_real > 1.0 and (
-            negative_prompt_embeds is None or negative_pooled_prompt_embeds is None
-        ):
+        if guidance_scale_real > 1.0 and (negative_prompt_embeds is None or negative_pooled_prompt_embeds is None):
             (
                 negative_prompt_embeds,
                 negative_pooled_prompt_embeds,
@@ -2538,18 +2265,11 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         cond_seq = None
         cond_seq_ids = None
         if conditioning_image is not None:
-            conditioning_images = (
-                conditioning_image
-                if isinstance(conditioning_image, list)
-                else [conditioning_image]
-            )
+            conditioning_images = conditioning_image if isinstance(conditioning_image, list) else [conditioning_image]
             conditioning_images = [
-                Image.open(x).convert("RGB") if isinstance(x, (str, Path)) else x
-                for x in conditioning_images
+                Image.open(x).convert("RGB") if isinstance(x, (str, Path)) else x for x in conditioning_images
             ]
-            cond_seq, cond_seq_ids = self._encode_conditioning_image(
-                conditioning_images, device=device, dtype=latents.dtype
-            )
+            cond_seq, cond_seq_ids = self._encode_conditioning_image(conditioning_images, device=device, dtype=latents.dtype)
             # broadcast to batch if necessary
             cond_seq = cond_seq.expand(latents.size(0), -1, -1)
             # cond_seq_ids  = cond_seq_ids.expand(latents.size(0), -1, -1)
@@ -2572,9 +2292,7 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             sigmas,
             mu=mu,
         )
-        num_warmup_steps = max(
-            len(timesteps) - num_inference_steps * self.scheduler.order, 0
-        )
+        num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
         self._num_timesteps = len(timesteps)
         if cond_end_step is None or cond_end_step > self._num_timesteps:
             cond_end_step = self._num_timesteps  # run until the end by default
@@ -2599,16 +2317,12 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                 timestep = t.expand(latents.shape[0]).to(latents.dtype)
 
                 # decide whether to include the Kontext conditioning this step
-                use_cond = (
-                    cond_seq is not None
-                    and (i >= cond_start_step)
-                    and (i < cond_end_step)
-                )
+                use_cond = cond_seq is not None and (i >= cond_start_step) and (i < cond_end_step)
 
                 if use_cond:
                     lat_in = torch.cat([latents, cond_seq], dim=1)
 
-                    # make both ID tensors (B,S,3) then concatenate
+                    # concatenate id tensors
                     base_ids = latent_image_ids.expand(latents.size(0), -1, -1)
                     ktx_ids = cond_seq_ids.expand(latents.size(0), -1, -1)
                     id_in = torch.cat([base_ids, ktx_ids], dim=1)
@@ -2618,9 +2332,7 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
 
                 # handle guidance
                 if self.transformer.config.guidance_embeds:
-                    guidance = torch.tensor(
-                        [guidance_scale], device=self.transformer.device
-                    )
+                    guidance = torch.tensor([guidance_scale], device=self.transformer.device)
                     guidance = guidance.expand(latents.shape[0])
                 else:
                     guidance = None
@@ -2632,9 +2344,7 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                         prompt_mask = prompt_mask.squeeze(1)  # [1, 1, 512] -> [1, 512]
                     if prompt_mask.size(0) == 1 and lat_in.size(0) > 1:
                         prompt_mask = prompt_mask.expand(lat_in.size(0), -1, -1)
-                    extra_transformer_args["attention_mask"] = prompt_mask.to(
-                        device=self.transformer.device
-                    )
+                    extra_transformer_args["attention_mask"] = prompt_mask.to(device=self.transformer.device)
                 noise_pred = self.transformer(
                     hidden_states=lat_in.to(
                         device=self.transformer.device  # , dtype=self.transformer.dtype     # can't cast dtype like this because of NF4
@@ -2659,14 +2369,10 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                 if guidance_scale_real > 1.0 and i >= no_cfg_until_timestep:
                     if negative_mask is not None:
                         if negative_mask.dim() == 3 and negative_mask.size(1) == 1:
-                            negative_mask = negative_mask.squeeze(
-                                1
-                            )  # [1, 1, 512] -> [1, 512]
+                            negative_mask = negative_mask.squeeze(1)  # [1, 1, 512] -> [1, 512]
                         if negative_mask.size(0) == 1 and lat_in.size(0) > 1:
                             negative_mask = negative_mask.expand(lat_in.size(0), -1, -1)
-                        extra_transformer_args["attention_mask"] = negative_mask.to(
-                            device=self.transformer.device
-                        )
+                        extra_transformer_args["attention_mask"] = negative_mask.to(device=self.transformer.device)
                     noise_pred_uncond = self.transformer(
                         hidden_states=lat_in.to(
                             device=self.transformer.device  # , dtype=self.transformer.dtype     # can't cast dtype like this because of NF4
@@ -2687,9 +2393,7 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                         return_dict=False,
                     )[0]
 
-                    noise_pred = noise_pred_uncond + guidance_scale_real * (
-                        noise_pred - noise_pred_uncond
-                    )
+                    noise_pred = noise_pred_uncond + guidance_scale_real * (noise_pred - noise_pred_uncond)
 
                 if conditioning_image is not None:
                     # remove the conditioning image from the noise prediction
@@ -2697,9 +2401,7 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents_dtype = latents.dtype
-                latents = self.scheduler.step(
-                    noise_pred, t, latents, return_dict=False
-                )[0]
+                latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
 
                 if latents.dtype != latents_dtype:
                     if torch.backends.mps.is_available():
@@ -2716,9 +2418,7 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                     prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
 
                 # call the callback, if provided
-                if i == len(timesteps) - 1 or (
-                    (i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0
-                ):
+                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
 
                 if XLA_AVAILABLE:
@@ -2728,27 +2428,17 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             image = latents
 
         else:
-            latents = self._unpack_latents(
-                latents, height, width, self.vae_scale_factor
-            )
-            latents = (
-                latents / self.vae.config.scaling_factor
-            ) + self.vae.config.shift_factor
+            latents = self._unpack_latents(latents, height, width, self.vae_scale_factor)
+            latents = (latents / self.vae.config.scaling_factor) + self.vae.config.shift_factor
             if hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa"):
                 # we have SageAttention loaded. fallback to SDPA for decode.
-                torch.nn.functional.scaled_dot_product_attention = (
-                    torch.nn.functional.scaled_dot_product_attention_sdpa
-                )
+                torch.nn.functional.scaled_dot_product_attention = torch.nn.functional.scaled_dot_product_attention_sdpa
 
-            image = self.vae.decode(
-                latents.to(dtype=self.vae.dtype), return_dict=False
-            )[0]
+            image = self.vae.decode(latents.to(dtype=self.vae.dtype), return_dict=False)[0]
 
             if hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa"):
                 # reenable SageAttention for training.
-                torch.nn.functional.scaled_dot_product_attention = (
-                    torch.nn.functional.scaled_dot_product_attention_sage
-                )
+                torch.nn.functional.scaled_dot_product_attention = torch.nn.functional.scaled_dot_product_attention_sage
 
             image = self.image_processor.postprocess(image, output_type=output_type)
 

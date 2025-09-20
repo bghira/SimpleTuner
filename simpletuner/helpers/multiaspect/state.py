@@ -1,6 +1,6 @@
 import json
-import os
 import logging
+import os
 from multiprocessing.managers import DictProxy
 
 logger = logging.getLogger("BucketStateManager")

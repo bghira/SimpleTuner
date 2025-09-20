@@ -1,11 +1,12 @@
+import logging
+import os
 from typing import Any
 
 from torch.utils.data import Dataset
-from simpletuner.helpers.training.state_tracker import StateTracker
-from simpletuner.helpers.multiaspect.image import MultiaspectImage
+
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
-import logging
-import os
+from simpletuner.helpers.multiaspect.image import MultiaspectImage
+from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("MultiAspectDataset")
 from simpletuner.helpers.training.multi_process import should_log
@@ -58,9 +59,7 @@ class MultiAspectDataset(Dataset):
 
             image_metadata = sample
             if "target_size" in image_metadata:
-                calculated_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-                    image_metadata["target_size"]
-                )
+                calculated_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(image_metadata["target_size"])
                 if first_aspect_ratio is None:
                     first_aspect_ratio = calculated_aspect_ratio
                 elif first_aspect_ratio != calculated_aspect_ratio:
@@ -69,17 +68,14 @@ class MultiAspectDataset(Dataset):
                     )
 
             if "deepfloyd" not in StateTracker.get_args().model_family and (
-                image_metadata["original_size"] is None
-                or image_metadata["target_size"] is None
+                image_metadata["original_size"] is None or image_metadata["target_size"] is None
             ):
                 raise Exception(
                     f"Metadata was unavailable for image: {image_metadata['image_path']}. Ensure --skip_file_discovery=metadata is not set."
                 )
 
             if self.print_names:
-                logger.info(
-                    f"Dataset is now using image: {image_metadata['image_path']}"
-                )
+                logger.info(f"Dataset is now using image: {image_metadata['image_path']}")
 
             output_data["training_samples"].append(image_metadata)
 

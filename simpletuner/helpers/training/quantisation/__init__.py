@@ -1,7 +1,10 @@
+import logging
+import os
+
+import torch
+
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
-import logging
-import torch, os
 
 logger = logging.getLogger(__name__)
 if should_log():
@@ -13,13 +16,7 @@ else:
 def _quanto_type_map(model_precision: str):
     if model_precision == "no_change":
         return None
-    from optimum.quanto import (
-        qfloat8,
-        qfloat8_e4m3fnuz,
-        qint8,
-        qint4,
-        qint2,
-    )
+    from optimum.quanto import qfloat8, qfloat8_e4m3fnuz, qint2, qint4, qint8
 
     if model_precision == "int2-quanto":
         quant_level = qint2
@@ -51,16 +48,11 @@ def _quanto_model(
     quantize_activations: bool = False,
 ):
     try:
+        from optimum.quanto import QTensor, freeze, quantize
+
         from simpletuner.helpers.training.quantisation import quanto_workarounds
-        from optimum.quanto import (
-            freeze,
-            quantize,
-            QTensor,
-        )
     except ImportError as e:
-        raise ImportError(
-            f"To use Quanto, please install the optimum library: `pip install optimum-quanto`: {e}"
-        )
+        raise ImportError(f"To use Quanto, please install the optimum library: `pip install optimum-quanto`: {e}")
 
     if model_precision is None:
         model_precision = base_model_precision
@@ -119,9 +111,7 @@ def _quanto_model(
         freeze(model)
     except Exception as e:
         if "out of memory" in str(e).lower():
-            logger.error(
-                "GPU ran out of memory during quantisation. Use --quantize_via=cpu to use the slower CPU method."
-            )
+            logger.error("GPU ran out of memory during quantisation. Use --quantize_via=cpu to use the slower CPU method.")
         raise e
 
     return model
@@ -153,22 +143,17 @@ def _torchao_model(
         return model
 
     try:
-        from simpletuner.helpers.training.quantisation import torchao_workarounds
-        from torchao.float8 import convert_to_float8_training, Float8LinearConfig
-        from torchao.prototype.quantized_training import (
-            int8_weight_only_quantized_training,
-        )
         import torchao
+        from torchao.float8 import Float8LinearConfig, convert_to_float8_training
+        from torchao.prototype.quantized_training import int8_weight_only_quantized_training
         from torchao.quantization import quantize_
+
+        from simpletuner.helpers.training.quantisation import torchao_workarounds
     except ImportError as e:
-        raise ImportError(
-            f"To use torchao, please install the torchao library: `pip install torchao`: {e}"
-        )
+        raise ImportError(f"To use torchao, please install the torchao library: `pip install torchao`: {e}")
     logger.info(f"Quantising {model.__class__.__name__}. Using {model_precision}.")
     if quantize_activations:
-        logger.warning(
-            "Activation quantisation is not used in TorchAO. This will be ignored."
-        )
+        logger.warning("Activation quantisation is not used in TorchAO. This will be ignored.")
 
     if model_precision == "int8-torchao":
         quantize_(
@@ -319,16 +304,10 @@ def quantise_model(
         if model is not None:
             quant_args_combined = {
                 "model_precision": quant_args["model_precision"],
-                "base_model_precision": quant_args.get(
-                    "base_model_precision", args.base_model_precision
-                ),
-                "quantize_activations": quant_args.get(
-                    "quantize_activations", args.quantize_activations
-                ),
+                "base_model_precision": quant_args.get("base_model_precision", args.base_model_precision),
+                "quantize_activations": quant_args.get("quantize_activations", args.quantize_activations),
             }
-            logger.info(
-                f"Quantising {model.__class__.__name__} with {quant_args_combined}"
-            )
+            logger.info(f"Quantising {model.__class__.__name__} with {quant_args_combined}")
             models[i] = (quant_fn(model, **quant_args_combined), quant_args)
 
     # Unpack the quantized models

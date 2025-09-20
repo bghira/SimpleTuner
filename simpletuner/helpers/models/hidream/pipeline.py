@@ -1,61 +1,51 @@
 import inspect
-from typing import Any, Callable, Dict, List, Optional, Union
 import math
 import os
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Optional, Union
+
 import einops
+import numpy as np
+import PIL.Image
 import torch
-from transformers import (
-    CLIPTextModelWithProjection,
-    CLIPTokenizer,
-    T5EncoderModel,
-    T5Tokenizer,
-    LlamaForCausalLM,
-    PreTrainedTokenizerFast,
-)
-from huggingface_hub.utils import validate_hf_hub_args
 from diffusers.image_processor import VaeImageProcessor
 from diffusers.loaders import FromSingleFileMixin
-from diffusers.loaders.lora_base import LoraBaseMixin
+from diffusers.loaders.lora_base import LoraBaseMixin, _fetch_state_dict
+from diffusers.loaders.lora_conversion_utils import _convert_non_diffusers_hidream_lora_to_diffusers
 from diffusers.models.autoencoders import AutoencoderKL
-from diffusers.schedulers import (
-    FlowMatchEulerDiscreteScheduler,
-    UniPCMultistepScheduler,
-)
-from diffusers.models.lora import (
-    text_encoder_attn_modules,
-    text_encoder_mlp_modules,
-)
+from diffusers.models.lora import text_encoder_attn_modules, text_encoder_mlp_modules
+from diffusers.pipelines.pipeline_utils import DiffusionPipeline
+from diffusers.schedulers import FlowMatchEulerDiscreteScheduler, UniPCMultistepScheduler
 from diffusers.utils import (
     USE_PEFT_BACKEND,
-    is_torch_xla_available,
-    scale_lora_layers,
-    unscale_lora_layers,
+    BaseOutput,
+    convert_state_dict_to_diffusers,
+    convert_state_dict_to_peft,
+    convert_unet_state_dict_to_peft,
+    get_adapter_name,
+    get_peft_kwargs,
     is_peft_available,
     is_peft_version,
     is_torch_version,
+    is_torch_xla_available,
     is_transformers_available,
     is_transformers_version,
-    get_peft_kwargs,
-    get_adapter_name,
-    convert_unet_state_dict_to_peft,
-    convert_state_dict_to_diffusers,
-    convert_state_dict_to_peft,
     logging,
+    scale_lora_layers,
+    unscale_lora_layers,
 )
 from diffusers.utils.torch_utils import randn_tensor
-from diffusers.pipelines.pipeline_utils import DiffusionPipeline
-from simpletuner.helpers.models.hidream.schedule import FlowUniPCMultistepScheduler
-from diffusers.loaders.lora_base import _fetch_state_dict
-from diffusers.loaders.lora_conversion_utils import (
-    _convert_non_diffusers_hidream_lora_to_diffusers,
+from huggingface_hub.utils import validate_hf_hub_args
+from transformers import (
+    CLIPTextModelWithProjection,
+    CLIPTokenizer,
+    LlamaForCausalLM,
+    PreTrainedTokenizerFast,
+    T5EncoderModel,
+    T5Tokenizer,
 )
 
-from dataclasses import dataclass
-from typing import List, Union
-from diffusers.utils import BaseOutput
-
-import numpy as np
-import PIL.Image
+from simpletuner.helpers.models.hidream.schedule import FlowUniPCMultistepScheduler
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
@@ -124,13 +114,9 @@ def retrieve_timesteps(
         second element is the number of inference steps.
     """
     if timesteps is not None and sigmas is not None:
-        raise ValueError(
-            "Only one of `timesteps` or `sigmas` can be passed. Please choose one to set custom values"
-        )
+        raise ValueError("Only one of `timesteps` or `sigmas` can be passed. Please choose one to set custom values")
     if timesteps is not None:
-        accepts_timesteps = "timesteps" in set(
-            inspect.signature(scheduler.set_timesteps).parameters.keys()
-        )
+        accepts_timesteps = "timesteps" in set(inspect.signature(scheduler.set_timesteps).parameters.keys())
         if not accepts_timesteps:
             raise ValueError(
                 f"The current scheduler class {scheduler.__class__}'s `set_timesteps` does not support custom"
@@ -140,9 +126,7 @@ def retrieve_timesteps(
         timesteps = scheduler.timesteps
         num_inference_steps = len(timesteps)
     elif sigmas is not None:
-        accept_sigmas = "sigmas" in set(
-            inspect.signature(scheduler.set_timesteps).parameters.keys()
-        )
+        accept_sigmas = "sigmas" in set(inspect.signature(scheduler.set_timesteps).parameters.keys())
         if not accept_sigmas:
             raise ValueError(
                 f"The current scheduler class {scheduler.__class__}'s `set_timesteps` does not support custom"
@@ -310,9 +294,7 @@ class HiDreamImageLoraLoaderMixin(LoraBaseMixin):
         if not USE_PEFT_BACKEND:
             raise ValueError("PEFT backend is required for this method.")
 
-        low_cpu_mem_usage = kwargs.pop(
-            "low_cpu_mem_usage", _LOW_CPU_MEM_USAGE_DEFAULT_LORA
-        )
+        low_cpu_mem_usage = kwargs.pop("low_cpu_mem_usage", _LOW_CPU_MEM_USAGE_DEFAULT_LORA)
         if low_cpu_mem_usage and is_peft_version("<", "0.13.0"):
             raise ValueError(
                 "`low_cpu_mem_usage=True` is not compatible with this `peft` version. Please update it with `pip install -U peft`."
@@ -320,15 +302,11 @@ class HiDreamImageLoraLoaderMixin(LoraBaseMixin):
 
         # if a dict is passed, copy it instead of modifying it inplace
         if isinstance(pretrained_model_name_or_path_or_dict, dict):
-            pretrained_model_name_or_path_or_dict = (
-                pretrained_model_name_or_path_or_dict.copy()
-            )
+            pretrained_model_name_or_path_or_dict = pretrained_model_name_or_path_or_dict.copy()
 
         # First, ensure that the checkpoint is a compatible one and can be successfully loaded.
         kwargs["return_lora_metadata"] = True
-        state_dict, metadata = self.lora_state_dict(
-            pretrained_model_name_or_path_or_dict, **kwargs
-        )
+        state_dict, metadata = self.lora_state_dict(pretrained_model_name_or_path_or_dict, **kwargs)
 
         is_correct_format = all("lora" in key for key in state_dict.keys())
         if not is_correct_format:
@@ -361,11 +339,7 @@ class HiDreamImageLoraLoaderMixin(LoraBaseMixin):
         if transformer_state_dict:
             self.load_lora_into_transformer(
                 transformer_state_dict,
-                transformer=(
-                    getattr(self, self.transformer_name)
-                    if not hasattr(self, "transformer")
-                    else self.transformer
-                ),
+                transformer=(getattr(self, self.transformer_name) if not hasattr(self, "transformer") else self.transformer),
                 adapter_name=adapter_name,
                 metadata=metadata,
                 _pipeline=self,
@@ -473,11 +447,7 @@ class HiDreamImageLoraLoaderMixin(LoraBaseMixin):
         controlnet_key = cls.controlnet_name
 
         controlnet_keys = [k for k in keys if k.startswith(controlnet_key)]
-        state_dict = {
-            k.replace(f"{controlnet_key}.", ""): v
-            for k, v in state_dict.items()
-            if k in controlnet_keys
-        }
+        state_dict = {k.replace(f"{controlnet_key}.", ""): v for k, v in state_dict.items() if k in controlnet_keys}
 
         if len(state_dict.keys()) > 0:
             # check with first key if is not in peft format
@@ -496,18 +466,12 @@ class HiDreamImageLoraLoaderMixin(LoraBaseMixin):
                     rank[key] = val.shape[1]
 
             if network_alphas is not None and len(network_alphas) >= 1:
-                alpha_keys = [
-                    k for k in network_alphas.keys() if k.startswith(controlnet_key)
-                ]
+                alpha_keys = [k for k in network_alphas.keys() if k.startswith(controlnet_key)]
                 network_alphas = {
-                    k.replace(f"{controlnet_key}.", ""): v
-                    for k, v in network_alphas.items()
-                    if k in alpha_keys
+                    k.replace(f"{controlnet_key}.", ""): v for k, v in network_alphas.items() if k in alpha_keys
                 }
 
-            lora_config_kwargs = get_peft_kwargs(
-                rank, network_alpha_dict=network_alphas, peft_state_dict=state_dict
-            )
+            lora_config_kwargs = get_peft_kwargs(rank, network_alpha_dict=network_alphas, peft_state_dict=state_dict)
             if "use_dora" in lora_config_kwargs:
                 if lora_config_kwargs["use_dora"] and is_peft_version("<", "0.9.0"):
                     raise ValueError(
@@ -522,25 +486,17 @@ class HiDreamImageLoraLoaderMixin(LoraBaseMixin):
                 adapter_name = get_adapter_name(controlnet)
 
             # In case the pipeline has been already offloaded to CPU - temporarily remove the hooks
-            is_model_cpu_offload, is_sequential_cpu_offload = (
-                cls._optionally_disable_offloading(_pipeline)
-            )
+            is_model_cpu_offload, is_sequential_cpu_offload = cls._optionally_disable_offloading(_pipeline)
 
             peft_kwargs = {}
             if is_peft_version(">=", "0.13.1"):
                 peft_kwargs["low_cpu_mem_usage"] = low_cpu_mem_usage
 
-            inject_adapter_in_model(
-                lora_config, controlnet, adapter_name=adapter_name, **peft_kwargs
-            )
-            incompatible_keys = set_peft_model_state_dict(
-                controlnet, state_dict, adapter_name, **peft_kwargs
-            )
+            inject_adapter_in_model(lora_config, controlnet, adapter_name=adapter_name, **peft_kwargs)
+            incompatible_keys = set_peft_model_state_dict(controlnet, state_dict, adapter_name, **peft_kwargs)
 
             if incompatible_keys is not None:
-                logger.info(
-                    f"Loaded ControlNet LoRA with incompatible keys: {incompatible_keys}"
-                )
+                logger.info(f"Loaded ControlNet LoRA with incompatible keys: {incompatible_keys}")
 
             # Offload back.
             if is_model_cpu_offload:
@@ -635,26 +591,18 @@ class HiDreamImageLoraLoaderMixin(LoraBaseMixin):
         if prefix is None:
             raise ValueError("Prefix must be specified for text encoder LoRA loading")
 
-        text_encoder_keys = [
-            k for k in keys if k.startswith(prefix) and k.split(".")[0] == prefix
-        ]
+        text_encoder_keys = [k for k in keys if k.startswith(prefix) and k.split(".")[0] == prefix]
         text_encoder_lora_state_dict = {
-            k.replace(f"{prefix}.", ""): v
-            for k, v in state_dict.items()
-            if k in text_encoder_keys
+            k.replace(f"{prefix}.", ""): v for k, v in state_dict.items() if k in text_encoder_keys
         }
 
         if len(text_encoder_lora_state_dict) > 0:
             logger.info(f"Loading {prefix}.")
             rank = {}
-            text_encoder_lora_state_dict = convert_state_dict_to_diffusers(
-                text_encoder_lora_state_dict
-            )
+            text_encoder_lora_state_dict = convert_state_dict_to_diffusers(text_encoder_lora_state_dict)
 
             # convert state dict
-            text_encoder_lora_state_dict = convert_state_dict_to_peft(
-                text_encoder_lora_state_dict
-            )
+            text_encoder_lora_state_dict = convert_state_dict_to_peft(text_encoder_lora_state_dict)
 
             for name, _ in text_encoder_attn_modules(text_encoder):
                 for module in ("out_proj", "q_proj", "k_proj", "v_proj"):
@@ -671,20 +619,10 @@ class HiDreamImageLoraLoaderMixin(LoraBaseMixin):
                     rank[rank_key] = text_encoder_lora_state_dict[rank_key].shape[1]
 
             if network_alphas is not None:
-                alpha_keys = [
-                    k
-                    for k in network_alphas.keys()
-                    if k.startswith(prefix) and k.split(".")[0] == prefix
-                ]
-                network_alphas = {
-                    k.replace(f"{prefix}.", ""): v
-                    for k, v in network_alphas.items()
-                    if k in alpha_keys
-                }
+                alpha_keys = [k for k in network_alphas.keys() if k.startswith(prefix) and k.split(".")[0] == prefix]
+                network_alphas = {k.replace(f"{prefix}.", ""): v for k, v in network_alphas.items() if k in alpha_keys}
 
-            lora_config_kwargs = get_peft_kwargs(
-                rank, network_alphas, text_encoder_lora_state_dict, is_unet=False
-            )
+            lora_config_kwargs = get_peft_kwargs(rank, network_alphas, text_encoder_lora_state_dict, is_unet=False)
             if "use_dora" in lora_config_kwargs:
                 if lora_config_kwargs["use_dora"]:
                     if is_peft_version("<", "0.9.0"):
@@ -700,9 +638,7 @@ class HiDreamImageLoraLoaderMixin(LoraBaseMixin):
             if adapter_name is None:
                 adapter_name = get_adapter_name(text_encoder)
 
-            is_model_cpu_offload, is_sequential_cpu_offload = (
-                cls._optionally_disable_offloading(_pipeline)
-            )
+            is_model_cpu_offload, is_sequential_cpu_offload = cls._optionally_disable_offloading(_pipeline)
 
             # inject LoRA layers and load the state dict
             # in transformers we automatically check whether the adapter name is already in use or not
@@ -729,18 +665,10 @@ class HiDreamImageLoraLoaderMixin(LoraBaseMixin):
         cls,
         save_directory: Union[str, os.PathLike],
         transformer_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
-        text_encoder_lora_layers: Dict[
-            str, Union[torch.nn.Module, torch.Tensor]
-        ] = None,
-        text_encoder_2_lora_layers: Dict[
-            str, Union[torch.nn.Module, torch.Tensor]
-        ] = None,
-        text_encoder_3_lora_layers: Dict[
-            str, Union[torch.nn.Module, torch.Tensor]
-        ] = None,
-        text_encoder_4_lora_layers: Dict[
-            str, Union[torch.nn.Module, torch.Tensor]
-        ] = None,
+        text_encoder_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
+        text_encoder_2_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
+        text_encoder_3_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
+        text_encoder_4_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
         controlnet_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
         is_main_process: bool = True,
         weight_name: str = None,
@@ -793,41 +721,25 @@ class HiDreamImageLoraLoaderMixin(LoraBaseMixin):
             raise ValueError("You must pass at least one set of LoRA layers.")
 
         if transformer_lora_layers:
-            state_dict.update(
-                cls.pack_weights(transformer_lora_layers, cls.transformer_name)
-            )
+            state_dict.update(cls.pack_weights(transformer_lora_layers, cls.transformer_name))
 
         if text_encoder_lora_layers:
-            state_dict.update(
-                cls.pack_weights(text_encoder_lora_layers, "text_encoder")
-            )
+            state_dict.update(cls.pack_weights(text_encoder_lora_layers, "text_encoder"))
 
         if text_encoder_2_lora_layers:
-            state_dict.update(
-                cls.pack_weights(text_encoder_2_lora_layers, "text_encoder_2")
-            )
+            state_dict.update(cls.pack_weights(text_encoder_2_lora_layers, "text_encoder_2"))
 
         if text_encoder_3_lora_layers:
-            state_dict.update(
-                cls.pack_weights(text_encoder_3_lora_layers, "text_encoder_3")
-            )
+            state_dict.update(cls.pack_weights(text_encoder_3_lora_layers, "text_encoder_3"))
 
         if text_encoder_4_lora_layers:
-            state_dict.update(
-                cls.pack_weights(text_encoder_4_lora_layers, "text_encoder_4")
-            )
+            state_dict.update(cls.pack_weights(text_encoder_4_lora_layers, "text_encoder_4"))
 
         if controlnet_lora_layers:
-            state_dict.update(
-                cls.pack_weights(controlnet_lora_layers, cls.controlnet_name)
-            )
+            state_dict.update(cls.pack_weights(controlnet_lora_layers, cls.controlnet_name))
 
         if transformer_lora_adapter_metadata is not None:
-            lora_adapter_metadata.update(
-                cls.pack_weights(
-                    transformer_lora_adapter_metadata, cls.transformer_name
-                )
-            )
+            lora_adapter_metadata.update(cls.pack_weights(transformer_lora_adapter_metadata, cls.transformer_name))
 
         # Save the model
         cls.write_lora_layers(
@@ -936,9 +848,7 @@ class HiDreamImagePipelineOutput(BaseOutput):
     images: Union[List[PIL.Image.Image], np.ndarray]
 
 
-class HiDreamImagePipeline(
-    DiffusionPipeline, FromSingleFileMixin, HiDreamImageLoraLoaderMixin
-):
+class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin, HiDreamImageLoraLoaderMixin):
     model_cpu_offload_seq = "text_encoder->text_encoder_2->text_encoder_3->text_encoder_4->image_encoder->transformer->vae"
     _optional_components = ["image_encoder", "feature_extractor"]
     _callback_tensor_inputs = ["latents", "prompt_embeds"]
@@ -973,15 +883,11 @@ class HiDreamImagePipeline(
             scheduler=scheduler,
         )
         self.vae_scale_factor = (
-            2 ** (len(self.vae.config.block_out_channels) - 1)
-            if hasattr(self, "vae") and self.vae is not None
-            else 8
+            2 ** (len(self.vae.config.block_out_channels) - 1) if hasattr(self, "vae") and self.vae is not None else 8
         )
         # HiDreamImage latents are turned into 2x2 patches and packed. This means the latent width and height has to be divisible
         # by the patch size. So the vae scale factor is multiplied by the patch size to account for this
-        self.image_processor = VaeImageProcessor(
-            vae_scale_factor=self.vae_scale_factor * 2
-        )
+        self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor * 2)
         self.default_sample_size = 128
         self.tokenizer_4.pad_token = self.tokenizer_4.eos_token
 
@@ -1022,18 +928,13 @@ class HiDreamImagePipeline(
         )
         text_input_ids = text_inputs.input_ids
         attention_mask = text_inputs.attention_mask
-        untruncated_ids = self.tokenizer_3(
-            prompt, padding="longest", return_tensors="pt"
-        ).input_ids
+        untruncated_ids = self.tokenizer_3(prompt, padding="longest", return_tensors="pt").input_ids
 
-        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(
-            text_input_ids, untruncated_ids
-        ):
+        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(text_input_ids, untruncated_ids):
             removed_text = self.tokenizer_3.batch_decode(
                 untruncated_ids[
                     :,
-                    min(max_sequence_length, self.tokenizer_3.model_max_length)
-                    - 1 : -1,
+                    min(max_sequence_length, self.tokenizer_3.model_max_length) - 1 : -1,
                 ]
             )
             logger.warning(
@@ -1041,17 +942,13 @@ class HiDreamImagePipeline(
                 f" {min(max_sequence_length, self.tokenizer_3.model_max_length)} tokens: {removed_text}"
             )
 
-        prompt_embeds = self.text_encoder_3(
-            text_input_ids.to(device), attention_mask=attention_mask.to(device)
-        )[0]
+        prompt_embeds = self.text_encoder_3(text_input_ids.to(device), attention_mask=attention_mask.to(device))[0]
         prompt_embeds = prompt_embeds.to(dtype=dtype, device=device)
         _, seq_len, _ = prompt_embeds.shape
 
         # duplicate text embeddings and attention mask for each generation per prompt, using mps friendly method
         prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
-        prompt_embeds = prompt_embeds.view(
-            batch_size * num_images_per_prompt, seq_len, -1
-        )
+        prompt_embeds = prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
         return prompt_embeds
 
     def _get_clip_prompt_embeds(
@@ -1094,20 +991,14 @@ class HiDreamImagePipeline(
         )
 
         text_input_ids = text_inputs.input_ids
-        untruncated_ids = tokenizer(
-            prompt, padding="longest", return_tensors="pt"
-        ).input_ids
-        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(
-            text_input_ids, untruncated_ids
-        ):
+        untruncated_ids = tokenizer(prompt, padding="longest", return_tensors="pt").input_ids
+        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(text_input_ids, untruncated_ids):
             removed_text = tokenizer.batch_decode(untruncated_ids[:, 128 - 1 : -1])
             logger.warning(
                 "The following part of your input was truncated because CLIP can only handle sequences up to"
                 f" {128} tokens: {removed_text}"
             )
-        prompt_embeds = text_encoder(
-            text_input_ids.to(device), output_hidden_states=True
-        )
+        prompt_embeds = text_encoder(text_input_ids.to(device), output_hidden_states=True)
 
         # Use pooled output of CLIPTextModel
         prompt_embeds = prompt_embeds[0]
@@ -1156,18 +1047,13 @@ class HiDreamImagePipeline(
         )
         text_input_ids = text_inputs.input_ids
         attention_mask = text_inputs.attention_mask
-        untruncated_ids = self.tokenizer_4(
-            prompt, padding="longest", return_tensors="pt"
-        ).input_ids
+        untruncated_ids = self.tokenizer_4(prompt, padding="longest", return_tensors="pt").input_ids
 
-        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(
-            text_input_ids, untruncated_ids
-        ):
+        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(text_input_ids, untruncated_ids):
             removed_text = self.tokenizer_4.batch_decode(
                 untruncated_ids[
                     :,
-                    min(max_sequence_length, self.tokenizer_4.model_max_length)
-                    - 1 : -1,
+                    min(max_sequence_length, self.tokenizer_4.model_max_length) - 1 : -1,
                 ]
             )
             logger.warning(
@@ -1189,9 +1075,7 @@ class HiDreamImagePipeline(
 
         # duplicate text embeddings and attention mask for each generation per prompt, using mps friendly method
         prompt_embeds = prompt_embeds.repeat(1, 1, num_images_per_prompt, 1)
-        prompt_embeds = prompt_embeds.view(
-            -1, batch_size * num_images_per_prompt, seq_len, dim
-        )
+        prompt_embeds = prompt_embeds.view(-1, batch_size * num_images_per_prompt, seq_len, dim)
         return prompt_embeds
 
     def enable_vae_slicing(self):
@@ -1258,14 +1142,10 @@ class HiDreamImagePipeline(
         shape = (batch_size, num_channels_latents, height, width)
 
         if latents is None:
-            latents = randn_tensor(
-                shape, generator=generator, device=device, dtype=dtype
-            )
+            latents = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
         else:
             if latents.shape != shape:
-                raise ValueError(
-                    f"Unexpected latents shape, got {latents.shape}, expected {shape}"
-                )
+                raise ValueError(f"Unexpected latents shape, got {latents.shape}, expected {shape}")
             latents = latents.to(device)
         return latents
 
@@ -1357,39 +1237,27 @@ class HiDreamImagePipeline(
                 # Handle based on expected shape format
                 if len(llama_prompt_embeds.shape) == 4:  # [num_layers, batch, seq, dim]
                     batch_size = llama_prompt_embeds.shape[1]
-                elif (
-                    len(llama_prompt_embeds.shape) == 5
-                ):  # [batch, num_layers, 1, seq, dim]
+                elif len(llama_prompt_embeds.shape) == 5:  # [batch, num_layers, 1, seq, dim]
                     batch_size = llama_prompt_embeds.shape[0]
                 else:
-                    raise ValueError(
-                        f"Unexpected llama embedding shape: {llama_prompt_embeds.shape}"
-                    )
+                    raise ValueError(f"Unexpected llama embedding shape: {llama_prompt_embeds.shape}")
             else:
-                raise ValueError(
-                    "Either prompt or pre-computed embeddings must be provided"
-                )
+                raise ValueError("Either prompt or pre-computed embeddings must be provided")
 
         # Check if we need to compute embeddings or use provided ones
-        if (
-            t5_prompt_embeds is None
-            or llama_prompt_embeds is None
-            or pooled_prompt_embeds is None
-        ):
-            t5_prompt_embeds, llama_prompt_embeds, pooled_prompt_embeds = (
-                self._encode_prompt(
-                    prompt=prompt,
-                    prompt_2=prompt_2,
-                    prompt_3=prompt_3,
-                    prompt_4=prompt_4,
-                    device=device,
-                    dtype=dtype,
-                    num_images_per_prompt=num_images_per_prompt,
-                    t5_prompt_embeds=t5_prompt_embeds,
-                    llama_prompt_embeds=llama_prompt_embeds,
-                    pooled_prompt_embeds=pooled_prompt_embeds,
-                    max_sequence_length=max_sequence_length,
-                )
+        if t5_prompt_embeds is None or llama_prompt_embeds is None or pooled_prompt_embeds is None:
+            t5_prompt_embeds, llama_prompt_embeds, pooled_prompt_embeds = self._encode_prompt(
+                prompt=prompt,
+                prompt_2=prompt_2,
+                prompt_3=prompt_3,
+                prompt_4=prompt_4,
+                device=device,
+                dtype=dtype,
+                num_images_per_prompt=num_images_per_prompt,
+                t5_prompt_embeds=t5_prompt_embeds,
+                llama_prompt_embeds=llama_prompt_embeds,
+                pooled_prompt_embeds=pooled_prompt_embeds,
+                max_sequence_length=max_sequence_length,
             )
 
         # Handle negative embeddings for classifier-free guidance
@@ -1405,25 +1273,15 @@ class HiDreamImagePipeline(
                 negative_prompt_4 = negative_prompt_4 or negative_prompt
 
                 # normalize str to list
-                negative_prompt = (
-                    batch_size * [negative_prompt]
-                    if isinstance(negative_prompt, str)
-                    else negative_prompt
-                )
+                negative_prompt = batch_size * [negative_prompt] if isinstance(negative_prompt, str) else negative_prompt
                 negative_prompt_2 = (
-                    batch_size * [negative_prompt_2]
-                    if isinstance(negative_prompt_2, str)
-                    else negative_prompt_2
+                    batch_size * [negative_prompt_2] if isinstance(negative_prompt_2, str) else negative_prompt_2
                 )
                 negative_prompt_3 = (
-                    batch_size * [negative_prompt_3]
-                    if isinstance(negative_prompt_3, str)
-                    else negative_prompt_3
+                    batch_size * [negative_prompt_3] if isinstance(negative_prompt_3, str) else negative_prompt_3
                 )
                 negative_prompt_4 = (
-                    batch_size * [negative_prompt_4]
-                    if isinstance(negative_prompt_4, str)
-                    else negative_prompt_4
+                    batch_size * [negative_prompt_4] if isinstance(negative_prompt_4, str) else negative_prompt_4
                 )
 
                 if prompt is not None and type(prompt) is not type(negative_prompt):
@@ -1543,9 +1401,7 @@ class HiDreamImagePipeline(
                 )
 
                 # Concatenate CLIP embeddings
-                pooled_prompt_embeds = torch.cat(
-                    [pooled_prompt_embeds_1, pooled_prompt_embeds_2], dim=-1
-                )
+                pooled_prompt_embeds = torch.cat([pooled_prompt_embeds_1, pooled_prompt_embeds_2], dim=-1)
 
             # Get T5 embeddings if needed
             if need_t5:
@@ -1645,9 +1501,7 @@ class HiDreamImagePipeline(
         S_max = (self.default_sample_size * self.vae_scale_factor) ** 2
         scale = S_max / (width * height)
         scale = math.sqrt(scale)
-        width, height = int(width * scale // division * division), int(
-            height * scale // division * division
-        )
+        width, height = int(width * scale // division * division), int(height * scale // division * division)
 
         # 2. Set up parameters for generation
         self._guidance_scale = guidance_scale
@@ -1667,25 +1521,17 @@ class HiDreamImagePipeline(
                 # Handle based on expected shape format
                 if len(llama_prompt_embeds.shape) == 4:  # [num_layers, batch, seq, dim]
                     batch_size = llama_prompt_embeds.shape[1]
-                elif (
-                    len(llama_prompt_embeds.shape) == 5
-                ):  # [batch, num_layers, 1, seq, dim]
+                elif len(llama_prompt_embeds.shape) == 5:  # [batch, num_layers, 1, seq, dim]
                     batch_size = llama_prompt_embeds.shape[0]
                 else:
-                    raise ValueError(
-                        f"Unexpected llama embedding shape: {llama_prompt_embeds.shape}"
-                    )
+                    raise ValueError(f"Unexpected llama embedding shape: {llama_prompt_embeds.shape}")
             else:
                 raise ValueError("Either prompt or embeddings must be provided")
 
         device = self.transformer.device
 
         # 4. Encode prompts
-        lora_scale = (
-            self.joint_attention_kwargs.get("scale", None)
-            if self.joint_attention_kwargs is not None
-            else None
-        )
+        lora_scale = self.joint_attention_kwargs.get("scale", None) if self.joint_attention_kwargs is not None else None
         (
             t5_prompt_embeds,
             llama_prompt_embeds,
@@ -1720,9 +1566,7 @@ class HiDreamImagePipeline(
             # Format embeddings for the transformer which expects separate inputs
             # Handle T5 embeddings (shape: [batch, seq_len, dim])
             if negative_t5_prompt_embeds is not None:
-                t5_embeds_input = torch.cat(
-                    [negative_t5_prompt_embeds, t5_prompt_embeds], dim=0
-                )
+                t5_embeds_input = torch.cat([negative_t5_prompt_embeds, t5_prompt_embeds], dim=0)
             else:
                 t5_embeds_input = t5_prompt_embeds
 
@@ -1730,26 +1574,16 @@ class HiDreamImagePipeline(
             if negative_llama_prompt_embeds is not None:
                 # The shape handling depends on the format of llama embeddings
                 if len(llama_prompt_embeds.shape) == 4:  # [num_layers, batch, seq, dim]
-                    llama_embeds_input = torch.cat(
-                        [negative_llama_prompt_embeds, llama_prompt_embeds], dim=1
-                    )
-                elif (
-                    len(llama_prompt_embeds.shape) == 5
-                ):  # [batch, num_layers, 1, seq, dim]
-                    llama_embeds_input = torch.cat(
-                        [negative_llama_prompt_embeds, llama_prompt_embeds], dim=0
-                    )
+                    llama_embeds_input = torch.cat([negative_llama_prompt_embeds, llama_prompt_embeds], dim=1)
+                elif len(llama_prompt_embeds.shape) == 5:  # [batch, num_layers, 1, seq, dim]
+                    llama_embeds_input = torch.cat([negative_llama_prompt_embeds, llama_prompt_embeds], dim=0)
                 else:
-                    raise ValueError(
-                        f"Unexpected llama embedding shape: {llama_prompt_embeds.shape}"
-                    )
+                    raise ValueError(f"Unexpected llama embedding shape: {llama_prompt_embeds.shape}")
             else:
                 llama_embeds_input = llama_prompt_embeds
 
             # Combine embeddings for passing to transformer
-            pooled_embeds_input = torch.cat(
-                [negative_pooled_prompt_embeds, pooled_prompt_embeds], dim=0
-            )
+            pooled_embeds_input = torch.cat([negative_pooled_prompt_embeds, pooled_prompt_embeds], dim=0)
         else:
             # If not using guidance, use the embeddings directly
             t5_embeds_input = t5_prompt_embeds
@@ -1797,14 +1631,10 @@ class HiDreamImagePipeline(
         mu = calculate_shift(self.transformer.max_seq)
         scheduler_kwargs = {"mu": mu}
         if isinstance(self.scheduler, FlowUniPCMultistepScheduler):
-            self.scheduler.set_timesteps(
-                num_inference_steps, device=device, shift=math.exp(mu)
-            )
+            self.scheduler.set_timesteps(num_inference_steps, device=device, shift=math.exp(mu))
             timesteps = self.scheduler.timesteps
         elif isinstance(self.scheduler, UniPCMultistepScheduler):
-            self.scheduler.set_timesteps(
-                num_inference_steps, device=device
-            )  # , shift=math.exp(mu))
+            self.scheduler.set_timesteps(num_inference_steps, device=device)  # , shift=math.exp(mu))
             timesteps = self.scheduler.timesteps
         else:
             timesteps, num_inference_steps = retrieve_timesteps(
@@ -1814,9 +1644,7 @@ class HiDreamImagePipeline(
                 sigmas=sigmas,
                 **scheduler_kwargs,
             )
-        num_warmup_steps = max(
-            len(timesteps) - num_inference_steps * self.scheduler.order, 0
-        )
+        num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
         self._num_timesteps = len(timesteps)
 
         # 9. Denoising loop
@@ -1826,11 +1654,7 @@ class HiDreamImagePipeline(
                     continue
 
                 # expand the latents if we are doing classifier free guidance
-                latent_model_input = (
-                    torch.cat([latents] * 2)
-                    if self.do_classifier_free_guidance
-                    else latents
-                )
+                latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
                 timestep = t.expand(latent_model_input.shape[0])
 
@@ -1869,15 +1693,11 @@ class HiDreamImagePipeline(
                 # perform guidance
                 if self.do_classifier_free_guidance:
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                    noise_pred = noise_pred_uncond + self.guidance_scale * (
-                        noise_pred_text - noise_pred_uncond
-                    )
+                    noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents_dtype = latents.dtype
-                latents = self.scheduler.step(
-                    noise_pred, t, latents, return_dict=False
-                )[0]
+                latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
 
                 if latents.dtype != latents_dtype:
                     if torch.backends.mps.is_available():
@@ -1891,20 +1711,12 @@ class HiDreamImagePipeline(
                     callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
 
                     latents = callback_outputs.pop("latents", latents)
-                    t5_embeds_input = callback_outputs.pop(
-                        "t5_embeds_input", t5_embeds_input
-                    )
-                    llama_embeds_input = callback_outputs.pop(
-                        "llama_embeds_input", llama_embeds_input
-                    )
-                    pooled_embeds_input = callback_outputs.pop(
-                        "pooled_embeds_input", pooled_embeds_input
-                    )
+                    t5_embeds_input = callback_outputs.pop("t5_embeds_input", t5_embeds_input)
+                    llama_embeds_input = callback_outputs.pop("llama_embeds_input", llama_embeds_input)
+                    pooled_embeds_input = callback_outputs.pop("pooled_embeds_input", pooled_embeds_input)
 
                 # call the callback, if provided
-                if i == len(timesteps) - 1 or (
-                    (i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0
-                ):
+                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
 
                 if XLA_AVAILABLE:
@@ -1914,9 +1726,7 @@ class HiDreamImagePipeline(
         if output_type == "latent":
             image = latents
         else:
-            latents = (
-                latents / self.vae.config.scaling_factor
-            ) + self.vae.config.shift_factor
+            latents = (latents / self.vae.config.scaling_factor) + self.vae.config.shift_factor
 
             image = self.vae.decode(
                 latents.to(dtype=self.vae.dtype, device=self.vae.device),

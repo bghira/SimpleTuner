@@ -18,18 +18,16 @@ from typing import Any, Callable, Dict, List, Optional, Union
 import ftfy
 import regex as re
 import torch
-from transformers import AutoTokenizer, UMT5EncoderModel
-
 from diffusers.callbacks import MultiPipelineCallbacks, PipelineCallback
 from diffusers.loaders import WanLoraLoaderMixin
 from diffusers.models import AutoencoderKLWan, WanTransformer3DModel
+from diffusers.pipelines.pipeline_utils import DiffusionPipeline
+from diffusers.pipelines.wan.pipeline_output import WanPipelineOutput
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from diffusers.utils import is_torch_xla_available, logging, replace_example_docstring
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.video_processor import VideoProcessor
-from diffusers.pipelines.pipeline_utils import DiffusionPipeline
-from diffusers.pipelines.wan.pipeline_output import WanPipelineOutput
-
+from transformers import AutoTokenizer, UMT5EncoderModel
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
@@ -133,15 +131,9 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
             scheduler=scheduler,
         )
 
-        self.vae_scale_factor_temporal = (
-            2 ** sum(self.vae.temperal_downsample) if getattr(self, "vae", None) else 4
-        )
-        self.vae_scale_factor_spatial = (
-            2 ** len(self.vae.temperal_downsample) if getattr(self, "vae", None) else 8
-        )
-        self.video_processor = VideoProcessor(
-            vae_scale_factor=self.vae_scale_factor_spatial
-        )
+        self.vae_scale_factor_temporal = 2 ** sum(self.vae.temperal_downsample) if getattr(self, "vae", None) else 4
+        self.vae_scale_factor_spatial = 2 ** len(self.vae.temperal_downsample) if getattr(self, "vae", None) else 8
+        self.video_processor = VideoProcessor(vae_scale_factor=self.vae_scale_factor_spatial)
 
     def _get_t5_prompt_embeds(
         self,
@@ -170,25 +162,18 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
         text_input_ids, mask = text_inputs.input_ids, text_inputs.attention_mask
         seq_lens = mask.gt(0).sum(dim=1).long()
 
-        prompt_embeds = self.text_encoder(
-            text_input_ids.to(device), mask.to(device)
-        ).last_hidden_state
+        prompt_embeds = self.text_encoder(text_input_ids.to(device), mask.to(device)).last_hidden_state
         prompt_embeds = prompt_embeds.to(dtype=dtype, device=device)
         prompt_embeds = [u[:v] for u, v in zip(prompt_embeds, seq_lens)]
         prompt_embeds = torch.stack(
-            [
-                torch.cat([u, u.new_zeros(max_sequence_length - u.size(0), u.size(1))])
-                for u in prompt_embeds
-            ],
+            [torch.cat([u, u.new_zeros(max_sequence_length - u.size(0), u.size(1))]) for u in prompt_embeds],
             dim=0,
         )
 
         # duplicate text embeddings for each generation per prompt, using mps friendly method
         _, seq_len, _ = prompt_embeds.shape
         prompt_embeds = prompt_embeds.repeat(1, num_videos_per_prompt, 1)
-        prompt_embeds = prompt_embeds.view(
-            batch_size * num_videos_per_prompt, seq_len, -1
-        )
+        prompt_embeds = prompt_embeds.view(batch_size * num_videos_per_prompt, seq_len, -1)
 
         return prompt_embeds
 
@@ -249,11 +234,7 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
 
         if do_classifier_free_guidance and negative_prompt_embeds is None:
             negative_prompt = negative_prompt or ""
-            negative_prompt = (
-                batch_size * [negative_prompt]
-                if isinstance(negative_prompt, str)
-                else negative_prompt
-            )
+            negative_prompt = batch_size * [negative_prompt] if isinstance(negative_prompt, str) else negative_prompt
 
             if prompt is not None and type(prompt) is not type(negative_prompt):
                 raise TypeError(
@@ -288,13 +269,10 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
         callback_on_step_end_tensor_inputs=None,
     ):
         if height % 16 != 0 or width % 16 != 0:
-            raise ValueError(
-                f"`height` and `width` have to be divisible by 16 but are {height} and {width}."
-            )
+            raise ValueError(f"`height` and `width` have to be divisible by 16 but are {height} and {width}.")
 
         if callback_on_step_end_tensor_inputs is not None and not all(
-            k in self._callback_tensor_inputs
-            for k in callback_on_step_end_tensor_inputs
+            k in self._callback_tensor_inputs for k in callback_on_step_end_tensor_inputs
         ):
             raise ValueError(
                 f"`callback_on_step_end_tensor_inputs` has to be in {self._callback_tensor_inputs}, but found {[k for k in callback_on_step_end_tensor_inputs if k not in self._callback_tensor_inputs]}"
@@ -314,19 +292,12 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
             raise ValueError(
                 "Provide either `prompt` or `prompt_embeds`. Cannot leave both `prompt` and `prompt_embeds` undefined."
             )
-        elif prompt is not None and (
-            not isinstance(prompt, str) and not isinstance(prompt, list)
-        ):
-            raise ValueError(
-                f"`prompt` has to be of type `str` or `list` but is {type(prompt)}"
-            )
+        elif prompt is not None and (not isinstance(prompt, str) and not isinstance(prompt, list)):
+            raise ValueError(f"`prompt` has to be of type `str` or `list` but is {type(prompt)}")
         elif negative_prompt is not None and (
-            not isinstance(negative_prompt, str)
-            and not isinstance(negative_prompt, list)
+            not isinstance(negative_prompt, str) and not isinstance(negative_prompt, list)
         ):
-            raise ValueError(
-                f"`negative_prompt` has to be of type `str` or `list` but is {type(negative_prompt)}"
-            )
+            raise ValueError(f"`negative_prompt` has to be of type `str` or `list` but is {type(negative_prompt)}")
 
     def prepare_latents(
         self,
@@ -570,9 +541,7 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
                     noise_pred_uncond = self.transformer(
                         hidden_states=latents.to(transformer_dtype),
                         timestep=timestep,
-                        encoder_hidden_states=negative_prompt_embeds.to(
-                            transformer_dtype
-                        ),
+                        encoder_hidden_states=negative_prompt_embeds.to(transformer_dtype),
                         skip_layers=skip_layer_indices,
                         return_dict=False,
                     )[0]
@@ -591,17 +560,13 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
                 # Combine for CFG
                 if self.do_classifier_free_guidance:
                     # noise_pred = uncond + w * (text - uncond)
-                    noise_pred = noise_pred_uncond + self.guidance_scale * (
-                        noise_pred_text - noise_pred_uncond
-                    )
+                    noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
                 else:
                     # if no CFG, just use text pass
                     noise_pred = noise_pred_text
 
                 # compute the previous noisy sample x_t -> x_t-1
-                latents = self.scheduler.step(
-                    noise_pred, t, latents, return_dict=False
-                )[0]
+                latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
 
                 if callback_on_step_end is not None:
                     callback_kwargs = {}
@@ -611,14 +576,10 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
 
                     latents = callback_outputs.pop("latents", latents)
                     prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
-                    negative_prompt_embeds = callback_outputs.pop(
-                        "negative_prompt_embeds", negative_prompt_embeds
-                    )
+                    negative_prompt_embeds = callback_outputs.pop("negative_prompt_embeds", negative_prompt_embeds)
 
                 # call the callback, if provided
-                if i == len(timesteps) - 1 or (
-                    (i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0
-                ):
+                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
 
                 if XLA_AVAILABLE:
@@ -633,14 +594,12 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
                 .view(1, self.vae.config.z_dim, 1, 1, 1)
                 .to(latents.device, latents.dtype)
             )
-            latents_std = 1.0 / torch.tensor(self.vae.config.latents_std).view(
-                1, self.vae.config.z_dim, 1, 1, 1
-            ).to(latents.device, latents.dtype)
+            latents_std = 1.0 / torch.tensor(self.vae.config.latents_std).view(1, self.vae.config.z_dim, 1, 1, 1).to(
+                latents.device, latents.dtype
+            )
             latents = latents / latents_std + latents_mean
             video = self.vae.decode(latents, return_dict=False)[0]
-            video = self.video_processor.postprocess_video(
-                video, output_type=output_type
-            )
+            video = self.video_processor.postprocess_video(video, output_type=output_type)
         else:
             video = latents
 

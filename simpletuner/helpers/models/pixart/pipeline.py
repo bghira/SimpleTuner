@@ -1,4 +1,4 @@
-# Copyright 2024 PixArt-Sigma Authors and The HuggingFace Team. All rights reserved.
+# Copyright 2024 PixArt-Sigma Authors and The HuggingFace Team and 2024-2025 bghira. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,49 +14,42 @@
 
 import html
 import inspect
-import re
 import os
+import re
 import urllib.parse as ul
-from typing import Callable, List, Optional, Tuple, Union, Dict
-from diffusers.utils import USE_PEFT_BACKEND
-from huggingface_hub.utils import validate_hf_hub_args
-from diffusers.loaders.lora_base import (
-    LoraBaseMixin,
-    _fetch_state_dict,
-    USE_PEFT_BACKEND,
-)
-from simpletuner.helpers.models.pixart.controlnet import (
-    PixArtSigmaControlNetAdapterModel,
-    PixArtSigmaControlNetTransformerModel,
-)
-import torch
-import numpy as np
-import PIL
-import peft
-from transformers import T5EncoderModel, T5Tokenizer
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
-from diffusers.image_processor import (
-    PixArtImageProcessor,
-    VaeImageProcessor,
-    PipelineImageInput,
-)
+import numpy as np
+import peft
+import PIL
+import torch
+from diffusers.image_processor import PipelineImageInput, PixArtImageProcessor, VaeImageProcessor
+from diffusers.loaders.lora_base import USE_PEFT_BACKEND, LoraBaseMixin, _fetch_state_dict
 from diffusers.models import AutoencoderKL, PixArtTransformer2DModel
-from diffusers.schedulers import KarrasDiffusionSchedulers
-from diffusers.utils import (
-    BACKENDS_MAPPING,
-    deprecate,
-    is_bs4_available,
-    is_torch_xla_available,
-    is_ftfy_available,
-    logging,
-    replace_example_docstring,
-)
-from diffusers.utils.torch_utils import randn_tensor
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline, ImagePipelineOutput
 from diffusers.pipelines.pixart_alpha.pipeline_pixart_alpha import (
     ASPECT_RATIO_256_BIN,
     ASPECT_RATIO_512_BIN,
     ASPECT_RATIO_1024_BIN,
+)
+from diffusers.schedulers import KarrasDiffusionSchedulers
+from diffusers.utils import (
+    BACKENDS_MAPPING,
+    USE_PEFT_BACKEND,
+    deprecate,
+    is_bs4_available,
+    is_ftfy_available,
+    is_torch_xla_available,
+    logging,
+    replace_example_docstring,
+)
+from diffusers.utils.torch_utils import randn_tensor
+from huggingface_hub.utils import validate_hf_hub_args
+from transformers import T5EncoderModel, T5Tokenizer
+
+from simpletuner.helpers.models.pixart.controlnet import (
+    PixArtSigmaControlNetAdapterModel,
+    PixArtSigmaControlNetTransformerModel,
 )
 
 if is_torch_xla_available():
@@ -168,13 +161,9 @@ def retrieve_timesteps(
         second element is the number of inference steps.
     """
     if timesteps is not None and sigmas is not None:
-        raise ValueError(
-            "Only one of `timesteps` or `sigmas` can be passed. Please choose one to set custom values"
-        )
+        raise ValueError("Only one of `timesteps` or `sigmas` can be passed. Please choose one to set custom values")
     if timesteps is not None:
-        accepts_timesteps = "timesteps" in set(
-            inspect.signature(scheduler.set_timesteps).parameters.keys()
-        )
+        accepts_timesteps = "timesteps" in set(inspect.signature(scheduler.set_timesteps).parameters.keys())
         if not accepts_timesteps:
             raise ValueError(
                 f"The current scheduler class {scheduler.__class__}'s `set_timesteps` does not support custom"
@@ -184,9 +173,7 @@ def retrieve_timesteps(
         timesteps = scheduler.timesteps
         num_inference_steps = len(timesteps)
     elif sigmas is not None:
-        accept_sigmas = "sigmas" in set(
-            inspect.signature(scheduler.set_timesteps).parameters.keys()
-        )
+        accept_sigmas = "sigmas" in set(inspect.signature(scheduler.set_timesteps).parameters.keys())
         if not accept_sigmas:
             raise ValueError(
                 f"The current scheduler class {scheduler.__class__}'s `set_timesteps` does not support custom"
@@ -226,9 +213,7 @@ class PixArtSigmaControlNetLoraLoaderMixin(LoraBaseMixin):
 
         # Pack transformer weights (only the non-replaced blocks)
         if transformer_lora_layers:
-            transformer_state = cls.pack_weights(
-                transformer_lora_layers, cls.transformer_name
-            )
+            transformer_state = cls.pack_weights(transformer_lora_layers, cls.transformer_name)
             state_dict.update(transformer_state)
 
         # Pack controlnet weights
@@ -255,9 +240,7 @@ class PixArtSigmaControlNetLoraLoaderMixin(LoraBaseMixin):
         if not USE_PEFT_BACKEND:
             raise ValueError("PEFT backend is required for this method.")
 
-        state_dict = self.lora_state_dict(
-            pretrained_model_name_or_path_or_dict, **kwargs
-        )
+        state_dict = self.lora_state_dict(pretrained_model_name_or_path_or_dict, **kwargs)
 
         # Separate transformer and controlnet weights
         transformer_state_dict = {}
@@ -280,11 +263,7 @@ class PixArtSigmaControlNetLoraLoaderMixin(LoraBaseMixin):
                     transformer_state_dict[key] = value
 
         # Load into transformer if there are transformer weights
-        _transformer = (
-            self.transformer
-            if not hasattr(self.transformer, "transformer")
-            else self.transformer.transformer
-        )
+        _transformer = self.transformer if not hasattr(self.transformer, "transformer") else self.transformer.transformer
         if transformer_state_dict:
             self.load_lora_into_transformer(
                 transformer_state_dict,
@@ -314,7 +293,7 @@ class PixArtSigmaControlNetLoraLoaderMixin(LoraBaseMixin):
         """Load LoRA layers into the controlnet adapter."""
         logger.info("Loading controlnet LoRA layers.")
 
-        # The controlnet should have a load_lora_adapter method similar to transformer
+        # Use controlnet's load_lora_adapter method if available
         if hasattr(controlnet, "load_lora_adapter"):
             out = controlnet.load_lora_adapter(
                 state_dict,
@@ -322,17 +301,14 @@ class PixArtSigmaControlNetLoraLoaderMixin(LoraBaseMixin):
                 _pipeline=_pipeline,
                 low_cpu_mem_usage=low_cpu_mem_usage,
             )
-            print(f"output of loading: {out}")
         else:
             # Fallback: manually inject LoRA weights
-            print(
-                f"[WARNING] Fallback to manual PEFT injection for loading. This is bad!"
-            )
-            from peft import inject_adapter_in_model, LoraConfig
+            logger.warning("Fallback to manual PEFT injection for loading")
+            from peft import LoraConfig, inject_adapter_in_model
 
             # Infer LoRA config from state dict
             lora_config = LoraConfig(
-                r=16,  # You might want to infer this from the state dict
+                r=16,
                 lora_alpha=16,
                 target_modules=[
                     "to_k",
@@ -413,19 +389,7 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
     """
 
     bad_punct_regex = re.compile(
-        r"["
-        + "#®•©™&@·º½¾¿¡§~"
-        + r"\)"
-        + r"\("
-        + r"\]"
-        + r"\["
-        + r"\}"
-        + r"\{"
-        + r"\|"
-        + "\\"
-        + r"\/"
-        + r"\*"
-        + r"]{1,}"
+        r"[" + "#®•©™&@·º½¾¿¡§~" + r"\)" + r"\(" + r"\]" + r"\[" + r"\}" + r"\{" + r"\|" + "\\" + r"\/" + r"\*" + r"]{1,}"
     )  # noqa
 
     _optional_components = ["tokenizer", "text_encoder"]
@@ -449,23 +413,13 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
             scheduler=scheduler,
         )
 
-        self.vae_scale_factor = (
-            2 ** (len(self.vae.config.block_out_channels) - 1)
-            if self.vae is not None
-            else 8
-        )
-        self.image_processor = PixArtImageProcessor(
-            vae_scale_factor=self.vae_scale_factor
-        )
+        self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1) if self.vae is not None else 8
+        self.image_processor = PixArtImageProcessor(vae_scale_factor=self.vae_scale_factor)
 
-    def get_timesteps(
-        self, num_inference_steps, strength, device, denoising_start=None
-    ):
+    def get_timesteps(self, num_inference_steps, strength, device, denoising_start=None):
         # get the original timestep using init_timestep
         if denoising_start is not None:
-            init_timestep = min(
-                int(num_inference_steps * denoising_start), num_inference_steps
-            )
+            init_timestep = min(int(num_inference_steps * denoising_start), num_inference_steps)
             t_start = max(num_inference_steps - init_timestep, 0)
         else:
             t_start = 0
@@ -476,8 +430,7 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
         if denoising_start is not None:
             discrete_timestep_cutoff = int(
                 round(
-                    self.scheduler.config.num_train_timesteps
-                    - (denoising_start * self.scheduler.config.num_train_timesteps)
+                    self.scheduler.config.num_train_timesteps - (denoising_start * self.scheduler.config.num_train_timesteps)
                 )
             )
 
@@ -568,16 +521,10 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
                 return_tensors="pt",
             )
             text_input_ids = text_inputs.input_ids
-            untruncated_ids = self.tokenizer(
-                prompt, padding="longest", return_tensors="pt"
-            ).input_ids
+            untruncated_ids = self.tokenizer(prompt, padding="longest", return_tensors="pt").input_ids
 
-            if untruncated_ids.shape[-1] >= text_input_ids.shape[
-                -1
-            ] and not torch.equal(text_input_ids, untruncated_ids):
-                removed_text = self.tokenizer.batch_decode(
-                    untruncated_ids[:, max_length - 1 : -1]
-                )
+            if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(text_input_ids, untruncated_ids):
+                removed_text = self.tokenizer.batch_decode(untruncated_ids[:, max_length - 1 : -1])
                 logger.warning(
                     "The following part of your input was truncated because T5 can only handle sequences up to"
                     f" {max_length} tokens: {removed_text}"
@@ -586,9 +533,7 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
             prompt_attention_mask = text_inputs.attention_mask
             prompt_attention_mask = prompt_attention_mask.to(device)
 
-            prompt_embeds = self.text_encoder(
-                text_input_ids.to(device), attention_mask=prompt_attention_mask
-            )
+            prompt_embeds = self.text_encoder(text_input_ids.to(device), attention_mask=prompt_attention_mask)
             prompt_embeds = prompt_embeds[0]
 
         if self.text_encoder is not None:
@@ -603,22 +548,14 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
         bs_embed, seq_len, _ = prompt_embeds.shape
         # duplicate text embeddings and attention mask for each generation per prompt, using mps friendly method
         prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
-        prompt_embeds = prompt_embeds.view(
-            bs_embed * num_images_per_prompt, seq_len, -1
-        )
+        prompt_embeds = prompt_embeds.view(bs_embed * num_images_per_prompt, seq_len, -1)
         prompt_attention_mask = prompt_attention_mask.view(bs_embed, -1)
         prompt_attention_mask = prompt_attention_mask.repeat(num_images_per_prompt, 1)
 
         # get unconditional embeddings for classifier free guidance
         if do_classifier_free_guidance and negative_prompt_embeds is None:
-            uncond_tokens = (
-                [negative_prompt] * batch_size
-                if isinstance(negative_prompt, str)
-                else negative_prompt
-            )
-            uncond_tokens = self._text_preprocessing(
-                uncond_tokens, clean_caption=clean_caption
-            )
+            uncond_tokens = [negative_prompt] * batch_size if isinstance(negative_prompt, str) else negative_prompt
+            uncond_tokens = self._text_preprocessing(uncond_tokens, clean_caption=clean_caption)
             max_length = prompt_embeds.shape[1]
             uncond_input = self.tokenizer(
                 uncond_tokens,
@@ -642,23 +579,13 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
             # duplicate unconditional embeddings for each generation per prompt, using mps friendly method
             seq_len = negative_prompt_embeds.shape[1]
 
-            negative_prompt_embeds = negative_prompt_embeds.to(
-                dtype=dtype, device=device
-            )
+            negative_prompt_embeds = negative_prompt_embeds.to(dtype=dtype, device=device)
 
-            negative_prompt_embeds = negative_prompt_embeds.repeat(
-                1, num_images_per_prompt, 1
-            )
-            negative_prompt_embeds = negative_prompt_embeds.view(
-                batch_size * num_images_per_prompt, seq_len, -1
-            )
+            negative_prompt_embeds = negative_prompt_embeds.repeat(1, num_images_per_prompt, 1)
+            negative_prompt_embeds = negative_prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
 
-            negative_prompt_attention_mask = negative_prompt_attention_mask.view(
-                bs_embed, -1
-            )
-            negative_prompt_attention_mask = negative_prompt_attention_mask.repeat(
-                num_images_per_prompt, 1
-            )
+            negative_prompt_attention_mask = negative_prompt_attention_mask.view(bs_embed, -1)
+            negative_prompt_attention_mask = negative_prompt_attention_mask.repeat(num_images_per_prompt, 1)
         else:
             negative_prompt_embeds = None
             negative_prompt_attention_mask = None
@@ -677,17 +604,13 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
         # eta corresponds to η in DDIM paper: https://arxiv.org/abs/2010.02502
         # and should be between [0, 1]
 
-        accepts_eta = "eta" in set(
-            inspect.signature(self.scheduler.step).parameters.keys()
-        )
+        accepts_eta = "eta" in set(inspect.signature(self.scheduler.step).parameters.keys())
         extra_step_kwargs = {}
         if accepts_eta:
             extra_step_kwargs["eta"] = eta
 
         # check if the scheduler accepts generator
-        accepts_generator = "generator" in set(
-            inspect.signature(self.scheduler.step).parameters.keys()
-        )
+        accepts_generator = "generator" in set(inspect.signature(self.scheduler.step).parameters.keys())
         if accepts_generator:
             extra_step_kwargs["generator"] = generator
         return extra_step_kwargs
@@ -709,14 +632,10 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
     ):
         if strength is None:
             if height % 8 != 0 or width % 8 != 0:
-                raise ValueError(
-                    f"`height` and `width` have to be divisible by 8 but are {height} and {width}."
-                )
+                raise ValueError(f"`height` and `width` have to be divisible by 8 but are {height} and {width}.")
         else:
             if strength < 0 or strength > 1:
-                raise ValueError(
-                    f"The value of strength should in [0.0, 1.0] but is {strength}"
-                )
+                raise ValueError(f"The value of strength should in [0.0, 1.0] but is {strength}")
             if num_inference_steps is None:
                 raise ValueError("`num_inference_steps` cannot be None.")
             elif not isinstance(num_inference_steps, int) or num_inference_steps <= 0:
@@ -725,12 +644,10 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
                     f" {type(num_inference_steps)}."
                 )
         if (callback_steps is None) or (
-            callback_steps is not None
-            and (not isinstance(callback_steps, int) or callback_steps <= 0)
+            callback_steps is not None and (not isinstance(callback_steps, int) or callback_steps <= 0)
         ):
             raise ValueError(
-                f"`callback_steps` has to be a positive integer but is {callback_steps} of type"
-                f" {type(callback_steps)}."
+                f"`callback_steps` has to be a positive integer but is {callback_steps} of type" f" {type(callback_steps)}."
             )
 
         if prompt is not None and prompt_embeds is not None:
@@ -740,12 +657,8 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
             raise ValueError(
                 "Provide either `prompt` or `prompt_embeds`. Cannot leave both `prompt` and `prompt_embeds` undefined."
             )
-        elif prompt is not None and (
-            not isinstance(prompt, str) and not isinstance(prompt, list)
-        ):
-            raise ValueError(
-                f"`prompt` has to be of type `str` or `list` but is {type(prompt)}"
-            )
+        elif prompt is not None and (not isinstance(prompt, str) and not isinstance(prompt, list)):
+            raise ValueError(f"`prompt` has to be of type `str` or `list` but is {type(prompt)}")
 
         if prompt is not None and negative_prompt_embeds is not None:
             raise ValueError(
@@ -757,17 +670,10 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
             negative_prompt = None
 
         if prompt_embeds is not None and prompt_attention_mask is None:
-            raise ValueError(
-                "Must provide `prompt_attention_mask` when specifying `prompt_embeds`."
-            )
+            raise ValueError("Must provide `prompt_attention_mask` when specifying `prompt_embeds`.")
 
-        if (
-            negative_prompt_embeds is not None
-            and negative_prompt_attention_mask is None
-        ):
-            raise ValueError(
-                "Must provide `negative_prompt_attention_mask` when specifying `negative_prompt_embeds`."
-            )
+        if negative_prompt_embeds is not None and negative_prompt_attention_mask is None:
+            raise ValueError("Must provide `negative_prompt_attention_mask` when specifying `negative_prompt_embeds`.")
 
         if prompt_embeds is not None and negative_prompt_embeds is not None:
             if prompt_embeds.shape != negative_prompt_embeds.shape:
@@ -786,16 +692,12 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
     # Copied from diffusers.pipelines.deepfloyd_if.pipeline_if.IFPipeline._text_preprocessing
     def _text_preprocessing(self, text, clean_caption=False):
         if clean_caption and not is_bs4_available():
-            logger.warning(
-                BACKENDS_MAPPING["bs4"][-1].format("Setting `clean_caption=True`")
-            )
+            logger.warning(BACKENDS_MAPPING["bs4"][-1].format("Setting `clean_caption=True`"))
             logger.warning("Setting `clean_caption` to False...")
             clean_caption = False
 
         if clean_caption and not is_ftfy_available():
-            logger.warning(
-                BACKENDS_MAPPING["ftfy"][-1].format("Setting `clean_caption=True`")
-            )
+            logger.warning(BACKENDS_MAPPING["ftfy"][-1].format("Setting `clean_caption=True`"))
             logger.warning("Setting `clean_caption` to False...")
             clean_caption = False
 
@@ -883,17 +785,13 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
         # "123456.."
         caption = re.sub(r"\b\d{6,}\b", "", caption)
         # filenames:
-        caption = re.sub(
-            r"[\S]+\.(?:png|jpg|jpeg|bmp|webp|eps|pdf|apk|mp4)", "", caption
-        )
+        caption = re.sub(r"[\S]+\.(?:png|jpg|jpeg|bmp|webp|eps|pdf|apk|mp4)", "", caption)
 
         #
         caption = re.sub(r"[\"\']{2,}", r'"', caption)  # """AUSVERKAUFT"""
         caption = re.sub(r"[\.]{2,}", r" ", caption)  # """AUSVERKAUFT"""
 
-        caption = re.sub(
-            self.bad_punct_regex, r" ", caption
-        )  # ***AUSVERKAUFT***, #AUSVERKAUFT
+        caption = re.sub(self.bad_punct_regex, r" ", caption)  # ***AUSVERKAUFT***, #AUSVERKAUFT
         caption = re.sub(r"\s+\.\s+", r" ", caption)  # " . "
 
         # this-is-my-cute-cat / this_is_my_cute_cat
@@ -911,14 +809,10 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
         caption = re.sub(r"(worldwide\s+)?(free\s+)?shipping", "", caption)
         caption = re.sub(r"(free\s)?download(\sfree)?", "", caption)
         caption = re.sub(r"\bclick\b\s(?:for|on)\s\w+", "", caption)
-        caption = re.sub(
-            r"\b(?:png|jpg|jpeg|bmp|webp|eps|pdf|apk|mp4)(\simage[s]?)?", "", caption
-        )
+        caption = re.sub(r"\b(?:png|jpg|jpeg|bmp|webp|eps|pdf|apk|mp4)(\simage[s]?)?", "", caption)
         caption = re.sub(r"\bpage\s+\d+\b", "", caption)
 
-        caption = re.sub(
-            r"\b\d*[a-zA-Z]+\d+[a-zA-Z]+\d+[a-zA-Z\d]*\b", r" ", caption
-        )  # j2d1a2a...
+        caption = re.sub(r"\b\d*[a-zA-Z]+\d+[a-zA-Z]+\d+[a-zA-Z\d]*\b", r" ", caption)  # j2d1a2a...
 
         caption = re.sub(r"\b\d+\.?\d*[xх×]\d+\.?\d*\b", "", caption)
 
@@ -963,16 +857,12 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
             )
 
         if latents is None:
-            latents = randn_tensor(
-                shape, generator=generator, device=device, dtype=dtype
-            )
+            latents = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
         else:
             latents = latents.to(device)
             if add_noise and timestep is not None:
                 shape = latents.shape
-                noise = randn_tensor(
-                    shape, generator=generator, device=device, dtype=dtype
-                )
+                noise = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
                 # get latents
                 latents = self.scheduler.add_noise(latents, noise, timestep)
 
@@ -997,45 +887,34 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
 
                 elif isinstance(generator, list):
                     init_latents = [
-                        retrieve_latents(
-                            self.vae.encode(image[i : i + 1]), generator=generator[i]
-                        )
+                        retrieve_latents(self.vae.encode(image[i : i + 1]), generator=generator[i])
                         for i in range(batch_size)
                     ]
                     init_latents = torch.cat(init_latents, dim=0)
                 else:
-                    init_latents = retrieve_latents(
-                        self.vae.encode(image), generator=generator
-                    )
+                    init_latents = retrieve_latents(self.vae.encode(image), generator=generator)
 
                 if self.vae.config.force_upcast:
                     self.vae.to(dtype)
 
                 init_latents = init_latents.to(dtype)
+                latents_mean = latents_std = None
+                if hasattr(self.vae.config, "latents_mean") and self.vae.config.latents_mean is not None:
+                    latents_mean = torch.tensor(self.vae.config.latents_mean).view(1, 4, 1, 1)
+                if hasattr(self.vae.config, "latents_std") and self.vae.config.latents_std is not None:
+                    latents_std = torch.tensor(self.vae.config.latents_std).view(1, 4, 1, 1)
                 if latents_mean is not None and latents_std is not None:
                     latents_mean = latents_mean.to(device=device, dtype=dtype)
                     latents_std = latents_std.to(device=device, dtype=dtype)
-                    init_latents = (
-                        (init_latents - latents_mean)
-                        * self.vae.config.scaling_factor
-                        / latents_std
-                    )
+                    init_latents = (init_latents - latents_mean) * self.vae.config.scaling_factor / latents_std
                 else:
                     init_latents = self.vae.config.scaling_factor * init_latents
 
-            if (
-                batch_size > init_latents.shape[0]
-                and batch_size % init_latents.shape[0] == 0
-            ):
+            if batch_size > init_latents.shape[0] and batch_size % init_latents.shape[0] == 0:
                 # expand init_latents for batch_size
                 additional_image_per_prompt = batch_size // init_latents.shape[0]
-                init_latents = torch.cat(
-                    [init_latents] * additional_image_per_prompt, dim=0
-                )
-            elif (
-                batch_size > init_latents.shape[0]
-                and batch_size % init_latents.shape[0] != 0
-            ):
+                init_latents = torch.cat([init_latents] * additional_image_per_prompt, dim=0)
+            elif batch_size > init_latents.shape[0] and batch_size % init_latents.shape[0] != 0:
                 raise ValueError(
                     f"Cannot duplicate `image` of batch size {init_latents.shape[0]} to {batch_size} text prompts."
                 )
@@ -1205,9 +1084,7 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
             else:
                 raise ValueError("Invalid sample size")
             orig_height, orig_width = height, width
-            height, width = self.image_processor.classify_height_width_bin(
-                height, width, ratios=aspect_ratio_bin
-            )
+            height, width = self.image_processor.classify_height_width_bin(height, width, ratios=aspect_ratio_bin)
 
         self.check_inputs(
             prompt,
@@ -1262,22 +1139,18 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
         )
         if do_classifier_free_guidance:
             prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
-            prompt_attention_mask = torch.cat(
-                [negative_prompt_attention_mask, prompt_attention_mask], dim=0
-            )
+            prompt_attention_mask = torch.cat([negative_prompt_attention_mask, prompt_attention_mask], dim=0)
 
         # 4. Prepare timesteps
         def denoising_value_valid(dnv):
             return isinstance(dnv, float) and 0 < dnv < 1
 
-        timesteps, num_inference_steps = retrieve_timesteps(
-            self.scheduler, num_inference_steps, device, timesteps, sigmas
-        )
+        timesteps, num_inference_steps = retrieve_timesteps(self.scheduler, num_inference_steps, device, timesteps, sigmas)
 
         # 5. Prepare latents.
         if image is not None:
             image = self.image_processor.preprocess(image)
-            image = image.to(device=device, dtype=dtype)
+            image = image.to(device=device, dtype=self.vae.dtype)
 
         latent_channels = self.transformer.config.in_channels
         latent_timestep = None
@@ -1286,11 +1159,7 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
                 num_inference_steps,
                 strength,
                 device,
-                denoising_start=(
-                    self.denoising_start
-                    if denoising_value_valid(self.denoising_start)
-                    else None
-                ),
+                denoising_start=(self.denoising_start if denoising_value_valid(self.denoising_start) else None),
             )
             latent_timestep = timesteps[:1].repeat(batch_size * num_images_per_prompt)
             if latents is not None:
@@ -1320,9 +1189,7 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
         added_cond_kwargs = {"resolution": None, "aspect_ratio": None}
 
         # 7. Denoising loop
-        num_warmup_steps = max(
-            len(timesteps) - num_inference_steps * self.scheduler.order, 0
-        )
+        num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
         if (
             self.denoising_end is not None
             and self.denoising_start is not None
@@ -1343,47 +1210,28 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
                     )
                 )
 
-                num_inference_steps = (
-                    (timesteps < discrete_timestep_cutoff).sum().item()
-                )
-                print(
-                    f"Beginning inference for stage2 with {num_inference_steps} steps."
-                )
+                num_inference_steps = (timesteps < discrete_timestep_cutoff).sum().item()
+                print(f"Beginning inference for stage2 with {num_inference_steps} steps.")
 
             else:
-                raise ValueError(
-                    f"`denoising_start` must be a float between 0 and 1: {denoising_start}"
-                )
+                raise ValueError(f"`denoising_start` must be a float between 0 and 1: {denoising_start}")
         if self.denoising_end is not None:
             if denoising_value_valid(self.denoising_end):
                 discrete_timestep_cutoff = int(
                     round(
                         self.scheduler.config.num_train_timesteps
-                        - (
-                            self.denoising_end
-                            * self.scheduler.config.num_train_timesteps
-                        )
+                        - (self.denoising_end * self.scheduler.config.num_train_timesteps)
                     )
                 )
-                num_inference_steps = len(
-                    list(filter(lambda ts: ts >= discrete_timestep_cutoff, timesteps))
-                )
-                print(
-                    f"Beginning inference for stage1 with {num_inference_steps} steps."
-                )
+                num_inference_steps = len(list(filter(lambda ts: ts >= discrete_timestep_cutoff, timesteps)))
+                print(f"Beginning inference for stage1 with {num_inference_steps} steps.")
                 timesteps = timesteps[:num_inference_steps]
             else:
-                raise ValueError(
-                    f"`denoising_end` must be a float between 0 and 1: {denoising_end}"
-                )
+                raise ValueError(f"`denoising_end` must be a float between 0 and 1: {denoising_end}")
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
-                latent_model_input = (
-                    torch.cat([latents] * 2) if do_classifier_free_guidance else latents
-                )
-                latent_model_input = self.scheduler.scale_model_input(
-                    latent_model_input, t
-                )
+                latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
+                latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
                 current_timestep = t
                 if not torch.is_tensor(current_timestep):
@@ -1400,17 +1248,13 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
                         device=latent_model_input.device,
                     )
                 elif len(current_timestep.shape) == 0:
-                    current_timestep = current_timestep[None].to(
-                        latent_model_input.device
-                    )
+                    current_timestep = current_timestep[None].to(latent_model_input.device)
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
                 current_timestep = current_timestep.expand(latent_model_input.shape[0])
 
                 # predict noise model_output
                 noise_pred = self.transformer(
-                    latent_model_input.to(
-                        device=self.transformer.device, dtype=self.transformer.dtype
-                    ),
+                    latent_model_input.to(device=self.transformer.device, dtype=self.transformer.dtype),
                     encoder_hidden_states=prompt_embeds,
                     encoder_attention_mask=prompt_attention_mask,
                     timestep=current_timestep,
@@ -1421,9 +1265,7 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
                 # perform guidance
                 if do_classifier_free_guidance:
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                    noise_pred = noise_pred_uncond + guidance_scale * (
-                        noise_pred_text - noise_pred_uncond
-                    )
+                    noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
                 # learned sigma
                 if self.transformer.config.out_channels // 2 == latent_channels:
@@ -1432,14 +1274,10 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
                     noise_pred = noise_pred
 
                 # compute previous image: x_t -> x_t-1
-                latents = self.scheduler.step(
-                    noise_pred, t, latents, **extra_step_kwargs, return_dict=False
-                )[0]
+                latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
 
                 # call the callback, if provided
-                if i == len(timesteps) - 1 or (
-                    (i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0
-                ):
+                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
                     if callback is not None and i % callback_steps == 0:
                         step_idx = i // getattr(self.scheduler, "order", 1)
@@ -1448,9 +1286,7 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
         if not output_type == "latent":
             if hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa"):
                 # we have SageAttention loaded. fallback to SDPA for decode.
-                torch.nn.functional.scaled_dot_product_attention = (
-                    torch.nn.functional.scaled_dot_product_attention_sdpa
-                )
+                torch.nn.functional.scaled_dot_product_attention = torch.nn.functional.scaled_dot_product_attention_sdpa
 
             image = self.vae.decode(
                 latents.to(dtype=self.vae.dtype) / self.vae.config.scaling_factor,
@@ -1460,14 +1296,10 @@ class PixArtSigmaPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixi
 
             if hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa"):
                 # reenable SageAttention for training.
-                torch.nn.functional.scaled_dot_product_attention = (
-                    torch.nn.functional.scaled_dot_product_attention_sage
-                )
+                torch.nn.functional.scaled_dot_product_attention = torch.nn.functional.scaled_dot_product_attention_sage
 
             if use_resolution_binning:
-                image = self.image_processor.resize_and_crop_tensor(
-                    image, orig_width, orig_height
-                )
+                image = self.image_processor.resize_and_crop_tensor(image, orig_width, orig_height)
         else:
             image = latents
 
@@ -1489,19 +1321,7 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
     """
 
     bad_punct_regex = re.compile(
-        r"["
-        + "#®•©™&@·º½¾¿¡§~"
-        + r"\)"
-        + r"\("
-        + r"\]"
-        + r"\["
-        + r"\}"
-        + r"\{"
-        + r"\|"
-        + "\\"
-        + r"\/"
-        + r"\*"
-        + r"]{1,}"
+        r"[" + "#®•©™&@·º½¾¿¡§~" + r"\)" + r"\(" + r"\]" + r"\[" + r"\}" + r"\{" + r"\|" + "\\" + r"\/" + r"\*" + r"]{1,}"
     )  # noqa
 
     _optional_components = ["tokenizer", "text_encoder"]
@@ -1525,17 +1345,9 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
             scheduler=scheduler,
         )
 
-        self.vae_scale_factor = (
-            2 ** (len(self.vae.config.block_out_channels) - 1)
-            if getattr(self, "vae", None)
-            else 8
-        )
-        self.vae_latent_channels = (
-            self.vae.config.latent_channels if getattr(self, "vae", None) else 16
-        )
-        self.image_processor = PixArtImageProcessor(
-            vae_scale_factor=self.vae_scale_factor
-        )
+        self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1) if getattr(self, "vae", None) else 8
+        self.vae_latent_channels = self.vae.config.latent_channels if getattr(self, "vae", None) else 16
+        self.image_processor = PixArtImageProcessor(vae_scale_factor=self.vae_scale_factor)
         self.condition_image_processor = VaeImageProcessor(
             vae_scale_factor=self.vae_scale_factor * 2,
             vae_latent_channels=self.vae_latent_channels,
@@ -1604,16 +1416,10 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
                 return_tensors="pt",
             )
             text_input_ids = text_inputs.input_ids
-            untruncated_ids = self.tokenizer(
-                prompt, padding="longest", return_tensors="pt"
-            ).input_ids
+            untruncated_ids = self.tokenizer(prompt, padding="longest", return_tensors="pt").input_ids
 
-            if untruncated_ids.shape[-1] >= text_input_ids.shape[
-                -1
-            ] and not torch.equal(text_input_ids, untruncated_ids):
-                removed_text = self.tokenizer.batch_decode(
-                    untruncated_ids[:, max_length - 1 : -1]
-                )
+            if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(text_input_ids, untruncated_ids):
+                removed_text = self.tokenizer.batch_decode(untruncated_ids[:, max_length - 1 : -1])
                 logger.warning(
                     "The following part of your input was truncated because T5 can only handle sequences up to"
                     f" {max_length} tokens: {removed_text}"
@@ -1622,9 +1428,7 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
             prompt_attention_mask = text_inputs.attention_mask
             prompt_attention_mask = prompt_attention_mask.to(device)
 
-            prompt_embeds = self.text_encoder(
-                text_input_ids.to(device), attention_mask=prompt_attention_mask
-            )
+            prompt_embeds = self.text_encoder(text_input_ids.to(device), attention_mask=prompt_attention_mask)
             prompt_embeds = prompt_embeds[0]
 
         if self.text_encoder is not None:
@@ -1639,24 +1443,14 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
         bs_embed, seq_len, _ = prompt_embeds.shape
         # duplicate text embeddings and attention mask for each generation per prompt, using mps friendly method
         prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
-        prompt_embeds = prompt_embeds.view(
-            bs_embed * num_images_per_prompt, seq_len, -1
-        )
+        prompt_embeds = prompt_embeds.view(bs_embed * num_images_per_prompt, seq_len, -1)
         prompt_attention_mask = prompt_attention_mask.repeat(1, num_images_per_prompt)
-        prompt_attention_mask = prompt_attention_mask.view(
-            bs_embed * num_images_per_prompt, -1
-        )
+        prompt_attention_mask = prompt_attention_mask.view(bs_embed * num_images_per_prompt, -1)
 
         # get unconditional embeddings for classifier free guidance
         if do_classifier_free_guidance and negative_prompt_embeds is None:
-            uncond_tokens = (
-                [negative_prompt] * bs_embed
-                if isinstance(negative_prompt, str)
-                else negative_prompt
-            )
-            uncond_tokens = self._text_preprocessing(
-                uncond_tokens, clean_caption=clean_caption
-            )
+            uncond_tokens = [negative_prompt] * bs_embed if isinstance(negative_prompt, str) else negative_prompt
+            uncond_tokens = self._text_preprocessing(uncond_tokens, clean_caption=clean_caption)
             max_length = prompt_embeds.shape[1]
             uncond_input = self.tokenizer(
                 uncond_tokens,
@@ -1680,23 +1474,13 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
             # duplicate unconditional embeddings for each generation per prompt, using mps friendly method
             seq_len = negative_prompt_embeds.shape[1]
 
-            negative_prompt_embeds = negative_prompt_embeds.to(
-                dtype=dtype, device=device
-            )
+            negative_prompt_embeds = negative_prompt_embeds.to(dtype=dtype, device=device)
 
-            negative_prompt_embeds = negative_prompt_embeds.repeat(
-                1, num_images_per_prompt, 1
-            )
-            negative_prompt_embeds = negative_prompt_embeds.view(
-                bs_embed * num_images_per_prompt, seq_len, -1
-            )
+            negative_prompt_embeds = negative_prompt_embeds.repeat(1, num_images_per_prompt, 1)
+            negative_prompt_embeds = negative_prompt_embeds.view(bs_embed * num_images_per_prompt, seq_len, -1)
 
-            negative_prompt_attention_mask = negative_prompt_attention_mask.repeat(
-                1, num_images_per_prompt
-            )
-            negative_prompt_attention_mask = negative_prompt_attention_mask.view(
-                bs_embed * num_images_per_prompt, -1
-            )
+            negative_prompt_attention_mask = negative_prompt_attention_mask.repeat(1, num_images_per_prompt)
+            negative_prompt_attention_mask = negative_prompt_attention_mask.view(bs_embed * num_images_per_prompt, -1)
         else:
             negative_prompt_embeds = None
             negative_prompt_attention_mask = None
@@ -1715,17 +1499,13 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
         # eta corresponds to η in DDIM paper: https://arxiv.org/abs/2010.02502
         # and should be between [0, 1]
 
-        accepts_eta = "eta" in set(
-            inspect.signature(self.scheduler.step).parameters.keys()
-        )
+        accepts_eta = "eta" in set(inspect.signature(self.scheduler.step).parameters.keys())
         extra_step_kwargs = {}
         if accepts_eta:
             extra_step_kwargs["eta"] = eta
 
         # check if the scheduler accepts generator
-        accepts_generator = "generator" in set(
-            inspect.signature(self.scheduler.step).parameters.keys()
-        )
+        accepts_generator = "generator" in set(inspect.signature(self.scheduler.step).parameters.keys())
         if accepts_generator:
             extra_step_kwargs["generator"] = generator
         return extra_step_kwargs
@@ -1744,17 +1524,13 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
         negative_prompt_attention_mask=None,
     ):
         if height % 8 != 0 or width % 8 != 0:
-            raise ValueError(
-                f"`height` and `width` have to be divisible by 8 but are {height} and {width}."
-            )
+            raise ValueError(f"`height` and `width` have to be divisible by 8 but are {height} and {width}.")
 
         if (callback_steps is None) or (
-            callback_steps is not None
-            and (not isinstance(callback_steps, int) or callback_steps <= 0)
+            callback_steps is not None and (not isinstance(callback_steps, int) or callback_steps <= 0)
         ):
             raise ValueError(
-                f"`callback_steps` has to be a positive integer but is {callback_steps} of type"
-                f" {type(callback_steps)}."
+                f"`callback_steps` has to be a positive integer but is {callback_steps} of type" f" {type(callback_steps)}."
             )
 
         if prompt is not None and prompt_embeds is not None:
@@ -1766,12 +1542,8 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
             raise ValueError(
                 "Provide either `prompt` or `prompt_embeds`. Cannot leave both `prompt` and `prompt_embeds` undefined."
             )
-        elif prompt is not None and (
-            not isinstance(prompt, str) and not isinstance(prompt, list)
-        ):
-            raise ValueError(
-                f"`prompt` has to be of type `str` or `list` but is {type(prompt)}"
-            )
+        elif prompt is not None and (not isinstance(prompt, str) and not isinstance(prompt, list)):
+            raise ValueError(f"`prompt` has to be of type `str` or `list` but is {type(prompt)}")
 
         if prompt is not None and negative_prompt_embeds is not None:
             raise ValueError(
@@ -1786,17 +1558,10 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
             )
 
         if prompt_embeds is not None and prompt_attention_mask is None:
-            raise ValueError(
-                "Must provide `prompt_attention_mask` when specifying `prompt_embeds`."
-            )
+            raise ValueError("Must provide `prompt_attention_mask` when specifying `prompt_embeds`.")
 
-        if (
-            negative_prompt_embeds is not None
-            and negative_prompt_attention_mask is None
-        ):
-            raise ValueError(
-                "Must provide `negative_prompt_attention_mask` when specifying `negative_prompt_embeds`."
-            )
+        if negative_prompt_embeds is not None and negative_prompt_attention_mask is None:
+            raise ValueError("Must provide `negative_prompt_attention_mask` when specifying `negative_prompt_embeds`.")
 
         if prompt_embeds is not None and negative_prompt_embeds is not None:
             if prompt_embeds.shape != negative_prompt_embeds.shape:
@@ -1815,16 +1580,12 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
     # Copied from diffusers.pipelines.deepfloyd_if.pipeline_if.IFPipeline._text_preprocessing
     def _text_preprocessing(self, text, clean_caption=False):
         if clean_caption and not is_bs4_available():
-            logger.warning(
-                BACKENDS_MAPPING["bs4"][-1].format("Setting `clean_caption=True`")
-            )
+            logger.warning(BACKENDS_MAPPING["bs4"][-1].format("Setting `clean_caption=True`"))
             logger.warning("Setting `clean_caption` to False...")
             clean_caption = False
 
         if clean_caption and not is_ftfy_available():
-            logger.warning(
-                BACKENDS_MAPPING["ftfy"][-1].format("Setting `clean_caption=True`")
-            )
+            logger.warning(BACKENDS_MAPPING["ftfy"][-1].format("Setting `clean_caption=True`"))
             logger.warning("Setting `clean_caption` to False...")
             clean_caption = False
 
@@ -1912,17 +1673,13 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
         # "123456.."
         caption = re.sub(r"\b\d{6,}\b", "", caption)
         # filenames:
-        caption = re.sub(
-            r"[\S]+\.(?:png|jpg|jpeg|bmp|webp|eps|pdf|apk|mp4)", "", caption
-        )
+        caption = re.sub(r"[\S]+\.(?:png|jpg|jpeg|bmp|webp|eps|pdf|apk|mp4)", "", caption)
 
         #
         caption = re.sub(r"[\"\']{2,}", r'"', caption)  # """AUSVERKAUFT"""
         caption = re.sub(r"[\.]{2,}", r" ", caption)  # """AUSVERKAUFT"""
 
-        caption = re.sub(
-            self.bad_punct_regex, r" ", caption
-        )  # ***AUSVERKAUFT***, #AUSVERKAUFT
+        caption = re.sub(self.bad_punct_regex, r" ", caption)  # ***AUSVERKAUFT***, #AUSVERKAUFT
         caption = re.sub(r"\s+\.\s+", r" ", caption)  # " . "
 
         # this-is-my-cute-cat / this_is_my_cute_cat
@@ -1940,14 +1697,10 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
         caption = re.sub(r"(worldwide\s+)?(free\s+)?shipping", "", caption)
         caption = re.sub(r"(free\s)?download(\sfree)?", "", caption)
         caption = re.sub(r"\bclick\b\s(?:for|on)\s\w+", "", caption)
-        caption = re.sub(
-            r"\b(?:png|jpg|jpeg|bmp|webp|eps|pdf|apk|mp4)(\simage[s]?)?", "", caption
-        )
+        caption = re.sub(r"\b(?:png|jpg|jpeg|bmp|webp|eps|pdf|apk|mp4)(\simage[s]?)?", "", caption)
         caption = re.sub(r"\bpage\s+\d+\b", "", caption)
 
-        caption = re.sub(
-            r"\b\d*[a-zA-Z]+\d+[a-zA-Z]+\d+[a-zA-Z\d]*\b", r" ", caption
-        )  # j2d1a2a...
+        caption = re.sub(r"\b\d*[a-zA-Z]+\d+[a-zA-Z]+\d+[a-zA-Z\d]*\b", r" ", caption)  # j2d1a2a...
 
         caption = re.sub(r"\b\d+\.?\d*[xх×]\d+\.?\d*\b", "", caption)
 
@@ -1989,9 +1742,7 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
             )
 
         if latents is None:
-            latents = randn_tensor(
-                shape, generator=generator, device=device, dtype=dtype
-            )
+            latents = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
         else:
             latents = latents.to(device)
 
@@ -2015,9 +1766,7 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
         if isinstance(image, torch.Tensor):
             pass
         else:
-            image = self.condition_image_processor.preprocess(
-                image, height=height, width=width
-            )
+            image = self.condition_image_processor.preprocess(image, height=height, width=width)
 
         image_batch_size = image.shape[0]
 
@@ -2158,9 +1907,7 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
             else:
                 raise ValueError("Invalid sample size")
             orig_height, orig_width = height, width
-            height, width = self.image_processor.classify_height_width_bin(
-                height, width, ratios=aspect_ratio_bin
-            )
+            height, width = self.image_processor.classify_height_width_bin(height, width, ratios=aspect_ratio_bin)
 
         self.check_inputs(
             prompt,
@@ -2210,14 +1957,10 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
         )
         if do_classifier_free_guidance:
             prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
-            prompt_attention_mask = torch.cat(
-                [negative_prompt_attention_mask, prompt_attention_mask], dim=0
-            )
+            prompt_attention_mask = torch.cat([negative_prompt_attention_mask, prompt_attention_mask], dim=0)
 
         # 4. Prepare timesteps
-        timesteps, num_inference_steps = retrieve_timesteps(
-            self.scheduler, num_inference_steps, device, timesteps, sigmas
-        )
+        timesteps, num_inference_steps = retrieve_timesteps(self.scheduler, num_inference_steps, device, timesteps, sigmas)
 
         # 5-1. Prepare conditional latents.
         control_image = self.prepare_image(
@@ -2231,9 +1974,7 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
         )
 
         if control_image.ndim == 4:
-            control_image = self.vae.encode(control_image).latent_dist.sample(
-                generator=generator
-            )
+            control_image = self.vae.encode(control_image).latent_dist.sample(generator=generator)
             control_image = control_image * self.vae.config.scaling_factor
 
         # 5. Prepare latents.
@@ -2256,21 +1997,15 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
         added_cond_kwargs = {"resolution": None, "aspect_ratio": None}
 
         # 7. Denoising loop
-        num_warmup_steps = max(
-            len(timesteps) - num_inference_steps * self.scheduler.order, 0
-        )
+        num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
 
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 latent_model_input = torch.cat([latents, control_image], dim=1)
                 latent_model_input = (
-                    torch.cat([latent_model_input] * 2)
-                    if do_classifier_free_guidance
-                    else latent_model_input
+                    torch.cat([latent_model_input] * 2) if do_classifier_free_guidance else latent_model_input
                 )
-                latent_model_input = self.scheduler.scale_model_input(
-                    latent_model_input, t
-                )
+                latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
                 current_timestep = t
                 if not torch.is_tensor(current_timestep):
@@ -2288,9 +2023,7 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
                         device=latent_model_input.device,
                     )
                 elif len(current_timestep.shape) == 0:
-                    current_timestep = current_timestep[None].to(
-                        latent_model_input.device
-                    )
+                    current_timestep = current_timestep[None].to(latent_model_input.device)
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
                 current_timestep = current_timestep.expand(latent_model_input.shape[0])
 
@@ -2307,9 +2040,7 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
                 # perform guidance
                 if do_classifier_free_guidance:
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                    noise_pred = noise_pred_uncond + guidance_scale * (
-                        noise_pred_text - noise_pred_uncond
-                    )
+                    noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
                 # learned sigma
                 if self.transformer.config.out_channels // 2 == latent_channels:
@@ -2318,14 +2049,10 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
                     noise_pred = noise_pred
 
                 # compute previous image: x_t -> x_t-1
-                latents = self.scheduler.step(
-                    noise_pred, t, latents, **extra_step_kwargs, return_dict=False
-                )[0]
+                latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
 
                 # call the callback, if provided
-                if i == len(timesteps) - 1 or (
-                    (i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0
-                ):
+                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
                     if callback is not None and i % callback_steps == 0:
                         step_idx = i // getattr(self.scheduler, "order", 1)
@@ -2335,13 +2062,9 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
                     xm.mark_step()
 
         if not output_type == "latent":
-            image = self.vae.decode(
-                latents / self.vae.config.scaling_factor, return_dict=False
-            )[0]
+            image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
             if use_resolution_binning:
-                image = self.image_processor.resize_and_crop_tensor(
-                    image, orig_width, orig_height
-                )
+                image = self.image_processor.resize_and_crop_tensor(image, orig_width, orig_height)
         else:
             image = latents
 
@@ -2357,27 +2080,13 @@ class PixArtSigmaControlPipeline(DiffusionPipeline):
         return ImagePipelineOutput(images=image)
 
 
-class PixArtSigmaControlNetPipeline(
-    DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixin
-):
+class PixArtSigmaControlNetPipeline(DiffusionPipeline, PixArtSigmaControlNetLoraLoaderMixin):
     """
     Pipeline for text-to-image generation using PixArt-Sigma with ControlNet.
     """
 
     bad_punct_regex = re.compile(
-        r"["
-        + "#®•©™&@·º½¾¿¡§~"
-        + r"\)"
-        + r"\("
-        + r"\]"
-        + r"\["
-        + r"\}"
-        + r"\{"
-        + r"\|"
-        + "\\"
-        + r"\/"
-        + r"\*"
-        + r"]{1,}"
+        r"[" + "#®•©™&@·º½¾¿¡§~" + r"\)" + r"\(" + r"\]" + r"\[" + r"\}" + r"\{" + r"\|" + "\\" + r"\/" + r"\*" + r"]{1,}"
     )  # noqa
 
     _optional_components = ["tokenizer", "text_encoder"]
@@ -2389,26 +2098,24 @@ class PixArtSigmaControlNetPipeline(
         text_encoder: T5EncoderModel,
         vae: AutoencoderKL,
         transformer: PixArtTransformer2DModel,
-        controlnet: Union[
-            PixArtSigmaControlNetAdapterModel, PixArtSigmaControlNetTransformerModel
-        ],
+        controlnet: Union[PixArtSigmaControlNetAdapterModel, PixArtSigmaControlNetTransformerModel],
         scheduler: KarrasDiffusionSchedulers,
     ):
         super().__init__()
 
-        # Check if controlnet is already a wrapper or just the adapter
+        # Check if controlnet is already a wrapper or the base adapter
         from simpletuner.helpers.models.pixart.controlnet import (
-            PixArtSigmaControlNetTransformerModel,
             PixArtSigmaControlNetAdapterModel,
+            PixArtSigmaControlNetTransformerModel,
         )
 
         if isinstance(controlnet, PixArtSigmaControlNetTransformerModel):
-            # Already wrapped, use it directly
+            # Use wrapped controlnet
             controlnet_transformer = controlnet
-            # Extract the adapter for separate registration
+            # Extract adapter for registration
             controlnet_adapter = controlnet.controlnet
         elif isinstance(controlnet, PixArtSigmaControlNetAdapterModel):
-            # Need to create wrapper
+            # Create wrapper for adapter
             controlnet_transformer = PixArtSigmaControlNetTransformerModel(
                 transformer=transformer,
                 controlnet=controlnet,
@@ -2431,12 +2138,8 @@ class PixArtSigmaControlNetPipeline(
         )
 
         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
-        self.image_processor = PixArtImageProcessor(
-            vae_scale_factor=self.vae_scale_factor
-        )
-        self.control_image_processor = PixArtImageProcessor(
-            vae_scale_factor=self.vae_scale_factor
-        )
+        self.image_processor = PixArtImageProcessor(vae_scale_factor=self.vae_scale_factor)
+        self.control_image_processor = PixArtImageProcessor(vae_scale_factor=self.vae_scale_factor)
 
     def encode_prompt(
         self,
@@ -2480,16 +2183,10 @@ class PixArtSigmaControlNetPipeline(
                 return_tensors="pt",
             )
             text_input_ids = text_inputs.input_ids
-            untruncated_ids = self.tokenizer(
-                prompt, padding="longest", return_tensors="pt"
-            ).input_ids
+            untruncated_ids = self.tokenizer(prompt, padding="longest", return_tensors="pt").input_ids
 
-            if untruncated_ids.shape[-1] >= text_input_ids.shape[
-                -1
-            ] and not torch.equal(text_input_ids, untruncated_ids):
-                removed_text = self.tokenizer.batch_decode(
-                    untruncated_ids[:, max_length - 1 : -1]
-                )
+            if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(text_input_ids, untruncated_ids):
+                removed_text = self.tokenizer.batch_decode(untruncated_ids[:, max_length - 1 : -1])
                 logger.warning(
                     "The following part of your input was truncated because T5 can only handle sequences up to"
                     f" {max_length} tokens: {removed_text}"
@@ -2498,9 +2195,7 @@ class PixArtSigmaControlNetPipeline(
             prompt_attention_mask = text_inputs.attention_mask
             prompt_attention_mask = prompt_attention_mask.to(device)
 
-            prompt_embeds = self.text_encoder(
-                text_input_ids.to(device), attention_mask=prompt_attention_mask
-            )
+            prompt_embeds = self.text_encoder(text_input_ids.to(device), attention_mask=prompt_attention_mask)
             prompt_embeds = prompt_embeds[0]
 
         if self.text_encoder is not None:
@@ -2514,21 +2209,13 @@ class PixArtSigmaControlNetPipeline(
 
         bs_embed, seq_len, _ = prompt_embeds.shape
         prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
-        prompt_embeds = prompt_embeds.view(
-            bs_embed * num_images_per_prompt, seq_len, -1
-        )
+        prompt_embeds = prompt_embeds.view(bs_embed * num_images_per_prompt, seq_len, -1)
         prompt_attention_mask = prompt_attention_mask.view(bs_embed, -1)
         prompt_attention_mask = prompt_attention_mask.repeat(num_images_per_prompt, 1)
 
         if do_classifier_free_guidance and negative_prompt_embeds is None:
-            uncond_tokens = (
-                [negative_prompt] * batch_size
-                if isinstance(negative_prompt, str)
-                else negative_prompt
-            )
-            uncond_tokens = self._text_preprocessing(
-                uncond_tokens, clean_caption=clean_caption
-            )
+            uncond_tokens = [negative_prompt] * batch_size if isinstance(negative_prompt, str) else negative_prompt
+            uncond_tokens = self._text_preprocessing(uncond_tokens, clean_caption=clean_caption)
             max_length = prompt_embeds.shape[1]
             uncond_input = self.tokenizer(
                 uncond_tokens,
@@ -2550,22 +2237,12 @@ class PixArtSigmaControlNetPipeline(
 
         if do_classifier_free_guidance:
             seq_len = negative_prompt_embeds.shape[1]
-            negative_prompt_embeds = negative_prompt_embeds.to(
-                dtype=dtype, device=device
-            )
-            negative_prompt_embeds = negative_prompt_embeds.repeat(
-                1, num_images_per_prompt, 1
-            )
-            negative_prompt_embeds = negative_prompt_embeds.view(
-                batch_size * num_images_per_prompt, seq_len, -1
-            )
+            negative_prompt_embeds = negative_prompt_embeds.to(dtype=dtype, device=device)
+            negative_prompt_embeds = negative_prompt_embeds.repeat(1, num_images_per_prompt, 1)
+            negative_prompt_embeds = negative_prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
 
-            negative_prompt_attention_mask = negative_prompt_attention_mask.view(
-                bs_embed, -1
-            )
-            negative_prompt_attention_mask = negative_prompt_attention_mask.repeat(
-                num_images_per_prompt, 1
-            )
+            negative_prompt_attention_mask = negative_prompt_attention_mask.view(bs_embed, -1)
+            negative_prompt_attention_mask = negative_prompt_attention_mask.repeat(num_images_per_prompt, 1)
         else:
             negative_prompt_embeds = None
             negative_prompt_attention_mask = None
@@ -2578,16 +2255,12 @@ class PixArtSigmaControlNetPipeline(
         )
 
     def prepare_extra_step_kwargs(self, generator, eta):
-        accepts_eta = "eta" in set(
-            inspect.signature(self.scheduler.step).parameters.keys()
-        )
+        accepts_eta = "eta" in set(inspect.signature(self.scheduler.step).parameters.keys())
         extra_step_kwargs = {}
         if accepts_eta:
             extra_step_kwargs["eta"] = eta
 
-        accepts_generator = "generator" in set(
-            inspect.signature(self.scheduler.step).parameters.keys()
-        )
+        accepts_generator = "generator" in set(inspect.signature(self.scheduler.step).parameters.keys())
         if accepts_generator:
             extra_step_kwargs["generator"] = generator
         return extra_step_kwargs
@@ -2606,17 +2279,13 @@ class PixArtSigmaControlNetPipeline(
         negative_prompt_attention_mask=None,
     ):
         if height % 8 != 0 or width % 8 != 0:
-            raise ValueError(
-                f"`height` and `width` have to be divisible by 8 but are {height} and {width}."
-            )
+            raise ValueError(f"`height` and `width` have to be divisible by 8 but are {height} and {width}.")
 
         if (callback_steps is None) or (
-            callback_steps is not None
-            and (not isinstance(callback_steps, int) or callback_steps <= 0)
+            callback_steps is not None and (not isinstance(callback_steps, int) or callback_steps <= 0)
         ):
             raise ValueError(
-                f"`callback_steps` has to be a positive integer but is {callback_steps} of type"
-                f" {type(callback_steps)}."
+                f"`callback_steps` has to be a positive integer but is {callback_steps} of type" f" {type(callback_steps)}."
             )
 
         if prompt is not None and prompt_embeds is not None:
@@ -2628,12 +2297,8 @@ class PixArtSigmaControlNetPipeline(
             raise ValueError(
                 "Provide either `prompt` or `prompt_embeds`. Cannot leave both `prompt` and `prompt_embeds` undefined."
             )
-        elif prompt is not None and (
-            not isinstance(prompt, str) and not isinstance(prompt, list)
-        ):
-            raise ValueError(
-                f"`prompt` has to be of type `str` or `list` but is {type(prompt)}"
-            )
+        elif prompt is not None and (not isinstance(prompt, str) and not isinstance(prompt, list)):
+            raise ValueError(f"`prompt` has to be of type `str` or `list` but is {type(prompt)}")
 
         if prompt is not None and negative_prompt_embeds is not None:
             raise ValueError(
@@ -2648,17 +2313,10 @@ class PixArtSigmaControlNetPipeline(
             )
 
         if prompt_embeds is not None and prompt_attention_mask is None:
-            raise ValueError(
-                "Must provide `prompt_attention_mask` when specifying `prompt_embeds`."
-            )
+            raise ValueError("Must provide `prompt_attention_mask` when specifying `prompt_embeds`.")
 
-        if (
-            negative_prompt_embeds is not None
-            and negative_prompt_attention_mask is None
-        ):
-            raise ValueError(
-                "Must provide `negative_prompt_attention_mask` when specifying `negative_prompt_embeds`."
-            )
+        if negative_prompt_embeds is not None and negative_prompt_attention_mask is None:
+            raise ValueError("Must provide `negative_prompt_attention_mask` when specifying `negative_prompt_embeds`.")
 
         if prompt_embeds is not None and negative_prompt_embeds is not None:
             if prompt_embeds.shape != negative_prompt_embeds.shape:
@@ -2681,12 +2339,8 @@ class PixArtSigmaControlNetPipeline(
         image_is_pil = isinstance(image, PIL.Image.Image)
         image_is_tensor = isinstance(image, torch.Tensor)
         image_is_np = isinstance(image, np.ndarray)
-        image_is_pil_list = isinstance(image, list) and isinstance(
-            image[0], PIL.Image.Image
-        )
-        image_is_tensor_list = isinstance(image, list) and isinstance(
-            image[0], torch.Tensor
-        )
+        image_is_pil_list = isinstance(image, list) and isinstance(image[0], PIL.Image.Image)
+        image_is_tensor_list = isinstance(image, list) and isinstance(image[0], torch.Tensor)
         image_is_np_list = isinstance(image, list) and isinstance(image[0], np.ndarray)
 
         if (
@@ -2720,16 +2374,12 @@ class PixArtSigmaControlNetPipeline(
 
     def _text_preprocessing(self, text, clean_caption=False):
         if clean_caption and not is_bs4_available():
-            logger.warning(
-                BACKENDS_MAPPING["bs4"][-1].format("Setting `clean_caption=True`")
-            )
+            logger.warning(BACKENDS_MAPPING["bs4"][-1].format("Setting `clean_caption=True`"))
             logger.warning("Setting `clean_caption` to False...")
             clean_caption = False
 
         if clean_caption and not is_ftfy_available():
-            logger.warning(
-                BACKENDS_MAPPING["ftfy"][-1].format("Setting `clean_caption=True`")
-            )
+            logger.warning(BACKENDS_MAPPING["ftfy"][-1].format("Setting `clean_caption=True`"))
             logger.warning("Setting `clean_caption` to False...")
             clean_caption = False
 
@@ -2784,9 +2434,7 @@ class PixArtSigmaControlNetPipeline(
         dtype,
         do_classifier_free_guidance=False,
     ):
-        image = self.control_image_processor.preprocess(
-            image, height=height, width=width
-        ).to(dtype=torch.float32)
+        image = self.control_image_processor.preprocess(image, height=height, width=width).to(dtype=torch.float32)
         image_batch_size = image.shape[0]
 
         if image_batch_size == 1:
@@ -2832,9 +2480,7 @@ class PixArtSigmaControlNetPipeline(
             )
 
         if latents is None:
-            latents = randn_tensor(
-                shape, generator=generator, device=device, dtype=dtype
-            )
+            latents = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
         else:
             latents = latents.to(device)
 
@@ -2877,11 +2523,7 @@ class PixArtSigmaControlNetPipeline(
         Function invoked when calling the pipeline for generation.
         """
         # 1. Check inputs
-        _transformer = (
-            self.transformer
-            if not hasattr(self.transformer, "transformer")
-            else self.transformer.transformer
-        )
+        _transformer = self.transformer if not hasattr(self.transformer, "transformer") else self.transformer.transformer
         height = height or _transformer.config.sample_size * self.vae_scale_factor
         width = width or _transformer.config.sample_size * self.vae_scale_factor
 
@@ -2897,9 +2539,7 @@ class PixArtSigmaControlNetPipeline(
             else:
                 raise ValueError("Invalid sample size")
             orig_height, orig_width = height, width
-            height, width = self.image_processor.classify_height_width_bin(
-                height, width, ratios=aspect_ratio_bin
-            )
+            height, width = self.image_processor.classify_height_width_bin(height, width, ratios=aspect_ratio_bin)
 
         self.check_inputs(
             prompt,
@@ -2947,14 +2587,10 @@ class PixArtSigmaControlNetPipeline(
 
         if do_classifier_free_guidance:
             prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
-            prompt_attention_mask = torch.cat(
-                [negative_prompt_attention_mask, prompt_attention_mask], dim=0
-            )
+            prompt_attention_mask = torch.cat([negative_prompt_attention_mask, prompt_attention_mask], dim=0)
 
         # 4. Prepare timesteps
-        timesteps, num_inference_steps = retrieve_timesteps(
-            self.scheduler, num_inference_steps, device, timesteps, sigmas
-        )
+        timesteps, num_inference_steps = retrieve_timesteps(self.scheduler, num_inference_steps, device, timesteps, sigmas)
 
         # 4.1 Prepare control image
         control_image_latents = None
@@ -2970,9 +2606,7 @@ class PixArtSigmaControlNetPipeline(
                 do_classifier_free_guidance=do_classifier_free_guidance,
             )
             # Convert to latents
-            control_image_latents = self.prepare_image_latents(
-                image, device, prompt_embeds.dtype
-            )
+            control_image_latents = self.prepare_image_latents(image, device, prompt_embeds.dtype)
 
         # 5. Prepare latents
         latent_channels = _transformer.config.in_channels
@@ -2999,21 +2633,15 @@ class PixArtSigmaControlNetPipeline(
         control_end_step = int(num_inference_steps * control_guidance_end)
 
         # 7. Denoising loop
-        num_warmup_steps = max(
-            len(timesteps) - num_inference_steps * self.scheduler.order, 0
-        )
+        num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
 
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 # Check if we should apply controlnet at this timestep
                 apply_control = control_start_step <= i < control_end_step
 
-                latent_model_input = (
-                    torch.cat([latents] * 2) if do_classifier_free_guidance else latents
-                )
-                latent_model_input = self.scheduler.scale_model_input(
-                    latent_model_input, t
-                )
+                latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
+                latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
                 current_timestep = t
                 if not torch.is_tensor(current_timestep):
@@ -3028,17 +2656,13 @@ class PixArtSigmaControlNetPipeline(
                         device=latent_model_input.device,
                     )
                 elif len(current_timestep.shape) == 0:
-                    current_timestep = current_timestep[None].to(
-                        latent_model_input.device
-                    )
+                    current_timestep = current_timestep[None].to(latent_model_input.device)
                 current_timestep = current_timestep.expand(latent_model_input.shape[0])
 
                 # FIXED: Simplified controlnet prediction
                 if apply_control and control_image_latents is not None:
                     # Apply conditioning scale to control latents
-                    scaled_control_latents = (
-                        control_image_latents * controlnet_conditioning_scale
-                    )
+                    scaled_control_latents = control_image_latents * controlnet_conditioning_scale
 
                     # The wrapper model handles everything internally
                     noise_pred = self.transformer(
@@ -3065,9 +2689,7 @@ class PixArtSigmaControlNetPipeline(
                 # perform guidance
                 if do_classifier_free_guidance:
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                    noise_pred = noise_pred_uncond + guidance_scale * (
-                        noise_pred_text - noise_pred_uncond
-                    )
+                    noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
                 # learned sigma
                 if _transformer.config.out_channels // 2 == latent_channels:
@@ -3076,31 +2698,21 @@ class PixArtSigmaControlNetPipeline(
                 # compute previous image: x_t -> x_t-1
                 if num_inference_steps == 1:
                     # For DMD one step sampling
-                    latents = self.scheduler.step(
-                        noise_pred, t, latents, **extra_step_kwargs
-                    ).pred_original_sample
+                    latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).pred_original_sample
                 else:
-                    latents = self.scheduler.step(
-                        noise_pred, t, latents, **extra_step_kwargs, return_dict=False
-                    )[0]
+                    latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
 
                 # call the callback, if provided
-                if i == len(timesteps) - 1 or (
-                    (i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0
-                ):
+                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
                     if callback is not None and i % callback_steps == 0:
                         step_idx = i // getattr(self.scheduler, "order", 1)
                         callback(step_idx, t, latents)
 
         if not output_type == "latent":
-            image = self.vae.decode(
-                latents / self.vae.config.scaling_factor, return_dict=False
-            )[0]
+            image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
             if use_resolution_binning:
-                image = self.image_processor.resize_and_crop_tensor(
-                    image, orig_width, orig_height
-                )
+                image = self.image_processor.resize_and_crop_tensor(image, orig_width, orig_height)
         else:
             image = latents
 

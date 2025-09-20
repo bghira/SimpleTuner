@@ -1,9 +1,10 @@
 import hashlib
 import logging
 import os
+import tempfile
 from io import BytesIO
 from pathlib import Path
-from typing import Any, BinaryIO, Optional, Union
+from typing import Any, BinaryIO, Dict, Optional, Union
 
 import numpy as np
 import torch
@@ -19,6 +20,12 @@ logger = logging.getLogger("HuggingfaceDatasetsBackend")
 
 
 class HuggingfaceDatasetsBackend(BaseDataBackend):
+    _CAP_PROP_POS_FRAMES = 1
+    _CAP_PROP_FRAME_WIDTH = 3
+    _CAP_PROP_FRAME_HEIGHT = 4
+    _CAP_PROP_FPS = 5
+    _CAP_PROP_FRAME_COUNT = 7
+
     def __init__(
         self,
         accelerator,
@@ -35,23 +42,8 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         num_proc: int = 16,
         composite_config: dict = {},
         dataset_type: str = "image",
+        auto_load: bool = False,
     ):
-        """
-        Initialize the Hugging Face datasets backend.
-
-        Args:
-            accelerator: The accelerator instance
-            id: Unique identifier for this backend
-            dataset_name: Name of the HF dataset (e.g., 'Yuanshi/Subjects200K')
-            split: Dataset split to use (default: 'train')
-            revision: Dataset revision/version
-            image_column: Column name containing images
-            cache_dir: Local cache directory for HF datasets
-            compress_cache: Whether to compress cached data
-            streaming: Whether to use streaming mode
-            filter_func: Optional function to filter dataset items
-            num_proc: Number of processes for filtering
-        """
         self.id = id
         self.type = "huggingface"
         self.accelerator = accelerator
@@ -68,6 +60,11 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         self.filter_func = filter_func
         self.num_proc = num_proc
         self.composite_config = composite_config
+        self._auto_load = auto_load
+
+        self._dataset = None
+        self._dataset_loaded = False
+        self._loading_dataset = False
 
         # Virtual file system mapping: index -> virtual path
         self._path_to_index = {}
@@ -77,14 +74,17 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         else:
             logger.setLevel("ERROR")
 
-        # Load the dataset
-        self._load_dataset()
+        if self._auto_load:
+            self._ensure_dataset_loaded()
 
     def _load_dataset(self):
-        """Load the Hugging Face dataset."""
+        if self._loading_dataset:
+            return
+        self._loading_dataset = True
         try:
             from datasets import load_dataset, load_dataset_builder
         except ImportError:
+            self._loading_dataset = False
             raise ImportError("Please install datasets: pip install datasets")
 
         # First, inspect the dataset structure
@@ -96,38 +96,258 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         logger.info(f"Loading dataset {self.dataset_name} (split: {self.split})")
 
         # Load with explicit parameters to ensure all data is loaded
-        self.dataset = load_dataset(
-            self.dataset_name,
-            split=self.split,
-            revision=self.revision,
-            cache_dir=self.cache_dir,
-            streaming=self.streaming,
-            download_mode="reuse_dataset_if_exists",  # or "force_redownload" if needed
-        )
-
-        # Log the initial size
-        if not self.streaming:
-            logger.info(f"Loaded dataset with {len(self.dataset)} items")
-
-            # Check if this looks like a subset
-            if len(self.dataset) == 8200:
-                logger.warning("Dataset has exactly 8200 items - this might be a single shard!")
-
-        # Apply filter if provided
-        if self.filter_func and not self.streaming:
-            logger.info("Applying filter to dataset...")
-            original_size = len(self.dataset)
-            self.dataset = self.dataset.filter(
-                self.filter_func,
-                num_proc=self.num_proc,
+        try:
+            self.dataset = load_dataset(
+                self.dataset_name,
+                split=self.split,
+                revision=self.revision,
+                cache_dir=self.cache_dir,
+                streaming=self.streaming,
+                download_mode="reuse_dataset_if_exists",  # or "force_redownload" if needed
             )
-            logger.info(f"Dataset filtered from {original_size} to {len(self.dataset)} items")
 
-        # Build virtual path mapping
-        self._build_path_mapping()
+            # Log the initial size
+            if not self.streaming:
+                logger.info(f"Loaded dataset with {len(self.dataset)} items")
+
+                # Check if this looks like a subset
+                if len(self.dataset) == 8200:
+                    logger.warning("Dataset has exactly 8200 items - this might be a single shard!")
+
+            self._configure_video_column()
+
+            # Apply filter if provided
+            if self.filter_func and not self.streaming:
+                logger.info("Applying filter to dataset...")
+                original_size = len(self.dataset)
+                self.dataset = self.dataset.filter(
+                    self.filter_func,
+                    num_proc=self.num_proc,
+                )
+                logger.info(f"Dataset filtered from {original_size} to {len(self.dataset)} items")
+
+            # Build virtual path mapping
+            self._build_path_mapping()
+            self._dataset_loaded = True
+        finally:
+            if not self._dataset_loaded:
+                self._dataset = None
+            self._loading_dataset = False
+
+    def _configure_video_column(self) -> None:
+        if self.dataset_type != "video" or self.streaming:
+            return
+
+        try:
+            from datasets import Video
+        except ImportError:
+            logger.warning("datasets.Video not available; cannot disable video decoding.")
+            return
+
+        try:
+            self.dataset = self.dataset.cast_column(self.video_column, Video(decode=False))
+        except Exception as exc:
+            logger.warning("Failed to cast video column '%s' to decode=False: %s", self.video_column, exc)
+
+    @staticmethod
+    def _coerce_to_bytes(payload: Any) -> Optional[bytes]:
+        if payload is None:
+            return None
+        if isinstance(payload, bytes):
+            return payload
+        if isinstance(payload, bytearray):
+            return bytes(payload)
+        if isinstance(payload, memoryview):  # type: ignore[name-defined]
+            return payload.tobytes()
+        if isinstance(payload, np.ndarray):
+            try:
+                return payload.tobytes()
+            except Exception:
+                return None
+        if hasattr(payload, "tobytes"):
+            try:
+                return payload.tobytes()
+            except Exception:
+                return None
+        if isinstance(payload, list):
+            try:
+                return bytes(payload)
+            except Exception:
+                return None
+        return None
+
+    def _prepare_video_source(self, sample: Any) -> tuple[Optional[str], Optional[str]]:
+        """Return a filesystem path to the video and an optional temp path for cleanup."""
+
+        path_candidate: Optional[str] = None
+        bytes_payload: Optional[bytes] = None
+
+        if isinstance(sample, dict):
+            raw_bytes = self._coerce_to_bytes(sample.get("bytes"))
+            if raw_bytes:
+                bytes_payload = raw_bytes
+            path_val = sample.get("path")
+            if isinstance(path_val, (str, Path)):
+                path_candidate = str(path_val)
+        elif isinstance(sample, (str, Path)):
+            path_candidate = str(sample)
+        elif isinstance(sample, (bytes, bytearray, memoryview)):
+            bytes_payload = self._coerce_to_bytes(sample)
+
+        if path_candidate:
+            if os.path.isfile(path_candidate):
+                return path_candidate, None
+            try:
+                from datasets.utils.file_utils import xopen
+
+                with xopen(path_candidate, "rb") as file_obj:
+                    bytes_payload = file_obj.read()
+            except Exception as exc:
+                logger.debug("Failed to open video path '%s' via xopen: %s", path_candidate, exc)
+
+        if not bytes_payload:
+            return None, None
+
+        try:
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+            temp_file.write(bytes_payload)
+            temp_file.flush()
+            temp_file.close()
+            return temp_file.name, temp_file.name
+        except Exception as exc:
+            logger.error("Unable to create temporary video file for metadata extraction: %s", exc)
+            return None, None
+
+    def _metadata_from_video_reader(self, video: VideoReader) -> Dict[str, Any]:
+        metadata: Dict[str, Any] = {}
+        try:
+            md = video.get_metadata().get("video", {})
+        except Exception as exc:
+            logger.debug("Failed to read metadata from VideoReader: %s", exc)
+            md = {}
+
+        fps_values = md.get("fps") if isinstance(md, dict) else None
+        if fps_values:
+            try:
+                metadata["fps"] = float(fps_values[0])
+            except Exception:
+                pass
+
+        duration_values = md.get("duration") if isinstance(md, dict) else None
+        if duration_values and "fps" in metadata:
+            try:
+                metadata["num_frames"] = int(round(duration_values[0] * metadata["fps"]))
+            except Exception:
+                pass
+
+        try:
+            iterator = iter(video)
+            first_batch = next(iterator)
+            frame_shape = first_batch["data"].shape if "data" in first_batch else None
+        except StopIteration:
+            frame_shape = None
+        except Exception as exc:
+            logger.debug("Failed to sample frame from VideoReader: %s", exc)
+            frame_shape = None
+        finally:
+            try:
+                video.seek(0)
+            except Exception:
+                pass
+
+        if frame_shape is not None:
+            if len(frame_shape) == 3:
+                _, height, width = frame_shape
+                metadata["original_size"] = (width, height)
+            elif len(frame_shape) >= 2:
+                metadata["original_size"] = (frame_shape[-1], frame_shape[-2])
+
+        return metadata
+
+    def _metadata_with_trainingsample(self, sample: Any) -> Dict[str, Any]:
+        metadata: Dict[str, Any] = {}
+        video_path, temp_path = self._prepare_video_source(sample)
+        if not video_path:
+            return metadata
+
+        capture = None
+        try:
+            import trainingsample as tsr
+
+            capture = tsr.PyVideoCapture(video_path)
+            if not capture.is_opened():
+                return metadata
+
+            try:
+                fps = capture.get(self._CAP_PROP_FPS)
+                if fps and fps > 0:
+                    metadata["fps"] = float(fps)
+            except Exception:
+                pass
+
+            try:
+                frame_count = capture.get(self._CAP_PROP_FRAME_COUNT)
+                if frame_count and frame_count > 0:
+                    metadata["num_frames"] = int(frame_count)
+            except Exception:
+                pass
+
+            width = height = None
+            try:
+                width = capture.get(self._CAP_PROP_FRAME_WIDTH)
+                height = capture.get(self._CAP_PROP_FRAME_HEIGHT)
+            except Exception:
+                width = height = None
+
+            if width and height and width > 0 and height > 0:
+                metadata["original_size"] = (int(width), int(height))
+            else:
+                try:
+                    success, frame = capture.read()
+                    if success and frame is not None:
+                        metadata["original_size"] = (frame.shape[1], frame.shape[0])
+                except Exception:
+                    pass
+        except Exception as exc:
+            logger.debug("Failed to extract metadata with trainingsample: %s", exc)
+        finally:
+            if capture is not None:
+                try:
+                    capture.release()
+                except Exception:
+                    pass
+            if temp_path:
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+
+        return metadata
+
+    def _extract_video_sample_metadata(self, sample: Any) -> Dict[str, Any]:
+        if isinstance(sample, VideoReader):
+            return self._metadata_from_video_reader(sample)
+        return self._metadata_with_trainingsample(sample)
+
+    def _ensure_dataset_loaded(self) -> None:
+        if self._dataset_loaded:
+            return
+        self._load_dataset()
+
+    @property
+    def dataset(self):
+        self._ensure_dataset_loaded()
+        return self._dataset
+
+    @dataset.setter
+    def dataset(self, value):
+        self._dataset = value
+        self._dataset_loaded = value is not None
 
     def _build_path_mapping(self):
-        """Build mapping between indices and virtual file paths."""
+        self._ensure_dataset_loaded()
+        self._path_to_index.clear()
+        self._index_to_path.clear()
         if not self.streaming:
             dataset_len = len(self.dataset)
             for idx in range(dataset_len):
@@ -145,7 +365,6 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             logger.warning("Streaming mode enabled - path mapping will be built on demand")
 
     def _get_index_from_path(self, filepath: str) -> Optional[int]:
-        """Extract index from virtual file path."""
         if isinstance(filepath, Path):
             filepath = str(filepath)
 
@@ -165,7 +384,6 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             raise
 
     def get_instance_representation(self) -> dict:
-        """Get a serializable representation of this backend instance."""
         return {
             "backend_type": "huggingface",
             "id": self.id,
@@ -186,12 +404,10 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
     def from_instance_representation(
         representation: dict,
     ) -> "HuggingfaceDatasetsBackend":
-        """Create a new HuggingfaceDatasetsBackend instance from a serialized representation."""
         if representation.get("backend_type") != "huggingface":
             raise ValueError(f"Expected backend_type 'huggingface', got {representation.get('backend_type')}")
 
-        # Note: filter_func cannot be serialized/deserialized automatically
-        # If needed, you'd have to implement a registry of filter functions
+        # filter_func cannot be serialized/deserialized automatically
         filter_func = None
         if representation.get("filter_func_name"):
             import logging
@@ -214,10 +430,10 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             filter_func=filter_func,  # Would need special handling
             num_proc=representation.get("num_proc", 16),
             composite_config=representation.get("composite_config", {}),
+            auto_load=False,
         )
 
     def read(self, location, as_byteIO: bool = False):
-        """Read and return the content of the file (image from dataset or cache file)."""
         if isinstance(location, Path):
             location = str(location)
 
@@ -246,7 +462,6 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                     cache_path = Path(self.cache_dir) / "cache" / self.id / filename
 
                 if cache_path.exists():
-                    logger.debug(f"Reading from location: {cache_path}")
                     with open(cache_path, "rb") as f:
                         data = f.read()
                     if as_byteIO:
@@ -259,6 +474,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             return None
 
         # Handle virtual dataset files (the existing logic)
+        self._ensure_dataset_loaded()
         index = self._get_index_from_path(location)
         if index is None:
             logger.error(f"Invalid path: {location}")
@@ -345,6 +561,48 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                     tmpfile.seek(0)
                     data = tmpfile.read()
                 # Now data contains the video bytes
+            elif isinstance(sample, dict):
+                bytes_data = sample.get("bytes")
+                path = sample.get("path")
+                data = None
+
+                if bytes_data is not None:
+                    if isinstance(bytes_data, (bytes, bytearray)):
+                        data = bytes(bytes_data)
+                    else:
+                        try:
+                            data = bytes(bytes_data)
+                        except Exception:
+                            logger.error(
+                                "Unable to convert '%s' bytes payload to raw bytes.",
+                                self.video_column if self.dataset_type == "video" else self.image_column,
+                            )
+                            data = None
+                elif path:
+                    try:
+                        if os.path.isfile(path):
+                            with open(path, "rb") as f:
+                                data = f.read()
+                        else:
+                            from datasets.utils.file_utils import xopen
+
+                            with xopen(path, "rb") as f:
+                                data = f.read()
+                    except Exception as exc:
+                        logger.error(
+                            "Failed to read %s sample from path '%s': %s",
+                            self.dataset_type,
+                            path,
+                            exc,
+                        )
+
+                if data is None:
+                    logger.error(
+                        "Dataset sample in column '%s' missing usable data (keys=%s)",
+                        self.video_column if self.dataset_type == "video" else self.image_column,
+                        list(sample.keys()),
+                    )
+                    return None
             else:
                 logger.error(f"Unsupported image type: {type(sample)}")
                 return None
@@ -361,9 +619,6 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             raise
 
     def write(self, filepath: Union[str, Path], data: Any) -> None:
-        """
-        Write operation - supported for cache files.
-        """
         if isinstance(filepath, Path):
             filepath = str(filepath)
 
@@ -419,13 +674,12 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
 
                         torch.save(data, f)
 
-            logger.debug(f"Wrote cache file to {cache_path}")
+            # cache file written
         else:
             logger.warning(f"Write operations are only supported for cache files, not {filepath}")
             raise NotImplementedError("Hugging Face datasets are read-only except for cache files")
 
     def exists(self, filepath):
-        """Check if the file exists (cache file or valid dataset index)."""
         if isinstance(filepath, Path):
             filepath = str(filepath)
 
@@ -450,12 +704,12 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                     cache_path = Path(self.cache_dir) / "cache" / self.id / filename
 
                 if cache_path.exists():
-                    logger.debug(f"Cache file exists: {cache_path}")
                     return True
 
             return False
 
         # For virtual files, check index
+        self._ensure_dataset_loaded()
         index = self._get_index_from_path(filepath)
         if index is None:
             return False
@@ -467,41 +721,31 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             return True
 
     def delete(self, filepath):
-        """Delete operation - not supported for HF datasets."""
         logger.warning("Delete operations are not supported for Hugging Face datasets")
         raise NotImplementedError("Hugging Face datasets are read-only")
 
     def open_file(self, filepath, mode):
-        """Open the file in the specified mode."""
         if "w" in mode:
             raise NotImplementedError("Write operations are not supported")
         return BytesIO(self.read(filepath))
 
     def list_files(self, file_extensions: list = None, instance_data_dir: str = None) -> list:
-        """
-        List all virtual files in the dataset or files in a real directory if instance_data_dir is provided.
-        Returns format compatible with os.walk: [(root, dirs, files), ...]
-        """
         if instance_data_dir:
             # List files from the real directory
             instance_data_dir = str(instance_data_dir)
-            logger.debug(f"Listing files via {instance_data_dir=}")
             if not os.path.exists(instance_data_dir):
                 logger.warning(f"Directory does not exist: {instance_data_dir}")
                 return []
             result = []
-            logger.debug(f"Running os.walk")
             for root, dirs, files in os.walk(instance_data_dir):
                 filtered_files = []
                 for f in files:
                     if file_extensions:
                         ext = os.path.splitext(f)[1].lower().strip(".")
                         if ext not in file_extensions:
-                            logger.debug(f"Skipping {ext=} cuz not in {file_extensions}")
                             continue
                     filtered_files.append(os.path.join(root, f))
                 result.append((root, dirs, filtered_files))
-            logger.debug("Returning results")
             return result
 
         if self.streaming:
@@ -509,6 +753,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             return []
 
         # For HF datasets, we use a flat structure (no subdirectories)
+        self._ensure_dataset_loaded()
         files = []
         for idx in range(len(self.dataset)):
             virtual_path = self._index_to_path.get(idx, f"{idx}.{self.file_extension}")
@@ -520,16 +765,12 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         return [("", [], files)]
 
     def get_abs_path(self, sample_path: str) -> str:
-        """
-        Given a relative path, return the absolute path.
-        For HF datasets, we just return the virtual path.
-        """
+        # for virtual paths, just return if it exists
         if self.exists(sample_path):
             return sample_path
         return None
 
     def read_image(self, filepath: str, delete_problematic_images: bool = False):
-        """Read an image from the dataset."""
         try:
             image_data = self.read(filepath, as_byteIO=True)
             if image_data is None:
@@ -546,7 +787,6 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             return None
 
     def read_image_batch(self, filepaths: list, delete_problematic_images: bool = False) -> list:
-        """Read a batch of images from the dataset."""
         output_images = []
         available_keys = []
 
@@ -561,25 +801,22 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         return (available_keys, output_images)
 
     def save_state(self):
-        """No state to save for HF datasets."""
         pass
 
     def get_dataset_item(self, index: int):
-        """Get the full dataset item at the given index."""
+        self._ensure_dataset_loaded()
         if not self.streaming and (index < 0 or index >= len(self.dataset)):
             logger.warning(f"Retrieving {index=} for {len(self.dataset)=}, returning None")
             return None
         return self.dataset[index]
 
     def __len__(self):
-        """Return the number of items in the dataset."""
         if self.streaming:
             logger.warning("Cannot get length of streaming dataset")
             return 0
         return len(self.dataset)
 
     def write_batch(self, filepaths: list, data_list: list) -> None:
-        """Write batch - supported for cache files."""
         if len(filepaths) != len(data_list):
             raise ValueError("Number of filepaths must match number of data items")
 
@@ -587,7 +824,6 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             self.write(filepath, data)
 
     def torch_load(self, filename):
-        """Load a torch tensor from cache."""
         if isinstance(filename, Path):
             filename = str(filename)
 
@@ -601,7 +837,6 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         return torch.load(data)
 
     def torch_save(self, data, location: Union[str, Path, BytesIO]):
-        """Save a torch tensor to cache."""
         if isinstance(location, BytesIO):
             import torch
 

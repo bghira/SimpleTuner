@@ -71,3 +71,5 @@ datasets/
 .test_runner_state.json
 .coverage
 coverage.xml
+*/htmlcov
+.simpletuner_output

@@ -17,10 +17,10 @@ from os import environ
 
 environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 
-from simpletuner.helpers.training.trainer import Trainer
-from simpletuner.helpers.training.state_tracker import StateTracker
-from simpletuner.helpers.training.multi_process import _get_rank
 from simpletuner.helpers import log_format
+from simpletuner.helpers.training.multi_process import _get_rank
+from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.training.trainer import Trainer
 
 logger = logging.getLogger("SimpleTuner")
 logger.setLevel(environ.get("SIMPLETUNER_LOG_LEVEL", "INFO") if _get_rank() == 0 else "ERROR")

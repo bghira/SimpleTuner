@@ -24,18 +24,14 @@ class DiscriminatorHead(nn.Module):
         self.conv1 = nn.Sequential(
             nn.Conv2d(input_channel, inner_channel, 1, 1, 0),
             nn.GroupNorm(32, inner_channel),
-            nn.LeakyReLU(
-                inplace=True
-            ),  # Using LeakyReLU instead of GELU to save memory
+            nn.LeakyReLU(inplace=True),  # Using LeakyReLU instead of GELU to save memory
         )
 
         # Second convolutional block with GroupNorm and LeakyReLU
         self.conv2 = nn.Sequential(
             nn.Conv2d(inner_channel, inner_channel, 1, 1, 0),
             nn.GroupNorm(32, inner_channel),
-            nn.LeakyReLU(
-                inplace=True
-            ),  # Using LeakyReLU instead of GELU to save memory
+            nn.LeakyReLU(inplace=True),  # Using LeakyReLU instead of GELU to save memory
         )
 
         # Output convolution layer
@@ -128,12 +124,7 @@ class Discriminator(nn.Module):
         # Each layer can have multiple heads (num_h_per_head)
         self.heads = nn.ModuleList(
             [
-                nn.ModuleList(
-                    [
-                        DiscriminatorHead(adapter_channel)
-                        for _ in range(self.num_h_per_head)
-                    ]
-                )
+                nn.ModuleList([DiscriminatorHead(adapter_channel) for _ in range(self.num_h_per_head)])
                 for adapter_channel in adapter_channel_dims
             ]
         )

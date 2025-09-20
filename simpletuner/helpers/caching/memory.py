@@ -1,5 +1,6 @@
 def reclaim_memory():
     import gc
+
     import torch
 
     if torch.cuda.is_available():

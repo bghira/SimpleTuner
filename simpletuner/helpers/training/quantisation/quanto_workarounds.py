@@ -1,4 +1,5 @@
-import torch, optimum
+import optimum
+import torch
 
 if torch.cuda.is_available():
     # the marlin fp8 kernel needs some help with dtype casting for some reason
@@ -35,9 +36,7 @@ if torch.cuda.is_available():
     # Monkey-patch the operator
     torch.ops.quanto.gemm_f16f8_marlin = fp8_marlin_gemm_wrapper
 
-    class TinyGemmQBitsLinearFunction(
-        optimum.quanto.tensor.function.QuantizedLinearFunction
-    ):
+    class TinyGemmQBitsLinearFunction(optimum.quanto.tensor.function.QuantizedLinearFunction):
         @staticmethod
         def forward(ctx, input, other, bias):
             ctx.save_for_backward(input, other)
@@ -62,32 +61,24 @@ if torch.cuda.is_available():
     tinygemm.qbits.TinyGemmQBitsLinearFunction = TinyGemmQBitsLinearFunction
 
 
-class WeightQBytesLinearFunction(
-    optimum.quanto.tensor.function.QuantizedLinearFunction
-):
+class WeightQBytesLinearFunction(optimum.quanto.tensor.function.QuantizedLinearFunction):
     @staticmethod
     def forward(ctx, input, other, bias=None):
         ctx.save_for_backward(input, other)
         if isinstance(input, optimum.quanto.tensor.QBytesTensor):
-            output = torch.ops.quanto.qbytes_mm(
-                input._data, other._data, input._scale * other._scale
-            )
+            output = torch.ops.quanto.qbytes_mm(input._data, other._data, input._scale * other._scale)
         else:
             in_features = input.shape[-1]
             out_features = other.shape[0]
             output_shape = input.shape[:-1] + (out_features,)
-            output = torch.ops.quanto.qbytes_mm(
-                input.reshape(-1, in_features), other._data, other._scale
-            )
+            output = torch.ops.quanto.qbytes_mm(input.reshape(-1, in_features), other._data, other._scale)
             output = output.view(output_shape)
         if bias is not None:
             output = output + bias
         return output
 
 
-optimum.quanto.tensor.weights.qbytes.WeightQBytesLinearFunction = (
-    WeightQBytesLinearFunction
-)
+optimum.quanto.tensor.weights.qbytes.WeightQBytesLinearFunction = WeightQBytesLinearFunction
 
 
 def reshape_qlf_backward(ctx, gO):

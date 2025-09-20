@@ -1,11 +1,12 @@
 import json
-import regex as re
 from pathlib import Path
-from simpletuner.helpers.training.state_tracker import StateTracker
-from simpletuner.helpers.training.multi_process import _get_rank as get_rank
-from simpletuner.helpers.training import image_file_extensions
 
 import numpy
+import regex as re
+
+from simpletuner.helpers.training import image_file_extensions
+from simpletuner.helpers.training.multi_process import _get_rank as get_rank
+from simpletuner.helpers.training.state_tracker import StateTracker
 
 try:
     import pandas as pd
@@ -69,36 +70,16 @@ prompts = {
 }
 
 
-def prompt_library_injection(new_prompts: dict) -> dict:
-    """
-    Add more prompts to the built-in SimpleTuner Prompt library.
-
-    Args:
-        new_prompts (dict): A dict of shortnames matching the existing prompt library format:
-        {
-            "nickname_here": "prompt goes here",
-            ...
-        }
-
-    Returns:
-        dict: Completed prompt library.
-    """
-
-    # Unpack the new prompts into the library.
-    global prompts
-    return {**prompts, **new_prompts}
-
-
 import logging
-from simpletuner.helpers.data_backend.base import BaseDataBackend
-from simpletuner.helpers.training.multi_process import _get_rank
-from tqdm import tqdm
 import os
 
+from tqdm import tqdm
+
+from simpletuner.helpers.data_backend.base import BaseDataBackend
+from simpletuner.helpers.training.multi_process import _get_rank
+
 logger = logging.getLogger("PromptHandler")
-logger.setLevel(
-    os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO") if _get_rank() == 0 else "ERROR"
-)
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO") if _get_rank() == 0 else "ERROR")
 
 
 class CaptionNotFoundError(Exception):
@@ -127,13 +108,9 @@ class PromptHandler:
         parquetdb = StateTracker.get_parquet_database(sampler_backend_id)
         dataframe = parquetdb[0]
         if dataframe is None:
-            raise ValueError(
-                f"Parquet database not found for sampler {sampler_backend_id}."
-            )
+            raise ValueError(f"Parquet database not found for sampler {sampler_backend_id}.")
         caption_column = (
-            StateTracker.get_data_backend_config(sampler_backend_id)
-            .get("parquet", {})
-            .get("caption_column", None)
+            StateTracker.get_data_backend_config(sampler_backend_id).get("parquet", {}).get("caption_column", None)
         )
         if not caption_column:
             raise ValueError(
@@ -142,16 +119,12 @@ class PromptHandler:
         # Return just that column
         all_captions = dataframe[caption_column].values
         fallback_caption_column = (
-            StateTracker.get_data_backend_config(sampler_backend_id)
-            .get("parquet", {})
-            .get("fallback_caption_column")
+            StateTracker.get_data_backend_config(sampler_backend_id).get("parquet", {}).get("fallback_caption_column")
         )
         if fallback_caption_column is not None and all_captions is not None:
             # Combine the lists
             fallback_captions = dataframe[fallback_caption_column].values
-            all_captions = [
-                x if x else y for x, y in zip(all_captions, fallback_captions)
-            ]
+            all_captions = [x if x else y for x, y in zip(all_captions, fallback_captions)]
         return all_captions
 
     @staticmethod
@@ -167,13 +140,9 @@ class PromptHandler:
             raise ValueError("Sampler backend ID is required.")
         if not use_captions:
             if not instance_prompt:
-                raise ValueError(
-                    "Instance prompt is required when instance_prompt_only is enabled."
-                )
+                raise ValueError("Instance prompt is required when instance_prompt_only is enabled.")
             return instance_prompt
-        metadata_backend = StateTracker.get_data_backend(sampler_backend_id)[
-            "metadata_backend"
-        ]
+        metadata_backend = StateTracker.get_data_backend(sampler_backend_id)["metadata_backend"]
         if metadata_backend is None:
             raise ValueError(
                 f"Could not find metadata backend for sampler {sampler_backend_id}: {StateTracker.get_data_backend(sampler_backend_id)}"
@@ -185,9 +154,7 @@ class PromptHandler:
             fallback_caption_column,
             identifier_includes_extension,
         ) = StateTracker.get_parquet_database(sampler_backend_id)
-        backend_config = StateTracker.get_data_backend_config(
-            data_backend_id=data_backend.id
-        )
+        backend_config = StateTracker.get_data_backend_config(data_backend_id=data_backend.id)
         instance_data_dir = backend_config.get("instance_data_dir")
         image_filename_stem = image_path
         if instance_data_dir is not None and instance_data_dir in image_filename_stem:
@@ -202,11 +169,7 @@ class PromptHandler:
             raise CaptionNotFoundError(
                 f"Could not locate caption for image {image_path} in sampler_backend {sampler_backend_id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(parquet_db)} entries."
             )
-        elif (
-            instance_prompt is None
-            and not fallback_caption_column
-            and not image_caption
-        ):
+        elif instance_prompt is None and not fallback_caption_column and not image_caption:
             raise CaptionNotFoundError(
                 f"Could not locate caption for image {image_path} in sampler_backend {sampler_backend_id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(parquet_db)} entries."
             )
@@ -215,9 +178,7 @@ class PromptHandler:
         if type(image_caption) == str:
             image_caption = image_caption.strip()
         if type(image_caption) in (list, tuple, numpy.ndarray, pd.Series):
-            image_caption = [
-                str(item).strip() for item in image_caption if item is not None
-            ]
+            image_caption = [str(item).strip() for item in image_caption if item is not None]
         if prepend_instance_prompt:
             if type(image_caption) == list:
                 image_caption = [instance_prompt + " " + x for x in image_caption]
@@ -234,9 +195,7 @@ class PromptHandler:
     ) -> str:
         if not use_captions:
             if not instance_prompt:
-                raise ValueError(
-                    "Instance prompt is required when instance_prompt_only is enabled."
-                )
+                raise ValueError("Instance prompt is required when instance_prompt_only is enabled.")
             return instance_prompt
         image_caption = Path(image_path).stem
         # Underscores to spaces.
@@ -255,9 +214,7 @@ class PromptHandler:
     ) -> str:
         if not use_captions:
             if not instance_prompt:
-                raise ValueError(
-                    "Instance prompt is required when instance_prompt_only is enabled."
-                )
+                raise ValueError("Instance prompt is required when instance_prompt_only is enabled.")
             return instance_prompt
         caption_file = os.path.splitext(image_path)[0] + ".txt"
         if not data_backend.exists(caption_file):
@@ -309,9 +266,7 @@ class PromptHandler:
         """
         if not use_captions:
             if not instance_prompt:
-                raise ValueError(
-                    "Instance prompt is required when instance_prompt_only is enabled."
-                )
+                raise ValueError("Instance prompt is required when instance_prompt_only is enabled.")
             return instance_prompt
 
         if sampler_backend_id is None:
@@ -320,9 +275,7 @@ class PromptHandler:
         # Get the metadata backend
         backend_info = StateTracker.get_data_backend(sampler_backend_id)
         if not backend_info or "metadata_backend" not in backend_info:
-            raise ValueError(
-                f"Could not find metadata backend for {sampler_backend_id}"
-            )
+            raise ValueError(f"Could not find metadata backend for {sampler_backend_id}")
 
         metadata_backend = backend_info["metadata_backend"]
 
@@ -330,9 +283,7 @@ class PromptHandler:
         caption = metadata_backend.caption_cache_entry(image_path)
 
         if caption is None:
-            raise CaptionNotFoundError(
-                f"Could not find caption for {image_path} in HuggingFace dataset"
-            )
+            raise CaptionNotFoundError(f"Could not find caption for {image_path} in HuggingFace dataset")
 
         # Process the caption
         if isinstance(caption, bytes):
@@ -437,16 +388,10 @@ class PromptHandler:
         )
         captions = []
         images_missing_captions = []
-        all_image_files = StateTracker.get_image_files(
-            data_backend_id=data_backend.id
-        ) or data_backend.list_files(
+        all_image_files = StateTracker.get_image_files(data_backend_id=data_backend.id) or data_backend.list_files(
             instance_data_dir=instance_data_dir, file_extensions=image_file_extensions
         )
-        if (
-            isinstance(all_image_files, list)
-            and len(all_image_files) > 0
-            and isinstance(all_image_files[0], tuple)
-        ):
+        if isinstance(all_image_files, list) and len(all_image_files) > 0 and isinstance(all_image_files[0], tuple):
             all_image_files = all_image_files[0][2]
         from tqdm import tqdm
 
@@ -553,30 +498,20 @@ class PromptHandler:
 
         If a line doesn't have any regex control characters in it, we'll treat it as a string.
         """
-        data_backend_config = StateTracker.get_data_backend_config(
-            data_backend_id=data_backend.id
-        )
+        data_backend_config = StateTracker.get_data_backend_config(data_backend_id=data_backend.id)
         caption_filter_list = data_backend_config.get("caption_filter_list", None)
         if not caption_filter_list or caption_filter_list == "":
             return captions
-        if (
-            type(caption_filter_list) == str
-            and os.path.splitext(caption_filter_list)[1] == ".json"
-        ):
+        if type(caption_filter_list) == str and os.path.splitext(caption_filter_list)[1] == ".json":
             # It's a path to a filter list. Load it in JSON format.
             caption_filter_list_path = Path(caption_filter_list)
             try:
                 with open(caption_filter_list_path, "r") as caption_filter_list:
                     caption_filter_list = json.load(caption_filter_list)
             except Exception as e:
-                logger.error(
-                    f"Caption filter list for data backend '{data_backend.id}' could not be loaded: {e}"
-                )
+                logger.error(f"Caption filter list for data backend '{data_backend.id}' could not be loaded: {e}")
                 raise e
-        elif (
-            type(caption_filter_list) == str
-            and os.path.splitext(caption_filter_list)[1] == ".txt"
-        ):
+        elif type(caption_filter_list) == str and os.path.splitext(caption_filter_list)[1] == ".txt":
             # We have a plain text list of filter strings/regex. Load them into an array:
             caption_filter_list_path = Path(caption_filter_list)
             try:
@@ -585,20 +520,14 @@ class PromptHandler:
                     # Strip newlines from the ends:
                     caption_filter_list = [x.strip("\n") for x in caption_filter_list]
             except Exception as e:
-                logger.error(
-                    f"Caption filter list for data backend '{data_backend.id}' could not be loaded: {e}"
-                )
+                logger.error(f"Caption filter list for data backend '{data_backend.id}' could not be loaded: {e}")
                 raise e
         # We have the filter list. Is it valid and non-empty?
         if type(caption_filter_list) != list or len(caption_filter_list) == 0:
-            logger.debug(
-                f"Data backend '{data_backend.id}' has an invalid or empty caption filter list."
-            )
+            logger.debug(f"Data backend '{data_backend.id}' has an invalid or empty caption filter list.")
             return captions
         elif type(caption_filter_list) is not list:
-            raise ValueError(
-                f"Data backend '{data_backend.id}' has an invalid caption filter list: {caption_filter_list}"
-            )
+            raise ValueError(f"Data backend '{data_backend.id}' has an invalid caption filter list: {caption_filter_list}")
         # Iterate through each caption
         filtered_captions = []
         for caption in tqdm(
@@ -614,9 +543,7 @@ class PromptHandler:
             # Apply each filter to the caption
             logger.debug(f"Filtering caption: {modified_caption}")
             if modified_caption is None:
-                logger.error(
-                    f"Encountered a None caption in the list, data backend: {data_backend.id}"
-                )
+                logger.error(f"Encountered a None caption in the list, data backend: {data_backend.id}")
                 continue
             for filter_item in caption_filter_list:
                 # Check for special replace pattern 's/replace/entry/'
@@ -631,9 +558,7 @@ class PromptHandler:
                 else:
                     # Treat as plain string and remove occurrences
                     if modified_caption is not None:
-                        modified_caption = str(modified_caption).replace(
-                            filter_item, ""
-                        )
+                        modified_caption = str(modified_caption).replace(filter_item, "")
                 try:
                     # Assume all filters as regex patterns for flexibility
                     pattern = re.compile(filter_item)

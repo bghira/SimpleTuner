@@ -1,21 +1,15 @@
-from concurrent.futures import ThreadPoolExecutor, Future
-from typing import Dict
 import threading
+from concurrent.futures import Future, ThreadPoolExecutor
+from typing import Dict
 
-# We can only really have one thread going at a time anyway.
 executor = ThreadPoolExecutor(max_workers=1)
-# But, we've designed this for a future where multiple background threads might be managed.
 thread_registry: Dict[str, Future] = {}
-# So we don't zig while we zag.
 lock = threading.Lock()
 
 
 def submit_job(job_id: str, func, *args, **kwargs):
     with lock:
-        if (
-            job_id in thread_registry
-            and get_thread_status(job_id, with_lock=False).lower() == "running"
-        ):
+        if job_id in thread_registry and get_thread_status(job_id, with_lock=False).lower() == "running":
             raise Exception(f"Job with ID {job_id} is already running or pending.")
         # Remove the completed or cancelled future from the registry
         thread_registry.pop(job_id, None)

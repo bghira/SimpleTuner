@@ -1,8 +1,8 @@
+from itertools import chain
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
-
-from itertools import chain
 
 # Parts of the code are modifications of Pytorch's AdamW optimizer
 # Parts of the code are modifications of code from https://github.com/jiaweizzhao/GaLore/blob/master/galore_torch/galore_projector.py
@@ -141,11 +141,7 @@ class SOAP(optim.Optimizer):
                         state,
                         precondition_frequency=group["precondition_frequency"],
                         precondition_1d=group["precondition_1d"],
-                        shampoo_beta=(
-                            group["shampoo_beta"]
-                            if group["shampoo_beta"] >= 0
-                            else group["betas"][1]
-                        ),
+                        shampoo_beta=(group["shampoo_beta"] if group["shampoo_beta"] >= 0 else group["betas"][1]),
                         max_precond_dim=group["max_precond_dim"],
                         merge_dims=group["merge_dims"],
                     )
@@ -175,9 +171,7 @@ class SOAP(optim.Optimizer):
                 # Decay the first and second moment running average coefficient
                 # In-place operations to update the averages at the same time
                 exp_avg.mul_(beta1).add_(grad, alpha=(1.0 - beta1))
-                exp_avg_sq.mul_(beta2).add_(
-                    grad_projected.square(), alpha=(1.0 - beta2)
-                )
+                exp_avg_sq.mul_(beta2).add_(grad_projected.square(), alpha=(1.0 - beta2))
 
                 denom = exp_avg_sq.sqrt().add_(group["eps"])
 
@@ -245,16 +239,12 @@ class SOAP(optim.Optimizer):
         """
         Initializes the preconditioner matrices (L and R in the paper).
         """
-        state["GG"] = (
-            []
-        )  # Will hold all the preconditioner matrices (L and R in the paper).
+        state["GG"] = []  # Will hold all the preconditioner matrices (L and R in the paper).
         if grad.dim() == 1:
             if not precondition_1d or grad.shape[0] > max_precond_dim:
                 state["GG"].append([])
             else:
-                state["GG"].append(
-                    torch.zeros(grad.shape[0], grad.shape[0], device=grad.device)
-                )
+                state["GG"].append(torch.zeros(grad.shape[0], grad.shape[0], device=grad.device))
         else:
             if merge_dims:
                 grad = self.merge_dims(grad, max_precond_dim)
@@ -310,9 +300,7 @@ class SOAP(optim.Optimizer):
         """
         if grad.dim() == 1:
             if precondition_1d and grad.shape[0] <= max_precond_dim:
-                state["GG"][0].lerp_(
-                    grad.unsqueeze(1) @ grad.unsqueeze(0), 1 - state["shampoo_beta"]
-                )
+                state["GG"][0].lerp_(grad.unsqueeze(1) @ grad.unsqueeze(0), 1 - state["shampoo_beta"])
         else:
             if merge_dims:
                 new_grad = self.merge_dims(grad, max_precond_dim)
@@ -321,14 +309,7 @@ class SOAP(optim.Optimizer):
                         outer_product = torch.tensordot(
                             new_grad,
                             new_grad,
-                            dims=[
-                                [
-                                    *chain(
-                                        range(idx), range(idx + 1, len(new_grad.shape))
-                                    )
-                                ]
-                            ]
-                            * 2,
+                            dims=[[*chain(range(idx), range(idx + 1, len(new_grad.shape)))]] * 2,
                         )
                         state["GG"][idx].lerp_(outer_product, 1 - state["shampoo_beta"])
             else:
@@ -338,8 +319,7 @@ class SOAP(optim.Optimizer):
                             grad,
                             grad,
                             # Contracts across all dimensions except for k.
-                            dims=[[*chain(range(idx), range(idx + 1, len(grad.shape)))]]
-                            * 2,
+                            dims=[[*chain(range(idx), range(idx + 1, len(grad.shape)))]] * 2,
                         )
                         state["GG"][idx].lerp_(
                             outer_product.to(state["GG"][idx].dtype),
@@ -349,9 +329,7 @@ class SOAP(optim.Optimizer):
         if state["Q"] is None:
             state["Q"] = self.get_orthogonal_matrix(state["GG"])
         if state["step"] > 0 and state["step"] % state["precondition_frequency"] == 0:
-            state["Q"] = self.get_orthogonal_matrix_QR(
-                state, max_precond_dim, merge_dims
-            )
+            state["Q"] = self.get_orthogonal_matrix_QR(state, max_precond_dim, merge_dims)
 
     def project_back(self, grad, state, merge_dims=False, max_precond_dim=10000):
         """
@@ -404,13 +382,9 @@ class SOAP(optim.Optimizer):
                 final.append([])
                 continue
             try:
-                _, Q = torch.linalg.eigh(
-                    m + 1e-30 * torch.eye(m.shape[0], device=m.device)
-                )
+                _, Q = torch.linalg.eigh(m + 1e-30 * torch.eye(m.shape[0], device=m.device))
             except:
-                _, Q = torch.linalg.eigh(
-                    m.to(torch.float64) + 1e-30 * torch.eye(m.shape[0], device=m.device)
-                )
+                _, Q = torch.linalg.eigh(m.to(torch.float64) + 1e-30 * torch.eye(m.shape[0], device=m.device))
                 Q = Q.to(m.dtype)
             Q = torch.flip(Q, [1])
 

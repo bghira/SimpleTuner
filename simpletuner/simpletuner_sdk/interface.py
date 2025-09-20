@@ -1,17 +1,16 @@
 # simpletuner_sdk.interface.py
-from fastapi import APIRouter, Request, HTTPException
-from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
-from typing import Dict, List, Any
-import os
 import json
+import os
+from typing import Any, Dict, List
+
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+
+from simpletuner.helpers.configuration.cmd_args import get_default_config as get_cmd_default_config
 
 # Import the proper configuration modules
-from simpletuner.helpers.models.all import (
-    model_families,
-    get_model_flavour_choices,
-    get_all_model_flavours,
-)
+from simpletuner.helpers.models.all import get_all_model_flavours, get_model_flavour_choices, model_families
 from simpletuner.helpers.training.optimizer_param import optimizer_choices
 
 
@@ -25,9 +24,7 @@ class WebInterface:
     def setup_routes(self):
         """Setup all web routes"""
         # Main trainer interface
-        self.router.add_api_route(
-            "/", self.get_trainer_page, methods=["GET"], response_class=HTMLResponse
-        )
+        self.router.add_api_route("/", self.get_trainer_page, methods=["GET"], response_class=HTMLResponse)
         self.router.add_api_route(
             "/trainer",
             self.get_trainer_page,
@@ -42,9 +39,7 @@ class WebInterface:
             methods=["GET"],
             response_class=HTMLResponse,
         )
-        self.router.add_api_route(
-            "/settings", self.get_settings, methods=["GET"], response_class=HTMLResponse
-        )
+        self.router.add_api_route("/settings", self.get_settings, methods=["GET"], response_class=HTMLResponse)
 
     def setup_template_functions(self):
         """Add custom functions to Jinja2 environment"""
@@ -76,8 +71,8 @@ class WebInterface:
         """Render a form field"""
         return f"""
         <label for="{name}" class="form-label">{label}</label>
-        <input type="{type}" class="form-control {extra_classes}" 
-               id="{name}" name="{name}" value="{value}" 
+        <input type="{type}" class="form-control {extra_classes}"
+               id="{name}" name="{name}" value="{value}"
                {'placeholder="' + placeholder + '"' if placeholder else ''}>
         """
 
@@ -102,14 +97,12 @@ class WebInterface:
         </select>
         """
 
-    def render_checkbox(
-        self, name: str, label: str, checked: bool = False, extra_classes: str = ""
-    ) -> str:
+    def render_checkbox(self, name: str, label: str, checked: bool = False, extra_classes: str = "") -> str:
         """Render a checkbox field"""
         checked_attr = "checked" if checked else ""
         return f"""
         <div class="form-check {extra_classes}">
-            <input type="checkbox" class="form-check-input" 
+            <input type="checkbox" class="form-check-input"
                    id="{name}" name="{name}" {checked_attr}>
             <label class="form-check-label" for="{name}">{label}</label>
         </div>
@@ -133,9 +126,7 @@ class WebInterface:
         for family_key, family_info in model_families.items():
             label = family_info.NAME
             is_default = family_key == "flux"  # Set default as needed
-            options.append(
-                {"value": family_key, "label": label, "selected": is_default}
-            )
+            options.append({"value": family_key, "label": label, "selected": is_default})
         return options
 
     def get_model_paths_options(self) -> List[Dict[str, Any]]:
@@ -149,9 +140,7 @@ class WebInterface:
                 default_flavour = getattr(model_class, "DEFAULT_MODEL_FLAVOUR", None)
 
                 # Get display name for the model family
-                display_name = getattr(
-                    model_class, "display_name", family_key.replace("_", " ").title()
-                )
+                display_name = getattr(model_class, "display_name", family_key.replace("_", " ").title())
 
                 # Add each path from the model's HUGGINGFACE_PATHS
                 for flavour, path in huggingface_paths.items():
@@ -173,20 +162,50 @@ class WebInterface:
         return sorted(all_paths, key=lambda x: x["label"])
 
     def get_optimizer_options(self) -> List[Dict[str, Any]]:
-        """Get optimizers from the actual optimizer_choices configuration"""
-        options = []
+        """Get optimisers from the actual optimizer_choices configuration"""
+        # Return as grouped structure for optgroup rendering
+        categories = {}
+
         for opt_key, opt_info in optimizer_choices.items():
             # Create a human-readable label
-            label = opt_key.replace("_", " ").replace("-", " ").title()
+            label = opt_key
+
+            # Categorize optimisers (using British spelling in UI)
+            if opt_key.startswith("ao-"):
+                category = "TorchAO (Quantised)"
+                label = opt_key.replace("ao-", "").upper()
+            elif opt_key.startswith("bnb-"):
+                category = "BitsAndBytes (8-bit)"
+                label = opt_key.replace("bnb-", "").upper()
+            elif opt_key.startswith("optimi-"):
+                category = "Optimi Library"
+                label = opt_key.replace("optimi-", "").title()
+            elif "schedulefree" in opt_key:
+                category = "Schedule-Free"
+                label = opt_key.replace("_schedulefree", "").title() + " (Schedule-Free)"
+            elif opt_key in ["prodigy", "soap", "adalomo", "adopt"]:
+                category = "Advanced Optimisers"
+                label = opt_key.upper()
+            else:
+                category = "Standard Optimisers"
+                label = opt_key.replace("_", " ").replace("-", " ").title()
 
             # Add precision info if relevant
             precision = opt_info.get("precision", "any")
-            if precision != "any":
+            if precision != "any" and precision not in label.lower():
                 label += f" ({precision})"
 
-            options.append({"value": opt_key, "label": label})
+            if category not in categories:
+                categories[category] = []
 
-        return sorted(options, key=lambda x: x["label"])
+            categories[category].append({"value": opt_key, "label": label})
+
+        # Return grouped structure for proper optgroup rendering
+        result = []
+        for category in sorted(categories.keys()):
+            result.append({"group": category, "options": sorted(categories[category], key=lambda x: x["label"])})
+
+        return result
 
     def get_lr_scheduler_options(self) -> List[Dict[str, Any]]:
         """Get learning rate schedulers"""
@@ -214,9 +233,7 @@ class WebInterface:
                 return self.templates.TemplateResponse("trainer.html", context)
             elif os.path.exists("templates/ui.template"):
                 # For backward compatibility
-                return self.templates.TemplateResponse(
-                    "ui.template", {"request": request}
-                )
+                return self.templates.TemplateResponse("ui.template", {"request": request})
             else:
                 return self.get_fallback_response()
 
@@ -234,22 +251,25 @@ class WebInterface:
             "lr_schedulers": self.get_lr_scheduler_options(),
             "default_config": self.get_default_config(),
             # Add model flavours if needed
-            "model_flavours": (
-                get_all_model_flavours()
-                if hasattr(self, "get_all_model_flavours")
-                else []
-            ),
+            "model_flavours": (get_all_model_flavours() if hasattr(self, "get_all_model_flavours") else []),
         }
 
     def get_default_config(self) -> Dict[str, Any]:
-        """Get default configuration values"""
-        return {
-            "job_id": "foobar123",
+        """Get default configuration values from actual cmd_args"""
+        # Get the real defaults from cmd_args
+        defaults = get_cmd_default_config()
+
+        # Override a few UI-specific defaults
+        defaults["job_id"] = "training_run_" + str(int(os.environ.get("RANDOM", "42")))
+        defaults["data_backend_config"] = "config/multidatabackend.json"
+
+        # Ensure all template-expected values have sensible defaults
+        # These are fallbacks if cmd_args doesn't provide them
+        template_defaults = {
             "resume_from_checkpoint": "latest",
-            "data_backend_config": "config/multidatabackend.json",
             "train_batch_size": 1,
             "gradient_accumulation_steps": 1,
-            "learning_rate": 0.0001,
+            "learning_rate": 4e-7,
             "num_train_epochs": 10,
             "max_train_steps": 0,
             "lr_warmup_steps": 100,
@@ -257,7 +277,23 @@ class WebInterface:
             "checkpointing_steps": 500,
             "validation_steps": 100,
             "seed": 42,
+            "lora_rank": 16,
+            "lora_alpha": 16,
+            "lora_dropout": 0.1,
+            "noise_offset": 0.1,
+            "input_perturbation": 0.0,
+            "flow_sigmoid_scale": 1.0,
+            "flow_schedule_shift": 3.0,
+            "flux_guidance_value": 1.0,
+            "ema_decay": 0.995,
         }
+
+        # Merge with template defaults (cmd_args takes precedence)
+        for key, value in template_defaults.items():
+            if key not in defaults or defaults[key] is None:
+                defaults[key] = value
+
+        return defaults
 
     async def get_dashboard(self, request: Request):
         """Serve dashboard page"""
@@ -287,10 +323,7 @@ class WebInterface:
 
     def get_fallback_response(self, message: str = None) -> HTMLResponse:
         """Get fallback HTML response"""
-        default_message = (
-            message
-            or "Welcome to SimpleTuner. This installation does not include a compatible web interface."
-        )
+        default_message = message or "Welcome to SimpleTuner. This installation does not include a compatible web interface."
 
         return HTMLResponse(
             content=f"""

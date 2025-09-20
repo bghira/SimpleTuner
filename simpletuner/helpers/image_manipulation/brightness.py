@@ -10,9 +10,7 @@ def calculate_luminance(img: Image.Image):
     elif isinstance(img, Image.Image):
         np_img = np.asarray(img.convert("RGB"))
     else:
-        raise ValueError(
-            f"Unexpected image type for luminance calculation: {type(img)}"
-        )
+        raise ValueError(f"Unexpected image type for luminance calculation: {type(img)}")
     r, g, b = np_img[:, :, 0], np_img[:, :, 1], np_img[:, :, 2]
     luminance = 0.299 * r + 0.587 * g + 0.114 * b
     avg_luminance = np.mean(luminance)

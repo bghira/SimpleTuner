@@ -1,5 +1,5 @@
 # Copyright 2025 The NVIDIA Team and The HuggingFace Team. All rights reserved.
-# Copyright 2025 SimpleTuner team, removing safety restrictions.
+# Copyright 2025 bghira (SimpleTuner team), removing safety restrictions.
 #
 # This file is licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,21 +18,16 @@ from typing import Callable, Dict, List, Optional, Union
 
 import numpy as np
 import torch
-from transformers import T5EncoderModel, T5TokenizerFast
-
 from diffusers.callbacks import MultiPipelineCallbacks, PipelineCallback
 from diffusers.models import AutoencoderKLWan, CosmosTransformer3DModel
+from diffusers.pipelines.cosmos.pipeline_output import CosmosImagePipelineOutput
+from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
-from diffusers.utils import (
-    is_cosmos_guardrail_available,
-    is_torch_xla_available,
-    logging,
-    replace_example_docstring,
-)
+from diffusers.utils import is_cosmos_guardrail_available, is_torch_xla_available, logging, replace_example_docstring
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.video_processor import VideoProcessor
-from diffusers.pipelines.pipeline_utils import DiffusionPipeline
-from diffusers.pipelines.cosmos.pipeline_output import CosmosImagePipelineOutput
+from transformers import T5EncoderModel, T5TokenizerFast
+
 from simpletuner.helpers.models.flux.pipeline import FluxLoraLoaderMixin
 
 if is_torch_xla_available():
@@ -100,13 +95,9 @@ def retrieve_timesteps(
         second element is the number of inference steps.
     """
     if timesteps is not None and sigmas is not None:
-        raise ValueError(
-            "Only one of `timesteps` or `sigmas` can be passed. Please choose one to set custom values"
-        )
+        raise ValueError("Only one of `timesteps` or `sigmas` can be passed. Please choose one to set custom values")
     if timesteps is not None:
-        accepts_timesteps = "timesteps" in set(
-            inspect.signature(scheduler.set_timesteps).parameters.keys()
-        )
+        accepts_timesteps = "timesteps" in set(inspect.signature(scheduler.set_timesteps).parameters.keys())
         if not accepts_timesteps:
             raise ValueError(
                 f"The current scheduler class {scheduler.__class__}'s `set_timesteps` does not support custom"
@@ -116,9 +107,7 @@ def retrieve_timesteps(
         timesteps = scheduler.timesteps
         num_inference_steps = len(timesteps)
     elif sigmas is not None:
-        accept_sigmas = "sigmas" in set(
-            inspect.signature(scheduler.set_timesteps).parameters.keys()
-        )
+        accept_sigmas = "sigmas" in set(inspect.signature(scheduler.set_timesteps).parameters.keys())
         if not accept_sigmas:
             raise ValueError(
                 f"The current scheduler class {scheduler.__class__}'s `set_timesteps` does not support custom"
@@ -179,15 +168,9 @@ class Cosmos2TextToImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             scheduler=scheduler,
         )
 
-        self.vae_scale_factor_temporal = (
-            2 ** sum(self.vae.temperal_downsample) if getattr(self, "vae", None) else 4
-        )
-        self.vae_scale_factor_spatial = (
-            2 ** len(self.vae.temperal_downsample) if getattr(self, "vae", None) else 8
-        )
-        self.video_processor = VideoProcessor(
-            vae_scale_factor=self.vae_scale_factor_spatial
-        )
+        self.vae_scale_factor_temporal = 2 ** sum(self.vae.temperal_downsample) if getattr(self, "vae", None) else 4
+        self.vae_scale_factor_spatial = 2 ** len(self.vae.temperal_downsample) if getattr(self, "vae", None) else 8
+        self.video_processor = VideoProcessor(vae_scale_factor=self.vae_scale_factor_spatial)
 
         self.sigma_max = 80.0
         self.sigma_min = 0.002
@@ -225,23 +208,15 @@ class Cosmos2TextToImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         text_input_ids = text_inputs.input_ids
         prompt_attention_mask = text_inputs.attention_mask.bool().to(device)
 
-        untruncated_ids = self.tokenizer(
-            prompt, padding="longest", return_tensors="pt"
-        ).input_ids
-        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(
-            text_input_ids, untruncated_ids
-        ):
-            removed_text = self.tokenizer.batch_decode(
-                untruncated_ids[:, max_sequence_length - 1 : -1]
-            )
+        untruncated_ids = self.tokenizer(prompt, padding="longest", return_tensors="pt").input_ids
+        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(text_input_ids, untruncated_ids):
+            removed_text = self.tokenizer.batch_decode(untruncated_ids[:, max_sequence_length - 1 : -1])
             logger.warning(
                 "The following part of your input was truncated because `max_sequence_length` is set to "
                 f" {max_sequence_length} tokens: {removed_text}"
             )
 
-        prompt_embeds = self.text_encoder(
-            text_input_ids.to(device), attention_mask=prompt_attention_mask
-        ).last_hidden_state
+        prompt_embeds = self.text_encoder(text_input_ids.to(device), attention_mask=prompt_attention_mask).last_hidden_state
         prompt_embeds = prompt_embeds.to(dtype=dtype, device=device)
 
         lengths = prompt_attention_mask.sum(dim=1).cpu()
@@ -308,17 +283,11 @@ class Cosmos2TextToImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             # duplicate text embeddings for each generation per prompt, using mps friendly method
             _, seq_len, _ = prompt_embeds.shape
             prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
-            prompt_embeds = prompt_embeds.view(
-                batch_size * num_images_per_prompt, seq_len, -1
-            )
+            prompt_embeds = prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
 
         if do_classifier_free_guidance and negative_prompt_embeds is None:
             negative_prompt = negative_prompt or ""
-            negative_prompt = (
-                batch_size * [negative_prompt]
-                if isinstance(negative_prompt, str)
-                else negative_prompt
-            )
+            negative_prompt = batch_size * [negative_prompt] if isinstance(negative_prompt, str) else negative_prompt
 
             if prompt is not None and type(prompt) is not type(negative_prompt):
                 raise TypeError(
@@ -341,12 +310,8 @@ class Cosmos2TextToImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
 
             # duplicate text embeddings for each generation per prompt, using mps friendly method
             _, seq_len, _ = negative_prompt_embeds.shape
-            negative_prompt_embeds = negative_prompt_embeds.repeat(
-                1, num_images_per_prompt, 1
-            )
-            negative_prompt_embeds = negative_prompt_embeds.view(
-                batch_size * num_images_per_prompt, seq_len, -1
-            )
+            negative_prompt_embeds = negative_prompt_embeds.repeat(1, num_images_per_prompt, 1)
+            negative_prompt_embeds = negative_prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
 
         return prompt_embeds, negative_prompt_embeds
 
@@ -363,9 +328,7 @@ class Cosmos2TextToImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         latents: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if latents is not None:
-            return (
-                latents.to(device=device, dtype=dtype) * self.scheduler.config.sigma_max
-            )
+            return latents.to(device=device, dtype=dtype) * self.scheduler.config.sigma_max
 
         num_latent_frames = (num_frames - 1) // self.vae_scale_factor_temporal + 1
         latent_height = height // self.vae_scale_factor_spatial
@@ -397,13 +360,10 @@ class Cosmos2TextToImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         callback_on_step_end_tensor_inputs=None,
     ):
         if height % 16 != 0 or width % 16 != 0:
-            raise ValueError(
-                f"`height` and `width` have to be divisible by 16 but are {height} and {width}."
-            )
+            raise ValueError(f"`height` and `width` have to be divisible by 16 but are {height} and {width}.")
 
         if callback_on_step_end_tensor_inputs is not None and not all(
-            k in self._callback_tensor_inputs
-            for k in callback_on_step_end_tensor_inputs
+            k in self._callback_tensor_inputs for k in callback_on_step_end_tensor_inputs
         ):
             raise ValueError(
                 f"`callback_on_step_end_tensor_inputs` has to be in {self._callback_tensor_inputs}, but found {[k for k in callback_on_step_end_tensor_inputs if k not in self._callback_tensor_inputs]}"
@@ -418,12 +378,8 @@ class Cosmos2TextToImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             raise ValueError(
                 "Provide either `prompt` or `prompt_embeds`. Cannot leave both `prompt` and `prompt_embeds` undefined."
             )
-        elif prompt is not None and (
-            not isinstance(prompt, str) and not isinstance(prompt, list)
-        ):
-            raise ValueError(
-                f"`prompt` has to be of type `str` or `list` but is {type(prompt)}"
-            )
+        elif prompt is not None and (not isinstance(prompt, str) and not isinstance(prompt, list)):
+            raise ValueError(f"`prompt` has to be of type `str` or `list` but is {type(prompt)}")
 
     @property
     def guidance_scale(self):
@@ -535,9 +491,7 @@ class Cosmos2TextToImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         num_frames = 1
 
         # 1. Check inputs. Raise error if not correct
-        self.check_inputs(
-            prompt, height, width, prompt_embeds, callback_on_step_end_tensor_inputs
-        )
+        self.check_inputs(prompt, height, width, prompt_embeds, callback_on_step_end_tensor_inputs)
 
         self._guidance_scale = guidance_scale
         self._current_timestep = None
@@ -569,13 +523,9 @@ class Cosmos2TextToImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         )
 
         # 4. Prepare timesteps
-        sigmas_dtype = (
-            torch.float32 if torch.backends.mps.is_available() else torch.float64
-        )
+        sigmas_dtype = torch.float32 if torch.backends.mps.is_available() else torch.float64
         sigmas = torch.linspace(0, 1, num_inference_steps, dtype=sigmas_dtype)
-        timesteps, num_inference_steps = retrieve_timesteps(
-            self.scheduler, device=device, sigmas=sigmas
-        )
+        timesteps, num_inference_steps = retrieve_timesteps(self.scheduler, device=device, sigmas=sigmas)
         if self.scheduler.config.get("final_sigmas_type", "zero") == "sigma_min":
             # Replace the last sigma (which is zero) with the minimum sigma value
             self.scheduler.sigmas[-1] = self.scheduler.sigmas[-2]
@@ -613,9 +563,7 @@ class Cosmos2TextToImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                 c_in = 1 - current_t
                 c_skip = 1 - current_t
                 c_out = -current_t
-                timestep = current_t.expand(latents.shape[0]).to(
-                    transformer_dtype
-                )  # [B, 1, T, 1, 1]
+                timestep = current_t.expand(latents.shape[0]).to(transformer_dtype)  # [B, 1, T, 1, 1]
 
                 latent_model_input = latents * c_in
                 latent_model_input = latent_model_input.to(transformer_dtype)
@@ -627,9 +575,7 @@ class Cosmos2TextToImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                     padding_mask=padding_mask,
                     return_dict=False,
                 )[0]
-                noise_pred = (c_skip * latents + c_out * noise_pred.float()).to(
-                    transformer_dtype
-                )
+                noise_pred = (c_skip * latents + c_out * noise_pred.float()).to(transformer_dtype)
 
                 if self.do_classifier_free_guidance:
                     noise_pred_uncond = self.transformer(
@@ -639,17 +585,11 @@ class Cosmos2TextToImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                         padding_mask=padding_mask,
                         return_dict=False,
                     )[0]
-                    noise_pred_uncond = (
-                        c_skip * latents + c_out * noise_pred_uncond.float()
-                    ).to(transformer_dtype)
-                    noise_pred = noise_pred + self.guidance_scale * (
-                        noise_pred - noise_pred_uncond
-                    )
+                    noise_pred_uncond = (c_skip * latents + c_out * noise_pred_uncond.float()).to(transformer_dtype)
+                    noise_pred = noise_pred + self.guidance_scale * (noise_pred - noise_pred_uncond)
 
                 noise_pred = (latents - noise_pred) / current_sigma
-                latents = self.scheduler.step(
-                    noise_pred, t, latents, return_dict=False
-                )[0]
+                latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
 
                 if callback_on_step_end is not None:
                     callback_kwargs = {}
@@ -659,14 +599,10 @@ class Cosmos2TextToImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
 
                     latents = callback_outputs.pop("latents", latents)
                     prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
-                    negative_prompt_embeds = callback_outputs.pop(
-                        "negative_prompt_embeds", negative_prompt_embeds
-                    )
+                    negative_prompt_embeds = callback_outputs.pop("negative_prompt_embeds", negative_prompt_embeds)
 
                 # call the callback, if provided
-                if i == len(timesteps) - 1 or (
-                    (i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0
-                ):
+                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
 
                 if XLA_AVAILABLE:
@@ -680,16 +616,12 @@ class Cosmos2TextToImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                 .view(1, self.vae.config.z_dim, 1, 1, 1)
                 .to(latents.device, latents.dtype)
             )
-            latents_std = 1.0 / torch.tensor(self.vae.config.latents_std).view(
-                1, self.vae.config.z_dim, 1, 1, 1
-            ).to(latents.device, latents.dtype)
-            latents = (
-                latents / latents_std / self.scheduler.config.sigma_data + latents_mean
+            latents_std = 1.0 / torch.tensor(self.vae.config.latents_std).view(1, self.vae.config.z_dim, 1, 1, 1).to(
+                latents.device, latents.dtype
             )
+            latents = latents / latents_std / self.scheduler.config.sigma_data + latents_mean
             video = self.vae.decode(latents.to(self.vae.dtype), return_dict=False)[0]
-            video = self.video_processor.postprocess_video(
-                video, output_type=output_type
-            )
+            video = self.video_processor.postprocess_video(video, output_type=output_type)
 
             image = [batch[0] for batch in video]
             if isinstance(video, torch.Tensor):

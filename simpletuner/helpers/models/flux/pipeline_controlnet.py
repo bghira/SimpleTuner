@@ -1,4 +1,4 @@
-# Copyright 2024 Black Forest Labs and The HuggingFace Team. All rights reserved.
+# Copyright 2024 Black Forest Labs and The HuggingFace Team and 2025 bghira. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,69 +12,54 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 import inspect
-from typing import Any, Callable, Dict, List, Optional, Union, Tuple
+import os
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
-from transformers import (
-    CLIPImageProcessor,
-    CLIPVisionModelWithProjection,
-    CLIPTextModel,
-    CLIPTokenizer,
-    T5EncoderModel,
-    T5TokenizerFast,
-)
-
 from diffusers.image_processor import PipelineImageInput, VaeImageProcessor
-from diffusers.models.autoencoders import AutoencoderKL
-from diffusers.models.transformers import FluxTransformer2DModel
-from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
-from diffusers.utils import (
-    USE_PEFT_BACKEND,
-    is_torch_xla_available,
-    replace_example_docstring,
-    scale_lora_layers,
-    unscale_lora_layers,
-    is_peft_available,
-    is_peft_version,
-    is_torch_version,
-    is_transformers_available,
-    is_transformers_version,
-    get_peft_kwargs,
-    get_adapter_name,
-    convert_unet_state_dict_to_peft,
-    convert_state_dict_to_diffusers,
-    convert_state_dict_to_peft,
-    logging,
-)
-from diffusers.models.lora import (
-    text_encoder_attn_modules,
-    text_encoder_mlp_modules,
-)
-from diffusers.utils.torch_utils import randn_tensor
-from diffusers.pipelines.pipeline_utils import DiffusionPipeline
-
-
-from diffusers.loaders import (
-    FluxIPAdapterMixin,
-    FromSingleFileMixin,
-    TextualInversionLoaderMixin,
-)
-from diffusers.models.controlnets.controlnet_flux import (
-    FluxControlNetModel,
-    FluxMultiControlNetModel,
-)
-from diffusers.models.transformers import FluxTransformer2DModel
-from diffusers.pipelines.pipeline_utils import DiffusionPipeline
-from diffusers.pipelines.flux.pipeline_output import FluxPipelineOutput
+from diffusers.loaders import FluxIPAdapterMixin, FromSingleFileMixin, TextualInversionLoaderMixin
 from diffusers.loaders.lora_base import LoraBaseMixin
-from huggingface_hub.utils import validate_hf_hub_args
 from diffusers.loaders.lora_conversion_utils import (
     _convert_bfl_flux_control_lora_to_diffusers,
     _convert_kohya_flux_lora_to_diffusers,
     _convert_xlabs_flux_lora_to_diffusers,
+)
+from diffusers.models.autoencoders import AutoencoderKL
+from diffusers.models.controlnets.controlnet_flux import FluxControlNetModel, FluxMultiControlNetModel
+from diffusers.models.lora import text_encoder_attn_modules, text_encoder_mlp_modules
+from diffusers.models.transformers import FluxTransformer2DModel
+from diffusers.pipelines.flux.pipeline_output import FluxPipelineOutput
+from diffusers.pipelines.pipeline_utils import DiffusionPipeline
+from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
+from diffusers.utils import (
+    USE_PEFT_BACKEND,
+    convert_state_dict_to_diffusers,
+    convert_state_dict_to_peft,
+    convert_unet_state_dict_to_peft,
+    get_adapter_name,
+    get_peft_kwargs,
+    is_peft_available,
+    is_peft_version,
+    is_torch_version,
+    is_torch_xla_available,
+    is_transformers_available,
+    is_transformers_version,
+    logging,
+    replace_example_docstring,
+    scale_lora_layers,
+    unscale_lora_layers,
+)
+from diffusers.utils.torch_utils import randn_tensor
+from huggingface_hub.utils import validate_hf_hub_args
+from transformers import (
+    CLIPImageProcessor,
+    CLIPTextModel,
+    CLIPTokenizer,
+    CLIPVisionModelWithProjection,
+    T5EncoderModel,
+    T5TokenizerFast,
 )
 
 if is_torch_xla_available():
@@ -105,11 +90,11 @@ TRANSFORMER_NAME = "transformer"
 _MODULE_NAME_TO_ATTRIBUTE_MAP_FLUX = {"x_embedder": "in_channels"}
 
 from simpletuner.helpers.models.flux.pipeline import (
+    FluxLoraLoaderMixin,
+    FluxPipelineOutput,
     calculate_shift,
     retrieve_latents,
     retrieve_timesteps,
-    FluxLoraLoaderMixin,
-    FluxPipelineOutput,
 )
 
 EXAMPLE_DOC_STRING = """
@@ -143,9 +128,7 @@ EXAMPLE_DOC_STRING = """
 """
 
 
-class FluxControlNetPipeline(
-    DiffusionPipeline, FluxLoraLoaderMixin, FromSingleFileMixin, FluxIPAdapterMixin
-):
+class FluxControlNetPipeline(DiffusionPipeline, FluxLoraLoaderMixin, FromSingleFileMixin, FluxIPAdapterMixin):
     r"""
     The Flux pipeline for text-to-image generation.
 
@@ -172,9 +155,7 @@ class FluxControlNetPipeline(
             [T5TokenizerFast](https://huggingface.co/docs/transformers/en/model_doc/t5#transformers.T5TokenizerFast).
     """
 
-    model_cpu_offload_seq = (
-        "text_encoder->text_encoder_2->image_encoder->transformer->vae"
-    )
+    model_cpu_offload_seq = "text_encoder->text_encoder_2->image_encoder->transformer->vae"
     _optional_components = ["image_encoder", "feature_extractor"]
     _callback_tensor_inputs = ["latents", "prompt_embeds", "control_image"]
 
@@ -212,20 +193,12 @@ class FluxControlNetPipeline(
             image_encoder=image_encoder,
             feature_extractor=feature_extractor,
         )
-        self.vae_scale_factor = (
-            2 ** (len(self.vae.config.block_out_channels) - 1)
-            if getattr(self, "vae", None)
-            else 8
-        )
+        self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1) if getattr(self, "vae", None) else 8
         # Flux latents are turned into 2x2 patches and packed. This means the latent width and height has to be divisible
         # by the patch size. So the vae scale factor is multiplied by the patch size to account for this
-        self.image_processor = VaeImageProcessor(
-            vae_scale_factor=self.vae_scale_factor * 2
-        )
+        self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor * 2)
         self.tokenizer_max_length = (
-            self.tokenizer.model_max_length
-            if hasattr(self, "tokenizer") and self.tokenizer is not None
-            else 77
+            self.tokenizer.model_max_length if hasattr(self, "tokenizer") and self.tokenizer is not None else 77
         )
         self.default_sample_size = 128
 
@@ -256,24 +229,16 @@ class FluxControlNetPipeline(
             return_tensors="pt",
         )
         text_input_ids = text_inputs.input_ids
-        untruncated_ids = self.tokenizer_2(
-            prompt, padding="longest", return_tensors="pt"
-        ).input_ids
+        untruncated_ids = self.tokenizer_2(prompt, padding="longest", return_tensors="pt").input_ids
 
-        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(
-            text_input_ids, untruncated_ids
-        ):
-            removed_text = self.tokenizer_2.batch_decode(
-                untruncated_ids[:, self.tokenizer_max_length - 1 : -1]
-            )
+        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(text_input_ids, untruncated_ids):
+            removed_text = self.tokenizer_2.batch_decode(untruncated_ids[:, self.tokenizer_max_length - 1 : -1])
             logger.warning(
                 "The following part of your input was truncated because `max_sequence_length` is set to "
                 f" {max_sequence_length} tokens: {removed_text}"
             )
 
-        prompt_embeds = self.text_encoder_2(
-            text_input_ids.to(device), output_hidden_states=False
-        )[0]
+        prompt_embeds = self.text_encoder_2(text_input_ids.to(device), output_hidden_states=False)[0]
 
         dtype = self.text_encoder_2.dtype
         prompt_embeds = prompt_embeds.to(dtype=dtype, device=device)
@@ -282,9 +247,7 @@ class FluxControlNetPipeline(
 
         # duplicate text embeddings and attention mask for each generation per prompt, using mps friendly method
         prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
-        prompt_embeds = prompt_embeds.view(
-            batch_size * num_images_per_prompt, seq_len, -1
-        )
+        prompt_embeds = prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
 
         return prompt_embeds
 
@@ -313,22 +276,14 @@ class FluxControlNetPipeline(
         )
 
         text_input_ids = text_inputs.input_ids
-        untruncated_ids = self.tokenizer(
-            prompt, padding="longest", return_tensors="pt"
-        ).input_ids
-        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(
-            text_input_ids, untruncated_ids
-        ):
-            removed_text = self.tokenizer.batch_decode(
-                untruncated_ids[:, self.tokenizer_max_length - 1 : -1]
-            )
+        untruncated_ids = self.tokenizer(prompt, padding="longest", return_tensors="pt").input_ids
+        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(text_input_ids, untruncated_ids):
+            removed_text = self.tokenizer.batch_decode(untruncated_ids[:, self.tokenizer_max_length - 1 : -1])
             logger.warning(
                 "The following part of your input was truncated because CLIP can only handle sequences up to"
                 f" {self.tokenizer_max_length} tokens: {removed_text}"
             )
-        prompt_embeds = self.text_encoder(
-            text_input_ids.to(device), output_hidden_states=False
-        )
+        prompt_embeds = self.text_encoder(text_input_ids.to(device), output_hidden_states=False)
 
         # Use pooled output of CLIPTextModel
         prompt_embeds = prompt_embeds.pooler_output
@@ -417,11 +372,7 @@ class FluxControlNetPipeline(
                 # Retrieve the original scale by scaling back the LoRA layers
                 unscale_lora_layers(self.text_encoder_2, lora_scale)
 
-        dtype = (
-            self.text_encoder.dtype
-            if self.text_encoder is not None
-            else self.transformer.dtype
-        )
+        dtype = self.text_encoder.dtype if self.text_encoder is not None else self.transformer.dtype
         text_ids = torch.zeros(prompt_embeds.shape[1], 3).to(device=device, dtype=dtype)
 
         return prompt_embeds, pooled_prompt_embeds, text_ids
@@ -439,35 +390,25 @@ class FluxControlNetPipeline(
         return image_embeds
 
     # Copied from diffusers.pipelines.flux.pipeline_flux.FluxPipeline.prepare_ip_adapter_image_embeds
-    def prepare_ip_adapter_image_embeds(
-        self, ip_adapter_image, ip_adapter_image_embeds, device, num_images_per_prompt
-    ):
+    def prepare_ip_adapter_image_embeds(self, ip_adapter_image, ip_adapter_image_embeds, device, num_images_per_prompt):
         image_embeds = []
         if ip_adapter_image_embeds is None:
             if not isinstance(ip_adapter_image, list):
                 ip_adapter_image = [ip_adapter_image]
 
-            if (
-                len(ip_adapter_image)
-                != self.transformer.encoder_hid_proj.num_ip_adapters
-            ):
+            if len(ip_adapter_image) != self.transformer.encoder_hid_proj.num_ip_adapters:
                 raise ValueError(
                     f"`ip_adapter_image` must have same length as the number of IP Adapters. Got {len(ip_adapter_image)} images and {self.transformer.encoder_hid_proj.num_ip_adapters} IP Adapters."
                 )
 
             for single_ip_adapter_image in ip_adapter_image:
-                single_image_embeds = self.encode_image(
-                    single_ip_adapter_image, device, 1
-                )
+                single_image_embeds = self.encode_image(single_ip_adapter_image, device, 1)
                 image_embeds.append(single_image_embeds[None, :])
         else:
             if not isinstance(ip_adapter_image_embeds, list):
                 ip_adapter_image_embeds = [ip_adapter_image_embeds]
 
-            if (
-                len(ip_adapter_image_embeds)
-                != self.transformer.encoder_hid_proj.num_ip_adapters
-            ):
+            if len(ip_adapter_image_embeds) != self.transformer.encoder_hid_proj.num_ip_adapters:
                 raise ValueError(
                     f"`ip_adapter_image_embeds` must have same length as the number of IP Adapters. Got {len(ip_adapter_image_embeds)} image embeds and {self.transformer.encoder_hid_proj.num_ip_adapters} IP Adapters."
                 )
@@ -477,9 +418,7 @@ class FluxControlNetPipeline(
 
         ip_adapter_image_embeds = []
         for single_image_embeds in image_embeds:
-            single_image_embeds = torch.cat(
-                [single_image_embeds] * num_images_per_prompt, dim=0
-            )
+            single_image_embeds = torch.cat([single_image_embeds] * num_images_per_prompt, dim=0)
             single_image_embeds = single_image_embeds.to(device=device)
             ip_adapter_image_embeds.append(single_image_embeds)
 
@@ -500,17 +439,13 @@ class FluxControlNetPipeline(
         callback_on_step_end_tensor_inputs=None,
         max_sequence_length=None,
     ):
-        if (
-            height % (self.vae_scale_factor * 2) != 0
-            or width % (self.vae_scale_factor * 2) != 0
-        ):
+        if height % (self.vae_scale_factor * 2) != 0 or width % (self.vae_scale_factor * 2) != 0:
             logger.warning(
                 f"`height` and `width` have to be divisible by {self.vae_scale_factor * 2} but are {height} and {width}. Dimensions will be resized accordingly"
             )
 
         if callback_on_step_end_tensor_inputs is not None and not all(
-            k in self._callback_tensor_inputs
-            for k in callback_on_step_end_tensor_inputs
+            k in self._callback_tensor_inputs for k in callback_on_step_end_tensor_inputs
         ):
             raise ValueError(
                 f"`callback_on_step_end_tensor_inputs` has to be in {self._callback_tensor_inputs}, but found {[k for k in callback_on_step_end_tensor_inputs if k not in self._callback_tensor_inputs]}"
@@ -530,18 +465,10 @@ class FluxControlNetPipeline(
             raise ValueError(
                 "Provide either `prompt` or `prompt_embeds`. Cannot leave both `prompt` and `prompt_embeds` undefined."
             )
-        elif prompt is not None and (
-            not isinstance(prompt, str) and not isinstance(prompt, list)
-        ):
-            raise ValueError(
-                f"`prompt` has to be of type `str` or `list` but is {type(prompt)}"
-            )
-        elif prompt_2 is not None and (
-            not isinstance(prompt_2, str) and not isinstance(prompt_2, list)
-        ):
-            raise ValueError(
-                f"`prompt_2` has to be of type `str` or `list` but is {type(prompt_2)}"
-            )
+        elif prompt is not None and (not isinstance(prompt, str) and not isinstance(prompt, list)):
+            raise ValueError(f"`prompt` has to be of type `str` or `list` but is {type(prompt)}")
+        elif prompt_2 is not None and (not isinstance(prompt_2, str) and not isinstance(prompt_2, list)):
+            raise ValueError(f"`prompt_2` has to be of type `str` or `list` but is {type(prompt_2)}")
 
         if negative_prompt is not None and negative_prompt_embeds is not None:
             raise ValueError(
@@ -572,41 +499,27 @@ class FluxControlNetPipeline(
             )
 
         if max_sequence_length is not None and max_sequence_length > 512:
-            raise ValueError(
-                f"`max_sequence_length` cannot be greater than 512 but is {max_sequence_length}"
-            )
+            raise ValueError(f"`max_sequence_length` cannot be greater than 512 but is {max_sequence_length}")
 
     @staticmethod
     # Copied from diffusers.pipelines.flux.pipeline_flux.FluxPipeline._prepare_latent_image_ids
     def _prepare_latent_image_ids(batch_size, height, width, device, dtype):
         latent_image_ids = torch.zeros(height, width, 3)
-        latent_image_ids[..., 1] = (
-            latent_image_ids[..., 1] + torch.arange(height)[:, None]
-        )
-        latent_image_ids[..., 2] = (
-            latent_image_ids[..., 2] + torch.arange(width)[None, :]
-        )
+        latent_image_ids[..., 1] = latent_image_ids[..., 1] + torch.arange(height)[:, None]
+        latent_image_ids[..., 2] = latent_image_ids[..., 2] + torch.arange(width)[None, :]
 
-        latent_image_id_height, latent_image_id_width, latent_image_id_channels = (
-            latent_image_ids.shape
-        )
+        latent_image_id_height, latent_image_id_width, latent_image_id_channels = latent_image_ids.shape
 
-        latent_image_ids = latent_image_ids.reshape(
-            latent_image_id_height * latent_image_id_width, latent_image_id_channels
-        )
+        latent_image_ids = latent_image_ids.reshape(latent_image_id_height * latent_image_id_width, latent_image_id_channels)
 
         return latent_image_ids.to(device=device, dtype=dtype)
 
     @staticmethod
     # Copied from diffusers.pipelines.flux.pipeline_flux.FluxPipeline._pack_latents
     def _pack_latents(latents, batch_size, num_channels_latents, height, width):
-        latents = latents.view(
-            batch_size, num_channels_latents, height // 2, 2, width // 2, 2
-        )
+        latents = latents.view(batch_size, num_channels_latents, height // 2, 2, width // 2, 2)
         latents = latents.permute(0, 2, 4, 1, 3, 5)
-        latents = latents.reshape(
-            batch_size, (height // 2) * (width // 2), num_channels_latents * 4
-        )
+        latents = latents.reshape(batch_size, (height // 2) * (width // 2), num_channels_latents * 4)
 
         return latents
 
@@ -647,9 +560,7 @@ class FluxControlNetPipeline(
         shape = (batch_size, num_channels_latents, height, width)
 
         if latents is not None:
-            latent_image_ids = self._prepare_latent_image_ids(
-                batch_size, height // 2, width // 2, device, dtype
-            )
+            latent_image_ids = self._prepare_latent_image_ids(batch_size, height // 2, width // 2, device, dtype)
             return latents.to(device=device, dtype=dtype), latent_image_ids
 
         if isinstance(generator, list) and len(generator) != batch_size:
@@ -659,13 +570,9 @@ class FluxControlNetPipeline(
             )
 
         latents = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
-        latents = self._pack_latents(
-            latents, batch_size, num_channels_latents, height, width
-        )
+        latents = self._pack_latents(latents, batch_size, num_channels_latents, height, width)
 
-        latent_image_ids = self._prepare_latent_image_ids(
-            batch_size, height // 2, width // 2, device, dtype
-        )
+        latent_image_ids = self._prepare_latent_image_ids(batch_size, height // 2, width // 2, device, dtype)
 
         return latents, latent_image_ids
 
@@ -859,24 +766,12 @@ class FluxControlNetPipeline(
         height = height or self.default_sample_size * self.vae_scale_factor
         width = width or self.default_sample_size * self.vae_scale_factor
 
-        if not isinstance(control_guidance_start, list) and isinstance(
-            control_guidance_end, list
-        ):
-            control_guidance_start = len(control_guidance_end) * [
-                control_guidance_start
-            ]
-        elif not isinstance(control_guidance_end, list) and isinstance(
-            control_guidance_start, list
-        ):
+        if not isinstance(control_guidance_start, list) and isinstance(control_guidance_end, list):
+            control_guidance_start = len(control_guidance_end) * [control_guidance_start]
+        elif not isinstance(control_guidance_end, list) and isinstance(control_guidance_start, list):
             control_guidance_end = len(control_guidance_start) * [control_guidance_end]
-        elif not isinstance(control_guidance_start, list) and not isinstance(
-            control_guidance_end, list
-        ):
-            mult = (
-                len(self.controlnet.nets)
-                if isinstance(self.controlnet, FluxMultiControlNetModel)
-                else 1
-            )
+        elif not isinstance(control_guidance_start, list) and not isinstance(control_guidance_end, list):
+            mult = len(self.controlnet.nets) if isinstance(self.controlnet, FluxMultiControlNetModel) else 1
             control_guidance_start, control_guidance_end = (
                 mult * [control_guidance_start],
                 mult * [control_guidance_end],
@@ -914,11 +809,7 @@ class FluxControlNetPipeline(
         dtype = self.transformer.dtype
 
         # 3. Prepare text embeddings
-        lora_scale = (
-            self.joint_attention_kwargs.get("scale", None)
-            if self.joint_attention_kwargs is not None
-            else None
-        )
+        lora_scale = self.joint_attention_kwargs.get("scale", None) if self.joint_attention_kwargs is not None else None
         do_true_cfg = true_cfg_scale > 1 and negative_prompt is not None
         (
             prompt_embeds,
@@ -965,17 +856,11 @@ class FluxControlNetPipeline(
             height, width = control_image.shape[-2:]
 
             # xlab controlnet has a input_hint_block and instantx controlnet does not
-            controlnet_blocks_repeat = (
-                False if self.controlnet.input_hint_block is None else True
-            )
+            controlnet_blocks_repeat = False if self.controlnet.input_hint_block is None else True
             if self.controlnet.input_hint_block is None:
                 # vae encode
-                control_image = retrieve_latents(
-                    self.vae.encode(control_image), generator=generator
-                )
-                control_image = (
-                    control_image - self.vae.config.shift_factor
-                ) * self.vae.config.scaling_factor
+                control_image = retrieve_latents(self.vae.encode(control_image), generator=generator)
+                control_image = (control_image - self.vae.config.shift_factor) * self.vae.config.scaling_factor
 
                 # pack
                 height_control_image, width_control_image = control_image.shape[2:]
@@ -990,20 +875,14 @@ class FluxControlNetPipeline(
             # Here we ensure that `control_mode` has the same length as the control_image.
             if control_mode is not None:
                 if not isinstance(control_mode, int):
-                    raise ValueError(
-                        " For `FluxControlNet`, `control_mode` should be an `int` or `None`"
-                    )
+                    raise ValueError(" For `FluxControlNet`, `control_mode` should be an `int` or `None`")
                 control_mode = torch.tensor(control_mode).to(device, dtype=torch.long)
-                control_mode = control_mode.view(-1, 1).expand(
-                    control_image.shape[0], 1
-                )
+                control_mode = control_mode.view(-1, 1).expand(control_image.shape[0], 1)
 
         elif isinstance(self.controlnet, FluxMultiControlNetModel):
             control_images = []
             # xlab controlnet has a input_hint_block and instantx controlnet does not
-            controlnet_blocks_repeat = (
-                False if self.controlnet.nets[0].input_hint_block is None else True
-            )
+            controlnet_blocks_repeat = False if self.controlnet.nets[0].input_hint_block is None else True
             for i, control_image_ in enumerate(control_image):
                 control_image_ = self.prepare_image(
                     image=control_image_,
@@ -1018,12 +897,8 @@ class FluxControlNetPipeline(
 
                 if self.controlnet.nets[0].input_hint_block is None:
                     # vae encode
-                    control_image_ = retrieve_latents(
-                        self.vae.encode(control_image_), generator=generator
-                    )
-                    control_image_ = (
-                        control_image_ - self.vae.config.shift_factor
-                    ) * self.vae.config.scaling_factor
+                    control_image_ = retrieve_latents(self.vae.encode(control_image_), generator=generator)
+                    control_image_ = (control_image_ - self.vae.config.shift_factor) * self.vae.config.scaling_factor
 
                     # pack
                     height_control_image, width_control_image = control_image_.shape[2:]
@@ -1039,9 +914,7 @@ class FluxControlNetPipeline(
             control_image = control_images
 
             # Here we ensure that `control_mode` has the same length as the control_image.
-            if isinstance(control_mode, list) and len(control_mode) != len(
-                control_image
-            ):
+            if isinstance(control_mode, list) and len(control_mode) != len(control_image):
                 raise ValueError(
                     "For Multi-ControlNet, `control_mode` must be a list of the same "
                     + " length as the number of controlnets (control images) specified"
@@ -1053,11 +926,7 @@ class FluxControlNetPipeline(
             for cmode in control_mode:
                 if cmode is None:
                     cmode = -1
-                control_mode = (
-                    torch.tensor(cmode)
-                    .expand(control_images[0].shape[0])
-                    .to(device, dtype=torch.long)
-                )
+                control_mode = torch.tensor(cmode).expand(control_images[0].shape[0]).to(device, dtype=torch.long)
                 control_modes.append(control_mode)
             control_mode = control_modes
 
@@ -1075,11 +944,7 @@ class FluxControlNetPipeline(
         )
 
         # 5. Prepare timesteps
-        sigmas = (
-            np.linspace(1.0, 1 / num_inference_steps, num_inference_steps)
-            if sigmas is None
-            else sigmas
-        )
+        sigmas = np.linspace(1.0, 1 / num_inference_steps, num_inference_steps) if sigmas is None else sigmas
         image_seq_len = latents.shape[1]
         mu = calculate_shift(
             image_seq_len,
@@ -1096,9 +961,7 @@ class FluxControlNetPipeline(
             mu=mu,
         )
 
-        num_warmup_steps = max(
-            len(timesteps) - num_inference_steps * self.scheduler.order, 0
-        )
+        num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
         self._num_timesteps = len(timesteps)
 
         # 6. Create tensor stating which controlnets to keep
@@ -1108,18 +971,14 @@ class FluxControlNetPipeline(
                 1.0 - float(i / len(timesteps) < s or (i + 1) / len(timesteps) > e)
                 for s, e in zip(control_guidance_start, control_guidance_end)
             ]
-            controlnet_keep.append(
-                keeps[0] if isinstance(self.controlnet, FluxControlNetModel) else keeps
-            )
+            controlnet_keep.append(keeps[0] if isinstance(self.controlnet, FluxControlNetModel) else keeps)
 
         if (ip_adapter_image is not None or ip_adapter_image_embeds is not None) and (
-            negative_ip_adapter_image is None
-            and negative_ip_adapter_image_embeds is None
+            negative_ip_adapter_image is None and negative_ip_adapter_image_embeds is None
         ):
             negative_ip_adapter_image = np.zeros((width, height, 3), dtype=np.uint8)
         elif (ip_adapter_image is None and ip_adapter_image_embeds is None) and (
-            negative_ip_adapter_image is not None
-            or negative_ip_adapter_image_embeds is not None
+            negative_ip_adapter_image is not None or negative_ip_adapter_image_embeds is not None
         ):
             ip_adapter_image = np.zeros((width, height, 3), dtype=np.uint8)
 
@@ -1135,10 +994,7 @@ class FluxControlNetPipeline(
                 device,
                 batch_size * num_images_per_prompt,
             )
-        if (
-            negative_ip_adapter_image is not None
-            or negative_ip_adapter_image_embeds is not None
-        ):
+        if negative_ip_adapter_image is not None or negative_ip_adapter_image_embeds is not None:
             negative_image_embeds = self.prepare_ip_adapter_image_embeds(
                 negative_ip_adapter_image,
                 negative_ip_adapter_image_embeds,
@@ -1153,9 +1009,7 @@ class FluxControlNetPipeline(
                     continue
 
                 if image_embeds is not None:
-                    self._joint_attention_kwargs["ip_adapter_image_embeds"] = (
-                        image_embeds
-                    )
+                    self._joint_attention_kwargs["ip_adapter_image_embeds"] = image_embeds
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
                 timestep = t.expand(latents.shape[0]).to(latents.dtype)
 
@@ -1164,22 +1018,11 @@ class FluxControlNetPipeline(
                 else:
                     use_guidance = self.controlnet.config.guidance_embeds
 
-                guidance = (
-                    torch.tensor([guidance_scale], device=device)
-                    if use_guidance
-                    else None
-                )
-                guidance = (
-                    guidance.expand(latents.shape[0]) if guidance is not None else None
-                )
+                guidance = torch.tensor([guidance_scale], device=device) if use_guidance else None
+                guidance = guidance.expand(latents.shape[0]) if guidance is not None else None
 
                 if isinstance(controlnet_keep[i], list):
-                    cond_scale = [
-                        c * s
-                        for c, s in zip(
-                            controlnet_conditioning_scale, controlnet_keep[i]
-                        )
-                    ]
+                    cond_scale = [c * s for c, s in zip(controlnet_conditioning_scale, controlnet_keep[i])]
                 else:
                     controlnet_cond_scale = controlnet_conditioning_scale
                     if isinstance(controlnet_cond_scale, list):
@@ -1187,31 +1030,23 @@ class FluxControlNetPipeline(
                     cond_scale = controlnet_cond_scale * controlnet_keep[i]
 
                 # controlnet
-                controlnet_block_samples, controlnet_single_block_samples = (
-                    self.controlnet(
-                        hidden_states=latents,
-                        controlnet_cond=control_image,
-                        controlnet_mode=control_mode,
-                        conditioning_scale=cond_scale,
-                        timestep=timestep / 1000,
-                        guidance=guidance,
-                        pooled_projections=pooled_prompt_embeds,
-                        encoder_hidden_states=prompt_embeds,
-                        txt_ids=text_ids,
-                        img_ids=latent_image_ids,
-                        joint_attention_kwargs=self.joint_attention_kwargs,
-                        return_dict=False,
-                    )
+                controlnet_block_samples, controlnet_single_block_samples = self.controlnet(
+                    hidden_states=latents,
+                    controlnet_cond=control_image,
+                    controlnet_mode=control_mode,
+                    conditioning_scale=cond_scale,
+                    timestep=timestep / 1000,
+                    guidance=guidance,
+                    pooled_projections=pooled_prompt_embeds,
+                    encoder_hidden_states=prompt_embeds,
+                    txt_ids=text_ids,
+                    img_ids=latent_image_ids,
+                    joint_attention_kwargs=self.joint_attention_kwargs,
+                    return_dict=False,
                 )
 
-                guidance = (
-                    torch.tensor([guidance_scale], device=device)
-                    if self.transformer.config.guidance_embeds
-                    else None
-                )
-                guidance = (
-                    guidance.expand(latents.shape[0]) if guidance is not None else None
-                )
+                guidance = torch.tensor([guidance_scale], device=device) if self.transformer.config.guidance_embeds else None
+                guidance = guidance.expand(latents.shape[0]) if guidance is not None else None
 
                 noise_pred = self.transformer(
                     hidden_states=latents,
@@ -1230,9 +1065,7 @@ class FluxControlNetPipeline(
 
                 if do_true_cfg:
                     if negative_image_embeds is not None:
-                        self._joint_attention_kwargs["ip_adapter_image_embeds"] = (
-                            negative_image_embeds
-                        )
+                        self._joint_attention_kwargs["ip_adapter_image_embeds"] = negative_image_embeds
                     neg_noise_pred = self.transformer(
                         hidden_states=latents,
                         timestep=timestep / 1000,
@@ -1247,15 +1080,11 @@ class FluxControlNetPipeline(
                         return_dict=False,
                         controlnet_blocks_repeat=controlnet_blocks_repeat,
                     )[0]
-                    noise_pred = neg_noise_pred + true_cfg_scale * (
-                        noise_pred - neg_noise_pred
-                    )
+                    noise_pred = neg_noise_pred + true_cfg_scale * (noise_pred - neg_noise_pred)
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents_dtype = latents.dtype
-                latents = self.scheduler.step(
-                    noise_pred, t, latents, return_dict=False
-                )[0]
+                latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
 
                 if latents.dtype != latents_dtype:
                     if torch.backends.mps.is_available():
@@ -1273,9 +1102,7 @@ class FluxControlNetPipeline(
                     control_image = callback_outputs.pop("control_image", control_image)
 
                 # call the callback, if provided
-                if i == len(timesteps) - 1 or (
-                    (i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0
-                ):
+                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
 
                 if XLA_AVAILABLE:
@@ -1285,12 +1112,8 @@ class FluxControlNetPipeline(
             image = latents
 
         else:
-            latents = self._unpack_latents(
-                latents, height, width, self.vae_scale_factor
-            )
-            latents = (
-                latents / self.vae.config.scaling_factor
-            ) + self.vae.config.shift_factor
+            latents = self._unpack_latents(latents, height, width, self.vae_scale_factor)
+            latents = (latents / self.vae.config.scaling_factor) + self.vae.config.shift_factor
 
             image = self.vae.decode(latents, return_dict=False)[0]
             image = self.image_processor.postprocess(image, output_type=output_type)
@@ -1361,14 +1184,8 @@ class FluxControlPipeline(
             transformer=transformer,
             scheduler=scheduler,
         )
-        self.vae_scale_factor = (
-            2 ** (len(self.vae.config.block_out_channels) - 1)
-            if getattr(self, "vae", None)
-            else 8
-        )
-        self.vae_latent_channels = (
-            self.vae.config.latent_channels if getattr(self, "vae", None) else 16
-        )
+        self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1) if getattr(self, "vae", None) else 8
+        self.vae_latent_channels = self.vae.config.latent_channels if getattr(self, "vae", None) else 16
         # Flux latents are turned into 2x2 patches and packed. This means the latent width and height has to be divisible
         # by the patch size. So the vae scale factor is multiplied by the patch size to account for this
         self.image_processor = VaeImageProcessor(
@@ -1376,9 +1193,7 @@ class FluxControlPipeline(
             vae_latent_channels=self.vae_latent_channels,
         )
         self.tokenizer_max_length = (
-            self.tokenizer.model_max_length
-            if hasattr(self, "tokenizer") and self.tokenizer is not None
-            else 77
+            self.tokenizer.model_max_length if hasattr(self, "tokenizer") and self.tokenizer is not None else 77
         )
         self.default_sample_size = 128
 
@@ -1410,24 +1225,16 @@ class FluxControlPipeline(
             return_tensors="pt",
         )
         text_input_ids = text_inputs.input_ids
-        untruncated_ids = self.tokenizer_2(
-            prompt, padding="longest", return_tensors="pt"
-        ).input_ids
+        untruncated_ids = self.tokenizer_2(prompt, padding="longest", return_tensors="pt").input_ids
 
-        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(
-            text_input_ids, untruncated_ids
-        ):
-            removed_text = self.tokenizer_2.batch_decode(
-                untruncated_ids[:, self.tokenizer_max_length - 1 : -1]
-            )
+        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(text_input_ids, untruncated_ids):
+            removed_text = self.tokenizer_2.batch_decode(untruncated_ids[:, self.tokenizer_max_length - 1 : -1])
             logger.warning(
                 "The following part of your input was truncated because `max_sequence_length` is set to "
                 f" {max_sequence_length} tokens: {removed_text}"
             )
 
-        prompt_embeds = self.text_encoder_2(
-            text_input_ids.to(device), output_hidden_states=False
-        )[0]
+        prompt_embeds = self.text_encoder_2(text_input_ids.to(device), output_hidden_states=False)[0]
 
         dtype = self.text_encoder_2.dtype
         prompt_embeds = prompt_embeds.to(dtype=dtype, device=device)
@@ -1436,9 +1243,7 @@ class FluxControlPipeline(
 
         # duplicate text embeddings and attention mask for each generation per prompt, using mps friendly method
         prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
-        prompt_embeds = prompt_embeds.view(
-            batch_size * num_images_per_prompt, seq_len, -1
-        )
+        prompt_embeds = prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
 
         return prompt_embeds
 
@@ -1468,22 +1273,14 @@ class FluxControlPipeline(
         )
 
         text_input_ids = text_inputs.input_ids
-        untruncated_ids = self.tokenizer(
-            prompt, padding="longest", return_tensors="pt"
-        ).input_ids
-        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(
-            text_input_ids, untruncated_ids
-        ):
-            removed_text = self.tokenizer.batch_decode(
-                untruncated_ids[:, self.tokenizer_max_length - 1 : -1]
-            )
+        untruncated_ids = self.tokenizer(prompt, padding="longest", return_tensors="pt").input_ids
+        if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(text_input_ids, untruncated_ids):
+            removed_text = self.tokenizer.batch_decode(untruncated_ids[:, self.tokenizer_max_length - 1 : -1])
             logger.warning(
                 "The following part of your input was truncated because CLIP can only handle sequences up to"
                 f" {self.tokenizer_max_length} tokens: {removed_text}"
             )
-        prompt_embeds = self.text_encoder(
-            text_input_ids.to(device), output_hidden_states=False
-        )
+        prompt_embeds = self.text_encoder(text_input_ids.to(device), output_hidden_states=False)
 
         # Use pooled output of CLIPTextModel
         prompt_embeds = prompt_embeds.pooler_output
@@ -1570,11 +1367,7 @@ class FluxControlPipeline(
                 # Retrieve the original scale by scaling back the LoRA layers
                 unscale_lora_layers(self.text_encoder_2, lora_scale)
 
-        dtype = (
-            self.text_encoder.dtype
-            if self.text_encoder is not None
-            else self.transformer.dtype
-        )
+        dtype = self.text_encoder.dtype if self.text_encoder is not None else self.transformer.dtype
         text_ids = torch.zeros(prompt_embeds.shape[1], 3).to(device=device, dtype=dtype)
 
         return prompt_embeds, pooled_prompt_embeds, text_ids
@@ -1590,17 +1383,13 @@ class FluxControlPipeline(
         callback_on_step_end_tensor_inputs=None,
         max_sequence_length=None,
     ):
-        if (
-            height % (self.vae_scale_factor * 2) != 0
-            or width % (self.vae_scale_factor * 2) != 0
-        ):
+        if height % (self.vae_scale_factor * 2) != 0 or width % (self.vae_scale_factor * 2) != 0:
             logger.warning(
                 f"`height` and `width` have to be divisible by {self.vae_scale_factor * 2} but are {height} and {width}. Dimensions will be resized accordingly"
             )
 
         if callback_on_step_end_tensor_inputs is not None and not all(
-            k in self._callback_tensor_inputs
-            for k in callback_on_step_end_tensor_inputs
+            k in self._callback_tensor_inputs for k in callback_on_step_end_tensor_inputs
         ):
             raise ValueError(
                 f"`callback_on_step_end_tensor_inputs` has to be in {self._callback_tensor_inputs}, but found {[k for k in callback_on_step_end_tensor_inputs if k not in self._callback_tensor_inputs]}"
@@ -1620,18 +1409,10 @@ class FluxControlPipeline(
             raise ValueError(
                 "Provide either `prompt` or `prompt_embeds`. Cannot leave both `prompt` and `prompt_embeds` undefined."
             )
-        elif prompt is not None and (
-            not isinstance(prompt, str) and not isinstance(prompt, list)
-        ):
-            raise ValueError(
-                f"`prompt` has to be of type `str` or `list` but is {type(prompt)}"
-            )
-        elif prompt_2 is not None and (
-            not isinstance(prompt_2, str) and not isinstance(prompt_2, list)
-        ):
-            raise ValueError(
-                f"`prompt_2` has to be of type `str` or `list` but is {type(prompt_2)}"
-            )
+        elif prompt is not None and (not isinstance(prompt, str) and not isinstance(prompt, list)):
+            raise ValueError(f"`prompt` has to be of type `str` or `list` but is {type(prompt)}")
+        elif prompt_2 is not None and (not isinstance(prompt_2, str) and not isinstance(prompt_2, list)):
+            raise ValueError(f"`prompt_2` has to be of type `str` or `list` but is {type(prompt_2)}")
 
         if prompt_embeds is not None and pooled_prompt_embeds is None:
             raise ValueError(
@@ -1639,41 +1420,27 @@ class FluxControlPipeline(
             )
 
         if max_sequence_length is not None and max_sequence_length > 512:
-            raise ValueError(
-                f"`max_sequence_length` cannot be greater than 512 but is {max_sequence_length}"
-            )
+            raise ValueError(f"`max_sequence_length` cannot be greater than 512 but is {max_sequence_length}")
 
     @staticmethod
     # Copied from diffusers.pipelines.flux.pipeline_flux.FluxPipeline._prepare_latent_image_ids
     def _prepare_latent_image_ids(batch_size, height, width, device, dtype):
         latent_image_ids = torch.zeros(height, width, 3)
-        latent_image_ids[..., 1] = (
-            latent_image_ids[..., 1] + torch.arange(height)[:, None]
-        )
-        latent_image_ids[..., 2] = (
-            latent_image_ids[..., 2] + torch.arange(width)[None, :]
-        )
+        latent_image_ids[..., 1] = latent_image_ids[..., 1] + torch.arange(height)[:, None]
+        latent_image_ids[..., 2] = latent_image_ids[..., 2] + torch.arange(width)[None, :]
 
-        latent_image_id_height, latent_image_id_width, latent_image_id_channels = (
-            latent_image_ids.shape
-        )
+        latent_image_id_height, latent_image_id_width, latent_image_id_channels = latent_image_ids.shape
 
-        latent_image_ids = latent_image_ids.reshape(
-            latent_image_id_height * latent_image_id_width, latent_image_id_channels
-        )
+        latent_image_ids = latent_image_ids.reshape(latent_image_id_height * latent_image_id_width, latent_image_id_channels)
 
         return latent_image_ids.to(device=device, dtype=dtype)
 
     @staticmethod
     # Copied from diffusers.pipelines.flux.pipeline_flux.FluxPipeline._pack_latents
     def _pack_latents(latents, batch_size, num_channels_latents, height, width):
-        latents = latents.view(
-            batch_size, num_channels_latents, height // 2, 2, width // 2, 2
-        )
+        latents = latents.view(batch_size, num_channels_latents, height // 2, 2, width // 2, 2)
         latents = latents.permute(0, 2, 4, 1, 3, 5)
-        latents = latents.reshape(
-            batch_size, (height // 2) * (width // 2), num_channels_latents * 4
-        )
+        latents = latents.reshape(batch_size, (height // 2) * (width // 2), num_channels_latents * 4)
 
         return latents
 
@@ -1743,9 +1510,7 @@ class FluxControlPipeline(
         shape = (batch_size, num_channels_latents, height, width)
 
         if latents is not None:
-            latent_image_ids = self._prepare_latent_image_ids(
-                batch_size, height // 2, width // 2, device, dtype
-            )
+            latent_image_ids = self._prepare_latent_image_ids(batch_size, height // 2, width // 2, device, dtype)
             return latents.to(device=device, dtype=dtype), latent_image_ids
 
         if isinstance(generator, list) and len(generator) != batch_size:
@@ -1755,13 +1520,9 @@ class FluxControlPipeline(
             )
 
         latents = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
-        latents = self._pack_latents(
-            latents, batch_size, num_channels_latents, height, width
-        )
+        latents = self._pack_latents(latents, batch_size, num_channels_latents, height, width)
 
-        latent_image_ids = self._prepare_latent_image_ids(
-            batch_size, height // 2, width // 2, device, dtype
-        )
+        latent_image_ids = self._prepare_latent_image_ids(batch_size, height // 2, width // 2, device, dtype)
 
         return latents, latent_image_ids
 
@@ -1948,11 +1709,7 @@ class FluxControlPipeline(
         device = self._execution_device
 
         # 3. Prepare text embeddings
-        lora_scale = (
-            self.joint_attention_kwargs.get("scale", None)
-            if self.joint_attention_kwargs is not None
-            else None
-        )
+        lora_scale = self.joint_attention_kwargs.get("scale", None) if self.joint_attention_kwargs is not None else None
         (
             prompt_embeds,
             pooled_prompt_embeds,
@@ -1982,12 +1739,8 @@ class FluxControlPipeline(
         )
 
         if control_image.ndim == 4:
-            control_image = self.vae.encode(control_image).latent_dist.sample(
-                generator=generator
-            )
-            control_image = (
-                control_image - self.vae.config.shift_factor
-            ) * self.vae.config.scaling_factor
+            control_image = self.vae.encode(control_image).latent_dist.sample(generator=generator)
+            control_image = (control_image - self.vae.config.shift_factor) * self.vae.config.scaling_factor
 
             height_control_image, width_control_image = control_image.shape[2:]
             control_image = self._pack_latents(
@@ -2010,11 +1763,7 @@ class FluxControlPipeline(
         )
 
         # 5. Prepare timesteps
-        sigmas = (
-            np.linspace(1.0, 1 / num_inference_steps, num_inference_steps)
-            if sigmas is None
-            else sigmas
-        )
+        sigmas = np.linspace(1.0, 1 / num_inference_steps, num_inference_steps) if sigmas is None else sigmas
         image_seq_len = latents.shape[1]
         mu = calculate_shift(
             image_seq_len,
@@ -2030,16 +1779,12 @@ class FluxControlPipeline(
             sigmas=sigmas,
             mu=mu,
         )
-        num_warmup_steps = max(
-            len(timesteps) - num_inference_steps * self.scheduler.order, 0
-        )
+        num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
         self._num_timesteps = len(timesteps)
 
         # handle guidance
         if self.transformer.config.guidance_embeds:
-            guidance = torch.full(
-                [1], guidance_scale, device=device, dtype=torch.float32
-            )
+            guidance = torch.full([1], guidance_scale, device=device, dtype=torch.float32)
             guidance = guidance.expand(latents.shape[0])
         else:
             guidance = None
@@ -2069,9 +1814,7 @@ class FluxControlPipeline(
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents_dtype = latents.dtype
-                latents = self.scheduler.step(
-                    noise_pred, t, latents, return_dict=False
-                )[0]
+                latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
 
                 if latents.dtype != latents_dtype:
                     if torch.backends.mps.is_available():
@@ -2088,9 +1831,7 @@ class FluxControlPipeline(
                     prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
 
                 # call the callback, if provided
-                if i == len(timesteps) - 1 or (
-                    (i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0
-                ):
+                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
 
                 if XLA_AVAILABLE:
@@ -2099,12 +1840,8 @@ class FluxControlPipeline(
         if output_type == "latent":
             image = latents
         else:
-            latents = self._unpack_latents(
-                latents, height, width, self.vae_scale_factor
-            )
-            latents = (
-                latents / self.vae.config.scaling_factor
-            ) + self.vae.config.shift_factor
+            latents = self._unpack_latents(latents, height, width, self.vae_scale_factor)
+            latents = (latents / self.vae.config.scaling_factor) + self.vae.config.shift_factor
             image = self.vae.decode(latents, return_dict=False)[0]
             image = self.image_processor.postprocess(image, output_type=output_type)
 

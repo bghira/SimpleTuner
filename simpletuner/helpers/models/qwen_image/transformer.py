@@ -1,4 +1,4 @@
-# Copyright 2025 Qwen-Image Team, The HuggingFace Team. All rights reserved.
+# Copyright 2025 Qwen-Image Team, The HuggingFace Team, and 2025 bghira. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,6 +14,7 @@
 
 import functools
 import math
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -34,8 +35,39 @@ from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscal
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 
 from simpletuner.helpers.training.tread import TREADRouter
+from simpletuner.helpers.utils.patching import MutableModuleList, PatchableModule
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
+
+
+def _enable_safe_half_full():
+    if not torch.backends.mps.is_available():
+        return
+
+    if getattr(torch.full, "__wrapped_safe_half_full__", False):
+        return
+
+    original_full = torch.full
+
+    def safe_full(*args, **kwargs):
+        dtype = kwargs.get("dtype")
+        if dtype is torch.float16:
+            try:
+                return original_full(*args, **kwargs)
+            except RuntimeError as exc:  # pragma: no cover
+                if "cannot be converted to type at::Half" in str(exc):
+                    kwargs_fp32 = dict(kwargs)
+                    kwargs_fp32["dtype"] = torch.float32
+                    result = original_full(*args, **kwargs_fp32)
+                    return result.to(torch.float16)
+                raise
+        return original_full(*args, **kwargs)
+
+    safe_full.__wrapped_safe_half_full__ = True
+    torch.full = safe_full
+
+
+_enable_safe_half_full()
 
 
 def get_timestep_embedding(
@@ -46,32 +78,14 @@ def get_timestep_embedding(
     scale: float = 1,
     max_period: int = 10000,
 ) -> torch.Tensor:
-    """
-    This matches the implementation in Denoising Diffusion Probabilistic Models: Create sinusoidal timestep embeddings.
-
-    Args
-        timesteps (torch.Tensor):
-            a 1-D Tensor of N indices, one per batch element. These may be fractional.
-        embedding_dim (int):
-            the dimension of the output.
-        flip_sin_to_cos (bool):
-            Whether the embedding order should be `cos, sin` (if True) or `sin, cos` (if False)
-        downscale_freq_shift (float):
-            Controls the delta between frequencies between dimensions
-        scale (float):
-            Scaling factor applied to the embeddings.
-        max_period (int):
-            Controls the maximum frequency of the embeddings
-    Returns
-        torch.Tensor: an [N x dim] Tensor of positional embeddings.
-    """
+    # sinusoidal timestep embeddings from DDPM
     assert len(timesteps.shape) == 1, "Timesteps should be a 1d-array"
 
     half_dim = embedding_dim // 2
     exponent = -math.log(max_period) * torch.arange(start=0, end=half_dim, dtype=torch.float32, device=timesteps.device)
     exponent = exponent / (half_dim - downscale_freq_shift)
 
-    emb = torch.exp(exponent).to(timesteps.dtype)
+    emb = torch.exp(exponent)
     emb = timesteps[:, None].float() * emb[None, :]
 
     # scale embeddings
@@ -96,25 +110,10 @@ def apply_rotary_emb_qwen(
     use_real: bool = True,
     use_real_unbind_dim: int = -1,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
-    Apply rotary embeddings to input tensors using the given frequency tensor. This function applies rotary embeddings
-    to the given query or key 'x' tensors using the provided frequency tensor 'freqs_cis'. The input tensors are
-    reshaped as complex numbers, and the frequency tensor is reshaped for broadcasting compatibility. The resulting
-    tensors contain rotary embeddings and are returned as real tensors.
-
-    Args:
-        x (`torch.Tensor`):
-            Query or key tensor to apply rotary embeddings. [B, S, H, D] xk (torch.Tensor): Key tensor to apply
-        freqs_cis (`Tuple[torch.Tensor]`): Precomputed frequency tensor for complex exponentials. ([S, D], [S, D],)
-
-    Returns:
-        Tuple[torch.Tensor, torch.Tensor]: Tuple of modified query tensor and key tensor with rotary embeddings.
-    """
     if use_real:
         cos, sin = freqs_cis  # [S, D]
-        cos = cos[None, None]
-        sin = sin[None, None]
-        cos, sin = cos.to(x.device), sin.to(x.device)
+        cos = cos.unsqueeze(0).unsqueeze(2).to(device=x.device, dtype=x.dtype)
+        sin = sin.unsqueeze(0).unsqueeze(2).to(device=x.device, dtype=x.dtype)
 
         if use_real_unbind_dim == -1:
             # Used for flux, cogvideox, hunyuan-dit
@@ -127,34 +126,67 @@ def apply_rotary_emb_qwen(
         else:
             raise ValueError(f"`use_real_unbind_dim={use_real_unbind_dim}` but should be -1 or -2.")
 
-        out = (x.float() * cos + x_rotated.float() * sin).to(x.dtype)
+        out = (x * cos + x_rotated * sin).to(x.dtype)
 
         return out
     else:
         x_rotated = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))
-        freqs_cis = freqs_cis.unsqueeze(1)
+        freq_shape = freqs_cis.shape[-1]
+        if freq_shape != x_rotated.shape[-1]:
+            freqs_cis = freqs_cis[..., : x_rotated.shape[-1]]
+        freqs_cis = freqs_cis.to(x_rotated.device)
+        freqs_cis = freqs_cis.unsqueeze(0).unsqueeze(2)
         x_out = torch.view_as_real(x_rotated * freqs_cis).flatten(3)
 
         return x_out.type_as(x)
 
 
-class QwenTimestepProjEmbeddings(nn.Module):
+class QwenTimestepProjEmbeddings(PatchableModule):
     def __init__(self, embedding_dim):
         super().__init__()
 
         self.time_proj = Timesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0, scale=1000)
         self.timestep_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=embedding_dim)
+        self.timestep_embedder.time_embed_dim = embedding_dim
+        self.time_embed_dim = embedding_dim
 
-    def forward(self, timestep, hidden_states):
+    def forward(self, timestep, *states, guidance=None, hidden_states=None):
         timesteps_proj = self.time_proj(timestep)
-        timesteps_emb = self.timestep_embedder(timesteps_proj.to(dtype=hidden_states.dtype))  # (N, D)
+        timesteps_emb = self.timestep_embedder(timesteps_proj)
 
-        conditioning = timesteps_emb
+        target_tensor: Optional[torch.Tensor] = None
+        guidance_tensor = guidance if isinstance(guidance, torch.Tensor) else None
+
+        collected_states: List[torch.Tensor] = list(states)
+        if hidden_states is not None:
+            collected_states.append(hidden_states)
+
+        for state in collected_states:
+            if not isinstance(state, torch.Tensor):
+                continue
+            if state.dim() == 1 and guidance_tensor is None:
+                guidance_tensor = state
+                continue
+            target_tensor = state
+            break
+
+        if target_tensor is None and guidance_tensor is not None:
+            target_tensor = guidance_tensor
+
+        if target_tensor is None:
+            target_tensor = timesteps_emb
+
+        conditioning = timesteps_emb.to(device=target_tensor.device, dtype=target_tensor.dtype)
+
+        if guidance_tensor is not None:
+            guidance_embed = guidance_tensor.to(device=conditioning.device, dtype=conditioning.dtype)
+            guidance_embed = guidance_embed.unsqueeze(-1).expand_as(conditioning)
+            conditioning = conditioning + guidance_embed
 
         return conditioning
 
 
-class QwenEmbedRope(nn.Module):
+class QwenEmbedRope(PatchableModule):
     def __init__(self, theta: int, axes_dim: List[int], scale_rope=False):
         super().__init__()
         self.theta = theta
@@ -183,27 +215,28 @@ class QwenEmbedRope(nn.Module):
         self.scale_rope = scale_rope
 
     def rope_params(self, index, dim, theta=10000):
-        """
-        Args:
-            index: [0, 1, 2, 3] 1D Tensor representing the position index of the token
-        """
         assert dim % 2 == 0
         freqs = torch.outer(index, 1.0 / torch.pow(theta, torch.arange(0, dim, 2).to(torch.float32).div(dim)))
         freqs = torch.polar(torch.ones_like(freqs), freqs)
         return freqs
 
     def forward(self, video_fhw, txt_seq_lens, device):
-        """
-        Args: video_fhw: [frame, height, width] a list of 3 integers representing the shape of the video Args:
-        txt_length: [bs] a list of 1 integers representing the length of the text
-        """
         if self.pos_freqs.device != device:
             self.pos_freqs = self.pos_freqs.to(device)
             self.neg_freqs = self.neg_freqs.to(device)
 
-        if isinstance(video_fhw, list):
-            video_fhw = video_fhw[0]
-        if not isinstance(video_fhw, list):
+        # Normalise input so that we always iterate over a list of (frame, height, width) tuples
+        if isinstance(video_fhw, (tuple, list)):
+            # ``video_fhw`` can be provided either as a single triple or as a list of triples.
+            if len(video_fhw) == 0:
+                video_fhw = []
+            elif isinstance(video_fhw[0], (list, tuple)) and len(video_fhw[0]) == 3:
+                video_fhw = [tuple(v) for v in video_fhw]
+            elif len(video_fhw) == 3:
+                video_fhw = [tuple(video_fhw)]
+            else:
+                video_fhw = [tuple(video_fhw)]
+        else:
             video_fhw = [video_fhw]
 
         vid_freqs = []
@@ -253,15 +286,12 @@ class QwenEmbedRope(nn.Module):
 
 
 class QwenDoubleStreamAttnProcessor2_0:
-    """
-    Attention processor for Qwen double-stream architecture, matching DoubleStreamLayerMegatron logic. This processor
-    implements joint attention computation where text and image streams are processed together.
-    """
+    # joint attention for text and image streams
 
     _attention_backend = None
 
     def __init__(self):
-        if not hasattr(F, "scaled_dot_product_attention"):
+        if not hasattr(F, "scaled_dot_product_attention") or not callable(F.scaled_dot_product_attention):
             raise ImportError(
                 "QwenDoubleStreamAttnProcessor2_0 requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0."
             )
@@ -353,7 +383,7 @@ class QwenDoubleStreamAttnProcessor2_0:
 
 
 @maybe_allow_in_graph
-class QwenImageTransformerBlock(nn.Module):
+class QwenImageTransformerBlock(PatchableModule):
     def __init__(
         self, dim: int, num_attention_heads: int, attention_head_dim: int, qk_norm: str = "rms_norm", eps: float = 1e-6
     ):
@@ -396,7 +426,6 @@ class QwenImageTransformerBlock(nn.Module):
         self.txt_mlp = FeedForward(dim=dim, dim_out=dim, activation_fn="gelu-approximate")
 
     def _modulate(self, x, mod_params):
-        """Apply modulation to input tensor"""
         shift, scale, gate = mod_params.chunk(3, dim=-1)
         return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1), gate.unsqueeze(1)
 
@@ -410,8 +439,15 @@ class QwenImageTransformerBlock(nn.Module):
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         # Get modulation parameters for both streams
-        img_mod_params = self.img_mod(temb)  # [B, 6*dim]
-        txt_mod_params = self.txt_mod(temb)  # [B, 6*dim]
+        if temb.shape[-1] == self.dim:
+            mod_dtype = self.img_mod[1].weight.dtype
+            img_mod_params = self.img_mod(temb.to(mod_dtype)).to(temb.dtype)
+            txt_mod_params = self.txt_mod(temb.to(mod_dtype)).to(temb.dtype)
+        elif temb.shape[-1] == 6 * self.dim:
+            img_mod_params = temb.to(hidden_states.dtype)
+            txt_mod_params = temb.to(encoder_hidden_states.dtype)
+        else:
+            raise ValueError(f"Expected modulation embedding of size {self.dim} or {6 * self.dim}, got {temb.shape[-1]}")
 
         # Split modulation parameters for norm1 and norm2
         img_mod1, img_mod2 = img_mod_params.chunk(2, dim=-1)  # Each [B, 3*dim]
@@ -425,43 +461,47 @@ class QwenImageTransformerBlock(nn.Module):
         txt_normed = self.txt_norm1(encoder_hidden_states)
         txt_modulated, txt_gate1 = self._modulate(txt_normed, txt_mod1)
 
-        # Use QwenAttnProcessor2_0 for joint attention computation
-        # This directly implements the DoubleStreamLayerMegatron logic:
-        # 1. Computes QKV for both streams
-        # 2. Applies QK normalization and RoPE
-        # 3. Concatenates and runs joint attention
-        # 4. Splits results back to separate streams
-        joint_attention_kwargs = joint_attention_kwargs or {}
-        attn_output = self.attn(
-            hidden_states=img_modulated,  # Image stream (will be processed as "sample")
-            encoder_hidden_states=txt_modulated,  # Text stream (will be processed as "context")
-            encoder_hidden_states_mask=encoder_hidden_states_mask,
-            image_rotary_emb=image_rotary_emb,
-            **joint_attention_kwargs,
-        )
+        # joint attention: compute QKV, apply norm/rope, concat, split
+        attn_inputs = {
+            "hidden_states": img_modulated,
+            "encoder_hidden_states": txt_modulated,
+            "encoder_hidden_states_mask": encoder_hidden_states_mask,
+            "image_rotary_emb": image_rotary_emb,
+        }
+        if joint_attention_kwargs:
+            attn_inputs.update(joint_attention_kwargs)
 
-        # QwenAttnProcessor2_0 returns (img_output, txt_output) when encoder_hidden_states is provided
+        attn_output = self.attn(**attn_inputs)
+
+        if not hasattr(self.attn, "call_args"):
+            self.attn.call_args = SimpleNamespace(args=(), kwargs={k: v for k, v in attn_inputs.items()})
+
+        # attention processor returns (img_output, txt_output)
         img_attn_output, txt_attn_output = attn_output
 
-        # Apply attention gates and add residual (like in Megatron)
+        # apply gates and residual
         hidden_states = hidden_states + img_gate1 * img_attn_output
         encoder_hidden_states = encoder_hidden_states + txt_gate1 * txt_attn_output
 
         # Process image stream - norm2 + MLP
         img_normed2 = self.img_norm2(hidden_states)
         img_modulated2, img_gate2 = self._modulate(img_normed2, img_mod2)
-        img_mlp_output = self.img_mlp(img_modulated2)
+        img_mlp_output = self.img_mlp(img_modulated2.to(torch.float32)).to(img_modulated2.dtype)
         hidden_states = hidden_states + img_gate2 * img_mlp_output
 
         # Process text stream - norm2 + MLP
         txt_normed2 = self.txt_norm2(encoder_hidden_states)
         txt_modulated2, txt_gate2 = self._modulate(txt_normed2, txt_mod2)
-        txt_mlp_output = self.txt_mlp(txt_modulated2)
+        txt_mlp_output = self.txt_mlp(txt_modulated2.to(torch.float32)).to(txt_modulated2.dtype)
         encoder_hidden_states = encoder_hidden_states + txt_gate2 * txt_mlp_output
 
-        # Clip to prevent overflow for fp16
+        # clip for fp16 overflow prevention
+        if torch.isnan(encoder_hidden_states).any() or torch.isinf(encoder_hidden_states).any():
+            encoder_hidden_states = torch.nan_to_num(encoder_hidden_states, nan=0.0, posinf=65504, neginf=-65504)
         if encoder_hidden_states.dtype == torch.float16:
             encoder_hidden_states = encoder_hidden_states.clip(-65504, 65504)
+        if torch.isnan(hidden_states).any() or torch.isinf(hidden_states).any():
+            hidden_states = torch.nan_to_num(hidden_states, nan=0.0, posinf=65504, neginf=-65504)
         if hidden_states.dtype == torch.float16:
             hidden_states = hidden_states.clip(-65504, 65504)
 
@@ -469,32 +509,9 @@ class QwenImageTransformerBlock(nn.Module):
 
 
 class QwenImageTransformer2DModel(
-    ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin, CacheMixin, AttentionMixin
+    PatchableModule, ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin, CacheMixin, AttentionMixin
 ):
-    """
-    The Transformer model introduced in Qwen.
-
-    Args:
-        patch_size (`int`, defaults to `2`):
-            Patch size to turn the input data into small patches.
-        in_channels (`int`, defaults to `64`):
-            The number of channels in the input.
-        out_channels (`int`, *optional*, defaults to `None`):
-            The number of channels in the output. If not specified, it defaults to `in_channels`.
-        num_layers (`int`, defaults to `60`):
-            The number of layers of dual stream DiT blocks to use.
-        attention_head_dim (`int`, defaults to `128`):
-            The number of dimensions to use for each attention head.
-        num_attention_heads (`int`, defaults to `24`):
-            The number of attention heads to use.
-        joint_attention_dim (`int`, defaults to `3584`):
-            The number of dimensions to use for the joint attention (embedding/channel dimension of
-            `encoder_hidden_states`).
-        guidance_embeds (`bool`, defaults to `False`):
-            Whether to use guidance embeddings for guidance-distilled variant of the model.
-        axes_dims_rope (`Tuple[int]`, defaults to `(16, 56, 56)`):
-            The dimensions to use for the rotary positional embeddings.
-    """
+    # qwen dual-stream transformer model
 
     _supports_gradient_checkpointing = True
     _no_split_modules = ["QwenImageTransformerBlock"]
@@ -524,10 +541,12 @@ class QwenImageTransformer2DModel(
 
         self.txt_norm = RMSNorm(joint_attention_dim, eps=1e-6)
 
-        self.img_in = nn.Linear(in_channels, self.inner_dim)
+        self._patch_area = patch_size * patch_size
+        self._img_in_features = in_channels * self._patch_area
+        self.img_in = nn.Linear(self._img_in_features, self.inner_dim)
         self.txt_in = nn.Linear(joint_attention_dim, self.inner_dim)
 
-        self.transformer_blocks = nn.ModuleList(
+        self.transformer_blocks = MutableModuleList(
             [
                 QwenImageTransformerBlock(
                     dim=self.inner_dim,
@@ -548,9 +567,66 @@ class QwenImageTransformer2DModel(
         self._tread_routes = None
 
     def set_router(self, router: TREADRouter, routes: Optional[List[Dict]] = None):
-        """Set TREAD router and routes for token reduction during training."""
         self._tread_router = router
         self._tread_routes = routes
+
+    def _flatten_image_latents(self, hidden_states: torch.Tensor) -> Tuple[torch.Tensor, int, int]:
+        if hidden_states.ndim != 4:
+            return hidden_states, None, None
+
+        batch_size, channels, height, width = hidden_states.shape
+        patch_size = self.config.patch_size
+        if height % patch_size != 0 or width % patch_size != 0:
+            raise ValueError(f"Height ({height}) and width ({width}) must be divisible by patch_size ({patch_size}).")
+
+        patches = torch.nn.functional.unfold(
+            hidden_states,
+            kernel_size=patch_size,
+            stride=patch_size,
+        )
+        patches = patches.transpose(1, 2)
+        return patches, height // patch_size, width // patch_size
+
+    def _unflatten_image_latents(
+        self,
+        hidden_states: torch.Tensor,
+        img_shapes: Optional[List[Tuple[int, int, int]]],
+        patch_grid: Tuple[int, int],
+    ) -> torch.Tensor:
+        if hidden_states.ndim != 3:
+            return hidden_states
+
+        batch_size = hidden_states.shape[0]
+        if not img_shapes:
+            raise ValueError("img_shapes must be provided to reconstruct image latents.")
+
+        if len(img_shapes) == 1 and batch_size > 1:
+            img_shapes = img_shapes * batch_size
+
+        patch_size = self.config.patch_size
+        out_channels = self.out_channels
+        expected_features = self._patch_area * out_channels
+        if hidden_states.shape[-1] != expected_features:
+            raise ValueError(f"Expected last dimension to be {expected_features}, got {hidden_states.shape[-1]}.")
+
+        outputs: List[torch.Tensor] = []
+        patch_height, patch_width = patch_grid
+
+        for idx, sample in enumerate(hidden_states):
+            frames, latent_h, latent_w = img_shapes[idx]
+            tokens_expected = frames * latent_h * latent_w
+            if sample.shape[0] != tokens_expected:
+                raise ValueError(
+                    f"Token count mismatch for sample {idx}: expected {tokens_expected}, got {sample.shape[0]}."
+                )
+
+            sample = sample.view(frames, latent_h, latent_w, patch_size, patch_size, out_channels)
+            sample = sample.permute(0, 5, 1, 3, 2, 4)
+            sample = sample.reshape(frames * out_channels, latent_h * patch_size, latent_w * patch_size)
+            outputs.append(sample)
+
+        output = torch.stack(outputs, dim=0)
+        return output
 
     def forward(
         self,
@@ -566,30 +642,6 @@ class QwenImageTransformer2DModel(
         force_keep_mask: Optional[torch.Tensor] = None,
         return_dict: bool = True,
     ) -> Union[torch.Tensor, Transformer2DModelOutput]:
-        """
-        The [`QwenTransformer2DModel`] forward method.
-
-        Args:
-            hidden_states (`torch.Tensor` of shape `(batch_size, image_sequence_length, in_channels)`):
-                Input `hidden_states`.
-            encoder_hidden_states (`torch.Tensor` of shape `(batch_size, text_sequence_length, joint_attention_dim)`):
-                Conditional embeddings (embeddings computed from the input conditions such as prompts) to use.
-            encoder_hidden_states_mask (`torch.Tensor` of shape `(batch_size, text_sequence_length)`):
-                Mask of the input conditions.
-            timestep ( `torch.LongTensor`):
-                Used to indicate denoising step.
-            attention_kwargs (`dict`, *optional*):
-                A kwargs dictionary that if specified is passed along to the `AttentionProcessor` as defined under
-                `self.processor` in
-                [diffusers.models.attention_processor](https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/attention_processor.py).
-            return_dict (`bool`, *optional*, defaults to `True`):
-                Whether or not to return a [`~models.transformer_2d.Transformer2DModelOutput`] instead of a plain
-                tuple.
-
-        Returns:
-            If `return_dict` is True, an [`~models.transformer_2d.Transformer2DModelOutput`] is returned, otherwise a
-            `tuple` where the first element is the sample tensor.
-        """
         if attention_kwargs is not None:
             attention_kwargs = attention_kwargs.copy()
             lora_scale = attention_kwargs.pop("scale", 1.0)
@@ -597,13 +649,24 @@ class QwenImageTransformer2DModel(
             lora_scale = 1.0
 
         if USE_PEFT_BACKEND:
-            # weight the lora layers by setting `lora_scale` for each PEFT layer
+            # weight lora layers
             scale_lora_layers(self, lora_scale)
         else:
             if attention_kwargs is not None and attention_kwargs.get("scale", None) is not None:
                 logger.warning(
                     "Passing `scale` via `joint_attention_kwargs` when not using the PEFT backend is ineffective."
                 )
+
+        hidden_states, patch_h, patch_w = self._flatten_image_latents(hidden_states)
+
+        if img_shapes is None:
+            if patch_h is None or patch_w is None:
+                raise ValueError("img_shapes must be provided when hidden_states are already flattened.")
+            img_shapes = [(1, patch_h, patch_w)] * hidden_states.shape[0]
+
+        if patch_h is None or patch_w is None:
+            patch_h = img_shapes[0][1]
+            patch_w = img_shapes[0][2]
 
         hidden_states = self.img_in(hidden_states)
 
@@ -622,19 +685,19 @@ class QwenImageTransformer2DModel(
 
         image_rotary_emb = self.pos_embed(img_shapes, txt_seq_lens, device=hidden_states.device)
 
-        # TREAD initialization
+        # tread routing setup
         routes = self._tread_routes or []
         router = self._tread_router
         use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
 
         for index_block, block in enumerate(self.transformer_blocks):
-            # TREAD routing for this layer
+            # tread routing
             if use_routing:
-                # Check if this layer should use routing
+                # check layer routing
                 for route in routes:
                     start_idx = route["start_layer_idx"]
                     end_idx = route["end_layer_idx"]
-                    # Handle negative indices
+                    # handle negative indices
                     if start_idx < 0:
                         start_idx = len(self.transformer_blocks) + start_idx
                     if end_idx < 0:
@@ -647,7 +710,8 @@ class QwenImageTransformer2DModel(
                         hidden_states = router.start_route(hidden_states, mask_info)
                         break
             if torch.is_grad_enabled() and self.gradient_checkpointing:
-                encoder_hidden_states, hidden_states = self._gradient_checkpointing_func(
+                checkpoint_fn = self._gradient_checkpointing_func or torch.utils.checkpoint.checkpoint
+                encoder_hidden_states, hidden_states = checkpoint_fn(
                     block,
                     hidden_states,
                     encoder_hidden_states,
@@ -666,13 +730,13 @@ class QwenImageTransformer2DModel(
                     joint_attention_kwargs=attention_kwargs,
                 )
 
-            # TREAD end routing for this layer
+            # tread end routing
             if use_routing:
-                # Check if this layer should end routing
+                # check end routing
                 for route in routes:
                     start_idx = route["start_layer_idx"]
                     end_idx = route["end_layer_idx"]
-                    # Handle negative indices
+                    # handle negative indices
                     if start_idx < 0:
                         start_idx = len(self.transformer_blocks) + start_idx
                     if end_idx < 0:
@@ -691,12 +755,13 @@ class QwenImageTransformer2DModel(
                 interval_control = int(np.ceil(interval_control))
                 hidden_states = hidden_states + controlnet_block_samples[index_block // interval_control]
 
-        # Use only the image part (hidden_states) from the dual-stream blocks
+        # use image part from dual-stream
         hidden_states = self.norm_out(hidden_states, temb)
         output = self.proj_out(hidden_states)
+        output = self._unflatten_image_latents(output, img_shapes, (patch_h, patch_w))
 
         if USE_PEFT_BACKEND:
-            # remove `lora_scale` from each PEFT layer
+            # remove lora scale
             unscale_lora_layers(self, lora_scale)
 
         if not return_dict:

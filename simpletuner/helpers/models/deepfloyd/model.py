@@ -1,26 +1,15 @@
-import torch, os, logging
-from simpletuner.helpers.models.common import (
-    ImageModelFoundation,
-    PredictionTypes,
-    PipelineTypes,
-    ModelTypes,
-)
-from transformers import (
-    T5TokenizerFast,
-    T5EncoderModel,
-)
-from diffusers import UNet2DConditionModel
-from diffusers.pipelines import (
-    IFPipeline,
-    IFSuperResolutionPipeline,
-)
-from diffusers import AutoencoderKL
-from diffusers.utils import (
-    convert_state_dict_to_diffusers,
-    convert_unet_state_dict_to_peft,
-)
+import logging
+import os
+
+import torch
+from diffusers import AutoencoderKL, UNet2DConditionModel
+from diffusers.pipelines import IFPipeline, IFSuperResolutionPipeline
+from diffusers.utils import convert_state_dict_to_diffusers, convert_unet_state_dict_to_peft
 from peft import set_peft_model_state_dict
 from peft.utils import get_peft_model_state_dict
+from transformers import T5EncoderModel, T5TokenizerFast
+
+from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -97,9 +86,7 @@ class DeepFloydIF(ImageModelFoundation):
             "prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
         }
 
-    def convert_negative_text_embed_for_pipeline(
-        self, text_embedding: torch.Tensor, prompt: str
-    ) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
         return {
             "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
@@ -116,9 +103,7 @@ class DeepFloydIF(ImageModelFoundation):
             Text encoder output (raw)
         """
 
-        positive_embed, negative_embed = self.pipelines[
-            PipelineTypes.TEXT2IMG
-        ].encode_prompt(
+        positive_embed, negative_embed = self.pipelines[PipelineTypes.TEXT2IMG].encode_prompt(
             prompt=prompts,
             do_classifier_free_guidance=False,
             device=self.accelerator.device,
@@ -147,9 +132,7 @@ class DeepFloydIF(ImageModelFoundation):
                 [prepared_batch["noisy_latents"], prepared_batch["noisy_latents"]],
                 dim=1,
             )
-            logger.info(
-                f"Post--expansion shape: {prepared_batch['noisy_latents'].shape}"
-            )
+            logger.info(f"Post--expansion shape: {prepared_batch['noisy_latents'].shape}")
             prediction_kwargs["class_labels"] = prepared_batch["timesteps"].to(
                 device=self.accelerator.device,
                 dtype=self.config.base_weight_dtype,
@@ -177,14 +160,9 @@ class DeepFloydIF(ImageModelFoundation):
                 "DeepFloyd does not support fp8-quanto. Please use fp8-torchao or int8 precision level instead."
             )
         t5_max_length = 77
-        if (
-            self.config.tokenizer_max_length is None
-            or int(self.config.tokenizer_max_length) > t5_max_length
-        ):
+        if self.config.tokenizer_max_length is None or int(self.config.tokenizer_max_length) > t5_max_length:
             if not self.config.i_know_what_i_am_doing:
-                logger.warning(
-                    f"Updating T5 XXL tokeniser max length to {t5_max_length} for DeepFloyd."
-                )
+                logger.warning(f"Updating T5 XXL tokeniser max length to {t5_max_length} for DeepFloyd.")
                 self.config.tokenizer_max_length = t5_max_length
             else:
                 logger.warning(
@@ -210,10 +188,6 @@ class DeepFloydIF(ImageModelFoundation):
     def custom_model_card_schedule_info(self):
         output_args = []
         # TODO: Implement scheduler info for DeepFloyd.
-        output_str = (
-            f" (extra parameters={output_args})"
-            if output_args
-            else " (no special parameters set)"
-        )
+        output_str = f" (extra parameters={output_args})" if output_args else " (no special parameters set)"
 
         return output_str

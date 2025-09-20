@@ -1,14 +1,16 @@
+import logging
+import os
+from io import BytesIO
+from pathlib import Path
+from typing import Any, List, Tuple, Union
+
+import torch
+from atomicwrites import atomic_write
+from PIL import Image
+
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.image_manipulation.load import load_image, load_video
-from simpletuner.helpers.training import video_file_extensions, image_file_extensions
-from pathlib import Path
-from io import BytesIO
-import os
-from PIL import Image
-import logging
-import torch
-from typing import Any, List, Tuple, Union
-from atomicwrites import atomic_write
+from simpletuner.helpers.training import image_file_extensions, video_file_extensions
 
 logger = logging.getLogger("LocalDataBackend")
 from simpletuner.helpers.training.multi_process import should_log
@@ -39,9 +41,7 @@ class LocalDataBackend(BaseDataBackend):
     def from_instance_representation(representation: dict) -> "LocalDataBackend":
         """Create a new LocalDataBackend instance from a serialized representation."""
         if representation.get("backend_type") != "local":
-            raise ValueError(
-                f"Expected backend_type 'local', got {representation.get('backend_type')}"
-            )
+            raise ValueError(f"Expected backend_type 'local', got {representation.get('backend_type')}")
 
         # Create without accelerator - subprocess will set its own if needed
         return LocalDataBackend(
@@ -71,9 +71,7 @@ class LocalDataBackend(BaseDataBackend):
         mode = "wb"
 
         try:
-            with atomic_write(
-                filepath, mode=mode, overwrite=True, encoding=None
-            ) as temp_file:
+            with atomic_write(filepath, mode=mode, overwrite=True, encoding=None) as temp_file:
                 if isinstance(data, Union[dict, torch.Tensor]):
                     self.torch_save(data, temp_file)
                 elif isinstance(data, str):
@@ -125,9 +123,7 @@ class LocalDataBackend(BaseDataBackend):
             logger.error(f"Error opening file {filepath} with mode {mode}: {e}")
             raise
 
-    def list_files(
-        self, file_extensions: List[str], instance_data_dir: str
-    ) -> List[Tuple[str, List, List[str]]]:
+    def list_files(self, file_extensions: List[str], instance_data_dir: str) -> List[Tuple[str, List, List[str]]]:
         """
         List all files matching the given file extensions.
         Creates Path objects of each file found.
@@ -174,9 +170,7 @@ class LocalDataBackend(BaseDataBackend):
                         logger.warning(f"Broken symlink encountered: {p} - {e}")
 
         # Prepare the extensions for globbing
-        extensions = (
-            [f"*.{ext.lower()}" for ext in file_extensions] if file_extensions else None
-        )
+        extensions = [f"*.{ext.lower()}" for ext in file_extensions] if file_extensions else None
 
         paths = list(_rglob_follow_symlinks(Path(instance_data_dir), extensions))
 
@@ -211,30 +205,20 @@ class LocalDataBackend(BaseDataBackend):
             image = file_loader(filepath)
             return image
         except Exception as e:
-            logger.error(
-                f"Encountered error opening image {filepath}: {e}", exc_info=True
-            )
+            logger.error(f"Encountered error opening image {filepath}: {e}", exc_info=True)
             if delete_problematic_images:
                 try:
-                    logger.error(
-                        "Deleting image, because --delete_problematic_images is provided."
-                    )
+                    logger.error("Deleting image, because --delete_problematic_images is provided.")
                     self.delete(filepath)
                 except Exception as del_e:
-                    logger.error(
-                        f"Failed to delete problematic image {filepath}: {del_e}"
-                    )
+                    logger.error(f"Failed to delete problematic image {filepath}: {del_e}")
             else:
                 raise e
 
-    def read_image_batch(
-        self, filepaths: List[str], delete_problematic_images: bool = False
-    ) -> Tuple[List[str], List[Any]]:
+    def read_image_batch(self, filepaths: List[str], delete_problematic_images: bool = False) -> Tuple[List[str], List[Any]]:
         """Read a batch of images from the specified filepaths."""
         if not isinstance(filepaths, list):
-            raise ValueError(
-                f"read_image_batch must be given a list of image filepaths. Received type: {type(filepaths)}"
-            )
+            raise ValueError(f"read_image_batch must be given a list of image filepaths. Received type: {type(filepaths)}")
         output_images = []
         available_keys = []
         for filepath in filepaths:
@@ -247,15 +231,11 @@ class LocalDataBackend(BaseDataBackend):
                 available_keys.append(filepath)
             except Exception as e:
                 if delete_problematic_images:
-                    logger.error(
-                        f"Deleting image '{filepath}', because --delete_problematic_images is provided. Error: {e}"
-                    )
+                    logger.error(f"Deleting image '{filepath}', because --delete_problematic_images is provided. Error: {e}")
                     try:
                         self.delete(filepath)
                     except Exception as del_e:
-                        logger.error(
-                            f"Failed to delete problematic image {filepath}: {del_e}"
-                        )
+                        logger.error(f"Failed to delete problematic image {filepath}: {del_e}")
                 else:
                     logger.warning(
                         f"A problematic image {filepath} is detected, but we are not allowed to remove it, because --delete_problematic_images is not provided."
@@ -298,9 +278,7 @@ class LocalDataBackend(BaseDataBackend):
                     self.delete(filename)
                     logger.info(f"Deleted corrupt torch file: {filename}")
                 except Exception as del_e:
-                    logger.error(
-                        f"Failed to delete corrupt torch file {filename}: {del_e}"
-                    )
+                    logger.error(f"Failed to delete corrupt torch file {filename}: {del_e}")
             raise e
 
     def torch_save(self, data: torch.Tensor, original_location: Any) -> None:
@@ -310,9 +288,7 @@ class LocalDataBackend(BaseDataBackend):
         try:
             if isinstance(original_location, str):
                 # original_location is a filepath
-                with atomic_write(
-                    original_location, mode="wb", overwrite=True, encoding=None
-                ) as temp_file:
+                with atomic_write(original_location, mode="wb", overwrite=True, encoding=None) as temp_file:
                     if self.compress_cache:
                         compressed_data = self._compress_torch(data)
                         temp_file.write(compressed_data)

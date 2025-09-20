@@ -243,9 +243,9 @@ class LTXVideoRotaryPosEmbed(nn.Module):
         else:
             grid = torch.stack(
                 [
-                    video_coords[:, 0] / self.base_num_frames,
-                    video_coords[:, 1] / self.base_height,
-                    video_coords[:, 2] / self.base_width,
+                    video_coords[..., 0] / self.base_num_frames,
+                    video_coords[..., 1] / self.base_height,
+                    video_coords[..., 2] / self.base_width,
                 ],
                 dim=-1,
             )

@@ -1,5 +1,6 @@
-import torch.distributed as dist
 import os
+
+import torch.distributed as dist
 
 
 def _get_rank():

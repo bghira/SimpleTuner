@@ -1,16 +1,10 @@
+from typing import Any, Dict, Optional, Union
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-from typing import Any, Dict, Optional, Union
-from diffusers.utils import logging
-from diffusers.utils import (
-    USE_PEFT_BACKEND,
-    logging,
-    scale_lora_layers,
-    unscale_lora_layers,
-)
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
+from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscale_lora_layers
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -43,13 +37,8 @@ def wan_forward_origin(
         # weight the lora layers by setting `lora_scale` for each PEFT layer
         scale_lora_layers(self, lora_scale)
     else:
-        if (
-            attention_kwargs is not None
-            and attention_kwargs.get("scale", None) is not None
-        ):
-            logger.warning(
-                "Passing `scale` via `attention_kwargs` when not using the PEFT backend is ineffective."
-            )
+        if attention_kwargs is not None and attention_kwargs.get("scale", None) is not None:
+            logger.warning("Passing `scale` via `attention_kwargs` when not using the PEFT backend is ineffective.")
 
     batch_size, num_channels, num_frames, height, width = hidden_states.shape
     p_t, p_h, p_w = self.config.patch_size
@@ -62,17 +51,13 @@ def wan_forward_origin(
     hidden_states = self.patch_embedding(hidden_states)
     hidden_states = hidden_states.flatten(2).transpose(1, 2)
 
-    temb, timestep_proj, encoder_hidden_states, encoder_hidden_states_image = (
-        self.condition_embedder(
-            timestep, encoder_hidden_states, encoder_hidden_states_image
-        )
+    temb, timestep_proj, encoder_hidden_states, encoder_hidden_states_image = self.condition_embedder(
+        timestep, encoder_hidden_states, encoder_hidden_states_image
     )
     timestep_proj = timestep_proj.unflatten(1, (6, -1))
 
     if encoder_hidden_states_image is not None:
-        encoder_hidden_states = torch.concat(
-            [encoder_hidden_states_image, encoder_hidden_states], dim=1
-        )
+        encoder_hidden_states = torch.concat([encoder_hidden_states_image, encoder_hidden_states], dim=1)
 
     if output_features:
         features_list = []
@@ -85,9 +70,7 @@ def wan_forward_origin(
             )
     else:
         for _, block in enumerate(self.blocks):
-            hidden_states = block(
-                hidden_states, encoder_hidden_states, timestep_proj, rotary_emb
-            )
+            hidden_states = block(hidden_states, encoder_hidden_states, timestep_proj, rotary_emb)
 
             if output_features and _ % output_features_stride == 0:
                 features_list.append(hidden_states)
@@ -102,9 +85,7 @@ def wan_forward_origin(
     shift = shift.to(hidden_states.device)
     scale = scale.to(hidden_states.device)
 
-    hidden_states = (
-        self.norm_out(hidden_states.float()) * (1 + scale) + shift
-    ).type_as(hidden_states)
+    hidden_states = (self.norm_out(hidden_states.float()) * (1 + scale) + shift).type_as(hidden_states)
     hidden_states = self.proj_out(hidden_states)
 
     hidden_states = hidden_states.reshape(
@@ -125,9 +106,7 @@ def wan_forward_origin(
             ori_features_list = torch.stack(features_list, dim=0)
             new_feat_list = []
             for xfeat in features_list:
-                tmp = (self.norm_out(xfeat.float()) * (1 + scale) + shift).type_as(
-                    xfeat
-                )
+                tmp = (self.norm_out(xfeat.float()) * (1 + scale) + shift).type_as(xfeat)
                 tmp = self.proj_out(tmp)
                 tmp = tmp.reshape(
                     batch_size,
@@ -205,13 +184,8 @@ def wan_forward(
         # weight the lora layers by setting `lora_scale` for each PEFT layer
         scale_lora_layers(self, lora_scale)
     else:
-        if (
-            attention_kwargs is not None
-            and attention_kwargs.get("scale", None) is not None
-        ):
-            logger.warning(
-                "Passing `scale` via `attention_kwargs` when not using the PEFT backend is ineffective."
-            )
+        if attention_kwargs is not None and attention_kwargs.get("scale", None) is not None:
+            logger.warning("Passing `scale` via `attention_kwargs` when not using the PEFT backend is ineffective.")
 
     batch_size, num_channels, num_frames, height, width = hidden_states.shape
     p_t, p_h, p_w = self.config.patch_size
@@ -224,17 +198,13 @@ def wan_forward(
     hidden_states = self.patch_embedding(hidden_states)
     hidden_states = hidden_states.flatten(2).transpose(1, 2)
 
-    temb, timestep_proj, encoder_hidden_states, encoder_hidden_states_image = (
-        self.condition_embedder_lora(
-            timestep, encoder_hidden_states, encoder_hidden_states_image
-        )
+    temb, timestep_proj, encoder_hidden_states, encoder_hidden_states_image = self.condition_embedder_lora(
+        timestep, encoder_hidden_states, encoder_hidden_states_image
     )
     timestep_proj = timestep_proj.unflatten(1, (6, -1))
 
     if encoder_hidden_states_image is not None:
-        encoder_hidden_states = torch.concat(
-            [encoder_hidden_states_image, encoder_hidden_states], dim=1
-        )
+        encoder_hidden_states = torch.concat([encoder_hidden_states_image, encoder_hidden_states], dim=1)
 
     if output_features:
         features_list = []
@@ -247,9 +217,7 @@ def wan_forward(
             )
     else:
         for _, block in enumerate(self.blocks):  # 30
-            hidden_states = block(
-                hidden_states, encoder_hidden_states, timestep_proj, rotary_emb
-            )
+            hidden_states = block(hidden_states, encoder_hidden_states, timestep_proj, rotary_emb)
 
             if output_features and _ % output_features_stride == 0:
                 features_list.append(hidden_states)
@@ -264,9 +232,7 @@ def wan_forward(
     shift = shift.to(hidden_states.device)
     scale = scale.to(hidden_states.device)
 
-    hidden_states = (
-        self.norm_out_lora(hidden_states.float()) * (1 + scale) + shift
-    ).type_as(hidden_states)
+    hidden_states = (self.norm_out_lora(hidden_states.float()) * (1 + scale) + shift).type_as(hidden_states)
     hidden_states = self.proj_out_lora(hidden_states)
 
     hidden_states = hidden_states.reshape(
@@ -287,9 +253,7 @@ def wan_forward(
             ori_features_list = torch.stack(features_list, dim=0)
             new_feat_list = []
             for xfeat in features_list:
-                tmp = (self.norm_out_lora(xfeat.float()) * (1 + scale) + shift).type_as(
-                    xfeat
-                )
+                tmp = (self.norm_out_lora(xfeat.float()) * (1 + scale) + shift).type_as(xfeat)
                 tmp = self.proj_out_lora(tmp)
 
                 tmp = tmp.reshape(
@@ -343,24 +307,18 @@ class DiscriminatorHead(nn.Module):
         self.conv1 = nn.Sequential(
             nn.Conv2d(input_channel, inner_channel, kernel_size=1, stride=1, padding=0),
             nn.GroupNorm(32, inner_channel),
-            nn.LeakyReLU(
-                inplace=True
-            ),  # Note: Using LeakyReLU instead of GELU to save memory
+            nn.LeakyReLU(inplace=True),  # Note: Using LeakyReLU instead of GELU to save memory
         )
 
         # Second convolutional block: same structure for deeper feature extraction
         self.conv2 = nn.Sequential(
             nn.Conv2d(inner_channel, inner_channel, kernel_size=1, stride=1, padding=0),
             nn.GroupNorm(32, inner_channel),
-            nn.LeakyReLU(
-                inplace=True
-            ),  # Note: Using LeakyReLU instead of GELU to save memory
+            nn.LeakyReLU(inplace=True),  # Note: Using LeakyReLU instead of GELU to save memory
         )
 
         # Output projection layer
-        self.conv_out = nn.Conv2d(
-            inner_channel, output_channel, kernel_size=1, stride=1, padding=0
-        )
+        self.conv_out = nn.Conv2d(inner_channel, output_channel, kernel_size=1, stride=1, padding=0)
 
     def forward(self, x):
         """
@@ -456,12 +414,7 @@ class Discriminator(nn.Module):
         # - Inner list: num_h_per_head discriminator heads per channel
         self.heads = nn.ModuleList(
             [
-                nn.ModuleList(
-                    [
-                        DiscriminatorHead(adapter_channel)
-                        for _ in range(self.num_h_per_head)
-                    ]
-                )
+                nn.ModuleList([DiscriminatorHead(adapter_channel) for _ in range(self.num_h_per_head)])
                 for adapter_channel in adapter_channel_dims
             ]
         )
@@ -488,9 +441,7 @@ class Discriminator(nn.Module):
             return custom_forward
 
         # Ensure we have the expected number of features
-        assert len(features) == len(
-            self.heads
-        ), f"Expected {len(self.heads)} features, got {len(features)}"
+        assert len(features) == len(self.heads), f"Expected {len(self.heads)} features, got {len(features)}"
 
         # Apply each head group to its corresponding feature
         for i in range(len(features)):

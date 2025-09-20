@@ -1,7 +1,9 @@
-import torch
-from torch.optim.optimizer import Optimizer
 import math
 from typing import Iterable
+
+import torch
+from torch.optim.optimizer import Optimizer
+
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 
@@ -46,13 +48,9 @@ class AdamWScheduleFreeKahan(Optimizer):
         if "step" not in state:
             state["step"] = 0
             state["exp_avg"] = torch.zeros_like(p, memory_format=torch.preserve_format)
-            state["exp_avg_sq"] = torch.zeros_like(
-                p, memory_format=torch.preserve_format
-            )
+            state["exp_avg_sq"] = torch.zeros_like(p, memory_format=torch.preserve_format)
             if self.defaults["kahan_sum"]:
-                state["kahan_comp"] = torch.zeros_like(
-                    p, memory_format=torch.preserve_format
-                )
+                state["kahan_comp"] = torch.zeros_like(p, memory_format=torch.preserve_format)
 
     def eval(self):
         for group in self.param_groups:
@@ -63,9 +61,7 @@ class AdamWScheduleFreeKahan(Optimizer):
                     state = self.state[p]
                     if "z" in state:
                         # Set p.data to x
-                        p.data.lerp_(
-                            end=state["z"].to(p.data.device), weight=1 - 1 / beta1
-                        )
+                        p.data.lerp_(end=state["z"].to(p.data.device), weight=1 - 1 / beta1)
                 group["train_mode"] = False
 
     def train(self):
