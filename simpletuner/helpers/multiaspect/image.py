@@ -1,19 +1,21 @@
-from torchvision import transforms
-from PIL import Image
 import logging
 import os
-import numpy as np
 from math import sqrt
+
+import numpy as np
+from PIL import Image
+from torchvision import transforms
+
+from simpletuner.helpers.models.common import ImageModelFoundation, VideoModelFoundation
 from simpletuner.helpers.training.state_tracker import StateTracker
-from simpletuner.helpers.models.common import VideoModelFoundation, ImageModelFoundation
 
 logger = logging.getLogger("MultiaspectImage")
 logger.setLevel(os.environ.get("SIMPLETUNER_IMAGE_PREP_LOG_LEVEL", "INFO"))
 
-import torch
-from torchvision import transforms
-from PIL import Image
 import numpy as np
+import torch
+from PIL import Image
+from torchvision import transforms
 
 
 class MultiaspectImage:
@@ -92,14 +94,10 @@ class MultiaspectImage:
             raise ValueError(f"Unknown resolution type: {resolution_type}")
 
     @staticmethod
-    def calculate_new_size_by_pixel_edge(
-        aspect_ratio: float, resolution: int, original_size: tuple
-    ):
+    def calculate_new_size_by_pixel_edge(aspect_ratio: float, resolution: int, original_size: tuple):
         if type(aspect_ratio) != float:
             raise ValueError(f"Aspect ratio must be a float, not {type(aspect_ratio)}")
-        if type(resolution) != int and (
-            type(resolution) != float or int(resolution) != resolution
-        ):
+        if type(resolution) != int and (type(resolution) != float or int(resolution) != resolution):
             raise ValueError(f"Resolution must be an int, not {type(resolution)}")
 
         W_original, H_original = original_size
@@ -135,24 +133,16 @@ class MultiaspectImage:
             W_initial += bigger_difference
             H_initial += bigger_difference
 
-        adjusted_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-            (W_adjusted, H_adjusted)
-        )
+        adjusted_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio((W_adjusted, H_adjusted))
 
         return (W_adjusted, H_adjusted), (W_initial, H_initial), adjusted_aspect_ratio
 
     @staticmethod
-    def calculate_new_size_by_pixel_area(
-        aspect_ratio: float, megapixels: float, original_size: tuple
-    ):
+    def calculate_new_size_by_pixel_area(aspect_ratio: float, megapixels: float, original_size: tuple):
         if type(aspect_ratio) not in [float, np.float64]:
             raise ValueError(f"Aspect ratio must be a float, not {type(aspect_ratio)}")
-        target_pixel_area = (
-            megapixels * 1e6
-        )  # Convert megapixels to pixel area, eg. 1.0 mp = 1000000 pixels
-        target_pixel_edge = MultiaspectImage._round_to_nearest_multiple(
-            int(sqrt(target_pixel_area))
-        )
+        target_pixel_area = megapixels * 1e6  # Convert megapixels to pixel area, eg. 1.0 mp = 1000000 pixels
+        target_pixel_edge = MultiaspectImage._round_to_nearest_multiple(int(sqrt(target_pixel_area)))
         logger.debug(
             f"Converted {megapixels} megapixels to {target_pixel_area} pixels with a square edge of {target_pixel_edge}."
         )
@@ -177,16 +167,10 @@ class MultiaspectImage:
             )
 
         # Calculate the target size. This is what will be cropped-to.
-        W_target = MultiaspectImage._round_to_nearest_multiple(
-            target_pixel_edge * sqrt(aspect_ratio)
-        )
-        H_target = MultiaspectImage._round_to_nearest_multiple(
-            target_pixel_edge / sqrt(aspect_ratio)
-        )
+        W_target = MultiaspectImage._round_to_nearest_multiple(target_pixel_edge * sqrt(aspect_ratio))
+        H_target = MultiaspectImage._round_to_nearest_multiple(target_pixel_edge / sqrt(aspect_ratio))
         calculated_resulting_megapixels = (W_target * H_target) / 1e6
-        target_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-            (W_target, H_target)
-        )
+        target_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio((W_target, H_target))
 
         if not np.isclose(calculated_resulting_megapixels, megapixels, rtol=1e-1):
             logger.debug(
@@ -202,9 +186,7 @@ class MultiaspectImage:
             W_intermediary = int(H_intermediary * aspect_ratio)
 
         # retrieve the static mapping.
-        adjusted_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-            (W_target, H_target)
-        )
+        adjusted_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio((W_target, H_target))
         previously_stored_resolution = StateTracker.get_resolution_by_aspect(
             dataloader_resolution=megapixels, aspect=adjusted_aspect_ratio
         )
@@ -257,9 +239,7 @@ class MultiaspectImage:
         return (target_resolution, intermediary_resolution, adjusted_aspect_ratio)
 
     @staticmethod
-    def adjust_resolution_to_bucket_interval(
-        initial_resolution: tuple, target_resolution: tuple
-    ):
+    def adjust_resolution_to_bucket_interval(initial_resolution: tuple, target_resolution: tuple):
         W_initial, H_initial = initial_resolution
         W_adjusted, H_adjusted = target_resolution
         # If W_initial or H_initial are < W_adjusted or H_adjusted, add the greater of the two differences to both values.
@@ -315,9 +295,7 @@ class MultiaspectImage:
     @staticmethod
     def numpy_list_to_pil(numpy_list):
         if isinstance(numpy_list, list) and isinstance(numpy_list[0], np.ndarray):
-            numpy_list = [
-                Image.fromarray(np.uint8(image)).convert("RGB") for image in numpy_list
-            ]
+            numpy_list = [Image.fromarray(np.uint8(image)).convert("RGB") for image in numpy_list]
         return numpy_list
 
 

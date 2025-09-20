@@ -194,7 +194,7 @@ def load_video(vid_data: Union[bytes, IO[Any], str]) -> np.ndarray:
 
     # Open the video using VideoCapture.
     cap = tsr.PyVideoCapture(video_path)
-    if not cap.isOpened():
+    if not cap.is_opened():
         if tmp_path:
             os.remove(tmp_path)
         raise ValueError("Failed to open video.")
@@ -202,7 +202,7 @@ def load_video(vid_data: Union[bytes, IO[Any], str]) -> np.ndarray:
     frames = []
     while True:
         ret, frame = cap.read()
-        if not ret:
+        if not ret or frame is None:
             break
         frame_rgb = tsr.cvt_color_py(frame, 4)  # 4 = COLOR_BGR2RGB
         frames.append(frame_rgb)

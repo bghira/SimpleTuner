@@ -1,5 +1,7 @@
 import logging
-import os, re
+import os
+import re
+
 from torch import nn
 
 logger = logging.getLogger("ModelFreeze")
@@ -20,13 +22,9 @@ def freeze_transformer_blocks(
     use_bitfit: bool = False,
 ):
     if target_blocks not in ["any", "dit", "mmdit"]:
-        raise ValueError(
-            f"Invalid target_blocks value {target_blocks}. Choose from 'any', 'dit', 'mmdit'."
-        )
+        raise ValueError(f"Invalid target_blocks value {target_blocks}. Choose from 'any', 'dit', 'mmdit'.")
     if freeze_direction not in ["up", "down"]:
-        raise ValueError(
-            f"Invalid freeze_direction value {freeze_direction}. Choose from 'up', 'down'."
-        )
+        raise ValueError(f"Invalid freeze_direction value {freeze_direction}. Choose from 'up', 'down'.")
     if first_unfrozen_dit_layer < 0 or first_unfrozen_mmdit_layer < 0:
         raise ValueError(f"Invalid first_unfrozen layer value. Must be greater than 0.")
     for name, param in model.named_parameters():
@@ -47,27 +45,17 @@ def freeze_transformer_blocks(
                 continue
             if target_blocks != "any":
                 # We will exclude entire categories of blocks here if they aren't defined to be trained.
-                if (
-                    target_blocks == "dit"
-                    and layer_group != "single_transformer_blocks"
-                ):
+                if target_blocks == "dit" and layer_group != "single_transformer_blocks":
                     continue
-                if (
-                    target_blocks == "mmdit"
-                    and layer_group != "joint_transformer_blocks"
-                ):
+                if target_blocks == "mmdit" and layer_group != "joint_transformer_blocks":
                     continue
             should_train = False
             if first_unfrozen_dit_layer is not None:
                 if layer_group == "single_transformer_blocks" or target_blocks == "any":
                     if first_unfrozen_dit_layer == 0:
                         should_train = True
-                    if (
-                        freeze_direction == "up"
-                        and layer_number < first_unfrozen_dit_layer
-                    ) or (
-                        freeze_direction == "down"
-                        and layer_number > first_unfrozen_dit_layer
+                    if (freeze_direction == "up" and layer_number < first_unfrozen_dit_layer) or (
+                        freeze_direction == "down" and layer_number > first_unfrozen_dit_layer
                     ):
                         should_train = True
 
@@ -75,12 +63,8 @@ def freeze_transformer_blocks(
                 if layer_group == "joint_transformer_blocks" or target_blocks == "any":
                     if first_unfrozen_mmdit_layer == 0:
                         should_train = True
-                    if (
-                        freeze_direction == "up"
-                        and layer_number < first_unfrozen_mmdit_layer
-                    ) or (
-                        freeze_direction == "down"
-                        and layer_number > first_unfrozen_mmdit_layer
+                    if (freeze_direction == "up" and layer_number < first_unfrozen_mmdit_layer) or (
+                        freeze_direction == "down" and layer_number > first_unfrozen_mmdit_layer
                     ):
                         should_train = True
 
@@ -104,9 +88,7 @@ def apply_bitfit_freezing(model, args):
     logger.debug("Applying BitFit freezing strategy for u-net tuning.")
     for name, param in model.named_parameters():
         if not hasattr(param, "requires_grad"):
-            logger.debug(
-                f"Skipping {name} as it does not have 'requires_grad' attribute."
-            )
+            logger.debug(f"Skipping {name} as it does not have 'requires_grad' attribute.")
             continue
         # Freeze everything that's not a bias
         if "bias" not in name:
@@ -127,11 +109,7 @@ def freeze_entire_component(component):
 def freeze_text_encoder(args, component):
     from transformers import T5EncoderModel
 
-    if (
-        not args.train_text_encoder
-        or not args.freeze_encoder
-        or type(component) is T5EncoderModel
-    ):
+    if not args.train_text_encoder or not args.freeze_encoder or type(component) is T5EncoderModel:
         if args.train_text_encoder:
             logger.info("Not freezing text encoder. Live dangerously and prosper!")
         return component
@@ -159,9 +137,7 @@ def freeze_text_encoder(args, component):
         elif method == "after":
             freeze_param = current_layer > last_layer
         else:
-            raise ValueError(
-                f"Invalid method {method}. Choose between 'between', 'outside', 'before' or 'after'."
-            )
+            raise ValueError(f"Invalid method {method}. Choose between 'between', 'outside', 'before' or 'after'.")
 
         if freeze_param:
             if hasattr(param, "requires_grad"):
@@ -174,7 +150,5 @@ def freeze_text_encoder(args, component):
                 #     f"Ignoring layer that does not mark as gradient capable: {name}"
                 # )
                 pass
-    logger.info(
-        f"Applied {method} method with range {first_layer} - {last_layer} to {total_count} total layers."
-    )
+    logger.info(f"Applied {method} method with range {first_layer} - {last_layer} to {total_count} total layers.")
     return component

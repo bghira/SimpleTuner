@@ -1,24 +1,17 @@
 # helpers/distillation/dcm/distiller.py
-import os
 import logging
+import os
 from typing import Any, Dict, Optional
-from safetensors.torch import save_file, load_file
 
 import torch
 import torch.nn.functional as F
 from diffusers import FlowMatchEulerDiscreteScheduler
+from safetensors.torch import load_file, save_file
 
 from simpletuner.helpers.distillation.common import DistillationBase
-from simpletuner.helpers.distillation.dcm.discriminator.wan import (
-    wan_forward,
-    wan_forward_origin,
-)
-from simpletuner.helpers.distillation.dcm.loss import gan_g_loss, gan_d_loss
-from simpletuner.helpers.distillation.dcm.solver import (
-    EulerSolver,
-    extract_into_tensor,
-    InferencePCMFMScheduler,
-)
+from simpletuner.helpers.distillation.dcm.discriminator.wan import wan_forward, wan_forward_origin
+from simpletuner.helpers.distillation.dcm.loss import gan_d_loss, gan_g_loss
+from simpletuner.helpers.distillation.dcm.solver import EulerSolver, InferencePCMFMScheduler, extract_into_tensor
 
 logger = logging.getLogger(__name__)
 
@@ -96,27 +89,19 @@ class DCMDistiller(DistillationBase):
             stride = self.config["discriminator_head_stride"]
             layers = self.config["discriminator_total_layers"]
             if fam == "wan":
-                from simpletuner.helpers.distillation.dcm.discriminator.wan import (
-                    Discriminator as D,
-                )
+                from simpletuner.helpers.distillation.dcm.discriminator.wan import Discriminator as D
 
                 # Overload student model forward
-                self.student_model.get_trained_component().wan_forward_origin = (
-                    wan_forward_origin.__get__(
-                        self.student_model.get_trained_component(),
-                        type(self.student_model.get_trained_component()),
-                    )
+                self.student_model.get_trained_component().wan_forward_origin = wan_forward_origin.__get__(
+                    self.student_model.get_trained_component(),
+                    type(self.student_model.get_trained_component()),
                 )
-                self.student_model.get_trained_component().forward = (
-                    wan_forward.__get__(
-                        self.student_model.get_trained_component(),
-                        type(self.student_model.get_trained_component()),
-                    )
+                self.student_model.get_trained_component().forward = wan_forward.__get__(
+                    self.student_model.get_trained_component(),
+                    type(self.student_model.get_trained_component()),
                 )
             else:
-                raise NotImplementedError(
-                    f"Discriminator model family '{fam}' is not implemented. "
-                )
+                raise NotImplementedError(f"Discriminator model family '{fam}' is not implemented. ")
             self.discriminator = D(stride, total_layers=layers)
             # Simple default D-optimiser (can be overridden later)
             self.disc_optimizer = torch.optim.AdamW(
@@ -139,9 +124,7 @@ class DCMDistiller(DistillationBase):
         # -------------------------------------------------------- #
         # 1.  pick an integer solver index  0 … solver.euler_steps-1
         # -------------------------------------------------------- #
-        idx = torch.randint(
-            0, len(self.solver.euler_timesteps), (B,), device=device, dtype=torch.long
-        )
+        idx = torch.randint(0, len(self.solver.euler_timesteps), (B,), device=device, dtype=torch.long)
         sigma = extract_into_tensor(self.solver.sigmas, idx, latents.shape)
         sigma_prev = extract_into_tensor(self.solver.sigmas_prev, idx, latents.shape)
         timesteps = (sigma * self.noise_sched.config.num_train_timesteps).view(-1)
@@ -165,9 +148,9 @@ class DCMDistiller(DistillationBase):
         cfg_w = self.config["distill_cfg"]
         self.toggle_adapter(enable=False)  # disable LoRA adapter if any
         with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
-            cond_out = self.teacher_model.get_trained_component()(
-                noisy_latents, timesteps, emb, return_dict=False
-            )[0].float()
+            cond_out = self.teacher_model.get_trained_component()(noisy_latents, timesteps, emb, return_dict=False)[
+                0
+            ].float()
             uncond_out = self.teacher_model.get_trained_component()(
                 noisy_latents,
                 timesteps,
@@ -204,18 +187,14 @@ class DCMDistiller(DistillationBase):
         if self.config["mode"] == "fine":
             # choose a second σ farther along the trajectory for GAN realism check
             adv_idx = torch.clamp(end_idx + 35, max=len(self.solver.sigmas) - 1)
-            sigma_adv = extract_into_tensor(
-                self.solver.sigmas_prev, adv_idx, latents.shape
-            )
+            sigma_adv = extract_into_tensor(self.solver.sigmas_prev, adv_idx, latents.shape)
             batch.update(
                 dict(
                     dcm_sigma=sigma,
                     dcm_sigma_prev=sigma_prev,
                     dcm_sigma_adv=sigma_adv,
                     dcm_x_prev=x_prev,  # teacher “real” sample at that stage
-                    dcm_timesteps_adv=(
-                        sigma_adv * self.noise_sched.config.num_train_timesteps
-                    ).view(-1),
+                    dcm_timesteps_adv=(sigma_adv * self.noise_sched.config.num_train_timesteps).view(-1),
                 )
             )
 
@@ -262,12 +241,8 @@ class DCMDistiller(DistillationBase):
         sigma_adv = prepared_batch["dcm_sigma_adv"]
 
         adv_noise = torch.randn_like(pred)
-        real_adv = ((1 - sigma_adv) * target + (sigma_adv - sigma_prev) * adv_noise) / (
-            1 - sigma_prev + EPS
-        )
-        fake_adv = ((1 - sigma_adv) * pred + (sigma_adv - sigma_prev) * adv_noise) / (
-            1 - sigma_prev + EPS
-        )
+        real_adv = ((1 - sigma_adv) * target + (sigma_adv - sigma_prev) * adv_noise) / (1 - sigma_prev + EPS)
+        fake_adv = ((1 - sigma_adv) * pred + (sigma_adv - sigma_prev) * adv_noise) / (1 - sigma_prev + EPS)
 
         # Freeze D for generator update
         self.discriminator.requires_grad_(False)
@@ -297,11 +272,7 @@ class DCMDistiller(DistillationBase):
         if getattr(self, "disc_optimizer", None) is None:
             return  # safety: no optimiser attached
 
-        pred = (
-            prepared_batch["dcm_fake_pred"]
-            if "dcm_fake_pred" in prepared_batch
-            else None
-        )
+        pred = prepared_batch["dcm_fake_pred"] if "dcm_fake_pred" in prepared_batch else None
         if pred is None:
             # recompute fake with Autocast-off to save VRAM; minimal overhead
             pred = self.student_model.get_trained_component()(
@@ -317,12 +288,8 @@ class DCMDistiller(DistillationBase):
         sigma_adv = prepared_batch["dcm_sigma_adv"]
 
         adv_noise = torch.randn_like(pred)
-        real_adv = ((1 - sigma_adv) * target + (sigma_adv - sigma_prev) * adv_noise) / (
-            1 - sigma_prev + EPS
-        )
-        fake_adv = (
-            (1 - sigma_adv) * pred.detach() + (sigma_adv - sigma_prev) * adv_noise
-        ) / (1 - sigma_prev + EPS)
+        real_adv = ((1 - sigma_adv) * target + (sigma_adv - sigma_prev) * adv_noise) / (1 - sigma_prev + EPS)
+        fake_adv = ((1 - sigma_adv) * pred.detach() + (sigma_adv - sigma_prev) * adv_noise) / (1 - sigma_prev + EPS)
 
         # Enable discriminator gradients for generator update
         self.discriminator.requires_grad_(True)
@@ -354,8 +321,7 @@ class DCMDistiller(DistillationBase):
         # -------- model weights  (tensor-only) ---------------
         weight_path = os.path.join(ckpt_dir, DCM_SAFETENSORS_DEFAULT_FILENAME)
         tensor_dict = {
-            k: v.detach().cpu()  # safetensors requires CPU tensors
-            for k, v in self.discriminator.state_dict().items()
+            k: v.detach().cpu() for k, v in self.discriminator.state_dict().items()  # safetensors requires CPU tensors
         }
         save_file(tensor_dict, weight_path)
 
@@ -380,14 +346,10 @@ class DCMDistiller(DistillationBase):
         # -------- load weights --------------------------------
         tensor_dict = load_file(weight_path, device="cpu")
         self.discriminator.load_state_dict(tensor_dict, strict=True)
-        self.discriminator.to(
-            self.teacher_model.get_trained_component().device, non_blocking=True
-        )
+        self.discriminator.to(self.teacher_model.get_trained_component().device, non_blocking=True)
 
         # -------- load optimizer ------------------------------
         opt_path = os.path.join(ckpt_dir, DCM_OPTIMIZER_DEFAULT_FILENAME)
         if os.path.exists(opt_path):
-            payload = torch.load(
-                opt_path, map_location={"cuda:0": f"cuda:{torch.cuda.current_device()}"}
-            )
+            payload = torch.load(opt_path, map_location={"cuda:0": f"cuda:{torch.cuda.current_device()}"})
             self.disc_optimizer.load_state_dict(payload["state"])

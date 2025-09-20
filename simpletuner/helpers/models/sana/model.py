@@ -111,13 +111,6 @@ class Sana(ImageModelFoundation):
         return prompt_embeds, prompt_attention_mask
 
     def model_predict(self, prepared_batch):
-        logger.debug(
-            "Input shapes:"
-            f"\n{prepared_batch['noisy_latents'].shape}"
-            f"\n{prepared_batch['timesteps'].shape}"
-            f"\n{prepared_batch['encoder_hidden_states'].shape}"
-            f"\n{prepared_batch['encoder_attention_mask'].shape}"
-        )
         return {
             "model_prediction": self.model(
                 hidden_states=prepared_batch["noisy_latents"].to(

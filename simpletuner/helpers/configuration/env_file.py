@@ -80,9 +80,6 @@ if should_log():
 
 
 def parse_env_file(file_path):
-    """
-    Parse a single .env file and return its contents as a dictionary.
-    """
     config_file_contents = {}
     if not os.path.isfile(file_path):
         return config_file_contents
@@ -91,39 +88,32 @@ def parse_env_file(file_path):
 
     with open(file_path, "r") as f:
         for line_num, line in enumerate(f, 1):
-            # Skip comments and empty lines
             line = line.strip()
             if line.startswith("#") or line == "":
                 continue
 
-            # Remove 'export ' from the start (with space)
             if line.startswith("export "):
                 line = line[7:]
 
-            # Handle `+=` for appending values
             if "+=" in line:
                 key, value = line.split("+=", 1)
                 key, value = (
                     key.strip(),
                     value.strip('"').strip("'").strip().split(),
                 )
-                # Append each element to the existing key's list or create a new list
                 if key in config_file_contents:
                     config_file_contents[key].extend(value)
                 else:
                     config_file_contents[key] = value
             else:
-                # Regular `=` assignment
                 if "=" in line:
                     key, value = line.split("=", 1)
                     key = key.strip()
                     value = value.strip()
 
-                    # Handle quoted values
                     if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
                         value = value[1:-1]
 
-                    # Split into words for consistency with old behavior
                     config_file_contents[key] = value.split() if value else []
                 else:
                     logger.warning(f"[CONFIG.ENV] Skipping malformed line {line_num} in {file_path}: {line}")
@@ -132,39 +122,29 @@ def parse_env_file(file_path):
 
 
 def load_env():
-    """
-    Load environment variables from .env files using topological search.
-    Searches from specific env directory up to current directory, merging configs.
-    """
     env = os.environ.get(
         "SIMPLETUNER_ENVIRONMENT",
         os.environ.get("SIMPLETUNER_ENV", os.environ.get("ENV", None)),
     )
 
-    # Define search paths in order of precedence (later files override earlier ones)
     search_paths = []
 
-    # 1. Root config.env (lowest precedence)
     search_paths.append("config.env")
 
-    # 2. Base config directory
     search_paths.append("config/config.env")
 
-    # 3. Environment-specific config (highest precedence)
     if env and env != "default":
         search_paths.append(f"config/{env}/config.env")
 
-    # Load and merge configs
     merged_config = {}
     loaded_files = []
 
     for config_path in search_paths:
         file_config = parse_env_file(config_path)
-        if file_config:  # Only merge if file exists and has content
+        if file_config:
             loaded_files.append(config_path)
-            # Merge configs - later files override earlier ones
             for key, value in file_config.items():
-                if "+=" in key:  # Handle append operations
+                if "+=" in key:
                     base_key = key.replace("+=", "").strip()
                     if base_key in merged_config:
                         if isinstance(merged_config[base_key], list):
@@ -176,7 +156,6 @@ def load_env():
                 else:
                     merged_config[key] = value
 
-    # Convert lists to single string values with spaces, if needed
     for key, value in merged_config.items():
         if isinstance(value, list):
             if value and "${" in str(value[0]):
@@ -192,16 +171,7 @@ def load_env():
 
 
 def load_env_config():
-    """
-    Map the environment variables to command-line arguments.
-    NOTE: Environment variables from config.env files should be loaded separately
-    by the configuration loader before this function is called.
-
-    :return: List of command-line arguments.
-    """
-    # Get variables from actual environment (which should have been loaded from config.env files)
     mapped_args = []
-    # Loop through the environment variable to argument mapping
     ignored_accelerate_kwargs = [
         "--num_processes",
         "--num_machines",
@@ -209,10 +179,8 @@ def load_env_config():
     ]
     for env_var, arg_name in env_to_args_map.items():
         if arg_name in ignored_accelerate_kwargs:
-            # These are handled by accelerate via environment variables, not command-line args
             continue
         value = os.environ.get(env_var, None)
-        # strip 's from the outside of value
         if value is not None and value.startswith("'") and value.endswith("'"):
             value = value[1:-1]
         if value is not None and value.startswith('"') and value.endswith('"'):
@@ -223,15 +191,12 @@ def load_env_config():
         except (ValueError, TypeError):
             is_numeric = False
         if value is not None:
-            # Handle booleans by checking their string value
             if value.lower() in ["true", "false"]:
                 if value.lower() == "true":
                     mapped_args.append(f"{arg_name}")
             elif is_numeric:
-                # Handle numeric values
                 mapped_args.append(f"{arg_name}={value}")
             else:
-                # Add the argument and its value to the list
                 mapped_args.append(f"{arg_name}={value}")
     extra_args = os.environ.get("TRAINER_EXTRA_ARGS", None)
     if extra_args:

@@ -1,5 +1,5 @@
 import torch
-from torch import Tensor, FloatTensor
+from torch import FloatTensor, Tensor
 
 
 def swap_first_and_last_dims(tensor: torch.Tensor) -> torch.Tensor:
@@ -103,9 +103,7 @@ def add_stochastic_(_input: Tensor, other: Tensor, alpha: float = 1.0):
         _input_original.copy_(_input.view(dtype=torch.float32))
 
 
-def addcdiv_stochastic_(
-    _input: Tensor, tensor1: Tensor, tensor2: Tensor, value: float = 1.0
-):
+def addcdiv_stochastic_(_input: Tensor, tensor1: Tensor, tensor2: Tensor, value: float = 1.0):
     """
     adds (tensor1 / tensor2 * value) to input using stochastic rounding
 

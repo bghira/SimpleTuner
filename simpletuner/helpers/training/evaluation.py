@@ -1,9 +1,13 @@
+import logging
+import os
 from functools import partial
+
+import numpy as np
+import torch
+from PIL import Image
 from torchmetrics.functional.multimodal import clip_score
 from torchvision import transforms
-import torch, logging, os
-import numpy as np
-from PIL import Image
+
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("ModelEvaluator")
@@ -21,9 +25,7 @@ model_evaluator_map = {
 
 class ModelEvaluator:
     def __init__(self, pretrained_model_name_or_path):
-        raise NotImplementedError(
-            "Subclasses is incomplete, no __init__ method was found."
-        )
+        raise NotImplementedError("Subclasses is incomplete, no __init__ method was found.")
 
     def evaluate(self, images, prompts):
         raise NotImplementedError("Subclasses should implement the evaluate() method.")
@@ -39,20 +41,14 @@ class ModelEvaluator:
             and args.evaluation_type.lower() != "none"
         ):
             model_evaluator = model_evaluator_map[args.evaluation_type]
-            return globals()[model_evaluator](
-                args.pretrained_evaluation_model_name_or_path
-            )
+            return globals()[model_evaluator](args.pretrained_evaluation_model_name_or_path)
 
         return None
 
 
 class CLIPModelEvaluator(ModelEvaluator):
-    def __init__(
-        self, pretrained_model_name_or_path="openai/clip-vit-large-patch14-336"
-    ):
-        self.clip_score_fn = partial(
-            clip_score, model_name_or_path=pretrained_model_name_or_path
-        )
+    def __init__(self, pretrained_model_name_or_path="openai/clip-vit-large-patch14-336"):
+        self.clip_score_fn = partial(clip_score, model_name_or_path=pretrained_model_name_or_path)
         self.preprocess = transforms.Compose([transforms.ToTensor()])
 
     def evaluate(self, images, prompts):

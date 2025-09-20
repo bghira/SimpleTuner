@@ -1,23 +1,22 @@
-import boto3
-import os
-from os.path import splitext
-import time
-from botocore.exceptions import (
-    NoCredentialsError,
-    PartialCredentialsError,
-)
+import concurrent.futures
 import fnmatch
 import logging
-import torch
-from torch import Tensor
-import concurrent.futures
-from botocore.config import Config
-from simpletuner.helpers.data_backend.base import BaseDataBackend
-from simpletuner.helpers.training.multi_process import _get_rank as get_rank
-from simpletuner.helpers.image_manipulation.load import load_image, load_video
-from simpletuner.helpers.training import video_file_extensions, image_file_extensions
+import os
+import time
 from io import BytesIO
+from os.path import splitext
 from typing import Union
+
+import boto3
+import torch
+from botocore.config import Config
+from botocore.exceptions import NoCredentialsError, PartialCredentialsError
+from torch import Tensor
+
+from simpletuner.helpers.data_backend.base import BaseDataBackend
+from simpletuner.helpers.image_manipulation.load import load_image, load_video
+from simpletuner.helpers.training import image_file_extensions, video_file_extensions
+from simpletuner.helpers.training.multi_process import _get_rank as get_rank
 
 loggers_to_silence = [
     "botocore.hooks",
@@ -116,9 +115,7 @@ class S3DataBackend(BaseDataBackend):
     def from_instance_representation(representation: dict) -> "S3DataBackend":
         """Create a new S3DataBackend instance from a serialized representation."""
         if representation.get("backend_type") != "aws":
-            raise ValueError(
-                f"Expected backend_type 'aws', got {representation.get('backend_type')}"
-            )
+            raise ValueError(f"Expected backend_type 'aws', got {representation.get('backend_type')}")
 
         # Extract parameters from representation
         return S3DataBackend(
@@ -155,17 +152,12 @@ class S3DataBackend(BaseDataBackend):
                 self.client.head_object(Bucket=self.bucket_name, Key=str(s3_key))
                 return True
             except self.client.exceptions.NoSuchKey:
-                logger.debug(
-                    f"File {s3_key} does not exist in S3 bucket ({self.bucket_name})"
-                )
+                logger.debug(f"File {s3_key} does not exist in S3 bucket ({self.bucket_name})")
                 return False
             except (NoCredentialsError, PartialCredentialsError) as e:
                 raise e  # Raise credential errors to the caller
             except Exception as e:
-                if (
-                    "An error occurred (404) when calling the HeadObject operation: Not Found"
-                    in str(e)
-                ):
+                if "An error occurred (404) when calling the HeadObject operation: Not Found" in str(e):
                     return False
                 logger.error(f'Error checking existence of S3 key "{s3_key}": {e}')
                 if i == self.read_retry_limit - 1:
@@ -177,14 +169,10 @@ class S3DataBackend(BaseDataBackend):
         """Retrieve and return the content of the file from S3."""
         for i in range(self.read_retry_limit):
             try:
-                response = self.client.get_object(
-                    Bucket=self.bucket_name, Key=str(s3_key)
-                )
+                response = self.client.get_object(Bucket=self.bucket_name, Key=str(s3_key))
                 return response["Body"].read()
             except self.client.exceptions.NoSuchKey:
-                logger.debug(
-                    f"File {s3_key} does not exist in S3 bucket ({self.bucket_name})"
-                )
+                logger.debug(f"File {s3_key} does not exist in S3 bucket ({self.bucket_name})")
                 return None
             except (NoCredentialsError, PartialCredentialsError) as e:
                 raise e  # Raise credential errors to the caller
@@ -209,9 +197,7 @@ class S3DataBackend(BaseDataBackend):
             try:
                 if isinstance(data, (dict, torch.Tensor)):
                     return self.torch_save(data, real_key)
-                response = self.client.put_object(
-                    Body=data, Bucket=self.bucket_name, Key=real_key
-                )
+                response = self.client.put_object(Body=data, Bucket=self.bucket_name, Key=real_key)
                 return response
             except Exception as e:
                 logger.error(f'Error writing S3 key "{real_key}": {e}')
@@ -225,9 +211,7 @@ class S3DataBackend(BaseDataBackend):
         for i in range(self.write_retry_limit):
             try:
                 logger.debug(f'Deleting S3 key "{s3_key}"')
-                response = self.client.delete_object(
-                    Bucket=self.bucket_name, Key=str(s3_key)
-                )
+                response = self.client.delete_object(Bucket=self.bucket_name, Key=str(s3_key))
                 return response
             except Exception as e:
                 logger.error(f'Error deleting S3 key "{s3_key}": {e}')
@@ -242,11 +226,7 @@ class S3DataBackend(BaseDataBackend):
         bucket_prefix = f"{self.bucket_name}/"
 
         return [
-            (
-                item["Key"][len(bucket_prefix) :]
-                if item["Key"].startswith(bucket_prefix)
-                else item["Key"]
-            )
+            (item["Key"][len(bucket_prefix) :] if item["Key"].startswith(bucket_prefix) else item["Key"])
             for item in response.get("Contents", [])
         ]
 
@@ -380,9 +360,7 @@ class S3DataBackend(BaseDataBackend):
                 logger.debug(f"File format: {file_format}")
                 if file_format == "incorrect":
                     stored_data.seek(0)
-                    compressed_data = BytesIO(
-                        torch.load(stored_data, map_location="cpu")
-                    )
+                    compressed_data = BytesIO(torch.load(stored_data, map_location="cpu"))
                     stored_tensor = self._decompress_torch(compressed_data)
                 elif file_format == "correct_compressed":
                     stored_tensor = self._decompress_torch(data)
@@ -410,8 +388,9 @@ class S3DataBackend(BaseDataBackend):
         """
         Save a torch object (tensor or dict) to S3 using possible compression.
         """
-        import torch
         from io import BytesIO
+
+        import torch
 
         for i in range(self.write_retry_limit):
             try:

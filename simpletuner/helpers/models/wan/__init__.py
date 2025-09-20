@@ -17,9 +17,7 @@ Functions:
 """
 
 
-def normalize_wan_latents(
-    latents: torch.Tensor, latents_mean: torch.Tensor, latents_std: torch.Tensor
-) -> torch.Tensor:
+def normalize_wan_latents(latents: torch.Tensor, latents_mean: torch.Tensor, latents_std: torch.Tensor) -> torch.Tensor:
     """
     Normalize latent representations (WAN latents) using provided mean and standard deviation.
 
@@ -52,9 +50,7 @@ def normalize_wan_latents(
     return latents
 
 
-def compute_wan_posterior(
-    latents: torch.Tensor, latents_mean: list, latents_std: list
-) -> DiagonalGaussianDistribution:
+def compute_wan_posterior(latents: torch.Tensor, latents_mean: list, latents_std: list) -> DiagonalGaussianDistribution:
     """
     Compute the WAN posterior distribution from latent representations.
 

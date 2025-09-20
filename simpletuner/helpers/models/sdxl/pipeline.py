@@ -1,4 +1,4 @@
-# Copyright 2024 The HuggingFace Team. All rights reserved.
+# Copyright 2024 The HuggingFace Team and 2025 bghira. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,20 +12,52 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 import inspect
-import torch.nn.functional as F
+import os
+
 import numpy as np
+import torch.nn.functional as F
 
 try:
     import pillow_jxl
 except ModuleNotFoundError:
     pass
-import PIL
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
-from diffusers.callbacks import PipelineCallback, MultiPipelineCallbacks
-from diffusers import ControlNetModel, MultiControlNetModel
+
+import PIL
 import torch
+from diffusers import ControlNetModel, MultiControlNetModel
+from diffusers.callbacks import MultiPipelineCallbacks, PipelineCallback
+from diffusers.image_processor import PipelineImageInput, VaeImageProcessor
+from diffusers.loaders import FromSingleFileMixin, IPAdapterMixin, TextualInversionLoaderMixin
+from diffusers.loaders.lora_base import LoraBaseMixin, _fetch_state_dict
+from diffusers.loaders.lora_conversion_utils import (
+    _convert_non_diffusers_lora_to_diffusers,
+    _maybe_map_sgm_blocks_to_diffusers,
+)
+from diffusers.models import AutoencoderKL, ImageProjection, UNet2DConditionModel
+from diffusers.models.attention_processor import AttnProcessor2_0, FusedAttnProcessor2_0, XFormersAttnProcessor
+from diffusers.models.lora import adjust_lora_scale_text_encoder, text_encoder_attn_modules, text_encoder_mlp_modules
+from diffusers.pipelines.pipeline_utils import DiffusionPipeline, StableDiffusionMixin
+from diffusers.pipelines.stable_diffusion_xl.pipeline_output import StableDiffusionXLPipelineOutput
+from diffusers.schedulers import KarrasDiffusionSchedulers
+from diffusers.utils import (
+    USE_PEFT_BACKEND,
+    deprecate,
+    is_invisible_watermark_available,
+    is_peft_available,
+    is_peft_version,
+    is_torch_version,
+    is_torch_xla_available,
+    is_transformers_available,
+    is_transformers_version,
+    logging,
+    replace_example_docstring,
+    scale_lora_layers,
+    unscale_lora_layers,
+)
+from diffusers.utils.torch_utils import is_compiled_module, randn_tensor
+from huggingface_hub.utils import validate_hf_hub_args
 from transformers import (
     CLIPImageProcessor,
     CLIPTextModel,
@@ -34,55 +66,8 @@ from transformers import (
     CLIPVisionModelWithProjection,
 )
 
-from diffusers.image_processor import PipelineImageInput, VaeImageProcessor
-from diffusers.loaders.lora_base import LoraBaseMixin, _fetch_state_dict
-from diffusers.loaders import (
-    FromSingleFileMixin,
-    IPAdapterMixin,
-    TextualInversionLoaderMixin,
-)
-from diffusers.models import AutoencoderKL, ImageProjection, UNet2DConditionModel
-from diffusers.models.attention_processor import (
-    AttnProcessor2_0,
-    FusedAttnProcessor2_0,
-    XFormersAttnProcessor,
-)
-from diffusers.models.lora import adjust_lora_scale_text_encoder
-from diffusers.schedulers import KarrasDiffusionSchedulers
-from diffusers.utils.torch_utils import is_compiled_module
-from diffusers.utils import (
-    USE_PEFT_BACKEND,
-    deprecate,
-    is_invisible_watermark_available,
-    is_torch_xla_available,
-    logging,
-    replace_example_docstring,
-    scale_lora_layers,
-    unscale_lora_layers,
-    is_peft_available,
-    is_peft_version,
-    is_torch_version,
-    is_transformers_available,
-    is_transformers_version,
-    logging,
-)
-from diffusers.models.lora import (
-    text_encoder_attn_modules,
-    text_encoder_mlp_modules,
-)
-
-from diffusers.utils.torch_utils import randn_tensor
-from diffusers.pipelines.pipeline_utils import DiffusionPipeline, StableDiffusionMixin
-from diffusers.pipelines.stable_diffusion_xl.pipeline_output import (
-    StableDiffusionXLPipelineOutput,
-)
-
-from huggingface_hub.utils import validate_hf_hub_args
-
 if is_invisible_watermark_available():
-    from diffusers.pipelines.stable_diffusion_xl.watermark import (
-        StableDiffusionXLWatermarker,
-    )
+    from diffusers.pipelines.stable_diffusion_xl.watermark import StableDiffusionXLWatermarker
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
@@ -133,16 +118,12 @@ def rescale_noise_cfg(noise_cfg, noise_pred_text, guidance_rescale=0.0):
     Rescale `noise_cfg` according to `guidance_rescale`. Based on findings of [Common Diffusion Noise Schedules and
     Sample Steps are Flawed](https://arxiv.org/pdf/2305.08891.pdf). See Section 3.4
     """
-    std_text = noise_pred_text.std(
-        dim=list(range(1, noise_pred_text.ndim)), keepdim=True
-    )
+    std_text = noise_pred_text.std(dim=list(range(1, noise_pred_text.ndim)), keepdim=True)
     std_cfg = noise_cfg.std(dim=list(range(1, noise_cfg.ndim)), keepdim=True)
     # rescale the results from guidance (fixes overexposure)
     noise_pred_rescaled = noise_cfg * (std_text / std_cfg)
     # mix with the original results from guidance by factor guidance_rescale to avoid "plain looking" images
-    noise_cfg = (
-        guidance_rescale * noise_pred_rescaled + (1 - guidance_rescale) * noise_cfg
-    )
+    noise_cfg = guidance_rescale * noise_pred_rescaled + (1 - guidance_rescale) * noise_cfg
     return noise_cfg
 
 
@@ -179,13 +160,9 @@ def retrieve_timesteps(
         second element is the number of inference steps.
     """
     if timesteps is not None and sigmas is not None:
-        raise ValueError(
-            "Only one of `timesteps` or `sigmas` can be passed. Please choose one to set custom values"
-        )
+        raise ValueError("Only one of `timesteps` or `sigmas` can be passed. Please choose one to set custom values")
     if timesteps is not None:
-        accepts_timesteps = "timesteps" in set(
-            inspect.signature(scheduler.set_timesteps).parameters.keys()
-        )
+        accepts_timesteps = "timesteps" in set(inspect.signature(scheduler.set_timesteps).parameters.keys())
         if not accepts_timesteps:
             raise ValueError(
                 f"The current scheduler class {scheduler.__class__}'s `set_timesteps` does not support custom"
@@ -195,9 +172,7 @@ def retrieve_timesteps(
         timesteps = scheduler.timesteps
         num_inference_steps = len(timesteps)
     elif sigmas is not None:
-        accept_sigmas = "sigmas" in set(
-            inspect.signature(scheduler.set_timesteps).parameters.keys()
-        )
+        accept_sigmas = "sigmas" in set(inspect.signature(scheduler.set_timesteps).parameters.keys())
         if not accept_sigmas:
             raise ValueError(
                 f"The current scheduler class {scheduler.__class__}'s `set_timesteps` does not support custom"
@@ -249,9 +224,7 @@ class StableDiffusionXLLoraLoaderMixin(LoraBaseMixin):
         if not USE_PEFT_BACKEND:
             raise ValueError("PEFT backend is required for this method.")
 
-        low_cpu_mem_usage = kwargs.pop(
-            "low_cpu_mem_usage", _LOW_CPU_MEM_USAGE_DEFAULT_LORA
-        )
+        low_cpu_mem_usage = kwargs.pop("low_cpu_mem_usage", _LOW_CPU_MEM_USAGE_DEFAULT_LORA)
         if low_cpu_mem_usage and not is_peft_version(">=", "0.13.1"):
             raise ValueError(
                 "`low_cpu_mem_usage=True` is not compatible with this `peft` version. Please update it with `pip install -U peft`."
@@ -259,11 +232,9 @@ class StableDiffusionXLLoraLoaderMixin(LoraBaseMixin):
 
         # if a dict is passed, copy it instead of modifying it inplace
         if isinstance(pretrained_model_name_or_path_or_dict, dict):
-            pretrained_model_name_or_path_or_dict = (
-                pretrained_model_name_or_path_or_dict.copy()
-            )
+            pretrained_model_name_or_path_or_dict = pretrained_model_name_or_path_or_dict.copy()
 
-        # First, ensure that the checkpoint is a compatible one and can be successfully loaded.
+        # validate checkpoint compatibility
         state_dict, network_alphas = self.lora_state_dict(
             pretrained_model_name_or_path_or_dict,
             unet_config=self.unet.config,
@@ -291,7 +262,7 @@ class StableDiffusionXLLoraLoaderMixin(LoraBaseMixin):
                 # Assume unet weights
                 unet_state_dict[k] = v
 
-        # Load UNet weights
+        # load unet
         if unet_state_dict:
             self.load_lora_into_unet(
                 unet_state_dict,
@@ -302,7 +273,7 @@ class StableDiffusionXLLoraLoaderMixin(LoraBaseMixin):
                 low_cpu_mem_usage=low_cpu_mem_usage,
             )
 
-        # Load text encoder weights
+        # load text encoder
         if text_encoder_state_dict:
             self.load_lora_into_text_encoder(
                 text_encoder_state_dict,
@@ -315,7 +286,7 @@ class StableDiffusionXLLoraLoaderMixin(LoraBaseMixin):
                 low_cpu_mem_usage=low_cpu_mem_usage,
             )
 
-        # Load text encoder 2 weights
+        # load text encoder 2
         if text_encoder_2_state_dict:
             self.load_lora_into_text_encoder(
                 text_encoder_2_state_dict,
@@ -328,7 +299,7 @@ class StableDiffusionXLLoraLoaderMixin(LoraBaseMixin):
                 low_cpu_mem_usage=low_cpu_mem_usage,
             )
 
-        # Load controlnet weights if present
+        # load controlnet if present
         if controlnet_state_dict and hasattr(self, "controlnet"):
             self.load_lora_into_controlnet(
                 controlnet_state_dict,
@@ -375,14 +346,10 @@ class StableDiffusionXLLoraLoaderMixin(LoraBaseMixin):
         # Extract controlnet keys
         keys = list(state_dict.keys())
         controlnet_keys = [k for k in keys if k.startswith(cls.controlnet_name)]
-        state_dict = {
-            k.replace(f"{cls.controlnet_name}.", ""): v
-            for k, v in state_dict.items()
-            if k in controlnet_keys
-        }
+        state_dict = {k.replace(f"{cls.controlnet_name}.", ""): v for k, v in state_dict.items() if k in controlnet_keys}
 
         if len(state_dict.keys()) > 0:
-            # Load the layers corresponding to ControlNet.
+            # load controlnet layers
             logger.info(f"Loading {cls.controlnet_name}.")
             controlnet.load_attn_procs(
                 state_dict,
@@ -397,12 +364,8 @@ class StableDiffusionXLLoraLoaderMixin(LoraBaseMixin):
         cls,
         save_directory: Union[str, os.PathLike],
         unet_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
-        text_encoder_lora_layers: Dict[
-            str, Union[torch.nn.Module, torch.Tensor]
-        ] = None,
-        text_encoder_2_lora_layers: Dict[
-            str, Union[torch.nn.Module, torch.Tensor]
-        ] = None,
+        text_encoder_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
+        text_encoder_2_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
         controlnet_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
         is_main_process: bool = True,
         weight_name: str = None,
@@ -432,12 +395,7 @@ class StableDiffusionXLLoraLoaderMixin(LoraBaseMixin):
         """
         state_dict = {}
 
-        if not (
-            unet_lora_layers
-            or text_encoder_lora_layers
-            or text_encoder_2_lora_layers
-            or controlnet_lora_layers
-        ):
+        if not (unet_lora_layers or text_encoder_lora_layers or text_encoder_2_lora_layers or controlnet_lora_layers):
             raise ValueError(
                 "You must pass at least one of `unet_lora_layers`, `text_encoder_lora_layers`, "
                 "`text_encoder_2_lora_layers`, or `controlnet_lora_layers`."
@@ -447,19 +405,13 @@ class StableDiffusionXLLoraLoaderMixin(LoraBaseMixin):
             state_dict.update(cls.pack_weights(unet_lora_layers, "unet"))
 
         if text_encoder_lora_layers:
-            state_dict.update(
-                cls.pack_weights(text_encoder_lora_layers, "text_encoder")
-            )
+            state_dict.update(cls.pack_weights(text_encoder_lora_layers, "text_encoder"))
 
         if text_encoder_2_lora_layers:
-            state_dict.update(
-                cls.pack_weights(text_encoder_2_lora_layers, "text_encoder_2")
-            )
+            state_dict.update(cls.pack_weights(text_encoder_2_lora_layers, "text_encoder_2"))
 
         if controlnet_lora_layers:
-            state_dict.update(
-                cls.pack_weights(controlnet_lora_layers, cls.controlnet_name)
-            )
+            state_dict.update(cls.pack_weights(controlnet_lora_layers, cls.controlnet_name))
 
         cls.write_lora_layers(
             state_dict=state_dict,
@@ -550,8 +502,7 @@ class StableDiffusionXLLoraLoaderMixin(LoraBaseMixin):
             return_lora_metadata (`bool`, *optional*, defaults to False):
                 When enabled, additionally return the LoRA adapter metadata, typically found in the state dict.
         """
-        # Load the main state dict first which has the LoRA layers for either of
-        # UNet and text encoder or both.
+        # load main state dict with lora layers
         cache_dir = kwargs.pop("cache_dir", None)
         force_download = kwargs.pop("force_download", False)
         proxies = kwargs.pop("proxies", None)
@@ -611,15 +562,9 @@ class StableDiffusionXLLoraLoaderMixin(LoraBaseMixin):
             if unet_config is not None:
                 # use unet config to remap block numbers
                 state_dict = _maybe_map_sgm_blocks_to_diffusers(state_dict, unet_config)
-            state_dict, network_alphas = _convert_non_diffusers_lora_to_diffusers(
-                state_dict
-            )
+            state_dict, network_alphas = _convert_non_diffusers_lora_to_diffusers(state_dict)
 
-        out = (
-            (state_dict, network_alphas, metadata)
-            if return_lora_metadata
-            else (state_dict, network_alphas)
-        )
+        out = (state_dict, network_alphas, metadata) if return_lora_metadata else (state_dict, network_alphas)
         return out
 
 
@@ -723,9 +668,7 @@ class StableDiffusionXLPipeline(
             image_encoder=image_encoder,
             feature_extractor=feature_extractor,
         )
-        self.register_to_config(
-            force_zeros_for_empty_prompt=force_zeros_for_empty_prompt
-        )
+        self.register_to_config(force_zeros_for_empty_prompt=force_zeros_for_empty_prompt)
         self.validation_refiner_aesthetic_score = validation_refiner_aesthetic_score
         self.vae_scale_factor = 8
         self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor)
@@ -735,11 +678,7 @@ class StableDiffusionXLPipeline(
         else:
             self.default_sample_size = 128
 
-        add_watermarker = (
-            add_watermarker
-            if add_watermarker is not None
-            else is_invisible_watermark_available()
-        )
+        add_watermarker = add_watermarker if add_watermarker is not None else is_invisible_watermark_available()
 
         if add_watermarker:
             self.watermark = StableDiffusionXLWatermarker()
@@ -808,9 +747,7 @@ class StableDiffusionXLPipeline(
 
         # set lora scale so that monkey patched LoRA
         # function of text encoder can correctly access it
-        if lora_scale is not None and isinstance(
-            self, StableDiffusionXLLoraLoaderMixin
-        ):
+        if lora_scale is not None and isinstance(self, StableDiffusionXLLoraLoaderMixin):
             self._lora_scale = lora_scale
 
             # dynamically adjust the LoRA scale
@@ -834,16 +771,8 @@ class StableDiffusionXLPipeline(
             batch_size = prompt_embeds.shape[0]
 
         # Define tokenizers and text encoders
-        tokenizers = (
-            [self.tokenizer, self.tokenizer_2]
-            if self.tokenizer is not None
-            else [self.tokenizer_2]
-        )
-        text_encoders = (
-            [self.text_encoder, self.text_encoder_2]
-            if self.text_encoder is not None
-            else [self.text_encoder_2]
-        )
+        tokenizers = [self.tokenizer, self.tokenizer_2] if self.tokenizer is not None else [self.tokenizer_2]
+        text_encoders = [self.text_encoder, self.text_encoder_2] if self.text_encoder is not None else [self.text_encoder_2]
 
         if prompt_embeds is None:
             prompt_2 = prompt_2 or prompt
@@ -852,9 +781,7 @@ class StableDiffusionXLPipeline(
             # textual inversion: process multi-vector tokens if necessary
             prompt_embeds_list = []
             prompts = [prompt, prompt_2]
-            for prompt, tokenizer, text_encoder in zip(
-                prompts, tokenizers, text_encoders
-            ):
+            for prompt, tokenizer, text_encoder in zip(prompts, tokenizers, text_encoders):
                 if isinstance(self, TextualInversionLoaderMixin):
                     prompt = self.maybe_convert_prompt(prompt, tokenizer)
 
@@ -867,31 +794,21 @@ class StableDiffusionXLPipeline(
                 )
 
                 text_input_ids = text_inputs.input_ids
-                untruncated_ids = tokenizer(
-                    prompt, padding="longest", return_tensors="pt"
-                ).input_ids
+                untruncated_ids = tokenizer(prompt, padding="longest", return_tensors="pt").input_ids
 
-                if untruncated_ids.shape[-1] >= text_input_ids.shape[
-                    -1
-                ] and not torch.equal(text_input_ids, untruncated_ids):
-                    removed_text = tokenizer.batch_decode(
-                        untruncated_ids[:, tokenizer.model_max_length - 1 : -1]
-                    )
+                if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(
+                    text_input_ids, untruncated_ids
+                ):
+                    removed_text = tokenizer.batch_decode(untruncated_ids[:, tokenizer.model_max_length - 1 : -1])
                     logger.warning(
                         "The following part of your input was truncated because CLIP can only handle sequences up to"
                         f" {tokenizer.model_max_length} tokens: {removed_text}"
                     )
 
-                prompt_embeds = text_encoder(
-                    text_input_ids.to(device), output_hidden_states=True
-                )
+                prompt_embeds = text_encoder(text_input_ids.to(device), output_hidden_states=True)
 
                 # We are only ALWAYS interested in the pooled output of the final text encoder
-                pooled_prompt_embeds = (
-                    prompt_embeds[0]
-                    if pooled_prompt_embeds is None
-                    else pooled_prompt_embeds
-                )
+                pooled_prompt_embeds = prompt_embeds[0] if pooled_prompt_embeds is None else pooled_prompt_embeds
                 if clip_skip is None:
                     prompt_embeds = prompt_embeds.hidden_states[-2]
                 else:
@@ -903,14 +820,8 @@ class StableDiffusionXLPipeline(
             prompt_embeds = torch.concat(prompt_embeds_list, dim=-1)
 
         # get unconditional embeddings for classifier free guidance
-        zero_out_negative_prompt = (
-            negative_prompt is None and self.config.force_zeros_for_empty_prompt
-        )
-        if (
-            do_classifier_free_guidance
-            and negative_prompt_embeds is None
-            and zero_out_negative_prompt
-        ):
+        zero_out_negative_prompt = negative_prompt is None and self.config.force_zeros_for_empty_prompt
+        if do_classifier_free_guidance and negative_prompt_embeds is None and zero_out_negative_prompt:
             negative_prompt_embeds = torch.zeros_like(prompt_embeds)
             negative_pooled_prompt_embeds = torch.zeros_like(pooled_prompt_embeds)
         elif do_classifier_free_guidance and negative_prompt_embeds is None:
@@ -918,16 +829,8 @@ class StableDiffusionXLPipeline(
             negative_prompt_2 = negative_prompt_2 or negative_prompt
 
             # normalize str to list
-            negative_prompt = (
-                batch_size * [negative_prompt]
-                if isinstance(negative_prompt, str)
-                else negative_prompt
-            )
-            negative_prompt_2 = (
-                batch_size * [negative_prompt_2]
-                if isinstance(negative_prompt_2, str)
-                else negative_prompt_2
-            )
+            negative_prompt = batch_size * [negative_prompt] if isinstance(negative_prompt, str) else negative_prompt
+            negative_prompt_2 = batch_size * [negative_prompt_2] if isinstance(negative_prompt_2, str) else negative_prompt_2
 
             uncond_tokens: List[str]
             if prompt is not None and type(prompt) is not type(negative_prompt):
@@ -945,13 +848,9 @@ class StableDiffusionXLPipeline(
                 uncond_tokens = [negative_prompt, negative_prompt_2]
 
             negative_prompt_embeds_list = []
-            for negative_prompt, tokenizer, text_encoder in zip(
-                uncond_tokens, tokenizers, text_encoders
-            ):
+            for negative_prompt, tokenizer, text_encoder in zip(uncond_tokens, tokenizers, text_encoders):
                 if isinstance(self, TextualInversionLoaderMixin):
-                    negative_prompt = self.maybe_convert_prompt(
-                        negative_prompt, tokenizer
-                    )
+                    negative_prompt = self.maybe_convert_prompt(negative_prompt, tokenizer)
 
                 max_length = prompt_embeds.shape[1]
                 uncond_input = tokenizer(
@@ -975,46 +874,34 @@ class StableDiffusionXLPipeline(
             negative_prompt_embeds = torch.concat(negative_prompt_embeds_list, dim=-1)
 
         if self.text_encoder_2 is not None:
-            prompt_embeds = prompt_embeds.to(
-                dtype=self.text_encoder_2.dtype, device=device
-            )
+            prompt_embeds = prompt_embeds.to(dtype=self.text_encoder_2.dtype, device=device)
         else:
             prompt_embeds = prompt_embeds.to(dtype=self.unet.dtype, device=device)
 
         bs_embed, seq_len, _ = prompt_embeds.shape
         # duplicate text embeddings for each generation per prompt, using mps friendly method
         prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
-        prompt_embeds = prompt_embeds.view(
-            bs_embed * num_images_per_prompt, seq_len, -1
-        )
+        prompt_embeds = prompt_embeds.view(bs_embed * num_images_per_prompt, seq_len, -1)
 
         if do_classifier_free_guidance:
             # duplicate unconditional embeddings for each generation per prompt, using mps friendly method
             seq_len = negative_prompt_embeds.shape[1]
 
             if self.text_encoder_2 is not None:
-                negative_prompt_embeds = negative_prompt_embeds.to(
-                    dtype=self.text_encoder_2.dtype, device=device
-                )
+                negative_prompt_embeds = negative_prompt_embeds.to(dtype=self.text_encoder_2.dtype, device=device)
             else:
-                negative_prompt_embeds = negative_prompt_embeds.to(
-                    dtype=self.unet.dtype, device=device
-                )
+                negative_prompt_embeds = negative_prompt_embeds.to(dtype=self.unet.dtype, device=device)
 
-            negative_prompt_embeds = negative_prompt_embeds.repeat(
-                1, num_images_per_prompt, 1
-            )
-            negative_prompt_embeds = negative_prompt_embeds.view(
-                batch_size * num_images_per_prompt, seq_len, -1
-            )
+            negative_prompt_embeds = negative_prompt_embeds.repeat(1, num_images_per_prompt, 1)
+            negative_prompt_embeds = negative_prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
 
-        pooled_prompt_embeds = pooled_prompt_embeds.repeat(
-            1, num_images_per_prompt
-        ).view(bs_embed * num_images_per_prompt, -1)
+        pooled_prompt_embeds = pooled_prompt_embeds.repeat(1, num_images_per_prompt).view(
+            bs_embed * num_images_per_prompt, -1
+        )
         if do_classifier_free_guidance:
-            negative_pooled_prompt_embeds = negative_pooled_prompt_embeds.repeat(
-                1, num_images_per_prompt
-            ).view(bs_embed * num_images_per_prompt, -1)
+            negative_pooled_prompt_embeds = negative_pooled_prompt_embeds.repeat(1, num_images_per_prompt).view(
+                bs_embed * num_images_per_prompt, -1
+            )
 
         if self.text_encoder is not None:
             if isinstance(self, StableDiffusionXLLoraLoaderMixin) and USE_PEFT_BACKEND:
@@ -1034,9 +921,7 @@ class StableDiffusionXLPipeline(
         )
 
     # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.encode_image
-    def encode_image(
-        self, image, device, num_images_per_prompt, output_hidden_states=None
-    ):
+    def encode_image(self, image, device, num_images_per_prompt, output_hidden_states=None):
         dtype = next(self.image_encoder.parameters()).dtype
 
         if not isinstance(image, torch.Tensor):
@@ -1044,20 +929,12 @@ class StableDiffusionXLPipeline(
 
         image = image.to(device=device, dtype=dtype)
         if output_hidden_states:
-            image_enc_hidden_states = self.image_encoder(
-                image, output_hidden_states=True
-            ).hidden_states[-2]
-            image_enc_hidden_states = image_enc_hidden_states.repeat_interleave(
-                num_images_per_prompt, dim=0
-            )
+            image_enc_hidden_states = self.image_encoder(image, output_hidden_states=True).hidden_states[-2]
+            image_enc_hidden_states = image_enc_hidden_states.repeat_interleave(num_images_per_prompt, dim=0)
             uncond_image_enc_hidden_states = self.image_encoder(
                 torch.zeros_like(image), output_hidden_states=True
             ).hidden_states[-2]
-            uncond_image_enc_hidden_states = (
-                uncond_image_enc_hidden_states.repeat_interleave(
-                    num_images_per_prompt, dim=0
-                )
-            )
+            uncond_image_enc_hidden_states = uncond_image_enc_hidden_states.repeat_interleave(num_images_per_prompt, dim=0)
             return image_enc_hidden_states, uncond_image_enc_hidden_states
         else:
             image_embeds = self.image_encoder(image).image_embeds
@@ -1079,9 +956,7 @@ class StableDiffusionXLPipeline(
             if not isinstance(ip_adapter_image, list):
                 ip_adapter_image = [ip_adapter_image]
 
-            if len(ip_adapter_image) != len(
-                self.unet.encoder_hid_proj.image_projection_layers
-            ):
+            if len(ip_adapter_image) != len(self.unet.encoder_hid_proj.image_projection_layers):
                 raise ValueError(
                     f"`ip_adapter_image` must have same length as the number of IP Adapters. Got {len(ip_adapter_image)} images and {len(self.unet.encoder_hid_proj.image_projection_layers)} IP Adapters."
                 )
@@ -1094,17 +969,11 @@ class StableDiffusionXLPipeline(
                 single_image_embeds, single_negative_image_embeds = self.encode_image(
                     single_ip_adapter_image, device, 1, output_hidden_state
                 )
-                single_image_embeds = torch.stack(
-                    [single_image_embeds] * num_images_per_prompt, dim=0
-                )
-                single_negative_image_embeds = torch.stack(
-                    [single_negative_image_embeds] * num_images_per_prompt, dim=0
-                )
+                single_image_embeds = torch.stack([single_image_embeds] * num_images_per_prompt, dim=0)
+                single_negative_image_embeds = torch.stack([single_negative_image_embeds] * num_images_per_prompt, dim=0)
 
                 if do_classifier_free_guidance:
-                    single_image_embeds = torch.cat(
-                        [single_negative_image_embeds, single_image_embeds]
-                    )
+                    single_image_embeds = torch.cat([single_negative_image_embeds, single_image_embeds])
                     single_image_embeds = single_image_embeds.to(device)
 
                 image_embeds.append(single_image_embeds)
@@ -1113,9 +982,7 @@ class StableDiffusionXLPipeline(
             image_embeds = []
             for single_image_embeds in ip_adapter_image_embeds:
                 if do_classifier_free_guidance:
-                    single_negative_image_embeds, single_image_embeds = (
-                        single_image_embeds.chunk(2)
-                    )
+                    single_negative_image_embeds, single_image_embeds = single_image_embeds.chunk(2)
                     single_image_embeds = single_image_embeds.repeat(
                         num_images_per_prompt,
                         *(repeat_dims * len(single_image_embeds.shape[1:])),
@@ -1124,9 +991,7 @@ class StableDiffusionXLPipeline(
                         num_images_per_prompt,
                         *(repeat_dims * len(single_negative_image_embeds.shape[1:])),
                     )
-                    single_image_embeds = torch.cat(
-                        [single_negative_image_embeds, single_image_embeds]
-                    )
+                    single_image_embeds = torch.cat([single_negative_image_embeds, single_image_embeds])
                 else:
                     single_image_embeds = single_image_embeds.repeat(
                         num_images_per_prompt,
@@ -1143,17 +1008,13 @@ class StableDiffusionXLPipeline(
         # eta corresponds to η in DDIM paper: https://arxiv.org/abs/2010.02502
         # and should be between [0, 1]
 
-        accepts_eta = "eta" in set(
-            inspect.signature(self.scheduler.step).parameters.keys()
-        )
+        accepts_eta = "eta" in set(inspect.signature(self.scheduler.step).parameters.keys())
         extra_step_kwargs = {}
         if accepts_eta:
             extra_step_kwargs["eta"] = eta
 
         # check if the scheduler accepts generator
-        accepts_generator = "generator" in set(
-            inspect.signature(self.scheduler.step).parameters.keys()
-        )
+        accepts_generator = "generator" in set(inspect.signature(self.scheduler.step).parameters.keys())
         if accepts_generator:
             extra_step_kwargs["generator"] = generator
         return extra_step_kwargs
@@ -1176,21 +1037,15 @@ class StableDiffusionXLPipeline(
         callback_on_step_end_tensor_inputs=None,
     ):
         if height % 8 != 0 or width % 8 != 0:
-            raise ValueError(
-                f"`height` and `width` have to be divisible by 8 but are {height} and {width}."
-            )
+            raise ValueError(f"`height` and `width` have to be divisible by 8 but are {height} and {width}.")
 
-        if callback_steps is not None and (
-            not isinstance(callback_steps, int) or callback_steps <= 0
-        ):
+        if callback_steps is not None and (not isinstance(callback_steps, int) or callback_steps <= 0):
             raise ValueError(
-                f"`callback_steps` has to be a positive integer but is {callback_steps} of type"
-                f" {type(callback_steps)}."
+                f"`callback_steps` has to be a positive integer but is {callback_steps} of type" f" {type(callback_steps)}."
             )
 
         if callback_on_step_end_tensor_inputs is not None and not all(
-            k in self._callback_tensor_inputs
-            for k in callback_on_step_end_tensor_inputs
+            k in self._callback_tensor_inputs for k in callback_on_step_end_tensor_inputs
         ):
             raise ValueError(
                 f"`callback_on_step_end_tensor_inputs` has to be in {self._callback_tensor_inputs}, but found {[k for k in callback_on_step_end_tensor_inputs if k not in self._callback_tensor_inputs]}"
@@ -1210,18 +1065,10 @@ class StableDiffusionXLPipeline(
             raise ValueError(
                 "Provide either `prompt` or `prompt_embeds`. Cannot leave both `prompt` and `prompt_embeds` undefined."
             )
-        elif prompt is not None and (
-            not isinstance(prompt, str) and not isinstance(prompt, list)
-        ):
-            raise ValueError(
-                f"`prompt` has to be of type `str` or `list` but is {type(prompt)}"
-            )
-        elif prompt_2 is not None and (
-            not isinstance(prompt_2, str) and not isinstance(prompt_2, list)
-        ):
-            raise ValueError(
-                f"`prompt_2` has to be of type `str` or `list` but is {type(prompt_2)}"
-            )
+        elif prompt is not None and (not isinstance(prompt, str) and not isinstance(prompt, list)):
+            raise ValueError(f"`prompt` has to be of type `str` or `list` but is {type(prompt)}")
+        elif prompt_2 is not None and (not isinstance(prompt_2, str) and not isinstance(prompt_2, list)):
+            raise ValueError(f"`prompt_2` has to be of type `str` or `list` but is {type(prompt_2)}")
 
         if negative_prompt is not None and negative_prompt_embeds is not None:
             raise ValueError(
@@ -1292,9 +1139,7 @@ class StableDiffusionXLPipeline(
             )
 
         if latents is None:
-            latents = randn_tensor(
-                shape, generator=generator, device=device, dtype=dtype
-            )
+            latents = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
         else:
             latents = latents.to(device)
 
@@ -1311,18 +1156,11 @@ class StableDiffusionXLPipeline(
         text_encoder_projection_dim=None,
     ):
         if self.unet.config.cross_attention_dim == 1280:
-            add_time_ids = list(
-                original_size
-                + crops_coords_top_left
-                + (self.validation_refiner_aesthetic_score,)
-            )
+            add_time_ids = list(original_size + crops_coords_top_left + (self.validation_refiner_aesthetic_score,))
         else:
             add_time_ids = list(original_size + crops_coords_top_left + target_size)
 
-        passed_add_embed_dim = (
-            self.unet.config.addition_time_embed_dim * len(add_time_ids)
-            + text_encoder_projection_dim
-        )
+        passed_add_embed_dim = self.unet.config.addition_time_embed_dim * len(add_time_ids) + text_encoder_projection_dim
         expected_add_embed_dim = self.unet.add_embedding.linear_1.in_features
 
         if expected_add_embed_dim != passed_add_embed_dim:
@@ -1659,11 +1497,7 @@ class StableDiffusionXLPipeline(
         device = self.unet.device
 
         # 3. Encode input prompt
-        lora_scale = (
-            self.cross_attention_kwargs.get("scale", None)
-            if self.cross_attention_kwargs is not None
-            else None
-        )
+        lora_scale = self.cross_attention_kwargs.get("scale", None) if self.cross_attention_kwargs is not None else None
 
         (
             prompt_embeds,
@@ -1687,9 +1521,7 @@ class StableDiffusionXLPipeline(
         )
 
         # 4. Prepare timesteps
-        timesteps, num_inference_steps = retrieve_timesteps(
-            self.scheduler, num_inference_steps, device, timesteps
-        )
+        timesteps, num_inference_steps = retrieve_timesteps(self.scheduler, num_inference_steps, device, timesteps)
 
         # 5. Prepare latent variables
         num_channels_latents = self.unet.config.in_channels
@@ -1734,16 +1566,12 @@ class StableDiffusionXLPipeline(
 
         if self.do_classifier_free_guidance:
             prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
-            add_text_embeds = torch.cat(
-                [negative_pooled_prompt_embeds, add_text_embeds], dim=0
-            )
+            add_text_embeds = torch.cat([negative_pooled_prompt_embeds, add_text_embeds], dim=0)
             add_time_ids = torch.cat([negative_add_time_ids, add_time_ids], dim=0)
 
         prompt_embeds = prompt_embeds.to(device)
         add_text_embeds = add_text_embeds.to(device)
-        add_time_ids = add_time_ids.to(device).repeat(
-            batch_size * num_images_per_prompt, 1
-        )
+        add_time_ids = add_time_ids.to(device).repeat(batch_size * num_images_per_prompt, 1)
 
         if ip_adapter_image is not None or ip_adapter_image_embeds is not None:
             image_embeds = self.prepare_ip_adapter_image_embeds(
@@ -1755,9 +1583,7 @@ class StableDiffusionXLPipeline(
             )
 
         # 8. Denoising loop
-        num_warmup_steps = max(
-            len(timesteps) - num_inference_steps * self.scheduler.order, 0
-        )
+        num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
 
         # 8.1 Apply denoising_end
         if (
@@ -1772,17 +1598,13 @@ class StableDiffusionXLPipeline(
                     - (self.denoising_end * self.scheduler.config.num_train_timesteps)
                 )
             )
-            num_inference_steps = len(
-                list(filter(lambda ts: ts >= discrete_timestep_cutoff, timesteps))
-            )
+            num_inference_steps = len(list(filter(lambda ts: ts >= discrete_timestep_cutoff, timesteps)))
             timesteps = timesteps[:num_inference_steps]
 
         # 9. Optionally get Guidance Scale Embedding
         timestep_cond = None
         if self.unet.config.time_cond_proj_dim is not None:
-            guidance_scale_tensor = torch.tensor(self.guidance_scale - 1).repeat(
-                batch_size * num_images_per_prompt
-            )
+            guidance_scale_tensor = torch.tensor(self.guidance_scale - 1).repeat(batch_size * num_images_per_prompt)
             timestep_cond = self.get_guidance_scale_embedding(
                 guidance_scale_tensor, embedding_dim=self.unet.config.time_cond_proj_dim
             ).to(device=device, dtype=latents.dtype)
@@ -1794,15 +1616,9 @@ class StableDiffusionXLPipeline(
                     continue
 
                 # expand the latents if we are doing classifier free guidance
-                latent_model_input = (
-                    torch.cat([latents] * 2)
-                    if self.do_classifier_free_guidance
-                    else latents
-                )
+                latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents
 
-                latent_model_input = self.scheduler.scale_model_input(
-                    latent_model_input, t
-                )
+                latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
                 # predict the noise residual
                 added_cond_kwargs = {
@@ -1817,18 +1633,14 @@ class StableDiffusionXLPipeline(
                     encoder_hidden_states=prompt_embeds.to(self.unet.device),
                     timestep_cond=timestep_cond,
                     cross_attention_kwargs=self.cross_attention_kwargs,
-                    added_cond_kwargs={
-                        k: v.to(self.unet.device) for k, v in added_cond_kwargs.items()
-                    },
+                    added_cond_kwargs={k: v.to(self.unet.device) for k, v in added_cond_kwargs.items()},
                     return_dict=False,
                 )[0]
 
                 # perform guidance
                 if self.do_classifier_free_guidance:
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                    noise_pred = noise_pred_uncond + self.guidance_scale * (
-                        noise_pred_text - noise_pred_uncond
-                    )
+                    noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
 
                 if self.do_classifier_free_guidance and self.guidance_rescale > 0.0:
                     # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf
@@ -1840,9 +1652,7 @@ class StableDiffusionXLPipeline(
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents_dtype = latents.dtype
-                latents = self.scheduler.step(
-                    noise_pred, t, latents, **extra_step_kwargs, return_dict=False
-                )[0]
+                latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
                 if latents.dtype != latents_dtype:
                     if torch.backends.mps.is_available():
                         # some platforms (eg. apple mps) misbehave due to a pytorch bug: https://github.com/pytorch/pytorch/pull/99272
@@ -1856,24 +1666,16 @@ class StableDiffusionXLPipeline(
 
                     latents = callback_outputs.pop("latents", latents)
                     prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
-                    negative_prompt_embeds = callback_outputs.pop(
-                        "negative_prompt_embeds", negative_prompt_embeds
-                    )
-                    add_text_embeds = callback_outputs.pop(
-                        "add_text_embeds", add_text_embeds
-                    )
+                    negative_prompt_embeds = callback_outputs.pop("negative_prompt_embeds", negative_prompt_embeds)
+                    add_text_embeds = callback_outputs.pop("add_text_embeds", add_text_embeds)
                     negative_pooled_prompt_embeds = callback_outputs.pop(
                         "negative_pooled_prompt_embeds", negative_pooled_prompt_embeds
                     )
                     add_time_ids = callback_outputs.pop("add_time_ids", add_time_ids)
-                    negative_add_time_ids = callback_outputs.pop(
-                        "negative_add_time_ids", negative_add_time_ids
-                    )
+                    negative_add_time_ids = callback_outputs.pop("negative_add_time_ids", negative_add_time_ids)
 
                 # call the callback, if provided
-                if i == len(timesteps) - 1 or (
-                    (i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0
-                ):
+                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
                     if callback is not None and i % callback_steps == 0:
                         step_idx = i // getattr(self.scheduler, "order", 1)
@@ -1884,15 +1686,11 @@ class StableDiffusionXLPipeline(
 
         if not output_type == "latent":
             # make sure the VAE is in float32 mode, as it overflows in float16
-            needs_upcasting = (
-                self.vae.dtype == torch.float16 and self.vae.config.force_upcast
-            )
+            needs_upcasting = self.vae.dtype == torch.float16 and self.vae.config.force_upcast
 
             if needs_upcasting:
                 self.upcast_vae()
-                latents = latents.to(
-                    next(iter(self.vae.post_quant_conv.parameters())).dtype
-                )
+                latents = latents.to(next(iter(self.vae.post_quant_conv.parameters())).dtype)
             elif latents.dtype != self.vae.dtype:
                 if torch.backends.mps.is_available():
                     # some platforms (eg. apple mps) misbehave due to a pytorch bug: https://github.com/pytorch/pytorch/pull/99272
@@ -1900,47 +1698,24 @@ class StableDiffusionXLPipeline(
 
             # unscale/denormalize the latents
             # denormalize with the mean and std if available and not None
-            has_latents_mean = (
-                hasattr(self.vae.config, "latents_mean")
-                and self.vae.config.latents_mean is not None
-            )
-            has_latents_std = (
-                hasattr(self.vae.config, "latents_std")
-                and self.vae.config.latents_std is not None
-            )
+            has_latents_mean = hasattr(self.vae.config, "latents_mean") and self.vae.config.latents_mean is not None
+            has_latents_std = hasattr(self.vae.config, "latents_std") and self.vae.config.latents_std is not None
             if has_latents_mean and has_latents_std:
-                latents_mean = (
-                    torch.tensor(self.vae.config.latents_mean)
-                    .view(1, 4, 1, 1)
-                    .to(latents.device, latents.dtype)
-                )
-                latents_std = (
-                    torch.tensor(self.vae.config.latents_std)
-                    .view(1, 4, 1, 1)
-                    .to(latents.device, latents.dtype)
-                )
-                latents = (
-                    latents * latents_std / self.vae.config.scaling_factor
-                    + latents_mean
-                )
+                latents_mean = torch.tensor(self.vae.config.latents_mean).view(1, 4, 1, 1).to(latents.device, latents.dtype)
+                latents_std = torch.tensor(self.vae.config.latents_std).view(1, 4, 1, 1).to(latents.device, latents.dtype)
+                latents = latents * latents_std / self.vae.config.scaling_factor + latents_mean
             else:
                 latents = latents / self.vae.config.scaling_factor
 
             if hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa"):
                 # we have SageAttention loaded. fallback to SDPA for decode.
-                torch.nn.functional.scaled_dot_product_attention = (
-                    torch.nn.functional.scaled_dot_product_attention_sdpa
-                )
+                torch.nn.functional.scaled_dot_product_attention = torch.nn.functional.scaled_dot_product_attention_sdpa
 
-            image = self.vae.decode(
-                latents.to(dtype=self.vae.dtype), return_dict=False
-            )[0]
+            image = self.vae.decode(latents.to(dtype=self.vae.dtype), return_dict=False)[0]
 
             if hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa"):
                 # reenable SageAttention for training.
-                torch.nn.functional.scaled_dot_product_attention = (
-                    torch.nn.functional.scaled_dot_product_attention_sage
-                )
+                torch.nn.functional.scaled_dot_product_attention = torch.nn.functional.scaled_dot_product_attention_sage
 
             # cast back to fp16 if needed
             if needs_upcasting:
@@ -2067,18 +1842,12 @@ class StableDiffusionXLImg2ImgPipeline(
             feature_extractor=feature_extractor,
             scheduler=scheduler,
         )
-        self.register_to_config(
-            force_zeros_for_empty_prompt=force_zeros_for_empty_prompt
-        )
+        self.register_to_config(force_zeros_for_empty_prompt=force_zeros_for_empty_prompt)
         self.register_to_config(requires_aesthetics_score=requires_aesthetics_score)
         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
         self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor)
 
-        add_watermarker = (
-            add_watermarker
-            if add_watermarker is not None
-            else is_invisible_watermark_available()
-        )
+        add_watermarker = add_watermarker if add_watermarker is not None else is_invisible_watermark_available()
 
         if add_watermarker:
             self.watermark = StableDiffusionXLWatermarker()
@@ -2148,9 +1917,7 @@ class StableDiffusionXLImg2ImgPipeline(
 
         # set lora scale so that monkey patched LoRA
         # function of text encoder can correctly access it
-        if lora_scale is not None and isinstance(
-            self, StableDiffusionXLLoraLoaderMixin
-        ):
+        if lora_scale is not None and isinstance(self, StableDiffusionXLLoraLoaderMixin):
             self._lora_scale = lora_scale
 
             # dynamically adjust the LoRA scale
@@ -2174,16 +1941,8 @@ class StableDiffusionXLImg2ImgPipeline(
             batch_size = prompt_embeds.shape[0]
 
         # Define tokenizers and text encoders
-        tokenizers = (
-            [self.tokenizer, self.tokenizer_2]
-            if self.tokenizer is not None
-            else [self.tokenizer_2]
-        )
-        text_encoders = (
-            [self.text_encoder, self.text_encoder_2]
-            if self.text_encoder is not None
-            else [self.text_encoder_2]
-        )
+        tokenizers = [self.tokenizer, self.tokenizer_2] if self.tokenizer is not None else [self.tokenizer_2]
+        text_encoders = [self.text_encoder, self.text_encoder_2] if self.text_encoder is not None else [self.text_encoder_2]
 
         if prompt_embeds is None:
             prompt_2 = prompt_2 or prompt
@@ -2192,9 +1951,7 @@ class StableDiffusionXLImg2ImgPipeline(
             # textual inversion: process multi-vector tokens if necessary
             prompt_embeds_list = []
             prompts = [prompt, prompt_2]
-            for prompt, tokenizer, text_encoder in zip(
-                prompts, tokenizers, text_encoders
-            ):
+            for prompt, tokenizer, text_encoder in zip(prompts, tokenizers, text_encoders):
                 if isinstance(self, TextualInversionLoaderMixin):
                     prompt = self.maybe_convert_prompt(prompt, tokenizer)
 
@@ -2207,24 +1964,18 @@ class StableDiffusionXLImg2ImgPipeline(
                 )
 
                 text_input_ids = text_inputs.input_ids
-                untruncated_ids = tokenizer(
-                    prompt, padding="longest", return_tensors="pt"
-                ).input_ids
+                untruncated_ids = tokenizer(prompt, padding="longest", return_tensors="pt").input_ids
 
-                if untruncated_ids.shape[-1] >= text_input_ids.shape[
-                    -1
-                ] and not torch.equal(text_input_ids, untruncated_ids):
-                    removed_text = tokenizer.batch_decode(
-                        untruncated_ids[:, tokenizer.model_max_length - 1 : -1]
-                    )
+                if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(
+                    text_input_ids, untruncated_ids
+                ):
+                    removed_text = tokenizer.batch_decode(untruncated_ids[:, tokenizer.model_max_length - 1 : -1])
                     logger.warning(
                         "The following part of your input was truncated because CLIP can only handle sequences up to"
                         f" {tokenizer.model_max_length} tokens: {removed_text}"
                     )
 
-                prompt_embeds = text_encoder(
-                    text_input_ids.to(device), output_hidden_states=True
-                )
+                prompt_embeds = text_encoder(text_input_ids.to(device), output_hidden_states=True)
 
                 # We are only ALWAYS interested in the pooled output of the final text encoder
                 pooled_prompt_embeds = prompt_embeds[0]
@@ -2239,14 +1990,8 @@ class StableDiffusionXLImg2ImgPipeline(
             prompt_embeds = torch.concat(prompt_embeds_list, dim=-1)
 
         # get unconditional embeddings for classifier free guidance
-        zero_out_negative_prompt = (
-            negative_prompt is None and self.config.force_zeros_for_empty_prompt
-        )
-        if (
-            do_classifier_free_guidance
-            and negative_prompt_embeds is None
-            and zero_out_negative_prompt
-        ):
+        zero_out_negative_prompt = negative_prompt is None and self.config.force_zeros_for_empty_prompt
+        if do_classifier_free_guidance and negative_prompt_embeds is None and zero_out_negative_prompt:
             negative_prompt_embeds = torch.zeros_like(prompt_embeds)
             negative_pooled_prompt_embeds = torch.zeros_like(pooled_prompt_embeds)
         elif do_classifier_free_guidance and negative_prompt_embeds is None:
@@ -2254,16 +1999,8 @@ class StableDiffusionXLImg2ImgPipeline(
             negative_prompt_2 = negative_prompt_2 or negative_prompt
 
             # normalize str to list
-            negative_prompt = (
-                batch_size * [negative_prompt]
-                if isinstance(negative_prompt, str)
-                else negative_prompt
-            )
-            negative_prompt_2 = (
-                batch_size * [negative_prompt_2]
-                if isinstance(negative_prompt_2, str)
-                else negative_prompt_2
-            )
+            negative_prompt = batch_size * [negative_prompt] if isinstance(negative_prompt, str) else negative_prompt
+            negative_prompt_2 = batch_size * [negative_prompt_2] if isinstance(negative_prompt_2, str) else negative_prompt_2
 
             uncond_tokens: List[str]
             if prompt is not None and type(prompt) is not type(negative_prompt):
@@ -2281,13 +2018,9 @@ class StableDiffusionXLImg2ImgPipeline(
                 uncond_tokens = [negative_prompt, negative_prompt_2]
 
             negative_prompt_embeds_list = []
-            for negative_prompt, tokenizer, text_encoder in zip(
-                uncond_tokens, tokenizers, text_encoders
-            ):
+            for negative_prompt, tokenizer, text_encoder in zip(uncond_tokens, tokenizers, text_encoders):
                 if isinstance(self, TextualInversionLoaderMixin):
-                    negative_prompt = self.maybe_convert_prompt(
-                        negative_prompt, tokenizer
-                    )
+                    negative_prompt = self.maybe_convert_prompt(negative_prompt, tokenizer)
 
                 max_length = prompt_embeds.shape[1]
                 uncond_input = tokenizer(
@@ -2311,46 +2044,34 @@ class StableDiffusionXLImg2ImgPipeline(
             negative_prompt_embeds = torch.concat(negative_prompt_embeds_list, dim=-1)
 
         if self.text_encoder_2 is not None:
-            prompt_embeds = prompt_embeds.to(
-                dtype=self.text_encoder_2.dtype, device=device
-            )
+            prompt_embeds = prompt_embeds.to(dtype=self.text_encoder_2.dtype, device=device)
         else:
             prompt_embeds = prompt_embeds.to(dtype=self.unet.dtype, device=device)
 
         bs_embed, seq_len, _ = prompt_embeds.shape
         # duplicate text embeddings for each generation per prompt, using mps friendly method
         prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
-        prompt_embeds = prompt_embeds.view(
-            bs_embed * num_images_per_prompt, seq_len, -1
-        )
+        prompt_embeds = prompt_embeds.view(bs_embed * num_images_per_prompt, seq_len, -1)
 
         if do_classifier_free_guidance:
             # duplicate unconditional embeddings for each generation per prompt, using mps friendly method
             seq_len = negative_prompt_embeds.shape[1]
 
             if self.text_encoder_2 is not None:
-                negative_prompt_embeds = negative_prompt_embeds.to(
-                    dtype=self.text_encoder_2.dtype, device=device
-                )
+                negative_prompt_embeds = negative_prompt_embeds.to(dtype=self.text_encoder_2.dtype, device=device)
             else:
-                negative_prompt_embeds = negative_prompt_embeds.to(
-                    dtype=self.unet.dtype, device=device
-                )
+                negative_prompt_embeds = negative_prompt_embeds.to(dtype=self.unet.dtype, device=device)
 
-            negative_prompt_embeds = negative_prompt_embeds.repeat(
-                1, num_images_per_prompt, 1
-            )
-            negative_prompt_embeds = negative_prompt_embeds.view(
-                batch_size * num_images_per_prompt, seq_len, -1
-            )
+            negative_prompt_embeds = negative_prompt_embeds.repeat(1, num_images_per_prompt, 1)
+            negative_prompt_embeds = negative_prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
 
-        pooled_prompt_embeds = pooled_prompt_embeds.repeat(
-            1, num_images_per_prompt
-        ).view(bs_embed * num_images_per_prompt, -1)
+        pooled_prompt_embeds = pooled_prompt_embeds.repeat(1, num_images_per_prompt).view(
+            bs_embed * num_images_per_prompt, -1
+        )
         if do_classifier_free_guidance:
-            negative_pooled_prompt_embeds = negative_pooled_prompt_embeds.repeat(
-                1, num_images_per_prompt
-            ).view(bs_embed * num_images_per_prompt, -1)
+            negative_pooled_prompt_embeds = negative_pooled_prompt_embeds.repeat(1, num_images_per_prompt).view(
+                bs_embed * num_images_per_prompt, -1
+            )
 
         if self.text_encoder is not None:
             if isinstance(self, StableDiffusionXLLoraLoaderMixin) and USE_PEFT_BACKEND:
@@ -2376,17 +2097,13 @@ class StableDiffusionXLImg2ImgPipeline(
         # eta corresponds to η in DDIM paper: https://arxiv.org/abs/2010.02502
         # and should be between [0, 1]
 
-        accepts_eta = "eta" in set(
-            inspect.signature(self.scheduler.step).parameters.keys()
-        )
+        accepts_eta = "eta" in set(inspect.signature(self.scheduler.step).parameters.keys())
         extra_step_kwargs = {}
         if accepts_eta:
             extra_step_kwargs["eta"] = eta
 
         # check if the scheduler accepts generator
-        accepts_generator = "generator" in set(
-            inspect.signature(self.scheduler.step).parameters.keys()
-        )
+        accepts_generator = "generator" in set(inspect.signature(self.scheduler.step).parameters.keys())
         if accepts_generator:
             extra_step_kwargs["generator"] = generator
         return extra_step_kwargs
@@ -2407,9 +2124,7 @@ class StableDiffusionXLImg2ImgPipeline(
         callback_on_step_end_tensor_inputs=None,
     ):
         if strength < 0 or strength > 1:
-            raise ValueError(
-                f"The value of strength should in [0.0, 1.0] but is {strength}"
-            )
+            raise ValueError(f"The value of strength should in [0.0, 1.0] but is {strength}")
         if num_inference_steps is None:
             raise ValueError("`num_inference_steps` cannot be None.")
         elif not isinstance(num_inference_steps, int) or num_inference_steps <= 0:
@@ -2417,17 +2132,13 @@ class StableDiffusionXLImg2ImgPipeline(
                 f"`num_inference_steps` has to be a positive integer but is {num_inference_steps} of type"
                 f" {type(num_inference_steps)}."
             )
-        if callback_steps is not None and (
-            not isinstance(callback_steps, int) or callback_steps <= 0
-        ):
+        if callback_steps is not None and (not isinstance(callback_steps, int) or callback_steps <= 0):
             raise ValueError(
-                f"`callback_steps` has to be a positive integer but is {callback_steps} of type"
-                f" {type(callback_steps)}."
+                f"`callback_steps` has to be a positive integer but is {callback_steps} of type" f" {type(callback_steps)}."
             )
 
         if callback_on_step_end_tensor_inputs is not None and not all(
-            k in self._callback_tensor_inputs
-            for k in callback_on_step_end_tensor_inputs
+            k in self._callback_tensor_inputs for k in callback_on_step_end_tensor_inputs
         ):
             raise ValueError(
                 f"`callback_on_step_end_tensor_inputs` has to be in {self._callback_tensor_inputs}, but found {[k for k in callback_on_step_end_tensor_inputs if k not in self._callback_tensor_inputs]}"
@@ -2447,18 +2158,10 @@ class StableDiffusionXLImg2ImgPipeline(
             raise ValueError(
                 "Provide either `prompt` or `prompt_embeds`. Cannot leave both `prompt` and `prompt_embeds` undefined."
             )
-        elif prompt is not None and (
-            not isinstance(prompt, str) and not isinstance(prompt, list)
-        ):
-            raise ValueError(
-                f"`prompt` has to be of type `str` or `list` but is {type(prompt)}"
-            )
-        elif prompt_2 is not None and (
-            not isinstance(prompt_2, str) and not isinstance(prompt_2, list)
-        ):
-            raise ValueError(
-                f"`prompt_2` has to be of type `str` or `list` but is {type(prompt_2)}"
-            )
+        elif prompt is not None and (not isinstance(prompt, str) and not isinstance(prompt, list)):
+            raise ValueError(f"`prompt` has to be of type `str` or `list` but is {type(prompt)}")
+        elif prompt_2 is not None and (not isinstance(prompt_2, str) and not isinstance(prompt_2, list)):
+            raise ValueError(f"`prompt_2` has to be of type `str` or `list` but is {type(prompt_2)}")
 
         if negative_prompt is not None and negative_prompt_embeds is not None:
             raise ValueError(
@@ -2494,14 +2197,10 @@ class StableDiffusionXLImg2ImgPipeline(
                     f"`ip_adapter_image_embeds` has to be a list of 3D or 4D tensors but is {ip_adapter_image_embeds[0].ndim}D"
                 )
 
-    def get_timesteps(
-        self, num_inference_steps, strength, device, denoising_start=None
-    ):
+    def get_timesteps(self, num_inference_steps, strength, device, denoising_start=None):
         # get the original timestep using init_timestep
         if denoising_start is None:
-            init_timestep = min(
-                int(num_inference_steps * strength), num_inference_steps
-            )
+            init_timestep = min(int(num_inference_steps * strength), num_inference_steps)
             t_start = max(num_inference_steps - init_timestep, 0)
         else:
             t_start = 0
@@ -2513,8 +2212,7 @@ class StableDiffusionXLImg2ImgPipeline(
         if denoising_start is not None:
             discrete_timestep_cutoff = int(
                 round(
-                    self.scheduler.config.num_train_timesteps
-                    - (denoising_start * self.scheduler.config.num_train_timesteps)
+                    self.scheduler.config.num_train_timesteps - (denoising_start * self.scheduler.config.num_train_timesteps)
                 )
             )
 
@@ -2546,20 +2244,12 @@ class StableDiffusionXLImg2ImgPipeline(
         add_noise=True,
     ):
         if not isinstance(image, (torch.Tensor, PIL.Image.Image, list)):
-            raise ValueError(
-                f"`image` has to be of type `torch.Tensor`, `PIL.Image.Image` or list but is {type(image)}"
-            )
+            raise ValueError(f"`image` has to be of type `torch.Tensor`, `PIL.Image.Image` or list but is {type(image)}")
 
         latents_mean = latents_std = None
-        if (
-            hasattr(self.vae.config, "latents_mean")
-            and self.vae.config.latents_mean is not None
-        ):
+        if hasattr(self.vae.config, "latents_mean") and self.vae.config.latents_mean is not None:
             latents_mean = torch.tensor(self.vae.config.latents_mean).view(1, 4, 1, 1)
-        if (
-            hasattr(self.vae.config, "latents_std")
-            and self.vae.config.latents_std is not None
-        ):
+        if hasattr(self.vae.config, "latents_std") and self.vae.config.latents_std is not None:
             latents_std = torch.tensor(self.vae.config.latents_std).view(1, 4, 1, 1)
 
         # Offload text encoder if `enable_model_cpu_offload` was enabled
@@ -2588,16 +2278,11 @@ class StableDiffusionXLImg2ImgPipeline(
 
             elif isinstance(generator, list):
                 init_latents = [
-                    retrieve_latents(
-                        self.vae.encode(image[i : i + 1]), generator=generator[i]
-                    )
-                    for i in range(batch_size)
+                    retrieve_latents(self.vae.encode(image[i : i + 1]), generator=generator[i]) for i in range(batch_size)
                 ]
                 init_latents = torch.cat(init_latents, dim=0)
             else:
-                init_latents = retrieve_latents(
-                    self.vae.encode(image), generator=generator
-                )
+                init_latents = retrieve_latents(self.vae.encode(image), generator=generator)
 
             if self.vae.config.force_upcast:
                 self.vae.to(dtype)
@@ -2606,30 +2291,16 @@ class StableDiffusionXLImg2ImgPipeline(
             if latents_mean is not None and latents_std is not None:
                 latents_mean = latents_mean.to(device=self.device, dtype=dtype)
                 latents_std = latents_std.to(device=self.device, dtype=dtype)
-                init_latents = (
-                    (init_latents - latents_mean)
-                    * self.vae.config.scaling_factor
-                    / latents_std
-                )
+                init_latents = (init_latents - latents_mean) * self.vae.config.scaling_factor / latents_std
             else:
                 init_latents = self.vae.config.scaling_factor * init_latents
 
-        if (
-            batch_size > init_latents.shape[0]
-            and batch_size % init_latents.shape[0] == 0
-        ):
+        if batch_size > init_latents.shape[0] and batch_size % init_latents.shape[0] == 0:
             # expand init_latents for batch_size
             additional_image_per_prompt = batch_size // init_latents.shape[0]
-            init_latents = torch.cat(
-                [init_latents] * additional_image_per_prompt, dim=0
-            )
-        elif (
-            batch_size > init_latents.shape[0]
-            and batch_size % init_latents.shape[0] != 0
-        ):
-            raise ValueError(
-                f"Cannot duplicate `image` of batch size {init_latents.shape[0]} to {batch_size} text prompts."
-            )
+            init_latents = torch.cat([init_latents] * additional_image_per_prompt, dim=0)
+        elif batch_size > init_latents.shape[0] and batch_size % init_latents.shape[0] != 0:
+            raise ValueError(f"Cannot duplicate `image` of batch size {init_latents.shape[0]} to {batch_size} text prompts.")
         else:
             init_latents = torch.cat([init_latents], dim=0)
 
@@ -2644,9 +2315,7 @@ class StableDiffusionXLImg2ImgPipeline(
         return latents
 
     # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.encode_image
-    def encode_image(
-        self, image, device, num_images_per_prompt, output_hidden_states=None
-    ):
+    def encode_image(self, image, device, num_images_per_prompt, output_hidden_states=None):
         dtype = next(self.image_encoder.parameters()).dtype
 
         if not isinstance(image, torch.Tensor):
@@ -2654,20 +2323,12 @@ class StableDiffusionXLImg2ImgPipeline(
 
         image = image.to(device=device, dtype=dtype)
         if output_hidden_states:
-            image_enc_hidden_states = self.image_encoder(
-                image, output_hidden_states=True
-            ).hidden_states[-2]
-            image_enc_hidden_states = image_enc_hidden_states.repeat_interleave(
-                num_images_per_prompt, dim=0
-            )
+            image_enc_hidden_states = self.image_encoder(image, output_hidden_states=True).hidden_states[-2]
+            image_enc_hidden_states = image_enc_hidden_states.repeat_interleave(num_images_per_prompt, dim=0)
             uncond_image_enc_hidden_states = self.image_encoder(
                 torch.zeros_like(image), output_hidden_states=True
             ).hidden_states[-2]
-            uncond_image_enc_hidden_states = (
-                uncond_image_enc_hidden_states.repeat_interleave(
-                    num_images_per_prompt, dim=0
-                )
-            )
+            uncond_image_enc_hidden_states = uncond_image_enc_hidden_states.repeat_interleave(num_images_per_prompt, dim=0)
             return image_enc_hidden_states, uncond_image_enc_hidden_states
         else:
             image_embeds = self.image_encoder(image).image_embeds
@@ -2689,9 +2350,7 @@ class StableDiffusionXLImg2ImgPipeline(
             if not isinstance(ip_adapter_image, list):
                 ip_adapter_image = [ip_adapter_image]
 
-            if len(ip_adapter_image) != len(
-                self.unet.encoder_hid_proj.image_projection_layers
-            ):
+            if len(ip_adapter_image) != len(self.unet.encoder_hid_proj.image_projection_layers):
                 raise ValueError(
                     f"`ip_adapter_image` must have same length as the number of IP Adapters. Got {len(ip_adapter_image)} images and {len(self.unet.encoder_hid_proj.image_projection_layers)} IP Adapters."
                 )
@@ -2704,17 +2363,11 @@ class StableDiffusionXLImg2ImgPipeline(
                 single_image_embeds, single_negative_image_embeds = self.encode_image(
                     single_ip_adapter_image, device, 1, output_hidden_state
                 )
-                single_image_embeds = torch.stack(
-                    [single_image_embeds] * num_images_per_prompt, dim=0
-                )
-                single_negative_image_embeds = torch.stack(
-                    [single_negative_image_embeds] * num_images_per_prompt, dim=0
-                )
+                single_image_embeds = torch.stack([single_image_embeds] * num_images_per_prompt, dim=0)
+                single_negative_image_embeds = torch.stack([single_negative_image_embeds] * num_images_per_prompt, dim=0)
 
                 if do_classifier_free_guidance:
-                    single_image_embeds = torch.cat(
-                        [single_negative_image_embeds, single_image_embeds]
-                    )
+                    single_image_embeds = torch.cat([single_negative_image_embeds, single_image_embeds])
                     single_image_embeds = single_image_embeds.to(device)
 
                 image_embeds.append(single_image_embeds)
@@ -2723,9 +2376,7 @@ class StableDiffusionXLImg2ImgPipeline(
             image_embeds = []
             for single_image_embeds in ip_adapter_image_embeds:
                 if do_classifier_free_guidance:
-                    single_negative_image_embeds, single_image_embeds = (
-                        single_image_embeds.chunk(2)
-                    )
+                    single_negative_image_embeds, single_image_embeds = single_image_embeds.chunk(2)
                     single_image_embeds = single_image_embeds.repeat(
                         num_images_per_prompt,
                         *(repeat_dims * len(single_image_embeds.shape[1:])),
@@ -2734,9 +2385,7 @@ class StableDiffusionXLImg2ImgPipeline(
                         num_images_per_prompt,
                         *(repeat_dims * len(single_negative_image_embeds.shape[1:])),
                     )
-                    single_image_embeds = torch.cat(
-                        [single_negative_image_embeds, single_image_embeds]
-                    )
+                    single_image_embeds = torch.cat([single_negative_image_embeds, single_image_embeds])
                 else:
                     single_image_embeds = single_image_embeds.repeat(
                         num_images_per_prompt,
@@ -2760,38 +2409,25 @@ class StableDiffusionXLImg2ImgPipeline(
         text_encoder_projection_dim=None,
     ):
         if self.config.requires_aesthetics_score:
-            add_time_ids = list(
-                original_size + crops_coords_top_left + (aesthetic_score,)
-            )
-            add_neg_time_ids = list(
-                negative_original_size
-                + negative_crops_coords_top_left
-                + (negative_aesthetic_score,)
-            )
+            add_time_ids = list(original_size + crops_coords_top_left + (aesthetic_score,))
+            add_neg_time_ids = list(negative_original_size + negative_crops_coords_top_left + (negative_aesthetic_score,))
         else:
             add_time_ids = list(original_size + crops_coords_top_left + target_size)
-            add_neg_time_ids = list(
-                negative_original_size + crops_coords_top_left + negative_target_size
-            )
+            add_neg_time_ids = list(negative_original_size + crops_coords_top_left + negative_target_size)
 
-        passed_add_embed_dim = (
-            self.unet.config.addition_time_embed_dim * len(add_time_ids)
-            + text_encoder_projection_dim
-        )
+        passed_add_embed_dim = self.unet.config.addition_time_embed_dim * len(add_time_ids) + text_encoder_projection_dim
         expected_add_embed_dim = self.unet.add_embedding.linear_1.in_features
 
         if (
             expected_add_embed_dim > passed_add_embed_dim
-            and (expected_add_embed_dim - passed_add_embed_dim)
-            == self.unet.config.addition_time_embed_dim
+            and (expected_add_embed_dim - passed_add_embed_dim) == self.unet.config.addition_time_embed_dim
         ):
             raise ValueError(
                 f"Model expects an added time embedding vector of length {expected_add_embed_dim}, but a vector of {passed_add_embed_dim} was created. Please make sure to enable `requires_aesthetics_score` with `pipe.register_to_config(requires_aesthetics_score=True)` to make sure `aesthetic_score` {aesthetic_score} and `negative_aesthetic_score` {negative_aesthetic_score} is correctly used by the model."
             )
         elif (
             expected_add_embed_dim < passed_add_embed_dim
-            and (passed_add_embed_dim - expected_add_embed_dim)
-            == self.unet.config.addition_time_embed_dim
+            and (passed_add_embed_dim - expected_add_embed_dim) == self.unet.config.addition_time_embed_dim
         ):
             raise ValueError(
                 f"Model expects an added time embedding vector of length {expected_add_embed_dim}, but a vector of {passed_add_embed_dim} was created. Please make sure to disable `requires_aesthetics_score` with `pipe.register_to_config(requires_aesthetics_score=False)` to make sure `target_size` {target_size} is correctly used by the model."
@@ -3164,9 +2800,7 @@ class StableDiffusionXLImg2ImgPipeline(
 
         # 3. Encode input prompt
         text_encoder_lora_scale = (
-            self.cross_attention_kwargs.get("scale", None)
-            if self.cross_attention_kwargs is not None
-            else None
+            self.cross_attention_kwargs.get("scale", None) if self.cross_attention_kwargs is not None else None
         )
         (
             prompt_embeds,
@@ -3207,11 +2841,7 @@ class StableDiffusionXLImg2ImgPipeline(
             num_inference_steps,
             strength,
             device,
-            denoising_start=(
-                self.denoising_start
-                if denoising_value_valid(self.denoising_start)
-                else None
-            ),
+            denoising_start=(self.denoising_start if denoising_value_valid(self.denoising_start) else None),
         )
         latent_timestep = timesteps[:1].repeat(batch_size * num_images_per_prompt)
 
@@ -3267,12 +2897,8 @@ class StableDiffusionXLImg2ImgPipeline(
 
         if self.do_classifier_free_guidance:
             prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
-            add_text_embeds = torch.cat(
-                [negative_pooled_prompt_embeds, add_text_embeds], dim=0
-            )
-            add_neg_time_ids = add_neg_time_ids.repeat(
-                batch_size * num_images_per_prompt, 1
-            )
+            add_text_embeds = torch.cat([negative_pooled_prompt_embeds, add_text_embeds], dim=0)
+            add_neg_time_ids = add_neg_time_ids.repeat(batch_size * num_images_per_prompt, 1)
             add_time_ids = torch.cat([add_neg_time_ids, add_time_ids], dim=0)
 
         prompt_embeds = prompt_embeds.to(device)
@@ -3289,9 +2915,7 @@ class StableDiffusionXLImg2ImgPipeline(
             )
 
         # 9. Denoising loop
-        num_warmup_steps = max(
-            len(timesteps) - num_inference_steps * self.scheduler.order, 0
-        )
+        num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
 
         # 9.1 Apply denoising_end
         if (
@@ -3305,26 +2929,20 @@ class StableDiffusionXLImg2ImgPipeline(
                 f"`denoising_start`: {self.denoising_start} cannot be larger than or equal to `denoising_end`: "
                 + f" {self.denoising_end} when using type float."
             )
-        elif self.denoising_end is not None and denoising_value_valid(
-            self.denoising_end
-        ):
+        elif self.denoising_end is not None and denoising_value_valid(self.denoising_end):
             discrete_timestep_cutoff = int(
                 round(
                     self.scheduler.config.num_train_timesteps
                     - (self.denoising_end * self.scheduler.config.num_train_timesteps)
                 )
             )
-            num_inference_steps = len(
-                list(filter(lambda ts: ts >= discrete_timestep_cutoff, timesteps))
-            )
+            num_inference_steps = len(list(filter(lambda ts: ts >= discrete_timestep_cutoff, timesteps)))
             timesteps = timesteps[:num_inference_steps]
 
         # 9.2 Optionally get Guidance Scale Embedding
         timestep_cond = None
         if self.unet.config.time_cond_proj_dim is not None:
-            guidance_scale_tensor = torch.tensor(self.guidance_scale - 1).repeat(
-                batch_size * num_images_per_prompt
-            )
+            guidance_scale_tensor = torch.tensor(self.guidance_scale - 1).repeat(batch_size * num_images_per_prompt)
             timestep_cond = self.get_guidance_scale_embedding(
                 guidance_scale_tensor, embedding_dim=self.unet.config.time_cond_proj_dim
             ).to(device=device, dtype=latents.dtype)
@@ -3336,15 +2954,9 @@ class StableDiffusionXLImg2ImgPipeline(
                     continue
 
                 # expand the latents if we are doing classifier free guidance
-                latent_model_input = (
-                    torch.cat([latents] * 2)
-                    if self.do_classifier_free_guidance
-                    else latents
-                )
+                latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents
 
-                latent_model_input = self.scheduler.scale_model_input(
-                    latent_model_input, t
-                )
+                latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
                 # predict the noise residual
                 added_cond_kwargs = {
@@ -3366,9 +2978,7 @@ class StableDiffusionXLImg2ImgPipeline(
                 # perform guidance
                 if self.do_classifier_free_guidance:
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                    noise_pred = noise_pred_uncond + self.guidance_scale * (
-                        noise_pred_text - noise_pred_uncond
-                    )
+                    noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
 
                 if self.do_classifier_free_guidance and self.guidance_rescale > 0.0:
                     # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf
@@ -3380,9 +2990,7 @@ class StableDiffusionXLImg2ImgPipeline(
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents_dtype = latents.dtype
-                latents = self.scheduler.step(
-                    noise_pred, t, latents, **extra_step_kwargs, return_dict=False
-                )[0]
+                latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
                 if latents.dtype != latents_dtype:
                     if torch.backends.mps.is_available():
                         # some platforms (eg. apple mps) misbehave due to a pytorch bug: https://github.com/pytorch/pytorch/pull/99272
@@ -3396,24 +3004,16 @@ class StableDiffusionXLImg2ImgPipeline(
 
                     latents = callback_outputs.pop("latents", latents)
                     prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
-                    negative_prompt_embeds = callback_outputs.pop(
-                        "negative_prompt_embeds", negative_prompt_embeds
-                    )
-                    add_text_embeds = callback_outputs.pop(
-                        "add_text_embeds", add_text_embeds
-                    )
+                    negative_prompt_embeds = callback_outputs.pop("negative_prompt_embeds", negative_prompt_embeds)
+                    add_text_embeds = callback_outputs.pop("add_text_embeds", add_text_embeds)
                     negative_pooled_prompt_embeds = callback_outputs.pop(
                         "negative_pooled_prompt_embeds", negative_pooled_prompt_embeds
                     )
                     add_time_ids = callback_outputs.pop("add_time_ids", add_time_ids)
-                    add_neg_time_ids = callback_outputs.pop(
-                        "add_neg_time_ids", add_neg_time_ids
-                    )
+                    add_neg_time_ids = callback_outputs.pop("add_neg_time_ids", add_neg_time_ids)
 
                 # call the callback, if provided
-                if i == len(timesteps) - 1 or (
-                    (i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0
-                ):
+                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
                     if callback is not None and i % callback_steps == 0:
                         step_idx = i // getattr(self.scheduler, "order", 1)
@@ -3424,15 +3024,11 @@ class StableDiffusionXLImg2ImgPipeline(
 
         if not output_type == "latent":
             # make sure the VAE is in float32 mode, as it overflows in float16
-            needs_upcasting = (
-                self.vae.dtype == torch.float16 and self.vae.config.force_upcast
-            )
+            needs_upcasting = self.vae.dtype == torch.float16 and self.vae.config.force_upcast
 
             if needs_upcasting:
                 self.upcast_vae()
-                latents = latents.to(
-                    next(iter(self.vae.post_quant_conv.parameters())).dtype
-                )
+                latents = latents.to(next(iter(self.vae.post_quant_conv.parameters())).dtype)
             elif latents.dtype != self.vae.dtype:
                 if torch.backends.mps.is_available():
                     # some platforms (eg. apple mps) misbehave due to a pytorch bug: https://github.com/pytorch/pytorch/pull/99272
@@ -3440,29 +3036,12 @@ class StableDiffusionXLImg2ImgPipeline(
 
             # unscale/denormalize the latents
             # denormalize with the mean and std if available and not None
-            has_latents_mean = (
-                hasattr(self.vae.config, "latents_mean")
-                and self.vae.config.latents_mean is not None
-            )
-            has_latents_std = (
-                hasattr(self.vae.config, "latents_std")
-                and self.vae.config.latents_std is not None
-            )
+            has_latents_mean = hasattr(self.vae.config, "latents_mean") and self.vae.config.latents_mean is not None
+            has_latents_std = hasattr(self.vae.config, "latents_std") and self.vae.config.latents_std is not None
             if has_latents_mean and has_latents_std:
-                latents_mean = (
-                    torch.tensor(self.vae.config.latents_mean)
-                    .view(1, 4, 1, 1)
-                    .to(latents.device, latents.dtype)
-                )
-                latents_std = (
-                    torch.tensor(self.vae.config.latents_std)
-                    .view(1, 4, 1, 1)
-                    .to(latents.device, latents.dtype)
-                )
-                latents = (
-                    latents * latents_std / self.vae.config.scaling_factor
-                    + latents_mean
-                )
+                latents_mean = torch.tensor(self.vae.config.latents_mean).view(1, 4, 1, 1).to(latents.device, latents.dtype)
+                latents_std = torch.tensor(self.vae.config.latents_std).view(1, 4, 1, 1).to(latents.device, latents.dtype)
+                latents = latents * latents_std / self.vae.config.scaling_factor + latents_mean
             else:
                 latents = latents / self.vae.config.scaling_factor
 
@@ -3598,28 +3177,20 @@ class StableDiffusionXLControlNetPipeline(
             image_encoder=image_encoder,
         )
         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
-        self.image_processor = VaeImageProcessor(
-            vae_scale_factor=self.vae_scale_factor, do_convert_rgb=True
-        )
+        self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor, do_convert_rgb=True)
         self.control_image_processor = VaeImageProcessor(
             vae_scale_factor=self.vae_scale_factor,
             do_convert_rgb=True,
             do_normalize=False,
         )
-        add_watermarker = (
-            add_watermarker
-            if add_watermarker is not None
-            else is_invisible_watermark_available()
-        )
+        add_watermarker = add_watermarker if add_watermarker is not None else is_invisible_watermark_available()
 
         if add_watermarker:
             self.watermark = StableDiffusionXLWatermarker()
         else:
             self.watermark = None
 
-        self.register_to_config(
-            force_zeros_for_empty_prompt=force_zeros_for_empty_prompt
-        )
+        self.register_to_config(force_zeros_for_empty_prompt=force_zeros_for_empty_prompt)
 
     # Copied from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl.StableDiffusionXLPipeline.encode_prompt
     def encode_prompt(
@@ -3684,9 +3255,7 @@ class StableDiffusionXLControlNetPipeline(
 
         # set lora scale so that monkey patched LoRA
         # function of text encoder can correctly access it
-        if lora_scale is not None and isinstance(
-            self, StableDiffusionXLLoraLoaderMixin
-        ):
+        if lora_scale is not None and isinstance(self, StableDiffusionXLLoraLoaderMixin):
             self._lora_scale = lora_scale
 
             # dynamically adjust the LoRA scale
@@ -3710,16 +3279,8 @@ class StableDiffusionXLControlNetPipeline(
             batch_size = prompt_embeds.shape[0]
 
         # Define tokenizers and text encoders
-        tokenizers = (
-            [self.tokenizer, self.tokenizer_2]
-            if self.tokenizer is not None
-            else [self.tokenizer_2]
-        )
-        text_encoders = (
-            [self.text_encoder, self.text_encoder_2]
-            if self.text_encoder is not None
-            else [self.text_encoder_2]
-        )
+        tokenizers = [self.tokenizer, self.tokenizer_2] if self.tokenizer is not None else [self.tokenizer_2]
+        text_encoders = [self.text_encoder, self.text_encoder_2] if self.text_encoder is not None else [self.text_encoder_2]
 
         if prompt_embeds is None:
             prompt_2 = prompt_2 or prompt
@@ -3728,9 +3289,7 @@ class StableDiffusionXLControlNetPipeline(
             # textual inversion: process multi-vector tokens if necessary
             prompt_embeds_list = []
             prompts = [prompt, prompt_2]
-            for prompt, tokenizer, text_encoder in zip(
-                prompts, tokenizers, text_encoders
-            ):
+            for prompt, tokenizer, text_encoder in zip(prompts, tokenizers, text_encoders):
                 if isinstance(self, TextualInversionLoaderMixin):
                     prompt = self.maybe_convert_prompt(prompt, tokenizer)
 
@@ -3743,24 +3302,18 @@ class StableDiffusionXLControlNetPipeline(
                 )
 
                 text_input_ids = text_inputs.input_ids
-                untruncated_ids = tokenizer(
-                    prompt, padding="longest", return_tensors="pt"
-                ).input_ids
+                untruncated_ids = tokenizer(prompt, padding="longest", return_tensors="pt").input_ids
 
-                if untruncated_ids.shape[-1] >= text_input_ids.shape[
-                    -1
-                ] and not torch.equal(text_input_ids, untruncated_ids):
-                    removed_text = tokenizer.batch_decode(
-                        untruncated_ids[:, tokenizer.model_max_length - 1 : -1]
-                    )
+                if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(
+                    text_input_ids, untruncated_ids
+                ):
+                    removed_text = tokenizer.batch_decode(untruncated_ids[:, tokenizer.model_max_length - 1 : -1])
                     logger.warning(
                         "The following part of your input was truncated because CLIP can only handle sequences up to"
                         f" {tokenizer.model_max_length} tokens: {removed_text}"
                     )
 
-                prompt_embeds = text_encoder(
-                    text_input_ids.to(device), output_hidden_states=True
-                )
+                prompt_embeds = text_encoder(text_input_ids.to(device), output_hidden_states=True)
 
                 # We are only ALWAYS interested in the pooled output of the final text encoder
                 pooled_prompt_embeds = prompt_embeds[0]
@@ -3775,14 +3328,8 @@ class StableDiffusionXLControlNetPipeline(
             prompt_embeds = torch.concat(prompt_embeds_list, dim=-1)
 
         # get unconditional embeddings for classifier free guidance
-        zero_out_negative_prompt = (
-            negative_prompt is None and self.config.force_zeros_for_empty_prompt
-        )
-        if (
-            do_classifier_free_guidance
-            and negative_prompt_embeds is None
-            and zero_out_negative_prompt
-        ):
+        zero_out_negative_prompt = negative_prompt is None and self.config.force_zeros_for_empty_prompt
+        if do_classifier_free_guidance and negative_prompt_embeds is None and zero_out_negative_prompt:
             negative_prompt_embeds = torch.zeros_like(prompt_embeds)
             negative_pooled_prompt_embeds = torch.zeros_like(pooled_prompt_embeds)
         elif do_classifier_free_guidance and negative_prompt_embeds is None:
@@ -3790,16 +3337,8 @@ class StableDiffusionXLControlNetPipeline(
             negative_prompt_2 = negative_prompt_2 or negative_prompt
 
             # normalize str to list
-            negative_prompt = (
-                batch_size * [negative_prompt]
-                if isinstance(negative_prompt, str)
-                else negative_prompt
-            )
-            negative_prompt_2 = (
-                batch_size * [negative_prompt_2]
-                if isinstance(negative_prompt_2, str)
-                else negative_prompt_2
-            )
+            negative_prompt = batch_size * [negative_prompt] if isinstance(negative_prompt, str) else negative_prompt
+            negative_prompt_2 = batch_size * [negative_prompt_2] if isinstance(negative_prompt_2, str) else negative_prompt_2
 
             uncond_tokens: List[str]
             if prompt is not None and type(prompt) is not type(negative_prompt):
@@ -3817,13 +3356,9 @@ class StableDiffusionXLControlNetPipeline(
                 uncond_tokens = [negative_prompt, negative_prompt_2]
 
             negative_prompt_embeds_list = []
-            for negative_prompt, tokenizer, text_encoder in zip(
-                uncond_tokens, tokenizers, text_encoders
-            ):
+            for negative_prompt, tokenizer, text_encoder in zip(uncond_tokens, tokenizers, text_encoders):
                 if isinstance(self, TextualInversionLoaderMixin):
-                    negative_prompt = self.maybe_convert_prompt(
-                        negative_prompt, tokenizer
-                    )
+                    negative_prompt = self.maybe_convert_prompt(negative_prompt, tokenizer)
 
                 max_length = prompt_embeds.shape[1]
                 uncond_input = tokenizer(
@@ -3847,46 +3382,34 @@ class StableDiffusionXLControlNetPipeline(
             negative_prompt_embeds = torch.concat(negative_prompt_embeds_list, dim=-1)
 
         if self.text_encoder_2 is not None:
-            prompt_embeds = prompt_embeds.to(
-                dtype=self.text_encoder_2.dtype, device=device
-            )
+            prompt_embeds = prompt_embeds.to(dtype=self.text_encoder_2.dtype, device=device)
         else:
             prompt_embeds = prompt_embeds.to(dtype=self.unet.dtype, device=device)
 
         bs_embed, seq_len, _ = prompt_embeds.shape
         # duplicate text embeddings for each generation per prompt, using mps friendly method
         prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
-        prompt_embeds = prompt_embeds.view(
-            bs_embed * num_images_per_prompt, seq_len, -1
-        )
+        prompt_embeds = prompt_embeds.view(bs_embed * num_images_per_prompt, seq_len, -1)
 
         if do_classifier_free_guidance:
             # duplicate unconditional embeddings for each generation per prompt, using mps friendly method
             seq_len = negative_prompt_embeds.shape[1]
 
             if self.text_encoder_2 is not None:
-                negative_prompt_embeds = negative_prompt_embeds.to(
-                    dtype=self.text_encoder_2.dtype, device=device
-                )
+                negative_prompt_embeds = negative_prompt_embeds.to(dtype=self.text_encoder_2.dtype, device=device)
             else:
-                negative_prompt_embeds = negative_prompt_embeds.to(
-                    dtype=self.unet.dtype, device=device
-                )
+                negative_prompt_embeds = negative_prompt_embeds.to(dtype=self.unet.dtype, device=device)
 
-            negative_prompt_embeds = negative_prompt_embeds.repeat(
-                1, num_images_per_prompt, 1
-            )
-            negative_prompt_embeds = negative_prompt_embeds.view(
-                batch_size * num_images_per_prompt, seq_len, -1
-            )
+            negative_prompt_embeds = negative_prompt_embeds.repeat(1, num_images_per_prompt, 1)
+            negative_prompt_embeds = negative_prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
 
-        pooled_prompt_embeds = pooled_prompt_embeds.repeat(
-            1, num_images_per_prompt
-        ).view(bs_embed * num_images_per_prompt, -1)
+        pooled_prompt_embeds = pooled_prompt_embeds.repeat(1, num_images_per_prompt).view(
+            bs_embed * num_images_per_prompt, -1
+        )
         if do_classifier_free_guidance:
-            negative_pooled_prompt_embeds = negative_pooled_prompt_embeds.repeat(
-                1, num_images_per_prompt
-            ).view(bs_embed * num_images_per_prompt, -1)
+            negative_pooled_prompt_embeds = negative_pooled_prompt_embeds.repeat(1, num_images_per_prompt).view(
+                bs_embed * num_images_per_prompt, -1
+            )
 
         if self.text_encoder is not None:
             if isinstance(self, StableDiffusionXLLoraLoaderMixin) and USE_PEFT_BACKEND:
@@ -3906,9 +3429,7 @@ class StableDiffusionXLControlNetPipeline(
         )
 
     # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.encode_image
-    def encode_image(
-        self, image, device, num_images_per_prompt, output_hidden_states=None
-    ):
+    def encode_image(self, image, device, num_images_per_prompt, output_hidden_states=None):
         dtype = next(self.image_encoder.parameters()).dtype
 
         if not isinstance(image, torch.Tensor):
@@ -3916,20 +3437,12 @@ class StableDiffusionXLControlNetPipeline(
 
         image = image.to(device=device, dtype=dtype)
         if output_hidden_states:
-            image_enc_hidden_states = self.image_encoder(
-                image, output_hidden_states=True
-            ).hidden_states[-2]
-            image_enc_hidden_states = image_enc_hidden_states.repeat_interleave(
-                num_images_per_prompt, dim=0
-            )
+            image_enc_hidden_states = self.image_encoder(image, output_hidden_states=True).hidden_states[-2]
+            image_enc_hidden_states = image_enc_hidden_states.repeat_interleave(num_images_per_prompt, dim=0)
             uncond_image_enc_hidden_states = self.image_encoder(
                 torch.zeros_like(image), output_hidden_states=True
             ).hidden_states[-2]
-            uncond_image_enc_hidden_states = (
-                uncond_image_enc_hidden_states.repeat_interleave(
-                    num_images_per_prompt, dim=0
-                )
-            )
+            uncond_image_enc_hidden_states = uncond_image_enc_hidden_states.repeat_interleave(num_images_per_prompt, dim=0)
             return image_enc_hidden_states, uncond_image_enc_hidden_states
         else:
             image_embeds = self.image_encoder(image).image_embeds
@@ -3954,9 +3467,7 @@ class StableDiffusionXLControlNetPipeline(
             if not isinstance(ip_adapter_image, list):
                 ip_adapter_image = [ip_adapter_image]
 
-            if len(ip_adapter_image) != len(
-                self.unet.encoder_hid_proj.image_projection_layers
-            ):
+            if len(ip_adapter_image) != len(self.unet.encoder_hid_proj.image_projection_layers):
                 raise ValueError(
                     f"`ip_adapter_image` must have same length as the number of IP Adapters. Got {len(ip_adapter_image)} images and {len(self.unet.encoder_hid_proj.image_projection_layers)} IP Adapters."
                 )
@@ -3975,24 +3486,16 @@ class StableDiffusionXLControlNetPipeline(
         else:
             for single_image_embeds in ip_adapter_image_embeds:
                 if do_classifier_free_guidance:
-                    single_negative_image_embeds, single_image_embeds = (
-                        single_image_embeds.chunk(2)
-                    )
+                    single_negative_image_embeds, single_image_embeds = single_image_embeds.chunk(2)
                     negative_image_embeds.append(single_negative_image_embeds)
                 image_embeds.append(single_image_embeds)
 
         ip_adapter_image_embeds = []
         for i, single_image_embeds in enumerate(image_embeds):
-            single_image_embeds = torch.cat(
-                [single_image_embeds] * num_images_per_prompt, dim=0
-            )
+            single_image_embeds = torch.cat([single_image_embeds] * num_images_per_prompt, dim=0)
             if do_classifier_free_guidance:
-                single_negative_image_embeds = torch.cat(
-                    [negative_image_embeds[i]] * num_images_per_prompt, dim=0
-                )
-                single_image_embeds = torch.cat(
-                    [single_negative_image_embeds, single_image_embeds], dim=0
-                )
+                single_negative_image_embeds = torch.cat([negative_image_embeds[i]] * num_images_per_prompt, dim=0)
+                single_image_embeds = torch.cat([single_negative_image_embeds, single_image_embeds], dim=0)
 
             single_image_embeds = single_image_embeds.to(device=device)
             ip_adapter_image_embeds.append(single_image_embeds)
@@ -4006,17 +3509,13 @@ class StableDiffusionXLControlNetPipeline(
         # eta corresponds to η in DDIM paper: https://arxiv.org/abs/2010.02502
         # and should be between [0, 1]
 
-        accepts_eta = "eta" in set(
-            inspect.signature(self.scheduler.step).parameters.keys()
-        )
+        accepts_eta = "eta" in set(inspect.signature(self.scheduler.step).parameters.keys())
         extra_step_kwargs = {}
         if accepts_eta:
             extra_step_kwargs["eta"] = eta
 
         # check if the scheduler accepts generator
-        accepts_generator = "generator" in set(
-            inspect.signature(self.scheduler.step).parameters.keys()
-        )
+        accepts_generator = "generator" in set(inspect.signature(self.scheduler.step).parameters.keys())
         if accepts_generator:
             extra_step_kwargs["generator"] = generator
         return extra_step_kwargs
@@ -4040,17 +3539,13 @@ class StableDiffusionXLControlNetPipeline(
         control_guidance_end=1.0,
         callback_on_step_end_tensor_inputs=None,
     ):
-        if callback_steps is not None and (
-            not isinstance(callback_steps, int) or callback_steps <= 0
-        ):
+        if callback_steps is not None and (not isinstance(callback_steps, int) or callback_steps <= 0):
             raise ValueError(
-                f"`callback_steps` has to be a positive integer but is {callback_steps} of type"
-                f" {type(callback_steps)}."
+                f"`callback_steps` has to be a positive integer but is {callback_steps} of type" f" {type(callback_steps)}."
             )
 
         if callback_on_step_end_tensor_inputs is not None and not all(
-            k in self._callback_tensor_inputs
-            for k in callback_on_step_end_tensor_inputs
+            k in self._callback_tensor_inputs for k in callback_on_step_end_tensor_inputs
         ):
             raise ValueError(
                 f"`callback_on_step_end_tensor_inputs` has to be in {self._callback_tensor_inputs}, but found {[k for k in callback_on_step_end_tensor_inputs if k not in self._callback_tensor_inputs]}"
@@ -4070,18 +3565,10 @@ class StableDiffusionXLControlNetPipeline(
             raise ValueError(
                 "Provide either `prompt` or `prompt_embeds`. Cannot leave both `prompt` and `prompt_embeds` undefined."
             )
-        elif prompt is not None and (
-            not isinstance(prompt, str) and not isinstance(prompt, list)
-        ):
-            raise ValueError(
-                f"`prompt` has to be of type `str` or `list` but is {type(prompt)}"
-            )
-        elif prompt_2 is not None and (
-            not isinstance(prompt_2, str) and not isinstance(prompt_2, list)
-        ):
-            raise ValueError(
-                f"`prompt_2` has to be of type `str` or `list` but is {type(prompt_2)}"
-            )
+        elif prompt is not None and (not isinstance(prompt, str) and not isinstance(prompt, list)):
+            raise ValueError(f"`prompt` has to be of type `str` or `list` but is {type(prompt)}")
+        elif prompt_2 is not None and (not isinstance(prompt_2, str) and not isinstance(prompt_2, list)):
+            raise ValueError(f"`prompt_2` has to be of type `str` or `list` but is {type(prompt_2)}")
 
         if negative_prompt is not None and negative_prompt_embeds is not None:
             raise ValueError(
@@ -4142,9 +3629,7 @@ class StableDiffusionXLControlNetPipeline(
             # When `image` is a nested list:
             # (e.g. [[canny_image_1, pose_image_1], [canny_image_2, pose_image_2]])
             elif any(isinstance(i, list) for i in image):
-                raise ValueError(
-                    "A single batch of multiple conditionings are supported at the moment."
-                )
+                raise ValueError("A single batch of multiple conditionings are supported at the moment.")
             elif len(image) != len(self.controlnet.nets):
                 raise ValueError(
                     f"For multiple controlnets: `image` must have the same length as the number of controlnets, but got {len(image)} images and {len(self.controlnet.nets)} ControlNets."
@@ -4162,9 +3647,7 @@ class StableDiffusionXLControlNetPipeline(
             and isinstance(self.controlnet._orig_mod, ControlNetModel)
         ):
             if not isinstance(controlnet_conditioning_scale, float):
-                raise TypeError(
-                    "For single controlnet: `controlnet_conditioning_scale` must be type `float`."
-                )
+                raise TypeError("For single controlnet: `controlnet_conditioning_scale` must be type `float`.")
         elif (
             isinstance(self.controlnet, MultiControlNetModel)
             or is_compiled
@@ -4172,12 +3655,10 @@ class StableDiffusionXLControlNetPipeline(
         ):
             if isinstance(controlnet_conditioning_scale, list):
                 if any(isinstance(i, list) for i in controlnet_conditioning_scale):
-                    raise ValueError(
-                        "A single batch of multiple conditionings are supported at the moment."
-                    )
-            elif isinstance(controlnet_conditioning_scale, list) and len(
-                controlnet_conditioning_scale
-            ) != len(self.controlnet.nets):
+                    raise ValueError("A single batch of multiple conditionings are supported at the moment.")
+            elif isinstance(controlnet_conditioning_scale, list) and len(controlnet_conditioning_scale) != len(
+                self.controlnet.nets
+            ):
                 raise ValueError(
                     "For multiple controlnets: When `controlnet_conditioning_scale` is specified as `list`, it must have"
                     " the same length as the number of controlnets"
@@ -4208,13 +3689,9 @@ class StableDiffusionXLControlNetPipeline(
                     f"control guidance start: {start} cannot be larger or equal to control guidance end: {end}."
                 )
             if start < 0.0:
-                raise ValueError(
-                    f"control guidance start: {start} can't be smaller than 0."
-                )
+                raise ValueError(f"control guidance start: {start} can't be smaller than 0.")
             if end > 1.0:
-                raise ValueError(
-                    f"control guidance end: {end} can't be larger than 1.0."
-                )
+                raise ValueError(f"control guidance end: {end} can't be larger than 1.0.")
 
         if ip_adapter_image is not None and ip_adapter_image_embeds is not None:
             raise ValueError(
@@ -4236,12 +3713,8 @@ class StableDiffusionXLControlNetPipeline(
         image_is_pil = isinstance(image, PIL.Image.Image)
         image_is_tensor = isinstance(image, torch.Tensor)
         image_is_np = isinstance(image, np.ndarray)
-        image_is_pil_list = isinstance(image, list) and isinstance(
-            image[0], PIL.Image.Image
-        )
-        image_is_tensor_list = isinstance(image, list) and isinstance(
-            image[0], torch.Tensor
-        )
+        image_is_pil_list = isinstance(image, list) and isinstance(image[0], PIL.Image.Image)
+        image_is_tensor_list = isinstance(image, list) and isinstance(image[0], torch.Tensor)
         image_is_np_list = isinstance(image, list) and isinstance(image[0], np.ndarray)
 
         if (
@@ -4286,9 +3759,7 @@ class StableDiffusionXLControlNetPipeline(
         do_classifier_free_guidance=False,
         guess_mode=False,
     ):
-        image = self.control_image_processor.preprocess(
-            image, height=height, width=width
-        ).to(dtype=torch.float32)
+        image = self.control_image_processor.preprocess(image, height=height, width=width).to(dtype=torch.float32)
         image_batch_size = image.shape[0]
 
         if image_batch_size == 1:
@@ -4331,9 +3802,7 @@ class StableDiffusionXLControlNetPipeline(
             )
 
         if latents is None:
-            latents = randn_tensor(
-                shape, generator=generator, device=device, dtype=dtype
-            )
+            latents = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
         else:
             latents = latents.to(device)
 
@@ -4352,10 +3821,7 @@ class StableDiffusionXLControlNetPipeline(
     ):
         add_time_ids = list(original_size + crops_coords_top_left + target_size)
 
-        passed_add_embed_dim = (
-            self.unet.config.addition_time_embed_dim * len(add_time_ids)
-            + text_encoder_projection_dim
-        )
+        passed_add_embed_dim = self.unet.config.addition_time_embed_dim * len(add_time_ids) + text_encoder_projection_dim
         expected_add_embed_dim = self.unet.add_embedding.linear_1.in_features
 
         if expected_add_embed_dim != passed_add_embed_dim:
@@ -4670,31 +4136,15 @@ class StableDiffusionXLControlNetPipeline(
         if isinstance(callback_on_step_end, (PipelineCallback, MultiPipelineCallbacks)):
             callback_on_step_end_tensor_inputs = callback_on_step_end.tensor_inputs
 
-        controlnet = (
-            self.controlnet._orig_mod
-            if is_compiled_module(self.controlnet)
-            else self.controlnet
-        )
+        controlnet = self.controlnet._orig_mod if is_compiled_module(self.controlnet) else self.controlnet
 
         # align format for control guidance
-        if not isinstance(control_guidance_start, list) and isinstance(
-            control_guidance_end, list
-        ):
-            control_guidance_start = len(control_guidance_end) * [
-                control_guidance_start
-            ]
-        elif not isinstance(control_guidance_end, list) and isinstance(
-            control_guidance_start, list
-        ):
+        if not isinstance(control_guidance_start, list) and isinstance(control_guidance_end, list):
+            control_guidance_start = len(control_guidance_end) * [control_guidance_start]
+        elif not isinstance(control_guidance_end, list) and isinstance(control_guidance_start, list):
             control_guidance_end = len(control_guidance_start) * [control_guidance_end]
-        elif not isinstance(control_guidance_start, list) and not isinstance(
-            control_guidance_end, list
-        ):
-            mult = (
-                len(controlnet.nets)
-                if isinstance(controlnet, MultiControlNetModel)
-                else 1
-            )
+        elif not isinstance(control_guidance_start, list) and not isinstance(control_guidance_end, list):
+            mult = len(controlnet.nets) if isinstance(controlnet, MultiControlNetModel) else 1
             control_guidance_start, control_guidance_end = (
                 mult * [control_guidance_start],
                 mult * [control_guidance_end],
@@ -4736,12 +4186,8 @@ class StableDiffusionXLControlNetPipeline(
 
         device = self._execution_device
 
-        if isinstance(controlnet, MultiControlNetModel) and isinstance(
-            controlnet_conditioning_scale, float
-        ):
-            controlnet_conditioning_scale = [controlnet_conditioning_scale] * len(
-                controlnet.nets
-            )
+        if isinstance(controlnet, MultiControlNetModel) and isinstance(controlnet_conditioning_scale, float):
+            controlnet_conditioning_scale = [controlnet_conditioning_scale] * len(controlnet.nets)
 
         global_pool_conditions = (
             controlnet.config.global_pool_conditions
@@ -4752,9 +4198,7 @@ class StableDiffusionXLControlNetPipeline(
 
         # 3.1 Encode input prompt
         text_encoder_lora_scale = (
-            self.cross_attention_kwargs.get("scale", None)
-            if self.cross_attention_kwargs is not None
-            else None
+            self.cross_attention_kwargs.get("scale", None) if self.cross_attention_kwargs is not None else None
         )
         (
             prompt_embeds,
@@ -4825,9 +4269,7 @@ class StableDiffusionXLControlNetPipeline(
             assert False
 
         # 5. Prepare timesteps
-        timesteps, num_inference_steps = retrieve_timesteps(
-            self.scheduler, num_inference_steps, device, timesteps, sigmas
-        )
+        timesteps, num_inference_steps = retrieve_timesteps(self.scheduler, num_inference_steps, device, timesteps, sigmas)
         self._num_timesteps = len(timesteps)
 
         # 6. Prepare latent variables
@@ -4846,9 +4288,7 @@ class StableDiffusionXLControlNetPipeline(
         # 6.5 Optionally get Guidance Scale Embedding
         timestep_cond = None
         if self.unet.config.time_cond_proj_dim is not None:
-            guidance_scale_tensor = torch.tensor(self.guidance_scale - 1).repeat(
-                batch_size * num_images_per_prompt
-            )
+            guidance_scale_tensor = torch.tensor(self.guidance_scale - 1).repeat(batch_size * num_images_per_prompt)
             timestep_cond = self.get_guidance_scale_embedding(
                 guidance_scale_tensor, embedding_dim=self.unet.config.time_cond_proj_dim
             ).to(device=device, dtype=latents.dtype)
@@ -4863,9 +4303,7 @@ class StableDiffusionXLControlNetPipeline(
                 1.0 - float(i / len(timesteps) < s or (i + 1) / len(timesteps) > e)
                 for s, e in zip(control_guidance_start, control_guidance_end)
             ]
-            controlnet_keep.append(
-                keeps[0] if isinstance(controlnet, ControlNetModel) else keeps
-            )
+            controlnet_keep.append(keeps[0] if isinstance(controlnet, ControlNetModel) else keeps)
 
         # 7.2 Prepare added time ids & embeddings
         if isinstance(image, list):
@@ -4901,16 +4339,12 @@ class StableDiffusionXLControlNetPipeline(
 
         if self.do_classifier_free_guidance:
             prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
-            add_text_embeds = torch.cat(
-                [negative_pooled_prompt_embeds, add_text_embeds], dim=0
-            )
+            add_text_embeds = torch.cat([negative_pooled_prompt_embeds, add_text_embeds], dim=0)
             add_time_ids = torch.cat([negative_add_time_ids, add_time_ids], dim=0)
 
         prompt_embeds = prompt_embeds.to(device)
         add_text_embeds = add_text_embeds.to(device)
-        add_time_ids = add_time_ids.to(device).repeat(
-            batch_size * num_images_per_prompt, 1
-        )
+        add_time_ids = add_time_ids.to(device).repeat(batch_size * num_images_per_prompt, 1)
 
         # 8. Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
@@ -4928,9 +4362,7 @@ class StableDiffusionXLControlNetPipeline(
                     - (self.denoising_end * self.scheduler.config.num_train_timesteps)
                 )
             )
-            num_inference_steps = len(
-                list(filter(lambda ts: ts >= discrete_timestep_cutoff, timesteps))
-            )
+            num_inference_steps = len(list(filter(lambda ts: ts >= discrete_timestep_cutoff, timesteps)))
             timesteps = timesteps[:num_inference_steps]
 
         is_unet_compiled = is_compiled_module(self.unet)
@@ -4943,19 +4375,11 @@ class StableDiffusionXLControlNetPipeline(
 
                 # Relevant thread:
                 # https://dev-discuss.pytorch.org/t/cudagraphs-in-pytorch-2-0/1428
-                if (
-                    is_unet_compiled and is_controlnet_compiled
-                ) and is_torch_higher_equal_2_1:
+                if (is_unet_compiled and is_controlnet_compiled) and is_torch_higher_equal_2_1:
                     torch._inductor.cudagraph_mark_step_begin()
                 # expand the latents if we are doing classifier free guidance
-                latent_model_input = (
-                    torch.cat([latents] * 2)
-                    if self.do_classifier_free_guidance
-                    else latents
-                )
-                latent_model_input = self.scheduler.scale_model_input(
-                    latent_model_input, t
-                )
+                latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents
+                latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
                 added_cond_kwargs = {
                     "text_embeds": add_text_embeds,
@@ -4966,9 +4390,7 @@ class StableDiffusionXLControlNetPipeline(
                 if guess_mode and self.do_classifier_free_guidance:
                     # Infer ControlNet only for the conditional batch.
                     control_model_input = latents
-                    control_model_input = self.scheduler.scale_model_input(
-                        control_model_input, t
-                    )
+                    control_model_input = self.scheduler.scale_model_input(control_model_input, t)
                     controlnet_prompt_embeds = prompt_embeds.chunk(2)[1]
                     controlnet_added_cond_kwargs = {
                         "text_embeds": add_text_embeds.chunk(2)[1],
@@ -4980,12 +4402,7 @@ class StableDiffusionXLControlNetPipeline(
                     controlnet_added_cond_kwargs = added_cond_kwargs
 
                 if isinstance(controlnet_keep[i], list):
-                    cond_scale = [
-                        c * s
-                        for c, s in zip(
-                            controlnet_conditioning_scale, controlnet_keep[i]
-                        )
-                    ]
+                    cond_scale = [c * s for c, s in zip(controlnet_conditioning_scale, controlnet_keep[i])]
                 else:
                     controlnet_cond_scale = controlnet_conditioning_scale
                     if isinstance(controlnet_cond_scale, list):
@@ -5007,13 +4424,8 @@ class StableDiffusionXLControlNetPipeline(
                     # Inferred ControlNet only for the conditional batch.
                     # To apply the output of ControlNet to both the unconditional and conditional batches,
                     # add 0 to the unconditional batch to keep it unchanged.
-                    down_block_res_samples = [
-                        torch.cat([torch.zeros_like(d), d])
-                        for d in down_block_res_samples
-                    ]
-                    mid_block_res_sample = torch.cat(
-                        [torch.zeros_like(mid_block_res_sample), mid_block_res_sample]
-                    )
+                    down_block_res_samples = [torch.cat([torch.zeros_like(d), d]) for d in down_block_res_samples]
+                    mid_block_res_sample = torch.cat([torch.zeros_like(mid_block_res_sample), mid_block_res_sample])
 
                 if ip_adapter_image is not None or ip_adapter_image_embeds is not None:
                     added_cond_kwargs["image_embeds"] = image_embeds
@@ -5034,14 +4446,10 @@ class StableDiffusionXLControlNetPipeline(
                 # perform guidance
                 if self.do_classifier_free_guidance:
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                    noise_pred = noise_pred_uncond + guidance_scale * (
-                        noise_pred_text - noise_pred_uncond
-                    )
+                    noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
                 # compute the previous noisy sample x_t -> x_t-1
-                latents = self.scheduler.step(
-                    noise_pred, t, latents, **extra_step_kwargs, return_dict=False
-                )[0]
+                latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
 
                 if callback_on_step_end is not None:
                     callback_kwargs = {}
@@ -5051,24 +4459,16 @@ class StableDiffusionXLControlNetPipeline(
 
                     latents = callback_outputs.pop("latents", latents)
                     prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
-                    negative_prompt_embeds = callback_outputs.pop(
-                        "negative_prompt_embeds", negative_prompt_embeds
-                    )
-                    add_text_embeds = callback_outputs.pop(
-                        "add_text_embeds", add_text_embeds
-                    )
+                    negative_prompt_embeds = callback_outputs.pop("negative_prompt_embeds", negative_prompt_embeds)
+                    add_text_embeds = callback_outputs.pop("add_text_embeds", add_text_embeds)
                     negative_pooled_prompt_embeds = callback_outputs.pop(
                         "negative_pooled_prompt_embeds", negative_pooled_prompt_embeds
                     )
                     add_time_ids = callback_outputs.pop("add_time_ids", add_time_ids)
-                    negative_add_time_ids = callback_outputs.pop(
-                        "negative_add_time_ids", negative_add_time_ids
-                    )
+                    negative_add_time_ids = callback_outputs.pop("negative_add_time_ids", negative_add_time_ids)
 
                 # call the callback, if provided
-                if i == len(timesteps) - 1 or (
-                    (i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0
-                ):
+                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
                     if callback is not None and i % callback_steps == 0:
                         step_idx = i // getattr(self.scheduler, "order", 1)
@@ -5076,41 +4476,20 @@ class StableDiffusionXLControlNetPipeline(
 
         if not output_type == "latent":
             # make sure the VAE is in float32 mode, as it overflows in float16
-            needs_upcasting = (
-                self.vae.dtype == torch.float16 and self.vae.config.force_upcast
-            )
+            needs_upcasting = self.vae.dtype == torch.float16 and self.vae.config.force_upcast
 
             if needs_upcasting:
                 self.upcast_vae()
-                latents = latents.to(
-                    next(iter(self.vae.post_quant_conv.parameters())).dtype
-                )
+                latents = latents.to(next(iter(self.vae.post_quant_conv.parameters())).dtype)
 
             # unscale/denormalize the latents
             # denormalize with the mean and std if available and not None
-            has_latents_mean = (
-                hasattr(self.vae.config, "latents_mean")
-                and self.vae.config.latents_mean is not None
-            )
-            has_latents_std = (
-                hasattr(self.vae.config, "latents_std")
-                and self.vae.config.latents_std is not None
-            )
+            has_latents_mean = hasattr(self.vae.config, "latents_mean") and self.vae.config.latents_mean is not None
+            has_latents_std = hasattr(self.vae.config, "latents_std") and self.vae.config.latents_std is not None
             if has_latents_mean and has_latents_std:
-                latents_mean = (
-                    torch.tensor(self.vae.config.latents_mean)
-                    .view(1, 4, 1, 1)
-                    .to(latents.device, latents.dtype)
-                )
-                latents_std = (
-                    torch.tensor(self.vae.config.latents_std)
-                    .view(1, 4, 1, 1)
-                    .to(latents.device, latents.dtype)
-                )
-                latents = (
-                    latents * latents_std / self.vae.config.scaling_factor
-                    + latents_mean
-                )
+                latents_mean = torch.tensor(self.vae.config.latents_mean).view(1, 4, 1, 1).to(latents.device, latents.dtype)
+                latents_std = torch.tensor(self.vae.config.latents_std).view(1, 4, 1, 1).to(latents.device, latents.dtype)
+                latents = latents * latents_std / self.vae.config.scaling_factor + latents_mean
             else:
                 latents = latents / self.vae.config.scaling_factor
 

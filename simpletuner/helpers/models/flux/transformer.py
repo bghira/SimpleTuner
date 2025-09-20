@@ -1,44 +1,29 @@
-# Copyright 2024 Stability AI, The HuggingFace Team, The InstantX Team, and Terminus Research Group. All rights reserved.
+# Copyright 2024 Stability AI, The HuggingFace Team, The InstantX Team, and Terminus Research Group and 2025 bghira. All rights reserved.
 #
 # Originally licensed under the Apache License, Version 2.0 (the "License");
 # Updated to "Affero GENERAL PUBLIC LICENSE Version 3, 19 November 2007" via extensive updates to attn_mask usage.
 
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
-
+from diffusers import FluxTransformer2DModel as OriginalFluxTransformer2DModel
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
 from diffusers.models.attention import FeedForward
-from diffusers.models.attention_processor import (
-    Attention,
-    AttentionProcessor,
-)
-from diffusers.models.modeling_utils import ModelMixin
-from diffusers.models.normalization import (
-    AdaLayerNormContinuous,
-    AdaLayerNormZero,
-    AdaLayerNormZeroSingle,
-)
-from diffusers.utils import (
-    USE_PEFT_BACKEND,
-    is_torch_version,
-    logging,
-    scale_lora_layers,
-    unscale_lora_layers,
-)
-from diffusers.utils.torch_utils import maybe_allow_in_graph
+from diffusers.models.attention_processor import Attention, AttentionProcessor
 from diffusers.models.embeddings import (
     CombinedTimestepGuidanceTextProjEmbeddings,
     CombinedTimestepTextProjEmbeddings,
-    FluxPosEmbed,
 )
+from diffusers.models.transformers.transformer_flux import FluxPosEmbed
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
-from diffusers import FluxTransformer2DModel as OriginalFluxTransformer2DModel
-
+from diffusers.models.modeling_utils import ModelMixin
+from diffusers.models.normalization import AdaLayerNormContinuous, AdaLayerNormZero, AdaLayerNormZeroSingle
+from diffusers.utils import USE_PEFT_BACKEND, is_torch_version, logging, scale_lora_layers, unscale_lora_layers
+from diffusers.utils.torch_utils import maybe_allow_in_graph
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -50,11 +35,9 @@ try:
 except:
     pass
 
-from simpletuner.helpers.models.flux.attention import (
-    FluxSingleAttnProcessor3_0,
-    FluxAttnProcessor3_0,
-)
+from simpletuner.helpers.models.flux.attention import FluxAttnProcessor3_0, FluxSingleAttnProcessor3_0
 from simpletuner.helpers.training.tread import TREADRouter
+from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, PatchableModule
 
 
 def _apply_rotary_emb_anyshape(x, freqs_cis, use_real=True, use_real_unbind_dim=-1):
@@ -80,14 +63,15 @@ def _apply_rotary_emb_anyshape(x, freqs_cis, use_real=True, use_real_unbind_dim=
             x_real, x_imag = x.reshape(*x.shape[:-1], 2, -1).unbind(-2)
             x_rotated = torch.cat([-x_imag, x_real], dim=-1)
         else:
-            raise ValueError(
-                f"`use_real_unbind_dim={use_real_unbind_dim}` but should be -1 or -2."
-            )
+            raise ValueError(f"`use_real_unbind_dim={use_real_unbind_dim}` but should be -1 or -2.")
 
         return (x.float() * cos + x_rotated.float() * sin).to(x.dtype)
     else:
         x_rotated = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))
-        freqs_cis = freqs_cis.unsqueeze(2)
+        freqs_cis = freqs_cis.to(x_rotated.device)
+        freqs_cis = freqs_cis.unsqueeze(0).unsqueeze(2)
+        if freqs_cis.shape[-1] != x_rotated.shape[-1]:
+            freqs_cis = freqs_cis[..., : x_rotated.shape[-1]]
         x_out = torch.view_as_real(x_rotated * freqs_cis).flatten(3)
         return x_out.type_as(x)
 
@@ -96,10 +80,8 @@ class FluxAttnProcessor2_0:
     """Attention processor used typically in processing the SD3-like self-attention projections."""
 
     def __init__(self):
-        if not hasattr(F, "scaled_dot_product_attention"):
-            raise ImportError(
-                "FluxAttnProcessor2_0 requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0."
-            )
+        if not hasattr(F, "scaled_dot_product_attention") or not callable(F.scaled_dot_product_attention):
+            raise ImportError("FluxAttnProcessor2_0 requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0.")
 
     def __call__(
         self,
@@ -109,11 +91,7 @@ class FluxAttnProcessor2_0:
         attention_mask: Optional[torch.FloatTensor] = None,
         image_rotary_emb: Optional[torch.Tensor] = None,
     ) -> torch.FloatTensor:
-        batch_size, _, _ = (
-            hidden_states.shape
-            if encoder_hidden_states is None
-            else encoder_hidden_states.shape
-        )
+        batch_size, _, _ = hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
 
         # `sample` projections.
         query = attn.to_q(hidden_states)
@@ -150,13 +128,9 @@ class FluxAttnProcessor2_0:
             ).transpose(1, 2)
 
             if attn.norm_added_q is not None:
-                encoder_hidden_states_query_proj = attn.norm_added_q(
-                    encoder_hidden_states_query_proj
-                )
+                encoder_hidden_states_query_proj = attn.norm_added_q(encoder_hidden_states_query_proj)
             if attn.norm_added_k is not None:
-                encoder_hidden_states_key_proj = attn.norm_added_k(
-                    encoder_hidden_states_key_proj
-                )
+                encoder_hidden_states_key_proj = attn.norm_added_k(encoder_hidden_states_key_proj)
 
             # attention
             query = torch.cat([encoder_hidden_states_query_proj, query], dim=2)
@@ -170,9 +144,7 @@ class FluxAttnProcessor2_0:
         if attention_mask is not None:
             attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
             attention_mask = (attention_mask > 0).bool()
-            attention_mask = attention_mask.to(
-                device=hidden_states.device, dtype=hidden_states.dtype
-            )
+            attention_mask = attention_mask.to(device=hidden_states.device, dtype=hidden_states.dtype)
 
         hidden_states = F.scaled_dot_product_attention(
             query,
@@ -182,9 +154,7 @@ class FluxAttnProcessor2_0:
             is_causal=False,
             attn_mask=attention_mask,
         )
-        hidden_states = hidden_states.transpose(1, 2).reshape(
-            batch_size, -1, attn.heads * head_dim
-        )
+        hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
         hidden_states = hidden_states.to(query.dtype)
 
         if encoder_hidden_states is not None:
@@ -222,7 +192,7 @@ def expand_flux_attention_mask(
 
 
 @maybe_allow_in_graph
-class FluxSingleTransformerBlock(nn.Module):
+class FluxSingleTransformerBlock(PatchableModule):
     r"""
     A Transformer block following the MMDiT architecture, introduced in Stable Diffusion 3.
 
@@ -287,6 +257,7 @@ class FluxSingleTransformerBlock(nn.Module):
         hidden_states = gate * self.proj_out(hidden_states)
         hidden_states = residual + hidden_states
 
+        hidden_states = torch.nan_to_num(hidden_states, nan=0.0, posinf=65504, neginf=-65504)
         if hidden_states.dtype == torch.float16:
             hidden_states = hidden_states.clip(-65504, 65504)
 
@@ -294,7 +265,7 @@ class FluxSingleTransformerBlock(nn.Module):
 
 
 @maybe_allow_in_graph
-class FluxTransformerBlock(nn.Module):
+class FluxTransformerBlock(PatchableModule):
     r"""
     A Transformer block following the MMDiT architecture, introduced in Stable Diffusion 3.
 
@@ -308,9 +279,7 @@ class FluxTransformerBlock(nn.Module):
             processing of `context` conditions.
     """
 
-    def __init__(
-        self, dim, num_attention_heads, attention_head_dim, qk_norm="rms_norm", eps=1e-6
-    ):
+    def __init__(self, dim, num_attention_heads, attention_head_dim, qk_norm="rms_norm", eps=1e-6):
         super().__init__()
 
         self.norm1 = AdaLayerNormZero(dim)
@@ -320,9 +289,7 @@ class FluxTransformerBlock(nn.Module):
         if hasattr(F, "scaled_dot_product_attention"):
             processor = FluxAttnProcessor2_0()
         else:
-            raise ValueError(
-                "The current PyTorch version does not support the `scaled_dot_product_attention` function."
-            )
+            raise ValueError("The current PyTorch version does not support the `scaled_dot_product_attention` function.")
         self.attn = Attention(
             query_dim=dim,
             cross_attention_dim=None,
@@ -341,9 +308,7 @@ class FluxTransformerBlock(nn.Module):
         self.ff = FeedForward(dim=dim, dim_out=dim, activation_fn="gelu-approximate")
 
         self.norm2_context = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
-        self.ff_context = FeedForward(
-            dim=dim, dim_out=dim, activation_fn="gelu-approximate"
-        )
+        self.ff_context = FeedForward(dim=dim, dim_out=dim, activation_fn="gelu-approximate")
 
         # let chunk size default to None
         self._chunk_size = None
@@ -357,12 +322,10 @@ class FluxTransformerBlock(nn.Module):
         image_rotary_emb=None,
         attention_mask: Optional[torch.Tensor] = None,
     ):
-        norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(
-            hidden_states, emb=temb
-        )
+        norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(hidden_states, emb=temb)
 
-        norm_encoder_hidden_states, c_gate_msa, c_shift_mlp, c_scale_mlp, c_gate_mlp = (
-            self.norm1_context(encoder_hidden_states, emb=temb)
+        norm_encoder_hidden_states, c_gate_msa, c_shift_mlp, c_scale_mlp, c_gate_mlp = self.norm1_context(
+            encoder_hidden_states, emb=temb
         )
 
         if attention_mask is not None:
@@ -388,9 +351,7 @@ class FluxTransformerBlock(nn.Module):
         hidden_states = hidden_states + attn_output
 
         norm_hidden_states = self.norm2(hidden_states)
-        norm_hidden_states = (
-            norm_hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
-        )
+        norm_hidden_states = norm_hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
 
         ff_output = self.ff(norm_hidden_states)
         ff_output = gate_mlp.unsqueeze(1) * ff_output
@@ -404,25 +365,19 @@ class FluxTransformerBlock(nn.Module):
         encoder_hidden_states = encoder_hidden_states + context_attn_output
 
         norm_encoder_hidden_states = self.norm2_context(encoder_hidden_states)
-        norm_encoder_hidden_states = (
-            norm_encoder_hidden_states * (1 + c_scale_mlp[:, None])
-            + c_shift_mlp[:, None]
-        )
+        norm_encoder_hidden_states = norm_encoder_hidden_states * (1 + c_scale_mlp[:, None]) + c_shift_mlp[:, None]
 
         context_ff_output = self.ff_context(norm_encoder_hidden_states)
-        encoder_hidden_states = (
-            encoder_hidden_states + c_gate_mlp.unsqueeze(1) * context_ff_output
-        )
+        encoder_hidden_states = encoder_hidden_states + c_gate_mlp.unsqueeze(1) * context_ff_output
 
+        encoder_hidden_states = torch.nan_to_num(encoder_hidden_states, nan=0.0, posinf=65504, neginf=-65504)
         if encoder_hidden_states.dtype == torch.float16:
             encoder_hidden_states = encoder_hidden_states.clip(-65504, 65504)
 
         return encoder_hidden_states, hidden_states
 
 
-class FluxTransformer2DModel(
-    ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin
-):
+class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
     """
     The Transformer model introduced in Flux.
 
@@ -460,27 +415,21 @@ class FluxTransformer2DModel(
     ):
         super().__init__()
         self.out_channels = in_channels
-        self.inner_dim = (
-            self.config.num_attention_heads * self.config.attention_head_dim
-        )
+        self.inner_dim = self.config.num_attention_heads * self.config.attention_head_dim
 
         self.pos_embed = FluxPosEmbed(theta=10000, axes_dim=axes_dims_rope)
         text_time_guidance_cls = (
-            CombinedTimestepGuidanceTextProjEmbeddings
-            if guidance_embeds
-            else CombinedTimestepTextProjEmbeddings
+            CombinedTimestepGuidanceTextProjEmbeddings if guidance_embeds else CombinedTimestepTextProjEmbeddings
         )
         self.time_text_embed = text_time_guidance_cls(
             embedding_dim=self.inner_dim,
             pooled_projection_dim=self.config.pooled_projection_dim,
         )
 
-        self.context_embedder = nn.Linear(
-            self.config.joint_attention_dim, self.inner_dim
-        )
+        self.context_embedder = nn.Linear(self.config.joint_attention_dim, self.inner_dim)
         self.x_embedder = torch.nn.Linear(self.config.in_channels, self.inner_dim)
 
-        self.transformer_blocks = nn.ModuleList(
+        self.transformer_blocks = MutableModuleList(
             [
                 FluxTransformerBlock(
                     dim=self.inner_dim,
@@ -491,7 +440,7 @@ class FluxTransformer2DModel(
             ]
         )
 
-        self.single_transformer_blocks = nn.ModuleList(
+        self.single_transformer_blocks = MutableModuleList(
             [
                 FluxSingleTransformerBlock(
                     dim=self.inner_dim,
@@ -502,15 +451,11 @@ class FluxTransformer2DModel(
             ]
         )
 
-        self.norm_out = AdaLayerNormContinuous(
-            self.inner_dim, self.inner_dim, elementwise_affine=False, eps=1e-6
-        )
-        self.proj_out = nn.Linear(
-            self.inner_dim, patch_size * patch_size * self.out_channels, bias=True
-        )
+        self.norm_out = AdaLayerNormContinuous(self.inner_dim, self.inner_dim, elementwise_affine=False, eps=1e-6)
+        self.proj_out = nn.Linear(self.inner_dim, patch_size * patch_size * self.out_channels, bias=True)
 
         self.gradient_checkpointing = False
-        # added for users to disable checkpointing every nth step
+        # optional interval for gradient checkpointing
         self.gradient_checkpointing_interval = None
 
     def set_gradient_checkpointing_interval(self, value: int):
@@ -528,7 +473,6 @@ class FluxTransformer2DModel(
             `dict` of attention processors: A dictionary containing all attention processors used in the model with
             indexed by its weight name.
         """
-        # set recursively
         processors = {}
 
         def fn_recursive_add_processors(
@@ -547,12 +491,10 @@ class FluxTransformer2DModel(
         for name, module in self.named_children():
             fn_recursive_add_processors(name, module, processors)
 
-        return processors
+        return CallableDict(processors)
 
     # Copied from diffusers.models.unets.unet_2d_condition.UNet2DConditionModel.set_attn_processor
-    def set_attn_processor(
-        self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]]
-    ):
+    def set_attn_processor(self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]]):
         r"""
         Sets the attention processor to use to compute attention.
 
@@ -604,9 +546,7 @@ class FluxTransformer2DModel(
 
         def _route_one(r: torch.Tensor) -> torch.Tensor:
             rB = r.unsqueeze(0).expand(batch, -1, -1)  # (B, S, D)
-            shuf = torch.take_along_dim(
-                rB, info.ids_shuffle.unsqueeze(-1).expand_as(rB), dim=1
-            )
+            shuf = torch.take_along_dim(rB, info.ids_shuffle.unsqueeze(-1).expand_as(rB), dim=1)
             return shuf[:, :keep_len, :]  # (B, keep, D)
 
         if isinstance(rope, tuple):
@@ -664,13 +604,10 @@ class FluxTransformer2DModel(
             lora_scale = 1.0
 
         if USE_PEFT_BACKEND:
-            # weight the lora layers by setting `lora_scale` for each PEFT layer
+            # scale lora layers
             scale_lora_layers(self, lora_scale)
         else:
-            if (
-                joint_attention_kwargs is not None
-                and joint_attention_kwargs.get("scale", None) is not None
-            ):
+            if joint_attention_kwargs is not None and joint_attention_kwargs.get("scale", None) is not None:
                 logger.warning(
                     "Passing `scale` via `joint_attention_kwargs` when not using the PEFT backend is ineffective."
                 )
@@ -699,22 +636,15 @@ class FluxTransformer2DModel(
         image_rotary_emb = self.pos_embed(ids)
 
         # IP adapter
-        if (
-            joint_attention_kwargs is not None
-            and "ip_adapter_image_embeds" in joint_attention_kwargs
-        ):
-            ip_adapter_image_embeds = joint_attention_kwargs.pop(
-                "ip_adapter_image_embeds"
-            )
+        if joint_attention_kwargs is not None and "ip_adapter_image_embeds" in joint_attention_kwargs:
+            ip_adapter_image_embeds = joint_attention_kwargs.pop("ip_adapter_image_embeds")
             ip_hidden_states = self.encoder_hid_proj(ip_adapter_image_embeds)
             joint_attention_kwargs.update({"ip_hidden_states": ip_hidden_states})
 
         # TREAD related
         routes = self._tread_routes or []
         router = self._tread_router
-        use_routing = (
-            self.training and len(routes) > 0 and torch.is_grad_enabled()
-        )  # enable only while training
+        use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()  # enable only while training
         route_ptr = 0  # which entry in `routes` we’re on
         routing_now = False  # are we inside a route?
         tread_mask_info = None
@@ -724,9 +654,7 @@ class FluxTransformer2DModel(
 
         # TREAD: handle negative route index.
         if routes:
-            total_layers = len(self.transformer_blocks) + len(
-                self.single_transformer_blocks
-            )
+            total_layers = len(self.transformer_blocks) + len(self.single_transformer_blocks)
 
             def _to_pos(idx):
                 return idx if idx >= 0 else total_layers + idx
@@ -742,11 +670,7 @@ class FluxTransformer2DModel(
 
         for index_block, block in enumerate(self.transformer_blocks):
             # TREAD: START a route?
-            if (
-                use_routing
-                and route_ptr < len(routes)
-                and global_idx == routes[route_ptr]["start_layer_idx"]
-            ):
+            if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
                 mask_ratio = routes[route_ptr]["selection_ratio"]
                 tread_mask_info = router.get_mask(
                     hidden_states,
@@ -759,10 +683,7 @@ class FluxTransformer2DModel(
 
                 # --- build RoPE with    [ text | routed‑image ]    rows -------------
                 # 1. text part:  (B, txt_len, D) – identical for all samples
-                text_rope_b = tuple(
-                    r[:txt_len].unsqueeze(0).expand(hidden_states.size(0), -1, -1)
-                    for r in image_rotary_emb
-                )
+                text_rope_b = tuple(r[:txt_len].unsqueeze(0).expand(hidden_states.size(0), -1, -1) for r in image_rotary_emb)
 
                 # 2. image part: apply the same shuffle+slice as the tokens
                 image_only_rope = tuple(r[txt_len:] for r in image_rotary_emb)
@@ -773,18 +694,12 @@ class FluxTransformer2DModel(
                     batch=hidden_states.size(0),
                 )
 
-                # 3. concatenate → (B, txt_len+S_keep, D)
-                current_rope = tuple(
-                    torch.cat([tr, ir], dim=1)
-                    for tr, ir in zip(text_rope_b, img_rope_r)
-                )
+                # concatenate text + image rope
+                current_rope = tuple(torch.cat([tr, ir], dim=1) for tr, ir in zip(text_rope_b, img_rope_r))
             if (
                 self.training
                 and self.gradient_checkpointing
-                and (
-                    self.gradient_checkpointing_interval is None
-                    or index_block % self.gradient_checkpointing_interval == 0
-                )
+                and (self.gradient_checkpointing_interval is None or index_block % self.gradient_checkpointing_interval == 0)
             ):
 
                 def create_custom_forward(module, return_dict=None):
@@ -796,19 +711,15 @@ class FluxTransformer2DModel(
 
                     return custom_forward
 
-                ckpt_kwargs: Dict[str, Any] = (
-                    {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-                )
-                encoder_hidden_states, hidden_states = (
-                    torch.utils.checkpoint.checkpoint(
-                        create_custom_forward(block),
-                        hidden_states,
-                        encoder_hidden_states,
-                        temb,
-                        current_rope,
-                        attention_mask,
-                        **ckpt_kwargs,
-                    )
+                ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
+                encoder_hidden_states, hidden_states = torch.utils.checkpoint.checkpoint(
+                    create_custom_forward(block),
+                    hidden_states,
+                    encoder_hidden_states,
+                    temb,
+                    current_rope,
+                    attention_mask,
+                    **ckpt_kwargs,
                 )
 
             else:
@@ -822,23 +733,13 @@ class FluxTransformer2DModel(
 
             # controlnet residual
             if controlnet_block_samples is not None:
-                interval_control = len(self.transformer_blocks) / len(
-                    controlnet_block_samples
-                )
+                interval_control = len(self.transformer_blocks) / len(controlnet_block_samples)
                 interval_control = int(np.ceil(interval_control))
                 # For Xlabs ControlNet.
                 if controlnet_blocks_repeat:
-                    hidden_states = (
-                        hidden_states
-                        + controlnet_block_samples[
-                            index_block % len(controlnet_block_samples)
-                        ]
-                    )
+                    hidden_states = hidden_states + controlnet_block_samples[index_block % len(controlnet_block_samples)]
                 else:
-                    hidden_states = (
-                        hidden_states
-                        + controlnet_block_samples[index_block // interval_control]
-                    )
+                    hidden_states = hidden_states + controlnet_block_samples[index_block // interval_control]
 
             # TREAD: END the current route?
             if routing_now and global_idx == routes[route_ptr]["end_layer_idx"]:
@@ -860,24 +761,14 @@ class FluxTransformer2DModel(
 
         for index_block, block in enumerate(self.single_transformer_blocks):
             # TREAD: START? (operate on *image* tokens only)
-            if (
-                use_routing
-                and route_ptr < len(routes)
-                and global_idx == routes[route_ptr]["start_layer_idx"]
-            ):
+            if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
                 mask_ratio = routes[route_ptr]["selection_ratio"]
 
                 text_tok = hidden_states[:, :txt_len, :]
                 img_tok = hidden_states[:, txt_len:, :]
 
-                fkm = (
-                    force_keep_mask[:, txt_len:]
-                    if force_keep_mask is not None
-                    else None
-                )
-                tread_mask_info = router.get_mask(
-                    img_tok, mask_ratio=mask_ratio, force_keep=fkm
-                )
+                fkm = force_keep_mask[:, txt_len:] if force_keep_mask is not None else None
+                tread_mask_info = router.get_mask(img_tok, mask_ratio=mask_ratio, force_keep=fkm)
                 saved_tokens = img_tok.clone()
                 img_tok = router.start_route(img_tok, tread_mask_info)
 
@@ -892,25 +783,17 @@ class FluxTransformer2DModel(
                         device=attention_mask.device,
                         dtype=attention_mask.dtype,
                     )
-                    attention_mask = torch.cat(
-                        [attention_mask[:, :txt_len], pad], dim=1
-                    )
+                    attention_mask = torch.cat([attention_mask[:, :txt_len], pad], dim=1)
 
                 # Handle shrinking RoPE
-                text_rope_b = tuple(
-                    r[:txt_len].unsqueeze(0).expand(img_tok.size(0), -1, -1)
-                    for r in image_rotary_emb
-                )
+                text_rope_b = tuple(r[:txt_len].unsqueeze(0).expand(img_tok.size(0), -1, -1) for r in image_rotary_emb)
                 img_rope_r = self._route_rope(
                     tuple(r[txt_len:] for r in image_rotary_emb),
                     tread_mask_info,
                     keep_len=img_tok.size(1),
                     batch=img_tok.size(0),
                 )
-                current_rope = tuple(
-                    torch.cat([tr, ir], dim=1)
-                    for tr, ir in zip(text_rope_b, img_rope_r)
-                )
+                current_rope = tuple(torch.cat([tr, ir], dim=1) for tr, ir in zip(text_rope_b, img_rope_r))
 
             if (
                 self.training
@@ -930,9 +813,7 @@ class FluxTransformer2DModel(
 
                     return custom_forward
 
-                ckpt_kwargs: Dict[str, Any] = (
-                    {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-                )
+                ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
                 hidden_states = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(block),
                     hidden_states,
@@ -952,9 +833,7 @@ class FluxTransformer2DModel(
 
             # controlnet residual
             if controlnet_single_block_samples is not None:
-                interval_control = len(self.single_transformer_blocks) / len(
-                    controlnet_single_block_samples
-                )
+                interval_control = len(self.single_transformer_blocks) / len(controlnet_single_block_samples)
                 interval_control = int(np.ceil(interval_control))
                 hidden_states[:, encoder_hidden_states.shape[1] :, ...] = (
                     hidden_states[:, encoder_hidden_states.shape[1] :, ...]
@@ -983,9 +862,7 @@ class FluxTransformer2DModel(
                         device=attention_mask.device,
                         dtype=attention_mask.dtype,
                     )
-                    attention_mask = torch.cat(
-                        [attention_mask[:, :txt_len], pad], dim=1
-                    )
+                    attention_mask = torch.cat([attention_mask[:, :txt_len], pad], dim=1)
 
                 current_rope = image_rotary_emb
 
@@ -997,7 +874,7 @@ class FluxTransformer2DModel(
         output = self.proj_out(hidden_states)
 
         if USE_PEFT_BACKEND:
-            # remove `lora_scale` from each PEFT layer
+            # unscale lora layers
             unscale_lora_layers(self, lora_scale)
 
         if not return_dict:
@@ -1013,35 +890,21 @@ if __name__ == "__main__":
     timestep = torch.tensor([0.5, 0.5]).to("cuda", dtype=torch.float32)
     pooled = torch.rand(bsz, 768).to("cuda", dtype=dtype)
     text = torch.rand((bsz, 512, 4096)).to("cuda", dtype=dtype)
-    attn_mask = torch.tensor([[1.0] * 384 + [0.0] * 128] * bsz).to(
-        "cuda", dtype=dtype
-    )  # Last 128 positions are masked
+    attn_mask = torch.tensor([[1.0] * 384 + [0.0] * 128] * bsz).to("cuda", dtype=dtype)  # Last 128 positions are masked
 
     def _pack_latents(latents, batch_size, num_channels_latents, height, width):
-        latents = latents.view(
-            batch_size, num_channels_latents, height // 2, 2, width // 2, 2
-        )
+        latents = latents.view(batch_size, num_channels_latents, height // 2, 2, width // 2, 2)
         latents = latents.permute(0, 2, 4, 1, 3, 5)
-        latents = latents.reshape(
-            batch_size, (height // 2) * (width // 2), num_channels_latents * 4
-        )
+        latents = latents.reshape(batch_size, (height // 2) * (width // 2), num_channels_latents * 4)
 
         return latents
 
-    def _prepare_latent_image_ids(
-        batch_size, height, width, device="cuda", dtype=dtype
-    ):
+    def _prepare_latent_image_ids(batch_size, height, width, device="cuda", dtype=dtype):
         latent_image_ids = torch.zeros(height // 2, width // 2, 3)
-        latent_image_ids[..., 1] = (
-            latent_image_ids[..., 1] + torch.arange(height // 2)[:, None]
-        )
-        latent_image_ids[..., 2] = (
-            latent_image_ids[..., 2] + torch.arange(width // 2)[None, :]
-        )
+        latent_image_ids[..., 1] = latent_image_ids[..., 1] + torch.arange(height // 2)[:, None]
+        latent_image_ids[..., 2] = latent_image_ids[..., 2] + torch.arange(width // 2)[None, :]
 
-        latent_image_id_height, latent_image_id_width, latent_image_id_channels = (
-            latent_image_ids.shape
-        )
+        latent_image_id_height, latent_image_id_width, latent_image_id_channels = latent_image_ids.shape
 
         latent_image_ids = latent_image_ids[None, :].repeat(batch_size, 1, 1, 1)
         latent_image_ids = latent_image_ids.reshape(
@@ -1100,7 +963,7 @@ if __name__ == "__main__":
         )
 
     assert torch.allclose(no_mask.sample, mask.sample) is False
-    print("Attention masking test ran OK. Differences in output were detected.")
+    # attention masking test passed - outputs differ as expected
 
     # Test TREAD
     # ------------------------------------------------------------------
@@ -1113,9 +976,7 @@ if __name__ == "__main__":
     pooled = torch.rand(bsz, 768, device="cuda", dtype=dtype)
     text = torch.rand((bsz, 512, 4096), device="cuda", dtype=dtype)
 
-    attn_mask = torch.tensor(
-        [[1.0] * 384 + [0.0] * 128] * bsz, device="cuda", dtype=dtype
-    )
+    attn_mask = torch.tensor([[1.0] * 384 + [0.0] * 128] * bsz, device="cuda", dtype=dtype)
 
     # helpers -----------------------------------------------------------------
     def _pack_latents(latents, batch, C, H, W):
@@ -1181,12 +1042,11 @@ if __name__ == "__main__":
         loss = out.sample.mean()
         loss.backward()
 
-        print("\n✓ forward & backward succeeded")
-        print(f"output shape : {out.sample.shape}")
-        print(f"loss value   : {loss.item():.4f}")
+        # forward & backward passed
+        pass
 
     except Exception as e:
         import traceback
 
-        print("\n✗ crash during step — full traceback:")
+        # crash during step
         traceback.print_exc()

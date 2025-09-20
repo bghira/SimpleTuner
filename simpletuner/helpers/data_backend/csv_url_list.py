@@ -1,20 +1,19 @@
 import fnmatch
 import hashlib
+import logging
+import os
+from io import BytesIO
+from pathlib import Path
+from typing import Any, BinaryIO, Optional, Union
 
 import pandas as pd
 import requests
+import torch
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.image_manipulation.load import load_image, load_video
+from simpletuner.helpers.training import image_file_extensions, video_file_extensions
 from simpletuner.helpers.training.multi_process import should_log
-from simpletuner.helpers.training import video_file_extensions, image_file_extensions
-
-from pathlib import Path
-from io import BytesIO
-import os
-import logging
-import torch
-from typing import Any, Union, Optional, BinaryIO
 
 logger = logging.getLogger("CSVDataBackend")
 if should_log():
@@ -40,9 +39,7 @@ def path_to_hashed_path(path: Path, hash_filenames: bool) -> Path:
 
 def html_to_file_loc(parent_directory: Path, url: str, hash_filenames: bool) -> str:
     filename = url_to_filename(url)
-    cached_loc = path_to_hashed_path(
-        parent_directory.joinpath(filename), hash_filenames
-    )
+    cached_loc = path_to_hashed_path(parent_directory.joinpath(filename), hash_filenames)
     return str(cached_loc.resolve())
 
 
@@ -68,21 +65,16 @@ class CSVDataBackend(BaseDataBackend):
         self.df = pd.read_csv(csv_file, index_col=url_column)
         self.df = self.df.groupby(level=0).last()  # deduplicate by index (image loc)
         self.caption_column = caption_column
-        self.image_cache_loc = (
-            Path(image_cache_loc) if image_cache_loc is not None else None
-        )
+        self.image_cache_loc = Path(image_cache_loc) if image_cache_loc is not None else None
 
     def read(self, location, as_byteIO: bool = False):
-        """Read and return the content of the file."""
         already_hashed = False
         if isinstance(location, Path):
             location = str(location.resolve())
         if location.startswith("http"):
             if self.image_cache_loc is not None:
                 # check for cache
-                cached_loc = html_to_file_loc(
-                    self.image_cache_loc, location, self.hash_filenames
-                )
+                cached_loc = html_to_file_loc(self.image_cache_loc, location, self.hash_filenames)
                 if os.path.exists(cached_loc):
                     # found cache
                     location = cached_loc
@@ -96,9 +88,7 @@ class CSVDataBackend(BaseDataBackend):
                 data = requests.get(location, stream=True).raw.data
         if not location.startswith("http"):
             # read from local file
-            hashed_location = path_to_hashed_path(
-                location, hash_filenames=self.hash_filenames and not already_hashed
-            )
+            hashed_location = path_to_hashed_path(location, hash_filenames=self.hash_filenames and not already_hashed)
             try:
                 with open(hashed_location, "rb") as file:
                     data = file.read()
@@ -116,9 +106,7 @@ class CSVDataBackend(BaseDataBackend):
         Write the provided data to the specified filepath.
         """
         if isinstance(filepath, str):
-            assert not filepath.startswith(
-                "http"
-            ), f"writing to {filepath} is not allowed as it has http in it"
+            assert not filepath.startswith("http"), f"writing to {filepath} is not allowed as it has http in it"
             filepath = Path(filepath)
 
         filepath = path_to_hashed_path(filepath, self.hash_filenames)
@@ -128,20 +116,14 @@ class CSVDataBackend(BaseDataBackend):
                 return self.torch_save(data, file)
             if isinstance(data, str):
                 data = data.encode("utf-8")
-            else:
-                logger.debug(
-                    f"Received an unknown data type to write to disk. Doing our best: {type(data)}"
-                )
             file.write(data)
 
     def delete(self, filepath):
-        """Delete the specified file."""
         if filepath in self.df.index:
             self.df.drop(filepath, inplace=True)
 
         filepath = path_to_hashed_path(filepath, self.hash_filenames)
         if os.path.exists(filepath):
-            logger.debug(f"Deleting file: {filepath}")
             os.remove(filepath)
         if self.exists(filepath) or filepath in self.df.index:
             raise Exception(f"Failed to delete {filepath}")
@@ -158,16 +140,11 @@ class CSVDataBackend(BaseDataBackend):
         """Open the file in the specified mode."""
         return open(path_to_hashed_path(filepath, self.hash_filenames), mode)
 
-    def list_files(
-        self, file_extensions: list = None, instance_data_dir: str = None
-    ) -> tuple:
+    def list_files(self, file_extensions: list = None, instance_data_dir: str = None) -> tuple:
         """
         List all files matching the file extensions.
         Creates Path objects of each file found.
         """
-        logger.debug(
-            f"CSVDataBackend.list_files: file_extensions={file_extensions}, instance_data_dir={instance_data_dir}"
-        )
 
         if instance_data_dir is None:
             filtered_paths = set(self.df.index)
@@ -181,13 +158,9 @@ class CSVDataBackend(BaseDataBackend):
 
             filtered_ids = set()
             for pattern in patterns:
-                filtered_ids.update(
-                    filter(lambda id: fnmatch.fnmatch(id, pattern), list(self.df.index))
-                )
+                filtered_ids.update(filter(lambda id: fnmatch.fnmatch(id, pattern), list(self.df.index)))
 
-            filtered_paths = set(
-                filter(lambda id: "http" not in id and os.path.exists(id), filtered_ids)
-            )
+            filtered_paths = set(filter(lambda id: "http" not in id and os.path.exists(id), filtered_ids))
 
         path_dict = {}
         for path in filtered_paths:
@@ -239,26 +212,18 @@ class CSVDataBackend(BaseDataBackend):
         except Exception as e:
             import traceback
 
-            logger.error(
-                f"Encountered error opening image {filepath}: {e}, traceback: {traceback.format_exc()}"
-            )
+            logger.error(f"Encountered error opening image {filepath}: {e}, traceback: {traceback.format_exc()}")
             if delete_problematic_images:
-                logger.error(
-                    "Deleting image, because --delete_problematic_images is provided."
-                )
+                logger.error("Deleting image, because --delete_problematic_images is provided.")
                 self.delete(filepath)
             else:
                 exit(1)
                 raise e
 
-    def read_image_batch(
-        self, filepaths: list, delete_problematic_images: bool = False
-    ) -> list:
+    def read_image_batch(self, filepaths: list, delete_problematic_images: bool = False) -> list:
         """Read a batch of images (or videos) from the specified filepaths."""
         if not isinstance(filepaths, list):
-            raise ValueError(
-                f"read_image_batch must be given a list of image filepaths. we received: {filepaths}"
-            )
+            raise ValueError(f"read_image_batch must be given a list of image filepaths. we received: {filepaths}")
         output_images = []
         available_keys = []
         for filepath in filepaths:
@@ -271,9 +236,7 @@ class CSVDataBackend(BaseDataBackend):
                 available_keys.append(filepath)
             except Exception as e:
                 if delete_problematic_images:
-                    logger.error(
-                        f"Deleting image '{filepath}', because --delete_problematic_images is provided. Error: {e}"
-                    )
+                    logger.error(f"Deleting image '{filepath}', because --delete_problematic_images is provided. Error: {e}")
                 else:
                     logger.warning(
                         f"A problematic image {filepath} is detected, but we are not allowed to remove it. Error: {e}"
@@ -283,7 +246,6 @@ class CSVDataBackend(BaseDataBackend):
     def create_directory(self, directory_path):
         if os.path.exists(directory_path):
             return
-        logger.debug(f"Creating directory: {directory_path}")
         os.makedirs(directory_path, exist_ok=True)
 
     def torch_load(self, filename):
@@ -295,9 +257,7 @@ class CSVDataBackend(BaseDataBackend):
             try:
                 stored_tensor = self._decompress_torch(stored_tensor)
             except Exception as e:
-                logger.error(
-                    f"Failed to decompress torch file, falling back to passthrough: {e}"
-                )
+                logger.error(f"Failed to decompress torch file, falling back to passthrough: {e}")
         if hasattr(stored_tensor, "seek"):
             stored_tensor.seek(0)
         try:
@@ -336,3 +296,35 @@ class CSVDataBackend(BaseDataBackend):
         if self.caption_column is None:
             raise ValueError("Cannot retrieve caption from csv, as one is not set.")
         return self.df.loc[image_path, self.caption_column]
+
+    def get_instance_representation(self) -> dict:
+        """Get a serializable representation of this backend instance."""
+        return {
+            "backend_type": "csv",
+            "id": self.id,
+            "csv_file": str(self.csv_file.resolve()),
+            "compress_cache": self.compress_cache,
+            "url_column": self.url_column,
+            "caption_column": self.caption_column,
+            "image_cache_loc": str(self.image_cache_loc.resolve()) if self.image_cache_loc else None,
+            "hash_filenames": self.hash_filenames,
+            # Note: accelerator and df are not serializable
+        }
+
+    @staticmethod
+    def from_instance_representation(representation: dict) -> "CSVDataBackend":
+        """Create a new CSVDataBackend instance from a serialized representation."""
+        if representation.get("backend_type") != "csv":
+            raise ValueError(f"Expected backend_type 'csv', got {representation.get('backend_type')}")
+
+        # Extract parameters from representation
+        return CSVDataBackend(
+            id=representation["id"],
+            csv_file=Path(representation["csv_file"]),
+            accelerator=None,  # Will be set by subprocess if needed
+            compress_cache=representation.get("compress_cache", False),
+            url_column=representation.get("url_column", "url"),
+            caption_column=representation.get("caption_column", "caption"),
+            image_cache_loc=representation.get("image_cache_loc"),
+            hash_filenames=representation.get("hash_filenames", True),
+        )

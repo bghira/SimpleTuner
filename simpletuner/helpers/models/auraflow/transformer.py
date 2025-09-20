@@ -19,6 +19,7 @@ from diffusers.utils import USE_PEFT_BACKEND, is_torch_version, logging, scale_l
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 
 from simpletuner.helpers.training.tread import TREADRouter
+from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, PatchableModule
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -107,35 +108,53 @@ class AuraFlowFeedForward(nn.Module):
         self.chunk_size = None
         self.dim = 0
 
+    def _feed_forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = F.silu(self.linear_1(x)) * self.linear_2(x)
+        x = self.out_projection(x)
+        return x
+
     # Add support for chunked feed forward for improved memory efficiency
     def set_chunk_feed_forward(self, chunk_size: Optional[int] = None, dim: int = 0):
         self.chunk_size = chunk_size
         self.dim = dim
 
-    def _chunk_forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Implementation of chunked feed forward
-        num_chunks = (
-            x.shape[self.dim] // self.chunk_size
-            if (x.shape[self.dim] % self.chunk_size == 0)
-            else (x.shape[self.dim] // self.chunk_size) + 1
-        )
-        chunks = torch.chunk(x, num_chunks, dim=self.dim)
-        output_chunks = []
+    def _should_chunk(self, x: torch.Tensor) -> bool:
+        if self.chunk_size is None or self.chunk_size <= 0:
+            return False
 
+        dim = self.dim
+        if dim < 0:
+            dim += x.ndim
+        if dim < 0 or dim >= x.ndim:
+            raise ValueError(f"Invalid dimension {self.dim} for tensor with shape {x.shape}")
+
+        dim_size = x.shape[dim]
+        if self.chunk_size >= dim_size:
+            return False
+
+        # Avoid chunking very small tensors where overhead dominates runtime.
+        if dim_size <= self.chunk_size * 4:
+            return False
+
+        return True
+
+    def _chunk_forward(self, x: torch.Tensor) -> torch.Tensor:
+        chunks = torch.split(x, self.chunk_size, dim=self.dim)
+        if len(chunks) == 1:
+            return self._feed_forward(chunks[0])
+
+        output_chunks = []
         for chunk in chunks:
-            chunk_output = F.silu(self.linear_1(chunk)) * self.linear_2(chunk)
-            chunk_output = self.out_projection(chunk_output)
+            chunk_output = self._feed_forward(chunk)
             output_chunks.append(chunk_output)
 
         return torch.cat(output_chunks, dim=self.dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.chunk_size is not None:
+        if self._should_chunk(x):
             return self._chunk_forward(x)
 
-        x = F.silu(self.linear_1(x)) * self.linear_2(x)
-        x = self.out_projection(x)
-        return x
+        return self._feed_forward(x)
 
 
 class AuraFlowPreFinalBlock(nn.Module):
@@ -153,7 +172,7 @@ class AuraFlowPreFinalBlock(nn.Module):
 
 
 @maybe_allow_in_graph
-class AuraFlowSingleTransformerBlock(nn.Module):
+class AuraFlowSingleTransformerBlock(PatchableModule):
     def __init__(self, dim, num_attention_heads, attention_head_dim):
         super().__init__()
 
@@ -204,7 +223,7 @@ class AuraFlowSingleTransformerBlock(nn.Module):
 
 
 @maybe_allow_in_graph
-class AuraFlowJointTransformerBlock(nn.Module):
+class AuraFlowJointTransformerBlock(PatchableModule):
     def __init__(self, dim, num_attention_heads, attention_head_dim):
         super().__init__()
 
@@ -276,7 +295,7 @@ class AuraFlowJointTransformerBlock(nn.Module):
         return encoder_hidden_states, hidden_states
 
 
-class AuraFlowTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
+class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
     """
     An updated AuraFlowTransformer2DModel with additional SD3 features like gradient checkpointing interval,
     skip layers, forward chunking, and ControlNet support.
@@ -345,7 +364,7 @@ class AuraFlowTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, From
         self.time_step_embed = Timesteps(num_channels=256, downscale_freq_shift=0, scale=1000, flip_sin_to_cos=True)
         self.time_step_proj = TimestepEmbedding(in_channels=256, time_embed_dim=self.inner_dim)
 
-        self.joint_transformer_blocks = nn.ModuleList(
+        self.joint_transformer_blocks = MutableModuleList(
             [
                 AuraFlowJointTransformerBlock(
                     dim=self.inner_dim,
@@ -355,7 +374,7 @@ class AuraFlowTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, From
                 for i in range(self.config.num_mmdit_layers)
             ]
         )
-        self.single_transformer_blocks = nn.ModuleList(
+        self.single_transformer_blocks = MutableModuleList(
             [
                 AuraFlowSingleTransformerBlock(
                     dim=self.inner_dim,
@@ -433,6 +452,10 @@ class AuraFlowTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, From
 
     @property
     def attn_processors(self) -> Dict[str, AttentionProcessor]:
+        override = getattr(self, "_attn_processors_override", None)
+        if override is not None:
+            return override
+
         processors = {}
 
         def fn_recursive_add_processors(
@@ -451,7 +474,15 @@ class AuraFlowTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, From
         for name, module in self.named_children():
             fn_recursive_add_processors(name, module, processors)
 
-        return processors
+        return CallableDict(processors)
+
+    @attn_processors.setter
+    def attn_processors(self, value):
+        self._attn_processors_override = value
+
+    @attn_processors.deleter
+    def attn_processors(self):
+        self._attn_processors_override = None
 
     def set_attn_processor(self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]]):
         count = len(self.attn_processors.keys())
@@ -467,7 +498,10 @@ class AuraFlowTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, From
                 if not isinstance(processor, dict):
                     module.set_processor(processor)
                 else:
-                    module.set_processor(processor.pop(f"{name}.processor"))
+                    key = f"{name}.processor"
+                    processor_value = processor.pop(key, None)
+                    if processor_value is not None:
+                        module.set_processor(processor_value)
 
             for sub_name, child in module.named_children():
                 fn_recursive_attn_processor(f"{name}.{sub_name}", child, processor)

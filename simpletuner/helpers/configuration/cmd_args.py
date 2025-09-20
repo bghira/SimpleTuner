@@ -1,26 +1,24 @@
-from datetime import timedelta
-from accelerate.utils import ProjectConfiguration
-from accelerate import InitProcessGroupKwargs
 import argparse
-import os
-from typing import Dict, List, Optional, Tuple
-import random
-import time
 import json
 import logging
+import os
+import random
 import sys
+import time
+from datetime import timedelta
+from typing import Dict, List, Optional, Tuple
+
 import torch
+from accelerate import InitProcessGroupKwargs
+from accelerate.utils import ProjectConfiguration
+
+from simpletuner.helpers.models.all import get_all_model_flavours, get_model_flavour_choices, model_families
 from simpletuner.helpers.training import quantised_precision_levels
 from simpletuner.helpers.training.optimizer_param import (
     is_optimizer_deprecated,
     is_optimizer_grad_fp32,
     map_deprecated_optimizer_parameter,
     optimizer_choices,
-)
-from simpletuner.helpers.models.all import (
-    model_families,
-    get_model_flavour_choices,
-    get_all_model_flavours,
 )
 
 model_family_choices = list(model_families.keys())
@@ -158,9 +156,7 @@ def get_argument_parser():
         "--hidream_use_load_balancing_loss",
         action="store_true",
         default=False,
-        help=(
-            "When set, will use the load balancing loss for HiDream training. This is an experimental implementation."
-        ),
+        help=("When set, will use the load balancing loss for HiDream training. This is an experimental implementation."),
     )
     parser.add_argument(
         "--hidream_load_balancing_loss_weight",
@@ -438,17 +434,13 @@ def get_argument_parser():
         type=float,
         required=False,
         default=None,
-        help=(
-            "The alpha value for the LoRA model. This is the learning rate for the LoRA update matrices."
-        ),
+        help=("The alpha value for the LoRA model. This is the learning rate for the LoRA update matrices."),
     )
     parser.add_argument(
         "--lora_dropout",
         type=float,
         default=0.1,
-        help=(
-            "LoRA dropout randomly ignores neurons during training. This can help prevent overfitting."
-        ),
+        help=("LoRA dropout randomly ignores neurons during training. This can help prevent overfitting."),
     )
     parser.add_argument(
         "--lycoris_config",
@@ -515,9 +507,7 @@ def get_argument_parser():
         "--controlnet_model_name_or_path",
         type=str,
         default=None,
-        help=(
-            "When provided alongside --controlnet, this will specify ControlNet model weights to preload from the hub."
-        ),
+        help=("When provided alongside --controlnet, this will specify ControlNet model weights to preload from the hub."),
     )
     parser.add_argument(
         "--pretrained_model_name_or_path",
@@ -744,9 +734,7 @@ def get_argument_parser():
         "--vae_enable_slicing",
         action="store_true",
         default=False,
-        help=(
-            "If set, will enable slicing for VAE caching. This is useful for video models."
-        ),
+        help=("If set, will enable slicing for VAE caching. This is useful for video models."),
     )
     parser.add_argument(
         "--vae_cache_scan_behaviour",
@@ -859,9 +847,7 @@ def get_argument_parser():
         "--cache_dir_text",
         type=str,
         default="cache",
-        help=(
-            "This is the path to a local directory that will contain your text embed cache."
-        ),
+        help=("This is the path to a local directory that will contain your text embed cache."),
     )
     parser.add_argument(
         "--cache_dir_vae",
@@ -916,9 +902,7 @@ def get_argument_parser():
         "--read_batch_size",
         type=int,
         default=25,
-        help=(
-            "Used by the VAE cache to prefetch image data. This is the number of images to read ahead."
-        ),
+        help=("Used by the VAE cache to prefetch image data. This is the number of images to read ahead."),
     )
     parser.add_argument(
         "--image_processing_batch_size",
@@ -1044,9 +1028,7 @@ def get_argument_parser():
         default="simpletuner-results",
         help="The output directory where the model predictions and checkpoints will be written.",
     )
-    parser.add_argument(
-        "--seed", type=int, default=None, help="A seed for reproducible training."
-    )
+    parser.add_argument("--seed", type=int, default=None, help="A seed for reproducible training.")
     parser.add_argument(
         "--seed_for_each_device",
         type=bool,
@@ -1453,9 +1435,7 @@ def get_argument_parser():
         "--optimizer_offload_gradients",
         action="store_true",
         default=False,
-        help=(
-            "When creating a CPU-offloaded optimiser, the gradients can be offloaded to the CPU to save more memory."
-        ),
+        help=("When creating a CPU-offloaded optimiser, the gradients can be offloaded to the CPU to save more memory."),
     )
     parser.add_argument(
         "--fuse_optimizer",
@@ -1497,9 +1477,7 @@ def get_argument_parser():
         default=0.999,
         help="The beta2 parameter for the Adam and other optimizers.",
     )
-    parser.add_argument(
-        "--adam_weight_decay", type=float, default=1e-2, help="Weight decay to use."
-    )
+    parser.add_argument("--adam_weight_decay", type=float, default=1e-2, help="Weight decay to use.")
     parser.add_argument(
         "--adam_epsilon",
         type=float,
@@ -1560,9 +1538,7 @@ def get_argument_parser():
         "--model_card_note",
         type=str,
         default=None,
-        help=(
-            "Add a string to the top of your model card to provide users with some additional context."
-        ),
+        help=("Add a string to the top of your model card to provide users with some additional context."),
     )
     parser.add_argument(
         "--model_card_safe_for_work",
@@ -1626,9 +1602,7 @@ def get_argument_parser():
         "--validation_on_startup",
         action="store_true",
         default=False,
-        help=(
-            "When training begins, the starting model will have validation prompts run through it, for later comparison."
-        ),
+        help=("When training begins, the starting model will have validation prompts run through it, for later comparison."),
     )
     parser.add_argument(
         "--validation_seed_source",
@@ -1996,9 +1970,7 @@ def get_argument_parser():
     parser.add_argument(
         "--quantize_activations",
         action="store_true",
-        help=(
-            "(EXPERIMENTAL) This option is currently unsupported, and exists solely for development purposes."
-        ),
+        help=("(EXPERIMENTAL) This option is currently unsupported, and exists solely for development purposes."),
     )
     parser.add_argument(
         "--base_model_default_dtype",
@@ -2253,16 +2225,12 @@ def get_argument_parser():
         "--text_encoder_limit",
         type=int,
         default=25,
-        help=(
-            "When training the text_encoder, we want to limit how long it trains for to avoid catastrophic loss."
-        ),
+        help=("When training the text_encoder, we want to limit how long it trains for to avoid catastrophic loss."),
     )
     parser.add_argument(
         "--prepend_instance_prompt",
         action="store_true",
-        help=(
-            "When determining the captions from the filename, prepend the instance prompt as an enforced keyword."
-        ),
+        help=("When determining the captions from the filename, prepend the instance prompt as an enforced keyword."),
     )
     parser.add_argument(
         "--only_instance_prompt",
@@ -2373,9 +2341,7 @@ def get_argument_parser():
         "--accelerator_cache_clear_interval",
         default=None,
         type=int,
-        help=(
-            "Clear the cache from VRAM every X steps. This can help prevent memory leaks, but may slow down training."
-        ),
+        help=("Clear the cache from VRAM every X steps. This can help prevent memory leaks, but may slow down training."),
     )
 
     return parser
@@ -2410,17 +2376,15 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if args is None and exit_on_error:
         sys.exit(1)
 
-    if (
-        args.controlnet_custom_config is not None
-        and type(args.controlnet_custom_config) is str
-    ):
+    if args is None:
+        return None
+
+    if args.controlnet_custom_config is not None and type(args.controlnet_custom_config) is str:
         if args.controlnet_custom_config.startswith("{"):
             try:
                 import ast
 
-                args.controlnet_custom_config = ast.literal_eval(
-                    args.controlnet_custom_config
-                )
+                args.controlnet_custom_config = ast.literal_eval(args.controlnet_custom_config)
             except Exception as e:
                 logger.error(f"Could not load controlnet_custom_config: {e}")
                 raise
@@ -2437,15 +2401,11 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
 
     if args.optimizer == "adam_bfloat16" and args.mixed_precision != "bf16":
         if not torch.backends.mps.is_available():
-            logging.error(
-                "You cannot use --adam_bfloat16 without --mixed_precision=bf16."
-            )
+            logging.error("You cannot use --adam_bfloat16 without --mixed_precision=bf16.")
             sys.exit(1)
 
     if args.mixed_precision == "fp8" and not torch.cuda.is_available():
-        logging.error(
-            "You cannot use --mixed_precision=fp8 without a CUDA device. Please use bf16 instead."
-        )
+        logging.error("You cannot use --mixed_precision=fp8 without a CUDA device. Please use bf16 instead.")
         sys.exit(1)
 
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
@@ -2468,9 +2428,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         args.cache_dir = os.path.join(args.output_dir, "cache")
 
     if args.maximum_image_size is not None and not args.target_downsample_size:
-        raise ValueError(
-            "When providing --maximum_image_size, you must also provide a value for --target_downsample_size."
-        )
+        raise ValueError("When providing --maximum_image_size, you must also provide a value for --target_downsample_size.")
     if (
         args.maximum_image_size is not None
         and args.resolution_type == "area"
@@ -2480,11 +2438,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         raise ValueError(
             f"When using --resolution_type=area, --maximum_image_size must be less than 5 megapixels. You may have accidentally entered {args.maximum_image_size} pixels, instead of megapixels."
         )
-    elif (
-        args.maximum_image_size is not None
-        and args.resolution_type == "pixel"
-        and args.maximum_image_size < 512
-    ):
+    elif args.maximum_image_size is not None and args.resolution_type == "pixel" and args.maximum_image_size < 512:
         raise ValueError(
             f"When using --resolution_type=pixel, --maximum_image_size must be at least 512 pixels. You may have accidentally entered {args.maximum_image_size} megapixels, instead of pixels."
         )
@@ -2497,28 +2451,16 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         raise ValueError(
             f"When using --resolution_type=area, --target_downsample_size must be less than 5 megapixels. You may have accidentally entered {args.target_downsample_size} pixels, instead of megapixels."
         )
-    elif (
-        args.target_downsample_size is not None
-        and args.resolution_type == "pixel"
-        and args.target_downsample_size < 512
-    ):
+    elif args.target_downsample_size is not None and args.resolution_type == "pixel" and args.target_downsample_size < 512:
         raise ValueError(
             f"When using --resolution_type=pixel, --target_downsample_size must be at least 512 pixels. You may have accidentally entered {args.target_downsample_size} megapixels, instead of pixels."
         )
 
     model_is_bf16 = (
-        args.base_model_precision == "no_change"
-        and (args.mixed_precision == "bf16" or torch.backends.mps.is_available())
-    ) or (
-        args.base_model_precision != "no_change"
-        and args.base_model_default_dtype == "bf16"
-    )
+        args.base_model_precision == "no_change" and (args.mixed_precision == "bf16" or torch.backends.mps.is_available())
+    ) or (args.base_model_precision != "no_change" and args.base_model_default_dtype == "bf16")
     model_is_quantized = args.base_model_precision != "no_change"
-    if (
-        model_is_quantized
-        and args.mixed_precision == "fp8"
-        and args.base_model_precision != "fp8-torchao"
-    ):
+    if model_is_quantized and args.mixed_precision == "fp8" and args.base_model_precision != "fp8-torchao":
         raise ValueError(
             "You cannot use --mixed_precision=fp8 with a quantized base model. Please use bf16 or remove base_model_precision option from your configuration."
         )
@@ -2528,17 +2470,11 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     from simpletuner.helpers.training.optimizer_param import optimizer_parameters
 
     optimizer_cls, optimizer_details = optimizer_parameters(chosen_optimizer, args)
-    using_bf16_optimizer = optimizer_details.get("default_settings", {}).get(
-        "precision"
-    ) in ["any", "bf16"]
+    using_bf16_optimizer = optimizer_details.get("default_settings", {}).get("precision") in ["any", "bf16"]
     if using_bf16_optimizer and not model_is_bf16:
-        raise ValueError(
-            f"Model is not using bf16 precision, but the optimizer {chosen_optimizer} requires it."
-        )
+        raise ValueError(f"Model is not using bf16 precision, but the optimizer {chosen_optimizer} requires it.")
     if is_optimizer_grad_fp32(args.optimizer):
-        warning_log(
-            "Using an optimizer that requires fp32 gradients. Training will potentially run more slowly."
-        )
+        warning_log("Using an optimizer that requires fp32 gradients. Training will potentially run more slowly.")
         if args.gradient_precision != "fp32":
             args.gradient_precision = "fp32"
     else:
@@ -2546,13 +2482,8 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             args.gradient_precision = "unmodified"
 
     if torch.backends.mps.is_available():
-        if (
-            args.model_family.lower() not in ["sd3", "flux", "legacy"]
-            and not args.unet_attention_slice
-        ):
-            warning_log(
-                "MPS may benefit from the use of --unet_attention_slice for memory savings at the cost of speed."
-            )
+        if args.model_family.lower() not in ["sd3", "flux", "legacy"] and not args.unet_attention_slice:
+            warning_log("MPS may benefit from the use of --unet_attention_slice for memory savings at the cost of speed.")
         if args.train_batch_size > 16:
             error_log(
                 "An M3 Max 128G will use 12 seconds per step at a batch size of 1 and 65 seconds per step at a batch size of 12."
@@ -2567,14 +2498,8 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             )
             args.quantize_via = "cpu"
 
-    if (
-        args.max_train_steps is not None
-        and args.max_train_steps > 0
-        and args.num_train_epochs > 0
-    ):
-        error_log(
-            "When using --max_train_steps (MAX_NUM_STEPS), you must set --num_train_epochs (NUM_EPOCHS) to 0."
-        )
+    if args.max_train_steps is not None and args.max_train_steps > 0 and args.num_train_epochs > 0:
+        error_log("When using --max_train_steps (MAX_NUM_STEPS), you must set --num_train_epochs (NUM_EPOCHS) to 0.")
         sys.exit(1)
 
     if (
@@ -2588,16 +2513,11 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             f"The VAE model {args.pretrained_vae_model_name_or_path} is not compatible. Please use a compatible VAE to eliminate this warning. The baked-in VAE will be used, instead."
         )
         args.pretrained_vae_model_name_or_path = None
-    if (
-        args.pretrained_vae_model_name_or_path == ""
-        or args.pretrained_vae_model_name_or_path == "''"
-    ):
+    if args.pretrained_vae_model_name_or_path == "" or args.pretrained_vae_model_name_or_path == "''":
         args.pretrained_vae_model_name_or_path = None
 
     if "deepfloyd" not in args.model_type:
-        info_log(
-            f"VAE Model: {args.pretrained_vae_model_name_or_path or args.pretrained_model_name_or_path}"
-        )
+        info_log(f"VAE Model: {args.pretrained_vae_model_name_or_path or args.pretrained_model_name_or_path}")
         info_log(f"Default VAE Cache location: {args.cache_dir_vae}")
         info_log(f"Text Cache location: {args.cache_dir_text}")
 
@@ -2610,9 +2530,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             args.aspect_bucket_alignment = deepfloyd_pixel_alignment
 
     if "deepfloyd-stage2" in args.model_type and args.resolution < 256:
-        warning_log(
-            "DeepFloyd Stage II requires a resolution of at least 256. Setting to 256."
-        )
+        warning_log("DeepFloyd Stage II requires a resolution of at least 256. Setting to 256.")
         args.resolution = 256
         args.aspect_bucket_alignment = 64
         args.resolution_type = "pixel"
@@ -2672,13 +2590,9 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         torch._dynamo.config.optimize_ddp = False
 
     args.logging_dir = os.path.join(args.output_dir, args.logging_dir)
-    args.accelerator_project_config = ProjectConfiguration(
-        project_dir=args.output_dir, logging_dir=args.logging_dir
-    )
+    args.accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=args.logging_dir)
     # Create the custom configuration
-    args.process_group_kwargs = InitProcessGroupKwargs(
-        timeout=timedelta(seconds=5400)
-    )  # 1.5 hours
+    args.process_group_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=5400))  # 1.5 hours
 
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
@@ -2686,9 +2600,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
         if args.disable_tf32:
-            warning_log(
-                "--disable_tf32 is provided, not enabling. Training will potentially be much slower."
-            )
+            warning_log("--disable_tf32 is provided, not enabling. Training will potentially be much slower.")
             torch.backends.cuda.matmul.allow_tf32 = False
             torch.backends.cudnn.allow_tf32 = False
         else:
@@ -2696,17 +2608,10 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
                 "Enabled NVIDIA TF32 for faster training on Ampere GPUs. Use --disable_tf32 if this causes any problems."
             )
 
-    args.is_quantized = (
-        False
-        if (args.base_model_precision == "no_change" or "lora" not in args.model_type)
-        else True
-    )
+    args.is_quantized = False if (args.base_model_precision == "no_change" or "lora" not in args.model_type) else True
     args.weight_dtype = (
         torch.bfloat16
-        if (
-            args.mixed_precision == "bf16"
-            or (args.base_model_default_dtype == "bf16" and args.is_quantized)
-        )
+        if (args.mixed_precision == "bf16" or (args.base_model_default_dtype == "bf16" and args.is_quantized))
         else torch.float16 if args.mixed_precision == "fp16" else torch.float32
     )
     args.disable_accelerator = os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False)
@@ -2716,60 +2621,38 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
 
         if args.lycoris_config is None:
             raise ValueError(
-                "--lora_type=lycoris requires you to add a JSON "
-                + "configuration file location with --lycoris_config"
+                "--lora_type=lycoris requires you to add a JSON " + "configuration file location with --lycoris_config"
             )
         # is it readable?
-        if not os.path.isfile(args.lycoris_config) or not os.access(
-            args.lycoris_config, os.R_OK
-        ):
-            raise ValueError(
-                f"Could not find the JSON configuration file at '{args.lycoris_config}'"
-            )
+        if not os.path.isfile(args.lycoris_config) or not os.access(args.lycoris_config, os.R_OK):
+            raise ValueError(f"Could not find the JSON configuration file at '{args.lycoris_config}'")
         import json
 
         with open(args.lycoris_config, "r") as f:
             lycoris_config = json.load(f)
         assert lycoris_config is not None, "lycoris_config could not be parsed as JSON"
         assert "algo" in lycoris_config, "lycoris_config JSON must contain algo key"
-        assert (
-            "multiplier" in lycoris_config
-        ), "lycoris_config JSON must contain multiplier key"
-        if (
-            "full_matrix" not in lycoris_config
-            or lycoris_config.get("full_matrix") is not True
-        ):
+        assert "multiplier" in lycoris_config, "lycoris_config JSON must contain multiplier key"
+        if "full_matrix" not in lycoris_config or lycoris_config.get("full_matrix") is not True:
             assert (
                 "linear_dim" in lycoris_config
             ), "lycoris_config JSON must contain linear_dim key if full_matrix is not set."
-        assert (
-            "linear_alpha" in lycoris_config
-        ), "lycoris_config JSON must contain linear_alpha key"
+        assert "linear_alpha" in lycoris_config, "lycoris_config JSON must contain linear_alpha key"
 
     elif "standard" == args.lora_type.lower():
         if hasattr(args, "lora_init_type") and args.lora_init_type is not None:
             if torch.backends.mps.is_available() and args.lora_init_type == "loftq":
-                error_log(
-                    "Apple MPS cannot make use of LoftQ initialisation. Overriding to 'default'."
-                )
+                error_log("Apple MPS cannot make use of LoftQ initialisation. Overriding to 'default'.")
             elif args.is_quantized and args.lora_init_type == "loftq":
-                error_log(
-                    "LoftQ initialisation is not supported with quantised models. Overriding to 'default'."
-                )
+                error_log("LoftQ initialisation is not supported with quantised models. Overriding to 'default'.")
             else:
-                args.lora_initialisation_style = (
-                    args.lora_init_type if args.lora_init_type != "default" else True
-                )
+                args.lora_initialisation_style = args.lora_init_type if args.lora_init_type != "default" else True
         if args.use_dora:
             if "quanto" in args.base_model_precision:
-                error_log(
-                    "Quanto does not yet support DoRA training in PEFT. Disabling DoRA. 😴"
-                )
+                error_log("Quanto does not yet support DoRA training in PEFT. Disabling DoRA. 😴")
                 args.use_dora = False
             else:
-                warning_log(
-                    "DoRA support is experimental and not very thoroughly tested."
-                )
+                warning_log("DoRA support is experimental and not very thoroughly tested.")
                 args.lora_initialisation_style = "default"
 
     if args.distillation_config is not None:
@@ -2785,17 +2668,10 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if not args.data_backend_config:
         from simpletuner.helpers.training.state_tracker import StateTracker
 
-        args.data_backend_config = os.path.join(
-            StateTracker.get_config_path(), "multidatabackend.json"
-        )
-        warning_log(
-            f"No data backend config provided. Using default config at {args.data_backend_config}."
-        )
+        args.data_backend_config = os.path.join(StateTracker.get_config_path(), "multidatabackend.json")
+        warning_log(f"No data backend config provided. Using default config at {args.data_backend_config}.")
 
-    if (
-        args.validation_num_video_frames is not None
-        and args.validation_num_video_frames < 1
-    ):
+    if args.validation_num_video_frames is not None and args.validation_num_video_frames < 1:
         raise ValueError("validation_num_video_frames must be at least 1.")
 
     # Check if we have a valid gradient accumulation steps.
@@ -2806,17 +2682,11 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
 
     if args.validation_guidance_skip_layers is not None:
         if args.model_family not in ["sd3", "wan"]:
-            raise ValueError(
-                "Currently, skip-layer guidance is not supported for {}".format(
-                    args.model_family
-                )
-            )
+            raise ValueError("Currently, skip-layer guidance is not supported for {}".format(args.model_family))
         try:
             import json
 
-            args.validation_guidance_skip_layers = json.loads(
-                args.validation_guidance_skip_layers
-            )
+            args.validation_guidance_skip_layers = json.loads(args.validation_guidance_skip_layers)
         except Exception as e:
             logger.error(f"Could not load validation_guidance_skip_layers: {e}")
             raise
@@ -2829,21 +2699,15 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         try:
             import json
 
-            args.sana_complex_human_instruction = json.loads(
-                args.sana_complex_human_instruction
-            )
+            args.sana_complex_human_instruction = json.loads(args.sana_complex_human_instruction)
         except Exception as e:
-            logger.error(
-                f"Could not load complex human instruction ({args.sana_complex_human_instruction}): {e}"
-            )
+            logger.error(f"Could not load complex human instruction ({args.sana_complex_human_instruction}): {e}")
             raise
     elif args.sana_complex_human_instruction == "None":
         args.sana_complex_human_instruction = None
 
     if args.attention_mechanism != "diffusers" and not torch.cuda.is_available():
-        warning_log(
-            "For non-CUDA systems, only Diffusers attention mechanism is officially supported."
-        )
+        warning_log("For non-CUDA systems, only Diffusers attention mechanism is officially supported.")
 
     deprecated_options = {
         # how to deprecate options:
@@ -2856,9 +2720,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             and getattr(args, deprecated_option) is not None
             and type(getattr(args, deprecated_option)) is not object
         ):
-            warning_log(
-                f"The option --{deprecated_option} has been replaced with --{replacement_option}."
-            )
+            warning_log(f"The option --{deprecated_option} has been replaced with --{replacement_option}.")
             setattr(args, replacement_option, getattr(args, deprecated_option))
         elif getattr(args, deprecated_option) is not None:
             error_log(

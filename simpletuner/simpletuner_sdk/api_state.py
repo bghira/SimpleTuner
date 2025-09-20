@@ -5,12 +5,13 @@ If a server were to crash during a training job, we can immediately reload the s
 and continue training from the last checkpoint.
 """
 
-import os
 import json
 import logging
+import os
 
 logger = logging.getLogger("SimpleTunerSDK")
 from simpletuner.helpers.training.multi_process import should_log
+
 if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 else:

@@ -1,5 +1,6 @@
 import logging
 import os
+
 from simpletuner.helpers.training.multi_process import _get_rank
 
 logger = logging.getLogger(__name__)
@@ -14,9 +15,7 @@ class DatasetDuplicator:
         target_meta = target_backend.get("metadata_backend", None)
 
         if source_meta is None or target_meta is None:
-            raise ValueError(
-                f"Both backends must have metadata_backend defined. Received {source_meta} \n\n {target_meta}"
-            )
+            raise ValueError(f"Both backends must have metadata_backend defined. Received {source_meta} \n\n {target_meta}")
 
         logger.info("Reloading metadata caches...")
         source_meta.reload_cache(set_config=False)
@@ -27,15 +26,10 @@ class DatasetDuplicator:
         target_dir = target_backend.get("instance_data_dir", "")
 
         # Check if we need to update paths (for conditioning datasets)
-        needs_path_update = (
-            source_dir != target_dir
-            and target_backend.get("dataset_type") == "conditioning"
-        )
+        needs_path_update = source_dir != target_dir and target_backend.get("dataset_type") == "conditioning"
 
         if needs_path_update:
-            logger.info(
-                f"Copying metadata with path translation: '{source_dir}' -> '{target_dir}'"
-            )
+            logger.info(f"Copying metadata with path translation: '{source_dir}' -> '{target_dir}'")
 
             # Copy and update bucket indices
             target_meta.aspect_ratio_bucket_indices = {}
@@ -162,9 +156,7 @@ class DatasetDuplicator:
         target_cfg["source_dataset_id"] = source_id
         target_cfg["dataset_type"] = "conditioning"
         target_cfg["conditioning_config"] = cond_cfg
-        target_cfg["conditioning_type"] = cond_cfg.get(
-            "conditioning_type", "reference_strict"
-        )
+        target_cfg["conditioning_type"] = cond_cfg.get("conditioning_type", "reference_strict")
 
         # Override for controlnet
         if global_cfg.controlnet:
@@ -175,9 +167,7 @@ class DatasetDuplicator:
         if source_vae_path is not None:
             target_vae_path = os.path.join(source_vae_path, target_cfg["id"])
         else:
-            target_vae_path = os.path.join(
-                global_cfg.cache_dir, "vae", target_cfg["id"]
-            )
+            target_vae_path = os.path.join(global_cfg.cache_dir, "vae", target_cfg["id"])
         target_cfg["cache_dir_vae"] = target_vae_path
 
         # Create directories and set absolute paths for local backends
@@ -185,9 +175,7 @@ class DatasetDuplicator:
             os.makedirs(target_cfg["instance_data_dir"], exist_ok=True)
             os.makedirs(target_cfg["cache_dir_vae"], exist_ok=True)
             target_cfg["cache_dir_vae"] = os.path.abspath(target_cfg["cache_dir_vae"])
-            target_cfg["instance_data_dir"] = os.path.abspath(
-                target_cfg["instance_data_dir"]
-            )
+            target_cfg["instance_data_dir"] = os.path.abspath(target_cfg["instance_data_dir"])
 
         # Handle caption strategy
         target_cfg["caption_strategy"] = cond_cfg.get("caption_strategy", None)
@@ -202,8 +190,6 @@ class DatasetDuplicator:
         # Check for captions with exact original logic
         if cond_cfg.get("captions", False) not in [False, None]:
             target_cfg["caption_strategy"] = "instanceprompt"
-            target_cfg["instance_prompt"] = cond_cfg.get(
-                "captions", None
-            ) or cond_cfg.get("instance_prompt", None)
+            target_cfg["instance_prompt"] = cond_cfg.get("captions", None) or cond_cfg.get("instance_prompt", None)
 
         return target_cfg

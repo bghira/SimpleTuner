@@ -1,0 +1,25 @@
+[
+    {
+        "id": "text_embeds",
+        "type": "local",
+        "dataset_type": "text_embeds",
+        "default": true,
+        "cache_dir": "/tmp/text_cache"
+    },
+    {
+        "id": "conditioning_dataset",
+        "type": "local",
+        "dataset_type": "conditioning",
+        "instance_data_dir": "/tmp/conditioning",
+        "caption_strategy": "filename"
+    },
+    {
+        "id": "main_dataset",
+        "type": "local",
+        "dataset_type": "image",
+        "instance_data_dir": "/tmp/images",
+        "text_embeds": "text_embeds",
+        "conditioning_data": "conditioning_dataset",
+        "caption_strategy": "filename"
+    }
+]

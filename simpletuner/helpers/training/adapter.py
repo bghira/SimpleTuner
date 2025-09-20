@@ -1,6 +1,6 @@
 import peft
-import torch
 import safetensors.torch
+import torch
 
 
 def determine_adapter_target_modules(args, unet, transformer):
@@ -100,18 +100,12 @@ def load_lora_weights(dictionary, filename, loraKey="default", use_dora=False):
     state_dict = safetensors.torch.load_file(filename)
     for prefix, model in dictionary.items():
         lora_layers = {
-            (prefix + "." + x): y
-            for (x, y) in model.named_modules()
-            if isinstance(y, peft.tuners.lora.layer.Linear)
+            (prefix + "." + x): y for (x, y) in model.named_modules() if isinstance(y, peft.tuners.lora.layer.Linear)
         }
     missing_keys = set(
         [x + ".lora_A.weight" for x in lora_layers.keys()]
         + [x + ".lora_B.weight" for x in lora_layers.keys()]
-        + (
-            [x + ".lora_magnitude_vector.weight" for x in lora_layers.keys()]
-            if use_dora
-            else []
-        )
+        + ([x + ".lora_magnitude_vector.weight" for x in lora_layers.keys()] if use_dora else [])
     )
     for k, v in state_dict.items():
         if "lora_A" in k:

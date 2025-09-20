@@ -1,14 +1,13 @@
-import torch, os, logging
-from simpletuner.helpers.models.common import (
-    ImageModelFoundation,
-    PredictionTypes,
-    PipelineTypes,
-    ModelTypes,
-)
+import logging
+import os
+
+import torch
+from diffusers import AutoencoderKL, UNet2DConditionModel
 from diffusers.pipelines.kolors.text_encoder import ChatGLMModel
 from diffusers.pipelines.kolors.tokenizer import ChatGLMTokenizer
-from simpletuner.helpers.models.kolors.pipeline import KolorsPipeline, KolorsImg2ImgPipeline
-from diffusers import AutoencoderKL, UNet2DConditionModel
+
+from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
+from simpletuner.helpers.models.kolors.pipeline import KolorsImg2ImgPipeline, KolorsPipeline
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -26,7 +25,6 @@ class Kolors(ImageModelFoundation):
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 4
     DEFAULT_NOISE_SCHEDULER = "euler"
-    # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     # Only training the Attention blocks by default seems to help more with SD3.
     DEFAULT_LYCORIS_TARGET = ["Attention"]
@@ -38,7 +36,6 @@ class Kolors(ImageModelFoundation):
         PipelineTypes.IMG2IMG: KolorsImg2ImgPipeline,
     }
 
-    # The default model flavor to use when none is specified.
     DEFAULT_MODEL_FLAVOUR = "1.0"
     HUGGINGFACE_PATHS = {
         "1.0": "terminusresearch/kwai-kolors-1.0",
@@ -79,18 +76,13 @@ class Kolors(ImageModelFoundation):
             "pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0),
         }
 
-    def convert_negative_text_embed_for_pipeline(
-        self, text_embedding: torch.Tensor, prompt: str
-    ) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
         return {
             "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            "negative_pooled_prompt_embeds": text_embedding[
-                "pooled_prompt_embeds"
-            ].unsqueeze(0),
+            "negative_pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0),
         }
 
-    # Adapted from pipelines.StableDiffusionXLPipeline.encode_sdxl_prompt
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
         """
         Encode a prompt.
@@ -125,14 +117,10 @@ class Kolors(ImageModelFoundation):
                     max_length=max_seq_len,
                 ).input_ids
 
-                if untruncated_ids.shape[
-                    -1
-                ] > tokenizer.model_max_length and not torch.equal(
+                if untruncated_ids.shape[-1] > tokenizer.model_max_length and not torch.equal(
                     text_inputs.input_ids, untruncated_ids
                 ):
-                    removed_text = tokenizer.batch_decode(
-                        untruncated_ids[:, tokenizer.model_max_length - 1 : -1]
-                    )
+                    removed_text = tokenizer.batch_decode(untruncated_ids[:, tokenizer.model_max_length - 1 : -1])
                     if not emitted_warning:
                         # Only print this once. It's a bit spammy otherwise.
                         emitted_warning = True
@@ -143,20 +131,14 @@ class Kolors(ImageModelFoundation):
                 # unfortunately, kolors does not return the attention mask for later use by the U-net to avoid attending to the padding tokens.
                 prompt_embeds_output = text_encoder(
                     input_ids=text_inputs["input_ids"].to(self.accelerator.device),
-                    attention_mask=text_inputs["attention_mask"].to(
-                        self.accelerator.device
-                    ),
+                    attention_mask=text_inputs["attention_mask"].to(self.accelerator.device),
                     position_ids=text_inputs["position_ids"],
                     output_hidden_states=True,
                 )
                 # the ChatGLM encoder output is hereby mangled in fancy ways for Kolors to be useful.
-                prompt_embeds = (
-                    prompt_embeds_output.hidden_states[-2].permute(1, 0, 2).clone()
-                )
+                prompt_embeds = prompt_embeds_output.hidden_states[-2].permute(1, 0, 2).clone()
                 # [max_sequence_length, batch, hidden_size] -> [batch, hidden_size]
-                pooled_prompt_embeds = prompt_embeds_output.hidden_states[-1][
-                    -1, :, :
-                ].clone()
+                pooled_prompt_embeds = prompt_embeds_output.hidden_states[-1][-1, :, :].clone()
                 bs_embed, seq_len, _ = prompt_embeds.shape
                 prompt_embeds = prompt_embeds.view(bs_embed, seq_len, -1)
 
@@ -169,22 +151,12 @@ class Kolors(ImageModelFoundation):
         except Exception as e:
             import traceback
 
-            logger.error(
-                f"Failed to encode prompt: {prompts}\n-> error: {e}\n-> traceback: {traceback.format_exc()}"
-            )
+            logger.error(f"Failed to encode prompt: {prompts}\n-> error: {e}\n-> traceback: {traceback.format_exc()}")
             raise e
         prompt_embeds = torch.cat(prompt_embeds_list, dim=-1)
         return prompt_embeds, pooled_prompt_embeds
 
     def model_predict(self, prepared_batch):
-        logger.debug(
-            "Input shapes:"
-            f"\n{prepared_batch['noisy_latents'].shape}"
-            f"\n{prepared_batch['timesteps'].shape}"
-            f"\n{prepared_batch['encoder_hidden_states'].shape}"
-            f"\n{prepared_batch['add_text_embeds'].shape}"
-            f"\n{prepared_batch['added_cond_kwargs']['text_embeds'].shape}"
-        )
         return {
             "model_prediction": self.model(
                 prepared_batch["noisy_latents"].to(
@@ -210,9 +182,7 @@ class Kolors(ImageModelFoundation):
         We'll check the current model config to ensure we're loading a base or refiner model.
         """
         if self.model.config.cross_attention_dim == 1280:
-            logger.info(
-                f"{self.NAME} Refiner model is detected, enabling refiner training configuration settings."
-            )
+            logger.info(f"{self.NAME} Refiner model is detected, enabling refiner training configuration settings.")
             self.config.refiner_training = True
 
     def check_user_config(self):
@@ -232,9 +202,7 @@ class Kolors(ImageModelFoundation):
                 f"{self.NAME} does not support fp8-quanto. Please use fp8-torchao or int8 precision level instead."
             )
         if self.config.tokenizer_max_length is not None:
-            logger.warning(
-                f"-!- {self.NAME} supports a max length of 77 tokens, --tokenizer_max_length is ignored -!-"
-            )
+            logger.warning(f"-!- {self.NAME} supports a max length of 77 tokens, --tokenizer_max_length is ignored -!-")
         if self.config.aspect_bucket_alignment != 64:
             logger.warning(
                 "{self.NAME} requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
@@ -242,9 +210,7 @@ class Kolors(ImageModelFoundation):
             self.config.aspect_bucket_alignment = 64
 
         if self.config.prediction_type is not None:
-            logger.info(
-                f"Setting {self.NAME} prediction type: {self.config.prediction_type}"
-            )
+            logger.info(f"Setting {self.NAME} prediction type: {self.config.prediction_type}")
             self.PREDICTION_TYPE = PredictionTypes.from_str(self.config.prediction_type)
             if self.config.validation_noise_scheduler is None:
                 self.config.validation_noise_scheduler = self.DEFAULT_NOISE_SCHEDULER
@@ -252,10 +218,6 @@ class Kolors(ImageModelFoundation):
     def custom_model_card_schedule_info(self):
         output_args = []
 
-        output_str = (
-            f" (extra parameters={output_args})"
-            if output_args
-            else " (no special parameters set)"
-        )
+        output_str = f" (extra parameters={output_args})" if output_args else " (no special parameters set)"
 
         return output_str

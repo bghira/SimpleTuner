@@ -1,7 +1,8 @@
 import os
-from accelerate.logging import get_logger
+
 import accelerate
 import torch
+from accelerate.logging import get_logger
 
 logger = get_logger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -22,13 +23,11 @@ except:
     pass
 
 try:
-    from torchao.optim import (
-        AdamW8bit as AOAdamW8Bit,
-        AdamW4bit as AOAdamW4Bit,
-        AdamFp8 as AOAdamFp8,
-        AdamWFp8 as AOAdamWFp8,
-        CPUOffloadOptimizer as AOCPUOffloadOptimizer,
-    )
+    from torchao.optim import AdamFp8 as AOAdamFp8
+    from torchao.optim import AdamW4bit as AOAdamW4Bit
+    from torchao.optim import AdamW8bit as AOAdamW8Bit
+    from torchao.optim import AdamWFp8 as AOAdamWFp8
+    from torchao.optim import CPUOffloadOptimizer as AOCPUOffloadOptimizer
 
     if torch.backends.mps.is_available():
         import torch._dynamo
@@ -43,9 +42,7 @@ try:
 
     is_optimi_available = True
 except:
-    logger.error(
-        "Could not load optimi library. Please install `torch-optimi` for better memory efficiency."
-    )
+    logger.error("Could not load optimi library. Please install `torch-optimi` for better memory efficiency.")
 
 is_bitsandbytes_available = False
 try:
@@ -54,9 +51,7 @@ try:
     is_bitsandbytes_available = True
 except:
     if torch.cuda.is_available():
-        print(
-            "Could not load bitsandbytes library. BnB-specific optimisers and other functionality will be unavailable."
-        )
+        print("Could not load bitsandbytes library. BnB-specific optimisers and other functionality will be unavailable.")
 
 # Some optimizers are not available in multibackend bitsandbytes as of January 2025.
 is_ademamix_available = False
@@ -528,9 +523,7 @@ def convert_arg_to_parameters(args):
     """--optimizer_config can have a format like --optimizer_config=eps=1e-6,weight_decay=0.0"""
     out = {}
     if args.optimizer_config is not None and args.optimizer_config:
-        optimizer_params = [
-            param.split("=") for param in args.optimizer_config.split(",")
-        ]
+        optimizer_params = [param.split("=") for param in args.optimizer_config.split(",")]
         for param in optimizer_params:
             if "." in param[1]:
                 out[param[0]] = float(param[1])
@@ -568,9 +561,7 @@ def optimizer_parameters(optimizer, args):
             prodigy_steps = args.prodigy_steps
             if prodigy_steps and prodigy_steps > 0:
                 optimizer_params["prodigy_steps"] = int(prodigy_steps)
-            print(
-                f"Using Prodigy optimiser with {optimizer_params['prodigy_steps']} steps of learning rate adjustment."
-            )
+            print(f"Using Prodigy optimiser with {optimizer_params['prodigy_steps']} steps of learning rate adjustment.")
         return optimizer_class, optimizer_details
     else:
         raise ValueError(f"Optimizer {optimizer} not found.")
@@ -580,9 +571,7 @@ def is_lr_scheduler_disabled(optimizer: str):
     """Check if the optimizer has a built-in LR scheduler"""
     is_disabled = False
     if optimizer in optimizer_choices:
-        is_disabled = optimizer_choices.get(optimizer).get(
-            "override_lr_scheduler", False
-        )
+        is_disabled = optimizer_choices.get(optimizer).get("override_lr_scheduler", False)
     return is_disabled
 
 
@@ -625,9 +614,7 @@ def is_optimizer_bf16(optimizer: str) -> bool:
 
 
 def is_optimizer_grad_fp32(optimizer: str) -> bool:
-    optimizer_precision = optimizer_choices.get(optimizer, {}).get(
-        "gradient_precision", None
-    )
+    optimizer_precision = optimizer_choices.get(optimizer, {}).get("gradient_precision", None)
     if optimizer_precision == "fp32":
         return True
     return False
@@ -644,9 +631,7 @@ def cpu_offload_optimizer(
     if not offload_mechanism or offload_mechanism == "none":
         return optimizer_cls(params_to_optimize, **optimizer_parameters)
     if offload_mechanism != "torchao":
-        raise ValueError(
-            f"Unknown CPU optimiser offload mechanism: {offload_mechanism}"
-        )
+        raise ValueError(f"Unknown CPU optimiser offload mechanism: {offload_mechanism}")
 
     if offload_gradients:
         optimizer_parameters["offload_gradients"] = offload_gradients
@@ -658,9 +643,7 @@ def cpu_offload_optimizer(
     return AOCPUOffloadOptimizer(params_to_optimize, **optimizer_parameters)
 
 
-def determine_optimizer_class_with_config(
-    args, use_deepspeed_optimizer, is_quantized, enable_adamw_bf16
-) -> tuple:
+def determine_optimizer_class_with_config(args, use_deepspeed_optimizer, is_quantized, enable_adamw_bf16) -> tuple:
     extra_optimizer_args = {}
     if use_deepspeed_optimizer:
         optimizer_class = accelerate.utils.DummyOptim
@@ -671,18 +654,14 @@ def determine_optimizer_class_with_config(
         default_settings = extra_optimizer_args
         optimizer_details = {}
     elif is_quantized and not enable_adamw_bf16 and args.optimizer == "adamw_bf16":
-        logger.error(
-            f"When --base_model_default_dtype=fp32, AdamWBF16 may not be used. Switching to AdamW."
-        )
+        logger.error(f"When --base_model_default_dtype=fp32, AdamWBF16 may not be used. Switching to AdamW.")
         optimizer_class, optimizer_details = optimizer_parameters("optimi-adamw", args)
         default_settings = optimizer_details.get("default_settings")
     else:
         optimizer_class, optimizer_details = optimizer_parameters(args.optimizer, args)
         default_settings = optimizer_details.get("default_settings")
     if optimizer_details.get("can_warmup", False):
-        logger.info(
-            f"Optimizer contains LR scheduler, warmup steps will be set to {args.lr_warmup_steps}."
-        )
+        logger.info(f"Optimizer contains LR scheduler, warmup steps will be set to {args.lr_warmup_steps}.")
         default_settings["warmup_steps"] = args.lr_warmup_steps
     logger.info(f"cls: {optimizer_class}, settings: {default_settings}")
     return default_settings, optimizer_class
@@ -704,23 +683,15 @@ def determine_params_to_optimize(
         # add the first text encoder's parameters
         for text_encoder in model.text_encoders:
             if "t5" in str(text_encoder.__class__).lower():
-                logger.warning(
-                    f"{text_encoder.__class__} does not support finetuning, skipping model."
-                )
+                logger.warning(f"{text_encoder.__class__} does not support finetuning, skipping model.")
                 continue
-            params_to_optimize = params_to_optimize + list(
-                filter(lambda p: p.requires_grad, text_encoder.parameters())
-            )
+            params_to_optimize = params_to_optimize + list(filter(lambda p: p.requires_grad, text_encoder.parameters()))
 
     if args.model_type == "lora" and args.lora_type == "lycoris":
         if lycoris_wrapped_network is not None:
-            params_to_optimize = list(
-                filter(lambda p: p.requires_grad, lycoris_wrapped_network.parameters())
-            )
+            params_to_optimize = list(filter(lambda p: p.requires_grad, lycoris_wrapped_network.parameters()))
         else:
-            raise Exception(
-                "Lycoris wrapped network is None, cannot optimize parameters."
-            )
+            raise Exception("Lycoris wrapped network is None, cannot optimize parameters.")
 
     return params_to_optimize
 
@@ -752,9 +723,7 @@ def create_optimizer_params_with_decay(model, weight_decay=0.01, learning_rate=N
         # - LayerNorm weights (often named with 'norm', 'ln', or 'layernorm')
         # - Embedding weights
         # - Batch normalization parameters
-        if any(
-            nd in name.lower() for nd in ["bias", "norm", "embedding", "embed", "bn"]
-        ):
+        if any(nd in name.lower() for nd in ["bias", "norm", "embedding", "embed", "bn"]):
             no_decay.append(param)
         else:
             decay.append(param)
@@ -771,10 +740,7 @@ def create_optimizer_params_with_decay(model, weight_decay=0.01, learning_rate=N
             group["lr"] = learning_rate
 
     # Log the parameter distribution
-    logger.info(
-        f"Parameter groups: {len(decay)} with weight decay, "
-        f"{len(no_decay)} without weight decay"
-    )
+    logger.info(f"Parameter groups: {len(decay)} with weight decay, " f"{len(no_decay)} without weight decay")
 
     return param_groups
 
@@ -805,9 +771,7 @@ def create_optimizer_with_param_groups(
 
     if use_parameter_groups and weight_decay > 0:
         # Create parameter groups with appropriate weight decay settings
-        param_groups = create_optimizer_params_with_decay(
-            model, weight_decay=weight_decay, learning_rate=learning_rate
-        )
+        param_groups = create_optimizer_params_with_decay(model, weight_decay=weight_decay, learning_rate=learning_rate)
 
         # Remove lr from optimizer_parameters if it was set in param groups
         if learning_rate is not None:
@@ -819,9 +783,7 @@ def create_optimizer_with_param_groups(
 
     # Handle CPU offload if configured
     if cpu_offload_config:
-        return cpu_offload_optimizer(
-            param_groups, optimizer_class, optimizer_parameters, **cpu_offload_config
-        )
+        return cpu_offload_optimizer(param_groups, optimizer_class, optimizer_parameters, **cpu_offload_config)
 
     # Create and return the optimizer
     return optimizer_class(param_groups, **optimizer_parameters)

@@ -1,7 +1,8 @@
-import torch
 import random
+from typing import Optional, Tuple
+
+import torch
 from torch import randn as randn_tensor
-from typing import Tuple, Optional
 
 
 def normalize_ltx_latents(
@@ -33,21 +34,12 @@ def unpack_ltx_latents(
     # are unpacked and reshaped into a video tensor of shape [B, C, F, H, W]. This is the inverse operation of
     # what happens in the `_pack_latents` method.
     batch_size = latents.size(0)
-    latents = latents.reshape(
-        batch_size, num_frames, height, width, -1, patch_size_t, patch_size, patch_size
-    )
-    latents = (
-        latents.permute(0, 4, 1, 5, 2, 6, 3, 7)
-        .flatten(6, 7)
-        .flatten(4, 5)
-        .flatten(2, 3)
-    )
+    latents = latents.reshape(batch_size, num_frames, height, width, -1, patch_size_t, patch_size, patch_size)
+    latents = latents.permute(0, 4, 1, 5, 2, 6, 3, 7).flatten(6, 7).flatten(4, 5).flatten(2, 3)
     return latents
 
 
-def pack_ltx_latents(
-    latents: torch.Tensor, patch_size: int = 1, patch_size_t: int = 1
-) -> torch.Tensor:
+def pack_ltx_latents(latents: torch.Tensor, patch_size: int = 1, patch_size_t: int = 1) -> torch.Tensor:
     # Unpacked latents of shape are [B, C, F, H, W] are patched into tokens of shape [B, C, F // p_t, p_t, H // p, p, W // p, p].
     # The patch dimensions are then permuted and collapsed into the channel dimension of shape:
     # [B, F // p_t * H // p * W // p, C * p_t * p * p] (an ndim=3 tensor).
@@ -150,9 +142,7 @@ def apply_first_frame_protection(
     updated_noise = noise.clone()
 
     # 1. Decide if partial protection triggers
-    do_partial = (not protect_first_frame) and (
-        random.random() < first_frame_probability
-    )
+    do_partial = (not protect_first_frame) and (random.random() < first_frame_probability)
 
     if protect_first_frame:
         # Completely zero out timesteps where i2v_conditioning_mask=1
@@ -187,9 +177,7 @@ def apply_first_frame_protection(
     return updated_timesteps, updated_noise, sigmas
 
 
-def make_i2v_conditioning_mask(
-    latents: torch.Tensor, protect_frame_index: int = 0
-) -> torch.Tensor:
+def make_i2v_conditioning_mask(latents: torch.Tensor, protect_frame_index: int = 0) -> torch.Tensor:
     """
     Create a mask that is 1.0 at the given 'protect_frame_index' frame (e.g., the first frame),
     and 0.0 elsewhere.
@@ -203,9 +191,7 @@ def make_i2v_conditioning_mask(
                       The selected frame is set to 1.0, all others 0.0.
     """
     bsz, _, num_frames, height, width = latents.shape
-    mask = torch.zeros(
-        (bsz, 1, num_frames, height, width), dtype=latents.dtype, device=latents.device
-    )
+    mask = torch.zeros((bsz, 1, num_frames, height, width), dtype=latents.dtype, device=latents.device)
     if protect_frame_index < num_frames:
         mask[:, :, protect_frame_index, :, :] = 1.0
     return mask

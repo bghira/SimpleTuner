@@ -1,35 +1,30 @@
-import torch, os, logging
+import logging
+import os
 import random
-from torch.nn import functional as F
-from simpletuner.helpers.training import diffusers_overrides
-from simpletuner.helpers.models.common import (
-    ImageModelFoundation,
-    PredictionTypes,
-    PipelineTypes,
-    ModelTypes,
-)
-from transformers import (
-    CLIPTokenizer,
-    CLIPTextModel,
-    T5TokenizerFast,
-    T5EncoderModel,
-)
+from typing import List
+
+import torch
 from diffusers import AutoencoderKL
 from diffusers.models.attention_processor import Attention
-from simpletuner.helpers.models.flux.transformer import FluxTransformer2DModel
-from simpletuner.helpers.models.flux.pipeline import FluxPipeline, FluxKontextPipeline
-from simpletuner.helpers.models.flux.pipeline_controlnet import (
-    FluxControlNetPipeline,
-    FluxControlPipeline,
-)
+from torch.nn import functional as F
+from transformers import CLIPTextModel, CLIPTokenizer, T5EncoderModel, T5TokenizerFast
 
-from simpletuner.helpers.training.multi_process import _get_rank
-from simpletuner.helpers.models.flux import (
-    prepare_latent_image_ids,
-    pack_latents,
-    unpack_latents,
-    build_kontext_inputs,
+from simpletuner.helpers.configuration.registry import (
+    ConfigRegistry,
+    ConfigRule,
+    RuleType,
+    ValidationResult,
+    make_choice_rule,
+    make_default_rule,
+    make_override_rule,
 )
+from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
+from simpletuner.helpers.models.flux import build_kontext_inputs, pack_latents, prepare_latent_image_ids, unpack_latents
+from simpletuner.helpers.models.flux.pipeline import FluxKontextPipeline, FluxPipeline
+from simpletuner.helpers.models.flux.pipeline_controlnet import FluxControlNetPipeline, FluxControlPipeline
+from simpletuner.helpers.models.flux.transformer import FluxTransformer2DModel
+from simpletuner.helpers.training import diffusers_overrides
+from simpletuner.helpers.training.multi_process import _get_rank
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -92,10 +87,7 @@ class Flux(ImageModelFoundation):
         """
         Initialize Flux Control parameters.
         """
-        if (
-            self.config.control
-            and self.config.pretrained_transformer_model_name_or_path is None
-        ):
+        if self.config.control and self.config.pretrained_transformer_model_name_or_path is None:
             with torch.no_grad():
                 initial_input_channels = self.get_trained_component().config.in_channels
                 # new linear layer for x_embedder
@@ -107,47 +99,30 @@ class Flux(ImageModelFoundation):
                     device=self.get_trained_component().device,
                 )
                 new_linear.weight.zero_()
-                new_linear.weight[:, :initial_input_channels].copy_(
-                    self.get_trained_component().x_embedder.weight
-                )
+                new_linear.weight[:, :initial_input_channels].copy_(self.get_trained_component().x_embedder.weight)
                 if self.get_trained_component().x_embedder.bias is not None:
                     new_linear.bias.copy_(self.get_trained_component().x_embedder.bias)
                 self.get_trained_component().x_embedder = new_linear
                 # new projection layer for pos_embed
                 new_proj = torch.nn.Conv2d(
-                    in_channels=self.get_trained_component().pos_embed.proj.in_channels
-                    * 2,
+                    in_channels=self.get_trained_component().pos_embed.proj.in_channels * 2,
                     out_channels=self.get_trained_component().pos_embed.proj.out_channels,
                     kernel_size=self.get_trained_component().pos_embed.proj.kernel_size,
                     stride=self.get_trained_component().pos_embed.proj.stride,
                     bias=self.get_trained_component().pos_embed.proj.bias is not None,
                 )
                 new_proj.weight.zero_()
-                new_proj.weight[:, :initial_input_channels].copy_(
-                    self.get_trained_component().pos_embed.proj.weight
-                )
+                new_proj.weight[:, :initial_input_channels].copy_(self.get_trained_component().pos_embed.proj.weight)
                 if self.get_trained_component().pos_embed.proj.bias is not None:
-                    new_proj.bias.copy_(
-                        self.get_trained_component().pos_embed.proj.bias
-                    )
+                    new_proj.bias.copy_(self.get_trained_component().pos_embed.proj.bias)
                 self.get_trained_component().pos_embed.proj = new_proj
                 self.get_trained_component().register_to_config(
                     in_channels=initial_input_channels * 2,
                     out_channels=initial_input_channels,
                 )
 
-            assert torch.all(
-                self.get_trained_component()
-                .x_embedder.weight[:, initial_input_channels:]
-                .data
-                == 0
-            )
-            assert torch.all(
-                self.get_trained_component()
-                .pos_embed.proj.weight[:, initial_input_channels:]
-                .data
-                == 0
-            )
+            assert torch.all(self.get_trained_component().x_embedder.weight[:, initial_input_channels:].data == 0)
+            assert torch.all(self.get_trained_component().pos_embed.proj.weight[:, initial_input_channels:].data == 0)
 
     def controlnet_init(self):
         logger.info("Creating the controlnet..")
@@ -155,14 +130,10 @@ class Flux(ImageModelFoundation):
 
         if self.config.controlnet_model_name_or_path:
             logger.info("Loading existing controlnet weights")
-            self.controlnet = FluxControlNetModel.from_pretrained(
-                self.config.controlnet_model_name_or_path
-            )
+            self.controlnet = FluxControlNetModel.from_pretrained(self.config.controlnet_model_name_or_path)
         else:
             logger.info("Initializing controlnet weights from base model")
-            self.controlnet = FluxControlNetModel.from_transformer(
-                self.unwrap_model(self.model)
-            )
+            self.controlnet = FluxControlNetModel.from_transformer(self.unwrap_model(self.model))
         self.controlnet.to(self.accelerator.device, self.config.weight_dtype)
 
     def tread_init(self):
@@ -176,9 +147,7 @@ class Flux(ImageModelFoundation):
             or getattr(self.config, "tread_config", None) is {}
             or getattr(self.config, "tread_config", {}).get("routes", None) is None
         ):
-            logger.error(
-                "TREAD training requires you to configure the routes in the TREAD config"
-            )
+            logger.error("TREAD training requires you to configure the routes in the TREAD config")
             import sys
 
             sys.exit(1)
@@ -220,14 +189,10 @@ class Flux(ImageModelFoundation):
             for module in self.controlnet.modules():
                 if isinstance(module, Attention):
                     module.fuse_projections(fuse=True)
-            logger.debug(
-                "Setting ControlNet attention processor to FluxFusedFlashAttnProcessor3"
-            )
+            logger.debug("Setting ControlNet attention processor to FluxFusedFlashAttnProcessor3")
             self.unwrap_model(model=self.controlnet).set_attn_processor(attn_processor)
         elif self.config.controlnet:
-            logger.warning(
-                "ControlNet does not support QKV projection fusing. Skipping."
-            )
+            logger.warning("ControlNet does not support QKV projection fusing. Skipping.")
         self._qkv_projections_fused = True
 
     def unfuse_qkv_projections(self):
@@ -310,19 +275,12 @@ class Flux(ImageModelFoundation):
         return {
             "prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
             "pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0),
-            "prompt_mask": (
-                attention_mask if self.config.flux_attention_masked_training else None
-            ),
+            "prompt_mask": (attention_mask if self.config.flux_attention_masked_training else None),
         }
 
-    def convert_negative_text_embed_for_pipeline(
-        self, text_embedding: torch.Tensor, prompt: str
-    ) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
-        if (
-            self.config.validation_guidance_real is None
-            or self.config.validation_guidance_real <= 1.0
-        ):
+        if self.config.validation_guidance_real is None or self.config.validation_guidance_real <= 1.0:
             # CFG is disabled, no negative prompts.
             return {}
         # Only unsqueeze if it's missing the batch dimension
@@ -331,12 +289,8 @@ class Flux(ImageModelFoundation):
             attention_mask = attention_mask.unsqueeze(0)  # Shape: [1, 512]
         return {
             "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            "negative_pooled_prompt_embeds": text_embedding[
-                "pooled_prompt_embeds"
-            ].unsqueeze(0),
-            "negative_mask": (
-                attention_mask if self.config.flux_attention_masked_training else None
-            ),
+            "negative_pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0),
+            "negative_mask": (attention_mask if self.config.flux_attention_masked_training else None),
             "guidance_scale_real": float(self.config.validation_guidance_real),
             "no_cfg_until_timestep": int(self.config.validation_no_cfg_until_timestep),
         }
@@ -351,9 +305,7 @@ class Flux(ImageModelFoundation):
         Returns:
             Text encoder output (raw)
         """
-        prompt_embeds, pooled_prompt_embeds, time_ids, masks = self.pipelines[
-            PipelineTypes.TEXT2IMG
-        ].encode_prompt(
+        prompt_embeds, pooled_prompt_embeds, time_ids, masks = self.pipelines[PipelineTypes.TEXT2IMG].encode_prompt(
             prompt=prompts,
             prompt_2=prompts,
             device=self.accelerator.device,
@@ -361,9 +313,7 @@ class Flux(ImageModelFoundation):
         )
         if self.config.t5_padding == "zero":
             # we can zero the padding tokens if we're just going to mask them later anyway.
-            prompt_embeds = prompt_embeds * masks.to(
-                device=prompt_embeds.device
-            ).unsqueeze(-1).expand(prompt_embeds.shape)
+            prompt_embeds = prompt_embeds * masks.to(device=prompt_embeds.device).unsqueeze(-1).expand(prompt_embeds.shape)
 
         return prompt_embeds, pooled_prompt_embeds, time_ids, masks
 
@@ -371,13 +321,9 @@ class Flux(ImageModelFoundation):
         cond = batch.get("conditioning_latents")
         if cond is None:
             logger.debug(f"No conditioning latents found :(")
-            return super().prepare_batch_conditions(
-                batch=batch, state=state
-            )  # nothing to do
+            return super().prepare_batch_conditions(batch=batch, state=state)  # nothing to do
         # Check sampling mode
-        sampling_mode = state.get("args", {}).get(
-            "conditioning_multidataset_sampling", "random"
-        )
+        sampling_mode = state.get("args", {}).get("conditioning_multidataset_sampling", "random")
 
         if sampling_mode == "random" and isinstance(cond, list) and len(cond) >= 1:
             # Random mode should have selected just one
@@ -388,13 +334,9 @@ class Flux(ImageModelFoundation):
         # here for index, ignore it.
         if self.config.model_flavour == "kontext":
             if isinstance(cond, list):
-                logger.debug(
-                    f"Inputs to kontext builder shapes: {[d.shape for d in cond]} {cond[0].dtype}"
-                )
+                logger.debug(f"Inputs to kontext builder shapes: {[d.shape for d in cond]} {cond[0].dtype}")
             else:
-                logger.debug(
-                    f"Inputs to kontext builder shapes: {cond.shape} {cond.dtype}"
-                )
+                logger.debug(f"Inputs to kontext builder shapes: {cond.shape} {cond.dtype}")
 
             # Build Kontext inputs
             packed_cond, cond_ids = build_kontext_inputs(
@@ -403,16 +345,12 @@ class Flux(ImageModelFoundation):
                 device=self.accelerator.device,
                 latent_channels=self.LATENT_CHANNEL_COUNT,
             )
-            logger.debug(
-                f"Now we have kontext shapes: {packed_cond.shape} {packed_cond.dtype}"
-            )
+            logger.debug(f"Now we have kontext shapes: {packed_cond.shape} {packed_cond.dtype}")
 
             batch["conditioning_packed_latents"] = packed_cond
             batch["conditioning_ids"] = cond_ids
 
-        return super().prepare_batch_conditions(
-            batch=batch, state=state
-        )  # fixes ControlNet latents in super class.
+        return super().prepare_batch_conditions(batch=batch, state=state)  # fixes ControlNet latents in super class.
 
     def model_predict(self, prepared_batch):
         # handle guidance
@@ -427,9 +365,7 @@ class Flux(ImageModelFoundation):
             device=self.accelerator.device,
         )
         if self.config.flux_guidance_mode == "constant":
-            guidance_scales = [float(self.config.flux_guidance_value)] * prepared_batch[
-                "latents"
-            ].shape[0]
+            guidance_scales = [float(self.config.flux_guidance_value)] * prepared_batch["latents"].shape[0]
 
         elif self.config.flux_guidance_mode == "random-range":
             # Generate a list of random values within the specified range for each latent
@@ -447,9 +383,7 @@ class Flux(ImageModelFoundation):
             transformer_config = self.get_trained_component().module.config
         elif hasattr(self.get_trained_component(), "config"):
             transformer_config = self.get_trained_component().config
-        if transformer_config is not None and getattr(
-            transformer_config, "guidance_embeds", False
-        ):
+        if transformer_config is not None and getattr(transformer_config, "guidance_embeds", False):
             guidance = torch.tensor(guidance_scales, device=self.accelerator.device)
         else:
             guidance = None
@@ -485,9 +419,7 @@ class Flux(ImageModelFoundation):
         )
 
         if img_ids.dim() == 2:  # (S, 3)  -> (1, S, 3) -> (B, S, 3)
-            img_ids = img_ids.unsqueeze(0).expand(
-                prepared_batch["latents"].shape[0], -1, -1
-            )
+            img_ids = img_ids.unsqueeze(0).expand(prepared_batch["latents"].shape[0], -1, -1)
 
         # pull optional kontext inputs
         cond_seq = prepared_batch.get("conditioning_packed_latents")
@@ -495,11 +427,7 @@ class Flux(ImageModelFoundation):
 
         use_cond = cond_seq is not None
         logger.debug(f"Using conditioning: {use_cond}")
-        lat_in = (
-            torch.cat([packed_noisy_latents, cond_seq], dim=1)
-            if use_cond
-            else packed_noisy_latents
-        )
+        lat_in = torch.cat([packed_noisy_latents, cond_seq], dim=1) if use_cond else packed_noisy_latents
         id_in = torch.cat([img_ids, cond_ids], dim=1) if use_cond else img_ids
 
         flux_transformer_kwargs = {
@@ -550,18 +478,14 @@ class Flux(ImageModelFoundation):
                 # fuse RGB → single channel, map to [0,1]
                 mask_img = (mask_img.sum(1, keepdim=True) / 3 + 1) / 2
                 # down‑sample so each latent / image token corresponds to 1 pixel
-                mask_lat = F.interpolate(
-                    mask_img, size=(h_tokens, w_tokens), mode="area"
-                )  # (B,1,32,32)
+                mask_lat = F.interpolate(mask_img, size=(h_tokens, w_tokens), mode="area")  # (B,1,32,32)
                 force_keep = mask_lat.flatten(2).squeeze(1) > 0.5  # (B, S_img)
                 flux_transformer_kwargs["force_keep_mask"] = force_keep
 
         model_pred = self.model(**flux_transformer_kwargs)[0]
         # Drop the reference-image tokens before unpacking
         if use_cond and self.config.model_flavour == "kontext":
-            scene_seq_len = packed_noisy_latents.shape[
-                1
-            ]  # tokens that belong to the main image
+            scene_seq_len = packed_noisy_latents.shape[1]  # tokens that belong to the main image
             model_pred = model_pred[:, :scene_seq_len, :]  # (B, S_scene, C*4)
 
         return {
@@ -614,9 +538,7 @@ class Flux(ImageModelFoundation):
 
         # Handle guidance
         if self.config.flux_guidance_mode == "constant":
-            guidance_scales = [float(self.config.flux_guidance_value)] * prepared_batch[
-                "latents"
-            ].shape[0]
+            guidance_scales = [float(self.config.flux_guidance_value)] * prepared_batch["latents"].shape[0]
         elif self.config.flux_guidance_mode == "random-range":
             guidance_scales = [
                 random.uniform(
@@ -629,15 +551,11 @@ class Flux(ImageModelFoundation):
         # Check if guidance embeds are enabled
         transformer_config = None
         if hasattr(self.get_trained_component(base_model=True), "module"):
-            transformer_config = self.get_trained_component(
-                base_model=True
-            ).module.config
+            transformer_config = self.get_trained_component(base_model=True).module.config
         elif hasattr(self.get_trained_component(base_model=True), "config"):
             transformer_config = self.get_trained_component(base_model=True).config
 
-        if transformer_config is not None and getattr(
-            transformer_config, "guidance_embeds", False
-        ):
+        if transformer_config is not None and getattr(transformer_config, "guidance_embeds", False):
             guidance = torch.tensor(guidance_scales, device=self.accelerator.device)
         else:
             guidance = None
@@ -715,25 +633,19 @@ class Flux(ImageModelFoundation):
         # Add ControlNet outputs to kwargs
         if controlnet_block_samples is not None:
             flux_transformer_kwargs["controlnet_block_samples"] = [
-                sample.to(
-                    device=self.accelerator.device, dtype=self.config.weight_dtype
-                )
+                sample.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
                 for sample in controlnet_block_samples
             ]
 
         if controlnet_single_block_samples is not None:
             flux_transformer_kwargs["controlnet_single_block_samples"] = [
-                sample.to(
-                    device=self.accelerator.device, dtype=self.config.weight_dtype
-                )
+                sample.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
                 for sample in controlnet_single_block_samples
             ]
 
         # Add attention mask if using masked training
         if self.config.flux_attention_masked_training:
-            flux_transformer_kwargs["attention_mask"] = prepared_batch[
-                "encoder_attention_mask"
-            ]
+            flux_transformer_kwargs["attention_mask"] = prepared_batch["encoder_attention_mask"]
             if flux_transformer_kwargs["attention_mask"] is None:
                 raise ValueError(
                     "No attention mask was discovered when attempting validation - "
@@ -741,9 +653,7 @@ class Flux(ImageModelFoundation):
                 )
 
         # Forward pass through the transformer with ControlNet residuals
-        model_pred = self.get_trained_component(base_model=True)(
-            **flux_transformer_kwargs
-        )[0]
+        model_pred = self.get_trained_component(base_model=True)(**flux_transformer_kwargs)[0]
 
         # Unpack the latents back to original shape
         return {
@@ -778,23 +688,14 @@ class Flux(ImageModelFoundation):
             self.config.aspect_bucket_alignment = 64
 
         if self.config.prediction_type is not None:
-            logger.warning(
-                f"{self.NAME} does not support prediction type {self.config.prediction_type}."
-            )
+            logger.warning(f"{self.NAME} does not support prediction type {self.config.prediction_type}.")
 
         if self.config.tokenizer_max_length is not None:
-            logger.warning(
-                f"-!- {self.NAME} supports a max length of 512 tokens, --tokenizer_max_length is ignored -!-"
-            )
+            logger.warning(f"-!- {self.NAME} supports a max length of 512 tokens, --tokenizer_max_length is ignored -!-")
         self.config.tokenizer_max_length = 512
         if self.config.model_flavour == "schnell":
-            if (
-                not self.config.flux_fast_schedule
-                and not self.config.i_know_what_i_am_doing
-            ):
-                logger.error(
-                    "Schnell requires --flux_fast_schedule (or --i_know_what_i_am_doing)."
-                )
+            if not self.config.flux_fast_schedule and not self.config.i_know_what_i_am_doing:
+                logger.error("Schnell requires --flux_fast_schedule (or --i_know_what_i_am_doing).")
                 import sys
 
                 sys.exit(1)
@@ -809,10 +710,7 @@ class Flux(ImageModelFoundation):
                 logger.warning(
                     f"{self.NAME} {self.config.model_flavour} expects around 15 or more inference steps. Consider increasing --validation_num_inference_steps to 15."
                 )
-        if (
-            self.config.model_flavour == "schnell"
-            and self.config.validation_num_inference_steps > 4
-        ):
+        if self.config.model_flavour == "schnell" and self.config.validation_num_inference_steps > 4:
             logger.warning(
                 "Flux Schnell requires fewer inference steps. Consider reducing --validation_num_inference_steps to 4."
             )
@@ -823,44 +721,30 @@ class Flux(ImageModelFoundation):
 
         if self.config.model_flavour == "libreflux":
             if self.config.validation_num_inference_steps < 28:
-                logger.warning(
-                    "LibreFlux requires at least 28 validation steps. Increasing value to 28."
-                )
+                logger.warning("LibreFlux requires at least 28 validation steps. Increasing value to 28.")
                 self.config.validation_num_inference_steps = 28
             if self.config.validation_guidance_real <= 1.0:
-                logger.warning(
-                    "LibreFlux requires CFG at validation time. Enabling it."
-                )
+                logger.warning("LibreFlux requires CFG at validation time. Enabling it.")
                 self.config.validation_guidance_real = 6.0
             if not self.config.flux_attention_masked_training:
                 logger.warning("LibreFlux requires attention masking. Enabling it.")
                 self.config.flux_attention_masked_training = True
             if self.config.fused_qkv_projections:
-                logger.warning(
-                    "LibreFlux does not support fused QKV projections. Disabling it."
-                )
+                logger.warning("LibreFlux does not support fused QKV projections. Disabling it.")
                 self.config.fuse_qkv_projections = False
         if self.config.model_flavour == "fluxbooru":
             # FluxBooru requires some special settings, we'll just override them here.
             if self.config.validation_num_inference_steps < 28:
-                logger.warning(
-                    "FluxBooru requires at least 28 validation steps. Increasing value to 28."
-                )
+                logger.warning("FluxBooru requires at least 28 validation steps. Increasing value to 28.")
                 self.config.validation_num_inference_steps = 28
             if self.config.validation_guidance_real <= 1.0:
-                logger.warning(
-                    "FluxBooru requires CFG at validation time. Enabling it."
-                )
+                logger.warning("FluxBooru requires CFG at validation time. Enabling it.")
                 self.config.validation_guidance_real = 6.0
             if self.config.flux_guidance_value != 3.5:
-                logger.warning(
-                    "FluxBooru requires a static guidance value of 3.5. Overriding --flux_guidance_value."
-                )
+                logger.warning("FluxBooru requires a static guidance value of 3.5. Overriding --flux_guidance_value.")
                 self.config.flux_guidance_value = 3.5
             if self.config.flux_attention_masked_training:
-                logger.warning(
-                    "FluxBooru does not support attention masking. Disabling it."
-                )
+                logger.warning("FluxBooru does not support attention masking. Disabling it.")
                 self.config.flux_attention_masked_training = False
 
     def conditioning_validation_dataset_type(self) -> bool:
@@ -896,9 +780,7 @@ class Flux(ImageModelFoundation):
 
     def get_lora_target_layers(self):
         # Some models, eg. Flux should override this with more complex config-driven logic.
-        if self.config.model_type == "lora" and (
-            self.config.controlnet or self.config.control
-        ):
+        if self.config.model_type == "lora" and (self.config.controlnet or self.config.control):
             if "control" not in self.config.flux_lora_target.lower():
                 logger.warning(
                     "ControlNet or Control is enabled, but the LoRA target does not include 'control'. Overriding to controlnet."
@@ -1037,9 +919,7 @@ class Flux(ImageModelFoundation):
         elif self.config.lora_type.lower() == "lycoris":
             return self.DEFAULT_LYCORIS_TARGET
         else:
-            raise NotImplementedError(
-                f"Unknown LoRA target type {self.config.lora_type}."
-            )
+            raise NotImplementedError(f"Unknown LoRA target type {self.config.lora_type}.")
 
     def custom_model_card_schedule_info(self):
         output_args = []
@@ -1058,12 +938,8 @@ class Flux(ImageModelFoundation):
             output_args.append(f"flux_guidance_max={self.config.flux_guidance_max}")
             output_args.append(f"flux_guidance_min={self.config.flux_guidance_min}")
         if self.config.flow_use_beta_schedule:
-            output_args.append(
-                f"flow_beta_schedule_alpha={self.config.flow_beta_schedule_alpha}"
-            )
-            output_args.append(
-                f"flow_beta_schedule_beta={self.config.flow_beta_schedule_beta}"
-            )
+            output_args.append(f"flow_beta_schedule_alpha={self.config.flow_beta_schedule_alpha}")
+            output_args.append(f"flow_beta_schedule_beta={self.config.flow_beta_schedule_beta}")
         if self.config.flux_attention_masked_training:
             output_args.append("flux_attention_masked_training")
         if self.config.t5_padding != "unmodified":
@@ -1074,10 +950,87 @@ class Flux(ImageModelFoundation):
             and self.config.flux_lora_target is not None
         ):
             output_args.append(f"flux_lora_target={self.config.flux_lora_target}")
-        output_str = (
-            f" (extra parameters={output_args})"
-            if output_args
-            else " (no special parameters set)"
-        )
+        output_str = f" (extra parameters={output_args})" if output_args else " (no special parameters set)"
 
         return output_str
+
+    @classmethod
+    def register_config_requirements(cls):
+        """Register configuration rules for Flux model."""
+        rules = [
+            make_override_rule(
+                field_name="aspect_bucket_alignment",
+                value=64,
+                message="Flux requires aspect bucket alignment of 64px",
+                example="aspect_bucket_alignment: 64",
+            ),
+            ConfigRule(
+                field_name="tokenizer_max_length",
+                rule_type=RuleType.MAX,
+                value=512,
+                message="Flux supports a maximum of 512 tokens",
+                example="tokenizer_max_length: 512  # Maximum supported",
+                error_level="warning",
+            ),
+            ConfigRule(
+                field_name="base_model_precision",
+                rule_type=RuleType.CHOICES,
+                value=["int8-quanto", "fp8-torchao", "no_change", "int4-quanto", "nf4-torchao", "fp8-torchao-compile"],
+                message="Flux supports limited precision options",
+                example="base_model_precision: fp8-torchao",
+                error_level="warning",
+            ),
+            ConfigRule(
+                field_name="prediction_type",
+                rule_type=RuleType.CUSTOM,
+                value=None,
+                message="Flux uses flow matching and does not support custom prediction types",
+                error_level="warning",
+            ),
+        ]
+
+        ConfigRegistry.register_rules("flux", rules)
+        ConfigRegistry.register_validator(
+            "flux",
+            cls._validate_flux_specific,
+            """Validates Flux-specific requirements:
+- Warns about attention slicing on MPS devices
+- Validates prediction_type compatibility
+- Ensures proper aspect bucket alignment
+- Checks tokenizer max length constraints""",
+        )
+
+    @staticmethod
+    def _validate_flux_specific(config: dict) -> List[ValidationResult]:
+        """Custom validation logic for Flux models."""
+        results = []
+
+        # Check attention slicing on MPS
+        if config.get("unet_attention_slice") and torch.backends.mps.is_available():
+            results.append(
+                ValidationResult(
+                    passed=False,
+                    field="unet_attention_slice",
+                    message="Using attention slicing when training Flux on MPS can result in NaN errors on the first backward pass",
+                    level="warning",
+                    suggestion="Disable attention slicing and reduce batch size instead to manage memory",
+                )
+            )
+
+        # Check prediction type
+        if config.get("prediction_type") is not None:
+            results.append(
+                ValidationResult(
+                    passed=False,
+                    field="prediction_type",
+                    message="Flux does not support custom prediction types - it uses flow matching",
+                    level="warning",
+                    suggestion="Remove prediction_type from your configuration",
+                )
+            )
+
+        return results
+
+
+# Register Flux configuration requirements when module is imported
+Flux.register_config_requirements()

@@ -19,16 +19,12 @@ def compute_snr(timesteps, noise_scheduler, use_soft_min: bool = False, sigma_da
     sqrt_one_minus_alphas_cumprod = (1.0 - alphas_cumprod) ** 0.5
 
     # Expand the tensors.
-    sqrt_alphas_cumprod = sqrt_alphas_cumprod.to(device=timesteps.device)[
-        timesteps
-    ].float()
+    sqrt_alphas_cumprod = sqrt_alphas_cumprod.to(device=timesteps.device)[timesteps].float()
     while len(sqrt_alphas_cumprod.shape) < len(timesteps.shape):
         sqrt_alphas_cumprod = sqrt_alphas_cumprod[..., None]
     alpha = sqrt_alphas_cumprod.expand(timesteps.shape)
 
-    sqrt_one_minus_alphas_cumprod = sqrt_one_minus_alphas_cumprod.to(
-        device=timesteps.device
-    )[timesteps].float()
+    sqrt_one_minus_alphas_cumprod = sqrt_one_minus_alphas_cumprod.to(device=timesteps.device)[timesteps].float()
     while len(sqrt_one_minus_alphas_cumprod.shape) < len(timesteps.shape):
         sqrt_one_minus_alphas_cumprod = sqrt_one_minus_alphas_cumprod[..., None]
     sigma = sqrt_one_minus_alphas_cumprod.expand(timesteps.shape)
@@ -36,9 +32,7 @@ def compute_snr(timesteps, noise_scheduler, use_soft_min: bool = False, sigma_da
     # Choose the method to compute SNR
     if use_soft_min:
         if sigma_data is None:
-            raise ValueError(
-                "sigma_data must be provided when using soft min SNR calculation."
-            )
+            raise ValueError("sigma_data must be provided when using soft min SNR calculation.")
         snr = (sigma * sigma_data) ** 2 / (sigma**2 + sigma_data**2) ** 2
     else:
         # Default SNR computation

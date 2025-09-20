@@ -25,9 +25,7 @@ class OmniGenTrainingCollator(OmniGenCollator):
         output_latents = torch.stack(output_latents, dim=0)
 
         # Process text inputs normally
-        target_img_size = [
-            [x.shape[-2] * 8, x.shape[-1] * 8] for x in output_latents
-        ]  # Convert latent size to image size
+        target_img_size = [[x.shape[-2] * 8, x.shape[-1] * 8] for x in output_latents]  # Convert latent size to image size
         (
             all_padded_input_ids,
             all_position_ids,
@@ -43,9 +41,7 @@ class OmniGenTrainingCollator(OmniGenCollator):
             # If we have input images that would normally go through VAE,
             # they should already be pre-encoded too
             input_latents = (
-                torch.cat(all_pixel_values, dim=0)
-                if not isinstance(all_pixel_values[0], list)
-                else all_pixel_values
+                torch.cat(all_pixel_values, dim=0) if not isinstance(all_pixel_values[0], list) else all_pixel_values
             )
 
         # Return the processed data with latents instead of pixel values

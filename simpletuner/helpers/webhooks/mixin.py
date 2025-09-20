@@ -1,6 +1,6 @@
-from simpletuner.helpers.webhooks.handler import WebhookHandler
-from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
+from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.webhooks.handler import WebhookHandler
 
 current_rank = get_rank()
 
@@ -26,6 +26,4 @@ class WebhookMixin:
             },
         }
 
-        self.webhook_handler.send_raw(
-            progress, "progress_update", job_id=StateTracker.get_job_id()
-        )
+        self.webhook_handler.send_raw(progress, "progress_update", job_id=StateTracker.get_job_id())

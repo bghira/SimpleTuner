@@ -1,11 +1,11 @@
-import torch
-import random
 import math
+import random
+
+import torch
+from diffusers.pipelines.flux.pipeline_flux import calculate_shift as calculate_shift_flux
+
 from simpletuner.helpers.models.flux.pipeline import FluxPipeline
 from simpletuner.helpers.training import steps_remaining_in_epoch
-from diffusers.pipelines.flux.pipeline_flux import (
-    calculate_shift as calculate_shift_flux,
-)
 
 
 def update_flux_schedule_to_fast(args, noise_scheduler_to_copy):
@@ -23,13 +23,9 @@ def update_flux_schedule_to_fast(args, noise_scheduler_to_copy):
 
 
 def pack_latents(latents, batch_size, num_channels_latents, height, width):
-    latents = latents.view(
-        batch_size, num_channels_latents, height // 2, 2, width // 2, 2
-    )
+    latents = latents.view(batch_size, num_channels_latents, height // 2, 2, width // 2, 2)
     latents = latents.permute(0, 2, 4, 1, 3, 5)
-    latents = latents.reshape(
-        batch_size, (height // 2) * (width // 2), num_channels_latents * 4
-    )
+    latents = latents.reshape(batch_size, (height // 2) * (width // 2), num_channels_latents * 4)
 
     return latents
 
@@ -50,16 +46,10 @@ def unpack_latents(latents, height, width, vae_scale_factor):
 
 def prepare_latent_image_ids(batch_size, height, width, device, dtype):
     latent_image_ids = torch.zeros(height // 2, width // 2, 3)
-    latent_image_ids[..., 1] = (
-        latent_image_ids[..., 1] + torch.arange(height // 2)[:, None]
-    )
-    latent_image_ids[..., 2] = (
-        latent_image_ids[..., 2] + torch.arange(width // 2)[None, :]
-    )
+    latent_image_ids[..., 1] = latent_image_ids[..., 1] + torch.arange(height // 2)[:, None]
+    latent_image_ids[..., 2] = latent_image_ids[..., 2] + torch.arange(width // 2)[None, :]
 
-    latent_image_id_height, latent_image_id_width, latent_image_id_channels = (
-        latent_image_ids.shape
-    )
+    latent_image_id_height, latent_image_id_width, latent_image_id_channels = latent_image_ids.shape
 
     latent_image_ids = latent_image_ids[None, :].repeat(batch_size, 1, 1, 1)
     latent_image_ids = latent_image_ids.reshape(
@@ -108,9 +98,7 @@ def build_kontext_inputs(
             # Keep as list - each element is a different conditioning image set
             pass
         else:
-            raise ValueError(
-                f"Inconsistent batch sizes in conditioning latents: {batch_sizes}"
-            )
+            raise ValueError(f"Inconsistent batch sizes in conditioning latents: {batch_sizes}")
 
     packed_cond = []
     packed_ids = []
@@ -153,9 +141,7 @@ def build_kontext_inputs(
             raise ValueError(f"Channel mismatch: expected {latent_channels}, got {C}")
 
         # Pack this conditioning image/batch
-        packed_cond.append(
-            pack_latents(latent, B, C, H, W).to(device=device, dtype=dtype)
-        )
+        packed_cond.append(pack_latents(latent, B, C, H, W).to(device=device, dtype=dtype))
 
         # Compute spatial IDs
         x = 0
@@ -168,15 +154,11 @@ def build_kontext_inputs(
         # seq-ids: flag-channel==1, rest is y/x indices
         idx_y = torch.arange(H // 2, device=device) + y // 2
         idx_x = torch.arange(W // 2, device=device) + x // 2
-        ids = torch.stack(
-            torch.meshgrid(idx_y, idx_x, indexing="ij"), dim=-1
-        )  # (H/2,W/2,2)
+        ids = torch.stack(torch.meshgrid(idx_y, idx_x, indexing="ij"), dim=-1)  # (H/2,W/2,2)
         ones = torch.ones_like(ids[..., :1])
 
         # Shape: (1, H/2*W/2, 3) -> expand to (B, H/2*W/2, 3)
-        packed_ids.append(
-            torch.cat([ones, ids], dim=-1).view(1, -1, 3).expand(B, -1, -1).to(dtype)
-        )
+        packed_ids.append(torch.cat([ones, ids], dim=-1).view(1, -1, 3).expand(B, -1, -1).to(dtype))
 
         x0 = max(x0, W + x)
         y0 = max(y0, H + y)

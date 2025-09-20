@@ -1,16 +1,17 @@
-from simpletuner.helpers.webhooks.config import WebhookConfig
-from simpletuner.helpers.multiaspect.image import MultiaspectImage
-from pathlib import Path
-import requests
-import os
+import base64
 import json
 import logging
-import numpy as np
+import os
 import time
 from io import BytesIO
-import base64
+from pathlib import Path
 
 import imageio  # <-- for in-memory video encoding (MP4 or GIF)
+import numpy as np
+import requests
+
+from simpletuner.helpers.multiaspect.image import MultiaspectImage
+from simpletuner.helpers.webhooks.config import WebhookConfig
 
 # Define log levels
 log_levels = {"critical": 0, "error": 1, "warning": 2, "info": 3, "debug": 4}
@@ -36,18 +37,12 @@ class WebhookHandler:
     ):
         self.accelerator = accelerator
         self.config = mock_webhook_config or WebhookConfig(config_path)
-        self.webhook_url = self.config.values.get(
-            "webhook_url", self.config.values.get("callback_url", None)
-        )
+        self.webhook_url = self.config.values.get("webhook_url", self.config.values.get("callback_url", None))
         self.webhook_type = self.config.webhook_type  # "discord" or "raw"
         self.message_prefix = (
-            f"`({self.config.message_prefix})` "
-            if self.config.message_prefix is not None
-            else f"`({project_name})` "
+            f"`({self.config.message_prefix})` " if self.config.message_prefix is not None else f"`({project_name})` "
         )
-        self.log_level = log_levels.get(
-            self.config.log_level or "info", log_levels["info"]
-        )
+        self.log_level = log_levels.get(self.config.log_level or "info", log_levels["info"])
         self.stored_response = None
         self.send_video = send_video
         self.video_framerate = args.framerate
@@ -86,11 +81,7 @@ class WebhookHandler:
                 # Convert images to base64 for a generic "raw" JSON
                 data = {
                     "message": message,
-                    "images": (
-                        [self._convert_image_to_base64(img) for img in images]
-                        if images
-                        else []
-                    ),
+                    "images": ([self._convert_image_to_base64(img) for img in images] if images else []),
                 }
                 files = None
 
@@ -233,15 +224,9 @@ class WebhookHandler:
         Send structured data to a "raw" webhook, e.g. for step progress.
         Ignores 'images' entirely, uses JSON payload only.
         """
-        if (
-            self.webhook_type != "raw"
-            or not self.accelerator.is_main_process
-            or not self._check_level(message_level)
-        ):
+        if self.webhook_type != "raw" or not self.accelerator.is_main_process or not self._check_level(message_level):
             return
         structured_data["message_type"] = message_type
         structured_data["job_id"] = job_id
         structured_data["timestamp"] = int(time.time())
-        self._send_request(
-            message=structured_data, images=None, store_response=False, raw_request=True
-        )
+        self._send_request(message=structured_data, images=None, store_response=False, raw_request=True)

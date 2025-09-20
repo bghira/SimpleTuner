@@ -1,5 +1,5 @@
 # Copyright 2025 The NVIDIA Team and The HuggingFace Team. All rights reserved.
-# Copyright 2025 SimpleTuner
+# Copyright 2025 bghira (SimpleTuner)
 # - Added support for PEFT LoRA
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,12 +32,13 @@ from diffusers.models.normalization import RMSNorm
 from diffusers.utils import USE_PEFT_BACKEND, is_torchvision_available, scale_lora_layers, unscale_lora_layers
 
 from simpletuner.helpers.training.tread import TREADRouter
+from simpletuner.helpers.utils.patching import MutableModuleList, PatchableModule
 
 if is_torchvision_available():
     from torchvision import transforms
 
 
-class CosmosPatchEmbed(nn.Module):
+class CosmosPatchEmbed(PatchableModule):
     def __init__(
         self,
         in_channels: int,
@@ -72,7 +73,7 @@ class CosmosPatchEmbed(nn.Module):
         return hidden_states
 
 
-class CosmosTimestepEmbedding(nn.Module):
+class CosmosTimestepEmbedding(PatchableModule):
     def __init__(self, in_features: int, out_features: int) -> None:
         super().__init__()
         self.linear_1 = nn.Linear(in_features, out_features, bias=False)
@@ -86,7 +87,7 @@ class CosmosTimestepEmbedding(nn.Module):
         return emb
 
 
-class CosmosEmbedding(nn.Module):
+class CosmosEmbedding(PatchableModule):
     def __init__(self, embedding_dim: int, condition_dim: int) -> None:
         super().__init__()
 
@@ -101,7 +102,7 @@ class CosmosEmbedding(nn.Module):
         return temb, embedded_timestep
 
 
-class CosmosAdaLayerNorm(nn.Module):
+class CosmosAdaLayerNorm(PatchableModule):
     def __init__(self, in_features: int, hidden_features: int) -> None:
         super().__init__()
         self.embedding_dim = in_features
@@ -134,14 +135,17 @@ class CosmosAdaLayerNorm(nn.Module):
         return hidden_states
 
 
-class CosmosAdaLayerNormZero(nn.Module):
+class CosmosAdaLayerNormZero(PatchableModule):
     def __init__(self, in_features: int, hidden_features: Optional[int] = None) -> None:
         super().__init__()
 
         self.norm = nn.LayerNorm(in_features, elementwise_affine=False, eps=1e-6)
         self.activation = nn.SiLU()
 
-        if hidden_features is None:
+        hidden_features = hidden_features or in_features
+        self.hidden_features = hidden_features
+
+        if hidden_features == in_features:
             self.linear_1 = nn.Identity()
         else:
             self.linear_1 = nn.Linear(in_features, hidden_features, bias=False)
@@ -164,16 +168,19 @@ class CosmosAdaLayerNormZero(nn.Module):
         shift, scale, gate = embedded_timestep.chunk(3, dim=-1)
         hidden_states = self.norm(hidden_states)
 
-        if embedded_timestep.ndim == 2:
+        expanded = embedded_timestep.ndim == 2
+        if expanded:
             shift, scale, gate = (x.unsqueeze(1) for x in (shift, scale, gate))
 
         hidden_states = hidden_states * (1 + scale) + shift
+        if expanded:
+            gate = gate.squeeze(1)
         return hidden_states, gate
 
 
 class CosmosAttnProcessor2_0:
     def __init__(self):
-        if not hasattr(F, "scaled_dot_product_attention"):
+        if not hasattr(F, "scaled_dot_product_attention") or not callable(F.scaled_dot_product_attention):
             raise ImportError("CosmosAttnProcessor2_0 requires PyTorch 2.0. To use it, please upgrade PyTorch to 2.0.")
 
     def __call__(
@@ -192,13 +199,17 @@ class CosmosAttnProcessor2_0:
         key = attn.to_k(encoder_hidden_states)
         value = attn.to_v(encoder_hidden_states)
 
+        target_dtype = query.dtype
+        key = key.to(target_dtype)
+        value = value.to(target_dtype)
+
         query = query.unflatten(2, (attn.heads, -1)).transpose(1, 2)
         key = key.unflatten(2, (attn.heads, -1)).transpose(1, 2)
         value = value.unflatten(2, (attn.heads, -1)).transpose(1, 2)
 
         # 2. QK normalization
-        query = attn.norm_q(query)
-        key = attn.norm_k(key)
+        query = attn.norm_q(query).to(target_dtype)
+        key = attn.norm_k(key).to(target_dtype)
 
         # 3. Apply RoPE
         if image_rotary_emb is not None:
@@ -224,16 +235,17 @@ class CosmosAttnProcessor2_0:
         hidden_states = F.scaled_dot_product_attention(
             query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
         )
-        hidden_states = hidden_states.transpose(1, 2).flatten(2, 3).type_as(query)
+        hidden_states = hidden_states.transpose(1, 2).flatten(2, 3)
 
         # 6. Output projection
+        hidden_states = hidden_states.to(hidden_states.dtype if hidden_states.dtype == query.dtype else query.dtype)
         hidden_states = attn.to_out[0](hidden_states)
         hidden_states = attn.to_out[1](hidden_states)
 
         return hidden_states
 
 
-class CosmosTransformerBlock(nn.Module):
+class CosmosTransformerBlock(PatchableModule):
     def __init__(
         self,
         num_attention_heads: int,
@@ -289,12 +301,16 @@ class CosmosTransformerBlock(nn.Module):
             hidden_states = hidden_states + extra_pos_emb
 
         # 1. Self Attention
-        norm_hidden_states, gate = self.norm1(hidden_states, embedded_timestep, temb)
+        norm_hidden_states, gate = self._extract_norm_outputs(
+            self.norm1(hidden_states, embedded_timestep, temb), hidden_states
+        )
         attn_output = self.attn1(norm_hidden_states, image_rotary_emb=image_rotary_emb)
         hidden_states = hidden_states + gate * attn_output
 
         # 2. Cross Attention
-        norm_hidden_states, gate = self.norm2(hidden_states, embedded_timestep, temb)
+        norm_hidden_states, gate = self._extract_norm_outputs(
+            self.norm2(hidden_states, embedded_timestep, temb), hidden_states
+        )
         attn_output = self.attn2(
             norm_hidden_states,
             encoder_hidden_states=encoder_hidden_states,
@@ -303,14 +319,41 @@ class CosmosTransformerBlock(nn.Module):
         hidden_states = hidden_states + gate * attn_output
 
         # 3. Feed Forward
-        norm_hidden_states, gate = self.norm3(hidden_states, embedded_timestep, temb)
+        norm_hidden_states, gate = self._extract_norm_outputs(
+            self.norm3(hidden_states, embedded_timestep, temb), hidden_states
+        )
         ff_output = self.ff(norm_hidden_states)
         hidden_states = hidden_states + gate * ff_output
 
         return hidden_states
 
+    @staticmethod
+    def _extract_norm_outputs(output, reference):
+        if isinstance(output, tuple):
+            if len(output) >= 2:
+                norm_hidden_states, gate = output[0], output[1]
+                if gate.ndim == reference.ndim - 1:
+                    gate = gate.unsqueeze(1)
+                elif gate.ndim < reference.ndim - 1:
+                    # bring to (B,1,H)
+                    while gate.ndim < reference.ndim - 1:
+                        gate = gate.unsqueeze(0)
+                    gate = gate.unsqueeze(1)
+                return norm_hidden_states, gate
+            raise ValueError("Cosmos AdaLayerNorm output tuple must have at least two elements.")
 
-class CosmosRotaryPosEmbed(nn.Module):
+        # Fallback for legacy behaviours that returned just the normalized tensor
+        hidden_states = output
+        if hidden_states.ndim >= 2:
+            batch = hidden_states.size(0)
+            hidden = hidden_states.size(-1)
+            gate = torch.ones(batch, 1, hidden, device=hidden_states.device, dtype=hidden_states.dtype)
+        else:
+            gate = torch.ones_like(hidden_states).unsqueeze(0)
+        return hidden_states, gate
+
+
+class CosmosRotaryPosEmbed(PatchableModule):
     def __init__(
         self,
         hidden_size: int,
@@ -321,6 +364,7 @@ class CosmosRotaryPosEmbed(nn.Module):
     ) -> None:
         super().__init__()
 
+        self.hidden_size = hidden_size
         self.max_size = [size // patch for size, patch in zip(max_size, patch_size)]
         self.patch_size = patch_size
         self.base_fps = base_fps
@@ -372,7 +416,7 @@ class CosmosRotaryPosEmbed(nn.Module):
         return cos, sin
 
 
-class CosmosLearnablePositionalEmbed(nn.Module):
+class CosmosLearnablePositionalEmbed(PatchableModule):
     def __init__(
         self,
         hidden_size: int,
@@ -386,9 +430,12 @@ class CosmosLearnablePositionalEmbed(nn.Module):
         self.patch_size = patch_size
         self.eps = eps
 
-        self.pos_emb_t = nn.Parameter(torch.zeros(self.max_size[0], hidden_size))
-        self.pos_emb_h = nn.Parameter(torch.zeros(self.max_size[1], hidden_size))
-        self.pos_emb_w = nn.Parameter(torch.zeros(self.max_size[2], hidden_size))
+        self.pos_emb_t = nn.Parameter(torch.empty(self.max_size[0], hidden_size))
+        self.pos_emb_h = nn.Parameter(torch.empty(self.max_size[1], hidden_size))
+        self.pos_emb_w = nn.Parameter(torch.empty(self.max_size[2], hidden_size))
+
+        for param in (self.pos_emb_t, self.pos_emb_h, self.pos_emb_w):
+            nn.init.normal_(param, mean=0.0, std=0.02)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         batch_size, num_channels, num_frames, height, width = hidden_states.shape
@@ -409,7 +456,7 @@ class CosmosLearnablePositionalEmbed(nn.Module):
         return (emb / norm).type_as(hidden_states)
 
 
-class CosmosTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin, PeftAdapterMixin):
+class CosmosTransformer3DModel(PatchableModule, ModelMixin, ConfigMixin, FromOriginalModelMixin, PeftAdapterMixin):
     r"""
     A Transformer model for video-like data used in [Cosmos](https://github.com/NVIDIA/Cosmos).
 
@@ -492,7 +539,7 @@ class CosmosTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin, 
         self.time_embed = CosmosEmbedding(hidden_size, hidden_size)
 
         # 4. Transformer Blocks
-        self.transformer_blocks = nn.ModuleList(
+        self.transformer_blocks = MutableModuleList(
             [
                 CosmosTransformerBlock(
                     num_attention_heads=num_attention_heads,
@@ -556,18 +603,63 @@ class CosmosTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin, 
             hidden_states = torch.cat([hidden_states, condition_mask], dim=1)
 
         if self.config.concat_padding_mask:
-            padding_mask = transforms.functional.resize(
-                padding_mask,
-                list(hidden_states.shape[-2:]),
-                interpolation=transforms.InterpolationMode.NEAREST,
+            if padding_mask.ndim > 5:
+                padding_mask = padding_mask.reshape(
+                    padding_mask.shape[0],
+                    padding_mask.shape[1],
+                    -1,
+                    padding_mask.shape[-2],
+                    padding_mask.shape[-1],
+                )
+            if padding_mask.ndim == 4:
+                padding_mask = transforms.functional.resize(
+                    padding_mask,
+                    list(hidden_states.shape[-2:]),
+                    interpolation=transforms.InterpolationMode.NEAREST,
+                )
+                if padding_mask.ndim == 4:
+                    padding_mask = padding_mask.unsqueeze(2)
+                elif padding_mask.ndim == 5:
+                    pass
+                else:
+                    raise ValueError(f"Unexpected padding mask dimensions after resize: {padding_mask.shape}")
+            elif padding_mask.ndim == 5:
+                # ensure spatial dimensions match later via interpolation
+                pass
+            else:
+                raise ValueError(f"Padding mask must be 4D or 5D, received shape {padding_mask.shape}.")
+
+            if (
+                padding_mask.shape[2] != num_frames
+                or padding_mask.shape[-2] != hidden_states.shape[-2]
+                or padding_mask.shape[-1] != hidden_states.shape[-1]
+            ):
+                padding_mask = torch.nn.functional.interpolate(
+                    padding_mask,
+                    size=(num_frames, hidden_states.shape[-2], hidden_states.shape[-1]),
+                    mode="nearest",
+                )
+
+            target_shape = (
+                batch_size,
+                padding_mask.shape[1],
+                num_frames,
+                hidden_states.shape[-2],
+                hidden_states.shape[-1],
             )
-            hidden_states = torch.cat(
-                [
-                    hidden_states,
-                    padding_mask.unsqueeze(2).repeat(batch_size, 1, num_frames, 1, 1),
-                ],
-                dim=1,
-            )
+            expand_dims = []
+            for current, target in zip(padding_mask.shape, target_shape):
+                if current == target:
+                    expand_dims.append(current)
+                elif current == 1:
+                    expand_dims.append(target)
+                else:
+                    raise ValueError(
+                        f"Cannot broadcast padding mask dimension {current} to {target} for shape {padding_mask.shape}."
+                    )
+
+            padding_mask = padding_mask.expand(*expand_dims)
+            hidden_states = torch.cat([hidden_states, padding_mask], dim=1)
 
         if attention_mask is not None:
             attention_mask = attention_mask.unsqueeze(1).unsqueeze(1)  # [B, 1, 1, S]
@@ -578,11 +670,27 @@ class CosmosTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin, 
 
         # 3. Patchify input
         p_t, p_h, p_w = self.config.patch_size
-        post_patch_num_frames = num_frames // p_t
-        post_patch_height = height // p_h
-        post_patch_width = width // p_w
+        expected_num_frames = num_frames // p_t
+        expected_height = height // p_h
+        expected_width = width // p_w
         hidden_states = self.patch_embed(hidden_states)
-        hidden_states = hidden_states.flatten(1, 3)  # [B, T, H, W, C] -> [B, THW, C]
+        if hidden_states.ndim == 5:
+            hidden_states = hidden_states.flatten(1, 3)  # [B, T, H, W, C] -> [B, THW, C]
+        elif hidden_states.ndim != 3:
+            raise ValueError(
+                f"Cosmos patch_embed expected to return a tensor with 3 or 5 dimensions, got {hidden_states.ndim}."
+            )
+        token_count = hidden_states.shape[1]
+        spatial_tokens = expected_height * expected_width
+        if spatial_tokens == 0:
+            raise ValueError("Spatial token count cannot be zero.")
+
+        if token_count % spatial_tokens != 0:
+            raise ValueError(f"Token count {token_count} is incompatible with spatial tokens {spatial_tokens}.")
+
+        post_patch_num_frames = token_count // spatial_tokens
+        post_patch_height = expected_height
+        post_patch_width = expected_width
 
         # 4. Timestep embeddings
         if timestep.ndim == 1:

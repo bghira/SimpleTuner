@@ -1,16 +1,17 @@
-from simpletuner.helpers.training.state_tracker import StateTracker
-from simpletuner.helpers.data_backend.base import BaseDataBackend
-from simpletuner.helpers.metadata.backends.base import MetadataBackend
-from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
-from simpletuner.helpers.image_manipulation.load import load_image, load_video
-from simpletuner.helpers.training.multi_process import should_log
 import json
 import logging
 import os
 import traceback
 from io import BytesIO
+
+from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.image_manipulation.brightness import calculate_luminance
+from simpletuner.helpers.image_manipulation.load import load_image, load_video
+from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
+from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.training import image_file_extensions, video_file_extensions
+from simpletuner.helpers.training.multi_process import should_log
+from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("DiscoveryMetadataBackend")
 if should_log():
@@ -67,23 +68,17 @@ class DiscoveryMetadataBackend(MetadataBackend):
             repeats=repeats,
         )
 
-    def _discover_new_files(
-        self, for_metadata: bool = False, ignore_existing_cache: bool = False
-    ):
+    def _discover_new_files(self, for_metadata: bool = False, ignore_existing_cache: bool = False):
         """
         Discover new files that have not been processed yet.
 
         Returns:
             list: A list of new files.
         """
-        all_image_files = StateTracker.get_image_files(
-            data_backend_id=self.data_backend.id
-        )
+        all_image_files = StateTracker.get_image_files(data_backend_id=self.data_backend.id)
         if ignore_existing_cache:
             # Return all files and remove the existing buckets.
-            logger.debug(
-                "Resetting the entire aspect bucket cache as we've received the signal to ignore existing cache."
-            )
+            logger.debug("Resetting the entire aspect bucket cache as we've received the signal to ignore existing cache.")
             self.aspect_ratio_bucket_indices = {}
             return list(all_image_files.keys())
         if all_image_files is None:
@@ -92,9 +87,7 @@ class DiscoveryMetadataBackend(MetadataBackend):
                 instance_data_dir=self.instance_data_dir,
                 file_extensions=image_file_extensions,
             )
-            all_image_files = StateTracker.set_image_files(
-                all_image_files, data_backend_id=self.data_backend.id
-            )
+            all_image_files = StateTracker.set_image_files(all_image_files, data_backend_id=self.data_backend.id)
         else:
             logger.debug("Using cached image file list")
 
@@ -107,20 +100,10 @@ class DiscoveryMetadataBackend(MetadataBackend):
         all_image_files_set = set(all_image_files)
 
         if for_metadata:
-            result = [
-                file
-                for file in all_image_files
-                if self.get_metadata_by_filepath(file) is None
-            ]
+            result = [file for file in all_image_files if self.get_metadata_by_filepath(file) is None]
         else:
-            processed_files = set(
-                path
-                for paths in self.aspect_ratio_bucket_indices.values()
-                for path in paths
-            )
-            result = [
-                file for file in all_image_files_set if file not in processed_files
-            ]
+            processed_files = set(path for paths in self.aspect_ratio_bucket_indices.values() for path in paths)
+            result = [file for file in all_image_files_set if file not in processed_files]
 
         return result
 
@@ -140,13 +123,9 @@ class DiscoveryMetadataBackend(MetadataBackend):
                 cache_data_raw = self.data_backend.read(self.cache_file)
                 cache_data = json.loads(cache_data_raw)
             except Exception as e:
-                logger.warning(
-                    f"Error loading aspect bucket cache, creating new one: {e}"
-                )
+                logger.warning(f"Error loading aspect bucket cache, creating new one: {e}")
                 cache_data = {}
-            self.aspect_ratio_bucket_indices = cache_data.get(
-                "aspect_ratio_bucket_indices", {}
-            )
+            self.aspect_ratio_bucket_indices = cache_data.get("aspect_ratio_bucket_indices", {})
             if set_config:
                 self.config = cache_data.get("config", {})
                 if self.config != {}:
@@ -156,9 +135,7 @@ class DiscoveryMetadataBackend(MetadataBackend):
                         data_backend_id=self.id,
                         config=self.config,
                     )
-            logger.debug(
-                f"(id={self.id}) Loaded {len(self.aspect_ratio_bucket_indices)} aspect ratio buckets"
-            )
+            logger.debug(f"(id={self.id}) Loaded {len(self.aspect_ratio_bucket_indices)} aspect ratio buckets")
         else:
             logger.warning("No cache file found, creating new one.")
 
@@ -176,14 +153,11 @@ class DiscoveryMetadataBackend(MetadataBackend):
             return
         # Convert any non-strings into strings as we save the index.
         aspect_ratio_bucket_indices_str = {
-            key: [str(path) for path in value]
-            for key, value in self.aspect_ratio_bucket_indices.items()
+            key: [str(path) for path in value] for key, value in self.aspect_ratio_bucket_indices.items()
         }
         # Encode the cache as JSON.
         cache_data = {
-            "config": StateTracker.get_data_backend_config(
-                data_backend_id=self.data_backend.id
-            ),
+            "config": StateTracker.get_data_backend_config(data_backend_id=self.data_backend.id),
             "aspect_ratio_bucket_indices": aspect_ratio_bucket_indices_str,
         }
         logger.debug(f"save_cache has config to write: {cache_data['config']}")
@@ -217,9 +191,7 @@ class DiscoveryMetadataBackend(MetadataBackend):
             image_metadata = {}
             image_data = self.data_backend.read(image_path_str)
             if image_data is None:
-                logger.debug(
-                    f"Image {image_path_str} was not found on the backend. Skipping image."
-                )
+                logger.debug(f"Image {image_path_str} was not found on the backend. Skipping image.")
                 statistics.setdefault("skipped", {}).setdefault("not_found", 0)
                 statistics["skipped"]["not_found"] += 1
                 return aspect_ratio_bucket_indices
@@ -231,13 +203,9 @@ class DiscoveryMetadataBackend(MetadataBackend):
             image = file_loader(BytesIO(image_data))
             if not self.meets_resolution_requirements(image=image):
                 if not self.delete_unwanted_images:
-                    logger.debug(
-                        f"Image {image_path_str} does not meet minimum size requirements. Skipping image."
-                    )
+                    logger.debug(f"Image {image_path_str} does not meet minimum size requirements. Skipping image.")
                 else:
-                    logger.debug(
-                        f"Image {image_path_str} does not meet minimum size requirements. Deleting image."
-                    )
+                    logger.debug(f"Image {image_path_str} does not meet minimum size requirements. Deleting image.")
                     self.data_backend.delete(image_path_str)
                 statistics.setdefault("skipped", {}).setdefault("too_small", 0)
                 statistics["skipped"]["too_small"] += 1

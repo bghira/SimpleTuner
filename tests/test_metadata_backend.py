@@ -1,9 +1,12 @@
-import unittest, json
+import json
+import unittest
+from unittest.mock import MagicMock, Mock, patch
+
+from helpers.data import MockDataBackend
 from PIL import Image
-from unittest.mock import Mock, patch, MagicMock
+
 from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
 from simpletuner.helpers.training.state_tracker import StateTracker
-from tests.helpers.data import MockDataBackend
 
 
 class TestMetadataBackend(unittest.TestCase):
@@ -14,9 +17,7 @@ class TestMetadataBackend(unittest.TestCase):
         self.accelerator = Mock()
         self.data_backend.exists = Mock(return_value=True)
         self.data_backend.write = Mock(return_value=True)
-        self.data_backend.list_files = Mock(
-            return_value=[("subdir", "", "image_path.png")]
-        )
+        self.data_backend.list_files = Mock(return_value=[("subdir", "", "image_path.png")])
         self.data_backend.read = Mock(return_value=self.test_image.tobytes())
         # Mock image data to simulate reading from the backend
         self.image_path_str = "test_image.jpg"
@@ -33,19 +34,18 @@ class TestMetadataBackend(unittest.TestCase):
             ),
             patch("pathlib.Path.exists", return_value=True),
         ):
-            with self.assertLogs("DiscoveryMetadataBackend", level="WARNING"):
-                self.metadata_backend = DiscoveryMetadataBackend(
-                    id="foo",
-                    instance_data_dir=self.instance_data_dir,
-                    cache_file=self.cache_file,
-                    metadata_file=self.metadata_file,
-                    batch_size=1,
-                    data_backend=self.data_backend,
-                    resolution=1,
-                    resolution_type="area",
-                    accelerator=self.accelerator,
-                    repeats=0,
-                )
+            self.metadata_backend = DiscoveryMetadataBackend(
+                id="foo",
+                instance_data_dir=self.instance_data_dir,
+                cache_file=self.cache_file,
+                metadata_file=self.metadata_file,
+                batch_size=1,
+                data_backend=self.data_backend,
+                resolution=1,
+                resolution_type="area",
+                accelerator=self.accelerator,
+                repeats=0,
+            )
 
     def test_len(self):
         self.metadata_backend.aspect_ratio_bucket_indices = {
@@ -73,9 +73,7 @@ class TestMetadataBackend(unittest.TestCase):
             ),
         ):
 
-            self.metadata_backend.aspect_ratio_bucket_indices = {
-                "1.0": ["image1.jpg", "image2.png"]
-            }
+            self.metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["image1.jpg", "image2.png"]}
             new_files = self.metadata_backend._discover_new_files(for_metadata=False)
             # Assuming the method's logic excludes files known (["image1.jpg", "image2.png"])
             # The expectation is that only ["image3.jpg", "image4.png"] are returned as new
@@ -85,9 +83,7 @@ class TestMetadataBackend(unittest.TestCase):
         valid_cache_data = {
             "aspect_ratio_bucket_indices": {"1.0": ["image1", "image2"]},
         }
-        with patch.object(
-            self.data_backend, "read", return_value=json.dumps(valid_cache_data)
-        ):
+        with patch.object(self.data_backend, "read", return_value=json.dumps(valid_cache_data)):
             self.metadata_backend.reload_cache()
         self.assertEqual(
             self.metadata_backend.aspect_ratio_bucket_indices,
@@ -96,14 +92,22 @@ class TestMetadataBackend(unittest.TestCase):
 
     def test_load_cache_invalid(self):
         invalid_cache_data = "this is not valid json"
+        # Need to ensure exists returns True so it tries to read the file
+        self.data_backend.exists = Mock(return_value=True)
+
         with patch.object(self.data_backend, "read", return_value=invalid_cache_data):
-            with self.assertLogs("DiscoveryMetadataBackend", level="WARNING"):
+            # Patch the logger.warning method directly to verify it's called
+            with patch("simpletuner.helpers.metadata.backends.discovery.logger.warning") as mock_warning:
                 self.metadata_backend.reload_cache()
+                # Verify warning was called with the expected message
+                mock_warning.assert_called_once()
+                warning_msg = mock_warning.call_args[0][0]
+                self.assertIn("Error loading aspect bucket cache", warning_msg)
+            # Should have empty indices due to invalid JSON
+            self.assertEqual(self.metadata_backend.aspect_ratio_bucket_indices, {})
 
     def test_save_cache(self):
-        self.metadata_backend.aspect_ratio_bucket_indices = {
-            "1.0": ["image1", "image2"]
-        }
+        self.metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["image1", "image2"]}
         with patch.object(self.data_backend, "write") as mock_write:
             self.metadata_backend.save_cache()
         mock_write.assert_called_once()
@@ -117,9 +121,7 @@ class TestMetadataBackend(unittest.TestCase):
         }
         self.metadata_backend.minimum_aspect_ratio = 1.25
         self.metadata_backend._enforce_min_aspect_ratio()
-        self.assertEqual(
-            self.metadata_backend.aspect_ratio_bucket_indices, {"1.5": ["image3"]}
-        )
+        self.assertEqual(self.metadata_backend.aspect_ratio_bucket_indices, {"1.5": ["image3"]})
 
     def test_maximum_aspect_size(self):
         # when metadata_backend.maximum_aspect_ratio is not None and > 0.0 it will remove buckets from the list.

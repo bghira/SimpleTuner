@@ -1,14 +1,13 @@
 from typing import Any, Dict, Optional
 
 import torch
-from torch import nn
-
 from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.loaders import PeftAdapterMixin
 from diffusers.models import PixArtTransformer2DModel
 from diffusers.models.attention import BasicTransformerBlock
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
-from diffusers.loaders import PeftAdapterMixin
+from torch import nn
 
 
 class PixArtSigmaControlNetAdapterBlock(nn.Module):
@@ -130,9 +129,7 @@ class PixArtSigmaControlNetAdapterModel(ModelMixin, ConfigMixin, PeftAdapterMixi
         )
 
     @classmethod
-    def from_transformer(
-        cls, transformer: PixArtTransformer2DModel, num_layers: Optional[int] = None
-    ):
+    def from_transformer(cls, transformer: PixArtTransformer2DModel, num_layers: Optional[int] = None):
         """
         Create a ControlNet adapter from an existing PixArt Sigma transformer.
 
@@ -185,18 +182,14 @@ class PixArtSigmaControlNetTransformerModel(ModelMixin, ConfigMixin, PeftAdapter
         super().__init__()
 
         # Use controlnet's num_layers if blocks_num not specified
-        self.blocks_num = (
-            blocks_num if blocks_num is not None else controlnet.num_layers
-        )
+        self.blocks_num = blocks_num if blocks_num is not None else controlnet.num_layers
         self.gradient_checkpointing = False
         self.register_to_config(**transformer.config)
         self.training = training
 
         if init_from_transformer:
             # Initialize controlnet from transformer
-            controlnet = PixArtSigmaControlNetAdapterModel.from_transformer(
-                transformer, num_layers=self.blocks_num
-            )
+            controlnet = PixArtSigmaControlNetAdapterModel.from_transformer(transformer, num_layers=self.blocks_num)
 
         self.transformer = transformer
         self.controlnet = controlnet
@@ -219,9 +212,7 @@ class PixArtSigmaControlNetTransformerModel(ModelMixin, ConfigMixin, PeftAdapter
         return_dict: bool = True,
     ):
         if self.transformer.use_additional_conditions and added_cond_kwargs is None:
-            raise ValueError(
-                "`added_cond_kwargs` cannot be None when using additional conditions for `adaln_single`."
-            )
+            raise ValueError("`added_cond_kwargs` cannot be None when using additional conditions for `adaln_single`.")
 
         # ensure attention_mask is a bias, and give it a singleton query_tokens dimension.
         if attention_mask is not None and attention_mask.ndim == 2:
@@ -230,9 +221,7 @@ class PixArtSigmaControlNetTransformerModel(ModelMixin, ConfigMixin, PeftAdapter
 
         # convert encoder_attention_mask to a bias the same way we do for attention_mask
         if encoder_attention_mask is not None and encoder_attention_mask.ndim == 2:
-            encoder_attention_mask = (
-                1 - encoder_attention_mask.to(hidden_states.dtype)
-            ) * -10000.0
+            encoder_attention_mask = (1 - encoder_attention_mask.to(hidden_states.dtype)) * -10000.0
             encoder_attention_mask = encoder_attention_mask.unsqueeze(1)
 
         # 1. Input
@@ -251,12 +240,8 @@ class PixArtSigmaControlNetTransformerModel(ModelMixin, ConfigMixin, PeftAdapter
         )
 
         if self.transformer.caption_projection is not None:
-            encoder_hidden_states = self.transformer.caption_projection(
-                encoder_hidden_states
-            )
-            encoder_hidden_states = encoder_hidden_states.view(
-                batch_size, -1, hidden_states.shape[-1]
-            )
+            encoder_hidden_states = self.transformer.caption_projection(encoder_hidden_states)
+            encoder_hidden_states = encoder_hidden_states.view(batch_size, -1, hidden_states.shape[-1])
 
         controlnet_states_down = None
         if controlnet_cond is not None:
@@ -264,21 +249,13 @@ class PixArtSigmaControlNetTransformerModel(ModelMixin, ConfigMixin, PeftAdapter
 
         # 2. Blocks
         for block_index, block in enumerate(self.transformer.transformer_blocks):
-            if (
-                self.training
-                and self.gradient_checkpointing
-                and torch.is_grad_enabled()
-            ):
+            if self.training and self.gradient_checkpointing and torch.is_grad_enabled():
                 # TODO: Implement gradient checkpointing support
                 # For now, fall through to regular forward
                 pass
 
             # the control nets are only used for blocks 1 to self.blocks_num
-            if (
-                block_index > 0
-                and block_index <= self.blocks_num
-                and controlnet_states_down is not None
-            ):
+            if block_index > 0 and block_index <= self.blocks_num and controlnet_states_down is not None:
                 (
                     controlnet_states_left,
                     controlnet_states_down,
@@ -312,9 +289,7 @@ class PixArtSigmaControlNetTransformerModel(ModelMixin, ConfigMixin, PeftAdapter
         ).chunk(2, dim=1)
         hidden_states = self.transformer.norm_out(hidden_states)
         # Modulation
-        hidden_states = hidden_states * (1 + scale.to(hidden_states.device)) + shift.to(
-            hidden_states.device
-        )
+        hidden_states = hidden_states * (1 + scale.to(hidden_states.device)) + shift.to(hidden_states.device)
         hidden_states = self.transformer.proj_out(hidden_states)
         hidden_states = hidden_states.squeeze(1)
 

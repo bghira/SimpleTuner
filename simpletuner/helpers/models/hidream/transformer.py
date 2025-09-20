@@ -13,6 +13,7 @@ from diffusers.utils.torch_utils import maybe_allow_in_graph
 from einops import repeat
 
 from simpletuner.helpers.training.tread import TREADRouter
+from simpletuner.helpers.utils.patching import MutableModuleList, PatchableModule
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -86,7 +87,8 @@ class EmbedND(nn.Module):
             [rope(ids[..., i], self.axes_dim[i], self.theta) for i in range(n_axes)],
             dim=-3,
         )
-        return emb.unsqueeze(2)
+        emb = emb.unsqueeze(2).flatten(-2)
+        return emb
 
 
 class PatchEmbed(nn.Module):
@@ -203,6 +205,11 @@ except:
 
 # Copied from https://github.com/black-forest-labs/flux/blob/main/src/flux/math.py
 def apply_rope(xq: torch.Tensor, xk: torch.Tensor, freqs_cis: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    if freqs_cis.ndim >= 3 and freqs_cis.shape[2] == 1:
+        freqs_cis = freqs_cis.squeeze(2)
+    if freqs_cis.shape[-1] == 4:
+        freqs_cis = freqs_cis.view(*freqs_cis.shape[:-1], 2, 2)
+
     xq_ = xq.float().reshape(*xq.shape[:-1], -1, 1, 2)
     xk_ = xk.float().reshape(*xk.shape[:-1], -1, 1, 2)
     xq_out = freqs_cis[..., 0] * xq_[..., 0] + freqs_cis[..., 1] * xq_[..., 1]
@@ -341,7 +348,11 @@ class HiDreamAttnProcessor_flashattn:
             key = key_i
             value = value_i
 
-        if query.shape[-1] == rope.shape[-3] * 2:
+        rope_dim = rope.shape[-3]
+        if rope_dim == 1 and rope.ndim >= 4:
+            rope_dim = rope.shape[-2]
+
+        if query.shape[-1] == rope_dim * 2:
             query, key = apply_rope(query, key, rope)
         else:
             query_1, query_2 = query.chunk(2, dim=-1)
@@ -517,7 +528,7 @@ class MOEFeedForward(nn.Module):
     ):
         super().__init__()
         self.shared_experts = FeedForward(dim, hidden_dim // 2)
-        self.experts = nn.ModuleList([FeedForward(dim, hidden_dim) for i in range(num_routed_experts)])
+        self.experts = MutableModuleList([FeedForward(dim, hidden_dim) for i in range(num_routed_experts)])
         self.gate = MoEGate(
             embed_dim=dim,
             num_routed_experts=num_routed_experts,
@@ -591,7 +602,7 @@ class BlockType:
 
 
 @maybe_allow_in_graph
-class HiDreamImageSingleTransformerBlock(nn.Module):
+class HiDreamImageSingleTransformerBlock(PatchableModule):
     def __init__(
         self,
         dim: int,
@@ -639,9 +650,17 @@ class HiDreamImageSingleTransformerBlock(nn.Module):
         rope: torch.FloatTensor = None,
     ) -> torch.FloatTensor:
         wtype = image_tokens.dtype
-        shift_msa_i, scale_msa_i, gate_msa_i, shift_mlp_i, scale_mlp_i, gate_mlp_i = self.adaLN_modulation(adaln_input)[
-            :, None
-        ].chunk(6, dim=-1)
+        ada_values = self.adaLN_modulation(adaln_input)
+        if ada_values.ndim > 2:
+            ada_values = ada_values.reshape(ada_values.shape[0], -1)
+        ada_values = ada_values.view(ada_values.shape[0], 6, -1)
+        shift_msa_i, scale_msa_i, gate_msa_i, shift_mlp_i, scale_mlp_i, gate_mlp_i = ada_values.unbind(dim=1)
+        shift_msa_i = shift_msa_i.unsqueeze(1)
+        scale_msa_i = scale_msa_i.unsqueeze(1)
+        gate_msa_i = gate_msa_i.unsqueeze(1)
+        shift_mlp_i = shift_mlp_i.unsqueeze(1)
+        scale_mlp_i = scale_mlp_i.unsqueeze(1)
+        gate_mlp_i = gate_mlp_i.unsqueeze(1)
 
         # 1. MM-Attention
         norm_image_tokens = self.norm1_i(image_tokens).to(dtype=wtype)
@@ -662,7 +681,7 @@ class HiDreamImageSingleTransformerBlock(nn.Module):
 
 
 @maybe_allow_in_graph
-class HiDreamImageTransformerBlock(nn.Module):
+class HiDreamImageTransformerBlock(PatchableModule):
     def __init__(
         self,
         dim: int,
@@ -713,6 +732,10 @@ class HiDreamImageTransformerBlock(nn.Module):
         rope: torch.FloatTensor = None,
     ) -> torch.FloatTensor:
         wtype = image_tokens.dtype
+        ada_values = self.adaLN_modulation(adaln_input)
+        if ada_values.ndim > 2:
+            ada_values = ada_values.reshape(ada_values.shape[0], -1)
+        ada_values = ada_values.view(ada_values.shape[0], 12, -1)
         (
             shift_msa_i,
             scale_msa_i,
@@ -726,7 +749,19 @@ class HiDreamImageTransformerBlock(nn.Module):
             shift_mlp_t,
             scale_mlp_t,
             gate_mlp_t,
-        ) = self.adaLN_modulation(adaln_input)[:, None].chunk(12, dim=-1)
+        ) = ada_values.unbind(dim=1)
+        shift_msa_i = shift_msa_i.unsqueeze(1)
+        scale_msa_i = scale_msa_i.unsqueeze(1)
+        gate_msa_i = gate_msa_i.unsqueeze(1)
+        shift_mlp_i = shift_mlp_i.unsqueeze(1)
+        scale_mlp_i = scale_mlp_i.unsqueeze(1)
+        gate_mlp_i = gate_mlp_i.unsqueeze(1)
+        shift_msa_t = shift_msa_t.unsqueeze(1)
+        scale_msa_t = scale_msa_t.unsqueeze(1)
+        gate_msa_t = gate_msa_t.unsqueeze(1)
+        shift_mlp_t = shift_mlp_t.unsqueeze(1)
+        scale_mlp_t = scale_mlp_t.unsqueeze(1)
+        gate_mlp_t = gate_mlp_t.unsqueeze(1)
 
         # 1. MM-Attention
         norm_image_tokens = self.norm1_i(image_tokens).to(dtype=wtype)
@@ -758,7 +793,7 @@ class HiDreamImageTransformerBlock(nn.Module):
 
 
 @maybe_allow_in_graph
-class HiDreamImageBlock(nn.Module):
+class HiDreamImageBlock(PatchableModule):
     def __init__(
         self,
         dim: int,
@@ -800,7 +835,7 @@ class HiDreamImageBlock(nn.Module):
         )
 
 
-class HiDreamImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
+class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
     _supports_gradient_checkpointing = True
     _no_split_modules = ["HiDreamImageBlock"]
 
@@ -837,7 +872,7 @@ class HiDreamImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, 
         )
         self.pe_embedder = EmbedND(theta=10000, axes_dim=axes_dims_rope)
 
-        self.double_stream_blocks = nn.ModuleList(
+        self.double_stream_blocks = MutableModuleList(
             [
                 HiDreamImageBlock(
                     dim=self.inner_dim,
@@ -852,7 +887,7 @@ class HiDreamImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, 
             ]
         )
 
-        self.single_stream_blocks = nn.ModuleList(
+        self.single_stream_blocks = MutableModuleList(
             [
                 HiDreamImageBlock(
                     dim=self.inner_dim,
@@ -874,7 +909,7 @@ class HiDreamImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, 
         caption_projection = []
         for caption_channel in caption_channels:
             caption_projection.append(TextProjection(in_features=caption_channel, hidden_size=self.inner_dim))
-        self.caption_projection = nn.ModuleList(caption_projection)
+        self.caption_projection = MutableModuleList(caption_projection)
         self.max_seq = max_resolution[0] * max_resolution[1] // (patch_size * patch_size)
 
         self.gradient_checkpointing = False
@@ -926,12 +961,16 @@ class HiDreamImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, 
         if not torch.is_tensor(timesteps):
             is_mps = device.type == "mps"
             if isinstance(timesteps, float):
-                dtype = torch.float32 if is_mps else torch.float64
+                dtype = torch.float32
             else:
                 dtype = torch.int32 if is_mps else torch.int64
             timesteps = torch.tensor([timesteps], dtype=dtype, device=device)
-        elif len(timesteps.shape) == 0:
-            timesteps = timesteps[None].to(device)
+        else:
+            timesteps = timesteps.to(device)
+            if timesteps.dtype in (torch.float64, torch.float32, torch.float16, torch.bfloat16):
+                timesteps = timesteps.to(torch.float32)
+        if timesteps.ndim == 0:
+            timesteps = timesteps[None]
         # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
         timesteps = timesteps.expand(batch_size)
         return timesteps
@@ -1583,4 +1622,4 @@ class HiDreamImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, 
         # 10. Return results
         if not return_dict:
             return (output, image_tokens_masks)
-        return Transformer2DModelOutput(sample=output, mask=image_tokens_masks)
+        return Transformer2DModelOutput(sample=output)

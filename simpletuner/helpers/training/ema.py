@@ -1,12 +1,14 @@
-import torch
+import contextlib
 import copy
 import logging
 import os
-import contextlib
-import transformers
 from typing import Any, Dict, Iterable, Optional, Union
-from diffusers.utils.deprecation_utils import deprecate
+
+import torch
+import transformers
 from diffusers.utils import is_transformers_available
+from diffusers.utils.deprecation_utils import deprecate
+
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("EMAModel")
@@ -88,9 +90,7 @@ class EMAModel:
             use_ema_warmup = True
 
         if kwargs.get("max_value", None) is not None:
-            deprecation_message = (
-                "The `max_value` argument is deprecated. Please use `decay` instead."
-            )
+            deprecation_message = "The `max_value` argument is deprecated. Please use `decay` instead."
             deprecate("max_value", "1.0.0", deprecation_message, standard_warn=False)
             decay = kwargs["max_value"]
 
@@ -103,9 +103,7 @@ class EMAModel:
         self.shadow_params = [p.clone().detach() for p in parameters]
 
         if kwargs.get("device", None) is not None:
-            deprecation_message = (
-                "The `device` argument is deprecated. Please use `to` instead."
-            )
+            deprecation_message = "The `device` argument is deprecated. Please use `to` instead."
             deprecate("device", "1.0.0", deprecation_message, standard_warn=False)
             self.to(device=kwargs["device"])
 
@@ -154,12 +152,8 @@ class EMAModel:
         # Load metadata
         self.decay = state_dict.get("decay", self.decay)
         self.min_decay = state_dict.get("min_decay", self.min_decay)
-        self.optimization_step = state_dict.get(
-            "optimization_step", self.optimization_step
-        )
-        self.update_after_step = state_dict.get(
-            "update_after_step", self.update_after_step
-        )
+        self.optimization_step = state_dict.get("optimization_step", self.optimization_step)
+        self.update_after_step = state_dict.get("update_after_step", self.update_after_step)
         self.use_ema_warmup = state_dict.get("use_ema_warmup", self.use_ema_warmup)
         self.inv_gamma = state_dict.get("inv_gamma", self.inv_gamma)
         self.power = state_dict.get("power", self.power)
@@ -187,23 +181,17 @@ class EMAModel:
         _, ema_kwargs = model_cls.load_config(path, return_unused_kwargs=True)
         model = model_cls.from_pretrained(path)
 
-        ema_model = cls(
-            model.parameters(), model_cls=model_cls, model_config=model.config
-        )
+        ema_model = cls(model.parameters(), model_cls=model_cls, model_config=model.config)
 
         ema_model.load_state_dict(ema_kwargs)
         return ema_model
 
     def save_pretrained(self, path, max_shard_size: str = "10GB"):
         if self.model_cls is None:
-            raise ValueError(
-                "`save_pretrained` can only be used if `model_cls` was defined at __init__."
-            )
+            raise ValueError("`save_pretrained` can only be used if `model_cls` was defined at __init__.")
 
         if self.model_config is None:
-            raise ValueError(
-                "`save_pretrained` can only be used if `model_config` was defined at __init__."
-            )
+            raise ValueError("`save_pretrained` can only be used if `model_config` was defined at __init__.")
 
         model = self.model_cls.from_config(self.model_config)
         state_dict = self.state_dict(exclude_params=True)
@@ -270,36 +258,20 @@ class EMAModel:
         one_minus_decay = 1 - decay
 
         context_manager = contextlib.nullcontext
-        if (
-            is_transformers_available()
-            and transformers.integrations.deepspeed.is_deepspeed_zero3_enabled()
-        ):
+        if is_transformers_available() and transformers.integrations.deepspeed.is_deepspeed_zero3_enabled():
             import deepspeed
 
         if self.foreach:
-            if (
-                is_transformers_available()
-                and transformers.integrations.deepspeed.is_deepspeed_zero3_enabled()
-            ):
-                context_manager = deepspeed.zero.GatheredParameters(
-                    parameters, modifier_rank=None
-                )
+            if is_transformers_available() and transformers.integrations.deepspeed.is_deepspeed_zero3_enabled():
+                context_manager = deepspeed.zero.GatheredParameters(parameters, modifier_rank=None)
 
             with context_manager():
                 params_grad = [param for param in parameters if param.requires_grad]
-                s_params_grad = [
-                    s_param
-                    for s_param, param in zip(self.shadow_params, parameters)
-                    if param.requires_grad
-                ]
+                s_params_grad = [s_param for s_param, param in zip(self.shadow_params, parameters) if param.requires_grad]
 
                 if len(params_grad) < len(parameters):
                     torch._foreach_copy_(
-                        [
-                            s_param
-                            for s_param, param in zip(self.shadow_params, parameters)
-                            if not param.requires_grad
-                        ],
+                        [s_param for s_param, param in zip(self.shadow_params, parameters) if not param.requires_grad],
                         [param for param in parameters if not param.requires_grad],
                         non_blocking=True,
                     )
@@ -312,19 +284,12 @@ class EMAModel:
 
         else:
             for s_param, param in zip(self.shadow_params, parameters):
-                if (
-                    is_transformers_available()
-                    and transformers.integrations.deepspeed.is_deepspeed_zero3_enabled()
-                ):
-                    context_manager = deepspeed.zero.GatheredParameters(
-                        param, modifier_rank=None
-                    )
+                if is_transformers_available() and transformers.integrations.deepspeed.is_deepspeed_zero3_enabled():
+                    context_manager = deepspeed.zero.GatheredParameters(param, modifier_rank=None)
 
                 with context_manager():
                     if param.requires_grad:
-                        s_param.sub_(
-                            one_minus_decay * (s_param - param.to(s_param.device))
-                        )
+                        s_param.sub_(one_minus_decay * (s_param - param.to(s_param.device)))
                     else:
                         s_param.copy_(param)
         if self.args.ema_device == "cpu" and not self.args.ema_cpu_only:
@@ -344,10 +309,7 @@ class EMAModel:
         if self.foreach:
             torch._foreach_copy_(
                 [param.data for param in parameters],
-                [
-                    s_param.to(param.device).data
-                    for s_param, param in zip(self.shadow_params, parameters)
-                ],
+                [s_param.to(param.device).data for s_param, param in zip(self.shadow_params, parameters)],
             )
         else:
             for s_param, param in zip(self.shadow_params, parameters):
@@ -379,9 +341,7 @@ class EMAModel:
     def cpu(self):
         return self.to(device="cpu")
 
-    def state_dict(
-        self, destination=None, prefix="", keep_vars=False, exclude_params: bool = False
-    ):
+    def state_dict(self, destination=None, prefix="", keep_vars=False, exclude_params: bool = False):
         r"""
         Returns a dictionary containing a whole state of the EMA model.
         """
@@ -397,9 +357,7 @@ class EMAModel:
         if exclude_params:
             return state_dict
         for idx, param in enumerate(self.shadow_params):
-            state_dict[f"{prefix}shadow_params.{idx}"] = (
-                param if keep_vars else param.detach()
-            )
+            state_dict[f"{prefix}shadow_params.{idx}"] = param if keep_vars else param.detach()
         return state_dict
 
     def store(self, parameters: Iterable[torch.nn.Parameter]) -> None:
@@ -413,10 +371,7 @@ class EMAModel:
         Restore the parameters stored with the `store` method.
         """
         if self.temp_stored_params is None:
-            raise RuntimeError(
-                "This ExponentialMovingAverage has no `store()`ed weights "
-                "to `restore()`"
-            )
+            raise RuntimeError("This ExponentialMovingAverage has no `store()`ed weights " "to `restore()`")
         if self.foreach:
             torch._foreach_copy_(
                 [param.data for param in parameters],

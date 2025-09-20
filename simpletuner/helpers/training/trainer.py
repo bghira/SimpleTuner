@@ -1,51 +1,46 @@
-import logging, os
-import huggingface_hub
-from simpletuner.helpers.training.default_settings.safety_check import safety_check
-from simpletuner.helpers.publishing.huggingface import HubManager
-from typing import Optional
-import shutil
+import copy
+import glob
 import hashlib
 import json
-import copy
-import random
+import logging
 import math
+import os
+import random
+import shutil
 import sys
-import glob
-import wandb
+from typing import Dict, Optional
 
+import huggingface_hub
+import wandb
+from accelerate.logging import get_logger
 
 from simpletuner.helpers import log_format  # noqa
-from simpletuner.helpers.configuration.loader import load_config
 from simpletuner.helpers.caching.memory import reclaim_memory
-from simpletuner.helpers.training.multi_process import _get_rank as get_rank
-from simpletuner.helpers.training.validation import Validation, prepare_validation_prompt_list
-from simpletuner.helpers.training.evaluation import ModelEvaluator
-from simpletuner.helpers.training.state_tracker import StateTracker
-from simpletuner.helpers.training.custom_schedule import get_lr_scheduler
-from simpletuner.helpers.training.optimizer_param import (
-    determine_optimizer_class_with_config,
-    create_optimizer_with_param_groups,
-    determine_params_to_optimize,
-    is_lr_scheduler_disabled,
-    is_lr_schedulefree,
-    cpu_offload_optimizer,
-)
-from simpletuner.helpers.data_backend.factory import BatchFetcher
-from simpletuner.helpers.training.deepspeed import (
-    prepare_model_for_deepspeed,
-)
-from simpletuner.helpers.training.wrappers import unwrap_model
-from simpletuner.helpers.data_backend.factory import configure_multi_databackend
-from simpletuner.helpers.data_backend.factory import random_dataloader_iterator
-from simpletuner.helpers.training import trainable_parameter_count
-from simpletuner.helpers.training.min_snr_gamma import compute_snr
-from simpletuner.helpers.training.peft_init import init_lokr_network_with_perturbed_normal
-from accelerate.logging import get_logger
+from simpletuner.helpers.configuration.loader import load_config
+from simpletuner.helpers.data_backend.factory import BatchFetcher, configure_multi_databackend, random_dataloader_iterator
 from simpletuner.helpers.models.all import model_families
-
-logger = get_logger(
-    "SimpleTuner", log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
+from simpletuner.helpers.publishing.huggingface import HubManager
+from simpletuner.helpers.training import trainable_parameter_count
+from simpletuner.helpers.training.custom_schedule import get_lr_scheduler
+from simpletuner.helpers.training.deepspeed import prepare_model_for_deepspeed
+from simpletuner.helpers.training.default_settings.safety_check import safety_check
+from simpletuner.helpers.training.evaluation import ModelEvaluator
+from simpletuner.helpers.training.min_snr_gamma import compute_snr
+from simpletuner.helpers.training.multi_process import _get_rank as get_rank
+from simpletuner.helpers.training.optimizer_param import (
+    cpu_offload_optimizer,
+    create_optimizer_with_param_groups,
+    determine_optimizer_class_with_config,
+    determine_params_to_optimize,
+    is_lr_schedulefree,
+    is_lr_scheduler_disabled,
 )
+from simpletuner.helpers.training.peft_init import init_lokr_network_with_perturbed_normal
+from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.training.validation import Validation, prepare_validation_prompt_list
+from simpletuner.helpers.training.wrappers import unwrap_model
+
+logger = get_logger("SimpleTuner", log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 filelock_logger = get_logger("filelock")
 connection_logger = get_logger("urllib3.connectionpool")
@@ -60,15 +55,16 @@ training_logger.setLevel(training_logger_level)
 # Less important logs.
 filelock_logger.setLevel("WARNING")
 connection_logger.setLevel("WARNING")
-import torch
-import diffusers
 import accelerate
-import transformers
+import diffusers
+import torch
 import torch.nn.functional as F
+import transformers
 from accelerate import Accelerator
 from accelerate.utils import set_seed
-from simpletuner.configure import model_classes
 from torch.distributions import Beta
+
+from simpletuner.configure import model_classes
 
 try:
     from lycoris import LycorisNetwork
@@ -79,25 +75,21 @@ try:
     from peft_singlora import update_singlora_global_step
 except:
     pass
-from tqdm.auto import tqdm
-
 from diffusers import (
     ControlNetModel,
     DDIMScheduler,
     DDPMScheduler,
-    EulerDiscreteScheduler,
     EulerAncestralDiscreteScheduler,
+    EulerDiscreteScheduler,
     UniPCMultistepScheduler,
 )
-
-from peft.utils import get_peft_model_state_dict
-from simpletuner.helpers.training.ema import EMAModel
-from diffusers.utils import (
-    check_min_version,
-    convert_state_dict_to_diffusers,
-)
+from diffusers.utils import check_min_version, convert_state_dict_to_diffusers
 from diffusers.utils.import_utils import is_xformers_available
-from simpletuner.helpers.models.common import VideoModelFoundation, ImageModelFoundation
+from peft.utils import get_peft_model_state_dict
+from tqdm.auto import tqdm
+
+from simpletuner.helpers.models.common import ImageModelFoundation, VideoModelFoundation
+from simpletuner.helpers.training.ema import EMAModel
 
 is_optimi_available = False
 try:
@@ -145,13 +137,8 @@ class Trainer:
             disable_accelerator=disable_accelerator,
             exit_on_error=exit_on_error,
         )
-        if (
-            getattr(self, "config", None) is not None
-            and self.config.model_family in model_families
-        ):
-            self.model = model_families[self.config.model_family](
-                self.config, self.accelerator
-            )
+        if getattr(self, "config", None) is not None and self.config.model_family in model_families:
+            self.model = model_families[self.config.model_family](self.config, self.accelerator)
             self.model.check_user_config()
             StateTracker.set_model(self.model)
         self._misc_init()
@@ -170,13 +157,25 @@ class Trainer:
             return None
         return type("Config", (object,), config)
 
-    def parse_arguments(
-        self, args=None, disable_accelerator: bool = False, exit_on_error: bool = False
+    def _update_grad_metrics(
+        self, target_logs: Dict[str, float], *, require_value_method: bool = False, clone_norm_value: bool = False
     ):
+        if self.grad_norm is None:
+            return
+
+        if self.config.grad_clip_method == "norm":
+            grad_value = self.grad_norm
+            if clone_norm_value:
+                grad_value = float(self.grad_norm.clone().detach())
+            target_logs["grad_norm"] = grad_value
+        elif (
+            not require_value_method or self.config.grad_clip_method == "value"
+        ) and not self.config.use_deepspeed_optimizer:
+            target_logs["grad_absmax"] = self.grad_norm
+
+    def parse_arguments(self, args=None, disable_accelerator: bool = False, exit_on_error: bool = False):
         self.config = load_config(args, exit_on_error=exit_on_error)
-        report_to = (
-            None if self.config.report_to.lower() == "none" else self.config.report_to
-        )
+        report_to = None if self.config.report_to.lower() == "none" else self.config.report_to
         if not disable_accelerator:
             accelerator_custom_config = [self.config.process_group_kwargs]
             if self.config.mixed_precision == "fp8":
@@ -186,7 +185,12 @@ class Trainer:
 
                 accelerator_custom_config.append(AORecipeKwargs())
 
-            self.accelerator = Accelerator(
+            should_override_bf16 = self._should_force_bf16_override()
+            if should_override_bf16:
+                logging.getLogger("SimpleTuner").info("Applying Accelerate bf16 capability override for this platform.")
+                self._enable_bf16_override()
+
+            accelerator_kwargs = dict(
                 gradient_accumulation_steps=self.config.gradient_accumulation_steps,
                 mixed_precision=self.config.mixed_precision,
                 log_with=report_to,
@@ -194,6 +198,18 @@ class Trainer:
                 kwargs_handlers=accelerator_custom_config,
                 dynamo_backend=os.environ.get("TRAINING_DYNAMO_BACKEND", "no"),
             )
+
+            try:
+                self.accelerator = Accelerator(**accelerator_kwargs)
+            except ValueError as err:
+                if not should_override_bf16 and self._should_force_bf16_override(err):
+                    logging.getLogger("SimpleTuner").warning(
+                        "Retrying Accelerator initialisation with bf16 capability override."
+                    )
+                    self._enable_bf16_override()
+                    self.accelerator = Accelerator(**accelerator_kwargs)
+                else:
+                    raise
         safety_check(args=self.config, accelerator=self.accelerator)
 
         if self.config.lr_scale:
@@ -202,9 +218,7 @@ class Trainer:
             lr_scale_ga = self.config.gradient_accumulation_steps
             lr_scale_np = getattr(self.accelerator, "num_processes", 1)
             lr_scale_mul = lr_scale_ga * lr_scale_bsz * lr_scale_np
-            lr_new = lr_cur * (
-                math.sqrt(lr_scale_mul) if self.config.lr_scale_sqrt else lr_scale_mul
-            )
+            lr_new = lr_cur * (math.sqrt(lr_scale_mul) if self.config.lr_scale_sqrt else lr_scale_mul)
             logger.info(
                 f"Scaling learning rate from {lr_cur:.1e} to {lr_new:.1e}"
                 f" due to {'--lr-scale and --lr-scale-sqrt' if self.config.lr_scale_sqrt else '--lr-scale'}"
@@ -216,6 +230,32 @@ class Trainer:
         StateTracker.set_args(self.config)
         StateTracker.set_weight_dtype(self.config.weight_dtype)
         self.set_model_family()
+
+    def _should_force_bf16_override(self, error: Exception | None = None) -> bool:
+        if self.config.mixed_precision != "bf16":
+            return False
+
+        if torch.backends.mps.is_available():
+            return True
+
+        if error is None:
+            return False
+
+        return "bf16 mixed precision requires" in str(error).lower()
+
+    @staticmethod
+    def _enable_bf16_override() -> None:
+        def _always_true(*_args, **_kwargs):
+            return True
+
+        try:
+            import accelerate.accelerator as accelerate_accelerator
+            import accelerate.utils as accelerate_utils
+
+            accelerate_utils.is_bf16_available = _always_true
+            accelerate_accelerator.is_bf16_available = _always_true
+        except ImportError:
+            logger.warning("Failed to patch Accelerate bf16 guard; proceeding without override.")
 
     def run(self):
         try:
@@ -264,9 +304,7 @@ class Trainer:
         except Exception as e:
             import traceback
 
-            logger.error(
-                f"Failed to run training: {e}, traceback: {traceback.format_exc()}"
-            )
+            logger.error(f"Failed to run training: {e}, traceback: {traceback.format_exc()}")
             self._send_webhook_msg(
                 message=f"Failed to run training: {e}",
             )
@@ -301,11 +339,7 @@ class Trainer:
             return
         from simpletuner.helpers.models.common import PredictionTypes
 
-        self.config.flow_matching = (
-            True
-            if self.model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING
-            else False
-        )
+        self.config.flow_matching = True if self.model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING else False
         self.noise_scheduler = self._get_noise_schedule()
         self.lr = 0.0
 
@@ -319,9 +353,7 @@ class Trainer:
             self.config.webhook_config,
             self.accelerator,
             f"{self.config.tracker_project_name} {self.config.tracker_run_name}",
-            send_video=(
-                True if isinstance(self.model, VideoModelFoundation) else False
-            ),
+            send_video=(True if isinstance(self.model, VideoModelFoundation) else False),
             args=self.config,
         )
         StateTracker.set_webhook_handler(self.webhook_handler)
@@ -331,9 +363,7 @@ class Trainer:
                 store_response=True,
             )
         self._send_webhook_raw(
-            structured_data={
-                "message": "Training job has started, configuration has begun."
-            },
+            structured_data={"message": "Training job has started, configuration has begun."},
             message_type="configure_webhook",
         )
 
@@ -357,8 +387,8 @@ class Trainer:
         self.grad_norm = None
         self.extra_lr_scheduler_kwargs = {}
         StateTracker.set_global_step(self.state["global_step"])
-        self.config.use_deepspeed_optimizer, self.config.use_deepspeed_scheduler = (
-            prepare_model_for_deepspeed(self.accelerator, self.config)
+        self.config.use_deepspeed_optimizer, self.config.use_deepspeed_scheduler = prepare_model_for_deepspeed(
+            self.accelerator, self.config
         )
         self.config.base_weight_dtype = self.config.weight_dtype
         self.config.is_quanto = False
@@ -372,9 +402,9 @@ class Trainer:
             self.config.is_bnb = True
         # if text_encoder_1_precision -> text_encoder_4_precision has quanto we'll mark that as well
         for i in range(1, 5):
-            if isinstance(
-                getattr(self.config, f"text_encoder_{i}_precision", None), str
-            ) and getattr(self.config, f"text_encoder_{i}_precision", None):
+            if isinstance(getattr(self.config, f"text_encoder_{i}_precision", None), str) and getattr(
+                self.config, f"text_encoder_{i}_precision", None
+            ):
                 if "quanto" in getattr(self.config, f"text_encoder_{i}_precision"):
                     if self.config.is_torchao:
                         raise ValueError(
@@ -414,9 +444,7 @@ class Trainer:
             return
         if not self.accelerator.is_local_main_process:
             return
-        StateTracker.delete_cache_files(
-            preserve_data_backend_cache=self.config.preserve_data_backend_cache
-        )
+        StateTracker.delete_cache_files(preserve_data_backend_cache=self.config.preserve_data_backend_cache)
 
     def init_seed(self):
         if self.config.seed is not None and self.config.seed != 0:
@@ -433,9 +461,7 @@ class Trainer:
         if self.config.push_to_hub:
             try:
                 StateTracker.set_hf_user(huggingface_hub.whoami())
-                logger.info(
-                    f"Logged into Hugging Face Hub as '{StateTracker.get_hf_username()}'"
-                )
+                logger.info(f"Logged into Hugging Face Hub as '{StateTracker.get_hf_username()}'")
             except Exception as e:
                 logger.error(f"Failed to log into Hugging Face Hub: {e}")
                 raise e
@@ -479,9 +505,7 @@ class Trainer:
     def init_data_backend(self):
         try:
             self.init_clear_backend_cache()
-            self._send_webhook_msg(
-                message="Configuring data backends... (this may take a while!)"
-            )
+            self._send_webhook_msg(message="Configuring data backends... (this may take a while!)")
             self._send_webhook_raw(
                 structured_data={"message": "Configuring data backends."},
                 message_type="init_data_backend_begin",
@@ -528,24 +552,14 @@ class Trainer:
         collected_data_backend_keys = list(StateTracker.get_data_backends().keys())
         if self.hub_manager is not None and self.accelerator.is_main_process:
             self.hub_manager.collected_data_backend_str = collected_data_backend_keys
-            validation_prompt_metadata = (
-                self.validation_prompt_metadata
-                if self.validation_prompt_metadata
-                else {}
-            )
+            validation_prompt_metadata = self.validation_prompt_metadata if self.validation_prompt_metadata else {}
             self.hub_manager.set_validation_prompts(validation_prompt_metadata)
             logger.debug(f"Collected validation prompts: {validation_prompt_metadata}")
         self._recalculate_training_steps()
-        logger.info(
-            f"Collected the following data backends: {collected_data_backend_keys}"
-        )
-        self._send_webhook_msg(
-            message=f"Collected the following data backends: {collected_data_backend_keys}"
-        )
+        logger.info(f"Collected the following data backends: {collected_data_backend_keys}")
+        self._send_webhook_msg(message=f"Collected the following data backends: {collected_data_backend_keys}")
         self._send_webhook_raw(
-            structured_data={
-                "message": f"Collected the following data backends: {collected_data_backend_keys}"
-            },
+            structured_data={"message": f"Collected the following data backends: {collected_data_backend_keys}"},
             message_type="init_data_backend",
         )
         self.accelerator.wait_for_everyone()
@@ -559,9 +573,7 @@ class Trainer:
             .get("stage")
             == 3
         ):
-            logger.warning(
-                "Cannot run validations with DeepSpeed ZeRO stage 3. Disabling validation."
-            )
+            logger.warning("Cannot run validations with DeepSpeed ZeRO stage 3. Disabling validation.")
             self.config.validation_disable = True
 
         if self.accelerator.is_main_process and not self.config.validation_disable:
@@ -584,9 +596,7 @@ class Trainer:
         elif torch.backends.mps.is_available():
             curent_memory_allocated = torch.mps.current_allocated_memory() / 1024**3
         else:
-            logger.warning(
-                "CUDA, ROCm, or Apple MPS not detected here. We cannot report VRAM reductions."
-            )
+            logger.warning("CUDA, ROCm, or Apple MPS not detected here. We cannot report VRAM reductions.")
             curent_memory_allocated = 0
 
         return curent_memory_allocated
@@ -605,19 +615,11 @@ class Trainer:
         reclaim_memory()
         memory_after_unload = self.stats_memory_used()
         memory_saved = memory_after_unload - memory_before_unload
-        logger.info(
-            f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
-        )
+        logger.info(f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM.")
 
-    def init_precision(
-        self, preprocessing_models_only: bool = False, ema_only: bool = False
-    ):
-        self.config.enable_adamw_bf16 = (
-            True if self.config.weight_dtype == torch.bfloat16 else False
-        )
-        quantization_device = (
-            "cpu" if self.config.quantize_via == "cpu" else self.accelerator.device
-        )
+    def init_precision(self, preprocessing_models_only: bool = False, ema_only: bool = False):
+        self.config.enable_adamw_bf16 = True if self.config.weight_dtype == torch.bfloat16 else False
+        quantization_device = "cpu" if self.config.quantize_via == "cpu" else self.accelerator.device
 
         if "bnb" in self.config.base_model_precision:
             # can't cast or move bitsandbytes models
@@ -636,16 +638,10 @@ class Trainer:
                 logger.info(
                     f"Moving {self.model.MODEL_TYPE.value} to dtype={self.config.base_weight_dtype}, device={quantization_device}"
                 )
-                self.model.model.to(
-                    quantization_device, dtype=self.config.base_weight_dtype
-                )
+                self.model.model.to(quantization_device, dtype=self.config.base_weight_dtype)
                 if self.config.controlnet:
-                    logger.info(
-                        f"Moving ControlNet to dtype={self.config.base_weight_dtype}, device={quantization_device}"
-                    )
-                    self.model.controlnet.to(
-                        quantization_device, dtype=self.config.base_weight_dtype
-                    )
+                    logger.info(f"Moving ControlNet to dtype={self.config.base_weight_dtype}, device={quantization_device}")
+                    self.model.controlnet.to(quantization_device, dtype=self.config.base_weight_dtype)
         if self.config.is_quanto:
             with self.accelerator.local_main_process_first():
                 if ema_only:
@@ -655,11 +651,7 @@ class Trainer:
                 if self.config.controlnet:
                     # we'll do the base model first
                     self.quantise_model(
-                        model=(
-                            self.model.unwrap_model(model=self.model.model)
-                            if not preprocessing_models_only
-                            else None
-                        ),
+                        model=(self.model.unwrap_model(model=self.model.model) if not preprocessing_models_only else None),
                         text_encoders=None,
                         controlnet=None,
                         ema=self.ema_model,
@@ -667,11 +659,7 @@ class Trainer:
                     )
 
                 self.quantise_model(
-                    model=(
-                        self.model.get_trained_component()
-                        if not preprocessing_models_only
-                        else None
-                    ),
+                    model=(self.model.get_trained_component() if not preprocessing_models_only else None),
                     text_encoders=self.model.text_encoders,
                     controlnet=None,
                     ema=None,
@@ -680,9 +668,7 @@ class Trainer:
         elif self.config.is_torchao:
             with self.accelerator.local_main_process_first():
                 if ema_only:
-                    self.ema_model = self.quantise_model(
-                        ema=self.ema_model, args=self.config, return_dict=True
-                    )["ema"]
+                    self.ema_model = self.quantise_model(ema=self.ema_model, args=self.config, return_dict=True)["ema"]
 
                     return
                 (
@@ -691,11 +677,7 @@ class Trainer:
                     self.controlnet,
                     self.ema_model,
                 ) = self.quantise_model(
-                    model=(
-                        self.model.get_trained_component(base_model=True)
-                        if not preprocessing_models_only
-                        else None
-                    ),
+                    model=(self.model.get_trained_component(base_model=True) if not preprocessing_models_only else None),
                     text_encoders=self.model.text_encoders,
                     controlnet=None,
                     ema=self.ema_model,
@@ -710,9 +692,7 @@ class Trainer:
                         _,
                     ) = self.quantise_model(
                         model=(
-                            self.model.get_trained_component(base_model=False)
-                            if not preprocessing_models_only
-                            else None
+                            self.model.get_trained_component(base_model=False) if not preprocessing_models_only else None
                         ),
                         args=self.config,
                     )
@@ -814,12 +794,8 @@ class Trainer:
             from simpletuner.helpers.training.model_freeze import apply_bitfit_freezing
 
             if self.model.get_trained_component() is not None:
-                logger.info(
-                    f"Applying BitFit freezing strategy to the {self.model.MODEL_TYPE.value}."
-                )
-                self.model.model = apply_bitfit_freezing(
-                    unwrap_model(self.accelerator, self.model.model), self.config
-                )
+                logger.info(f"Applying BitFit freezing strategy to the {self.model.MODEL_TYPE.value}.")
+                self.model.model = apply_bitfit_freezing(unwrap_model(self.accelerator, self.model.model), self.config)
         self.enable_gradient_checkpointing()
 
     def init_distillation(self):
@@ -850,9 +826,7 @@ class Trainer:
             )
 
             if self.distiller:
-                logger.info(
-                    f"Successfully initialized {self.config.distillation_method.upper()} distiller"
-                )
+                logger.info(f"Successfully initialized {self.config.distillation_method.upper()} distiller")
         except Exception as e:
             logger.error(f"Failed to initialize distillation: {e}")
             raise
@@ -860,58 +834,32 @@ class Trainer:
     def enable_gradient_checkpointing(self):
         if self.config.gradient_checkpointing:
             logger.debug("Enabling gradient checkpointing.")
-            if hasattr(
-                self.model.get_trained_component(), "enable_gradient_checkpointing"
-            ):
-                unwrap_model(
-                    self.accelerator, self.model.get_trained_component()
-                ).enable_gradient_checkpointing()
-            if (
-                hasattr(self.config, "train_text_encoder")
-                and self.config.train_text_encoder
-            ):
+            if hasattr(self.model.get_trained_component(), "enable_gradient_checkpointing"):
+                unwrap_model(self.accelerator, self.model.get_trained_component()).enable_gradient_checkpointing()
+            if hasattr(self.config, "train_text_encoder") and self.config.train_text_encoder:
                 for text_encoder in self.model.text_encoders:
                     if text_encoder is not None:
-                        unwrap_model(
-                            self.accelerator, text_encoder
-                        ).gradient_checkpointing_enable()
+                        unwrap_model(self.accelerator, text_encoder).gradient_checkpointing_enable()
 
     def disable_gradient_checkpointing(self):
         if self.config.gradient_checkpointing:
             logger.debug("Disabling gradient checkpointing.")
-            if hasattr(
-                self.model.get_trained_component(), "disable_gradient_checkpointing"
-            ):
+            if hasattr(self.model.get_trained_component(), "disable_gradient_checkpointing"):
                 unwrap_model(
                     self.accelerator, self.model.get_trained_component(base_model=True)
                 ).disable_gradient_checkpointing()
             if self.config.controlnet:
-                unwrap_model(
-                    self.accelerator, self.model.get_trained_component()
-                ).disable_gradient_checkpointing()
-            if (
-                hasattr(self.config, "train_text_encoder")
-                and self.config.train_text_encoder
-            ):
-                unwrap_model(
-                    self.accelerator, self.text_encoder_1
-                ).gradient_checkpointing_disable()
-                unwrap_model(
-                    self.accelerator, self.text_encoder_2
-                ).gradient_checkpointing_disable()
+                unwrap_model(self.accelerator, self.model.get_trained_component()).disable_gradient_checkpointing()
+            if hasattr(self.config, "train_text_encoder") and self.config.train_text_encoder:
+                unwrap_model(self.accelerator, self.text_encoder_1).gradient_checkpointing_disable()
+                unwrap_model(self.accelerator, self.text_encoder_2).gradient_checkpointing_disable()
 
     def _get_trainable_parameters(self):
         # Return just a list of the currently trainable parameters.
         if self.config.model_type == "lora":
             if self.config.lora_type == "lycoris":
                 return self.lycoris_wrapped_network.parameters()
-        return [
-            param
-            for param in self.model.get_trained_component(
-                unwrap_model=False
-            ).parameters()
-            if param.requires_grad
-        ]
+        return [param for param in self.model.get_trained_component(unwrap_model=False).parameters() if param.requires_grad]
 
     def _recalculate_training_steps(self):
         # Scheduler and math around the number of training steps.
@@ -919,9 +867,7 @@ class Trainer:
             self.config.overrode_max_train_steps = False
         self.config.total_num_batches = sum(
             [
-                len(
-                    backend["metadata_backend"] if "metadata_backend" in backend else []
-                )
+                len(backend["metadata_backend"] if "metadata_backend" in backend else [])
                 for _, backend in StateTracker.get_data_backends().items()
             ]
         )
@@ -929,28 +875,17 @@ class Trainer:
             self.config.total_num_batches / self.config.gradient_accumulation_steps
         )
         if getattr(self.config, "overrode_max_train_steps", False):
-            self.config.max_train_steps = (
-                self.config.num_train_epochs * self.config.num_update_steps_per_epoch
-            )
+            self.config.max_train_steps = self.config.num_train_epochs * self.config.num_update_steps_per_epoch
             # Afterwards we recalculate our number of training epochs
-            self.config.num_train_epochs = math.ceil(
-                self.config.max_train_steps / self.config.num_update_steps_per_epoch
-            )
+            self.config.num_train_epochs = math.ceil(self.config.max_train_steps / self.config.num_update_steps_per_epoch)
             logger.info(
                 "After removing any undesired samples and updating cache entries, we have settled on"
                 f" {self.config.num_train_epochs} epochs and {self.config.num_update_steps_per_epoch} steps per epoch."
             )
         if self.config.max_train_steps is None or self.config.max_train_steps == 0:
-            if (
-                self.config.num_train_epochs is None
-                or self.config.num_train_epochs == 0
-            ):
-                raise ValueError(
-                    "You must specify either --max_train_steps or --num_train_epochs with a value > 0"
-                )
-            self.config.max_train_steps = (
-                self.config.num_train_epochs * self.config.num_update_steps_per_epoch
-            )
+            if self.config.num_train_epochs is None or self.config.num_train_epochs == 0:
+                raise ValueError("You must specify either --max_train_steps or --num_train_epochs with a value > 0")
+            self.config.max_train_steps = self.config.num_train_epochs * self.config.num_update_steps_per_epoch
             logger.info(
                 f"Calculated our maximum training steps at {self.config.max_train_steps} because we have"
                 f" {self.config.num_train_epochs} epochs and {self.config.num_update_steps_per_epoch} steps per epoch."
@@ -958,40 +893,29 @@ class Trainer:
             self.config.overrode_max_train_steps = True
         elif self.config.num_train_epochs is None or self.config.num_train_epochs == 0:
             if self.config.max_train_steps is None or self.config.max_train_steps == 0:
-                raise ValueError(
-                    "You must specify either --max_train_steps or --num_train_epochs with a value > 0"
-                )
+                raise ValueError("You must specify either --max_train_steps or --num_train_epochs with a value > 0")
             self.config.num_train_epochs = math.ceil(
-                self.config.max_train_steps
-                / max(self.config.num_update_steps_per_epoch, 1)
+                self.config.max_train_steps / max(self.config.num_update_steps_per_epoch, 1)
             )
             logger.info(
                 f"Calculated our maximum training steps at {self.config.max_train_steps} because we have"
                 f" {self.config.num_train_epochs} epochs and {self.config.num_update_steps_per_epoch} steps per epoch."
             )
-        if self.lr_scheduler is not None and hasattr(
-            self.lr_scheduler, "num_update_steps_per_epoch"
-        ):
-            self.lr_scheduler.num_update_steps_per_epoch = (
-                self.config.num_update_steps_per_epoch
-            )
+        if self.lr_scheduler is not None and hasattr(self.lr_scheduler, "num_update_steps_per_epoch"):
+            self.lr_scheduler.num_update_steps_per_epoch = self.config.num_update_steps_per_epoch
         self.config.total_batch_size = (
-            self.config.train_batch_size
-            * self.accelerator.num_processes
-            * self.config.gradient_accumulation_steps
+            self.config.train_batch_size * self.accelerator.num_processes * self.config.gradient_accumulation_steps
         )
 
     def init_optimizer(self):
         logger.info(f"Learning rate: {self.config.learning_rate}")
         extra_optimizer_args = {"lr": self.config.learning_rate}
         # Initialize the optimizer
-        optimizer_args_from_config, optimizer_class = (
-            determine_optimizer_class_with_config(
-                args=self.config,
-                use_deepspeed_optimizer=self.config.use_deepspeed_optimizer,
-                is_quantized=self.config.is_quantized,
-                enable_adamw_bf16=self.config.enable_adamw_bf16,
-            )
+        optimizer_args_from_config, optimizer_class = determine_optimizer_class_with_config(
+            args=self.config,
+            use_deepspeed_optimizer=self.config.use_deepspeed_optimizer,
+            is_quantized=self.config.is_quantized,
+            enable_adamw_bf16=self.config.enable_adamw_bf16,
         )
         extra_optimizer_args.update(optimizer_args_from_config)
 
@@ -1001,9 +925,7 @@ class Trainer:
             model_type_label=self.config.model_type_label,
             lycoris_wrapped_network=self.lycoris_wrapped_network,
         )
-        logger.info(
-            f"Connecting optimizer to {trainable_parameter_count(self.params_to_optimize)} trainable parameters"
-        )
+        logger.info(f"Connecting optimizer to {trainable_parameter_count(self.params_to_optimize)} trainable parameters")
 
         if self.config.use_deepspeed_optimizer:
             logger.info(
@@ -1020,8 +942,7 @@ class Trainer:
                 use_parameter_groups=True,  # Enable weight decay separation
                 cpu_offload_config=(
                     {"offload_mechanism": self.config.optimizer_offload_mechanism}
-                    if hasattr(self.config, "optimizer_offload_mechanism")
-                    and self.config.optimizer_offload_mechanism
+                    if hasattr(self.config, "optimizer_offload_mechanism") and self.config.optimizer_offload_mechanism
                     else None
                 ),
             )
@@ -1043,23 +964,16 @@ class Trainer:
                 offload_mechanism=self.config.optimizer_cpu_offload_method,
             )
 
-        if (
-            is_optimi_available
-            and self.config.optimizer_release_gradients
-            and "optimi" in self.config.optimizer
-        ):
+        if is_optimi_available and self.config.optimizer_release_gradients and "optimi" in self.config.optimizer:
             logger.warning(
                 "Marking model for gradient release. This feature is experimental, and may use more VRAM or not work."
             )
-            prepare_for_gradient_release(
-                self.model.get_trained_component(), self.optimizer
-            )
+            prepare_for_gradient_release(self.model.get_trained_component(), self.optimizer)
 
     def init_lr_scheduler(self):
         self.config.is_schedulefree = is_lr_schedulefree(self.config.optimizer)
         self.config.is_lr_scheduler_disabled = (
-            is_lr_scheduler_disabled(self.config.optimizer)
-            or self.config.use_deepspeed_scheduler
+            is_lr_scheduler_disabled(self.config.optimizer) or self.config.use_deepspeed_scheduler
         )
         if self.config.is_schedulefree:
             logger.info("Using experimental ScheduleFree optimiser..")
@@ -1090,9 +1004,7 @@ class Trainer:
             use_deepspeed_scheduler=False,
         )
         if hasattr(lr_scheduler, "num_update_steps_per_epoch"):
-            lr_scheduler.num_update_steps_per_epoch = (
-                self.config.num_update_steps_per_epoch
-            )
+            lr_scheduler.num_update_steps_per_epoch = self.config.num_update_steps_per_epoch
         if hasattr(lr_scheduler, "last_step"):
             lr_scheduler.last_step = self.state.get("global_resume_step", 0)
 
@@ -1130,9 +1042,7 @@ class Trainer:
                 decay=self.config.ema_decay,
                 foreach=not self.config.ema_foreach_disable,
             )
-            logger.info(
-                f"EMA model creation completed with {self.ema_model.parameter_count():,} parameters"
-            )
+            logger.info(f"EMA model creation completed with {self.ema_model.parameter_count():,} parameters")
 
         self.accelerator.wait_for_everyone()
         # same about running on all processes to ensure alignment.
@@ -1166,9 +1076,7 @@ class Trainer:
             logger.error("For some reason, no dataloaders were configured.")
             sys.exit(0)
         if self.config.disable_accelerator:
-            logger.warning(
-                "Because SIMPLETUNER_DISABLE_ACCELERATOR is set, we will not prepare the accelerator."
-            )
+            logger.warning("Because SIMPLETUNER_DISABLE_ACCELERATOR is set, we will not prepare the accelerator.")
             return
         logger.info("Loading our accelerator...")
         if torch.backends.mps.is_available():
@@ -1179,9 +1087,7 @@ class Trainer:
             message_type="init_prepare_models_begin",
         )
         primary_model = self.model.get_trained_component(unwrap_model=False)
-        results = self.accelerator.prepare(
-            primary_model, lr_scheduler, self.optimizer, self.train_dataloaders[0]
-        )
+        results = self.accelerator.prepare(primary_model, lr_scheduler, self.optimizer, self.train_dataloaders[0])
         self.model.set_prepared_model(results[0])
 
         self.lr_scheduler = results[1]
@@ -1193,11 +1099,7 @@ class Trainer:
                 logger.info("Moving EMA model weights to accelerator...")
             print(f"EMA model: {self.ema_model}")
             self.ema_model.to(
-                (
-                    self.accelerator.device
-                    if self.config.ema_device == "accelerator"
-                    else "cpu"
-                ),
+                (self.accelerator.device if self.config.ema_device == "accelerator" else "cpu"),
                 dtype=self.config.weight_dtype,
             )
 
@@ -1216,18 +1118,14 @@ class Trainer:
         for _, backend in StateTracker.get_data_backends().items():
             if idx_count == 0 or "train_dataloader" not in backend:
                 continue
-            self.train_dataloaders.append(
-                self.accelerator.prepare(backend["train_dataloader"])
-            )
+            self.train_dataloaders.append(self.accelerator.prepare(backend["train_dataloader"]))
         idx_count = 0
 
         if "lora" in self.config.model_type and self.config.train_text_encoder:
             logger.info("Preparing text encoders for training.")
             if self.config.model_family == "sd3":
                 logger.info("NOTE: The third text encoder is not trained for SD3.")
-            self.text_encoder_1, self.text_encoder_2 = self.accelerator.prepare(
-                self.text_encoder_1, self.text_encoder_2
-            )
+            self.text_encoder_1, self.text_encoder_2 = self.accelerator.prepare(self.text_encoder_1, self.text_encoder_2)
         self._recalculate_training_steps()
         self.accelerator.wait_for_everyone()
         self._send_webhook_raw(
@@ -1246,9 +1144,7 @@ class Trainer:
         reclaim_memory()
         memory_after_unload = self.stats_memory_used()
         memory_saved = memory_after_unload - memory_before_unload
-        logger.info(
-            f"After nuking the VAE from orbit, we freed {abs(round(memory_saved, 2)) * 1024} MB of VRAM."
-        )
+        logger.info(f"After nuking the VAE from orbit, we freed {abs(round(memory_saved, 2)) * 1024} MB of VRAM.")
 
     def init_validations(self):
         if (
@@ -1259,17 +1155,12 @@ class Trainer:
             .get("stage")
             == 3
         ):
-            logger.warning(
-                "Cannot run validations with DeepSpeed ZeRO stage 3. Disabling validation."
-            )
+            logger.warning("Cannot run validations with DeepSpeed ZeRO stage 3. Disabling validation.")
             self.config.validation_disable = True
         self.evaluation = None
         if self.config.validation_disable:
             return
-        if (
-            self.config.eval_steps_interval is not None
-            and self.config.eval_steps_interval > 0
-        ):
+        if self.config.eval_steps_interval is not None and self.config.eval_steps_interval > 0:
             from simpletuner.helpers.training.validation import Evaluation
 
             self.evaluation = Evaluation(accelerator=self.accelerator)
@@ -1294,19 +1185,13 @@ class Trainer:
         self.accelerator.wait_for_everyone()
 
     def init_benchmark_base_model(self):
-        if (
-            self.config.disable_benchmark
-            or self.validation is None
-            or self.validation.benchmark_exists("base_model")
-        ):
+        if self.config.disable_benchmark or self.validation is None or self.validation.benchmark_exists("base_model"):
             # if we've disabled it or the benchmark exists, we will not do it again.
             # deepspeed zero3 can't do validations at all.
             return
         if not self.accelerator.is_main_process:
             return
-        logger.info(
-            "Benchmarking base model for comparison. Supply `--disable_benchmark: true` to disable this behaviour."
-        )
+        logger.info("Benchmarking base model for comparison. Supply `--disable_benchmark: true` to disable this behaviour.")
         self._send_webhook_raw(
             structured_data={"message": "Base model benchmark begins"},
             message_type="init_benchmark_base_model_begin",
@@ -1323,9 +1208,7 @@ class Trainer:
         # Potentially load in the weights and states from a previous save
         self.config.total_steps_remaining_at_start = self.config.max_train_steps
         self.state["current_epoch"] = self.state["first_epoch"]
-        self.state["global_resume_step"] = self.state["global_step"] = (
-            StateTracker.get_global_step()
-        )
+        self.state["global_resume_step"] = self.state["global_step"] = StateTracker.get_global_step()
         StateTracker.set_global_resume_step(self.state["global_resume_step"])
         if not self.config.resume_from_checkpoint:
             logger.info(f"Not resuming from checkpoint.")
@@ -1338,13 +1221,9 @@ class Trainer:
             logger.info(f"Checking {path} for latest checkpoint.")
 
         if path is None:
-            logger.info(
-                f"Checkpoint '{self.config.resume_from_checkpoint}' does not exist. Starting a new training run."
-            )
+            logger.info(f"Checkpoint '{self.config.resume_from_checkpoint}' does not exist. Starting a new training run.")
             self._send_webhook_raw(
-                structured_data={
-                    "message": "No model to resume. Beginning fresh training run."
-                },
+                structured_data={"message": "No model to resume. Beginning fresh training run."},
                 message_type="init_resume_checkpoint",
             )
 
@@ -1358,10 +1237,7 @@ class Trainer:
             logger.info(f"Loading DCM checkpoint states..")
             self.distiller.on_load_checkpoint(checkpoint_dir)
         try:
-            if (
-                "constant" == self.config.lr_scheduler
-                and not self.config.is_schedulefree
-            ):
+            if "constant" == self.config.lr_scheduler and not self.config.is_schedulefree:
                 for g in self.optimizer.param_groups:
                     if "lr" in g:
                         g["lr"] = self.config.learning_rate
@@ -1370,9 +1246,7 @@ class Trainer:
                         v[0] = self.config.learning_rate
         except Exception as e:
             self._send_webhook_raw(
-                structured_data={
-                    "message": "Could not update learning rate scheduler LR value."
-                },
+                structured_data={"message": "Could not update learning rate scheduler LR value."},
                 message_type="warning",
             )
             logger.error(
@@ -1395,9 +1269,7 @@ class Trainer:
                         training_state_filename,
                     ),
                 )
-        self.state["global_resume_step"] = self.state["global_step"] = (
-            StateTracker.get_global_step()
-        )
+        self.state["global_resume_step"] = self.state["global_step"] = StateTracker.get_global_step()
         StateTracker.set_global_resume_step(self.state["global_resume_step"])
         training_state_in_ckpt = StateTracker.get_training_state()
         self._send_webhook_raw(
@@ -1416,9 +1288,7 @@ class Trainer:
         # We store the number of dataset resets that have occurred inside the checkpoint.
         self.state["first_epoch"] = StateTracker.get_epoch()
         if self.state["first_epoch"] > 1 or self.state["global_resume_step"] > 1:
-            self.config.total_steps_remaining_at_start -= self.state[
-                "global_resume_step"
-            ]
+            self.config.total_steps_remaining_at_start -= self.state["global_resume_step"]
             logger.debug(
                 f"Resuming from epoch {self.state['first_epoch']}, which leaves us with {self.config.total_steps_remaining_at_start}."
             )
@@ -1426,16 +1296,11 @@ class Trainer:
         StateTracker.set_epoch(self.state["current_epoch"])
         if hasattr(lr_scheduler, "last_epoch"):
             lr_scheduler.last_epoch = (
-                training_state_in_ckpt.get(
-                    "epoch_step", self.state.get("global_resume_step", 1)
-                )
+                training_state_in_ckpt.get("epoch_step", self.state.get("global_resume_step", 1))
                 * self.accelerator.num_processes
             )
 
-        if (
-            self.state["current_epoch"] > self.config.num_train_epochs + 1
-            and not self.config.ignore_final_epochs
-        ):
+        if self.state["current_epoch"] > self.config.num_train_epochs + 1 and not self.config.ignore_final_epochs:
             logger.info(
                 f"Reached the end ({self.state['current_epoch']} epochs) of our training run ({self.config.num_train_epochs} epochs). This run will do zero steps."
             )
@@ -1444,9 +1309,7 @@ class Trainer:
         if self.optimizer is not None and self.config.optimizer == "prodigy":
             # fix the device assignment for the prodigy optimizer parameters
             for group in (
-                self.optimizer.param_groups
-                if self.optimizer.optimizer.split_groups
-                else self.optimizer.param_groups[:1]
+                self.optimizer.param_groups if self.optimizer.optimizer.split_groups else self.optimizer.param_groups[:1]
             ):
                 p = group["params"][0]
                 group["running_d_numerator"] = group["running_d_numerator"].to(p.device)
@@ -1473,13 +1336,9 @@ class Trainer:
                 delattr(public_args, "sana_complex_human_instruction")
 
             # Hash the contents of public_args to reflect a deterministic ID for a single set of params:
-            public_args_hash = hashlib.md5(
-                json.dumps(vars(public_args), sort_keys=True).encode("utf-8")
-            ).hexdigest()
+            public_args_hash = hashlib.md5(json.dumps(vars(public_args), sort_keys=True).encode("utf-8")).hexdigest()
             project_name = self.config.tracker_project_name or "simpletuner-training"
-            tracker_run_name = (
-                self.config.tracker_run_name or "simpletuner-training-run"
-            )
+            tracker_run_name = self.config.tracker_run_name or "simpletuner-training-run"
             try:
                 self.accelerator.init_trackers(
                     project_name,
@@ -1495,16 +1354,12 @@ class Trainer:
                 )
             except Exception as e:
                 if "Object has no attribute 'disabled'" in repr(e):
-                    logger.warning(
-                        "WandB is disabled, and Accelerate was not quite happy about it."
-                    )
+                    logger.warning("WandB is disabled, and Accelerate was not quite happy about it.")
                     self.accelerator.trackers = []
                 else:
                     logger.error(f"Could not initialize trackers: {e}")
                     self._send_webhook_raw(
-                        structured_data={
-                            "message": f"Could not initialize trackers. Continuing without. {e}"
-                        },
+                        structured_data={"message": f"Could not initialize trackers. Continuing without. {e}"},
                         message_type="error",
                     )
             self._send_webhook_raw(
@@ -1524,10 +1379,7 @@ class Trainer:
         # if the sageattention is inference-only, we'll enable it.
         # if it's training only, we'll disable it.
         # if it's inference+training, we leave it alone.
-        if (
-            "sageattention" not in self.config.attention_mechanism
-            or self.config.sageattention_usage == "training+inference"
-        ):
+        if "sageattention" not in self.config.attention_mechanism or self.config.sageattention_usage == "training+inference":
             return
         if self.config.sageattention_usage == "inference":
             self.enable_sageattention()
@@ -1538,10 +1390,7 @@ class Trainer:
         # if the sageattention is inference-only, we'll disable it.
         # if it's training only, we'll enable it.
         # if it's inference+training, we leave it alone.
-        if (
-            "sageattention" not in self.config.attention_mechanism
-            or self.config.sageattention_usage == "training+inference"
-        ):
+        if "sageattention" not in self.config.attention_mechanism or self.config.sageattention_usage == "training+inference":
             return
         if self.config.sageattention_usage == "inference":
             self.disable_sageattention()
@@ -1554,8 +1403,7 @@ class Trainer:
 
         if (
             hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa")
-            and torch.nn.functional
-            != torch.nn.functional.scaled_dot_product_attention_sdpa
+            and torch.nn.functional != torch.nn.functional.scaled_dot_product_attention_sdpa
         ):
             logger.info("Disabling SageAttention.")
             setattr(
@@ -1573,9 +1421,9 @@ class Trainer:
             logger.info("Enabling SageAttention.")
             from sageattention import (
                 sageattn,
-                sageattn_qk_int8_pv_fp16_triton,
-                sageattn_qk_int8_pv_fp16_cuda,
                 sageattn_qk_int8_pv_fp8_cuda,
+                sageattn_qk_int8_pv_fp16_cuda,
+                sageattn_qk_int8_pv_fp16_triton,
             )
 
             sageattn_functions = {
@@ -1603,9 +1451,7 @@ class Trainer:
                 enable_gqa=False,
             ) -> torch.Tensor:
                 try:
-                    return sageattn_functions[self.config.attention_mechanism](
-                        query, key, value, is_causal=is_causal
-                    )
+                    return sageattn_functions[self.config.attention_mechanism](query, key, value, is_causal=is_causal)
                 except:
                     logger.error(
                         f"Could not run SageAttention with {self.config.attention_mechanism}. Falling back to Pytorch SDPA."
@@ -1621,9 +1467,7 @@ class Trainer:
                         enable_gqa,
                     )
 
-            torch.nn.functional.scaled_dot_product_attention = (
-                sageattn_wrapper_for_torch_sdpa_with_fallback
-            )
+            torch.nn.functional.scaled_dot_product_attention = sageattn_wrapper_for_torch_sdpa_with_fallback
             if not hasattr(torch.nn.functional, "scaled_dot_product_attention_sage"):
                 setattr(
                     torch.nn.functional,
@@ -1653,23 +1497,14 @@ class Trainer:
             if self.config.is_quantized:
                 self.model.get_trained_component(unwrap_model=False).to(target_device)
             else:
-                self.model.get_trained_component(unwrap_model=False).to(
-                    target_device, dtype=self.config.weight_dtype
-                )
+                self.model.get_trained_component(unwrap_model=False).to(target_device, dtype=self.config.weight_dtype)
         if getattr(self.accelerator, "_lycoris_wrapped_network", None) is not None:
-            self.accelerator._lycoris_wrapped_network = (
-                self.accelerator._lycoris_wrapped_network.to(
-                    target_device, dtype=self.config.weight_dtype
-                )
+            self.accelerator._lycoris_wrapped_network = self.accelerator._lycoris_wrapped_network.to(
+                target_device, dtype=self.config.weight_dtype
             )
 
-        if (
-            "sageattention" in self.config.attention_mechanism
-            and "training" in self.config.sageattention_usage
-        ):
-            logger.info(
-                "Using SageAttention for training. This is an unsupported, experimental configuration."
-            )
+        if "sageattention" in self.config.attention_mechanism and "training" in self.config.sageattention_usage:
+            logger.info("Using SageAttention for training. This is an unsupported, experimental configuration.")
             self.enable_sageattention()
         elif self.config.attention_mechanism == "xformers":
             if is_xformers_available():
@@ -1690,49 +1525,33 @@ class Trainer:
                         " Alternatively, provide --attention_mechanism=sageattention for a more efficient option on CUDA systems."
                     )
             else:
-                raise ValueError(
-                    "xformers is not available. Make sure it is installed correctly"
-                )
+                raise ValueError("xformers is not available. Make sure it is installed correctly")
 
         if self.config.controlnet:
             self.model.get_trained_component(unwrap_model=False).train()
-            self.model.unwrap_model(self.model.model).to(
-                device=target_device, dtype=self.config.weight_dtype
-            )
+            self.model.unwrap_model(self.model.model).to(device=target_device, dtype=self.config.weight_dtype)
             if self.config.train_text_encoder:
-                logger.warning(
-                    "Unknown results will occur when finetuning the text encoder alongside ControlNet."
-                )
+                logger.warning("Unknown results will occur when finetuning the text encoder alongside ControlNet.")
 
     def mark_optimizer_train(self):
-        if is_lr_schedulefree(self.config.optimizer) and hasattr(
-            self.optimizer, "train"
-        ):
+        if is_lr_schedulefree(self.config.optimizer) and hasattr(self.optimizer, "train"):
             # we typically have to call train() on the optim for schedulefree.
             logger.debug("Setting optimiser into train() mode.")
             self.optimizer.train()
 
     def mark_optimizer_eval(self):
-        if is_lr_schedulefree(self.config.optimizer) and hasattr(
-            self.optimizer, "eval"
-        ):
+        if is_lr_schedulefree(self.config.optimizer) and hasattr(self.optimizer, "eval"):
             # we typically have to call eval() on the optim for schedulefree before saving or running validations.
             logger.debug("Setting optimiser into eval() mode.")
             self.optimizer.eval()
 
-    def _send_webhook_msg(
-        self, message: str, message_level: str = "info", store_response: bool = False
-    ):
+    def _send_webhook_msg(self, message: str, message_level: str = "info", store_response: bool = False):
         if type(message) is not str:
-            logger.error(
-                f"_send_webhook_msg received {type(message)} type message instead of str."
-            )
+            logger.error(f"_send_webhook_msg received {type(message)} type message instead of str.")
             return False
         if self.webhook_handler is None or not self.webhook_handler:
             return
-        self.webhook_handler.send(
-            message=message, message_level=message_level, store_response=store_response
-        )
+        self.webhook_handler.send(message=message, message_level=message_level, store_response=store_response)
 
     def _send_webhook_raw(
         self,
@@ -1741,9 +1560,7 @@ class Trainer:
         message_level: str = "info",
     ):
         if type(structured_data) is not dict:
-            logger.error(
-                f"_send_webhook_msg received {type(structured_data)} type message instead of dict."
-            )
+            logger.error(f"_send_webhook_msg received {type(structured_data)} type message instead of dict.")
             return False
         if not self.webhook_handler:
             return
@@ -1760,7 +1577,9 @@ class Trainer:
         initial_msg += f"\n-  Num batches = {self.config.total_num_batches}"
         initial_msg += f"\n-  Num Epochs = {self.config.num_train_epochs}"
         initial_msg += f"\n  - Current Epoch = {self.state['first_epoch']}"
-        initial_msg += f"\n-  Total train batch size (w. parallel, distributed & accumulation) = {self.config.total_batch_size}"
+        initial_msg += (
+            f"\n-  Total train batch size (w. parallel, distributed & accumulation) = {self.config.total_batch_size}"
+        )
         initial_msg += f"\n  - Instantaneous batch size per device = {self.config.train_batch_size}"
         initial_msg += f"\n  - Gradient Accumulation steps = {self.config.gradient_accumulation_steps}"
         initial_msg += f"\n-  Total optimization steps = {self.config.max_train_steps}"
@@ -1786,9 +1605,7 @@ class Trainer:
                 ),
             ),
         }
-        self._send_webhook_raw(
-            structured_data=structured_data, message_type="_train_initial_msg"
-        )
+        self._send_webhook_raw(structured_data=structured_data, message_type="_train_initial_msg")
 
     def _epoch_rollover(self, epoch):
         if self.state["first_epoch"] == epoch:
@@ -1803,10 +1620,7 @@ class Trainer:
                 and backend_config.get("crop_aspect") == "random"
                 and "metadata_backend" in backend
                 and not self.config.aspect_bucket_disable_rebuild
-            ) or (
-                backend_config.get("vae_cache_clear_each_epoch")
-                and "vaecache" in backend
-            ):
+            ) or (backend_config.get("vae_cache_clear_each_epoch") and "vaecache" in backend):
                 # when the aspect ratio is random, we need to shuffle the dataset on each epoch.
                 if self.accelerator.is_main_process:
                     # we only compute the aspect ratio indices on the main process.
@@ -1814,9 +1628,7 @@ class Trainer:
                     # otherwise, we can't actually save the new cache to disk.
                     backend["metadata_backend"].read_only = False
                     # this will generate+save the new cache to the storage backend.
-                    backend["metadata_backend"].compute_aspect_ratio_bucket_indices(
-                        ignore_existing_cache=True
-                    )
+                    backend["metadata_backend"].compute_aspect_ratio_bucket_indices(ignore_existing_cache=True)
                 self.accelerator.wait_for_everyone()
                 logger.info(f"Reloading cache for backend {backend_id}")
                 backend["metadata_backend"].reload_cache(set_config=False)
@@ -1915,17 +1727,13 @@ class Trainer:
             batch (dict): Prepared batch.
         """
         if not batch:
-            training_logger.debug(
-                f"No batch was returned by the iterator_fn, returning {batch}"
-            )
+            training_logger.debug(f"No batch was returned by the iterator_fn, returning {batch}")
             return batch
 
         prepared_batch = self.model.prepare_batch(batch, state=self.state)
 
         if getattr(self, "distiller", None) is not None:
-            prepared_batch = self.distiller.prepare_batch(
-                prepared_batch, self.model, self.state
-            )
+            prepared_batch = self.distiller.prepare_batch(prepared_batch, self.model, self.state)
 
         return prepared_batch
 
@@ -1980,9 +1788,7 @@ class Trainer:
 
         num_to_remove = len(checkpoints) - limit + 1
         removing_checkpoints = checkpoints[0:num_to_remove]
-        logger.debug(
-            f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints"
-        )
+        logger.debug(f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints")
         logger.debug(f"removing checkpoints: {', '.join(removing_checkpoints)}")
 
         for removing_checkpoint in removing_checkpoints:
@@ -1999,9 +1805,7 @@ class Trainer:
             save_path = f"{save_path}-{suffix}"
 
         # A temporary directory should be used so that saving state is an atomic operation.
-        save_path_tmp = (
-            f"{save_path}-tmp" if self.config.checkpointing_use_tempdir else save_path
-        )
+        save_path_tmp = f"{save_path}-tmp" if self.config.checkpointing_use_tempdir else save_path
 
         # schedulefree optim needs the optimizer to be in eval mode to save the state (and then back to train after)
         self.mark_optimizer_eval()
@@ -2056,10 +1860,7 @@ class Trainer:
         if self.config.ignore_final_epochs:
             num_epochs_to_track += 1000000
         for epoch in range(self.state["first_epoch"], num_epochs_to_track):
-            if (
-                self.state["current_epoch"] > self.config.num_train_epochs + 1
-                and not self.config.ignore_final_epochs
-            ):
+            if self.state["current_epoch"] > self.config.num_train_epochs + 1 and not self.config.ignore_final_epochs:
                 # This might immediately end training, but that's useful for simply exporting the model.
                 logger.info(
                     f"Training run is complete ({self.config.num_train_epochs}/{self.config.num_train_epochs} epochs, {self.state['global_step']}/{self.config.max_train_steps} steps)."
@@ -2084,15 +1885,10 @@ class Trainer:
                 current_epoch_step = 0
             else:
                 # If it's None, we need to calculate the current epoch step based on the current global step.
-                current_epoch_step = (
-                    self.state["global_step"] % self.config.num_update_steps_per_epoch
-                )
+                current_epoch_step = self.state["global_step"] % self.config.num_update_steps_per_epoch
             train_backends = {}
             for backend_id, backend in StateTracker.get_data_backends().items():
-                if (
-                    StateTracker.backend_status(backend_id)
-                    or "train_dataloader" not in backend
-                ):
+                if StateTracker.backend_status(backend_id) or "train_dataloader" not in backend:
                     # Exclude exhausted backends.
                     logger.debug(
                         f"Excluding backend: {backend_id}, as it is exhausted? {StateTracker.backend_status(backend_id)} or not found {('train_dataloader' not in backend)}"
@@ -2100,15 +1896,9 @@ class Trainer:
                     continue
                 if self.config.eval_dataset_id is not None:
                     # skip eval splits.
-                    if (
-                        isinstance(self.config.eval_dataset_id, str)
-                        and backend_id == self.config.eval_dataset_id
-                    ):
+                    if isinstance(self.config.eval_dataset_id, str) and backend_id == self.config.eval_dataset_id:
                         continue
-                    elif (
-                        isinstance(self.config.eval_dataset_id, list)
-                        and backend_id in self.config.eval_dataset_id
-                    ):
+                    elif isinstance(self.config.eval_dataset_id, list) and backend_id in self.config.eval_dataset_id:
                         continue
                 train_backends[backend_id] = backend["train_dataloader"]
             # Begin dataloader prefetch, if enabled.
@@ -2169,15 +1959,11 @@ class Trainer:
                     training_logger.debug(f"Working on batch size: {bsz}")
                     # Prepare the data for the scatter plot
                     for timestep in prepared_batch["timesteps"].tolist():
-                        self.timesteps_buffer.append(
-                            (self.state["global_step"], timestep)
-                        )
+                        self.timesteps_buffer.append((self.state["global_step"], timestep))
 
                     if "encoder_hidden_states" in prepared_batch:
                         encoder_hidden_states = prepared_batch["encoder_hidden_states"]
-                        training_logger.debug(
-                            f"Encoder hidden states: {encoder_hidden_states.shape}"
-                        )
+                        training_logger.debug(f"Encoder hidden states: {encoder_hidden_states.shape}")
 
                     if "add_text_embeds" in prepared_batch:
                         add_text_embeds = prepared_batch["add_text_embeds"]
@@ -2186,31 +1972,21 @@ class Trainer:
                         )
 
                     # Predict the noise residual and compute loss
-                    is_regularisation_data = prepared_batch.get(
-                        "is_regularisation_data", False
-                    )
+                    is_regularisation_data = prepared_batch.get("is_regularisation_data", False)
                     if is_regularisation_data and self.config.model_type == "lora":
                         training_logger.debug("Predicting parent model residual.")
                         with torch.no_grad():
                             if self.config.lora_type.lower() == "lycoris":
-                                training_logger.debug(
-                                    "Detaching LyCORIS adapter for parent prediction."
-                                )
-                                self.accelerator._lycoris_wrapped_network.set_multiplier(
-                                    0.0
-                                )
+                                training_logger.debug("Detaching LyCORIS adapter for parent prediction.")
+                                self.accelerator._lycoris_wrapped_network.set_multiplier(0.0)
                             else:
                                 self.model.get_trained_component().disable_lora()
                             prepared_batch["target"] = self.model_predict(
                                 prepared_batch=prepared_batch,
                             )["model_prediction"]
                             if self.config.lora_type.lower() == "lycoris":
-                                training_logger.debug(
-                                    "Attaching LyCORIS adapter for student prediction."
-                                )
-                                self.accelerator._lycoris_wrapped_network.set_multiplier(
-                                    1.0
-                                )
+                                training_logger.debug("Attaching LyCORIS adapter for student prediction.")
+                                self.accelerator._lycoris_wrapped_network.set_multiplier(1.0)
                             else:
                                 self.model.get_trained_component().enable_lora()
 
@@ -2230,34 +2006,23 @@ class Trainer:
                     )
                     distill_logs = {}
                     if self.config.distillation_method is not None:
-                        loss, distill_logs = self.distiller.compute_distill_loss(
-                            prepared_batch, model_pred, loss
-                        )
-                        loss, gen_logs = self.distiller.generator_loss_step(
-                            prepared_batch, model_pred, loss
-                        )
+                        loss, distill_logs = self.distiller.compute_distill_loss(prepared_batch, model_pred, loss)
+                        loss, gen_logs = self.distiller.generator_loss_step(prepared_batch, model_pred, loss)
                         distill_logs.update(gen_logs)
                     parent_loss = None
                     if is_regularisation_data:
                         parent_loss = loss
 
                     # Gather the losses across all processes for logging (if using distributed training)
-                    avg_loss = self.accelerator.gather(
-                        loss.repeat(self.config.train_batch_size)
-                    ).mean()
-                    self.train_loss += (
-                        avg_loss.item() / self.config.gradient_accumulation_steps
-                    )
+                    avg_loss = self.accelerator.gather(loss.repeat(self.config.train_batch_size)).mean()
+                    self.train_loss += avg_loss.item() / self.config.gradient_accumulation_steps
                     # Backpropagate
                     self.grad_norm = None
                     if not self.config.disable_accelerator:
                         training_logger.debug("Backwards pass.")
                         self.accelerator.backward(loss)
 
-                        if (
-                            self.config.optimizer != "adam_bfloat16"
-                            and self.config.gradient_precision == "fp32"
-                        ):
+                        if self.config.optimizer != "adam_bfloat16" and self.config.gradient_precision == "fp32":
                             # After backward, convert gradients to fp32 for stable accumulation
                             for param in self.params_to_optimize:
                                 if param.grad is not None:
@@ -2266,8 +2031,7 @@ class Trainer:
                         self.grad_norm = self._max_grad_value()
                         if (
                             self.accelerator.sync_gradients
-                            and self.config.optimizer
-                            not in ["optimi-stableadamw", "prodigy"]
+                            and self.config.optimizer not in ["optimi-stableadamw", "prodigy"]
                             and self.config.max_grad_norm > 0
                         ):
                             # StableAdamW/Prodigy do not need clipping, similar to Adafactor.
@@ -2297,21 +2061,15 @@ class Trainer:
                             training_logger.debug(
                                 f"step: {step}, should_not_release_gradients: {should_not_release_gradients}, self.config.optimizer_release_gradients: {self.config.optimizer_release_gradients}"
                             )
-                            self.optimizer.optimizer_accumulation = (
-                                should_not_release_gradients
-                            )
+                            self.optimizer.optimizer_accumulation = should_not_release_gradients
                         else:
                             self.optimizer.step()
-                        self.optimizer.zero_grad(
-                            set_to_none=self.config.set_grads_to_none
-                        )
+                        self.optimizer.zero_grad(set_to_none=self.config.set_grads_to_none)
                         if (
                             getattr(self, "distiller", None) is not None
                             and self.accelerator.sync_gradients  # run once per global step
                         ):
-                            self.distiller.discriminator_step(
-                                prepared_batch=prepared_batch
-                            )
+                            self.distiller.discriminator_step(prepared_batch=prepared_batch)
                             self.distiller.post_training_step(self.model, step)
 
                 # Checks if the accelerator has performed an optimization step behind the scenes
@@ -2320,9 +2078,7 @@ class Trainer:
                     try:
                         if self.config.peft_lora_mode == "singlora":
                             update_singlora_global_step(
-                                model=self.model.get_trained_component(
-                                    unwrap_model=True
-                                ),
+                                model=self.model.get_trained_component(unwrap_model=True),
                                 global_step=self.state["global_step"],
                             )
                         if "prodigy" in self.config.optimizer:
@@ -2335,9 +2091,7 @@ class Trainer:
                             self.lr_scheduler.step(**self.extra_lr_scheduler_kwargs)
                             self.lr = self.lr_scheduler.get_last_lr()[0]
                     except Exception as e:
-                        logger.error(
-                            f"Failed to get the last learning rate from the scheduler. Error: {e}"
-                        )
+                        logger.error(f"Failed to get the last learning rate from the scheduler. Error: {e}")
                     wandb_logs.update(
                         {
                             "train_loss": self.train_loss,
@@ -2353,14 +2107,8 @@ class Trainer:
                     if aux_loss_logs is not None:
                         for key, value in aux_loss_logs.items():
                             wandb_logs[f"aux_loss/{key}"] = value
-                    if self.grad_norm is not None:
-                        if self.config.grad_clip_method == "norm":
-                            wandb_logs["grad_norm"] = self.grad_norm
-                        else:
-                            wandb_logs["grad_absmax"] = self.grad_norm
-                    if self.validation is not None and hasattr(
-                        self.validation, "evaluation_result"
-                    ):
+                    self._update_grad_metrics(wandb_logs)
+                    if self.validation is not None and hasattr(self.validation, "evaluation_result"):
                         eval_result = self.validation.get_eval_result()
                         if eval_result is not None and type(eval_result) == dict:
                             # add the dict to wandb_logs
@@ -2384,18 +2132,10 @@ class Trainer:
                         self.accelerator.wait_for_everyone()
 
                     # Log scatter plot to wandb
-                    if (
-                        self.config.report_to == "wandb"
-                        and self.accelerator.is_main_process
-                    ):
+                    if self.config.report_to == "wandb" and self.accelerator.is_main_process:
                         # Prepare the data for the scatter plot
-                        data = [
-                            [iteration, timestep]
-                            for iteration, timestep in self.timesteps_buffer
-                        ]
-                        table = wandb.Table(
-                            data=data, columns=["global_step", "timestep"]
-                        )
+                        data = [[iteration, timestep] for iteration, timestep in self.timesteps_buffer]
+                        table = wandb.Table(data=data, columns=["global_step", "timestep"])
                         wandb_logs["timesteps_scatter"] = wandb.plot.scatter(
                             table,
                             "global_step",
@@ -2407,9 +2147,7 @@ class Trainer:
                     self.timesteps_buffer = []
 
                     # Average out the luminance values of each batch, so that we can store that in this step.
-                    avg_training_data_luminance = sum(training_luminance_values) / len(
-                        training_luminance_values
-                    )
+                    avg_training_data_luminance = sum(training_luminance_values) / len(training_luminance_values)
                     wandb_logs["train_luminance"] = avg_training_data_luminance
 
                     logger.debug(
@@ -2423,9 +2161,7 @@ class Trainer:
 
                     if (
                         self.config.webhook_reporting_interval is not None
-                        and self.state["global_step"]
-                        % self.config.webhook_reporting_interval
-                        == 0
+                        and self.state["global_step"] % self.config.webhook_reporting_interval == 0
                     ):
                         structured_data = {
                             "state": self.state,
@@ -2435,48 +2171,31 @@ class Trainer:
                             "epoch": epoch,
                             "final_epoch": self.config.num_train_epochs,
                         }
-                        self._send_webhook_raw(
-                            structured_data=structured_data, message_type="train"
-                        )
+                        self._send_webhook_raw(structured_data=structured_data, message_type="train")
 
-                    if (
-                        self.config.checkpointing_steps
-                        and self.state["global_step"] % self.config.checkpointing_steps
-                        == 0
-                    ):
+                    if self.config.checkpointing_steps and self.state["global_step"] % self.config.checkpointing_steps == 0:
                         self._send_webhook_msg(
                             message=f"Checkpoint: `{webhook_pending_msg}`",
                             message_level="info",
                         )
-                        if (
-                            self.accelerator.is_main_process
-                            and self.config.checkpoints_total_limit is not None
-                        ):
+                        if self.accelerator.is_main_process and self.config.checkpoints_total_limit is not None:
                             # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
                             self.checkpoint_state_cleanup(
                                 self.config.output_dir,
                                 self.config.checkpoints_total_limit,
                             )
 
-                        if (
-                            self.accelerator.is_main_process
-                            or self.config.use_deepspeed_optimizer
-                        ):
+                        if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer:
                             self.checkpoint_state_save(self.config.output_dir)
                     elif (
                         self.config.checkpointing_rolling_steps
-                        and self.state["global_step"]
-                        % self.config.checkpointing_rolling_steps
-                        == 0
+                        and self.state["global_step"] % self.config.checkpointing_rolling_steps == 0
                     ):
                         self._send_webhook_msg(
                             message=f"Checkpoint: `{webhook_pending_msg}`",
                             message_level="info",
                         )
-                        if (
-                            self.accelerator.is_main_process
-                            and self.config.checkpoints_rolling_total_limit is not None
-                        ):
+                        if self.accelerator.is_main_process and self.config.checkpoints_rolling_total_limit is not None:
                             # _before_ saving state, check if this save would set us over the `checkpoints_rolling_total_limit`
                             self.checkpoint_state_cleanup(
                                 self.config.output_dir,
@@ -2484,26 +2203,17 @@ class Trainer:
                                 "rolling",
                             )
 
-                        if (
-                            self.accelerator.is_main_process
-                            or self.config.use_deepspeed_optimizer
-                        ):
-                            self.checkpoint_state_save(
-                                self.config.output_dir, "rolling"
-                            )
+                        if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer:
+                            self.checkpoint_state_save(self.config.output_dir, "rolling")
 
                     if (
                         self.config.accelerator_cache_clear_interval is not None
-                        and self.state["global_step"]
-                        % self.config.accelerator_cache_clear_interval
-                        == 0
+                        and self.state["global_step"] % self.config.accelerator_cache_clear_interval == 0
                     ):
                         reclaim_memory()
 
                     # here we might run eval loss calculations.
-                    if self.evaluation is not None and self.evaluation.would_evaluate(
-                        self.state
-                    ):
+                    if self.evaluation is not None and self.evaluation.would_evaluate(self.state):
                         self.mark_optimizer_eval()
                         all_accumulated_losses = self.evaluation.execute_eval(
                             prepare_batch=self.prepare_batch,
@@ -2534,11 +2244,11 @@ class Trainer:
                     for key, value in aux_loss_logs.items():
                         logs_to_print[f"aux_loss/{key}"] = value
                     training_logger.debug(f"Aux loss: {logs_to_print}")
-                if self.grad_norm is not None:
-                    if self.config.grad_clip_method == "norm":
-                        logs["grad_norm"] = float(self.grad_norm.clone().detach())
-                    elif self.config.grad_clip_method == "value":
-                        logs["grad_absmax"] = self.grad_norm
+                self._update_grad_metrics(
+                    logs,
+                    require_value_method=True,
+                    clone_norm_value=True,
+                )
 
                 progress_bar.set_postfix(**logs)
 
@@ -2547,9 +2257,7 @@ class Trainer:
                         self.mark_optimizer_eval()
                         self.enable_sageattention_inference()
                         self.disable_gradient_checkpointing()
-                    self.validation.run_validations(
-                        validation_type="intermediary", step=step
-                    )
+                    self.validation.run_validations(validation_type="intermediary", step=step)
                     if self.validation.would_validate():
                         self.disable_sageattention_inference()
                         self.enable_gradient_checkpointing()
@@ -2564,21 +2272,16 @@ class Trainer:
                         try:
                             self.hub_manager.upload_latest_checkpoint(
                                 validation_images=(
-                                    getattr(self.validation, "validation_images")
-                                    if self.validation is not None
-                                    else None
+                                    getattr(self.validation, "validation_images") if self.validation is not None else None
                                 ),
                                 webhook_handler=self.webhook_handler,
                             )
                         except Exception as e:
-                            logger.error(
-                                f"Error uploading to hub: {e}, continuing training."
-                            )
+                            logger.error(f"Error uploading to hub: {e}, continuing training.")
                 self.accelerator.wait_for_everyone()
 
                 if self.state["global_step"] >= self.config.max_train_steps or (
-                    epoch > self.config.num_train_epochs
-                    and not self.config.ignore_final_epochs
+                    epoch > self.config.num_train_epochs and not self.config.ignore_final_epochs
                 ):
                     logger.info(
                         f"Training has completed."
@@ -2586,8 +2289,7 @@ class Trainer:
                     )
                     break
             if self.state["global_step"] >= self.config.max_train_steps or (
-                epoch > self.config.num_train_epochs
-                and not self.config.ignore_final_epochs
+                epoch > self.config.num_train_epochs and not self.config.ignore_final_epochs
             ):
                 logger.info(
                     f"Exiting training loop. Beginning model unwind at epoch {epoch}, step {self.state['global_step']}"
@@ -2612,10 +2314,7 @@ class Trainer:
                 self.disable_sageattention_inference()
             if self.model.get_trained_component() is not None:
                 self.model.model = unwrap_model(self.accelerator, self.model.model)
-            if (
-                "lora" in self.config.model_type
-                and "standard" == self.config.lora_type.lower()
-            ):
+            if "lora" in self.config.model_type and "standard" == self.config.lora_type.lower():
                 lora_save_kwargs = {
                     "save_directory": self.config.output_dir,
                     f"{self.model.MODEL_TYPE.value}_lora_layers": get_peft_model_state_dict(
@@ -2625,27 +2324,17 @@ class Trainer:
 
                 if self.config.train_text_encoder:
                     if self.model.get_text_encoder(0) is not None:
-                        self.text_encoder_1 = self.accelerator.unwrap_model(
-                            self.model.get_text_encoder(0)
-                        )
-                        lora_save_kwargs["text_encoder_lora_layers"] = (
-                            convert_state_dict_to_diffusers(
-                                get_peft_model_state_dict(self.text_encoder_1)
-                            )
+                        self.text_encoder_1 = self.accelerator.unwrap_model(self.model.get_text_encoder(0))
+                        lora_save_kwargs["text_encoder_lora_layers"] = convert_state_dict_to_diffusers(
+                            get_peft_model_state_dict(self.text_encoder_1)
                         )
                     if self.model.get_text_encoder(1) is not None:
-                        self.text_encoder_2 = self.accelerator.unwrap_model(
-                            self.model.get_text_encoder(1)
-                        )
-                        lora_save_kwargs["text_encoder_2_lora_layers"] = (
-                            convert_state_dict_to_diffusers(
-                                get_peft_model_state_dict(self.text_encoder_2)
-                            )
+                        self.text_encoder_2 = self.accelerator.unwrap_model(self.model.get_text_encoder(1))
+                        lora_save_kwargs["text_encoder_2_lora_layers"] = convert_state_dict_to_diffusers(
+                            get_peft_model_state_dict(self.text_encoder_2)
                         )
                         if self.model.get_text_encoder(2) is not None:
-                            self.text_encoder_3 = self.accelerator.unwrap_model(
-                                self.model.get_text_encoder(2)
-                            )
+                            self.text_encoder_3 = self.accelerator.unwrap_model(self.model.get_text_encoder(2))
                 else:
                     text_encoder_lora_layers = None
                     text_encoder_2_lora_layers = None
@@ -2658,36 +2347,17 @@ class Trainer:
                 del text_encoder_lora_layers
                 del text_encoder_2_lora_layers
                 reclaim_memory()
-            elif (
-                "lora" in self.config.model_type
-                and "lycoris" == self.config.lora_type.lower()
-            ):
-                if (
-                    self.accelerator.is_main_process
-                    or self.config.use_deepspeed_optimizer
-                ):
-                    logger.info(
-                        f"Saving final LyCORIS checkpoint to {self.config.output_dir}"
-                    )
+            elif "lora" in self.config.model_type and "lycoris" == self.config.lora_type.lower():
+                if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer:
+                    logger.info(f"Saving final LyCORIS checkpoint to {self.config.output_dir}")
                     # Save final LyCORIS checkpoint.
-                    if (
-                        getattr(self.accelerator, "_lycoris_wrapped_network", None)
-                        is not None
-                    ):
-                        from simpletuner.helpers.publishing.huggingface import (
-                            LORA_SAFETENSORS_FILENAME,
-                        )
+                    if getattr(self.accelerator, "_lycoris_wrapped_network", None) is not None:
+                        from simpletuner.helpers.publishing.huggingface import LORA_SAFETENSORS_FILENAME
 
                         self.accelerator._lycoris_wrapped_network.save_weights(
-                            os.path.join(
-                                self.config.output_dir, LORA_SAFETENSORS_FILENAME
-                            ),
-                            list(
-                                self.accelerator._lycoris_wrapped_network.parameters()
-                            )[0].dtype,
-                            {
-                                "lycoris_config": json.dumps(self.lycoris_config)
-                            },  # metadata
+                            os.path.join(self.config.output_dir, LORA_SAFETENSORS_FILENAME),
+                            list(self.accelerator._lycoris_wrapped_network.parameters())[0].dtype,
+                            {"lycoris_config": json.dumps(self.lycoris_config)},  # metadata
                         )
                         shutil.copy2(
                             self.config.lycoris_config,
@@ -2696,9 +2366,7 @@ class Trainer:
 
             elif self.config.use_ema:
                 if self.model.get_trained_component() is not None:
-                    self.ema_model.copy_to(
-                        self.model.get_trained_component().parameters()
-                    )
+                    self.ema_model.copy_to(self.model.get_trained_component().parameters())
 
             if self.config.model_type == "full":
                 if self.config.save_text_encoder:
@@ -2709,9 +2377,7 @@ class Trainer:
                     os.path.join(self.config.output_dir, "pipeline"),
                     safe_serialization=True,
                 )
-                logger.info(
-                    f"Wrote pipeline to disk: {self.config.output_dir}/pipeline"
-                )
+                logger.info(f"Wrote pipeline to disk: {self.config.output_dir}/pipeline")
 
             if self.hub_manager is not None and self.accelerator.is_main_process:
                 self.hub_manager.upload_model(validation_images, self.webhook_handler)

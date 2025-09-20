@@ -143,9 +143,6 @@ class SD3(ImageModelFoundation):
     }
 
     def controlnet_init(self):
-        """
-        Initialize SD3 ControlNet model.
-        """
         logger.info("Creating the SD3 controlnet..")
 
         if self.config.controlnet_model_name_or_path:
@@ -171,9 +168,6 @@ class SD3(ImageModelFoundation):
             logger.info(f"ControlNet expects {in_channels} input channels")
 
     def tread_init(self):
-        """
-        Initialize the TREAD model training method for SD3.
-        """
         from simpletuner.helpers.training.tread import TREADRouter
 
         if (
@@ -249,15 +243,6 @@ class SD3(ImageModelFoundation):
         }
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
-        """
-        Encode a prompt for an SD3 model.
-
-        Args:
-            prompts: The list of prompts to encode.
-
-        Returns:
-            Text encoder output (raw)
-        """
         num_images_per_prompt = 1
 
         clip_tokenizers = self.tokenizers[:2]
@@ -298,13 +283,6 @@ class SD3(ImageModelFoundation):
         return prompt_embeds, pooled_prompt_embeds
 
     def model_predict(self, prepared_batch):
-        logger.debug(
-            "Input shapes:"
-            f"\n{prepared_batch['noisy_latents'].shape}"
-            f"\n{prepared_batch['timesteps'].shape}"
-            f"\n{prepared_batch['encoder_hidden_states'].shape}"
-            f"\n{prepared_batch['add_text_embeds'].shape}"
-        )
         return {
             "model_prediction": self.model(
                 hidden_states=prepared_batch["noisy_latents"].to(
@@ -347,12 +325,9 @@ class SD3(ImageModelFoundation):
 
             if expected_channels != actual_channels:
                 if expected_channels == 17 and actual_channels == 16:
-                    # SD3 ControlNet was initialized with 1 extra conditioning channel
-                    # Add a zero channel or a specific control signal
+                    # extra channel required for 8b controlnet
                     batch_size, _, height, width = conditioning_latents.shape
 
-                    # You can customize this to add specific control information
-                    # For example: depth maps, edge maps, segmentation masks, etc.
                     extra_channel = torch.zeros(
                         batch_size,
                         1,
@@ -362,11 +337,7 @@ class SD3(ImageModelFoundation):
                         dtype=conditioning_latents.dtype,
                     )
 
-                    # If you have specific control data, you can add it here:
-                    # extra_channel = your_control_data.unsqueeze(1)  # shape: [batch, 1, H, W]
-
                     conditioning_latents = torch.cat([conditioning_latents, extra_channel], dim=1)
-                    logger.debug(f"Added extra conditioning channel, new shape: {conditioning_latents.shape}")
 
                 elif expected_channels < actual_channels:
                     # ControlNet expects fewer channels, might need to select specific channels
@@ -442,9 +413,6 @@ class SD3(ImageModelFoundation):
         return {"model_prediction": model_pred}
 
     def get_lora_target_layers(self):
-        """
-        Get the target layers for LoRA training based on configuration.
-        """
         # Override for ControlNet training if needed
         if self.config.model_type == "lora" and self.config.controlnet:
             # Comprehensive targeting including all layers
@@ -518,9 +486,6 @@ class SD3(ImageModelFoundation):
             raise NotImplementedError(f"Unknown LoRA target type {self.config.lora_type}.")
 
     def check_user_config(self):
-        """
-        Checks self.config values against important issues. Optionally implemented in child class.
-        """
         if self.config.base_model_precision == "fp8-quanto":
             raise ValueError(
                 f"{self.NAME} does not support fp8-quanto. Please use fp8-torchao or int8 precision level instead."

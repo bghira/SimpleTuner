@@ -1,12 +1,12 @@
 # helpers/distillation/dmd/distiller.py
-import os
 import logging
+import os
 from typing import Any, Dict, Optional
-from safetensors.torch import save_file, load_file
 
 import torch
 import torch.nn.functional as F
 from diffusers import FlowMatchEulerDiscreteScheduler
+from safetensors.torch import load_file, save_file
 
 from simpletuner.helpers.distillation.common import DistillationBase
 
@@ -64,9 +64,7 @@ class DMDDistiller(DistillationBase):
         self.noise_scheduler = noise_scheduler
 
         # Parse denoising steps
-        self.denoising_step_list = [
-            int(s) for s in self.config["dmd_denoising_steps"].split(",")
-        ]
+        self.denoising_step_list = [int(s) for s in self.config["dmd_denoising_steps"].split(",")]
 
         # Initialize fake score transformer
         self.fake_score_transformer = None
@@ -81,15 +79,11 @@ class DMDDistiller(DistillationBase):
 
         if fam == "wan":
             # Clone teacher architecture for fake score transformer
-            self.fake_score_transformer = (
-                self.teacher_model.get_trained_component().__class__(
-                    **self.teacher_model.get_trained_component().config
-                )
+            self.fake_score_transformer = self.teacher_model.get_trained_component().__class__(
+                **self.teacher_model.get_trained_component().config
             )
             # Initialize with teacher weights
-            self.fake_score_transformer.load_state_dict(
-                self.teacher_model.get_trained_component().state_dict()
-            )
+            self.fake_score_transformer.load_state_dict(self.teacher_model.get_trained_component().state_dict())
         else:
             raise NotImplementedError(f"Model family '{fam}' not implemented")
 
@@ -108,9 +102,7 @@ class DMDDistiller(DistillationBase):
         B, device = latents.shape[0], latents.device
 
         # Sample timestep from denoising steps
-        index = torch.randint(
-            0, len(self.denoising_step_list), [1], device=device, dtype=torch.long
-        )
+        index = torch.randint(0, len(self.denoising_step_list), [1], device=device, dtype=torch.long)
         target_timestep = self.denoising_step_list[index.item()]
         timestep = torch.tensor([target_timestep], device=device, dtype=torch.long)
 
@@ -142,9 +134,7 @@ class DMDDistiller(DistillationBase):
         with torch.no_grad():
             for step_idx in range(target_idx):
                 current_timestep = self.denoising_step_list[step_idx]
-                timestep_tensor = torch.tensor(
-                    [current_timestep], device=device, dtype=torch.long
-                )
+                timestep_tensor = torch.tensor([current_timestep], device=device, dtype=torch.long)
 
                 # Student prediction
                 pred_noise = self.student_model.get_trained_component()(
@@ -155,20 +145,14 @@ class DMDDistiller(DistillationBase):
                 )[0]
 
                 # Denoise
-                pred_clean = self._pred_noise_to_pred_video(
-                    pred_noise, current_noise_latents, timestep_tensor
-                )
+                pred_clean = self._pred_noise_to_pred_video(pred_noise, current_noise_latents, timestep_tensor)
 
                 # Add noise for next step if not final
                 if step_idx < target_idx - 1:
                     next_timestep = self.denoising_step_list[step_idx + 1]
-                    next_timestep_tensor = torch.tensor(
-                        [next_timestep], device=device, dtype=torch.long
-                    )
+                    next_timestep_tensor = torch.tensor([next_timestep], device=device, dtype=torch.long)
                     noise = torch.randn_like(pred_clean)
-                    current_noise_latents = self.noise_scheduler.add_noise(
-                        pred_clean, noise, next_timestep_tensor
-                    )
+                    current_noise_latents = self.noise_scheduler.add_noise(pred_clean, noise, next_timestep_tensor)
 
         batch["noisy_latents"] = current_noise_latents
         return batch
@@ -183,10 +167,7 @@ class DMDDistiller(DistillationBase):
         self.generator_update_counter += 1
 
         # Skip if not generator update step
-        if (
-            self.generator_update_counter % self.config["generator_update_interval"]
-            != 0
-        ):
+        if self.generator_update_counter % self.config["generator_update_interval"] != 0:
             return torch.tensor(0.0, device=model_output["model_prediction"].device), {}
 
         pred_noise = model_output["model_prediction"]
@@ -194,9 +175,7 @@ class DMDDistiller(DistillationBase):
         timesteps = prepared_batch["timesteps"]
 
         # Convert to predicted clean
-        generator_pred_video = self._pred_noise_to_pred_video(
-            pred_noise, noisy_latents, timesteps[0:1]
-        )
+        generator_pred_video = self._pred_noise_to_pred_video(pred_noise, noisy_latents, timesteps[0:1])
 
         # Compute DMD loss
         loss = self._dmd_forward(generator_pred_video, prepared_batch)
@@ -215,16 +194,12 @@ class DMDDistiller(DistillationBase):
         # Sample new timestep for DMD
         min_t = int(self.config["min_timestep_ratio"] * 1000)
         max_t = int(self.config["max_timestep_ratio"] * 1000)
-        timestep = torch.randint(
-            min_t, max_t, [1], device=clean_latents.device, dtype=torch.long
-        )
+        timestep = torch.randint(min_t, max_t, [1], device=clean_latents.device, dtype=torch.long)
 
         # Add noise to both clean and generated
         noise = torch.randn_like(clean_latents)
         noisy_clean = self.noise_scheduler.add_noise(clean_latents, noise, timestep)
-        noisy_gen = self.noise_scheduler.add_noise(
-            generator_pred_video, noise, timestep
-        )
+        noisy_gen = self.noise_scheduler.add_noise(generator_pred_video, noise, timestep)
 
         # Get predictions from both transformers
         with torch.no_grad():
@@ -257,12 +232,8 @@ class DMDDistiller(DistillationBase):
         )[0]
 
         # Convert to clean predictions
-        real_pred_clean = self._pred_noise_to_pred_video(
-            real_score_pred, noisy_gen, timestep
-        )
-        fake_pred_clean = self._pred_noise_to_pred_video(
-            fake_score_pred, noisy_gen, timestep
-        )
+        real_pred_clean = self._pred_noise_to_pred_video(real_score_pred, noisy_gen, timestep)
+        fake_pred_clean = self._pred_noise_to_pred_video(fake_score_pred, noisy_gen, timestep)
 
         # DMD loss
         loss = F.mse_loss(fake_pred_clean, real_pred_clean.detach())
@@ -289,15 +260,11 @@ class DMDDistiller(DistillationBase):
         # Sample timestep for fake score training
         min_t = int(self.config["min_timestep_ratio"] * 1000)
         max_t = int(self.config["max_timestep_ratio"] * 1000)
-        fake_score_timestep = torch.randint(
-            min_t, max_t, [1], device=generator_pred_video.device, dtype=torch.long
-        )
+        fake_score_timestep = torch.randint(min_t, max_t, [1], device=generator_pred_video.device, dtype=torch.long)
 
         # Add noise
         noise = torch.randn_like(generator_pred_video)
-        noisy_fake = self.noise_scheduler.add_noise(
-            generator_pred_video, noise, fake_score_timestep
-        )
+        noisy_fake = self.noise_scheduler.add_noise(generator_pred_video, noise, fake_score_timestep)
 
         # Fake score prediction
         fake_pred = self.fake_score_transformer(
@@ -327,17 +294,12 @@ class DMDDistiller(DistillationBase):
 
     def on_save_checkpoint(self, step: int, ckpt_dir: str):
         """Save fake score transformer checkpoint."""
-        if self.fake_score_transformer is None or (
-            torch.distributed.is_initialized() and torch.distributed.get_rank() != 0
-        ):
+        if self.fake_score_transformer is None or (torch.distributed.is_initialized() and torch.distributed.get_rank() != 0):
             return
 
         # Model weights
         weight_path = os.path.join(ckpt_dir, DMD_SAFETENSORS_DEFAULT_FILENAME)
-        tensor_dict = {
-            k: v.detach().cpu()
-            for k, v in self.fake_score_transformer.state_dict().items()
-        }
+        tensor_dict = {k: v.detach().cpu() for k, v in self.fake_score_transformer.state_dict().items()}
         save_file(tensor_dict, weight_path)
 
         # Optimizer state
@@ -362,9 +324,7 @@ class DMDDistiller(DistillationBase):
         # Load weights
         tensor_dict = load_file(weight_path, device="cpu")
         self.fake_score_transformer.load_state_dict(tensor_dict, strict=True)
-        self.fake_score_transformer.to(
-            self.teacher_model.get_trained_component().device, non_blocking=True
-        )
+        self.fake_score_transformer.to(self.teacher_model.get_trained_component().device, non_blocking=True)
 
         # Load optimizer
         opt_path = os.path.join(ckpt_dir, DMD_OPTIMIZER_DEFAULT_FILENAME)

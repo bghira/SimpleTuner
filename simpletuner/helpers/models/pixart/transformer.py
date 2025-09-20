@@ -1,4 +1,4 @@
-# Copyright 2024 The HuggingFace Team. All rights reserved.
+# Copyright 2024 The HuggingFace Team and 2025 bghira. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,11 +27,12 @@ from diffusers.utils import logging
 from torch import nn
 
 from simpletuner.helpers.training.tread import TREADRouter
+from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, PatchableModule
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
-class PixArtTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
+class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapterMixin):
     r"""
     A 2D Transformer model as introduced in PixArt family of models (https://huggingface.co/papers/2310.00426,
     https://huggingface.co/papers/2403.04692).
@@ -153,7 +154,7 @@ class PixArtTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             interpolation_scale=interpolation_scale,
         )
 
-        self.transformer_blocks = nn.ModuleList(
+        self.transformer_blocks = MutableModuleList(
             [
                 BasicTransformerBlock(
                     self.inner_dim,
@@ -216,7 +217,7 @@ class PixArtTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         for name, module in self.named_children():
             fn_recursive_add_processors(name, module, processors)
 
-        return processors
+        return CallableDict(processors)
 
     # Copied from diffusers.models.unets.unet_2d_condition.UNet2DConditionModel.set_attn_processor
     def set_attn_processor(self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]]):
@@ -256,8 +257,6 @@ class PixArtTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
     def set_default_attn_processor(self):
         """
         Disables custom attention processors and sets the default attention implementation.
-
-        Safe to just use `AttnProcessor()` as PixArt doesn't have any exotic attention processors in default model.
         """
         self.set_attn_processor(AttnProcessor())
 

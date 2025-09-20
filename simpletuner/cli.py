@@ -484,15 +484,33 @@ def cmd_configure(args) -> int:
 def cmd_server(args) -> int:
     """Handle server command."""
     host = getattr(args, "host", "0.0.0.0")
-    port = getattr(args, "port", 8001)
+    port = getattr(args, "port", None)  # Will be determined by mode
     reload = getattr(args, "reload", False)
+    mode = getattr(args, "mode", "trainer")
 
-    print(f"Starting SimpleTuner server on {host}:{port}")
+    # Determine port based on mode if not specified
+    if port is None:
+        if mode == "trainer":
+            port = 8001
+        elif mode == "callback":
+            port = 8002
+        else:  # unified
+            port = 8001
+
+    print(f"Starting SimpleTuner {mode} server on {host}:{port}")
 
     try:
         import uvicorn
 
-        from simpletuner.service_worker import app
+        from simpletuner.simpletuner_sdk.server import ServerMode, create_app
+
+        # Map mode string to enum
+        server_mode = {"trainer": ServerMode.TRAINER, "callback": ServerMode.CALLBACK, "unified": ServerMode.UNIFIED}.get(
+            mode, ServerMode.TRAINER
+        )
+
+        # Create app with specified mode
+        app = create_app(mode=server_mode)
 
         # Create necessary directories
         os.makedirs("static/css", exist_ok=True)
@@ -602,8 +620,14 @@ Examples:
     server_parser.add_argument(
         "--port",
         type=int,
-        default=8001,
-        help="Port to bind the server to (default: 8001)",
+        default=None,
+        help="Port to bind the server to (default: 8001 for trainer, 8002 for callback)",
+    )
+    server_parser.add_argument(
+        "--mode",
+        choices=["trainer", "callback", "unified"],
+        default="trainer",
+        help="Server mode: trainer (8001), callback (8002), or unified (both in single process)",
     )
     server_parser.add_argument(
         "--reload",

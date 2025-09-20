@@ -1,6 +1,7 @@
 # test_trainer.py
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import torch
@@ -16,6 +17,15 @@ except ImportError:
 
 
 class TestTrainer(unittest.TestCase):
+    def _build_trainer_for_grad_logging(self, grad_clip_method: str, use_deepspeed: bool, grad_value):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(
+            grad_clip_method=grad_clip_method,
+            use_deepspeed_optimizer=use_deepspeed,
+        )
+        trainer.grad_norm = grad_value
+        return trainer
+
     @patch("simpletuner.helpers.training.trainer.load_config")
     @patch("simpletuner.helpers.training.trainer.safety_check")
     @patch("simpletuner.helpers.training.state_tracker.StateTracker")
@@ -76,6 +86,49 @@ class TestTrainer(unittest.TestCase):
         trainer.config = Mock(seed=None, seed_for_each_device=False)
         trainer.init_seed()
         mock_set_seed.assert_not_called()
+
+    def test_update_grad_metrics_skips_absmax_with_deepspeed(self):
+        trainer = self._build_trainer_for_grad_logging(
+            grad_clip_method="value",
+            use_deepspeed=True,
+            grad_value=torch.tensor(1.2),
+        )
+        logs = {}
+        trainer._update_grad_metrics(logs)
+        self.assertNotIn("grad_absmax", logs)
+        self.assertNotIn("grad_norm", logs)
+
+    def test_update_grad_metrics_logs_absmax_without_deepspeed(self):
+        trainer = self._build_trainer_for_grad_logging(
+            grad_clip_method="value",
+            use_deepspeed=False,
+            grad_value=torch.tensor(1.2),
+        )
+        logs = {}
+        trainer._update_grad_metrics(logs)
+        self.assertIn("grad_absmax", logs)
+        self.assertIs(logs["grad_absmax"], trainer.grad_norm)
+
+    def test_update_grad_metrics_clones_norm_value_when_requested(self):
+        trainer = self._build_trainer_for_grad_logging(
+            grad_clip_method="norm",
+            use_deepspeed=False,
+            grad_value=torch.tensor(1.2),
+        )
+        logs = {}
+        trainer._update_grad_metrics(logs, clone_norm_value=True)
+        self.assertIn("grad_norm", logs)
+        self.assertEqual(logs["grad_norm"], float(trainer.grad_norm.clone().detach()))
+
+    def test_update_grad_metrics_requires_value_method_when_requested(self):
+        trainer = self._build_trainer_for_grad_logging(
+            grad_clip_method="clip",
+            use_deepspeed=False,
+            grad_value=torch.tensor(1.2),
+        )
+        logs = {}
+        trainer._update_grad_metrics(logs, require_value_method=True)
+        self.assertNotIn("grad_absmax", logs)
 
     @patch("simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock())
     @patch(

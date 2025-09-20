@@ -1,18 +1,17 @@
-import torch, os, logging
-from simpletuner.helpers.models.common import (
-    ImageModelFoundation,
-    PredictionTypes,
-    PipelineTypes,
-    ModelTypes,
-)
-from transformers import CLIPTokenizer, CLIPTextModelWithProjection, CLIPTextModel
+import logging
+import os
+
+import torch
+from diffusers import AutoencoderKL, UNet2DConditionModel
+from transformers import CLIPTextModel, CLIPTextModelWithProjection, CLIPTokenizer
+
+from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
+from simpletuner.helpers.models.sdxl.controlnet import ControlNetModel
 from simpletuner.helpers.models.sdxl.pipeline import (
+    StableDiffusionXLControlNetPipeline,
     StableDiffusionXLImg2ImgPipeline,
     StableDiffusionXLPipeline,
-    StableDiffusionXLControlNetPipeline,
 )
-from diffusers import AutoencoderKL, UNet2DConditionModel
-from simpletuner.helpers.models.sdxl.controlnet import ControlNetModel
 from simpletuner.helpers.training.multi_process import _get_rank
 
 logger = logging.getLogger(__name__)
@@ -95,15 +94,11 @@ class SDXL(ImageModelFoundation):
             "pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0),
         }
 
-    def convert_negative_text_embed_for_pipeline(
-        self, text_embedding: torch.Tensor, prompt: str
-    ) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
         return {
             "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            "negative_pooled_prompt_embeds": text_embedding[
-                "pooled_prompt_embeds"
-            ].unsqueeze(0),
+            "negative_pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0),
         }
 
     # Adapted from pipelines.StableDiffusionXLPipeline.encode_sdxl_prompt
@@ -142,14 +137,10 @@ class SDXL(ImageModelFoundation):
                     max_length=max_seq_len,
                 ).input_ids
 
-                if untruncated_ids.shape[
-                    -1
-                ] > tokenizer.model_max_length and not torch.equal(
+                if untruncated_ids.shape[-1] > tokenizer.model_max_length and not torch.equal(
                     text_inputs.input_ids, untruncated_ids
                 ):
-                    removed_text = tokenizer.batch_decode(
-                        untruncated_ids[:, tokenizer.model_max_length - 1 : -1]
-                    )
+                    removed_text = tokenizer.batch_decode(untruncated_ids[:, tokenizer.model_max_length - 1 : -1])
                     if not emitted_warning:
                         # Only print this once. It's a bit spammy otherwise.
                         emitted_warning = True
@@ -176,9 +167,7 @@ class SDXL(ImageModelFoundation):
         except Exception as e:
             import traceback
 
-            logger.error(
-                f"Failed to encode prompt: {prompts}\n-> error: {e}\n-> traceback: {traceback.format_exc()}"
-            )
+            logger.error(f"Failed to encode prompt: {prompts}\n-> error: {e}\n-> traceback: {traceback.format_exc()}")
             raise e
 
         # pooled_prompt_embeds = torch.cat(pooled_prompt_embeds_list, dim=-1)
@@ -189,9 +178,7 @@ class SDXL(ImageModelFoundation):
         logger.info("Creating the controlnet..")
         if self.config.controlnet_model_name_or_path:
             logger.info("Loading existing controlnet weights")
-            self.controlnet = ControlNetModel.from_pretrained(
-                self.config.controlnet_model_name_or_path
-            )
+            self.controlnet = ControlNetModel.from_pretrained(self.config.controlnet_model_name_or_path)
         else:
             logger.info("Initializing controlnet weights from base model")
             self.controlnet = ControlNetModel.from_unet(self.unwrap_model(self.model))
@@ -204,9 +191,7 @@ class SDXL(ImageModelFoundation):
         )
         logger.debug(f"Image shape: {controlnet_image.shape}")
         down_block_res_samples, mid_block_res_sample = self.controlnet(
-            prepared_batch["noisy_latents"].to(
-                device=self.accelerator.device, dtype=self.config.base_weight_dtype
-            ),
+            prepared_batch["noisy_latents"].to(device=self.accelerator.device, dtype=self.config.base_weight_dtype),
             prepared_batch["timesteps"],
             encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(
                 device=self.accelerator.device, dtype=self.config.base_weight_dtype
@@ -229,9 +214,7 @@ class SDXL(ImageModelFoundation):
                 ),
                 added_cond_kwargs=prepared_batch["added_cond_kwargs"],
                 down_block_additional_residuals=[
-                    sample.to(
-                        device=self.accelerator.device, dtype=self.config.weight_dtype
-                    )
+                    sample.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
                     for sample in down_block_res_samples
                 ],
                 mid_block_additional_residual=mid_block_res_sample.to(
@@ -275,9 +258,7 @@ class SDXL(ImageModelFoundation):
         We'll check the current model config to ensure we're loading a base or refiner model.
         """
         if self.model.config.cross_attention_dim == 1280:
-            logger.info(
-                f"{self.NAME} Refiner model is detected, enabling refiner training configuration settings."
-            )
+            logger.info(f"{self.NAME} Refiner model is detected, enabling refiner training configuration settings.")
             self.config.refiner_training = True
 
     def check_user_config(self):
@@ -297,9 +278,7 @@ class SDXL(ImageModelFoundation):
                 f"{self.NAME} does not support fp8-quanto. Please use fp8-torchao or int8 precision level instead."
             )
         if self.config.tokenizer_max_length is not None:
-            logger.warning(
-                f"-!- {self.NAME} supports a max length of 77 tokens, --tokenizer_max_length is ignored -!-"
-            )
+            logger.warning(f"-!- {self.NAME} supports a max length of 77 tokens, --tokenizer_max_length is ignored -!-")
         if self.config.aspect_bucket_alignment != 64:
             logger.warning(
                 "{self.NAME} requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
@@ -307,9 +286,7 @@ class SDXL(ImageModelFoundation):
             self.config.aspect_bucket_alignment = 64
 
         if self.config.prediction_type is not None:
-            logger.info(
-                f"Setting {self.NAME} prediction type: {self.config.prediction_type}"
-            )
+            logger.info(f"Setting {self.NAME} prediction type: {self.config.prediction_type}")
             self.PREDICTION_TYPE = PredictionTypes.from_str(self.config.prediction_type)
             if self.config.validation_noise_scheduler is None:
                 self.config.validation_noise_scheduler = self.DEFAULT_NOISE_SCHEDULER
@@ -321,27 +298,15 @@ class SDXL(ImageModelFoundation):
         if self.config.use_soft_min_snr:
             output_args.append(f"use_soft_min_snr")
             if self.config.soft_min_snr_sigma_data:
-                output_args.append(
-                    f"soft_min_snr_sigma_data={self.config.soft_min_snr_sigma_data}"
-                )
+                output_args.append(f"soft_min_snr_sigma_data={self.config.soft_min_snr_sigma_data}")
         if self.config.rescale_betas_zero_snr:
             output_args.append(f"rescale_betas_zero_snr")
         if self.config.offset_noise:
             output_args.append(f"offset_noise")
             output_args.append(f"noise_offset={self.config.noise_offset}")
-            output_args.append(
-                f"noise_offset_probability={self.config.noise_offset_probability}"
-            )
-        output_args.append(
-            f"training_scheduler_timestep_spacing={self.config.training_scheduler_timestep_spacing}"
-        )
-        output_args.append(
-            f"inference_scheduler_timestep_spacing={self.config.inference_scheduler_timestep_spacing}"
-        )
-        output_str = (
-            f" (extra parameters={output_args})"
-            if output_args
-            else " (no special parameters set)"
-        )
+            output_args.append(f"noise_offset_probability={self.config.noise_offset_probability}")
+        output_args.append(f"training_scheduler_timestep_spacing={self.config.training_scheduler_timestep_spacing}")
+        output_args.append(f"inference_scheduler_timestep_spacing={self.config.inference_scheduler_timestep_spacing}")
+        output_str = f" (extra parameters={output_args})" if output_args else " (no special parameters set)"
 
         return output_str

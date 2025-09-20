@@ -1,10 +1,10 @@
-from torch.optim.lr_scheduler import LambdaLR
-import torch
-import math
-import accelerate
-import os
 import logging
-from torch.optim.lr_scheduler import LRScheduler
+import math
+import os
+
+import accelerate
+import torch
+from torch.optim.lr_scheduler import LambdaLR, LRScheduler
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -15,24 +15,18 @@ else:
     logger.setLevel("ERROR")
 
 
-def segmented_timestep_selection(
-    actual_num_timesteps, bsz, weights, config, use_refiner_range: bool = False
-):
+def segmented_timestep_selection(actual_num_timesteps, bsz, weights, config, use_refiner_range: bool = False):
     # Determine the range of timesteps to use
     num_timesteps = actual_num_timesteps
     if use_refiner_range or config.refiner_training:
         if config.refiner_training_invert_schedule:
             # Inverted schedule calculation: we start from the last timestep and move downwards
-            start_timestep = (
-                actual_num_timesteps - 1
-            )  # Start from the last timestep, e.g., 999
+            start_timestep = actual_num_timesteps - 1  # Start from the last timestep, e.g., 999
             # Calculate the end of the range based on the inverse of the training strength
             end_timestep = int(config.refiner_training_strength * actual_num_timesteps)
         else:
             # Normal refiner training schedule
-            start_timestep = (
-                int(actual_num_timesteps * config.refiner_training_strength) - 1
-            )
+            start_timestep = int(actual_num_timesteps * config.refiner_training_strength) - 1
             end_timestep = 0
         num_timesteps = start_timestep - end_timestep + 1
     else:
@@ -143,9 +137,7 @@ def get_polynomial_decay_schedule_with_warmup(
 
     lr_init = optimizer.defaults["lr"]
     if not (float(lr_init) > float(lr_end)):
-        raise ValueError(
-            f"lr_end ({lr_end}) must be be smaller than initial lr ({lr_init})"
-        )
+        raise ValueError(f"lr_end ({lr_end}) must be be smaller than initial lr ({lr_init})")
 
     def lr_lambda(current_step: int):
         if current_step < num_warmup_steps:
@@ -248,10 +240,7 @@ class Cosine(LRScheduler):
 
     def get_lr(self):
         lrs = [
-            self.eta_min
-            + (base_lr - self.eta_min)
-            * (1 + math.cos(math.pi * self.T_cur / self.T_i))
-            / 2
+            self.eta_min + (base_lr - self.eta_min) * (1 + math.cos(math.pi * self.T_cur / self.T_i)) / 2
             for base_lr in self.base_lrs
         ]
         return lrs
@@ -262,13 +251,9 @@ class Cosine(LRScheduler):
 
         if step is None:
             step = self.last_epoch + 1
-            self.T_cur = (step // self.steps_per_epoch) + (
-                step % self.steps_per_epoch
-            ) / self.steps_per_epoch
+            self.T_cur = (step // self.steps_per_epoch) + (step % self.steps_per_epoch) / self.steps_per_epoch
         else:
-            self.T_cur = (step // self.steps_per_epoch) + (
-                step % self.steps_per_epoch
-            ) / self.steps_per_epoch
+            self.T_cur = (step // self.steps_per_epoch) + (step % self.steps_per_epoch) / self.steps_per_epoch
 
         if self.T_cur >= self.T_i:
             self.T_cur = self.T_cur - self.T_i
@@ -288,16 +273,10 @@ class Cosine(LRScheduler):
         """Display the current learning rate."""
         if is_verbose:
             if epoch is None:
-                print(
-                    "Adjusting learning rate"
-                    " of group {} to {:.8e}.".format(group, lr)
-                )
+                print("Adjusting learning rate" " of group {} to {:.8e}.".format(group, lr))
             else:
                 epoch_str = ("%.2f" if isinstance(epoch, float) else "%.5d") % epoch
-                print(
-                    "Epoch {}: adjusting learning rate"
-                    " of group {} to {:.8e}.".format(epoch_str, group, lr)
-                )
+                print("Epoch {}: adjusting learning rate" " of group {} to {:.8e}.".format(epoch_str, group, lr))
 
 
 class CosineAnnealingHardRestarts(LRScheduler):
@@ -359,10 +338,7 @@ class CosineAnnealingHardRestarts(LRScheduler):
 
     def get_lr(self):
         lrs = [
-            self.eta_min
-            + (base_lr - self.eta_min)
-            * (1 + math.cos(math.pi * self.T_cur / self.T_i))
-            / 2
+            self.eta_min + (base_lr - self.eta_min) * (1 + math.cos(math.pi * self.T_cur / self.T_i)) / 2
             for base_lr in self.base_lrs
         ]
         return lrs
@@ -403,26 +379,16 @@ class CosineAnnealingHardRestarts(LRScheduler):
         """Display the current learning rate."""
         if is_verbose:
             if epoch is None:
-                print(
-                    "Adjusting learning rate"
-                    " of group {} to {:.8e}.".format(group, lr)
-                )
+                print("Adjusting learning rate" " of group {} to {:.8e}.".format(group, lr))
             else:
                 epoch_str = ("%.2f" if isinstance(epoch, float) else "%.5d") % epoch
-                print(
-                    "Epoch {}: adjusting learning rate"
-                    " of group {} to {:.8e}.".format(epoch_str, group, lr)
-                )
+                print("Epoch {}: adjusting learning rate" " of group {} to {:.8e}.".format(epoch_str, group, lr))
 
 
 class Sine(LRScheduler):
-    def __init__(
-        self, optimizer, T_0, T_mult=1, eta_min=0, last_step=-1, verbose=False
-    ):
+    def __init__(self, optimizer, T_0, T_mult=1, eta_min=0, last_step=-1, verbose=False):
         if T_0 <= 0 or not isinstance(T_0, int):
-            raise ValueError(
-                f"Sine learning rate expects positive integer T_0, but got {T_0}"
-            )
+            raise ValueError(f"Sine learning rate expects positive integer T_0, but got {T_0}")
         if T_mult < 1 or not isinstance(T_mult, int):
             raise ValueError(f"Expected integer T_mult >= 1, but got {T_mult}")
 
@@ -442,9 +408,7 @@ class Sine(LRScheduler):
     def get_lr(self):
         # Calculate learning rates using a continuous sine function based on total steps
         lrs = [
-            self.eta_min
-            + (base_lr - self.eta_min)
-            * (0.5 * (1 + math.sin(math.pi * self.total_steps / self.T_0)))
+            self.eta_min + (base_lr - self.eta_min) * (0.5 * (1 + math.sin(math.pi * self.total_steps / self.T_0)))
             for base_lr in self.base_lrs
         ]
         return lrs
@@ -455,9 +419,7 @@ class Sine(LRScheduler):
 
         self.total_steps = step  # Use total steps instead of resetting per interval
         self.last_epoch = step
-        for i, (param_group, lr) in enumerate(
-            zip(self.optimizer.param_groups, self.get_lr())
-        ):
+        for i, (param_group, lr) in enumerate(zip(self.optimizer.param_groups, self.get_lr())):
             param_group["lr"] = math.floor(lr * 1e9) / 1e9
             self.print_lr(self.verbose, i, lr, step)
 
@@ -466,12 +428,11 @@ class Sine(LRScheduler):
     def print_lr(self, is_verbose, group, lr, epoch=None):
         if is_verbose:
             epoch_str = ("%.2f" if isinstance(epoch, float) else "%.5d") % epoch
-            print(
-                f"Epoch {epoch_str}: adjusting learning rate of group {group} to {lr:.8e}."
-            )
+            print(f"Epoch {epoch_str}: adjusting learning rate of group {group} to {lr:.8e}.")
 
 
 from diffusers.optimization import get_scheduler
+
 from simpletuner.helpers.models.flux import calculate_shift_flux
 
 
@@ -525,8 +486,7 @@ def get_lr_scheduler(
             T_mult=int(1),
             eta_min=float(args.lr_end),
             last_step=-1,
-            verbose=os.environ.get("SIMPLETUNER_SCHEDULER_VERBOSE", "false").lower()
-            == "true",
+            verbose=os.environ.get("SIMPLETUNER_SCHEDULER_VERBOSE", "false").lower() == "true",
         )
     elif args.lr_scheduler == "sine":
         logger.info("Using Sine learning rate scheduler.")
@@ -538,8 +498,7 @@ def get_lr_scheduler(
             T_mult=int(1),
             eta_min=float(args.lr_end),
             last_step=-1,
-            verbose=os.environ.get("SIMPLETUNER_SCHEDULER_VERBOSE", "false").lower()
-            == "true",
+            verbose=os.environ.get("SIMPLETUNER_SCHEDULER_VERBOSE", "false").lower() == "true",
         )
     elif args.lr_scheduler == "cosine":
         logger.info("Using Cosine learning rate scheduler.")
@@ -551,13 +510,10 @@ def get_lr_scheduler(
             T_mult=int(1),
             eta_min=float(args.lr_end),
             last_step=-1,
-            verbose=os.environ.get("SIMPLETUNER_SCHEDULER_VERBOSE", "false").lower()
-            == "true",
+            verbose=os.environ.get("SIMPLETUNER_SCHEDULER_VERBOSE", "false").lower() == "true",
         )
     elif args.lr_scheduler == "polynomial":
-        logger.info(
-            f"Using Polynomial learning rate scheduler with last epoch {global_step - 2}."
-        )
+        logger.info(f"Using Polynomial learning rate scheduler with last epoch {global_step - 2}.")
         lr_scheduler = get_polynomial_decay_schedule_with_warmup(
             optimizer=optimizer,
             num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
@@ -598,14 +554,12 @@ def get_lr_scheduler(
 # DISCLAIMER: This code is strongly influenced by https://github.com/leffff/euler-scheduler
 
 from dataclasses import dataclass
-from typing import Tuple, Optional, Union
+from typing import Optional, Tuple, Union
 
 import torch
 from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.schedulers.scheduling_utils import SchedulerMixin
 from diffusers.utils import BaseOutput
-from diffusers.schedulers.scheduling_utils import (
-    SchedulerMixin,
-)
 
 
 @dataclass
@@ -655,9 +609,7 @@ class FlowMatchingEulerScheduler(SchedulerMixin, ConfigMixin):
             self.set_timesteps(num_inference_steps)
 
     @staticmethod
-    def add_noise(
-        original_samples: torch.Tensor, noise: torch.Tensor, timestep: torch.Tensor
-    ) -> torch.Tensor:
+    def add_noise(original_samples: torch.Tensor, noise: torch.Tensor, timestep: torch.Tensor) -> torch.Tensor:
         """
         Add noise to the given sample
 
@@ -720,8 +672,7 @@ class FlowMatchingEulerScheduler(SchedulerMixin, ConfigMixin):
 
         step = FlowMatchingEulerSchedulerOutput(
             prev_sample=sample + self.h * model_output,
-            pred_original_sample=sample
-            + (1 - get_time_coefficients(timestep, model_output.ndim)) * model_output,
+            pred_original_sample=sample + (1 - get_time_coefficients(timestep, model_output.ndim)) * model_output,
         )
 
         if return_dict:
@@ -730,9 +681,7 @@ class FlowMatchingEulerScheduler(SchedulerMixin, ConfigMixin):
         return (step.prev_sample,)
 
     @staticmethod
-    def get_velocity(
-        original_samples: torch.Tensor, noise: torch.Tensor
-    ) -> torch.Tensor:
+    def get_velocity(original_samples: torch.Tensor, noise: torch.Tensor) -> torch.Tensor:
         """
         Predict the sample from the previous timestep by reversing the SDE. This function propagates the diffusion
         process from the learned model outputs (most often the predicted noise).
@@ -750,9 +699,7 @@ class FlowMatchingEulerScheduler(SchedulerMixin, ConfigMixin):
         return original_samples - noise
 
     @staticmethod
-    def scale_model_input(
-        sample: torch.Tensor, timestep: Optional[int] = None
-    ) -> torch.Tensor:
+    def scale_model_input(sample: torch.Tensor, timestep: Optional[int] = None) -> torch.Tensor:
         """
          Ensures interchangeability with schedulers that need to scale the denoising model input depending on the
          current timestep.
@@ -771,8 +718,10 @@ class FlowMatchingEulerScheduler(SchedulerMixin, ConfigMixin):
         return sample
 
 
-import os, math, logging
-from typing import Optional, Union, List
+import logging
+import math
+import os
+from typing import List, Optional, Union
 
 import numpy as np
 import torch
@@ -792,13 +741,9 @@ class PFODESolverSD1x:
         self.scheduler = scheduler
 
         train_step_terminal = 0
-        train_step_initial = (
-            train_step_terminal + self.scheduler.config.num_train_timesteps
-        )  # 0+1000
+        train_step_initial = train_step_terminal + self.scheduler.config.num_train_timesteps  # 0+1000
 
-        self.stepsize = (t_terminal - t_initial) / (
-            train_step_terminal - train_step_initial
-        )  # 1/1000
+        self.stepsize = (t_terminal - t_initial) / (train_step_terminal - train_step_initial)  # 1/1000
 
     def get_timesteps(self, t_start, t_end, num_steps):
         # (b,) -> (b,1)
@@ -806,14 +751,8 @@ class PFODESolverSD1x:
         t_end = t_end[:, None]
         assert t_start.dim() == 2
 
-        timepoints = (
-            torch.arange(0, num_steps, 1)
-            .expand(t_start.shape[0], num_steps)
-            .to(device=t_start.device)
-        )
-        interval = (t_end - t_start) / (
-            torch.ones([1], device=t_start.device) * num_steps
-        )
+        timepoints = torch.arange(0, num_steps, 1).expand(t_start.shape[0], num_steps).to(device=t_start.device)
+        interval = (t_end - t_start) / (torch.ones([1], device=t_start.device) * num_steps)
         timepoints = t_start + interval * timepoints
 
         timesteps = (self.scheduler.num_train_timesteps - 1) + (
@@ -850,32 +789,18 @@ class PFODESolverSD1x:
                 guidance_scale_tensor, embedding_dim=unet.config.time_cond_proj_dim
             ).to(device=latents.device, dtype=latents.dtype)
 
-        timesteps = self.get_timesteps(t_start, t_end, num_steps).to(
-            device=latents.device
-        )
-        timestep_interval = self.scheduler.config.num_train_timesteps // (
-            num_windows * num_steps
-        )
+        timesteps = self.get_timesteps(t_start, t_end, num_steps).to(device=latents.device)
+        timestep_interval = self.scheduler.config.num_train_timesteps // (num_windows * num_steps)
 
         # 7. Denoising loop
         with torch.no_grad():
             # for i in tqdm(range(num_steps)):
             for i in range(num_steps):
-                print(
-                    f"Step {i} latents: mean={latents.mean().item()}, std={latents.std().item()}"
-                )
-                t = (
-                    torch.cat([timesteps[:, i]] * 2)
-                    if do_classifier_free_guidance
-                    else timesteps[:, i]
-                )
+                print(f"Step {i} latents: mean={latents.mean().item()}, std={latents.std().item()}")
+                t = torch.cat([timesteps[:, i]] * 2) if do_classifier_free_guidance else timesteps[:, i]
                 # expand the latents if we are doing classifier free guidance
-                latent_model_input = (
-                    torch.cat([latents] * 2) if do_classifier_free_guidance else latents
-                )
-                latent_model_input = self.scheduler.scale_model_input(
-                    latent_model_input, t
-                )
+                latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
+                latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
                 # predict the noise residual
                 noise_pred = unet(
@@ -888,9 +813,7 @@ class PFODESolverSD1x:
 
                 if do_classifier_free_guidance:
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                    noise_pred = noise_pred_uncond + guidance_scale * (
-                        noise_pred_text - noise_pred_uncond
-                    )
+                    noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
                 # STEP: compute the previous noisy sample x_t -> x_t-1
                 # latents = self.scheduler.step(noise_pred, timesteps[:, i].cpu(), latents, return_dict=False)[0]
@@ -909,45 +832,35 @@ class PFODESolverSD1x:
                     )
                 beta_prod_t = 1 - alpha_prod_t
 
-                alpha_prod_t = alpha_prod_t.to(
-                    device=latents.device, dtype=latents.dtype
-                )
-                alpha_prod_t_prev = alpha_prod_t_prev.to(
-                    device=latents.device, dtype=latents.dtype
-                )
+                alpha_prod_t = alpha_prod_t.to(device=latents.device, dtype=latents.dtype)
+                alpha_prod_t_prev = alpha_prod_t_prev.to(device=latents.device, dtype=latents.dtype)
                 beta_prod_t = beta_prod_t.to(device=latents.device, dtype=latents.dtype)
 
                 # 3. compute predicted original sample from predicted noise also called
                 # "predicted x_0" of formula (12) from https://arxiv.org/pdf/2010.02502.pdf
                 if self.scheduler.config.prediction_type == "epsilon":
-                    pred_original_sample = (
-                        latents - beta_prod_t[:, None, None, None] ** (0.5) * noise_pred
-                    ) / alpha_prod_t[:, None, None, None] ** (0.5)
+                    pred_original_sample = (latents - beta_prod_t[:, None, None, None] ** (0.5) * noise_pred) / alpha_prod_t[
+                        :, None, None, None
+                    ] ** (0.5)
                     pred_epsilon = noise_pred
                 # elif self.scheduler.config.prediction_type == "sample":
                 #     pred_original_sample = noise_pred
                 #     pred_epsilon = (latents - alpha_prod_t ** (0.5) * pred_original_sample) / beta_prod_t ** (0.5)
                 elif self.scheduler.config.prediction_type == "v_prediction":
-                    pred_original_sample = (
-                        alpha_prod_t[:, None, None, None] ** 0.5
-                    ) * latents - (beta_prod_t[:, None, None, None] ** 0.5) * noise_pred
-                    pred_epsilon = (
-                        alpha_prod_t[:, None, None, None] ** 0.5
-                    ) * noise_pred + (beta_prod_t[:, None, None, None] ** 0.5) * latents
+                    pred_original_sample = (alpha_prod_t[:, None, None, None] ** 0.5) * latents - (
+                        beta_prod_t[:, None, None, None] ** 0.5
+                    ) * noise_pred
+                    pred_epsilon = (alpha_prod_t[:, None, None, None] ** 0.5) * noise_pred + (
+                        beta_prod_t[:, None, None, None] ** 0.5
+                    ) * latents
                 else:
                     raise ValueError(
                         f"prediction_type given as {self.scheduler.config.prediction_type} must be one of `epsilon`, `sample`, or"
                         " `v_prediction`"
                     )
 
-                pred_sample_direction = (
-                    1 - alpha_prod_t_prev[:, None, None, None]
-                ) ** (0.5) * pred_epsilon
-                latents = (
-                    alpha_prod_t_prev[:, None, None, None] ** (0.5)
-                    * pred_original_sample
-                    + pred_sample_direction
-                )
+                pred_sample_direction = (1 - alpha_prod_t_prev[:, None, None, None]) ** (0.5) * pred_epsilon
+                latents = alpha_prod_t_prev[:, None, None, None] ** (0.5) * pred_original_sample + pred_sample_direction
 
         return latents
 
@@ -964,13 +877,9 @@ class PFODESolverSDXL:
         self.scheduler = scheduler
 
         train_step_terminal = 0
-        train_step_initial = (
-            train_step_terminal + self.scheduler.config.num_train_timesteps
-        )  # 0+1000
+        train_step_initial = train_step_terminal + self.scheduler.config.num_train_timesteps  # 0+1000
 
-        self.stepsize = (t_terminal - t_initial) / (
-            train_step_terminal - train_step_initial
-        )  # 1/1000
+        self.stepsize = (t_terminal - t_initial) / (train_step_terminal - train_step_initial)  # 1/1000
 
     def get_timesteps(self, t_start, t_end, num_steps):
         # (b,) -> (b,1)
@@ -978,14 +887,8 @@ class PFODESolverSDXL:
         t_end = t_end[:, None]
         assert t_start.dim() == 2
 
-        timepoints = (
-            torch.arange(0, num_steps, 1)
-            .expand(t_start.shape[0], num_steps)
-            .to(device=t_start.device)
-        )
-        interval = (t_end - t_start) / (
-            torch.ones([1], device=t_start.device) * num_steps
-        )
+        timepoints = torch.arange(0, num_steps, 1).expand(t_start.shape[0], num_steps).to(device=t_start.device)
+        interval = (t_end - t_start) / (torch.ones([1], device=t_start.device) * num_steps)
         timepoints = t_start + interval * timepoints
 
         timesteps = (self.scheduler.num_train_timesteps - 1) + (
@@ -994,9 +897,7 @@ class PFODESolverSDXL:
         return timesteps.round().long()
         # return timesteps.floor().long()
 
-    def _get_add_time_ids(
-        self, original_size, crops_coords_top_left, target_size, dtype
-    ):
+    def _get_add_time_ids(self, original_size, crops_coords_top_left, target_size, dtype):
         # Adapted from pipeline.StableDiffusionXLPipeline._get_add_time_ids
         add_time_ids = list(original_size + crops_coords_top_left + target_size)
         add_time_ids = torch.tensor([add_time_ids], dtype=dtype)
@@ -1027,21 +928,14 @@ class PFODESolverSDXL:
         add_text_embeds = pooled_prompt_embeds
         add_time_ids = torch.cat(
             # [self._get_add_time_ids((1024, 1024), (0, 0), (1024, 1024), dtype) for _ in range(bsz)]
-            [
-                self._get_add_time_ids(
-                    (resolution, resolution), (0, 0), (resolution, resolution), dtype
-                )
-                for _ in range(bsz)
-            ]
+            [self._get_add_time_ids((resolution, resolution), (0, 0), (resolution, resolution), dtype) for _ in range(bsz)]
         ).to(device)
         negative_add_time_ids = add_time_ids
 
         if do_classifier_free_guidance:
             # prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds])
             prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
-            add_text_embeds = torch.cat(
-                [negative_pooled_prompt_embeds, add_text_embeds], dim=0
-            )
+            add_text_embeds = torch.cat([negative_pooled_prompt_embeds, add_text_embeds], dim=0)
             add_time_ids = torch.cat([negative_add_time_ids, add_time_ids], dim=0)
 
         timestep_cond = None
@@ -1051,29 +945,17 @@ class PFODESolverSDXL:
                 guidance_scale_tensor, embedding_dim=unet.config.time_cond_proj_dim
             ).to(device=latents.device, dtype=latents.dtype)
 
-        timesteps = self.get_timesteps(t_start, t_end, num_steps).to(
-            device=latents.device
-        )
-        timestep_interval = self.scheduler.config.num_train_timesteps // (
-            num_windows * num_steps
-        )
+        timesteps = self.get_timesteps(t_start, t_end, num_steps).to(device=latents.device)
+        timestep_interval = self.scheduler.config.num_train_timesteps // (num_windows * num_steps)
 
         # 7. Denoising loop
         with torch.no_grad():
             # for i in tqdm(range(num_steps)):
             for i in range(num_steps):
                 # expand the latents if we are doing classifier free guidance
-                t = (
-                    torch.cat([timesteps[:, i]] * 2)
-                    if do_classifier_free_guidance
-                    else timesteps[:, i]
-                )
-                latent_model_input = (
-                    torch.cat([latents] * 2) if do_classifier_free_guidance else latents
-                )
-                latent_model_input = self.scheduler.scale_model_input(
-                    latent_model_input, t
-                )
+                t = torch.cat([timesteps[:, i]] * 2) if do_classifier_free_guidance else timesteps[:, i]
+                latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
+                latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
                 # predict the noise residual
                 added_cond_kwargs = {
@@ -1091,9 +973,7 @@ class PFODESolverSDXL:
 
                 if do_classifier_free_guidance:
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                    noise_pred = noise_pred_uncond + guidance_scale * (
-                        noise_pred_text - noise_pred_uncond
-                    )
+                    noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
                 # STEP: compute the previous noisy sample x_t -> x_t-1
                 # latents = self.scheduler.step(noise_pred, timesteps[:, i].cpu(), latents, return_dict=False)[0]
@@ -1112,20 +992,16 @@ class PFODESolverSDXL:
                     )
                 beta_prod_t = 1 - alpha_prod_t
 
-                alpha_prod_t = alpha_prod_t.to(
-                    device=latents.device, dtype=latents.dtype
-                )
-                alpha_prod_t_prev = alpha_prod_t_prev.to(
-                    device=latents.device, dtype=latents.dtype
-                )
+                alpha_prod_t = alpha_prod_t.to(device=latents.device, dtype=latents.dtype)
+                alpha_prod_t_prev = alpha_prod_t_prev.to(device=latents.device, dtype=latents.dtype)
                 beta_prod_t = beta_prod_t.to(device=latents.device, dtype=latents.dtype)
 
                 # 3. compute predicted original sample from predicted noise also called
                 # "predicted x_0" of formula (12) from https://arxiv.org/pdf/2010.02502.pdf
                 if self.scheduler.config.prediction_type == "epsilon":
-                    pred_original_sample = (
-                        latents - beta_prod_t[:, None, None, None] ** (0.5) * noise_pred
-                    ) / alpha_prod_t[:, None, None, None] ** (0.5)
+                    pred_original_sample = (latents - beta_prod_t[:, None, None, None] ** (0.5) * noise_pred) / alpha_prod_t[
+                        :, None, None, None
+                    ] ** (0.5)
                     pred_epsilon = noise_pred
                 # elif self.scheduler.config.prediction_type == "sample":
                 #     pred_original_sample = noise_pred
@@ -1139,14 +1015,8 @@ class PFODESolverSDXL:
                         " `v_prediction`"
                     )
 
-                pred_sample_direction = (
-                    1 - alpha_prod_t_prev[:, None, None, None]
-                ) ** (0.5) * pred_epsilon
-                latents = (
-                    alpha_prod_t_prev[:, None, None, None] ** (0.5)
-                    * pred_original_sample
-                    + pred_sample_direction
-                )
+                pred_sample_direction = (1 - alpha_prod_t_prev[:, None, None, None]) ** (0.5) * pred_epsilon
+                latents = alpha_prod_t_prev[:, None, None, None] ** (0.5) * pred_original_sample + pred_sample_direction
 
         return latents
 
@@ -1154,20 +1024,16 @@ class PFODESolverSDXL:
 import math
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
+
 import numpy as np
 import torch
 from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.schedulers.scheduling_utils import KarrasDiffusionSchedulers, SchedulerMixin
 from diffusers.utils import BaseOutput
-from diffusers.schedulers.scheduling_utils import (
-    KarrasDiffusionSchedulers,
-    SchedulerMixin,
-)
 
 
 class Time_Windows:
-    def __init__(
-        self, t_initial=1, t_terminal=0, num_windows=4, precision=1.0 / 1000
-    ) -> None:
+    def __init__(self, t_initial=1, t_terminal=0, num_windows=4, precision=1.0 / 1000) -> None:
         assert t_terminal < t_initial
         time_windows = [1.0 * i / num_windows for i in range(1, num_windows + 1)][::-1]
 
@@ -1177,10 +1043,7 @@ class Time_Windows:
 
     def get_window(self, tp):
         idx = 0
-        while (
-            idx < len(self.window_ends) - 1
-            and (tp - 0.1 * self.precision) <= self.window_ends[idx]
-        ):
+        while idx < len(self.window_ends) - 1 and (tp - 0.1 * self.precision) <= self.window_ends[idx]:
             idx += 1
         if idx >= len(self.window_ends):
             idx = len(self.window_ends) - 1  # clamp to last window
@@ -1314,9 +1177,7 @@ class PeRFlowScheduler(SchedulerMixin, ConfigMixin):
             self.betas = torch.tensor(trained_betas, dtype=torch.float32)
         elif beta_schedule == "linear" or prediction_type == "flow_matching":
             # For flow_matching, use a linear schedule like the FlowMatchEulerDiscreteScheduler
-            self.betas = torch.linspace(
-                beta_start, beta_end, num_train_timesteps, dtype=torch.float32
-            )
+            self.betas = torch.linspace(beta_start, beta_end, num_train_timesteps, dtype=torch.float32)
         elif beta_schedule == "scaled_linear":
             # this schedule is very specific to the latent diffusion model.
             self.betas = (
@@ -1332,9 +1193,7 @@ class PeRFlowScheduler(SchedulerMixin, ConfigMixin):
             # Glide cosine schedule
             self.betas = betas_for_alpha_bar(num_train_timesteps)
         else:
-            raise NotImplementedError(
-                f"{beta_schedule} does is not implemented for {self.__class__}"
-            )
+            raise NotImplementedError(f"{beta_schedule} does is not implemented for {self.__class__}")
 
         self.alphas = 1.0 - self.betas
         self.alphas_cumprod = torch.cumprod(self.alphas, dim=0)
@@ -1343,9 +1202,7 @@ class PeRFlowScheduler(SchedulerMixin, ConfigMixin):
         # For the final step, there is no previous alphas_cumprod because we are already at 0
         # `set_alpha_to_one` decides whether we set this parameter simply to one or
         # whether we use the final alpha of the "non-previous" one.
-        self.final_alpha_cumprod = (
-            torch.tensor(1.0) if set_alpha_to_one else self.alphas_cumprod[0]
-        )
+        self.final_alpha_cumprod = torch.tensor(1.0) if set_alpha_to_one else self.alphas_cumprod[0]
 
         # # standard deviation of the initial noise distribution
         self.init_noise_sigma = 1.0
@@ -1360,15 +1217,11 @@ class PeRFlowScheduler(SchedulerMixin, ConfigMixin):
         # Store the prediction type for reference
         self.prediction_type = prediction_type
 
-        logger.info(
-            f"Loaded distillation scheduler {self.__class__.__name__} with prediction type {self.prediction_type}"
-        )
+        logger.info(f"Loaded distillation scheduler {self.__class__.__name__} with prediction type {self.prediction_type}")
 
         assert prediction_type in ["epsilon", "diff_eps", "flow_matching"]
 
-    def scale_model_input(
-        self, sample: torch.FloatTensor, timestep: Optional[int] = None
-    ) -> torch.FloatTensor:
+    def scale_model_input(self, sample: torch.FloatTensor, timestep: Optional[int] = None) -> torch.FloatTensor:
         """
         Ensures interchangeability with schedulers that need to scale the denoising model input depending on the
         current timestep.
@@ -1412,9 +1265,7 @@ class PeRFlowScheduler(SchedulerMixin, ConfigMixin):
             alphas_cumprod_end,
         )
 
-    def set_timesteps(
-        self, num_inference_steps: int, device: Union[str, torch.device] = None
-    ):
+    def set_timesteps(self, num_inference_steps: int, device: Union[str, torch.device] = None):
         """
         Sets the discrete timesteps used for the diffusion chain (to be run before inference).
 
@@ -1445,25 +1296,19 @@ class PeRFlowScheduler(SchedulerMixin, ConfigMixin):
         timesteps = []
         for i in range(self.config.num_time_windows):
             if i < num_inference_steps % self.config.num_time_windows:
-                num_steps_cur_win = (
-                    num_inference_steps // self.config.num_time_windows + 1
-                )
+                num_steps_cur_win = num_inference_steps // self.config.num_time_windows + 1
             else:
                 num_steps_cur_win = num_inference_steps // self.config.num_time_windows
 
             t_s = self.time_windows.window_starts[i]
             t_e = self.time_windows.window_ends[i]
-            timesteps_cur_win = np.linspace(
-                t_s, t_e, num=num_steps_cur_win, endpoint=False
-            )
+            timesteps_cur_win = np.linspace(t_s, t_e, num=num_steps_cur_win, endpoint=False)
             print(f"Timesteps in current window {i}: {timesteps_cur_win}")
             timesteps.append(timesteps_cur_win)
 
         timesteps = np.concatenate(timesteps)
 
-        self.timesteps = torch.from_numpy(
-            (timesteps * self.config.num_train_timesteps).astype(np.int64)
-        ).to(device)
+        self.timesteps = torch.from_numpy((timesteps * self.config.num_train_timesteps).astype(np.int64)).to(device)
         print(f"Perflow scheduler using timesteps: {self.timesteps}")
 
     # 3. Add a helper method for specifically handling flow_matching
@@ -1524,9 +1369,7 @@ class PeRFlowScheduler(SchedulerMixin, ConfigMixin):
         if self.config.prediction_type in ["epsilon", "ddim_eps"]:
             pred_epsilon = model_output
             t_c = timestep / self.config.num_train_timesteps
-            t_s, t_e, _, c_to_s, _, alphas_cumprod_start, alphas_cumprod_end = (
-                self.get_window_alpha(t_c)
-            )
+            t_s, t_e, _, c_to_s, _, alphas_cumprod_start, alphas_cumprod_end = self.get_window_alpha(t_c)
 
             lambda_s = (alphas_cumprod_end / alphas_cumprod_start) ** 0.5
             eta_s = (1 - alphas_cumprod_end) ** 0.5 - (
@@ -1570,9 +1413,7 @@ class PeRFlowScheduler(SchedulerMixin, ConfigMixin):
 
         if not return_dict:
             return (prev_sample,)
-        return PeRFlowSchedulerOutput(
-            prev_sample=prev_sample, pred_original_sample=None
-        )
+        return PeRFlowSchedulerOutput(prev_sample=prev_sample, pred_original_sample=None)
 
     # Copied from diffusers.schedulers.scheduling_ddpm.DDPMScheduler.add_noise
     def add_noise(
@@ -1582,9 +1423,7 @@ class PeRFlowScheduler(SchedulerMixin, ConfigMixin):
         timesteps: torch.IntTensor,
     ) -> torch.FloatTensor:
         # Make sure alphas_cumprod and timestep have same device and dtype as original_samples
-        alphas_cumprod = self.alphas_cumprod.to(
-            device=original_samples.device, dtype=original_samples.dtype
-        )
+        alphas_cumprod = self.alphas_cumprod.to(device=original_samples.device, dtype=original_samples.dtype)
         timesteps = timesteps.to(original_samples.device) - 1  # indexing from 0
 
         sqrt_alpha_prod = alphas_cumprod[timesteps] ** 0.5
@@ -1597,9 +1436,7 @@ class PeRFlowScheduler(SchedulerMixin, ConfigMixin):
         while len(sqrt_one_minus_alpha_prod.shape) < len(original_samples.shape):
             sqrt_one_minus_alpha_prod = sqrt_one_minus_alpha_prod.unsqueeze(-1)
 
-        noisy_samples = (
-            sqrt_alpha_prod * original_samples + sqrt_one_minus_alpha_prod * noise
-        )
+        noisy_samples = sqrt_alpha_prod * original_samples + sqrt_one_minus_alpha_prod * noise
         return noisy_samples
 
     def __len__(self):

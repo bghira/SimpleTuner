@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
+
 from simpletuner.simpletuner_sdk.api_state import APIState
 from simpletuner.simpletuner_sdk.thread_keeper import list_threads, terminate_thread
 
@@ -11,9 +12,7 @@ class TrainingHost:
         self.router.add_api_route("/", self.get_job, methods=["GET"])
         self.router.add_api_route("/state", self.get_host_state, methods=["GET"])
         self.router.add_api_route("/cancel", self.cancel_job, methods=["POST"])
-        self.router.add_api_route(
-            "/status/{job_id}", self.get_job_status, methods=["GET"]
-        )
+        self.router.add_api_route("/status/{job_id}", self.get_job_status, methods=["GET"])
         self.router.add_api_route("/jobs", self.list_jobs, methods=["GET"])
 
     def get_host_state(self):

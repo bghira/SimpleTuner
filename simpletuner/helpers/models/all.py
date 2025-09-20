@@ -1,19 +1,19 @@
-from simpletuner.helpers.models.sd3.model import SD3
-from simpletuner.helpers.models.deepfloyd.model import DeepFloydIF
-from simpletuner.helpers.models.sana.model import Sana
-from simpletuner.helpers.models.sdxl.model import SDXL
-from simpletuner.helpers.models.kolors.model import Kolors
-from simpletuner.helpers.models.flux.model import Flux
-from simpletuner.helpers.models.wan.model import Wan
-from simpletuner.helpers.models.ltxvideo.model import LTXVideo
-from simpletuner.helpers.models.sd1x.model import StableDiffusion1, StableDiffusion2
-from simpletuner.helpers.models.pixart.model import PixartSigma
-from simpletuner.helpers.models.hidream.model import HiDream
-from simpletuner.helpers.models.omnigen.model import OmniGen
 from simpletuner.helpers.models.auraflow.model import Auraflow
-from simpletuner.helpers.models.lumina2.model import Lumina2
 from simpletuner.helpers.models.cosmos.model import Cosmos2Image
+from simpletuner.helpers.models.deepfloyd.model import DeepFloydIF
+from simpletuner.helpers.models.flux.model import Flux
+from simpletuner.helpers.models.hidream.model import HiDream
+from simpletuner.helpers.models.kolors.model import Kolors
+from simpletuner.helpers.models.ltxvideo.model import LTXVideo
+from simpletuner.helpers.models.lumina2.model import Lumina2
+from simpletuner.helpers.models.omnigen.model import OmniGen
+from simpletuner.helpers.models.pixart.model import PixartSigma
 from simpletuner.helpers.models.qwen_image.model import QwenImage
+from simpletuner.helpers.models.sana.model import Sana
+from simpletuner.helpers.models.sd1x.model import StableDiffusion1, StableDiffusion2
+from simpletuner.helpers.models.sd3.model import SD3
+from simpletuner.helpers.models.sdxl.model import SDXL
+from simpletuner.helpers.models.wan.model import Wan
 
 model_families = {
     "sd1x": StableDiffusion1,
