@@ -13,7 +13,10 @@ import unittest
 from contextlib import suppress
 from unittest.mock import MagicMock, Mock, patch
 
-import test_setup
+try:
+    from tests import test_setup
+except ModuleNotFoundError:
+    import test_setup
 
 from simpletuner.simpletuner_sdk.process_keeper import (
     TrainerProcess,

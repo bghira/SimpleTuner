@@ -2,7 +2,10 @@ import json
 import unittest
 from unittest.mock import MagicMock, Mock, patch
 
-from helpers.data import MockDataBackend
+try:
+    from tests.helpers.data import MockDataBackend
+except ModuleNotFoundError:
+    from helpers.data import MockDataBackend
 from PIL import Image
 
 from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend

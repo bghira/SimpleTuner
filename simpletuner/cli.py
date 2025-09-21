@@ -498,6 +498,8 @@ def cmd_server(args) -> int:
             port = 8001
 
     print(f"Starting SimpleTuner {mode} server on {host}:{port}")
+    if mode in {"trainer", "unified"}:
+        print("NiceGUI interface available at /web/")
 
     try:
         import uvicorn

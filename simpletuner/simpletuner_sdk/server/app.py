@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+
 logger = logging.getLogger("SimpleTunerServer")
 
 
@@ -120,10 +121,22 @@ def _add_trainer_routes(app: FastAPI):
     training_host = TrainingHost()
     app.include_router(training_host.router)
 
-    # Add model info routes
+    # Add API routes
+    from .routes.configs import router as configs_router
+    from .routes.datasets import router as datasets_router
     from .routes.models import router as models_router
+    from .routes.validation import router as validation_router
+    from .routes.training import router as training_router
+    from .routes.web import router as web_router
+    from .routes.webui_state import router as webui_state_router
 
     app.include_router(models_router)
+    app.include_router(datasets_router)
+    app.include_router(configs_router)
+    app.include_router(validation_router)
+    app.include_router(training_router)
+    app.include_router(web_router)
+    app.include_router(webui_state_router)
 
     logger.info("Added trainer routes")
 

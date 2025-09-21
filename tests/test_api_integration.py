@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from simpletuner.simpletuner_sdk.api_state import APIState
 from simpletuner.simpletuner_sdk.configuration import ConfigModel, Configuration
+from simpletuner.simpletuner_sdk.server import ServerMode, create_app
 from simpletuner.simpletuner_sdk.training_host import TrainingHost
 
 
@@ -178,6 +179,94 @@ class TestModelEndpoints:
             response = test_client_trainer.get("/models/invalid/flavours")
 
             assert response.status_code == 404
+
+
+class TestDatasetRoutes:
+    """Test dataset blueprint and plan endpoints."""
+
+    def test_get_dataset_blueprints(self, test_client_trainer):
+        """Blueprint endpoint returns available backends."""
+        response = test_client_trainer.get("/api/datasets/blueprints")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "blueprints" in data
+        assert isinstance(data["blueprints"], list)
+        assert len(data["blueprints"]) >= 1
+
+    def test_get_dataset_plan_default(self, test_client_trainer, dataset_plan_path):
+        """Plan endpoint returns empty payload when no plan exists."""
+        response = test_client_trainer.get("/api/datasets/plan")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["datasets"] == []
+        assert data["source"] == "default"
+        assert any(
+            message["message"].startswith("add at least one dataset")
+            for message in data.get("validations", [])
+        )
+
+    def test_create_dataset_plan(self, test_client_trainer, dataset_plan_path):
+        """Plan endpoint persists datasets and returns validations."""
+        payload = {
+            "datasets": [
+                {
+                    "id": "text_embeds",
+                    "type": "local",
+                    "dataset_type": "text_embeds",
+                    "default": True,
+                    "cache_dir": "cache/text_embeds",
+                },
+                {
+                    "id": "main",
+                    "type": "local",
+                    "dataset_type": "image",
+                    "instance_data_dir": "/data/images",
+                },
+            ]
+        }
+
+        response = test_client_trainer.post("/api/datasets/plan", json=payload)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["source"] == "disk"
+        assert not any(message["level"] == "error" for message in data.get("validations", []))
+        assert dataset_plan_path.exists()
+
+        with dataset_plan_path.open("r", encoding="utf-8") as handle:
+            saved = json.load(handle)
+
+        assert saved == payload["datasets"]
+
+        reload_response = test_client_trainer.get("/api/datasets/plan")
+        assert reload_response.status_code == 200
+        reloaded = reload_response.json()
+        assert reloaded["datasets"] == payload["datasets"]
+        assert reloaded["source"] == "disk"
+
+    def test_create_invalid_dataset_plan_rejected(self, test_client_trainer):
+        """Invalid plans are rejected with validation detail."""
+        payload = {
+            "datasets": [
+                {
+                    "id": "images-only",
+                    "type": "local",
+                    "dataset_type": "image",
+                }
+            ]
+        }
+
+        response = test_client_trainer.post("/api/datasets/plan", json=payload)
+
+        assert response.status_code == 422
+        data = response.json()
+        assert "detail" in data
+        detail = data["detail"]
+        assert isinstance(detail, dict)
+        assert "validations" in detail
+        assert any(message["level"] == "error" for message in detail["validations"])
 
 
 class TestEventEndpoints:
@@ -419,6 +508,55 @@ class TestProcessModeIntegration:
             assert response.status_code == 200
             data = response.json()
             assert "cancel" in data.get("result", "").lower()
+ 
+
+@pytest.fixture
+def dataset_plan_path(tmp_path, monkeypatch):
+    """Provide an isolated dataset plan path for tests."""
+    plan_path = tmp_path / "dataset_plan.json"
+    monkeypatch.setenv("SIMPLETUNER_DATASET_PLAN_PATH", str(plan_path))
+    return plan_path
+
+
+@pytest.fixture
+def api_state_tmp(tmp_path, monkeypatch):
+    """Redirect API state persistence to a temporary file."""
+    state_path = tmp_path / "api_state.json"
+    monkeypatch.setattr(APIState, "state_file", str(state_path))
+    APIState.clear_state()
+    yield state_path
+    APIState.clear_state()
+
+
+@pytest.fixture
+def test_client_trainer(dataset_plan_path, api_state_tmp):
+    """FastAPI test client configured for trainer mode."""
+    app = create_app(mode=ServerMode.TRAINER)
+    with TestClient(app) as client:
+        yield client
+
+
+@pytest.fixture
+def test_client_callback(dataset_plan_path, api_state_tmp):
+    """FastAPI test client configured for callback mode."""
+    app = create_app(mode=ServerMode.CALLBACK)
+    with TestClient(app) as client:
+        yield client
+
+
+@pytest.fixture
+def test_client_unified(dataset_plan_path, api_state_tmp):
+    """FastAPI test client configured for unified mode."""
+    app = create_app(mode=ServerMode.UNIFIED)
+    with TestClient(app) as client:
+        yield client
+
+
+@pytest.fixture
+def execution_mode_process(monkeypatch):
+    """Force the server into subprocess execution mode for a test."""
+    monkeypatch.setenv("SIMPLETUNER_EXECUTION_MODE", "process")
+    yield
 
 
 if __name__ == "__main__":

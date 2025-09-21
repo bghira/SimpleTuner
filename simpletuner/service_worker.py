@@ -16,6 +16,7 @@ from simpletuner.simpletuner_sdk.configuration import Configuration
 # Import the WebInterface class
 from simpletuner.simpletuner_sdk.interface import WebInterface
 from simpletuner.simpletuner_sdk.training_host import TrainingHost
+from simpletuner.simpletuner_sdk.server.routes.datasets import router as dataset_router
 
 
 # Pydantic models for request/response
@@ -84,6 +85,9 @@ app.include_router(config_controller.router)
 #   traininghost controller for training job mgmt   #
 #####################################################
 app.include_router(training_host.router)
+
+# Dataset blueprint + plan API
+app.include_router(dataset_router)
 
 
 # Health check endpoint
