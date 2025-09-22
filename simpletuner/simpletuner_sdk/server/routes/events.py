@@ -6,7 +6,6 @@ Handles webhook callbacks and event broadcasting.
 import asyncio
 import json
 import logging
-from typing import Any, Dict, List
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -92,6 +91,7 @@ async def events_stream(request: Request):
         event_store = getattr(request.app.state, "event_store", None)
         if not event_store:
             from ..services.event_store import get_default_store
+
             event_store = get_default_store()
 
         last_index = 0
@@ -107,24 +107,24 @@ async def events_stream(request: Request):
                 for event in events:
                     # Transform event data for frontend
                     sse_event = {
-                        'type': event.get('message_type', 'notification'),
-                        'data': event,
-                        'timestamp': event.get('timestamp')
+                        "type": event.get("message_type", "notification"),
+                        "data": event,
+                        "timestamp": event.get("timestamp"),
                     }
 
                     # Map specific event types
-                    if event.get('message_type') == 'training_progress':
-                        sse_event['type'] = 'training_progress'
-                        sse_event['progress'] = event.get('progress', {})
-                    elif event.get('message_type') == 'validation_complete':
-                        sse_event['type'] = 'validation_complete'
-                    elif event.get('message_type') == 'error':
-                        sse_event['type'] = 'error'
-                        sse_event['message'] = event.get('message', 'Unknown error')
+                    if event.get("message_type") == "training_progress":
+                        sse_event["type"] = "training_progress"
+                        sse_event["progress"] = event.get("progress", {})
+                    elif event.get("message_type") == "validation_complete":
+                        sse_event["type"] = "validation_complete"
+                    elif event.get("message_type") == "error":
+                        sse_event["type"] = "error"
+                        sse_event["message"] = event.get("message", "Unknown error")
                     else:
-                        sse_event['type'] = 'notification'
-                        sse_event['message'] = event.get('message', str(event))
-                        sse_event['level'] = event.get('level', 'info')
+                        sse_event["type"] = "notification"
+                        sse_event["message"] = event.get("message", str(event))
+                        sse_event["level"] = event.get("level", "info")
 
                     yield f"data: {json.dumps(sse_event)}\n\n"
 
@@ -145,8 +145,8 @@ async def events_stream(request: Request):
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Headers": "Cache-Control"
-        }
+            "Access-Control-Allow-Headers": "Cache-Control",
+        },
     )
 
 
@@ -160,20 +160,24 @@ async def get_recent_events(request: Request):
 
     if not event_store:
         from ..services.event_store import get_default_store
+
         event_store = get_default_store()
 
     try:
         # Get last 10 events
         events = event_store.get_events_since(max(0, event_store.get_event_count() - 10))
-    except:
+    except Exception:
+        # Event store might be empty or unavailable
         events = []
 
     if not events:
-        return HTMLResponse("""
+        return HTMLResponse(
+            """
         <div class="text-muted text-center py-3">
             <i class="fas fa-info-circle"></i> No recent events
         </div>
-        """)
+        """
+        )
 
     html = ""
     for event in reversed(events):  # Show newest first

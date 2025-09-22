@@ -1,4 +1,5 @@
 """API routes for persisting Web UI state across sessions."""
+
 from __future__ import annotations
 
 import os
@@ -11,6 +12,7 @@ from pydantic import BaseModel
 from simpletuner.simpletuner_sdk.server.services.webui_state import (
     OnboardingStepState,
     WebUIDefaults,
+    WebUIOnboardingState,
     WebUIState,
     WebUIStateStore,
 )
@@ -33,6 +35,15 @@ class OnboardingStepDefinition:
 
 _STEP_DEFINITIONS: List[OnboardingStepDefinition] = [
     OnboardingStepDefinition(
+        id="default_configs_dir",
+        title="Default configurations directory",
+        prompt="Where do you want to store your training configurations?",
+        input_type="directory",
+        version=2,
+        required=True,
+        applies_to_default="configs_dir",
+    ),
+    OnboardingStepDefinition(
         id="default_output_dir",
         title="Default output directory",
         prompt="Where do you want to store outputs?",
@@ -40,7 +51,7 @@ _STEP_DEFINITIONS: List[OnboardingStepDefinition] = [
         version=1,
         required=True,
         applies_to_default="output_dir",
-    )
+    ),
 ]
 _STEP_INDEX: Dict[str, OnboardingStepDefinition] = {step.id: step for step in _STEP_DEFINITIONS}
 
@@ -116,6 +127,8 @@ def _apply_step_to_defaults(
 ) -> None:
     if step.applies_to_default == "output_dir" and value is not None:
         defaults.output_dir = value
+    elif step.applies_to_default == "configs_dir" and value is not None:
+        defaults.configs_dir = value
 
 
 @router.post("/onboarding/steps/{step_id}")
@@ -143,3 +156,55 @@ async def update_onboarding_step(step_id: str, payload: OnboardingStepUpdate) ->
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(error)) from error
 
     return _build_state_response(state, _STEP_DEFINITIONS)
+
+
+@router.post("/onboarding/reset")
+async def reset_onboarding() -> Dict[str, object]:
+    """Reset onboarding data to allow starting fresh."""
+    store = WebUIStateStore()
+    try:
+        # Clear both onboarding and defaults
+        store.save_onboarding(WebUIOnboardingState())
+        store.save_defaults(WebUIDefaults())
+
+        # Return fresh state
+        state = store.load_state()
+        return _build_state_response(state, _STEP_DEFINITIONS)
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(error)) from error
+
+
+class DefaultsUpdate(BaseModel):
+    """Payload for updating WebUI defaults."""
+
+    configs_dir: Optional[str] = None
+    output_dir: Optional[str] = None
+    active_config: Optional[str] = None
+
+
+@router.post("/defaults/update")
+async def update_defaults(payload: DefaultsUpdate) -> Dict[str, object]:
+    """Update WebUI default settings."""
+    store = WebUIStateStore()
+    try:
+        # Load current defaults
+        defaults = store.load_defaults()
+
+        # Update fields if provided
+        if payload.configs_dir is not None:
+            normalized_path = os.path.abspath(os.path.expanduser(payload.configs_dir.strip()))
+            defaults.configs_dir = normalized_path
+        if payload.output_dir is not None:
+            normalized_path = os.path.abspath(os.path.expanduser(payload.output_dir.strip()))
+            defaults.output_dir = normalized_path
+        if payload.active_config is not None:
+            defaults.active_config = payload.active_config
+
+        # Save updated defaults
+        store.save_defaults(defaults)
+
+        # Return updated state
+        state = store.load_state()
+        return _build_state_response(state, _STEP_DEFINITIONS)
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(error)) from error

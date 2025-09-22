@@ -1,4 +1,5 @@
 """Web UI state persistence and onboarding management."""
+
 from __future__ import annotations
 
 import json
@@ -34,6 +35,8 @@ class WebUIDefaults:
     """Persistent defaults used by the Web UI."""
 
     output_dir: Optional[str] = None
+    configs_dir: Optional[str] = None
+    active_config: Optional[str] = None
 
 
 @dataclass
@@ -59,11 +62,7 @@ class WebUIStateStore:
         if override:
             return Path(override).expanduser()
 
-        base_candidate = (
-            os.environ.get(_XDG_HOME_ENV)
-            or os.environ.get(_XDG_CONFIG_HOME_ENV)
-            or str(Path.home())
-        )
+        base_candidate = os.environ.get(_XDG_HOME_ENV) or os.environ.get(_XDG_CONFIG_HOME_ENV) or str(Path.home())
         return Path(base_candidate).expanduser() / ".simpletuner" / "webui"
 
     def _category_path(self, category: str) -> Path:
@@ -120,12 +119,7 @@ class WebUIStateStore:
         return WebUIOnboardingState(steps=steps)
 
     def save_onboarding(self, onboarding: WebUIOnboardingState) -> WebUIOnboardingState:
-        payload = {
-            "steps": {
-                step_id: asdict(step_state)
-                for step_id, step_state in onboarding.steps.items()
-            }
-        }
+        payload = {"steps": {step_id: asdict(step_state) for step_id, step_state in onboarding.steps.items()}}
         self._write_json("onboarding", payload)
         return onboarding
 

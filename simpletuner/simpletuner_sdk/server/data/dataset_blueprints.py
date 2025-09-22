@@ -1,4 +1,5 @@
 """Dataset blueprint metadata exposed to the Web UI."""
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional, Tuple
@@ -448,4 +449,3 @@ def find_blueprint(backend_type: str, dataset_type: str) -> Optional[BackendBlue
         if dataset_type in blueprint.datasetTypes:
             return blueprint.model_copy(deep=True)
     return None
-

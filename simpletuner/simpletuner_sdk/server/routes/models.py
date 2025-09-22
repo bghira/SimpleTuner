@@ -4,7 +4,6 @@ Provides model families and flavours information.
 """
 
 import logging
-from typing import Any, Dict, List
 
 from fastapi import APIRouter, HTTPException
 

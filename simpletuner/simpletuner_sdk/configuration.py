@@ -9,7 +9,6 @@ if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 else:
     logger.setLevel("ERROR")
-import os
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 from pydantic import BaseModel
@@ -78,15 +77,15 @@ class Configuration:
             job_config.trainer_config["webhook_config"] = "config/webhooks.json"
 
         if hasattr(job_config, "lycoris_config"):
-            print(f"LyCORIS config present: {job_config.lycoris_config}")
+            logger.debug(f"LyCORIS config present: {job_config.lycoris_config}")
             with open("config/lycoris_config.json", "w") as f:
                 f.write(json.dumps(job_config.lycoris_config, indent=4))
                 job_config.trainer_config["lycoris_config"] = "config/lycoris_config.json"
 
         user_prompt_library_path = job_config.trainer_config.get("--user_prompt_library", None)
-        print(f"User prompt library path: {user_prompt_library_path}")
+        logger.debug(f"User prompt library path: {user_prompt_library_path}")
         if user_prompt_library_path and hasattr(job_config, "user_prompt_library"):
-            print(f"User prompt library present: {job_config.user_prompt_library}")
+            logger.debug(f"User prompt library present: {job_config.user_prompt_library}")
             with open(user_prompt_library_path, "w") as f:
                 f.write(json.dumps(job_config.user_prompt_library, indent=4))
                 job_config.trainer_config["user_prompt_library"] = "config/user_prompt_library.json"
@@ -112,7 +111,7 @@ class Configuration:
         except Exception as e:
             import traceback
 
-            print(traceback.format_exc())
+            logger.error(traceback.format_exc())
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Could not validate configuration: {str(e)}",
@@ -170,7 +169,7 @@ class Configuration:
             }
         try:
             # Submit the job to the thread manager
-            print("Submitting job to thread..")
+            logger.info("Submitting job to thread..")
             submit_job(job_id, trainer.run)
             APIState.set_state("status", "Running")
             return {

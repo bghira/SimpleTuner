@@ -1,9 +1,9 @@
 """Field validation routes for HTMX forms."""
+
 from __future__ import annotations
 
 import os
 import re
-from typing import Any
 
 from fastapi import APIRouter, Form
 from fastapi.responses import HTMLResponse
@@ -89,8 +89,14 @@ async def validate_field(field_name: str, value: str = Form("")) -> str:
 
     elif field_name == "lr_scheduler":
         valid_schedulers = [
-            "linear", "cosine", "cosine_with_restarts", "polynomial",
-            "constant", "constant_with_warmup", "inverse_sqrt", "reduce_lr_on_plateau"
+            "linear",
+            "cosine",
+            "cosine_with_restarts",
+            "polynomial",
+            "constant",
+            "constant_with_warmup",
+            "inverse_sqrt",
+            "reduce_lr_on_plateau",
         ]
         if value and value not in valid_schedulers:
             error_html = f"Learning rate scheduler must be one of: {', '.join(valid_schedulers)}"

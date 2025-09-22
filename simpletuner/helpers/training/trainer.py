@@ -1065,7 +1065,7 @@ class Trainer:
         # Prepare everything with our `accelerator`.
         logger.info("Preparing models..")
 
-        # TODO: Is this still needed? Seems like a hack job from January 2024.
+        # TODO: Review if this is still required - added January 2024 as temporary solution.
         self.train_dataloaders = []
         for _, backend in StateTracker.get_data_backends().items():
             if "train_dataloader" not in backend:
@@ -2085,7 +2085,7 @@ class Trainer:
                             self.lr_scheduler.step(**self.extra_lr_scheduler_kwargs)
                             self.lr = self.optimizer.param_groups[0]["d"]
                         elif self.config.is_lr_scheduler_disabled:
-                            # hackjob method of retrieving LR from accelerated optims
+                            # Alternative method for retrieving LR from accelerated optimizers
                             self.lr = StateTracker.get_last_lr()
                         else:
                             self.lr_scheduler.step(**self.extra_lr_scheduler_kwargs)

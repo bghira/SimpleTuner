@@ -1,16 +1,15 @@
 # simpletuner_sdk.interface.py
-import json
 import os
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from simpletuner.helpers.configuration.cmd_args import get_default_config as get_cmd_default_config
 
 # Import the proper configuration modules
-from simpletuner.helpers.models.all import get_all_model_flavours, get_model_flavour_choices, model_families
+from simpletuner.helpers.models.all import get_all_model_flavours, model_families
 from simpletuner.helpers.training.optimizer_param import optimizer_choices
 
 
@@ -256,7 +255,8 @@ class WebInterface:
         defaults = get_cmd_default_config()
 
         # Override a few UI-specific defaults
-        defaults["job_id"] = "training_run_" + str(int(os.environ.get("RANDOM", "42")))
+        import random
+        defaults["job_id"] = f"training_run_{random.randint(1000, 9999)}"
         defaults["data_backend_config"] = "config/multidatabackend.json"
 
         # Ensure all template-expected values have sensible defaults

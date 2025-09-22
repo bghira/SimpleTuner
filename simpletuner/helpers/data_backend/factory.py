@@ -1528,7 +1528,7 @@ class FactoryRegistry:
                 "mask",
                 # controlnet uses pixel values for older Unets but encoded latents for newer models.
                 # when we require encoded latents, we also must scan for aspect ratio buckets here.
-                # it's stupid, because it effectively doubles the I/O to discover the conditioning dataset,
+                # This approach is inefficient as it effectively doubles the I/O to discover the conditioning dataset,
                 # and a more ideal implementation would simply reference the training dataset metadata buckets.
                 # but currently, there is no method to instruct a dataset to use a separate metadata instance with different paths.
                 "controlnet" if not self.model.requires_conditioning_latents() else -1,
@@ -2138,7 +2138,7 @@ class FactoryRegistry:
             "mask",
             (
                 "controlnet" if not self.model.requires_conditioning_latents() else -1
-            ),  # hack to encode VAE latents when the model requires them.
+            ),  # Workaround to encode VAE latents when the model requires them.
         ]:
             self._configure_vae_cache(
                 backend,

@@ -1,9 +1,10 @@
 """Dataset blueprint and plan routes exposed to the Web UI."""
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, HTTPException, status, Response
+from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict
 
@@ -137,10 +138,7 @@ async def create_dataset(dataset: Dict[str, Any]) -> Dict[str, Any]:
 
     # Validate dataset ID is unique
     if any(d.get("id") == dataset.get("id") for d in datasets):
-        raise HTTPException(
-            status_code=400,
-            detail={"message": f"Dataset ID '{dataset.get('id')}' already exists"}
-        )
+        raise HTTPException(status_code=400, detail={"message": f"Dataset ID '{dataset.get('id')}' already exists"})
 
     # Add dataset to plan
     datasets.append(dataset)
@@ -154,8 +152,8 @@ async def create_dataset(dataset: Dict[str, Any]) -> Dict[str, Any]:
             status_code=422,
             detail={
                 "message": "Dataset validation failed",
-                "validation_errors": {v.field: v.message for v in errors if v.field}
-            }
+                "validation_errors": {v.field: v.message for v in errors if v.field},
+            },
         )
 
     # Save updated plan
@@ -195,8 +193,8 @@ async def update_dataset(dataset_id: str, dataset: Dict[str, Any]) -> Dict[str, 
             status_code=422,
             detail={
                 "message": "Dataset validation failed",
-                "validation_errors": {v.field: v.message for v in errors if v.field}
-            }
+                "validation_errors": {v.field: v.message for v in errors if v.field},
+            },
         )
 
     # Save updated plan
@@ -287,4 +285,3 @@ async def validate_field(field_name: str, value: str = "") -> str:
             error_html = "Repeats must be a valid number"
 
     return error_html
-

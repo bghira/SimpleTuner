@@ -1,6 +1,9 @@
+import logging
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Dict
+
+logger = logging.getLogger(__name__)
 
 executor = ThreadPoolExecutor(max_workers=1)
 thread_registry: Dict[str, Future] = {}
@@ -48,7 +51,7 @@ def terminate_thread(job_id: str) -> bool:
     with lock:
         future = thread_registry.get(job_id)
         if not future:
-            print(f"Thread {job_id} not found")
+            logger.warning(f"Thread {job_id} not found")
             return False
         # Attempt to cancel the future if it hasn't started running
         cancelled = future.cancel()

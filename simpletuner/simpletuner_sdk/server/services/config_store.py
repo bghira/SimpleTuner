@@ -1,4 +1,5 @@
 """Configuration store for managing training configurations."""
+
 from __future__ import annotations
 
 import json
@@ -13,17 +14,23 @@ from pydantic import BaseModel, Field
 # Environment variables for configuration paths
 _CONFIG_ENV_DIR = "SIMPLETUNER_CONFIG_DIR"
 _CONFIG_ACTIVE = "SIMPLETUNER_ACTIVE_CONFIG"
-_DEFAULT_CONFIG_DIR = Path("config/environments")
-_DEFAULT_TEMPLATE_DIR = Path("config/templates")
-_DEFAULT_CONFIG_FILE = Path("config/config.json")
+
+# Default paths - will be resolved relative to current directory when used
+_DEFAULT_CONFIG_DIR = "config"
+_DEFAULT_DATALOADER_DIR = "config/dataloaders"
+_DEFAULT_TEMPLATE_DIR = "config/templates"
+_DEFAULT_CONFIG_FILE = "config/config.json"
 
 
 class ConfigMetadata(BaseModel):
     """Metadata for a configuration."""
+
     name: str
     description: Optional[str] = None
     model_family: Optional[str] = None
     model_type: Optional[str] = None
+    model_flavour: Optional[str] = None
+    lora_type: Optional[str] = None
     created_at: str
     modified_at: str
     tags: List[str] = Field(default_factory=list)
@@ -33,6 +40,7 @@ class ConfigMetadata(BaseModel):
 
 class ConfigValidation(BaseModel):
     """Validation result for a configuration."""
+
     is_valid: bool
     errors: List[str] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
@@ -42,12 +50,15 @@ class ConfigValidation(BaseModel):
 class ConfigStore:
     """Store for managing training configurations."""
 
-    def __init__(self, config_dir: Optional[Path | str] = None):
+    def __init__(self, config_dir: Optional[Path | str] = None, config_type: str = "model"):
         """Initialize the config store.
 
         Args:
-            config_dir: Directory to store configurations. Defaults to config/environments.
+            config_dir: Directory to store configurations. Defaults to config/environments or config/dataloaders.
+            config_type: Type of configuration ('model' or 'dataloader'). Defaults to 'model'.
         """
+        self.config_type = config_type
+
         if config_dir is not None:
             self.config_dir = Path(config_dir)
         else:
@@ -56,18 +67,20 @@ class ConfigStore:
         self.template_dir = self._resolve_template_dir()
         self._ensure_directories()
 
-    @staticmethod
-    def _resolve_config_dir() -> Path:
+    def _resolve_config_dir(self) -> Path:
         """Resolve the configuration directory from environment or default."""
         env_dir = os.environ.get(_CONFIG_ENV_DIR)
         if env_dir:
             return Path(env_dir)
-        return _DEFAULT_CONFIG_DIR
+
+        if self.config_type == "dataloader":
+            return Path(_DEFAULT_DATALOADER_DIR).resolve()
+        return Path(_DEFAULT_CONFIG_DIR).resolve()
 
     @staticmethod
     def _resolve_template_dir() -> Path:
         """Resolve the template directory."""
-        return _DEFAULT_TEMPLATE_DIR
+        return Path(_DEFAULT_TEMPLATE_DIR).resolve()
 
     def _ensure_directories(self):
         """Ensure configuration directories exist."""
@@ -81,27 +94,41 @@ class ConfigStore:
 
     def _create_default_config(self, path: Path):
         """Create a default configuration file."""
-        default_config = {
-            "--model_type": "lora",
-            "--model_family": "flux",
-            "--pretrained_model_name_or_path": "black-forest-labs/FLUX.1-dev",
-            "--output_dir": "output/models",
-            "--train_batch_size": 1,
-            "--learning_rate": 0.0001,
-            "--max_train_steps": 1000,
-            "--checkpointing_steps": 100,
-            "--seed": 42,
-            "--resolution": 1024,
-            "--mixed_precision": "bf16",
-            "--gradient_checkpointing": True,
-            "--use_ema": False
-        }
+        if self.config_type == "dataloader":
+            # Default dataloader config
+            default_config = [
+                {
+                    "id": "default-dataset",
+                    "type": "local",
+                    "dataset_type": "image",
+                    "instance_data_dir": "",
+                    "resolution": 1024,
+                    "caption_strategy": "textfile",
+                }
+            ]
 
-        metadata = self._create_metadata("default", "Default training configuration")
-        config_with_metadata = {
-            "_metadata": metadata.model_dump(),
-            "config": default_config
-        }
+            metadata = self._create_metadata("default", "Default dataloader configuration")
+            config_with_metadata = {"_metadata": metadata.model_dump(), "datasets": default_config}
+        else:
+            # Default model config
+            default_config = {
+                "--model_type": "lora",
+                "--model_family": "flux",
+                "--pretrained_model_name_or_path": "black-forest-labs/FLUX.1-dev",
+                "--output_dir": "output/models",
+                "--train_batch_size": 1,
+                "--learning_rate": 0.0001,
+                "--max_train_steps": 1000,
+                "--checkpointing_steps": 100,
+                "--seed": 42,
+                "--resolution": 1024,
+                "--mixed_precision": "bf16",
+                "--gradient_checkpointing": True,
+                "--use_ema": False,
+            }
+
+            metadata = self._create_metadata("default", "Default training configuration")
+            config_with_metadata = {"_metadata": metadata.model_dump(), "config": default_config}
 
         with path.open("w", encoding="utf-8") as f:
             json.dump(config_with_metadata, f, indent=2, sort_keys=True)
@@ -110,20 +137,36 @@ class ConfigStore:
     def _create_metadata(self, name: str, description: str = None) -> ConfigMetadata:
         """Create metadata for a configuration."""
         now = datetime.now(timezone.utc).isoformat()
-        return ConfigMetadata(
-            name=name,
-            description=description,
-            created_at=now,
-            modified_at=now
-        )
+        return ConfigMetadata(name=name, description=description, created_at=now, modified_at=now)
 
     def _get_config_path(self, name: str) -> Path:
         """Get the path for a configuration file."""
+        if self.config_type == "model":
+            # Check if it's a subdirectory with config.json
+            subdir_path = self.config_dir / name / "config.json"
+            if subdir_path.exists():
+                return subdir_path
+        else:
+            # For dataloader configs, check subdirectory with multidatabackend.json
+            subdir_path = self.config_dir / name / "multidatabackend.json"
+            if subdir_path.exists():
+                return subdir_path
+
+        # Fall back to root-level JSON file
         return self.config_dir / f"{name}.json"
 
     def _get_template_path(self, name: str) -> Path:
         """Get the path for a template file."""
         return self.template_dir / f"{name}.json"
+
+    def _is_folder_config(self, name: str) -> bool:
+        """Check if a configuration is folder-based."""
+        if self.config_type == "model":
+            folder_path = self.config_dir / name / "config.json"
+            return folder_path.exists()
+        else:
+            folder_path = self.config_dir / name / "multidatabackend.json"
+            return folder_path.exists()
 
     def list_configs(self) -> List[Dict[str, Any]]:
         """List all available configurations.
@@ -133,30 +176,315 @@ class ConfigStore:
         """
         configs = []
 
-        # List user configs
-        for config_file in self.config_dir.glob("*.json"):
-            try:
-                with config_file.open("r", encoding="utf-8") as f:
-                    data = json.load(f)
+        if self.config_type == "model":
+            # For model configs, look for config.json in subdirectories
+            for subdir in self.config_dir.iterdir():
+                if subdir.is_dir():
+                    config_file = subdir / "config.json"
+                    if config_file.exists():
+                        try:
+                            with config_file.open("r", encoding="utf-8") as f:
+                                data = json.load(f)
 
-                if "_metadata" in data:
-                    metadata = data["_metadata"]
-                else:
-                    # Legacy config without metadata
-                    metadata = {
-                        "name": config_file.stem,
-                        "created_at": datetime.fromtimestamp(
-                            config_file.stat().st_ctime, tz=timezone.utc
-                        ).isoformat(),
-                        "modified_at": datetime.fromtimestamp(
-                            config_file.stat().st_mtime, tz=timezone.utc
-                        ).isoformat()
-                    }
+                            if "_metadata" in data:
+                                metadata = data["_metadata"]
+                                metadata["name"] = subdir.name  # Use folder name
+                            else:
+                                # Legacy config without metadata
+                                metadata = {
+                                    "name": subdir.name,
+                                    "created_at": datetime.fromtimestamp(
+                                        config_file.stat().st_ctime, tz=timezone.utc
+                                    ).isoformat(),
+                                    "modified_at": datetime.fromtimestamp(
+                                        config_file.stat().st_mtime, tz=timezone.utc
+                                    ).isoformat(),
+                                }
+                                # Extract model info from config data
+                                if isinstance(data, dict):
+                                    if "--model_family" in data:
+                                        metadata["model_family"] = data["--model_family"]
+                                    elif "model_family" in data:
+                                        metadata["model_family"] = data["model_family"]
 
-                configs.append(metadata)
-            except Exception:
-                # Skip invalid files
-                continue
+                                    if "--model_type" in data:
+                                        metadata["model_type"] = data["--model_type"]
+                                    elif "model_type" in data:
+                                        metadata["model_type"] = data["model_type"]
+
+                                    if "--model_flavour" in data:
+                                        metadata["model_flavour"] = data["--model_flavour"]
+                                    elif "model_flavour" in data:
+                                        metadata["model_flavour"] = data["model_flavour"]
+
+                                    if "--lora_type" in data:
+                                        metadata["lora_type"] = data["--lora_type"]
+                                    elif "lora_type" in data:
+                                        metadata["lora_type"] = data["lora_type"]
+
+                            configs.append(metadata)
+                        except Exception:
+                            # Skip invalid files
+                            continue
+
+            # Also check root-level JSON files for backward compatibility
+            # But exclude files that are clearly dataloader configs
+            for config_file in self.config_dir.glob("*.json"):
+                try:
+                    with config_file.open("r", encoding="utf-8") as f:
+                        data = json.load(f)
+
+                    # Skip files that are dataloader configs
+                    # Check if it's an array (typical for dataloader configs)
+                    if isinstance(data, list):
+                        continue
+                    # Check if it has a "datasets" key (dataloader config with metadata)
+                    if isinstance(data, dict) and "datasets" in data and isinstance(data["datasets"], list):
+                        continue
+                    # Skip files with names that indicate they're dataloader configs
+                    if config_file.stem.startswith("multidatabackend"):
+                        continue
+                    # Skip webhook configs
+                    if isinstance(data, dict) and "webhook_type" in data:
+                        continue
+                    # Skip lycoris configs
+                    if isinstance(data, dict) and "algo" in data:
+                        continue
+
+                    if "_metadata" in data:
+                        metadata = data["_metadata"]
+                    else:
+                        # Legacy config without metadata
+                        metadata = {
+                            "name": config_file.stem,
+                            "created_at": datetime.fromtimestamp(config_file.stat().st_ctime, tz=timezone.utc).isoformat(),
+                            "modified_at": datetime.fromtimestamp(config_file.stat().st_mtime, tz=timezone.utc).isoformat(),
+                        }
+                        # Extract model info from config data
+                        if isinstance(data, dict):
+                            if "--model_family" in data:
+                                metadata["model_family"] = data["--model_family"]
+                            elif "model_family" in data:
+                                metadata["model_family"] = data["model_family"]
+
+                            if "--model_type" in data:
+                                metadata["model_type"] = data["--model_type"]
+                            elif "model_type" in data:
+                                metadata["model_type"] = data["model_type"]
+
+                            if "--model_flavour" in data:
+                                metadata["model_flavour"] = data["--model_flavour"]
+                            elif "model_flavour" in data:
+                                metadata["model_flavour"] = data["model_flavour"]
+
+                            if "--lora_type" in data:
+                                metadata["lora_type"] = data["--lora_type"]
+                            elif "lora_type" in data:
+                                metadata["lora_type"] = data["lora_type"]
+
+                    configs.append(metadata)
+                except Exception:
+                    # Skip invalid files
+                    continue
+        elif self.config_type == "dataloader":
+            # For dataloader configs, look for multidatabackend.json in subdirectories
+            # and also standalone JSON files
+            for subdir in self.config_dir.iterdir():
+                if subdir.is_dir():
+                    config_file = subdir / "multidatabackend.json"
+                    if config_file.exists():
+                        try:
+                            with config_file.open("r", encoding="utf-8") as f:
+                                data = json.load(f)
+
+                            # For dataloader configs, data is usually an array
+                            datasets = data if isinstance(data, list) else data.get("datasets", [])
+
+                            metadata = {
+                                "name": subdir.name,
+                                "created_at": datetime.fromtimestamp(
+                                    config_file.stat().st_ctime, tz=timezone.utc
+                                ).isoformat(),
+                                "modified_at": datetime.fromtimestamp(
+                                    config_file.stat().st_mtime, tz=timezone.utc
+                                ).isoformat(),
+                                "dataset_count": len(datasets),
+                            }
+
+                            configs.append(metadata)
+                        except Exception:
+                            # Skip invalid files
+                            continue
+
+            # Also check root-level JSON files
+            for config_file in self.config_dir.glob("*.json"):
+                try:
+                    with config_file.open("r", encoding="utf-8") as f:
+                        data = json.load(f)
+
+                    # For dataloader configs, data is usually an array
+                    is_dataloader_config = False
+                    datasets = []
+
+                    if isinstance(data, list):
+                        # It's a dataloader config (array of datasets)
+                        is_dataloader_config = True
+                        datasets = data
+                    elif isinstance(data, dict):
+                        if "datasets" in data and isinstance(data["datasets"], list):
+                            # It's a dataloader config with metadata
+                            is_dataloader_config = True
+                            datasets = data["datasets"]
+                        elif config_file.stem.startswith("multidatabackend"):
+                            # Name indicates it's a dataloader config
+                            is_dataloader_config = True
+                            datasets = data if isinstance(data, list) else []
+
+                    # Skip if it's not a dataloader config
+                    if not is_dataloader_config:
+                        continue
+
+                    if "_metadata" in data and not isinstance(data, list):
+                        metadata = data["_metadata"]
+                        metadata["dataset_count"] = len(datasets)
+                    else:
+                        # Legacy config without metadata
+                        metadata = {
+                            "name": config_file.stem,
+                            "created_at": datetime.fromtimestamp(config_file.stat().st_ctime, tz=timezone.utc).isoformat(),
+                            "modified_at": datetime.fromtimestamp(config_file.stat().st_mtime, tz=timezone.utc).isoformat(),
+                            "dataset_count": len(datasets),
+                        }
+
+                    configs.append(metadata)
+                except Exception:
+                    # Skip invalid files
+                    continue
+        elif self.config_type == "webhook":
+            # For webhook configs, look for files with "webhook_type" key
+            # Check subdirectories for any JSON files
+            for subdir in self.config_dir.iterdir():
+                if subdir.is_dir():
+                    for config_file in subdir.glob("*.json"):
+                        try:
+                            with config_file.open("r", encoding="utf-8") as f:
+                                data = json.load(f)
+
+                            # Only include if it has webhook_type key
+                            if isinstance(data, dict) and "webhook_type" in data:
+                                metadata = {
+                                    "name": f"{subdir.name}/{config_file.name}",
+                                    "created_at": datetime.fromtimestamp(
+                                        config_file.stat().st_ctime, tz=timezone.utc
+                                    ).isoformat(),
+                                    "modified_at": datetime.fromtimestamp(
+                                        config_file.stat().st_mtime, tz=timezone.utc
+                                    ).isoformat(),
+                                    "webhook_type": data.get("webhook_type"),
+                                    "callback_url": data.get("callback_url"),
+                                }
+                                configs.append(metadata)
+                        except Exception:
+                            # Skip invalid files
+                            continue
+
+            # Also check root-level JSON files
+            for config_file in self.config_dir.glob("*.json"):
+                try:
+                    with config_file.open("r", encoding="utf-8") as f:
+                        data = json.load(f)
+
+                    # Only include if it has webhook_type key
+                    if isinstance(data, dict) and "webhook_type" in data:
+                        metadata = {
+                            "name": config_file.stem,
+                            "created_at": datetime.fromtimestamp(config_file.stat().st_ctime, tz=timezone.utc).isoformat(),
+                            "modified_at": datetime.fromtimestamp(config_file.stat().st_mtime, tz=timezone.utc).isoformat(),
+                            "webhook_type": data.get("webhook_type"),
+                            "callback_url": data.get("callback_url"),
+                        }
+                        configs.append(metadata)
+                except Exception:
+                    # Skip invalid files
+                    continue
+        elif self.config_type == "lycoris":
+            # For lycoris configs, look for files with "algo" key
+            # Check subdirectories for lycoris_config.json
+            for subdir in self.config_dir.iterdir():
+                if subdir.is_dir():
+                    # Check for lycoris_config.json specifically
+                    config_file = subdir / "lycoris_config.json"
+                    if config_file.exists():
+                        try:
+                            with config_file.open("r", encoding="utf-8") as f:
+                                data = json.load(f)
+
+                            # Only include if it has algo key
+                            if isinstance(data, dict) and "algo" in data:
+                                metadata = {
+                                    "name": subdir.name,
+                                    "created_at": datetime.fromtimestamp(
+                                        config_file.stat().st_ctime, tz=timezone.utc
+                                    ).isoformat(),
+                                    "modified_at": datetime.fromtimestamp(
+                                        config_file.stat().st_mtime, tz=timezone.utc
+                                    ).isoformat(),
+                                    "algo": data.get("algo"),
+                                    "factor": data.get("factor"),
+                                    "multiplier": data.get("multiplier"),
+                                }
+                                configs.append(metadata)
+                        except Exception:
+                            # Skip invalid files
+                            continue
+
+                    # Also check other JSON files in subdirs
+                    for other_config in subdir.glob("*.json"):
+                        if other_config.name == "lycoris_config.json":
+                            continue  # Already handled
+                        try:
+                            with other_config.open("r", encoding="utf-8") as f:
+                                data = json.load(f)
+
+                            # Only include if it has algo key
+                            if isinstance(data, dict) and "algo" in data:
+                                metadata = {
+                                    "name": f"{subdir.name}/{other_config.name}",
+                                    "created_at": datetime.fromtimestamp(
+                                        other_config.stat().st_ctime, tz=timezone.utc
+                                    ).isoformat(),
+                                    "modified_at": datetime.fromtimestamp(
+                                        other_config.stat().st_mtime, tz=timezone.utc
+                                    ).isoformat(),
+                                    "algo": data.get("algo"),
+                                    "factor": data.get("factor"),
+                                    "multiplier": data.get("multiplier"),
+                                }
+                                configs.append(metadata)
+                        except Exception:
+                            # Skip invalid files
+                            continue
+
+            # Also check root-level JSON files
+            for config_file in self.config_dir.glob("*.json"):
+                try:
+                    with config_file.open("r", encoding="utf-8") as f:
+                        data = json.load(f)
+
+                    # Only include if it has algo key
+                    if isinstance(data, dict) and "algo" in data:
+                        metadata = {
+                            "name": config_file.stem,
+                            "created_at": datetime.fromtimestamp(config_file.stat().st_ctime, tz=timezone.utc).isoformat(),
+                            "modified_at": datetime.fromtimestamp(config_file.stat().st_mtime, tz=timezone.utc).isoformat(),
+                            "algo": data.get("algo"),
+                            "factor": data.get("factor"),
+                            "multiplier": data.get("multiplier"),
+                        }
+                        configs.append(metadata)
+                except Exception:
+                    # Skip invalid files
+                    continue
 
         return sorted(configs, key=lambda x: x.get("name", ""))
 
@@ -209,28 +537,45 @@ class ConfigStore:
         # Handle both new format (with metadata) and legacy format
         if "_metadata" in data:
             metadata = ConfigMetadata(**data["_metadata"])
-            config = data.get("config", {})
+            if self.config_type == "dataloader":
+                config = data.get("datasets", [])
+            else:
+                config = data.get("config", {})
         else:
             # Legacy format - create metadata on the fly
             metadata = ConfigMetadata(
                 name=name,
-                created_at=datetime.fromtimestamp(
-                    config_path.stat().st_ctime, tz=timezone.utc
-                ).isoformat(),
-                modified_at=datetime.fromtimestamp(
-                    config_path.stat().st_mtime, tz=timezone.utc
-                ).isoformat()
+                created_at=datetime.fromtimestamp(config_path.stat().st_ctime, tz=timezone.utc).isoformat(),
+                modified_at=datetime.fromtimestamp(config_path.stat().st_mtime, tz=timezone.utc).isoformat(),
             )
             config = data
+
+            # Extract model info from legacy config for model configs
+            if self.config_type == "model" and isinstance(config, dict):
+                if "--model_family" in config:
+                    metadata.model_family = config["--model_family"]
+                elif "model_family" in config:
+                    metadata.model_family = config["model_family"]
+
+                if "--model_type" in config:
+                    metadata.model_type = config["--model_type"]
+                elif "model_type" in config:
+                    metadata.model_type = config["model_type"]
+
+                if "--model_flavour" in config:
+                    metadata.model_flavour = config["--model_flavour"]
+                elif "model_flavour" in config:
+                    metadata.model_flavour = config["model_flavour"]
+
+                if "--lora_type" in config:
+                    metadata.lora_type = config["--lora_type"]
+                elif "lora_type" in config:
+                    metadata.lora_type = config["lora_type"]
 
         return config, metadata
 
     def save_config(
-        self,
-        name: str,
-        config: Dict[str, Any],
-        metadata: Optional[ConfigMetadata] = None,
-        overwrite: bool = False
+        self, name: str, config: Dict[str, Any], metadata: Optional[ConfigMetadata] = None, overwrite: bool = False
     ) -> ConfigMetadata:
         """Save a configuration.
 
@@ -258,17 +603,26 @@ class ConfigStore:
             metadata.modified_at = datetime.now(timezone.utc).isoformat()
             metadata.name = name
 
-        # Extract model info from config if not in metadata
-        if not metadata.model_family and "--model_family" in config:
-            metadata.model_family = config["--model_family"]
-        if not metadata.model_type and "--model_type" in config:
-            metadata.model_type = config["--model_type"]
+        if self.config_type == "dataloader":
+            # For dataloader configs, don't extract model info
+            # Save with datasets key
+            data = {"_metadata": metadata.model_dump(), "datasets": config}
+        else:
+            # Extract model info from config if not in metadata
+            if not metadata.model_family and "--model_family" in config:
+                metadata.model_family = config["--model_family"]
+            if not metadata.model_type and "--model_type" in config:
+                metadata.model_type = config["--model_type"]
+            if not metadata.model_flavour and "--model_flavour" in config:
+                metadata.model_flavour = config["--model_flavour"]
+            if not metadata.lora_type and "--lora_type" in config:
+                metadata.lora_type = config["--lora_type"]
 
-        # Save with metadata
-        data = {
-            "_metadata": metadata.model_dump(),
-            "config": config
-        }
+            # Save with config key
+            data = {"_metadata": metadata.model_dump(), "config": config}
+
+        # Create parent directory if it doesn't exist (for subdirectory configs)
+        config_path.parent.mkdir(parents=True, exist_ok=True)
 
         with config_path.open("w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, sort_keys=True)
@@ -307,24 +661,44 @@ class ConfigStore:
             FileNotFoundError: If old config doesn't exist.
             FileExistsError: If new name already exists.
         """
+        # Check if old config exists
         old_path = self._get_config_path(old_name)
-        new_path = self._get_config_path(new_name)
-
         if not old_path.exists():
             raise FileNotFoundError(f"Configuration '{old_name}' not found")
 
-        if new_path.exists():
-            raise FileExistsError(f"Configuration '{new_name}' already exists")
-
-        # Load, update metadata, and save
+        # Load config before renaming
         config, metadata = self.load_config(old_name)
+
+        # Determine if this is a folder-based config
+        is_folder = self._is_folder_config(old_name)
+
+        if is_folder:
+            # For folder-based configs, rename the folder
+            old_folder = self.config_dir / old_name
+            new_folder = self.config_dir / new_name
+
+            if new_folder.exists():
+                raise FileExistsError(f"Configuration '{new_name}' already exists")
+
+            # Rename the folder
+            old_folder.rename(new_folder)
+
+        else:
+            # For file-based configs, rename the file (preserving .json extension)
+            old_file = self.config_dir / f"{old_name}.json"
+            new_file = self.config_dir / f"{new_name}.json"
+
+            if new_file.exists():
+                raise FileExistsError(f"Configuration '{new_name}' already exists")
+
+            # Rename the file
+            old_file.rename(new_file)
+
+        # Update metadata
         metadata.name = new_name
         metadata.modified_at = datetime.now(timezone.utc).isoformat()
 
-        # Move file
-        old_path.rename(new_path)
-
-        # Update metadata in file
+        # Save updated metadata back to the file
         self.save_config(new_name, config, metadata, overwrite=True)
 
         return metadata
@@ -354,10 +728,7 @@ class ConfigStore:
 
         # Load source and create new metadata
         config, old_metadata = self.load_config(source)
-        new_metadata = self._create_metadata(
-            target,
-            f"Copy of {old_metadata.description or source}"
-        )
+        new_metadata = self._create_metadata(target, f"Copy of {old_metadata.description or source}")
         new_metadata.model_family = old_metadata.model_family
         new_metadata.model_type = old_metadata.model_type
         new_metadata.tags = old_metadata.tags.copy()
@@ -406,8 +777,7 @@ class ConfigStore:
 
         # Create new metadata
         metadata = self._create_metadata(
-            config_name,
-            f"Created from template: {template_metadata.get('name', template_name)}"
+            config_name, f"Created from template: {template_metadata.get('name', template_name)}"
         )
         metadata.parent_template = template_name
         metadata.model_family = template_metadata.get("model_family")
@@ -422,61 +792,73 @@ class ConfigStore:
         """Validate a configuration.
 
         Args:
-            config: Configuration dictionary.
+            config: Configuration dictionary or list for dataloader configs.
 
         Returns:
             Validation result.
         """
         validation = ConfigValidation(is_valid=True)
 
-        # Required fields
-        required_fields = [
-            "--model_type",
-            "--pretrained_model_name_or_path",
-            "--output_dir"
-        ]
+        if self.config_type == "dataloader":
+            # Validate dataloader config (list of datasets)
+            if not isinstance(config, list):
+                validation.errors.append("Dataloader config must be a list of datasets")
+                validation.is_valid = False
+                return validation
 
-        for field in required_fields:
-            if field not in config:
-                validation.errors.append(f"Required field '{field}' is missing")
+            if not config:
+                validation.errors.append("At least one dataset must be configured")
                 validation.is_valid = False
 
-        # Model family validation
-        if "--model_family" in config:
-            valid_families = ["flux", "sd3", "sdxl", "sd", "pixart", "ltxvideo"]
-            if config["--model_family"] not in valid_families:
-                validation.warnings.append(
-                    f"Unknown model family: {config['--model_family']}"
-                )
-
-        # Model type validation
-        if "--model_type" in config:
-            valid_types = ["lora", "full", "controlnet", "embedding"]
-            if config["--model_type"] not in valid_types:
-                validation.warnings.append(
-                    f"Unknown model type: {config['--model_type']}"
-                )
-
-        # LoRA specific validations
-        if config.get("--model_type") == "lora":
-            if "--lora_rank" not in config:
-                validation.suggestions.append(
-                    "Consider setting '--lora_rank' for LoRA training"
-                )
-
-        # Resolution validation
-        if "--resolution" in config:
-            res = config["--resolution"]
-            if isinstance(res, (int, float)):
-                if res < 256:
-                    validation.errors.append(
-                        "Resolution must be at least 256"
-                    )
+            # Validate each dataset
+            for idx, dataset in enumerate(config):
+                if not isinstance(dataset, dict):
+                    validation.errors.append(f"Dataset {idx} must be a dictionary")
                     validation.is_valid = False
-                elif res > 4096:
-                    validation.warnings.append(
-                        "Resolution above 4096 may cause memory issues"
-                    )
+                    continue
+
+                if "id" not in dataset:
+                    validation.errors.append(f"Dataset {idx} is missing required field 'id'")
+                    validation.is_valid = False
+
+                if "type" not in dataset:
+                    validation.errors.append(f"Dataset {idx} is missing required field 'type'")
+                    validation.is_valid = False
+        else:
+            # Validate model config
+            required_fields = ["--model_type", "--pretrained_model_name_or_path", "--output_dir"]
+
+            for field in required_fields:
+                if field not in config:
+                    validation.errors.append(f"Required field '{field}' is missing")
+                    validation.is_valid = False
+
+            # Model family validation
+            if "--model_family" in config:
+                valid_families = ["flux", "sd3", "sdxl", "sd", "pixart", "ltxvideo"]
+                if config["--model_family"] not in valid_families:
+                    validation.warnings.append(f"Unknown model family: {config['--model_family']}")
+
+            # Model type validation
+            if "--model_type" in config:
+                valid_types = ["lora", "full", "controlnet", "embedding"]
+                if config["--model_type"] not in valid_types:
+                    validation.warnings.append(f"Unknown model type: {config['--model_type']}")
+
+            # LoRA specific validations
+            if config.get("--model_type") == "lora":
+                if "--lora_rank" not in config:
+                    validation.suggestions.append("Consider setting '--lora_rank' for LoRA training")
+
+            # Resolution validation
+            if "--resolution" in config:
+                res = config["--resolution"]
+                if isinstance(res, (int, float)):
+                    if res < 256:
+                        validation.errors.append("Resolution must be at least 256")
+                        validation.is_valid = False
+                    elif res > 4096:
+                        validation.warnings.append("Resolution above 4096 may cause memory issues")
 
         return validation
 
@@ -486,17 +868,35 @@ class ConfigStore:
         Returns:
             Name of active config or None.
         """
+        # Try to get from WebUI state first (most persistent)
+        try:
+            from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
+
+            state_store = WebUIStateStore()
+            defaults = state_store.load_defaults()
+            if defaults.active_config:
+                return defaults.active_config
+        except Exception:
+            pass
+
+        # Fall back to environment variable
         active_config = os.environ.get(_CONFIG_ACTIVE)
         if active_config:
             return active_config
 
-        # Check if default config symlink exists
-        if _DEFAULT_CONFIG_FILE.is_symlink():
-            target = _DEFAULT_CONFIG_FILE.readlink()
+        # Check if default config symlink exists in user's config directory
+        config_symlink = self.config_dir / "config.json"
+        if config_symlink.is_symlink():
+            target = config_symlink.readlink()
             if target.parent == self.config_dir:
                 return target.stem
 
-        return "default"
+        # If no active config is set, try to find the first available config
+        configs = self.list_configs()
+        if configs:
+            return configs[0]["name"]
+
+        return None
 
     def set_active_config(self, name: str) -> bool:
         """Set the active configuration.
@@ -515,25 +915,41 @@ class ConfigStore:
         if not config_path.exists():
             raise FileNotFoundError(f"Configuration '{name}' not found")
 
-        # Set environment variable
+        # Save to WebUI state for persistence
+        try:
+            from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
+
+            state_store = WebUIStateStore()
+            defaults = state_store.load_defaults()
+            defaults.active_config = name
+            state_store.save_defaults(defaults)
+        except Exception:
+            pass
+
+        # Also set environment variable for current session
         os.environ[_CONFIG_ACTIVE] = name
 
-        # Update symlink or copy
-        if _DEFAULT_CONFIG_FILE.exists():
-            if _DEFAULT_CONFIG_FILE.is_symlink():
-                _DEFAULT_CONFIG_FILE.unlink()
+        # Update symlink or copy in user's config directory
+        config_symlink = self.config_dir / "config.json"
+        if config_symlink.exists():
+            if config_symlink.is_symlink():
+                config_symlink.unlink()
             else:
                 # Backup existing config
-                backup_path = _DEFAULT_CONFIG_FILE.with_suffix(".json.bak")
-                shutil.copy2(_DEFAULT_CONFIG_FILE, backup_path)
-                _DEFAULT_CONFIG_FILE.unlink()
+                backup_path = config_symlink.with_suffix(".json.bak")
+                shutil.copy2(config_symlink, backup_path)
+                config_symlink.unlink()
+
+        # Ensure parent directory exists
+        config_symlink.parent.mkdir(parents=True, exist_ok=True)
 
         # Create symlink to active config (or copy on Windows)
         try:
-            _DEFAULT_CONFIG_FILE.symlink_to(config_path)
+            # Use absolute paths for symlink
+            config_symlink.symlink_to(config_path.absolute())
         except OSError:
             # Fallback to copying on systems that don't support symlinks
-            shutil.copy2(config_path, _DEFAULT_CONFIG_FILE)
+            shutil.copy2(config_path, config_symlink)
 
         return True
 
@@ -550,19 +966,11 @@ class ConfigStore:
         config, metadata = self.load_config(name)
 
         if include_metadata:
-            return {
-                "_metadata": metadata.model_dump(),
-                "config": config
-            }
+            return {"_metadata": metadata.model_dump(), "config": config}
 
         return config
 
-    def import_config(
-        self,
-        data: Dict[str, Any],
-        name: Optional[str] = None,
-        overwrite: bool = False
-    ) -> ConfigMetadata:
+    def import_config(self, data: Dict[str, Any], name: Optional[str] = None, overwrite: bool = False) -> ConfigMetadata:
         """Import a configuration.
 
         Args:
