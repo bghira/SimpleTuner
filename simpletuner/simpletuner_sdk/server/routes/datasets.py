@@ -27,6 +27,7 @@ class DatasetPlanEntry(BaseModel):
 
 class DatasetPlanPayload(BaseModel):
     datasets: List[DatasetPlanEntry]
+    createBackup: Optional[bool] = False
 
 
 class DatasetPlanResponse(BaseModel):
@@ -34,6 +35,7 @@ class DatasetPlanResponse(BaseModel):
     validations: List[ValidationMessage]
     source: Literal["default", "disk"]
     updated_at: Optional[str] = None
+    backupPath: Optional[str] = None
 
 
 def _store() -> DatasetPlanStore:
@@ -104,6 +106,23 @@ def _persist_plan(payload: DatasetPlanPayload) -> DatasetPlanResponse:
         )
 
     store = _store()
+    backup_path = None
+
+    # Create backup if requested
+    if payload.createBackup:
+        try:
+            import shutil
+            from datetime import datetime
+
+            if store.path.exists():
+                timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+                backup_filename = f"{store.path.name}.backup-{timestamp}"
+                backup_path = store.path.parent / backup_filename
+                shutil.copy2(store.path, backup_path)
+        except Exception as e:
+            # Log but don't fail the save operation
+            print(f"Warning: Failed to create backup: {e}")
+
     try:
         updated_at = store.save(datasets)
     except OSError as exc:  # pragma: no cover - defensive, rarely triggered in tests
@@ -117,6 +136,7 @@ def _persist_plan(payload: DatasetPlanPayload) -> DatasetPlanResponse:
         validations=validations,
         source="disk",
         updated_at=updated_at,
+        backupPath=str(backup_path) if backup_path else None
     )
 
 
