@@ -14,6 +14,7 @@ from simpletuner.simpletuner_sdk.api_state import APIState
 from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore, ConfigMetadata
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
 from simpletuner.simpletuner_sdk import process_keeper
+from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
 
 router = APIRouter(prefix="/api/training", tags=["training"])
 
@@ -401,3 +402,76 @@ async def stream_training_events(websocket: WebSocket):
         except:
             pass
         await websocket.close()
+
+
+@router.get("/checkpoints")
+async def list_checkpoints(output_dir: str = None):
+    """List available checkpoints in the output directory.
+
+    Args:
+        output_dir: Output directory path. If not provided, uses current config.
+
+    Returns:
+        List of checkpoint information
+    """
+    try:
+        # If no output_dir provided, try to get from current config
+        if not output_dir:
+            config = APIState.get_state("training_config", {})
+            output_dir = config.get("--output_dir")
+
+        if not output_dir:
+            return {"error": "No output directory specified", "checkpoints": []}
+
+        # Initialize CheckpointManager
+        checkpoint_manager = CheckpointManager(output_dir)
+
+        # Get list of checkpoints with metadata
+        checkpoints = checkpoint_manager.list_checkpoints(include_metadata=True)
+
+        # Add latest flag to the most recent checkpoint
+        if checkpoints:
+            checkpoints[0]["is_latest"] = True
+
+        return {
+            "output_dir": output_dir,
+            "checkpoints": checkpoints,
+            "total": len(checkpoints)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/checkpoints/validate/{checkpoint_name}")
+async def validate_checkpoint(checkpoint_name: str, output_dir: str = None):
+    """Validate a specific checkpoint for resuming training.
+
+    Args:
+        checkpoint_name: Name of the checkpoint (e.g., "checkpoint-1000")
+        output_dir: Output directory path. If not provided, uses current config.
+
+    Returns:
+        Validation result with status and message
+    """
+    try:
+        # If no output_dir provided, try to get from current config
+        if not output_dir:
+            config = APIState.get_state("training_config", {})
+            output_dir = config.get("--output_dir")
+
+        if not output_dir:
+            return {"valid": False, "message": "No output directory specified"}
+
+        # Initialize CheckpointManager
+        checkpoint_manager = CheckpointManager(output_dir)
+
+        # Validate the checkpoint
+        is_valid, error_message = checkpoint_manager.validate_checkpoint(checkpoint_name)
+
+        return {
+            "checkpoint": checkpoint_name,
+            "valid": is_valid,
+            "message": error_message or "Checkpoint is valid and ready for resuming"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

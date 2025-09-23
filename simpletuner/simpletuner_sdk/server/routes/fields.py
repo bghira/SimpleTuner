@@ -5,6 +5,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query, status
 
 from simpletuner.simpletuner_sdk.server.services.field_registry import field_registry, ImportanceLevel
+from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
+from simpletuner.simpletuner_sdk.api_state import APIState
 
 router = APIRouter(prefix="/api/fields", tags=["fields"])
 
@@ -92,7 +94,7 @@ async def get_tab_fields(
         section_key = field.section
         if section_key not in fields_by_section:
             fields_by_section[section_key] = []
-        fields_by_section[section_key].append({
+        field_data = {
             "name": field.name,
             "arg_name": field.arg_name,
             "ui_label": field.ui_label,
@@ -107,6 +109,7 @@ async def get_tab_fields(
             "group": field.group,
             "order": field.order,
             "subsection": field.subsection,
+            "dynamic_choices": getattr(field, 'dynamic_choices', False),
             "dependencies": [
                 {
                     "field": d.field,
@@ -116,7 +119,33 @@ async def get_tab_fields(
                 }
                 for d in field.dependencies
             ]
-        })
+        }
+
+        # If this is the resume_from_checkpoint field and we have an output_dir in context, load checkpoints
+        if field.name == "resume_from_checkpoint" and context.get("output_dir"):
+            try:
+                checkpoint_manager = CheckpointManager(context["output_dir"])
+                checkpoints = checkpoint_manager.list_checkpoints(include_metadata=False)
+
+                # Build dynamic choices
+                dynamic_choices = [
+                    {"value": "", "label": "None (Start fresh)"},
+                    {"value": "latest", "label": "Latest checkpoint"}
+                ]
+
+                if checkpoints:
+                    for checkpoint in checkpoints:
+                        dynamic_choices.append({
+                            "value": checkpoint["name"],
+                            "label": f"{checkpoint['name']} (Step {checkpoint['step']})"
+                        })
+
+                field_data["choices"] = dynamic_choices
+            except Exception:
+                # Keep default choices if checkpoint loading fails
+                pass
+
+        fields_by_section[section_key].append(field_data)
 
     return {
         "tab": tab_name,
@@ -128,11 +157,15 @@ async def get_tab_fields(
 
 
 @router.get("/field/{field_name}")
-async def get_field_metadata(field_name: str) -> Dict[str, Any]:
+async def get_field_metadata(
+    field_name: str,
+    output_dir: Optional[str] = Query(None, description="Output directory for checkpoint loading")
+) -> Dict[str, Any]:
     """Get metadata for a specific field.
 
     Args:
         field_name: Name of the field to get metadata for
+        output_dir: Optional output directory for dynamic checkpoint loading
 
     Returns:
         Field metadata including validation rules and dependencies.
@@ -144,7 +177,7 @@ async def get_field_metadata(field_name: str) -> Dict[str, Any]:
             detail=f"Field '{field_name}' not found"
         )
 
-    return {
+    field_data = {
         "name": field.name,
         "arg_name": field.arg_name,
         "ui_label": field.ui_label,
@@ -154,6 +187,7 @@ async def get_field_metadata(field_name: str) -> Dict[str, Any]:
         "subsection": field.subsection,
         "default_value": field.default_value,
         "choices": field.choices,
+        "dynamic_choices": getattr(field, 'dynamic_choices', False),
         "validation_rules": [
             {
                 "type": rule.rule_type.value,
@@ -182,6 +216,32 @@ async def get_field_metadata(field_name: str) -> Dict[str, Any]:
         "group": field.group,
         "order": field.order
     }
+
+    # Handle dynamic checkpoint loading for resume_from_checkpoint field
+    if field_name == "resume_from_checkpoint" and output_dir:
+        try:
+            checkpoint_manager = CheckpointManager(output_dir)
+            checkpoints = checkpoint_manager.list_checkpoints(include_metadata=False)
+
+            # Build dynamic choices
+            dynamic_choices = [
+                {"value": "", "label": "None (Start fresh)"},
+                {"value": "latest", "label": "Latest checkpoint"}
+            ]
+
+            if checkpoints:
+                for checkpoint in checkpoints:
+                    dynamic_choices.append({
+                        "value": checkpoint["name"],
+                        "label": f"{checkpoint['name']} (Step {checkpoint['step']})"
+                    })
+
+            field_data["choices"] = dynamic_choices
+        except Exception:
+            # Keep default choices if checkpoint loading fails
+            pass
+
+    return field_data
 
 
 @router.get("/dependencies/{field_name}")

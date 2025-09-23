@@ -89,6 +89,7 @@ class ConfigField:
     warning: Optional[str] = None  # For experimental features
     group: Optional[str] = None  # For grouping related fields
     order: int = 0  # Display order within section
+    dynamic_choices: bool = False  # Whether choices are dynamically loaded
 
 
 class FieldRegistry:
@@ -365,14 +366,19 @@ class FieldRegistry:
             name="resume_from_checkpoint",
             arg_name="--resume_from_checkpoint",
             ui_label="Resume From Checkpoint",
-            field_type=FieldType.TEXT,
+            field_type=FieldType.SELECT,
             tab="basic",
             section="training_config",
-            placeholder="latest",
-            help_text="Path to checkpoint to resume training from",
-            tooltip="Use 'latest' to auto-resume from the most recent checkpoint, or provide a specific checkpoint path",
+            default_value="latest",
+            choices=[
+                {"value": "", "label": "None (Start fresh)"},
+                {"value": "latest", "label": "Latest checkpoint"}
+            ],
+            help_text="Select checkpoint to resume training from",
+            tooltip="Checkpoints will be dynamically loaded based on output directory. Use 'latest' to auto-resume from the most recent checkpoint.",
             importance=ImportanceLevel.ADVANCED,
-            order=11
+            order=11,
+            dynamic_choices=True  # Mark this field as having dynamic choices
         ))
 
         # Prediction Type

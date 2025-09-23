@@ -122,27 +122,51 @@ async def validate_field(field_name: str, value: str = Form("")) -> str:
             error_html = f"{field_name.replace('_', ' ').title()} must be a valid number"
 
     elif field_name == "mixed_precision":
-        if value not in ["no", "fp16", "bf16"]:
-            error_html = "Mixed precision must be 'no', 'fp16', or 'bf16'"
+        # Get valid choices from field registry
+        field = field_registry.get_field("mixed_precision")
+        if field and field.choices:
+            valid_values = [choice["value"] for choice in field.choices]
+            if value and value not in valid_values:
+                error_html = f"Mixed precision must be one of: {', '.join(valid_values)}"
+        else:
+            # Fallback to hardcoded values if field not found
+            if value not in ["no", "fp16", "bf16"]:
+                error_html = "Mixed precision must be 'no', 'fp16', or 'bf16'"
 
     elif field_name == "lr_scheduler":
-        valid_schedulers = [
-            "linear",
-            "cosine",
-            "cosine_with_restarts",
-            "polynomial",
-            "constant",
-            "constant_with_warmup",
-            "inverse_sqrt",
-            "reduce_lr_on_plateau",
-        ]
-        if value and value not in valid_schedulers:
-            error_html = f"Learning rate scheduler must be one of: {', '.join(valid_schedulers)}"
+        # Get valid choices from field registry
+        field = field_registry.get_field("lr_scheduler")
+        if field and field.choices:
+            valid_schedulers = [choice["value"] for choice in field.choices]
+            if value and value not in valid_schedulers:
+                error_html = f"Learning rate scheduler must be one of: {', '.join(valid_schedulers)}"
+        else:
+            # Fallback to hardcoded values if field not found
+            valid_schedulers = [
+                "linear",
+                "cosine",
+                "cosine_with_restarts",
+                "polynomial",
+                "constant",
+                "constant_with_warmup",
+                "inverse_sqrt",
+                "reduce_lr_on_plateau",
+            ]
+            if value and value not in valid_schedulers:
+                error_html = f"Learning rate scheduler must be one of: {', '.join(valid_schedulers)}"
 
     elif field_name == "optimizer":
-        valid_optimizers = ["adamw", "adam", "sgd", "adafactor", "adamw_bnb_8bit"]
-        if value and value not in valid_optimizers:
-            error_html = f"Optimizer must be one of: {', '.join(valid_optimizers)}"
+        # Get valid choices from field registry
+        field = field_registry.get_field("optimizer")
+        if field and field.choices:
+            valid_optimizers = [choice["value"] for choice in field.choices]
+            if value and value not in valid_optimizers:
+                error_html = f"Optimizer must be one of: {', '.join(valid_optimizers)}"
+        else:
+            # Fallback to hardcoded values if field not found
+            valid_optimizers = ["adamw", "adam", "sgd", "adafactor", "adamw_bnb_8bit"]
+            if value and value not in valid_optimizers:
+                error_html = f"Optimizer must be one of: {', '.join(valid_optimizers)}"
 
     return error_html
 

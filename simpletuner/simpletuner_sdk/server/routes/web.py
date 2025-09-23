@@ -126,6 +126,7 @@ async def basic_config_tab(request: Request):
         "model_name": _get_config_value(config_data, "job_id", ""),
         "output_dir": _get_config_value(config_data, "output_dir", webui_defaults.get("output_dir", "")),
         "pretrained_model_name_or_path": _get_config_value(config_data, "pretrained_model_name_or_path", ""),
+        "resume_from_checkpoint": _get_config_value(config_data, "resume_from_checkpoint", "latest"),
     }
 
     context = {
@@ -176,6 +177,21 @@ async def basic_config_tab(request: Request):
                     "required": True,
                     "value": config_values.get("pretrained_model_name_or_path", ""),
                     "description": "Hugging Face model or local path",
+                },
+                {
+                    "id": "resume_from_checkpoint",
+                    "name": "--resume_from_checkpoint",
+                    "label": "Resume From Checkpoint",
+                    "type": "select",
+                    "value": config_values.get("resume_from_checkpoint", "latest"),
+                    "options": [
+                        {"value": "", "label": "None (Start fresh)"},
+                        {"value": "latest", "label": "Latest checkpoint"}
+                    ],
+                    "description": "Checkpoints will be dynamically loaded based on output directory",
+                    "x_data": "checkpointField",
+                    "x_init": "$nextTick(() => loadCheckpoints())",
+                    "dynamic_loader": "checkpoints"  # Mark this as needing dynamic loading
                 },
             ],
             "actions": [

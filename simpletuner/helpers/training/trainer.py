@@ -39,6 +39,7 @@ from simpletuner.helpers.training.peft_init import init_lokr_network_with_pertur
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation import Validation, prepare_validation_prompt_list
 from simpletuner.helpers.training.wrappers import unwrap_model
+from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
 
 logger = get_logger("SimpleTuner", log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
@@ -372,6 +373,10 @@ class Trainer:
         torch.set_num_threads(self.config.torch_num_threads)
         self.state = {}
         self.state["lr"] = 0.0
+        # Initialize CheckpointManager with output directory
+        self.checkpoint_manager = None
+        if hasattr(self, 'config') and getattr(self.config, 'output_dir', None):
+            self.checkpoint_manager = CheckpointManager(self.config.output_dir)
         # Global step represents the most recently *completed* optimization step, which means it
         #  takes into account the number of gradient_accumulation_steps. If we use 1 gradient_accumulation_step,
         #  then global_step and step will be the same throughout training. However, if we use
@@ -1741,58 +1746,70 @@ class Trainer:
         return self.model.get_prediction_target(prepared_batch)
 
     def checkpoint_state_remove(self, output_dir, checkpoint):
-        removing_checkpoint = os.path.join(output_dir, checkpoint)
-        try:
-            logger.debug(f"Removing {removing_checkpoint}")
-            shutil.rmtree(removing_checkpoint, ignore_errors=True)
-        except Exception as e:
-            logger.error(f"Failed to remove directory: {removing_checkpoint}")
-            print(e)
+        if self.checkpoint_manager:
+            self.checkpoint_manager.remove_checkpoint(checkpoint)
+        else:
+            # Fallback to original implementation
+            removing_checkpoint = os.path.join(output_dir, checkpoint)
+            try:
+                logger.debug(f"Removing {removing_checkpoint}")
+                shutil.rmtree(removing_checkpoint, ignore_errors=True)
+            except Exception as e:
+                logger.error(f"Failed to remove directory: {removing_checkpoint}")
+                print(e)
 
     def checkpoint_state_filter(self, output_dir, suffix=None):
-        checkpoints_keep = []
-        checkpoints = os.listdir(output_dir)
-        for checkpoint in checkpoints:
-            cs = checkpoint.split("-")
-            base = cs[0]
-            sfx = None
-            if len(cs) < 2:
-                continue
-            elif len(cs) > 2:
-                sfx = cs[2]
+        if self.checkpoint_manager:
+            return self.checkpoint_manager._filter_checkpoints(suffix)
+        else:
+            # Fallback to original implementation
+            checkpoints_keep = []
+            checkpoints = os.listdir(output_dir)
+            for checkpoint in checkpoints:
+                cs = checkpoint.split("-")
+                base = cs[0]
+                sfx = None
+                if len(cs) < 2:
+                    continue
+                elif len(cs) > 2:
+                    sfx = cs[2]
 
-            if base != "checkpoint":
-                continue
-            if suffix and sfx and suffix != sfx:
-                continue
-            if (suffix and not sfx) or (sfx and not suffix):
-                continue
+                if base != "checkpoint":
+                    continue
+                if suffix and sfx and suffix != sfx:
+                    continue
+                if (suffix and not sfx) or (sfx and not suffix):
+                    continue
 
-            checkpoints_keep.append(checkpoint)
+                checkpoints_keep.append(checkpoint)
 
-        return checkpoints_keep
+            return checkpoints_keep
 
     def checkpoint_state_cleanup(self, output_dir, limit, suffix=None):
-        # remove any left over temp checkpoints (partially written, etc)
-        checkpoints = self.checkpoint_state_filter(output_dir, "tmp")
-        for removing_checkpoint in checkpoints:
-            self.checkpoint_state_remove(output_dir, removing_checkpoint)
+        if self.checkpoint_manager:
+            self.checkpoint_manager.cleanup_checkpoints(limit, suffix)
+        else:
+            # Fallback to original implementation
+            # remove any left over temp checkpoints (partially written, etc)
+            checkpoints = self.checkpoint_state_filter(output_dir, "tmp")
+            for removing_checkpoint in checkpoints:
+                self.checkpoint_state_remove(output_dir, removing_checkpoint)
 
-        # now remove normal checkpoints past the limit
-        checkpoints = self.checkpoint_state_filter(output_dir, suffix)
-        checkpoints = sorted(checkpoints, key=lambda x: int(x.split("-")[1]))
+            # now remove normal checkpoints past the limit
+            checkpoints = self.checkpoint_state_filter(output_dir, suffix)
+            checkpoints = sorted(checkpoints, key=lambda x: int(x.split("-")[1]))
 
-        # before we save the new checkpoint, we need to have at _most_ `limit - 1` checkpoints
-        if len(checkpoints) < limit:
-            return
+            # before we save the new checkpoint, we need to have at _most_ `limit - 1` checkpoints
+            if len(checkpoints) < limit:
+                return
 
-        num_to_remove = len(checkpoints) - limit + 1
-        removing_checkpoints = checkpoints[0:num_to_remove]
-        logger.debug(f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints")
-        logger.debug(f"removing checkpoints: {', '.join(removing_checkpoints)}")
+            num_to_remove = len(checkpoints) - limit + 1
+            removing_checkpoints = checkpoints[0:num_to_remove]
+            logger.debug(f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints")
+            logger.debug(f"removing checkpoints: {', '.join(removing_checkpoints)}")
 
-        for removing_checkpoint in removing_checkpoints:
-            self.checkpoint_state_remove(output_dir, removing_checkpoint)
+            for removing_checkpoint in removing_checkpoints:
+                self.checkpoint_state_remove(output_dir, removing_checkpoint)
 
     def checkpoint_state_save(self, output_dir, suffix=None):
         print("\n")
@@ -1826,11 +1843,15 @@ class Trainer:
             os.rename(save_path_tmp, save_path)
 
     def checkpoint_state_latest(self, output_dir):
-        # both checkpoint-[0-9]+ and checkpoint-[0-9]-rolling are candidates
-        dirs = os.listdir(output_dir)
-        dirs = [d for d in dirs if d.startswith("checkpoint") and not d.endswith("tmp")]
-        dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
-        return dirs[-1] if len(dirs) > 0 else None
+        if self.checkpoint_manager:
+            return self.checkpoint_manager.get_latest_checkpoint()
+        else:
+            # Fallback to original implementation
+            # both checkpoint-[0-9]+ and checkpoint-[0-9]-rolling are candidates
+            dirs = os.listdir(output_dir)
+            dirs = [d for d in dirs if d.startswith("checkpoint") and not d.endswith("tmp")]
+            dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
+            return dirs[-1] if len(dirs) > 0 else None
 
     def train(self):
         self.init_trackers()
