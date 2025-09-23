@@ -60,7 +60,10 @@ def _get_store(config_type: str = "model") -> ConfigStore:
         state_store = WebUIStateStore()
         defaults = state_store.load_defaults()
         if defaults.configs_dir:
-            return ConfigStore(config_dir=defaults.configs_dir, config_type=config_type)
+            # Expand the path before passing to ConfigStore (though ConfigStore also does this now)
+            import os
+            expanded_dir = os.path.expanduser(defaults.configs_dir)
+            return ConfigStore(config_dir=expanded_dir, config_type=config_type)
     except Exception:
         # Fall back to default behavior if loading defaults fails
         pass

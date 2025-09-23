@@ -62,7 +62,8 @@ class ConfigStore:
         self.config_type = config_type
 
         if config_dir is not None:
-            self.config_dir = Path(config_dir)
+            # Expand user home directory if present
+            self.config_dir = Path(os.path.expanduser(str(config_dir)))
         else:
             self.config_dir = self._resolve_config_dir()
 
@@ -200,7 +201,8 @@ class ConfigStore:
                                 data = json.load(f)
 
                             if "_metadata" in data:
-                                metadata = data["_metadata"]
+                                # New config format with metadata and config sections
+                                metadata = data["_metadata"].copy()
                                 metadata["name"] = subdir.name  # Use folder name
                             else:
                                 # Legacy config without metadata
@@ -214,26 +216,28 @@ class ConfigStore:
                                     ).isoformat(),
                                 }
                                 # Extract model info from config data
-                                if isinstance(data, dict):
-                                    if "--model_family" in data:
-                                        metadata["model_family"] = data["--model_family"]
-                                    elif "model_family" in data:
-                                        metadata["model_family"] = data["model_family"]
+                                # Check both direct data and nested config section
+                                config_data = data.get("config", data) if isinstance(data, dict) else data
+                                if isinstance(config_data, dict):
+                                    if "--model_family" in config_data:
+                                        metadata["model_family"] = config_data["--model_family"]
+                                    elif "model_family" in config_data:
+                                        metadata["model_family"] = config_data["model_family"]
 
-                                    if "--model_type" in data:
-                                        metadata["model_type"] = data["--model_type"]
-                                    elif "model_type" in data:
-                                        metadata["model_type"] = data["model_type"]
+                                    if "--model_type" in config_data:
+                                        metadata["model_type"] = config_data["--model_type"]
+                                    elif "model_type" in config_data:
+                                        metadata["model_type"] = config_data["model_type"]
 
-                                    if "--model_flavour" in data:
-                                        metadata["model_flavour"] = data["--model_flavour"]
-                                    elif "model_flavour" in data:
-                                        metadata["model_flavour"] = data["model_flavour"]
+                                    if "--model_flavour" in config_data:
+                                        metadata["model_flavour"] = config_data["--model_flavour"]
+                                    elif "model_flavour" in config_data:
+                                        metadata["model_flavour"] = config_data["model_flavour"]
 
-                                    if "--lora_type" in data:
-                                        metadata["lora_type"] = data["--lora_type"]
-                                    elif "lora_type" in data:
-                                        metadata["lora_type"] = data["lora_type"]
+                                    if "--lora_type" in config_data:
+                                        metadata["lora_type"] = config_data["--lora_type"]
+                                    elif "lora_type" in config_data:
+                                        metadata["lora_type"] = config_data["lora_type"]
 
                             configs.append(metadata)
                         except Exception:
@@ -265,7 +269,9 @@ class ConfigStore:
                         continue
 
                     if "_metadata" in data:
-                        metadata = data["_metadata"]
+                        # New config format with metadata and config sections
+                        metadata = data["_metadata"].copy()
+                        metadata["name"] = config_file.stem
                     else:
                         # Legacy config without metadata
                         metadata = {
@@ -274,26 +280,28 @@ class ConfigStore:
                             "modified_at": datetime.fromtimestamp(config_file.stat().st_mtime, tz=timezone.utc).isoformat(),
                         }
                         # Extract model info from config data
-                        if isinstance(data, dict):
-                            if "--model_family" in data:
-                                metadata["model_family"] = data["--model_family"]
-                            elif "model_family" in data:
-                                metadata["model_family"] = data["model_family"]
+                        # Check both direct data and nested config section
+                        config_data = data.get("config", data) if isinstance(data, dict) else data
+                        if isinstance(config_data, dict):
+                            if "--model_family" in config_data:
+                                metadata["model_family"] = config_data["--model_family"]
+                            elif "model_family" in config_data:
+                                metadata["model_family"] = config_data["model_family"]
 
-                            if "--model_type" in data:
-                                metadata["model_type"] = data["--model_type"]
-                            elif "model_type" in data:
-                                metadata["model_type"] = data["model_type"]
+                            if "--model_type" in config_data:
+                                metadata["model_type"] = config_data["--model_type"]
+                            elif "model_type" in config_data:
+                                metadata["model_type"] = config_data["model_type"]
 
-                            if "--model_flavour" in data:
-                                metadata["model_flavour"] = data["--model_flavour"]
-                            elif "model_flavour" in data:
-                                metadata["model_flavour"] = data["model_flavour"]
+                            if "--model_flavour" in config_data:
+                                metadata["model_flavour"] = config_data["--model_flavour"]
+                            elif "model_flavour" in config_data:
+                                metadata["model_flavour"] = config_data["model_flavour"]
 
-                            if "--lora_type" in data:
-                                metadata["lora_type"] = data["--lora_type"]
-                            elif "lora_type" in data:
-                                metadata["lora_type"] = data["lora_type"]
+                            if "--lora_type" in config_data:
+                                metadata["lora_type"] = config_data["--lora_type"]
+                            elif "lora_type" in config_data:
+                                metadata["lora_type"] = config_data["lora_type"]
 
                     configs.append(metadata)
                 except Exception:
