@@ -10,6 +10,7 @@ from typing import Optional
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from .utils.paths import get_simpletuner_root, get_template_directory, get_static_directory
 
 
 logger = logging.getLogger("SimpleTunerServer")
@@ -68,14 +69,20 @@ def create_app(
     # Mount static files if directory exists
     if static_dir and os.path.exists(static_dir):
         app.mount("/static", StaticFiles(directory=static_dir), name="static")
-    elif os.path.exists("static"):
-        app.mount("/static", StaticFiles(directory="static"), name="static")
+    else:
+        # Use absolute path to SimpleTuner's static directory
+        static_path = get_static_directory()
+        if static_path.exists():
+            app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
 
     # Set up template directory
     if template_dir:
         os.environ["TEMPLATE_DIR"] = template_dir
-    elif os.path.exists("templates"):
-        os.environ["TEMPLATE_DIR"] = "templates"
+    else:
+        # Use absolute path to SimpleTuner's templates directory
+        template_path = get_template_directory()
+        if template_path.exists():
+            os.environ["TEMPLATE_DIR"] = str(template_path)
 
     # Add routes based on mode
     if mode in (ServerMode.TRAINER, ServerMode.UNIFIED):

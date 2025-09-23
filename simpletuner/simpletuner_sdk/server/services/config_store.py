@@ -12,12 +12,13 @@ from typing import Any, Dict, List, Optional, Tuple
 from pydantic import BaseModel, Field
 
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
+from simpletuner.simpletuner_sdk.server.utils.paths import get_simpletuner_root
 
 # Environment variables for configuration paths
 _CONFIG_ENV_DIR = "SIMPLETUNER_CONFIG_DIR"
 _CONFIG_ACTIVE = "SIMPLETUNER_ACTIVE_CONFIG"
 
-# Default paths - will be resolved relative to current directory when used
+# Default paths - will be resolved relative to SimpleTuner root
 _DEFAULT_CONFIG_DIR = "config"
 _DEFAULT_DATALOADER_DIR = "config/dataloaders"
 _DEFAULT_TEMPLATE_DIR = "config/templates"
@@ -76,14 +77,17 @@ class ConfigStore:
         if env_dir:
             return Path(env_dir)
 
+        # Get SimpleTuner root and resolve relative to it
+        simpletuner_root = get_simpletuner_root()
         if self.config_type == "dataloader":
-            return Path(_DEFAULT_DATALOADER_DIR).resolve()
-        return Path(_DEFAULT_CONFIG_DIR).resolve()
+            return simpletuner_root / _DEFAULT_DATALOADER_DIR
+        return simpletuner_root / _DEFAULT_CONFIG_DIR
 
     @staticmethod
     def _resolve_template_dir() -> Path:
         """Resolve the template directory."""
-        return Path(_DEFAULT_TEMPLATE_DIR).resolve()
+        simpletuner_root = get_simpletuner_root()
+        return simpletuner_root / _DEFAULT_TEMPLATE_DIR
 
     def _ensure_directories(self):
         """Ensure configuration directories exist."""

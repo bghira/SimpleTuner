@@ -1,6 +1,6 @@
 """Create app instance for running with uvicorn."""
 
-from .app import create_app, ServerMode
+from .app import create_unified_app
 
 # Create the app instance
-app = create_app(mode=ServerMode.TRAINER)
+app = create_unified_app()

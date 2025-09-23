@@ -88,6 +88,77 @@ async def list_configs(config_type: str = "model") -> Dict[str, Any]:
     return {"configs": configs, "active": active, "count": len(configs), "config_type": config_type}
 
 
+@router.get("/data-backend-file")
+async def get_data_backend_file(path: str) -> Any:
+    """Get the contents of a data backend configuration file.
+
+    Args:
+        path: Path to the data backend config file (relative to config directory)
+
+    Returns:
+        JSON contents of the data backend config file
+    """
+    import os
+    import json
+
+    try:
+        # Get the configuration store to find the config directory
+        store = _get_store()
+        base_dir = store.config_dir
+
+        # Sanitize the path to prevent directory traversal
+        # Remove any .. or absolute path components
+        safe_path = os.path.normpath(path).lstrip(os.sep)
+        if '..' in safe_path:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid path: directory traversal not allowed"
+            )
+
+        # Construct the full path
+        full_path = os.path.join(str(base_dir), safe_path)
+
+        # Check if the file exists and is within the config directory
+        if not full_path.startswith(str(base_dir)):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid path: must be within config directory"
+            )
+
+        if not os.path.exists(full_path):
+            # Try looking in the parent directory (where SimpleTuner is)
+            # This handles paths like "config/examples/multidatabackend-*.json"
+            parent_dir = os.path.dirname(str(base_dir))
+            alt_path = os.path.join(parent_dir, safe_path)
+
+            if os.path.exists(alt_path) and alt_path.startswith(parent_dir):
+                full_path = alt_path
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Data backend config file not found: {path}"
+                )
+
+        # Read and parse the JSON file
+        with open(full_path, 'r') as f:
+            data = json.load(f)
+
+        return data
+
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid JSON in data backend config file: {str(e)}"
+        )
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error reading data backend config file: {str(e)}"
+        )
+
+
 @router.get("/templates")
 async def list_templates() -> Dict[str, Any]:
     """List all available configuration templates.
