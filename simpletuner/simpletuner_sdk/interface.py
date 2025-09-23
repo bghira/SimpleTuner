@@ -262,6 +262,7 @@ class WebInterface:
         # Ensure all template-expected values have sensible defaults
         # These are fallbacks if cmd_args doesn't provide them
         template_defaults = {
+            "model_type": "full",  # Default to full training
             "resume_from_checkpoint": "latest",
             "train_batch_size": 1,
             "gradient_accumulation_steps": 1,

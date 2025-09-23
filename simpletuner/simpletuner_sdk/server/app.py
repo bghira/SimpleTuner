@@ -129,6 +129,7 @@ def _add_trainer_routes(app: FastAPI):
     from .routes.training import router as training_router
     from .routes.web import router as web_router
     from .routes.webui_state import router as webui_state_router
+    from .routes.fields import router as fields_router
 
     app.include_router(models_router)
     app.include_router(datasets_router)
@@ -137,6 +138,7 @@ def _add_trainer_routes(app: FastAPI):
     app.include_router(training_router)
     app.include_router(web_router)
     app.include_router(webui_state_router)
+    app.include_router(fields_router)
 
     logger.info("Added trainer routes")
 
