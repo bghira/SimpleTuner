@@ -84,9 +84,27 @@ async def validate_config(request: Request):
     store = _get_config_store()
     validation = store.validate_config(config_dict)
 
-    errors = validation.errors
-    warnings = validation.warnings
-    suggestions = validation.suggestions
+    errors = list(validation.errors) if validation.errors else []
+    warnings = list(validation.warnings) if validation.warnings else []
+    suggestions = list(validation.suggestions) if validation.suggestions else []
+
+    # Add custom validation for mutual exclusivity
+    num_epochs = config_dict.get("--num_train_epochs", "10")
+    max_steps = config_dict.get("--max_train_steps", "0")
+
+    try:
+        epochs_val = int(num_epochs) if num_epochs else 0
+        steps_val = int(max_steps) if max_steps else 0
+
+        # Check if both are zero
+        if epochs_val == 0 and steps_val == 0:
+            errors.append("Either num_train_epochs or max_train_steps must be greater than 0. You cannot set both to 0.")
+
+        # Check if both are non-zero
+        if epochs_val > 0 and steps_val > 0:
+            errors.append("You can use either num_train_epochs or max_train_steps, not both. Set one to 0 to use the other.")
+    except ValueError:
+        errors.append("Invalid value for num_train_epochs or max_train_steps. Must be numeric.")
 
     # Generate HTML response
     if errors:
@@ -208,12 +226,32 @@ async def start_training(request: Request):
     store = _get_config_store()
     validation = store.validate_config(config_dict)
 
-    if not validation.is_valid:
+    # Add custom validation for mutual exclusivity
+    errors = list(validation.errors) if validation.errors else []
+
+    num_epochs = config_dict.get("--num_train_epochs", "10")
+    max_steps = config_dict.get("--max_train_steps", "0")
+
+    try:
+        epochs_val = int(num_epochs) if num_epochs else 0
+        steps_val = int(max_steps) if max_steps else 0
+
+        # Check if both are zero
+        if epochs_val == 0 and steps_val == 0:
+            errors.append("Either num_train_epochs or max_train_steps must be greater than 0. You cannot set both to 0.")
+
+        # Check if both are non-zero
+        if epochs_val > 0 and steps_val > 0:
+            errors.append("You can use either num_train_epochs or max_train_steps, not both. Set one to 0 to use the other.")
+    except ValueError:
+        errors.append("Invalid value for num_train_epochs or max_train_steps. Must be numeric.")
+
+    if not validation.is_valid or errors:
         return f"""
         <div class="alert alert-danger">
             <h6><i class="fas fa-exclamation-triangle"></i> Cannot Start Training</h6>
             <ul class="mb-0">
-                {''.join(f'<li>{error}</li>' for error in validation.errors)}
+                {''.join(f'<li>{error}</li>' for error in (errors if errors else validation.errors))}
             </ul>
         </div>
         """

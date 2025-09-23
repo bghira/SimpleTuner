@@ -275,6 +275,7 @@ async def training_config_tab(request: Request):
         "learning_rate": _get_config_value(config_data, "learning_rate", "0.0001"),
         "train_batch_size": _get_config_value(config_data, "train_batch_size", "1"),
         "num_train_epochs": _get_config_value(config_data, "num_train_epochs", "10"),
+        "max_train_steps": _get_config_value(config_data, "max_train_steps", "0"),
         "mixed_precision": _get_config_value(config_data, "mixed_precision", "bf16"),
         "resolution": _get_config_value(config_data, "resolution", "1024"),
         "gradient_checkpointing": _get_config_value(config_data, "gradient_checkpointing", False),
@@ -317,8 +318,23 @@ async def training_config_tab(request: Request):
                     "label": "Number of Epochs",
                     "type": "number",
                     "value": config_values.get("num_train_epochs", "10"),
-                    "min": 1,
-                    "description": "Number of training epochs",
+                    "min": 0,
+                    "description": "Number of training epochs (set to 0 to use max steps instead)",
+                    "x_model": "numTrainEpochs",
+                    "x_bind_disabled": "maxTrainSteps != 0",
+                    "x_on_input": "handleEpochsChange()",
+                },
+                {
+                    "id": "max_train_steps",
+                    "name": "--max_train_steps",
+                    "label": "Max Training Steps",
+                    "type": "number",
+                    "value": config_values.get("max_train_steps", "0"),
+                    "min": 0,
+                    "description": "Maximum training steps (set to 0 to use epochs instead)",
+                    "x_model": "maxTrainSteps",
+                    "x_bind_disabled": "numTrainEpochs != 0",
+                    "x_on_input": "handleMaxStepsChange()",
                 },
                 {
                     "id": "mixed_precision",
@@ -411,7 +427,9 @@ async def training_config_tab(request: Request):
             ],
         },
     }
-    return templates.TemplateResponse("partials/form_section.html", context)
+    # Add config_values to the context so the template can access them
+    context["config_values"] = config_values
+    return templates.TemplateResponse("training_config_section.html", context)
 
 
 @router.get("/trainer/tabs/advanced", response_class=HTMLResponse)
