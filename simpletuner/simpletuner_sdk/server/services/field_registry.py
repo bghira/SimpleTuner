@@ -9,6 +9,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Union, Callable
 
 from simpletuner.helpers.models.all import model_families
+from .arg_parser_integration import arg_parser_integration
 
 
 class FieldType(Enum):
@@ -90,6 +91,7 @@ class ConfigField:
     group: Optional[str] = None  # For grouping related fields
     order: int = 0  # Display order within section
     dynamic_choices: bool = False  # Whether choices are dynamically loaded
+    cmd_args_help: Optional[str] = None  # Formatted help text from cmd_args.py
 
 
 class FieldRegistry:
@@ -125,6 +127,17 @@ class FieldRegistry:
 
     def _add_field(self, field: ConfigField):
         """Add a field to the registry and update dependency maps."""
+        # Auto-populate help text from cmd_args.py if not provided
+        if field.arg_name:
+            arg_help = arg_parser_integration.get_argument_help(field.arg_name)
+            if arg_help:
+                # Store cmd_args help separately for detailed tooltip
+                field.cmd_args_help = arg_parser_integration.format_help_for_ui(arg_help)
+
+                # Use cmd_args help as primary help text if not set
+                if not field.help_text:
+                    field.help_text = arg_help
+
         self._fields[field.name] = field
 
         # Update dependency map
@@ -505,6 +518,90 @@ class FieldRegistry:
             order=15
         ))
 
+        # Gradient Checkpointing Interval
+        self._add_field(ConfigField(
+            name="gradient_checkpointing_interval",
+            arg_name="--gradient_checkpointing_interval",
+            ui_label="Gradient Checkpointing Interval",
+            field_type=FieldType.NUMBER,
+            tab="model",
+            section="memory_optimization",
+            default_value=1,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=1, message="Interval must be at least 1")
+            ],
+            dependencies=[
+                FieldDependency(
+                    field="gradient_checkpointing",
+                    operator="equals",
+                    value=True,
+                    action="enable"
+                )
+            ],
+            help_text="Checkpoint every N transformer blocks",
+            tooltip="Higher values save more memory but increase computation time. Only supported for SDXL and Flux models.",
+            importance=ImportanceLevel.ADVANCED,
+            order=16
+        ))
+
+        # Offload During Startup
+        self._add_field(ConfigField(
+            name="offload_during_startup",
+            arg_name="--offload_during_startup",
+            ui_label="Offload During Startup",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="memory_optimization",
+            default_value=False,
+            help_text="Offload text encoders to CPU during VAE caching",
+            tooltip="Useful for large models that OOM during startup. May significantly increase startup time.",
+            importance=ImportanceLevel.ADVANCED,
+            order=17
+        ))
+
+        # Quantize Via
+        self._add_field(ConfigField(
+            name="quantize_via",
+            arg_name="--quantize_via",
+            ui_label="Quantization Device",
+            field_type=FieldType.SELECT,
+            tab="model",
+            section="quantization",
+            default_value="cpu",
+            choices=[
+                {"value": "cpu", "label": "CPU (Slower but safer)"},
+                {"value": "accelerator", "label": "GPU/Accelerator (Faster)"}
+            ],
+            dependencies=[
+                FieldDependency(
+                    field="base_model_precision",
+                    operator="not_equals",
+                    value="no_change",
+                    action="enable"
+                )
+            ],
+            help_text="Where to perform model quantization",
+            tooltip="CPU is safer for 24GB cards with large models. GPU is faster but may OOM.",
+            importance=ImportanceLevel.ADVANCED,
+            order=18
+        ))
+
+        # Fused QKV Projections
+        self._add_field(ConfigField(
+            name="fused_qkv_projections",
+            arg_name="--fused_qkv_projections",
+            ui_label="Fused QKV Projections",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="performance",
+            default_value=False,
+            platform_specific=["cuda"],
+            help_text="Fuse QKV projections for H100/H200 GPUs",
+            tooltip="Requires NVIDIA H100/H200 with Flash Attention 3. Provides significant speedup.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=19
+        ))
+
     def _add_training_parameter_fields(self):
         """Add training parameter fields."""
         # Number of Training Epochs
@@ -763,6 +860,130 @@ class FieldRegistry:
                     action="show"
                 )
             ]
+        ))
+
+        # LR Number of Cycles
+        self._add_field(ConfigField(
+            name="lr_num_cycles",
+            arg_name="--lr_num_cycles",
+            ui_label="LR Scheduler Cycles",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="learning_rate",
+            default_value=1,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=1, message="Must have at least 1 cycle")
+            ],
+            dependencies=[
+                FieldDependency(
+                    field="lr_scheduler",
+                    operator="equals",
+                    value="cosine_with_restarts",
+                    action="show"
+                )
+            ],
+            help_text="Number of cosine annealing cycles",
+            tooltip="Only used with cosine_with_restarts scheduler. More cycles = more LR resets.",
+            importance=ImportanceLevel.ADVANCED,
+            order=5
+        ))
+
+        # LR Power
+        self._add_field(ConfigField(
+            name="lr_power",
+            arg_name="--lr_power",
+            ui_label="LR Polynomial Power",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="learning_rate",
+            default_value=1.0,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0.1, message="Power should be positive")
+            ],
+            dependencies=[
+                FieldDependency(
+                    field="lr_scheduler",
+                    operator="equals",
+                    value="polynomial",
+                    action="show"
+                )
+            ],
+            help_text="Power for polynomial decay scheduler",
+            tooltip="1.0 = linear decay, 2.0 = quadratic decay. Higher = stays high longer then drops faster.",
+            importance=ImportanceLevel.ADVANCED,
+            order=6
+        ))
+
+        # Use Soft Min SNR
+        self._add_field(ConfigField(
+            name="use_soft_min_snr",
+            arg_name="--use_soft_min_snr",
+            ui_label="Use Soft Min-SNR",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            default_value=False,
+            dependencies=[
+                FieldDependency(
+                    field="snr_gamma",
+                    operator="greater_than",
+                    value=0,
+                    action="show"
+                )
+            ],
+            help_text="Use soft clamping instead of hard clamping for Min-SNR",
+            tooltip="Smoother transition at the clamping boundary. May improve training stability.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=2
+        ))
+
+        # EMA CPU Only
+        self._add_field(ConfigField(
+            name="ema_cpu_only",
+            arg_name="--ema_cpu_only",
+            ui_label="EMA on CPU Only",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="ema_config",
+            default_value=False,
+            dependencies=[
+                FieldDependency(
+                    field="use_ema",
+                    operator="equals",
+                    value=True,
+                    action="show"
+                )
+            ],
+            help_text="Keep EMA weights on CPU to save VRAM",
+            tooltip="Slower EMA updates but saves significant VRAM for large models",
+            importance=ImportanceLevel.ADVANCED,
+            order=2
+        ))
+
+        # EMA Update Interval
+        self._add_field(ConfigField(
+            name="ema_update_interval",
+            arg_name="--ema_update_interval",
+            ui_label="EMA Update Interval",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="ema_config",
+            default_value=10,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=1, message="Must update at least every step")
+            ],
+            dependencies=[
+                FieldDependency(
+                    field="use_ema",
+                    operator="equals",
+                    value=True,
+                    action="show"
+                )
+            ],
+            help_text="Update EMA weights every N optimizer steps",
+            tooltip="Higher values = faster training but less smooth EMA. Default: 10",
+            importance=ImportanceLevel.ADVANCED,
+            order=3
         ))
 
     def _add_lora_config_fields(self):
@@ -1199,6 +1420,241 @@ class FieldRegistry:
             order=1
         ))
 
+        # Validation on Startup
+        self._add_field(ConfigField(
+            name="validation_on_startup",
+            arg_name="--validation_on_startup",
+            ui_label="Validation on Startup",
+            field_type=FieldType.CHECKBOX,
+            tab="validation",
+            section="validation_schedule",
+            default_value=False,
+            help_text="Run validation on the base model before training starts",
+            tooltip="Useful for comparing before/after results",
+            importance=ImportanceLevel.ADVANCED,
+            order=2
+        ))
+
+        # Validation Using Datasets
+        self._add_field(ConfigField(
+            name="validation_using_datasets",
+            arg_name="--validation_using_datasets",
+            ui_label="Validate Using Dataset Images",
+            field_type=FieldType.CHECKBOX,
+            tab="validation",
+            section="validation_options",
+            default_value=False,
+            help_text="Use random images from training datasets for validation",
+            tooltip="Alternative to validation prompts. Be mindful of privacy when sharing results.",
+            importance=ImportanceLevel.ADVANCED,
+            order=3
+        ))
+
+        # Validation Torch Compile
+        self._add_field(ConfigField(
+            name="validation_torch_compile",
+            arg_name="--validation_torch_compile",
+            ui_label="Compile Validation Pipeline",
+            field_type=FieldType.CHECKBOX,
+            tab="validation",
+            section="validation_options",
+            default_value=False,
+            help_text="Use torch.compile() on validation pipeline for speed",
+            tooltip="Can significantly speed up validation but may error on some setups",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=4
+        ))
+
+        # Validation Guidance Real
+        self._add_field(ConfigField(
+            name="validation_guidance_real",
+            arg_name="--validation_guidance_real",
+            ui_label="Real CFG (Distilled Models)",
+            field_type=FieldType.NUMBER,
+            tab="validation",
+            section="validation_guidance",
+            default_value=1.0,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=1.0, message="Must be at least 1.0")
+            ],
+            help_text="CFG value for distilled models (e.g., FLUX schnell)",
+            tooltip="Use 1.0 for no CFG (distilled models). Higher values for real CFG sampling.",
+            importance=ImportanceLevel.ADVANCED,
+            order=2
+        ))
+
+        # Validation No CFG Until Timestep
+        self._add_field(ConfigField(
+            name="validation_no_cfg_until_timestep",
+            arg_name="--validation_no_cfg_until_timestep",
+            ui_label="Skip CFG Until Timestep",
+            field_type=FieldType.NUMBER,
+            tab="validation",
+            section="validation_guidance",
+            default_value=2,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")
+            ],
+            help_text="Skip CFG for initial timesteps (Flux only)",
+            tooltip="For Flux real CFG: skip CFG on these initial timesteps. Default: 2",
+            importance=ImportanceLevel.ADVANCED,
+            order=3
+        ))
+
+        # Validation Negative Prompt
+        self._add_field(ConfigField(
+            name="validation_negative_prompt",
+            arg_name="--validation_negative_prompt",
+            ui_label="Negative Prompt",
+            field_type=FieldType.TEXTAREA,
+            tab="validation",
+            section="validation_prompts",
+            default_value="blurry, cropped, ugly",
+            help_text="Negative prompt for validation images",
+            tooltip="What to avoid in generated images. Set to empty string to disable.",
+            importance=ImportanceLevel.ADVANCED,
+            order=2
+        ))
+
+        # Validation Randomize
+        self._add_field(ConfigField(
+            name="validation_randomize",
+            arg_name="--validation_randomize",
+            ui_label="Randomize Seeds",
+            field_type=FieldType.CHECKBOX,
+            tab="validation",
+            section="validation_options",
+            default_value=False,
+            help_text="Use random seeds for each validation",
+            tooltip="Ignores validation_seed and generates different images each time",
+            importance=ImportanceLevel.ADVANCED,
+            order=5
+        ))
+
+        # Validation Seed
+        self._add_field(ConfigField(
+            name="validation_seed",
+            arg_name="--validation_seed",
+            ui_label="Validation Seed",
+            field_type=FieldType.NUMBER,
+            tab="validation",
+            section="validation_options",
+            default_value=42,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")
+            ],
+            dependencies=[
+                FieldDependency(
+                    field="validation_randomize",
+                    operator="equals",
+                    value=False,
+                    action="show"
+                )
+            ],
+            help_text="Fixed seed for reproducible validation images",
+            tooltip="Use the same seed to compare training progress consistently",
+            importance=ImportanceLevel.ADVANCED,
+            order=6
+        ))
+
+        # Validation Disable
+        self._add_field(ConfigField(
+            name="validation_disable",
+            arg_name="--validation_disable",
+            ui_label="Disable Validation",
+            field_type=FieldType.CHECKBOX,
+            tab="validation",
+            section="validation_options",
+            default_value=False,
+            help_text="Completely disable validation image generation",
+            tooltip="Saves time and VRAM but you won't see progress during training",
+            importance=ImportanceLevel.ADVANCED,
+            order=7
+        ))
+
+        # Validation Prompt Library
+        self._add_field(ConfigField(
+            name="validation_prompt_library",
+            arg_name="--validation_prompt_library",
+            ui_label="Use Prompt Library",
+            field_type=FieldType.CHECKBOX,
+            tab="validation",
+            section="validation_prompts",
+            default_value=False,
+            help_text="Use SimpleTuner's built-in prompt library",
+            tooltip="Generates multiple diverse validation images automatically",
+            importance=ImportanceLevel.ADVANCED,
+            order=3
+        ))
+
+        # User Prompt Library
+        self._add_field(ConfigField(
+            name="user_prompt_library",
+            arg_name="--user_prompt_library",
+            ui_label="Custom Prompt Library Path",
+            field_type=FieldType.TEXT,
+            tab="validation",
+            section="validation_prompts",
+            placeholder="/path/to/prompt_library.json",
+            help_text="Path to custom JSON prompt library",
+            tooltip="See user_prompt_library.json.example for format",
+            importance=ImportanceLevel.ADVANCED,
+            order=4
+        ))
+
+        # Eval Dataset ID
+        self._add_field(ConfigField(
+            name="eval_dataset_id",
+            arg_name="--eval_dataset_id",
+            ui_label="Evaluation Dataset ID",
+            field_type=FieldType.TEXT,
+            tab="validation",
+            section="evaluation",
+            placeholder="dataset_name",
+            help_text="Specific dataset to use for evaluation metrics",
+            tooltip="If not set, uses all datasets. Useful for img2img validation.",
+            importance=ImportanceLevel.ADVANCED,
+            order=1
+        ))
+
+        # Validation Stitch Input Location
+        self._add_field(ConfigField(
+            name="validation_stitch_input_location",
+            arg_name="--validation_stitch_input_location",
+            ui_label="Input Image Position",
+            field_type=FieldType.SELECT,
+            tab="validation",
+            section="validation_options",
+            default_value="left",
+            choices=[
+                {"value": "left", "label": "Left"},
+                {"value": "right", "label": "Right"}
+            ],
+            help_text="Where to place input image in img2img validations",
+            tooltip="For img2img models like DeepFloyd Stage II",
+            importance=ImportanceLevel.ADVANCED,
+            order=8
+        ))
+
+        # Validation Guidance Rescale
+        self._add_field(ConfigField(
+            name="validation_guidance_rescale",
+            arg_name="--validation_guidance_rescale",
+            ui_label="Guidance Rescale",
+            field_type=FieldType.NUMBER,
+            tab="validation",
+            section="validation_guidance",
+            default_value=0.0,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative"),
+                ValidationRule(ValidationRuleType.MAX, value=1.0, message="Maximum is 1.0")
+            ],
+            help_text="CFG rescale value for validation",
+            tooltip="Reduces oversaturation from high CFG. 0.0 = disabled, 0.7 = recommended if needed",
+            importance=ImportanceLevel.ADVANCED,
+            order=4
+        ))
+
     def _add_advanced_config_fields(self):
         """Add advanced configuration fields."""
         # Mixed Precision
@@ -1258,6 +1714,105 @@ class FieldRegistry:
             tooltip="Xformers saves memory. SageAttention is faster but experimental. Diffusers is default.",
             importance=ImportanceLevel.ADVANCED,
             order=1
+        ))
+
+        # Gradient Precision
+        self._add_field(ConfigField(
+            name="gradient_precision",
+            arg_name="--gradient_precision",
+            ui_label="Gradient Precision",
+            field_type=FieldType.SELECT,
+            tab="advanced",
+            section="memory_performance",
+            subsection="precision",
+            default_value="unmodified",
+            choices=[
+                {"value": "unmodified", "label": "Unmodified (Default)"},
+                {"value": "fp32", "label": "FP32 (Full precision)"}
+            ],
+            help_text="Force gradient precision to FP32",
+            tooltip="Can improve stability with mixed precision training but uses more memory",
+            importance=ImportanceLevel.ADVANCED,
+            order=2
+        ))
+
+        # Disable TF32
+        self._add_field(ConfigField(
+            name="disable_tf32",
+            arg_name="--disable_tf32",
+            ui_label="Disable TF32",
+            field_type=FieldType.CHECKBOX,
+            tab="advanced",
+            section="memory_performance",
+            subsection="precision",
+            default_value=False,
+            platform_specific=["cuda"],
+            help_text="Disable TF32 precision on Ampere GPUs",
+            tooltip="TF32 is enabled by default on RTX 3000/4000 series. Disabling may reduce performance but increase precision.",
+            importance=ImportanceLevel.ADVANCED,
+            order=3
+        ))
+
+        # Set Grads to None
+        self._add_field(ConfigField(
+            name="set_grads_to_none",
+            arg_name="--set_grads_to_none",
+            ui_label="Set Gradients to None",
+            field_type=FieldType.CHECKBOX,
+            tab="advanced",
+            section="memory_performance",
+            subsection="memory_optimization",
+            default_value=False,
+            help_text="Set gradients to None instead of zero",
+            tooltip="Can save memory and improve performance. May cause issues with some optimizers.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=2
+        ))
+
+        # Noise Offset
+        self._add_field(ConfigField(
+            name="noise_offset",
+            arg_name="--noise_offset",
+            ui_label="Noise Offset",
+            field_type=FieldType.NUMBER,
+            tab="advanced",
+            section="noise_settings",
+            default_value=0.0,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative"),
+                ValidationRule(ValidationRuleType.MAX, value=1.0, message="Values above 1.0 are extreme")
+            ],
+            help_text="Add noise offset to training",
+            tooltip="Helps generate darker/lighter images. Common values: 0.05-0.1. 0 = disabled.",
+            importance=ImportanceLevel.ADVANCED,
+            order=1
+        ))
+
+        # Noise Offset Probability
+        self._add_field(ConfigField(
+            name="noise_offset_probability",
+            arg_name="--noise_offset_probability",
+            ui_label="Noise Offset Probability",
+            field_type=FieldType.NUMBER,
+            tab="advanced",
+            section="noise_settings",
+            default_value=0.25,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be between 0 and 1"),
+                ValidationRule(ValidationRuleType.MAX, value=1.0, message="Must be between 0 and 1")
+            ],
+            dependencies=[
+                FieldDependency(
+                    field="noise_offset",
+                    operator="greater_than",
+                    value=0,
+                    action="show"
+                )
+            ],
+            help_text="Probability of applying noise offset",
+            tooltip="Apply noise offset this fraction of the time. Default: 25%",
+            importance=ImportanceLevel.ADVANCED,
+            order=2
         ))
 
     def _add_loss_config_fields(self):
@@ -1397,7 +1952,7 @@ class FieldRegistry:
             arg_name="--report_to",
             ui_label="Logging Platform",
             field_type=FieldType.SELECT,
-            tab="monitoring",
+            tab="advanced",
             section="logging",
             default_value="wandb",
             choices=[
@@ -1419,7 +1974,7 @@ class FieldRegistry:
             arg_name="--checkpointing_steps",
             ui_label="Checkpoint Every N Steps",
             field_type=FieldType.NUMBER,
-            tab="monitoring",
+            tab="advanced",
             section="checkpointing",
             default_value=500,
             validation_rules=[
@@ -1447,6 +2002,102 @@ class FieldRegistry:
             tooltip="Directory will be created if it doesn't exist. Use absolute paths for clarity.",
             importance=ImportanceLevel.ESSENTIAL,
             order=2
+        ))
+
+        # Tracker Run Name
+        self._add_field(ConfigField(
+            name="tracker_run_name",
+            arg_name="--tracker_run_name",
+            ui_label="Experiment Run Name",
+            field_type=FieldType.TEXT,
+            tab="advanced",
+            section="logging",
+            placeholder="my-training-run-1",
+            help_text="Name for this training run in tracking platforms",
+            tooltip="Identifies this specific run in WandB/TensorBoard. If not set, uses a generated name.",
+            importance=ImportanceLevel.ADVANCED,
+            order=2,
+            dependencies=[
+                FieldDependency(
+                    field="report_to",
+                    operator="not_equals",
+                    value="none",
+                    action="show"
+                )
+            ]
+        ))
+
+        # Tracker Project Name
+        self._add_field(ConfigField(
+            name="tracker_project_name",
+            arg_name="--tracker_project_name",
+            ui_label="Project Name",
+            field_type=FieldType.TEXT,
+            tab="advanced",
+            section="logging",
+            default_value="simpletuner-project",
+            help_text="Project name in tracking platforms",
+            tooltip="Groups related training runs together in WandB/logging platforms",
+            importance=ImportanceLevel.ADVANCED,
+            order=3,
+            dependencies=[
+                FieldDependency(
+                    field="report_to",
+                    operator="not_equals",
+                    value="none",
+                    action="show"
+                )
+            ]
+        ))
+
+        # Tracker Image Layout
+        self._add_field(ConfigField(
+            name="tracker_image_layout",
+            arg_name="--tracker_image_layout",
+            ui_label="Image Layout Style",
+            field_type=FieldType.SELECT,
+            tab="advanced",
+            section="logging",
+            default_value="gallery",
+            choices=[
+                {"value": "gallery", "label": "Gallery (with slider)"},
+                {"value": "table", "label": "Table (row-wise)"}
+            ],
+            help_text="How validation images are displayed in trackers",
+            tooltip="Gallery mode allows easy historical comparison. Table mode shows all at once.",
+            importance=ImportanceLevel.ADVANCED,
+            order=4,
+            dependencies=[
+                FieldDependency(
+                    field="report_to",
+                    operator="not_equals",
+                    value="none",
+                    action="show"
+                )
+            ]
+        ))
+
+        # Logging Directory
+        self._add_field(ConfigField(
+            name="logging_dir",
+            arg_name="--logging_dir",
+            ui_label="Local Logging Directory",
+            field_type=FieldType.TEXT,
+            tab="advanced",
+            section="logging",
+            default_value="logs",
+            help_text="Directory for TensorBoard logs",
+            tooltip="Local directory where training metrics are saved. Used by TensorBoard.",
+            importance=ImportanceLevel.ADVANCED,
+            order=5,
+            dependencies=[
+                FieldDependency(
+                    field="report_to",
+                    operator="in",
+                    values=["tensorboard", "all"],
+                    action="show"
+                )
+            ]
         ))
 
     def get_field(self, field_name: str) -> Optional[ConfigField]:
