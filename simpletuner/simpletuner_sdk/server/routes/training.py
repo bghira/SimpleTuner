@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
@@ -106,14 +107,27 @@ async def save_config(request: Request):
     webui_settings = {}
     config_dict = {}
 
+    # Directory fields that need path expansion
+    directory_fields = ["--output_dir", "--instance_data_dir", "--logging_dir"]
+
     for key, value in form_data.items():
         if key == "configs_dir":
-            webui_settings["configs_dir"] = value
+            # Expand path for webui settings
+            webui_settings["configs_dir"] = os.path.abspath(os.path.expanduser(value)) if value else value
         elif key.startswith("--"):
-            config_dict[key] = value
+            # Check if this is a directory field
+            if key in directory_fields and value:
+                config_dict[key] = os.path.abspath(os.path.expanduser(value))
+            else:
+                config_dict[key] = value
         else:
             # Add -- prefix if not present
-            config_dict[f"--{key}"] = value
+            full_key = f"--{key}"
+            # Check if this is a directory field
+            if full_key in directory_fields and value:
+                config_dict[full_key] = os.path.abspath(os.path.expanduser(value))
+            else:
+                config_dict[full_key] = value
 
     try:
         # Save WebUI settings if present
@@ -143,7 +157,7 @@ async def save_config(request: Request):
                 metadata = ConfigMetadata(
                     description="Default configuration",
                     created_at=datetime.now().isoformat(),
-                    modified_at=datetime.now().isoformat()
+                    modified_at=datetime.now().isoformat(),
                 )
 
             # Save updated config

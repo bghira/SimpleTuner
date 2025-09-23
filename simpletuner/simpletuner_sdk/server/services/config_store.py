@@ -11,6 +11,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
+from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
+
 # Environment variables for configuration paths
 _CONFIG_ENV_DIR = "SIMPLETUNER_CONFIG_DIR"
 _CONFIG_ACTIVE = "SIMPLETUNER_ACTIVE_CONFIG"
@@ -110,12 +112,23 @@ class ConfigStore:
             metadata = self._create_metadata("default", "Default dataloader configuration")
             config_with_metadata = {"_metadata": metadata.model_dump(), "datasets": default_config}
         else:
+            # Get onboarding values for default config
+            output_dir = "output/models"
+            try:
+                state_store = WebUIStateStore()
+                defaults = state_store.load_defaults()
+                if defaults.output_dir:
+                    output_dir = defaults.output_dir
+            except Exception:
+                # Fall back to hardcoded default if WebUI state is not available
+                pass
+
             # Default model config
             default_config = {
                 "--model_type": "lora",
                 "--model_family": "flux",
                 "--pretrained_model_name_or_path": "black-forest-labs/FLUX.1-dev",
-                "--output_dir": "output/models",
+                "--output_dir": output_dir,
                 "--train_batch_size": 1,
                 "--learning_rate": 0.0001,
                 "--max_train_steps": 1000,
