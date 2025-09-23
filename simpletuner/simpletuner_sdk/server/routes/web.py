@@ -536,14 +536,49 @@ async def advanced_config_tab(request: Request):
 @router.get("/trainer/tabs/datasets", response_class=HTMLResponse)
 async def datasets_tab(request: Request):
     """Dataset configuration tab content."""
-    # Load existing datasets from the dataset plan
+    import json
+    from pathlib import Path
     from ..services.dataset_plan import DatasetPlanStore
+    from ..utils.paths import resolve_config_path
+
+    datasets = []
 
     try:
-        store = DatasetPlanStore()
-        datasets, _, _ = store.load()
-    except ValueError:
-        datasets = []
+        # First, try to load from active configuration's data backend config
+        config_data = _load_active_config()
+        data_backend_config_path = _get_config_value(config_data, "data_backend_config", None)
+
+        if data_backend_config_path:
+            # Resolve the path using our utility function
+            store = DatasetPlanStore()
+            resolved_path = resolve_config_path(
+                data_backend_config_path,
+                config_dir=store.config_dir if hasattr(store, 'config_dir') else None,
+                check_cwd_first=True
+            )
+
+            if resolved_path and resolved_path.exists():
+                try:
+                    with open(resolved_path, 'r') as f:
+                        datasets = json.load(f)
+                        if not isinstance(datasets, list):
+                            datasets = []
+                except (json.JSONDecodeError, IOError):
+                    # Fall back to default behavior if we can't read the file
+                    pass
+
+        # If we couldn't load from active config, fall back to default store
+        if not datasets:
+            store = DatasetPlanStore()
+            datasets, _, _ = store.load()
+
+    except Exception:
+        # Fall back to default behavior on any error
+        try:
+            store = DatasetPlanStore()
+            datasets, _, _ = store.load()
+        except ValueError:
+            datasets = []
 
     context = {
         "request": request,
