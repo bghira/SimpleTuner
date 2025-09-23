@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
+import asyncio
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
@@ -338,3 +339,65 @@ async def get_training_status():
             pass
 
     return {"status": status, "config": config, "job_id": job_id, "job_info": job_info}
+
+
+@router.get("/events")
+async def get_training_events(since_index: int = 0):
+    """Get training events since a given index."""
+    job_id = APIState.get_state("current_job_id")
+
+    if not job_id:
+        return {"events": [], "job_id": None}
+
+    try:
+        events = process_keeper.get_process_events(job_id, since_index)
+        return {"events": events, "job_id": job_id, "next_index": since_index + len(events)}
+    except Exception as e:
+        # Job might not exist
+        return {"events": [], "job_id": job_id, "error": str(e)}
+
+
+@router.websocket("/events/stream")
+async def stream_training_events(websocket: WebSocket):
+    """Stream training events via WebSocket."""
+    await websocket.accept()
+
+    try:
+        last_index = 0
+        while True:
+            job_id = APIState.get_state("current_job_id")
+
+            if job_id:
+                try:
+                    # Get new events since last index
+                    events = process_keeper.get_process_events(job_id, last_index)
+
+                    if events:
+                        # Send each event
+                        for event in events:
+                            await websocket.send_json({
+                                "job_id": job_id,
+                                "event": event
+                            })
+
+                        last_index += len(events)
+                except Exception as e:
+                    # Send error but continue streaming
+                    await websocket.send_json({
+                        "error": str(e),
+                        "job_id": job_id
+                    })
+
+            # Wait a bit before checking for new events
+            await asyncio.sleep(0.5)
+
+    except WebSocketDisconnect:
+        # Client disconnected
+        pass
+    except Exception as e:
+        # Send error and close
+        try:
+            await websocket.send_json({"error": str(e)})
+        except:
+            pass
+        await websocket.close()
