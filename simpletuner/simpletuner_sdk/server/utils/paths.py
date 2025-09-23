@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+from typing import Optional, Union
 
 
 def get_simpletuner_root() -> Path:
@@ -45,3 +47,66 @@ def get_static_directory() -> Path:
         Path to the static directory relative to SimpleTuner root
     """
     return get_simpletuner_root() / "static"
+
+
+def resolve_config_path(
+    path: Union[str, Path],
+    config_dir: Optional[Union[str, Path]] = None,
+    check_cwd_first: bool = True,
+) -> Optional[Path]:
+    """Resolve a configuration file path using multiple resolution strategies.
+
+    For absolute paths:
+    - Expands user paths (~/)
+    - Returns the path as-is if it exists
+
+    For relative paths, checks in order:
+    1. Relative to current working directory (if check_cwd_first is True)
+    2. Relative to the provided config_dir
+    3. Relative to SimpleTuner's default config directory
+    4. Relative to SimpleTuner's root directory (for paths like 'config/...')
+
+    Args:
+        path: The path to resolve (can be relative or absolute)
+        config_dir: Optional custom config directory to check
+        check_cwd_first: Whether to check CWD first for relative paths
+
+    Returns:
+        Resolved Path object if file exists, None otherwise
+    """
+    path_str = str(path)
+
+    # Expand user path if present
+    expanded_path = os.path.expanduser(path_str)
+
+    # If it's an absolute path, return it if it exists
+    if os.path.isabs(expanded_path):
+        abs_path = Path(expanded_path)
+        return abs_path if abs_path.exists() else None
+
+    # For relative paths, try multiple resolution strategies
+    paths_to_check = []
+
+    # 1. Check relative to CWD first (if enabled)
+    if check_cwd_first:
+        paths_to_check.append(Path.cwd() / expanded_path)
+
+    # 2. Check relative to provided config directory
+    if config_dir:
+        config_path = Path(os.path.expanduser(str(config_dir)))
+        paths_to_check.append(config_path / expanded_path)
+
+    # 3. Check relative to SimpleTuner's default config directory
+    default_config = get_config_directory()
+    paths_to_check.append(default_config / expanded_path)
+
+    # 4. Check relative to SimpleTuner root (for paths like 'config/examples/...')
+    simpletuner_root = get_simpletuner_root()
+    paths_to_check.append(simpletuner_root / expanded_path)
+
+    # Return the first existing path
+    for check_path in paths_to_check:
+        if check_path.exists():
+            return check_path.resolve()
+
+    return None

@@ -93,54 +93,41 @@ async def get_data_backend_file(path: str) -> Any:
     """Get the contents of a data backend configuration file.
 
     Args:
-        path: Path to the data backend config file (relative to config directory)
+        path: Path to the data backend config file (can be relative or absolute)
 
     Returns:
         JSON contents of the data backend config file
     """
-    import os
     import json
+    from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
 
     try:
-        # Get the configuration store to find the config directory
-        store = _get_store()
-        base_dir = store.config_dir
-
         # Sanitize the path to prevent directory traversal
-        # Remove any .. or absolute path components
-        safe_path = os.path.normpath(path).lstrip(os.sep)
-        if '..' in safe_path:
+        if '..' in path:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid path: directory traversal not allowed"
             )
 
-        # Construct the full path
-        full_path = os.path.join(str(base_dir), safe_path)
+        # Get the configuration store to find the user's config directory
+        store = _get_store()
+        user_config_dir = store.config_dir
 
-        # Check if the file exists and is within the config directory
-        if not full_path.startswith(str(base_dir)):
+        # Resolve the path using our utility function
+        resolved_path = resolve_config_path(
+            path,
+            config_dir=user_config_dir,
+            check_cwd_first=True
+        )
+
+        if not resolved_path:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid path: must be within config directory"
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Data backend config file not found: {path}"
             )
 
-        if not os.path.exists(full_path):
-            # Try looking in the parent directory (where SimpleTuner is)
-            # This handles paths like "config/examples/multidatabackend-*.json"
-            parent_dir = os.path.dirname(str(base_dir))
-            alt_path = os.path.join(parent_dir, safe_path)
-
-            if os.path.exists(alt_path) and alt_path.startswith(parent_dir):
-                full_path = alt_path
-            else:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Data backend config file not found: {path}"
-                )
-
         # Read and parse the JSON file
-        with open(full_path, 'r') as f:
+        with open(resolved_path, 'r') as f:
             data = json.load(f)
 
         return data
