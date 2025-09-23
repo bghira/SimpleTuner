@@ -9,11 +9,37 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
+from simpletuner.helpers.models.all import model_families
+
 router = APIRouter(prefix="/web", tags=["web"])
 
 # Get template directory from environment
 template_dir = os.environ.get("TEMPLATE_DIR", "templates")
 templates = Jinja2Templates(directory=template_dir)
+
+
+def get_model_family_label(model_key: str) -> str:
+    """Generate a human-readable label for a model family key."""
+    labels = {
+        "sd1x": "Stable Diffusion 1.x",
+        "sd2x": "Stable Diffusion 2.x",
+        "sd3": "Stable Diffusion 3",
+        "deepfloyd": "DeepFloyd IF",
+        "sana": "Sana",
+        "sdxl": "Stable Diffusion XL",
+        "kolors": "Kolors",
+        "flux": "Flux",
+        "wan": "Wan",
+        "ltxvideo": "LTX Video",
+        "pixart_sigma": "PixArt-Σ",
+        "omnigen": "OmniGen",
+        "hidream": "HiDream",
+        "auraflow": "AuraFlow",
+        "lumina2": "Lumina 2",
+        "cosmos2image": "Cosmos2Image",
+        "qwen_image": "Qwen Image"
+    }
+    return labels.get(model_key, model_key.upper())
 
 
 def _load_active_config() -> Dict[str, Any]:
@@ -174,10 +200,8 @@ async def model_config_tab(request: Request):
                     "required": True,
                     "value": config_values.get("model_family", ""),
                     "options": [
-                        {"value": "flux", "label": "Flux"},
-                        {"value": "sd3", "label": "Stable Diffusion 3"},
-                        {"value": "sdxl", "label": "Stable Diffusion XL"},
-                        {"value": "sd", "label": "Stable Diffusion 1.5"},
+                        {"value": key, "label": get_model_family_label(key)}
+                        for key in sorted(model_families.keys())
                     ],
                 },
                 {
@@ -465,10 +489,8 @@ async def datasets_tab(request: Request):
         # Add default config for compatibility with trainer_dataloader_section.html
         "default_config": {
             "model_families": [
-                {"value": "flux", "label": "Flux", "selected": False},
-                {"value": "sd3", "label": "Stable Diffusion 3", "selected": False},
-                {"value": "sdxl", "label": "Stable Diffusion XL", "selected": True},
-                {"value": "sd", "label": "Stable Diffusion 1.5", "selected": False},
+                {"value": key, "label": get_model_family_label(key), "selected": key == "sdxl"}
+                for key in sorted(model_families.keys())
             ]
         },
     }

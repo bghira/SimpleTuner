@@ -29,6 +29,37 @@ class TrainingConfig(BaseModel):
     mixed_precision: str = "bf16"
 
 
+def _normalize_form_to_config(form_data: dict, directory_fields: list = None) -> dict:
+    """Convert form data to config dict with -- prefixes and optional path expansion.
+
+    Args:
+        form_data: The form data dictionary from the request
+        directory_fields: Optional list of fields that should have path expansion applied
+
+    Returns:
+        Dictionary with normalized config keys (all having -- prefix)
+    """
+    config_dict = {}
+    # Fields that should be excluded from config dict
+    excluded_fields = {"configs_dir"}
+
+    for key, value in form_data.items():
+        # Skip excluded fields
+        if key in excluded_fields:
+            continue
+
+        # Ensure -- prefix
+        config_key = key if key.startswith("--") else f"--{key}"
+
+        # Apply directory path expansion if needed
+        if directory_fields and config_key in directory_fields and value:
+            config_dict[config_key] = os.path.abspath(os.path.expanduser(value))
+        else:
+            config_dict[config_key] = value
+
+    return config_dict
+
+
 def _get_config_store() -> ConfigStore:
     """Get the configuration store instance with user defaults if available."""
     try:
@@ -47,13 +78,7 @@ async def validate_config(request: Request):
     form_data = await request.form()
 
     # Convert form data to config dict with -- prefixes
-    config_dict = {}
-    for key, value in form_data.items():
-        if key.startswith("--"):
-            config_dict[key] = value
-        else:
-            # Add -- prefix if not present
-            config_dict[f"--{key}"] = value
+    config_dict = _normalize_form_to_config(dict(form_data))
 
     # Use ConfigStore validation
     store = _get_config_store()
@@ -105,29 +130,17 @@ async def save_config(request: Request):
 
     # Separate WebUI settings from training config
     webui_settings = {}
-    config_dict = {}
+
+    # Extract WebUI-specific settings
+    form_dict = dict(form_data)
+    if "configs_dir" in form_dict:
+        webui_settings["configs_dir"] = os.path.abspath(os.path.expanduser(form_dict["configs_dir"])) if form_dict["configs_dir"] else form_dict["configs_dir"]
 
     # Directory fields that need path expansion
     directory_fields = ["--output_dir", "--instance_data_dir", "--logging_dir"]
 
-    for key, value in form_data.items():
-        if key == "configs_dir":
-            # Expand path for webui settings
-            webui_settings["configs_dir"] = os.path.abspath(os.path.expanduser(value)) if value else value
-        elif key.startswith("--"):
-            # Check if this is a directory field
-            if key in directory_fields and value:
-                config_dict[key] = os.path.abspath(os.path.expanduser(value))
-            else:
-                config_dict[key] = value
-        else:
-            # Add -- prefix if not present
-            full_key = f"--{key}"
-            # Check if this is a directory field
-            if full_key in directory_fields and value:
-                config_dict[full_key] = os.path.abspath(os.path.expanduser(value))
-            else:
-                config_dict[full_key] = value
+    # Convert form data to config dict with path expansion for directory fields
+    config_dict = _normalize_form_to_config(form_dict, directory_fields)
 
     try:
         # Save WebUI settings if present
@@ -189,13 +202,7 @@ async def start_training(request: Request):
     form_data = await request.form()
 
     # Convert form data to config dict with -- prefixes
-    config_dict = {}
-    for key, value in form_data.items():
-        if key.startswith("--"):
-            config_dict[key] = value
-        else:
-            # Add -- prefix if not present
-            config_dict[f"--{key}"] = value
+    config_dict = _normalize_form_to_config(dict(form_data))
 
     # Validate using ConfigStore
     store = _get_config_store()

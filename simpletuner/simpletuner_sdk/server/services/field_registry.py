@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union, Callable
 
+from simpletuner.helpers.models.all import model_families
+
 
 class FieldType(Enum):
     """UI field types."""
@@ -157,11 +159,7 @@ class FieldRegistry:
         ))
 
         # Model Family
-        model_families = [
-            'sd1x', 'sd2x', 'sd3', 'deepfloyd', 'sana', 'sdxl', 'kolors',
-            'flux', 'wan', 'ltxvideo', 'pixart_sigma', 'omnigen', 'hidream',
-            'auraflow', 'lumina2', 'cosmos2image', 'qwen_image'
-        ]
+        model_family_list = list(model_families.keys())
         self._add_field(ConfigField(
             name="model_family",
             arg_name="--model_family",
@@ -170,10 +168,10 @@ class FieldRegistry:
             tab="basic",
             section="model_config",
             subsection="architecture",
-            choices=[{"value": f, "label": f.upper()} for f in model_families],
+            choices=[{"value": f, "label": f.upper()} for f in model_family_list],
             validation_rules=[
                 ValidationRule(ValidationRuleType.REQUIRED, message="Model family is required"),
-                ValidationRule(ValidationRuleType.CHOICES, value=model_families)
+                ValidationRule(ValidationRuleType.CHOICES, value=model_family_list)
             ],
             help_text="The base model architecture family to train",
             tooltip="Different model families have different capabilities and requirements",
