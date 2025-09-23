@@ -51,6 +51,7 @@ class StableDiffusion1(ImageModelFoundation):
     }
     MODEL_LICENSE = "openrail++"
 
+    SUPPORTS_TEXT_ENCODER_TRAINING = True
     TEXT_ENCODER_CONFIGURATION = {
         "text_encoder": {
             "name": "CLIP-L/14",

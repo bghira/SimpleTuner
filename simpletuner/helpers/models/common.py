@@ -1304,6 +1304,7 @@ class ImageModelFoundation(ModelFoundation):
     Handles typical VAE, text encoder loading and a UNet forward pass.
     """
 
+    SUPPORTS_TEXT_ENCODER_TRAINING = False
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     DEFAULT_CONTROLNET_LORA_TARGET = [
         "to_q",
