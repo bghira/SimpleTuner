@@ -548,14 +548,26 @@ async def datasets_tab(request: Request):
         config_data = _load_active_config()
         data_backend_config_path = _get_config_value(config_data, "data_backend_config", None)
 
+        # Debug logging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"datasets_tab: data_backend_config_path = {data_backend_config_path}")
+
         if data_backend_config_path:
             # Resolve the path using our utility function
-            store = DatasetPlanStore()
+            # Get config directory from webui state
+            from ..services.webui_state import WebUIStateStore
+            webui_state = WebUIStateStore()
+            defaults = webui_state.load_defaults()
+            config_dir = defaults.configs_dir if defaults.configs_dir else None
+
             resolved_path = resolve_config_path(
                 data_backend_config_path,
-                config_dir=store.config_dir if hasattr(store, 'config_dir') else None,
+                config_dir=config_dir,
                 check_cwd_first=True
             )
+
+            logger.info(f"datasets_tab: resolved_path = {resolved_path}")
 
             if resolved_path and resolved_path.exists():
                 try:
@@ -563,20 +575,22 @@ async def datasets_tab(request: Request):
                         datasets = json.load(f)
                         if not isinstance(datasets, list):
                             datasets = []
-                except (json.JSONDecodeError, IOError):
+                        logger.info(f"datasets_tab: loaded {len(datasets)} datasets from {resolved_path}")
+                except (json.JSONDecodeError, IOError) as e:
                     # Fall back to default behavior if we can't read the file
                     pass
 
-        # If we couldn't load from active config, fall back to default store
-        if not datasets:
-            store = DatasetPlanStore()
-            datasets, _, _ = store.load()
+        # Note: We don't fall back to global store if datasets is empty
+        # An empty dataset list is a valid configuration for an environment
+        logger.info(f"datasets_tab: Finished loading, have {len(datasets)} datasets")
 
-    except Exception:
+    except Exception as e:
         # Fall back to default behavior on any error
+        logger.error(f"datasets_tab: Exception loading from config - {str(e)}")
         try:
             store = DatasetPlanStore()
             datasets, _, _ = store.load()
+            logger.warning(f"datasets_tab: Fell back to global store, loaded {len(datasets)} datasets")
         except ValueError:
             datasets = []
 

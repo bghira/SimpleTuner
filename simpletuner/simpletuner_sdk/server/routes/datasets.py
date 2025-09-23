@@ -11,6 +11,8 @@ from pydantic import BaseModel, ConfigDict
 from simpletuner.simpletuner_sdk.api_state import APIState
 from simpletuner.simpletuner_sdk.server.data.dataset_blueprints import get_dataset_blueprints
 from simpletuner.simpletuner_sdk.server.services.dataset_plan import DatasetPlanStore, ValidationMessage, compute_validations
+from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
+from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
 
@@ -36,6 +38,28 @@ class DatasetPlanResponse(BaseModel):
 
 def _store() -> DatasetPlanStore:
     """Create a dataset plan store using current environment settings."""
+    # Try to get data backend config from active configuration
+    try:
+        config_store = ConfigStore()
+        active_config_name = config_store.get_active_config()
+
+        if active_config_name:
+            config_data, _ = config_store.load_config(active_config_name)
+            # Try with and without -- prefix
+            data_backend_config = config_data.get("data_backend_config") or config_data.get("--data_backend_config")
+
+            if data_backend_config:
+                # Resolve the path relative to config directory
+                resolved_path = resolve_config_path(
+                    data_backend_config,
+                    config_dir=config_store.config_dir,
+                    check_cwd_first=True
+                )
+                if resolved_path:
+                    return DatasetPlanStore(path=resolved_path)
+    except Exception as e:
+        pass  # Fall back to default behavior
+
     return DatasetPlanStore()
 
 
