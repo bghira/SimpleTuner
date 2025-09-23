@@ -67,6 +67,29 @@ def _load_active_config() -> Dict[str, Any]:
     return {}
 
 
+def _get_config_value(config_data: Dict[str, Any], key: str, default: Any = "") -> Any:
+    """Get config value, checking both modern (no prefix) and legacy (-- prefix) formats.
+
+    Args:
+        config_data: The configuration dictionary
+        key: The key to look for (without -- prefix)
+        default: Default value if not found
+
+    Returns:
+        The config value if found, otherwise the default
+    """
+    # First try modern format without --
+    if key in config_data:
+        return config_data[key]
+
+    # Then try legacy format with --
+    legacy_key = f"--{key}"
+    if legacy_key in config_data:
+        return config_data[legacy_key]
+
+    return default
+
+
 @router.get("/", response_class=HTMLResponse)
 async def web_home(request: Request):
     """Redirect to trainer page."""
@@ -100,9 +123,9 @@ async def basic_config_tab(request: Request):
     config_data = _load_active_config()
     config_values = {
         "configs_dir": webui_defaults.get("configs_dir", ""),
-        "model_name": config_data.get("--job_id", ""),
-        "output_dir": config_data.get("--output_dir", webui_defaults.get("output_dir", "")),
-        "pretrained_model_name_or_path": config_data.get("--pretrained_model_name_or_path", ""),
+        "model_name": _get_config_value(config_data, "job_id", ""),
+        "output_dir": _get_config_value(config_data, "output_dir", webui_defaults.get("output_dir", "")),
+        "pretrained_model_name_or_path": _get_config_value(config_data, "pretrained_model_name_or_path", ""),
     }
 
     context = {
@@ -177,10 +200,10 @@ async def model_config_tab(request: Request):
     # Load active config values
     config_data = _load_active_config()
     config_values = {
-        "model_family": config_data.get("--model_family", ""),
-        "model_type": config_data.get("--model_type", "lora"),
-        "lora_rank": config_data.get("--lora_rank", "16"),
-        "lora_alpha": config_data.get("--lora_alpha", "16"),
+        "model_family": _get_config_value(config_data, "model_family", ""),
+        "model_type": _get_config_value(config_data, "model_type", "lora"),
+        "lora_rank": _get_config_value(config_data, "lora_rank", "16"),
+        "lora_alpha": _get_config_value(config_data, "lora_alpha", "16"),
     }
 
     context = {
@@ -248,15 +271,15 @@ async def training_config_tab(request: Request):
     # Load active config values
     config_data = _load_active_config()
     config_values = {
-        "learning_rate": config_data.get("--learning_rate", "0.0001"),
-        "train_batch_size": config_data.get("--train_batch_size", "1"),
-        "num_train_epochs": config_data.get("--num_train_epochs", "10"),
-        "mixed_precision": config_data.get("--mixed_precision", "bf16"),
-        "resolution": config_data.get("--resolution", "1024"),
-        "gradient_checkpointing": config_data.get("--gradient_checkpointing", False),
-        "optimizer": config_data.get("--optimizer", "adamw"),
-        "lr_scheduler": config_data.get("--lr_scheduler", "cosine"),
-        "lr_warmup_steps": config_data.get("--lr_warmup_steps", "0"),
+        "learning_rate": _get_config_value(config_data, "learning_rate", "0.0001"),
+        "train_batch_size": _get_config_value(config_data, "train_batch_size", "1"),
+        "num_train_epochs": _get_config_value(config_data, "num_train_epochs", "10"),
+        "mixed_precision": _get_config_value(config_data, "mixed_precision", "bf16"),
+        "resolution": _get_config_value(config_data, "resolution", "1024"),
+        "gradient_checkpointing": _get_config_value(config_data, "gradient_checkpointing", False),
+        "optimizer": _get_config_value(config_data, "optimizer", "adamw"),
+        "lr_scheduler": _get_config_value(config_data, "lr_scheduler", "cosine"),
+        "lr_warmup_steps": _get_config_value(config_data, "lr_warmup_steps", "0"),
     }
 
     context = {
@@ -376,14 +399,14 @@ async def advanced_config_tab(request: Request):
     # Load active config values
     config_data = _load_active_config()
     config_values = {
-        "gradient_accumulation_steps": config_data.get("--gradient_accumulation_steps", "1"),
-        "checkpointing_steps": config_data.get("--checkpointing_steps", "500"),
-        "validation_steps": config_data.get("--validation_steps", "100"),
-        "seed": config_data.get("--seed", "42"),
-        "max_grad_norm": config_data.get("--max_grad_norm", "1.0"),
-        "train_text_encoder": config_data.get("--train_text_encoder", False),
-        "enable_xformers_memory_efficient_attention": config_data.get("--enable_xformers_memory_efficient_attention", True),
-        "use_ema": config_data.get("--use_ema", False),
+        "gradient_accumulation_steps": _get_config_value(config_data, "gradient_accumulation_steps", "1"),
+        "checkpointing_steps": _get_config_value(config_data, "checkpointing_steps", "500"),
+        "validation_steps": _get_config_value(config_data, "validation_steps", "100"),
+        "seed": _get_config_value(config_data, "seed", "42"),
+        "max_grad_norm": _get_config_value(config_data, "max_grad_norm", "1.0"),
+        "train_text_encoder": _get_config_value(config_data, "train_text_encoder", False),
+        "enable_xformers_memory_efficient_attention": _get_config_value(config_data, "enable_xformers_memory_efficient_attention", True),
+        "use_ema": _get_config_value(config_data, "use_ema", False),
     }
 
     context = {
@@ -510,17 +533,17 @@ async def validation_config_tab(request: Request):
     # Load active config values
     config_data = _load_active_config()
     config_values = {
-        "validation_prompt": config_data.get("--validation_prompt", ""),
-        "validation_steps": config_data.get("--validation_steps", "100"),
-        "num_validation_images": config_data.get("--num_validation_images", "4"),
-        "validation_guidance_scale": config_data.get("--validation_guidance_scale", "7.5"),
-        "validation_guidance_rescale": config_data.get("--validation_guidance_rescale", "0.0"),
-        "validation_num_inference_steps": config_data.get("--validation_num_inference_steps", "20"),
-        "validation_resolution": config_data.get("--validation_resolution", ""),
-        "validation_negative_prompt": config_data.get("--validation_negative_prompt", ""),
-        "push_to_hub": config_data.get("--push_to_hub", False),
-        "hub_model_id": config_data.get("--hub_model_id", ""),
-        "webhook_config": config_data.get("--webhook_config", ""),
+        "validation_prompt": _get_config_value(config_data, "validation_prompt", ""),
+        "validation_steps": _get_config_value(config_data, "validation_steps", "100"),
+        "num_validation_images": _get_config_value(config_data, "num_validation_images", "4"),
+        "validation_guidance_scale": _get_config_value(config_data, "validation_guidance_scale", "7.5"),
+        "validation_guidance_rescale": _get_config_value(config_data, "validation_guidance_rescale", "0.0"),
+        "validation_num_inference_steps": _get_config_value(config_data, "validation_num_inference_steps", "20"),
+        "validation_resolution": _get_config_value(config_data, "validation_resolution", ""),
+        "validation_negative_prompt": _get_config_value(config_data, "validation_negative_prompt", ""),
+        "push_to_hub": _get_config_value(config_data, "push_to_hub", False),
+        "hub_model_id": _get_config_value(config_data, "hub_model_id", ""),
+        "webhook_config": _get_config_value(config_data, "webhook_config", ""),
     }
 
     context = {
