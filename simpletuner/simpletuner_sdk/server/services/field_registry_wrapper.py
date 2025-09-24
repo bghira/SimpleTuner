@@ -91,6 +91,25 @@ class LazyFieldRegistry:
             return {}
         return getattr(registry, '_dependencies_map', {})
 
+    def get_all_fields(self) -> List[Any]:
+        """Get all fields from the registry."""
+        registry = self._get_registry()
+        if registry is None:
+            return []
+
+        try:
+            # Try to get all fields from the registry
+            if hasattr(registry, 'get_all_fields'):
+                return registry.get_all_fields()
+            elif hasattr(registry, '_fields'):
+                # Return all field values if _fields is a dict
+                return list(registry._fields.values())
+            else:
+                return []
+        except Exception as e:
+            logger.error(f"Error getting all fields: {e}", exc_info=True)
+            return []
+
 
 # Create singleton instance
 lazy_field_registry = LazyFieldRegistry()

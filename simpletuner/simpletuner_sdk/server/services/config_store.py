@@ -655,6 +655,31 @@ class ConfigStore:
 
         return metadata
 
+    def save_trainer_config(self, name: str, config: Dict[str, Any], overwrite: bool = False) -> None:
+        """Save a trainer configuration without metadata wrapper.
+
+        This is used for SimpleTuner trainer configs which expect a flat JSON structure.
+
+        Args:
+            name: Name for the configuration.
+            config: Configuration dictionary.
+            overwrite: Whether to overwrite existing config.
+
+        Raises:
+            FileExistsError: If config exists and overwrite is False.
+        """
+        config_path = self._get_config_path(name)
+
+        if config_path.exists() and not overwrite:
+            raise FileExistsError(f"Configuration '{name}' already exists")
+
+        # Create parent directory if it doesn't exist (for subdirectory configs)
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with config_path.open("w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2, sort_keys=True)
+            f.write("\n")
+
     def delete_config(self, name: str) -> bool:
         """Delete a configuration.
 

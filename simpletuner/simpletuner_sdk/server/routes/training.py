@@ -15,6 +15,8 @@ from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
 from simpletuner.simpletuner_sdk import process_keeper
 from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
+from simpletuner.simpletuner_sdk.server.services.field_registry_wrapper import lazy_field_registry
+from simpletuner.simpletuner_sdk.server.services.field_registry import FieldType
 
 router = APIRouter(prefix="/api/training", tags=["training"])
 
@@ -31,19 +33,55 @@ class TrainingConfig(BaseModel):
     mixed_precision: str = "bf16"
 
 
+def _convert_value_by_type(value: str, field_type: FieldType) -> any:
+    """Convert a string value to the appropriate type based on field type.
+
+    Args:
+        value: The string value to convert
+        field_type: The field type from the field registry
+
+    Returns:
+        The converted value with the correct type
+    """
+    if not value and value != "0":
+        return value
+
+    if field_type == FieldType.NUMBER:
+        # Try to convert to int first, then float
+        try:
+            # Check if it's a float
+            if '.' in value or 'e' in value.lower():
+                return float(value)
+            return int(value)
+        except ValueError:
+            return value
+    elif field_type == FieldType.CHECKBOX:
+        # Convert checkbox values to boolean
+        return value.lower() in ('true', '1', 'yes', 'on')
+    else:
+        # TEXT, SELECT, TEXTAREA, FILE, etc. remain as strings
+        return value
+
+
 def _normalize_form_to_config(form_data: dict, directory_fields: list = None) -> dict:
-    """Convert form data to config dict with -- prefixes and optional path expansion.
+    """Convert form data to config dict with -- prefixes and proper type conversion.
 
     Args:
         form_data: The form data dictionary from the request
         directory_fields: Optional list of fields that should have path expansion applied
 
     Returns:
-        Dictionary with normalized config keys (all having -- prefix)
+        Dictionary with normalized config keys (all having -- prefix) and proper types
     """
     config_dict = {}
     # Fields that should be excluded from config dict
     excluded_fields = {"configs_dir"}
+
+    # Get field registry to determine types
+    field_types = {}
+    for field in lazy_field_registry.get_all_fields():
+        field_types[field.arg_name] = field.field_type
+
     # Numeric fields that should always be included, even if "0"
     numeric_fields = ["--num_train_epochs", "--max_train_steps", "--lr_warmup_steps",
                       "--gradient_accumulation_steps", "--train_batch_size"]
@@ -59,18 +97,19 @@ def _normalize_form_to_config(form_data: dict, directory_fields: list = None) ->
         # For numeric fields, always include the value (even "0")
         if config_key in numeric_fields:
             # Always include numeric fields, even if the value is "0" or empty
-            config_dict[config_key] = value if value else "0"
-            continue
-
-        # Skip empty values for non-numeric fields
-        if not value:
+            if not value:
+                value = "0"
+        elif not value:
+            # Skip empty values for non-numeric fields
             continue
 
         # Apply directory path expansion if needed
         if directory_fields and config_key in directory_fields and value:
             config_dict[config_key] = os.path.abspath(os.path.expanduser(value))
         else:
-            config_dict[config_key] = value
+            # Convert value to appropriate type
+            field_type = field_types.get(config_key, FieldType.TEXT)
+            config_dict[config_key] = _convert_value_by_type(value, field_type)
 
     return config_dict
 
@@ -85,6 +124,25 @@ def _get_config_store() -> ConfigStore:
     except Exception:
         pass
     return ConfigStore()
+
+
+def _get_all_field_defaults() -> dict:
+    """Get all default values from field registry with proper types.
+
+    Returns:
+        Dictionary with all field defaults with -- prefixes and proper types
+    """
+    defaults = {}
+
+    for field in lazy_field_registry.get_all_fields():
+        if field.default_value is not None:
+            # Convert default value to proper type
+            defaults[field.arg_name] = _convert_value_by_type(
+                str(field.default_value) if not isinstance(field.default_value, bool) else str(field.default_value).lower(),
+                field.field_type
+            )
+
+    return defaults
 
 
 @router.post("/validate", response_class=HTMLResponse)
@@ -191,37 +249,28 @@ async def save_config(request: Request):
                 setattr(defaults, key, value)
             state_store.save_defaults(defaults)
 
-        # Save training config only if we have parameters
-        if config_dict:
-            store = _get_config_store()
-            active_config = store.get_active_config()
+        # Get all field defaults and merge with form data
+        all_defaults = _get_all_field_defaults()
+        # Merge defaults with config_dict (config_dict takes precedence)
+        complete_config = {**all_defaults, **config_dict}
 
-            # If no active config, use default
-            if not active_config:
-                active_config = "default"
+        # Save training config
+        store = _get_config_store()
+        active_config = store.get_active_config()
 
-            # Check if config exists, create metadata if needed
-            try:
-                # Load existing metadata if present
-                _, metadata = store.load_config(active_config)
-                metadata.modified_at = datetime.now().isoformat()
-            except:
-                # Create new metadata for new config
-                metadata = ConfigMetadata(
-                    description="Default configuration",
-                    created_at=datetime.now().isoformat(),
-                    modified_at=datetime.now().isoformat(),
-                )
+        # If no active config, use default
+        if not active_config:
+            active_config = "default"
 
-            # Save updated config
-            store.save_config(active_config, config_dict, metadata, overwrite=True)
+        # Use the new save_trainer_config method for flat JSON format
+        store.save_trainer_config(active_config, complete_config, overwrite=True)
 
-            # Set as active config if it wasn't already
-            if not store.get_active_config():
-                store.set_active_config(active_config)
+        # Set as active config if it wasn't already
+        if not store.get_active_config():
+            store.set_active_config(active_config)
 
-            # Also store in API state for compatibility
-            APIState.set_state("training_config", config_dict)
+        # Also store in API state for compatibility
+        APIState.set_state("training_config", complete_config)
 
         return """
         <div class="text-success" x-data="{ show: true }" x-show="show" x-init="setTimeout(() => show = false, 3000)" x-transition.opacity.duration.500ms>
