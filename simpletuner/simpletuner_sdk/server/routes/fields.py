@@ -1,5 +1,6 @@
 """Field metadata API routes for dynamic UI configuration."""
 
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -16,8 +17,78 @@ except ImportError:
         EXPERIMENTAL = "experimental"
 from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
 from simpletuner.simpletuner_sdk.api_state import APIState
+from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
+from simpletuner.simpletuner_sdk.server.utils.paths import get_config_directory, get_simpletuner_root
 
 router = APIRouter(prefix="/api/fields", tags=["fields"])
+
+
+def _format_dataset_path(path: Path) -> str:
+    """Return a dataset path string relative to the project root when possible."""
+    resolved = path.expanduser().resolve(strict=False)
+    try:
+        return str(resolved.relative_to(get_simpletuner_root()))
+    except ValueError:
+        return str(resolved)
+
+
+def _build_data_backend_choices() -> List[Dict[str, str]]:
+    """Collect available dataset configurations for selection."""
+    choices: List[Dict[str, str]] = []
+    seen_values = set()
+
+    try:
+        dataloader_store = ConfigStore(config_type="dataloader")
+        for metadata in dataloader_store.list_configs():
+            name = metadata.get("name")
+            if not name:
+                continue
+
+            try:
+                path = dataloader_store._get_config_path(name)
+            except Exception:
+                continue
+
+            if not path:
+                continue
+
+            value = _format_dataset_path(path)
+            if value in seen_values:
+                continue
+
+            dataset_count = metadata.get("dataset_count")
+            if isinstance(dataset_count, int):
+                label = f"{name} ({dataset_count} datasets)"
+            else:
+                label = name
+
+            choices.append({"value": value, "label": label})
+            seen_values.add(value)
+    except Exception:
+        # If listing managed configs fails, continue with fallback discovery
+        pass
+
+    try:
+        config_root = Path(get_config_directory())
+    except Exception:
+        config_root = None
+
+    if config_root and config_root.exists():
+        for path in sorted(config_root.glob("**/multidatabackend*.json")):
+            value = _format_dataset_path(path)
+            if value in seen_values:
+                continue
+
+            try:
+                label = str(path.relative_to(config_root))
+            except ValueError:
+                label = path.name
+
+            choices.append({"value": value, "label": label})
+            seen_values.add(value)
+
+    choices.sort(key=lambda item: item["label"].lower())
+    return choices
 
 
 @router.get("/metadata")
@@ -152,6 +223,15 @@ async def get_tab_fields(
                 field_data["choices"] = dynamic_choices
             except Exception:
                 # Keep default choices if checkpoint loading fails
+                pass
+
+        if field.name == "data_backend_config":
+            try:
+                dataset_choices = _build_data_backend_choices()
+                if dataset_choices:
+                    field_data["choices"] = dataset_choices
+            except Exception:
+                # Keep default choices if listing datasets fails
                 pass
 
         fields_by_section[section_key].append(field_data)

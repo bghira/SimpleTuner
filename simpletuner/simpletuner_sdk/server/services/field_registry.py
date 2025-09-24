@@ -1174,17 +1174,19 @@ class FieldRegistry:
             name="data_backend_config",
             arg_name="--data_backend_config",
             ui_label="Data Backend Config",
-            field_type=FieldType.FILE,
+            field_type=FieldType.SELECT,
             tab="basic",
             section="data_config",
-            placeholder="config/multidatabackend.json",
+            default_value="config/multidatabackend.json",
+            choices=[],
             validation_rules=[
-                ValidationRule(ValidationRuleType.REQUIRED, message="Data backend configuration is required")
+                ValidationRule(ValidationRuleType.REQUIRED, message="Select a data backend configuration")
             ],
-            help_text="Path to multi-databackend configuration JSON",
-            tooltip="Defines your training datasets, captions, and data loading settings",
+            help_text="Select a saved dataset configuration (managed in Datasets & Environments tabs)",
+            tooltip="Pick which dataset plan to use. Create or edit datasets in the Datasets tab; manage saved plans from Environments.",
             importance=ImportanceLevel.ESSENTIAL,
-            order=1
+            order=1,
+            dynamic_choices=True
         ))
 
         # Caption Strategy
