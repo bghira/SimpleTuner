@@ -86,6 +86,9 @@ def _normalize_form_to_config(form_data: dict, directory_fields: list = None) ->
     numeric_fields = ["--num_train_epochs", "--max_train_steps", "--lr_warmup_steps",
                       "--gradient_accumulation_steps", "--train_batch_size"]
 
+    # Fields that should always be included even if empty
+    always_include_fields = ["--model_flavour"]
+
     for key, value in form_data.items():
         # Skip excluded fields
         if key in excluded_fields:
@@ -99,8 +102,12 @@ def _normalize_form_to_config(form_data: dict, directory_fields: list = None) ->
             # Always include numeric fields, even if the value is "0" or empty
             if not value:
                 value = "0"
+        elif config_key in always_include_fields:
+            # Always include these fields even if empty
+            if not value:
+                value = ""
         elif not value:
-            # Skip empty values for non-numeric fields
+            # Skip empty values for other fields
             continue
 
         # Apply directory path expansion if needed
@@ -153,9 +160,13 @@ async def validate_config(request: Request):
     # Convert form data to config dict with -- prefixes
     config_dict = _normalize_form_to_config(dict(form_data))
 
-    # Use ConfigStore validation
+    # Get all field defaults and merge with form data for complete validation
+    all_defaults = _get_all_field_defaults()
+    complete_config = {**all_defaults, **config_dict}
+
+    # Use ConfigStore validation on the complete config
     store = _get_config_store()
-    validation = store.validate_config(config_dict)
+    validation = store.validate_config(complete_config)
 
     errors = list(validation.errors) if validation.errors else []
     warnings = list(validation.warnings) if validation.warnings else []
@@ -219,13 +230,22 @@ async def save_config(request: Request):
     """Save training configuration."""
     form_data = await request.form()
 
-    # Separate WebUI settings from training config
+    # Separate WebUI settings and save options from training config
     webui_settings = {}
+    save_options = {}
 
-    # Extract WebUI-specific settings
+    # Extract WebUI-specific settings and save options
     form_dict = dict(form_data)
     if "configs_dir" in form_dict:
         webui_settings["configs_dir"] = os.path.abspath(os.path.expanduser(form_dict["configs_dir"])) if form_dict["configs_dir"] else form_dict["configs_dir"]
+
+    # Extract save options
+    if "preserve_defaults" in form_dict:
+        save_options["preserve_defaults"] = form_dict["preserve_defaults"] == "true"
+        del form_dict["preserve_defaults"]
+    if "create_backup" in form_dict:
+        save_options["create_backup"] = form_dict["create_backup"] == "true"
+        del form_dict["create_backup"]
 
     # Directory fields that need path expansion
     directory_fields = ["--output_dir", "--instance_data_dir", "--logging_dir"]
@@ -240,6 +260,25 @@ async def save_config(request: Request):
     logger.info(f"num_train_epochs value: {config_dict.get('--num_train_epochs', 'NOT FOUND')}")
     logger.info(f"max_train_steps value: {config_dict.get('--max_train_steps', 'NOT FOUND')}")
 
+    # Prepare config store and active config information
+    store = _get_config_store()
+    active_config = store.get_active_config()
+
+    # Load existing configuration (if any) so values from other tabs are preserved
+    existing_config_cli = {}
+    if active_config:
+        try:
+            existing_config_data, _ = store.load_config(active_config)
+            if isinstance(existing_config_data, dict):
+                for key, value in existing_config_data.items():
+                    cli_key = key if key.startswith("--") else f"--{key}"
+                    existing_config_cli[cli_key] = value
+        except FileNotFoundError:
+            pass
+        except ValueError:
+            # Malformed config should not block saving new values
+            pass
+
     try:
         # Save WebUI settings if present
         if webui_settings:
@@ -249,27 +288,51 @@ async def save_config(request: Request):
                 setattr(defaults, key, value)
             state_store.save_defaults(defaults)
 
-        # Get all field defaults and merge with form data
+        # Get all field defaults and merge with existing config plus form data
         all_defaults = _get_all_field_defaults()
-        # Merge defaults with config_dict (config_dict takes precedence)
-        complete_config = {**all_defaults, **config_dict}
+        # Merge order: defaults < existing config < submitted form values
+        complete_config = {**all_defaults, **existing_config_cli, **config_dict}
+
+        # Process the config for saving
+        save_config = {}
+        for key, value in complete_config.items():
+            # Remove "--" prefix from keys
+            clean_key = key[2:] if key.startswith("--") else key
+
+            # If preserve_defaults is true, only include non-default values
+            if save_options.get("preserve_defaults", False):
+                # Compare with default value
+                default_value = all_defaults.get(key)
+                if value != default_value:
+                    save_config[clean_key] = value
+            else:
+                save_config[clean_key] = value
 
         # Save training config
-        store = _get_config_store()
-        active_config = store.get_active_config()
-
         # If no active config, use default
         if not active_config:
             active_config = "default"
 
+        # Handle backup option
+        if save_options.get("create_backup", False):
+            config_path = store._get_config_path(active_config)
+            if config_path.exists():
+                # Create backup with timestamp
+                import datetime
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                backup_path = config_path.with_suffix(f".json.backup-{timestamp}")
+                import shutil
+                shutil.copy2(config_path, backup_path)
+                logger.info(f"Created backup at {backup_path}")
+
         # Use the new save_trainer_config method for flat JSON format
-        store.save_trainer_config(active_config, complete_config, overwrite=True)
+        store.save_trainer_config(active_config, save_config, overwrite=True)
 
         # Set as active config if it wasn't already
         if not store.get_active_config():
             store.set_active_config(active_config)
 
-        # Also store in API state for compatibility
+        # Also store in API state for compatibility (use complete config with -- prefixes for internal use)
         APIState.set_state("training_config", complete_config)
 
         return """
@@ -293,9 +356,13 @@ async def start_training(request: Request):
     # Convert form data to config dict with -- prefixes
     config_dict = _normalize_form_to_config(dict(form_data))
 
-    # Validate using ConfigStore
+    # Get all field defaults and merge with form data for complete validation
+    all_defaults = _get_all_field_defaults()
+    complete_config = {**all_defaults, **config_dict}
+
+    # Validate using ConfigStore on the complete config
     store = _get_config_store()
-    validation = store.validate_config(config_dict)
+    validation = store.validate_config(complete_config)
 
     # Add custom validation for mutual exclusivity
     errors = list(validation.errors) if validation.errors else []

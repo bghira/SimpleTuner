@@ -875,12 +875,10 @@ class ConfigStore:
                     validation.errors.append(f"Dataset {idx} is missing required field 'type'")
                     validation.is_valid = False
         else:
-            # Validate model config
-            required_fields = ["--model_type", "--pretrained_model_name_or_path", "--output_dir"]
-
-            for field in required_fields:
-                if field not in config:
-                    validation.errors.append(f"Required field '{field}' is missing")
+            # Check for empty config values that shouldn't be empty
+            for key, value in config.items():
+                if value == "" and key in ["--pretrained_model_name_or_path", "--output_dir"]:
+                    validation.errors.append(f"Field '{key}' cannot be empty")
                     validation.is_valid = False
 
             # Model family validation
