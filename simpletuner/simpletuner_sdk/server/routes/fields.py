@@ -4,7 +4,16 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from simpletuner.simpletuner_sdk.server.services.field_registry import field_registry, ImportanceLevel
+from simpletuner.simpletuner_sdk.server.services.field_registry_wrapper import lazy_field_registry as field_registry
+try:
+    from simpletuner.simpletuner_sdk.server.services.field_registry import ImportanceLevel
+except ImportError:
+    from enum import Enum
+    class ImportanceLevel(Enum):
+        ESSENTIAL = "essential"
+        IMPORTANT = "important"
+        ADVANCED = "advanced"
+        EXPERIMENTAL = "experimental"
 from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
 from simpletuner.simpletuner_sdk.api_state import APIState
 

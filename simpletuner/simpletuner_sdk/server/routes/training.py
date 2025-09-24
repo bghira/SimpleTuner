@@ -44,6 +44,9 @@ def _normalize_form_to_config(form_data: dict, directory_fields: list = None) ->
     config_dict = {}
     # Fields that should be excluded from config dict
     excluded_fields = {"configs_dir"}
+    # Numeric fields that should always be included, even if "0"
+    numeric_fields = ["--num_train_epochs", "--max_train_steps", "--lr_warmup_steps",
+                      "--gradient_accumulation_steps", "--train_batch_size"]
 
     for key, value in form_data.items():
         # Skip excluded fields
@@ -52,6 +55,16 @@ def _normalize_form_to_config(form_data: dict, directory_fields: list = None) ->
 
         # Ensure -- prefix
         config_key = key if key.startswith("--") else f"--{key}"
+
+        # For numeric fields, always include the value (even "0")
+        if config_key in numeric_fields:
+            # Always include numeric fields, even if the value is "0" or empty
+            config_dict[config_key] = value if value else "0"
+            continue
+
+        # Skip empty values for non-numeric fields
+        if not value:
+            continue
 
         # Apply directory path expansion if needed
         if directory_fields and config_key in directory_fields and value:
@@ -102,9 +115,9 @@ async def validate_config(request: Request):
         if epochs_val == 0 and steps_val == 0:
             errors.append("Either num_train_epochs or max_train_steps must be greater than 0. You cannot set both to 0.")
 
-        # Check if both are non-zero
-        if epochs_val > 0 and steps_val > 0:
-            errors.append("You can use either num_train_epochs or max_train_steps, not both. Set one to 0 to use the other.")
+        # Don't error if one is 0 - this is the valid use case
+        # Only error if user is trying to use both methods simultaneously
+        # (No check needed here - it's valid to have one at 0 and one > 0)
     except ValueError:
         errors.append("Invalid value for num_train_epochs or max_train_steps. Must be numeric.")
 
@@ -161,6 +174,13 @@ async def save_config(request: Request):
 
     # Convert form data to config dict with path expansion for directory fields
     config_dict = _normalize_form_to_config(form_dict, directory_fields)
+
+    # Debug log what we're saving
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"Saving config_dict: {config_dict}")
+    logger.info(f"num_train_epochs value: {config_dict.get('--num_train_epochs', 'NOT FOUND')}")
+    logger.info(f"max_train_steps value: {config_dict.get('--max_train_steps', 'NOT FOUND')}")
 
     try:
         # Save WebUI settings if present
@@ -242,9 +262,9 @@ async def start_training(request: Request):
         if epochs_val == 0 and steps_val == 0:
             errors.append("Either num_train_epochs or max_train_steps must be greater than 0. You cannot set both to 0.")
 
-        # Check if both are non-zero
-        if epochs_val > 0 and steps_val > 0:
-            errors.append("You can use either num_train_epochs or max_train_steps, not both. Set one to 0 to use the other.")
+        # Don't error if one is 0 - this is the valid use case
+        # Only error if user is trying to use both methods simultaneously
+        # (No check needed here - it's valid to have one at 0 and one > 0)
     except ValueError:
         errors.append("Invalid value for num_train_epochs or max_train_steps. Must be numeric.")
 

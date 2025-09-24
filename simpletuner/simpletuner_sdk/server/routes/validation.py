@@ -13,7 +13,20 @@ from fastapi import APIRouter, Form, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
-from ..services.field_registry import field_registry, ValidationRuleType
+from ..services.field_registry_wrapper import lazy_field_registry as field_registry
+try:
+    from ..services.field_registry import ValidationRuleType
+except ImportError:
+    # Create a fallback enum if import fails
+    class ValidationRuleType(Enum):
+        REQUIRED = "required"
+        MIN = "min"
+        MAX = "max"
+        PATTERN = "pattern"
+        CHOICES = "choices"
+        CUSTOM = "custom"
+        PATH_EXISTS = "path_exists"
+        DIVISIBLE_BY = "divisible_by"
 
 logger = logging.getLogger(__name__)
 
@@ -73,9 +86,9 @@ async def validate_field(field_name: str, value: str = Form("")) -> str:
 
     elif field_name in ["num_train_epochs", "max_train_steps"]:
         try:
-            epochs = int(value) if value else 0
-            if epochs <= 0:
-                error_html = f"{field_name.replace('_', ' ').title()} must be greater than 0"
+            val = int(value) if value else 0
+            if val < 0:
+                error_html = f"{field_name.replace('_', ' ').title()} must be non-negative"
         except ValueError:
             error_html = f"{field_name.replace('_', ' ').title()} must be a valid number"
 
@@ -380,6 +393,22 @@ async def validate_configuration(request: ConfigValidationRequest):
             severity=ValidationSeverity.WARNING,
             suggestion="Consider disabling text encoder training for LoRA"
         ))
+
+    # Validate that at least one of num_train_epochs or max_train_steps is > 0
+    num_epochs = config.get('num_train_epochs', 0)
+    max_steps = config.get('max_train_steps', 0)
+    try:
+        num_epochs = int(num_epochs) if num_epochs else 0
+        max_steps = int(max_steps) if max_steps else 0
+        if num_epochs <= 0 and max_steps <= 0:
+            messages.append(ValidationMessage(
+                field='num_train_epochs',
+                message="Either num_train_epochs or max_train_steps must be greater than 0",
+                severity=ValidationSeverity.ERROR
+            ))
+    except (ValueError, TypeError):
+        # Skip this validation if values can't be converted to int
+        pass
 
     # Count message types
     error_count = sum(1 for m in messages if m.severity == ValidationSeverity.ERROR)

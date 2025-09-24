@@ -3,19 +3,37 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict
+import logging
+import json
+from typing import Any, Dict, List
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
-from simpletuner.helpers.models.all import model_families
-from simpletuner.simpletuner_sdk.server.services.field_registry import field_registry
+# Set up logging first
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+try:
+    from simpletuner.helpers.models.all import model_families
+except ImportError as e:
+    logger.warning(f"Failed to import model_families: {e}")
+    model_families = {}
+
+# Use the lazy wrapper for field registry
+from simpletuner.simpletuner_sdk.server.services.field_registry_wrapper import lazy_field_registry as field_registry
+
+# Debug field registry status
+logger.info("Using lazy field registry wrapper")
 
 router = APIRouter(prefix="/web", tags=["web"])
 
 # Get template directory from environment
 template_dir = os.environ.get("TEMPLATE_DIR", "templates")
+logger.debug(f"Template directory from env: {template_dir}")
+logger.debug(f"Template directory absolute path: {os.path.abspath(template_dir)}")
+logger.debug(f"Template directory exists: {os.path.exists(template_dir)}")
 templates = Jinja2Templates(directory=template_dir)
 
 
@@ -45,12 +63,33 @@ def get_model_family_label(model_key: str) -> str:
 
 def _convert_field_to_template_format(field, config_values) -> Dict[str, Any]:
     """Convert a ConfigField to the format expected by the template."""
+    # Get the field value
+    field_value = config_values.get(field.name, field.default_value)
+
+    # For num_train_epochs and max_train_steps, handle default values specially
+    # to avoid browser spinner limitations
+    if field.name == "num_train_epochs":
+        logger.debug(f"num_train_epochs raw value: {field_value}, type: {type(field_value)}, in config: {field.name in config_values}")
+        # Convert string "0" to integer 0 to ensure proper handling
+        if str(field_value) == "0" or field_value == 0:
+            field_value = 0
+        elif field_value == 1 and field.name not in config_values:
+            # If using default value of 1, start empty to allow spinner to go to 0
+            field_value = ""
+        logger.debug(f"num_train_epochs final value: {field_value}")
+    elif field.name == "max_train_steps":
+        logger.debug(f"max_train_steps raw value: {field_value}, type: {type(field_value)}, in config: {field.name in config_values}")
+        # Convert string "0" to integer 0 to ensure proper handling
+        if str(field_value) == "0" or field_value == 0:
+            field_value = 0
+        logger.debug(f"max_train_steps final value: {field_value}")
+
     field_dict = {
         "id": field.name,
         "name": field.arg_name,
         "label": field.ui_label,
         "type": field.field_type.value.lower(),
-        "value": config_values.get(field.name, field.default_value),
+        "value": field_value,
         "description": field.help_text,
     }
 
@@ -68,19 +107,40 @@ def _convert_field_to_template_format(field, config_values) -> Dict[str, Any]:
     if field.placeholder:
         field_dict["placeholder"] = field.placeholder
 
-    if field.field_type.value == "NUMBER":
+    if field.field_type.value.upper() == "NUMBER":
         # Add number-specific attributes
         for rule in field.validation_rules:
-            if rule.rule_type.value == "min":
+            if rule.type.value == "min":
                 field_dict["min"] = rule.value
-            elif rule.rule_type.value == "max":
+                logger.debug(f"Field {field.name} has min value: {rule.value}")
+            elif rule.type.value == "max":
                 field_dict["max"] = rule.value
+                logger.debug(f"Field {field.name} has max value: {rule.value}")
 
-    if field.field_type.value == "SELECT":
+    logger.debug(f"Field {field.name} type: {field.field_type.value}, is SELECT?: {field.field_type.value == 'SELECT'}")
+    if field.field_type.value == "SELECT" or field.field_type.value.lower() == "select":
         field_dict["options"] = field.choices or []
+        logger.debug(f"Field {field.name} has {len(field_dict['options'])} options: {field_dict['options'][:3]}")
+    else:
+        logger.debug(f"Field {field.name} is not SELECT type, skipping options")
 
-    if field.field_type.value == "TEXTAREA":
+    if field.field_type.value.upper() == "TEXTAREA":
         field_dict["rows"] = getattr(field, "rows", 3)
+
+    # Check if field is required based on validation rules
+    for rule in field.validation_rules:
+        if rule.type.value == "required":
+            # Skip required attribute for num_train_epochs and max_train_steps
+            # to allow entering 0 values without browser interference
+            if field.name not in ["num_train_epochs", "max_train_steps"]:
+                field_dict["required"] = True
+            break
+
+    # Add any other field attributes
+    if hasattr(field, 'required') and field.required:
+        # Skip required attribute for num_train_epochs and max_train_steps
+        if field.name not in ["num_train_epochs", "max_train_steps"]:
+            field_dict["required"] = True
 
     return field_dict
 
@@ -132,12 +192,20 @@ def _get_config_value(config_data: Dict[str, Any], key: str, default: Any = "") 
     """
     # First try modern format without --
     if key in config_data:
-        return config_data[key]
+        value = config_data[key]
+        # Special handling for numeric fields that might be strings
+        if key in ["num_train_epochs", "max_train_steps"] and value == "0":
+            return 0
+        return value
 
     # Then try legacy format with --
     legacy_key = f"--{key}"
     if legacy_key in config_data:
-        return config_data[legacy_key]
+        value = config_data[legacy_key]
+        # Special handling for numeric fields that might be strings
+        if key in ["num_train_epochs", "max_train_steps"] and value == "0":
+            return 0
+        return value
 
     return default
 
@@ -157,6 +225,8 @@ async def trainer_page(request: Request):
 @router.get("/trainer/tabs/basic", response_class=HTMLResponse)
 async def basic_config_tab(request: Request):
     """Basic configuration tab content."""
+    logger.debug("=== BASIC CONFIG TAB DEBUG ===")
+
     # Load WebUI defaults
     from ..services.webui_state import WebUIStateStore
 
@@ -175,20 +245,79 @@ async def basic_config_tab(request: Request):
     config_data = _load_active_config()
 
     # Get all fields from the field registry for the basic tab
-    tab_fields = field_registry.get_fields_for_tab("basic")
+    try:
+        tab_fields = field_registry.get_fields_for_tab("basic")
+        logger.debug(f"Field registry returned {len(tab_fields)} fields for 'basic' tab")
+
+        if tab_fields:
+            field_names = [f.name for f in tab_fields]
+            logger.debug(f"Basic tab field names: {field_names}")
+        else:
+            logger.warning("No fields returned from field registry for 'basic' tab!")
+            # Provide fallback fields for basic functionality
+            tab_fields = []
+    except Exception as e:
+        logger.error(f"Error getting fields from registry: {e}", exc_info=True)
+        tab_fields = []
 
     # Extract all field names for config loading
     config_values = {}
     for field in tab_fields:
-        if field.name == "configs_dir":
-            config_values[field.name] = webui_defaults.get("configs_dir", "")
-        elif field.name == "output_dir":
+        # Special handling for output_dir to use webui defaults
+        if field.name == "output_dir":
             config_values[field.name] = _get_config_value(config_data, field.name, webui_defaults.get("output_dir", ""))
         else:
             config_values[field.name] = _get_config_value(config_data, field.name, field.default_value)
 
+    # Also add WebUI-specific values
+    config_values["configs_dir"] = webui_defaults.get("configs_dir", "")
+    config_values["job_id"] = _get_config_value(config_data, "job_id", "")
+
     # Build all fields into template format
     all_fields = [_convert_field_to_template_format(field, config_values) for field in tab_fields]
+    logger.debug(f"Converted {len(all_fields)} fields to template format from field registry")
+
+    # Handle special cases for model_family options
+    for field_dict in all_fields:
+        if field_dict["id"] == "model_family" and "options" in field_dict:
+            # Update options to use get_model_family_label for display
+            field_dict["options"] = [
+                {"value": opt["value"], "label": get_model_family_label(opt["value"])}
+                for opt in field_dict["options"]
+            ]
+
+    # Add WebUI-specific fields at the beginning
+    webui_fields = [
+        {
+            "id": "configs_dir",
+            "name": "configs_dir",
+            "label": "Configurations Directory",
+            "type": "text",
+            "placeholder": "/path/to/configs",
+            "required": True,
+            "value": config_values.get("configs_dir", ""),
+            "description": "Directory where training configurations are stored",
+        },
+        {
+            "id": "model_name",
+            "name": "--job_id",
+            "label": "Model Name",
+            "type": "text",
+            "placeholder": "my-awesome-model",
+            "required": True,
+            "value": config_values.get("job_id", ""),
+            "description": "Name for your trained model",
+        }
+    ]
+    logger.debug(f"Added {len(webui_fields)} WebUI-specific fields")
+
+    # Combine WebUI fields with registry fields
+    all_fields = webui_fields + all_fields
+    logger.debug(f"Final field count for basic tab: {len(all_fields)} fields total")
+
+    # Log field details for debugging
+    field_ids = [f.get("id") for f in all_fields]
+    logger.debug(f"Final field IDs: {field_ids}")
 
     context = {
         "request": request,
@@ -212,17 +341,33 @@ async def basic_config_tab(request: Request):
             ],
         },
     }
+
+    # Debug context being sent to template
+    logger.debug(f"Template context - Section ID: {context['section']['id']}")
+    logger.debug(f"Template context - Fields count: {len(context['section']['fields'])}")
+    logger.debug(f"Template context - Field IDs being sent: {[f.get('id') for f in context['section']['fields']]}")
+    logger.debug("=== END BASIC CONFIG TAB DEBUG ===")
+
     return templates.TemplateResponse("tabs/basic_config_multi.html", context)
 
 
 @router.get("/trainer/tabs/model", response_class=HTMLResponse)
 async def model_config_tab(request: Request):
     """Model configuration tab content."""
+    logger.debug("=== MODEL CONFIG TAB DEBUG ===")
+
     # Load active config values
     config_data = _load_active_config()
 
     # Get all fields from the field registry for the model tab
     tab_fields = field_registry.get_fields_for_tab("model")
+    logger.debug(f"Field registry returned {len(tab_fields)} fields for 'model' tab")
+
+    if tab_fields:
+        field_names = [f.name for f in tab_fields]
+        logger.debug(f"Model tab field names: {field_names}")
+    else:
+        logger.warning("No fields returned from field registry for 'model' tab!")
 
     # Extract all field names for config loading
     config_values = {}
@@ -231,6 +376,7 @@ async def model_config_tab(request: Request):
 
     # Build all fields into template format
     all_fields = [_convert_field_to_template_format(field, config_values) for field in tab_fields]
+    logger.debug(f"Converted {len(all_fields)} fields to template format from field registry")
 
     # Handle special cases for model_family options
     for field_dict in all_fields:
@@ -245,6 +391,10 @@ async def model_config_tab(request: Request):
             field_dict["value"] = config_values.get("lora_rank", "16")
             field_dict["disabled"] = True
 
+    logger.debug(f"Final field count for model tab: {len(all_fields)} fields total")
+    field_ids = [f.get("id") for f in all_fields]
+    logger.debug(f"Final model field IDs: {field_ids}")
+
     context = {
         "request": request,
         "section": {
@@ -256,36 +406,58 @@ async def model_config_tab(request: Request):
             "fields": all_fields,
         },
     }
+    logger.debug("=== END MODEL CONFIG TAB DEBUG ===")
     return templates.TemplateResponse("partials/form_section.html", context)
 
 
 @router.get("/trainer/tabs/training", response_class=HTMLResponse)
 async def training_config_tab(request: Request):
     """Training configuration tab content."""
+    logger.debug("=== TRAINING CONFIG TAB DEBUG ===")
+
     # Load active config values
     config_data = _load_active_config()
 
     # Get all fields from the field registry for the training tab
     tab_fields = field_registry.get_fields_for_tab("training")
+    logger.debug(f"Field registry returned {len(tab_fields)} fields for 'training' tab")
+
+    if tab_fields:
+        field_names = [f.name for f in tab_fields]
+        logger.debug(f"Training tab field names: {field_names}")
+    else:
+        logger.warning("No fields returned from field registry for 'training' tab!")
 
     # Extract all field names for config loading
     config_values = {}
     for field in tab_fields:
         config_values[field.name] = _get_config_value(config_data, field.name, field.default_value)
 
+    # Debug log the values for epochs and steps
+    logger.info(f"Config values for training tab - num_train_epochs: {config_values.get('num_train_epochs')}, max_train_steps: {config_values.get('max_train_steps')}")
+    logger.info(f"Raw config_data keys: {list(config_data.keys())}")
+
     # Build all fields into template format
     all_fields = [_convert_field_to_template_format(field, config_values) for field in tab_fields]
+    logger.debug(f"Converted {len(all_fields)} fields to template format from field registry")
 
     # Handle special Alpine.js bindings for epochs/steps mutual exclusion
     for field_dict in all_fields:
         if field_dict["id"] == "num_train_epochs":
             field_dict["x_model"] = "numTrainEpochs"
-            field_dict["x_bind_disabled"] = "maxTrainSteps != 0"
+            field_dict["x_bind_disabled"] = "maxTrainSteps > 0"
             field_dict["x_on_input"] = "handleEpochsChange()"
+            logger.info(f"num_train_epochs field value being sent to template: {field_dict.get('value')}")
         elif field_dict["id"] == "max_train_steps":
             field_dict["x_model"] = "maxTrainSteps"
-            field_dict["x_bind_disabled"] = "numTrainEpochs != 0"
+            # Don't disable max_train_steps - it should always be editable
+            # When max_train_steps > 0, it takes precedence over epochs
             field_dict["x_on_input"] = "handleMaxStepsChange()"
+            logger.info(f"max_train_steps field value being sent to template: {field_dict.get('value')}")
+
+    logger.debug(f"Final field count for training tab: {len(all_fields)} fields total")
+    field_ids = [f.get("id") for f in all_fields]
+    logger.debug(f"Final training field IDs: {field_ids}")
 
     context = {
         "request": request,
@@ -300,17 +472,27 @@ async def training_config_tab(request: Request):
     }
     # Add config_values to the context so the template can access them
     context["config_values"] = config_values
+    logger.debug("=== END TRAINING CONFIG TAB DEBUG ===")
     return templates.TemplateResponse("training_config_section.html", context)
 
 
 @router.get("/trainer/tabs/advanced", response_class=HTMLResponse)
 async def advanced_config_tab(request: Request):
     """Advanced configuration tab content."""
+    logger.debug("=== ADVANCED CONFIG TAB DEBUG ===")
+
     # Load active config values
     config_data = _load_active_config()
 
     # Get all fields from the field registry for the advanced tab
     tab_fields = field_registry.get_fields_for_tab("advanced")
+    logger.debug(f"Field registry returned {len(tab_fields)} fields for 'advanced' tab")
+
+    if tab_fields:
+        field_names = [f.name for f in tab_fields]
+        logger.debug(f"Advanced tab field names: {field_names}")
+    else:
+        logger.warning("No fields returned from field registry for 'advanced' tab!")
 
     # Extract all field names for config loading
     config_values = {}
@@ -319,6 +501,7 @@ async def advanced_config_tab(request: Request):
 
     # Build all fields into template format
     all_fields = [_convert_field_to_template_format(field, config_values) for field in tab_fields]
+    logger.debug(f"Final field count for advanced tab: {len(all_fields)} fields total")
 
     context = {
         "request": request,
@@ -331,6 +514,7 @@ async def advanced_config_tab(request: Request):
             "fields": all_fields,
         },
     }
+    logger.debug("=== END ADVANCED CONFIG TAB DEBUG ===")
     return templates.TemplateResponse("partials/form_section.html", context)
 
 
@@ -419,11 +603,20 @@ async def environments_tab(request: Request):
 @router.get("/trainer/tabs/validation", response_class=HTMLResponse)
 async def validation_config_tab(request: Request):
     """Validation configuration tab content."""
+    logger.debug("=== VALIDATION CONFIG TAB DEBUG ===")
+
     # Load active config values
     config_data = _load_active_config()
 
     # Get all fields from the field registry for the validation tab
     tab_fields = field_registry.get_fields_for_tab("validation")
+    logger.debug(f"Field registry returned {len(tab_fields)} fields for 'validation' tab")
+
+    if tab_fields:
+        field_names = [f.name for f in tab_fields]
+        logger.debug(f"Validation tab field names: {field_names}")
+    else:
+        logger.warning("No fields returned from field registry for 'validation' tab!")
 
     # Extract all field names for config loading
     config_values = {}
@@ -432,9 +625,11 @@ async def validation_config_tab(request: Request):
 
     # Get sections for this tab
     sections = field_registry.get_sections_for_tab("validation")
+    logger.debug(f"Validation tab sections: {[s.get('id', 'unknown') for s in sections]}")
 
     # Build all fields into a single section (for now)
     all_fields = [_convert_field_to_template_format(field, config_values) for field in tab_fields]
+    logger.debug(f"Final field count for validation tab: {len(all_fields)} fields total")
 
     context = {
         "request": request,
@@ -457,6 +652,7 @@ async def validation_config_tab(request: Request):
             ]
         }
     }
+    logger.debug("=== END VALIDATION CONFIG TAB DEBUG ===")
     return templates.TemplateResponse("partials/form_section.html", context)
 
 
@@ -477,3 +673,334 @@ async def new_dataset_modal(request: Request):
     }
 
     return templates.TemplateResponse("partials/dataset_card.html", context)
+
+
+@router.get("/debug/field-registry", response_class=HTMLResponse)
+async def debug_field_registry(request: Request):
+    """Debug endpoint to check field registry initialization and content."""
+    logger.debug("=== FIELD REGISTRY DEBUG ENDPOINT ===")
+
+    debug_info = {
+        "total_fields": len(field_registry._fields),
+        "field_names": list(field_registry._fields.keys()),
+        "tabs_with_field_counts": {},
+        "sections_by_tab": {},
+        "sample_fields": {},
+        "dependencies_map": field_registry._dependencies_map,
+    }
+
+    # Count fields by tab
+    for field_name, field in field_registry._fields.items():
+        tab = field.tab
+        if tab not in debug_info["tabs_with_field_counts"]:
+            debug_info["tabs_with_field_counts"][tab] = 0
+        debug_info["tabs_with_field_counts"][tab] += 1
+
+        # Collect sections by tab
+        if tab not in debug_info["sections_by_tab"]:
+            debug_info["sections_by_tab"][tab] = set()
+        debug_info["sections_by_tab"][tab].add(field.section)
+
+    # Convert sets to lists for JSON serialization
+    for tab in debug_info["sections_by_tab"]:
+        debug_info["sections_by_tab"][tab] = sorted(list(debug_info["sections_by_tab"][tab]))
+
+    # Get sample fields from each tab
+    for tab in debug_info["tabs_with_field_counts"]:
+        fields_for_tab = field_registry.get_fields_for_tab(tab)
+        if fields_for_tab:
+            sample_field = fields_for_tab[0]
+            debug_info["sample_fields"][tab] = {
+                "name": sample_field.name,
+                "ui_label": sample_field.ui_label,
+                "field_type": sample_field.field_type.value,
+                "section": sample_field.section,
+                "default_value": sample_field.default_value,
+                "help_text": sample_field.help_text[:100] + "..." if len(sample_field.help_text) > 100 else sample_field.help_text
+            }
+
+    logger.debug(f"Field registry contains {debug_info['total_fields']} total fields")
+    logger.debug(f"Fields by tab: {debug_info['tabs_with_field_counts']}")
+
+    # Test specific tab queries
+    test_results = {}
+    for tab in ["basic", "model", "training", "advanced", "validation"]:
+        tab_fields = field_registry.get_fields_for_tab(tab)
+        test_results[f"{tab}_tab_field_count"] = len(tab_fields)
+        test_results[f"{tab}_tab_field_names"] = [f.name for f in tab_fields[:5]]  # First 5 field names
+
+    debug_info["test_results"] = test_results
+
+    logger.debug("=== END FIELD REGISTRY DEBUG ===")
+
+    # Return as HTML table for easy viewing
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Field Registry Debug</title>
+        <style>
+            body {{ font-family: monospace; margin: 20px; }}
+            table {{ border-collapse: collapse; width: 100%; margin: 10px 0; }}
+            th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+            th {{ background-color: #f2f2f2; }}
+            .section {{ margin: 20px 0; }}
+            .json {{ background: #f5f5f5; padding: 10px; white-space: pre-wrap; }}
+        </style>
+    </head>
+    <body>
+        <h1>Field Registry Debug Information</h1>
+
+        <div class="section">
+            <h2>Summary</h2>
+            <p><strong>Total Fields:</strong> {debug_info['total_fields']}</p>
+            <p><strong>Total Dependencies:</strong> {len(debug_info['dependencies_map'])}</p>
+        </div>
+
+        <div class="section">
+            <h2>Fields by Tab</h2>
+            <table>
+                <tr><th>Tab</th><th>Field Count</th><th>Sections</th></tr>
+                {"".join([f"<tr><td>{tab}</td><td>{count}</td><td>{', '.join(debug_info['sections_by_tab'].get(tab, []))}</td></tr>"
+                         for tab, count in debug_info['tabs_with_field_counts'].items()])}
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Test Results</h2>
+            <table>
+                <tr><th>Test</th><th>Result</th></tr>
+                {"".join([f"<tr><td>{test}</td><td>{result}</td></tr>"
+                         for test, result in debug_info['test_results'].items()])}
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Sample Fields</h2>
+            <table>
+                <tr><th>Tab</th><th>Field Name</th><th>UI Label</th><th>Type</th><th>Section</th><th>Default</th><th>Help Text</th></tr>
+                {"".join([f"<tr><td>{tab}</td><td>{field['name']}</td><td>{field['ui_label']}</td><td>{field['field_type']}</td><td>{field['section']}</td><td>{field['default_value']}</td><td>{field['help_text']}</td></tr>"
+                         for tab, field in debug_info['sample_fields'].items()])}
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>All Field Names</h2>
+            <div class="json">{', '.join(debug_info['field_names'][:50])}{"..." if len(debug_info['field_names']) > 50 else ""}</div>
+        </div>
+    </body>
+    </html>
+    """
+
+    return HTMLResponse(content=html_content)
+
+
+@router.get("/debug/model-family", response_class=HTMLResponse)
+async def debug_model_family(request: Request):
+    """Debug model_family field specifically."""
+    try:
+        # Get basic tab fields
+        basic_fields = field_registry.get_fields_for_tab("basic")
+        model_family_field = None
+
+        for field in basic_fields:
+            if field.name == "model_family":
+                model_family_field = field
+                break
+
+        if not model_family_field:
+            return HTMLResponse(content="<html><body><h1>model_family field not found!</h1></body></html>")
+
+        # Debug field type
+        logger.info(f"model_family field_type: {model_family_field.field_type}")
+        logger.info(f"model_family field_type.value: {model_family_field.field_type.value}")
+        logger.info(f"Comparison test: {model_family_field.field_type.value} == 'SELECT' is {model_family_field.field_type.value == 'SELECT'}")
+        logger.info(f"Comparison test: {model_family_field.field_type.value} == 'select' is {model_family_field.field_type.value == 'select'}")
+
+        # Convert to template format
+        config_values = {"model_family": ""}
+        converted = _convert_field_to_template_format(model_family_field, config_values)
+
+        html = f"""
+        <html>
+        <body>
+        <h1>Model Family Field Debug</h1>
+        <h2>Field Registry Data:</h2>
+        <ul>
+            <li>Name: {model_family_field.name}</li>
+            <li>UI Label: {model_family_field.ui_label}</li>
+            <li>Field Type: {model_family_field.field_type.value}</li>
+            <li>Choices: {model_family_field.choices}</li>
+            <li>Choice Count: {len(model_family_field.choices) if model_family_field.choices else 0}</li>
+        </ul>
+
+        <h2>Converted Template Data:</h2>
+        <pre>{json.dumps(converted, indent=2, default=str)}</pre>
+
+        <h2>Model Families Import:</h2>
+        <ul>
+            <li>model_families dict: {list(model_families.keys()) if model_families else 'Empty!'}</li>
+            <li>Count: {len(model_families)}</li>
+        </ul>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html)
+    except Exception as e:
+        logger.error(f"Error in model family debug: {e}", exc_info=True)
+        return HTMLResponse(content=f"<html><body><h1>Error</h1><p>{str(e)}</p></body></html>", status_code=500)
+
+
+@router.get("/debug/num-train-epochs", response_class=HTMLResponse)
+async def debug_num_train_epochs(request: Request):
+    """Debug endpoint to check num_train_epochs field configuration."""
+    import json
+    field = field_registry.get_field('num_train_epochs')
+
+    if not field:
+        return HTMLResponse("Field not found")
+
+    # Get the field dict as it would be converted
+    config_values = {'num_train_epochs': 1}
+    field_dict = _convert_field_to_template_format(field, config_values)
+
+    html = f"""
+    <html>
+    <body>
+    <h1>num_train_epochs Debug</h1>
+    <h2>Field Registry Data</h2>
+    <pre>
+Name: {field.name}
+Type: {field.field_type.value}
+Default: {field.default_value}
+Validation Rules:
+{chr(10).join(f"  - Type: {rule.type.value}, Value: {rule.value}" for rule in field.validation_rules)}
+    </pre>
+
+    <h2>Converted Field Dict</h2>
+    <pre>{json.dumps(field_dict, indent=2)}</pre>
+
+    <h2>Rendered HTML</h2>
+    <input type="number"
+           id="num_train_epochs"
+           name="--num_train_epochs"
+           value="{field_dict.get('value', '')}"
+           {"min='" + str(field_dict['min']) + "'" if 'min' in field_dict else ""}
+           {"max='" + str(field_dict['max']) + "'" if 'max' in field_dict else ""}>
+
+    <h3>Test the field:</h3>
+    <form>
+        <input type="number"
+               id="test_epochs"
+               name="test_epochs"
+               value="1"
+               min="0"
+               max="1000">
+        <p>This input has min="0" max="1000"</p>
+    </form>
+    </body>
+    </html>
+    """
+    return HTMLResponse(html)
+
+@router.get("/debug/select-fields", response_class=HTMLResponse)
+async def debug_select_fields(request: Request):
+    """Debug endpoint to check SELECT field options."""
+    try:
+        # Get fields from all tabs
+        all_select_fields = []
+        for tab in ["basic", "model", "training", "advanced", "validation"]:
+            fields = field_registry.get_fields_for_tab(tab)
+            for field in fields:
+                if hasattr(field, 'field_type') and field.field_type.value.upper() == "SELECT":
+                    field_info = {
+                        "tab": tab,
+                        "name": field.name,
+                        "label": field.ui_label,
+                        "choices": field.choices,
+                        "choice_count": len(field.choices) if field.choices else 0
+                    }
+                    all_select_fields.append(field_info)
+
+        html = f"""
+        <html>
+        <body>
+        <h1>SELECT Field Debug</h1>
+        <table border="1">
+        <tr><th>Tab</th><th>Field Name</th><th>Label</th><th>Choice Count</th><th>First 3 Choices</th></tr>
+        {"".join([f"<tr><td>{f['tab']}</td><td>{f['name']}</td><td>{f['label']}</td><td>{f['choice_count']}</td><td>{str(f['choices'][:3]) if f['choices'] else 'None'}</td></tr>" for f in all_select_fields])}
+        </table>
+        <h2>Sample Field Details</h2>
+        <pre>{json.dumps(all_select_fields[:3], indent=2, default=str)}</pre>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html)
+    except Exception as e:
+        logger.error(f"Error in select fields debug: {e}", exc_info=True)
+        return HTMLResponse(content=f"<html><body><h1>Error</h1><p>{str(e)}</p></body></html>", status_code=500)
+
+
+@router.get("/debug/test-basic-fields", response_class=HTMLResponse)
+async def debug_test_basic_fields(request: Request):
+    """Quick test endpoint to verify basic tab field loading."""
+    logger.debug("=== TESTING BASIC FIELDS ENDPOINT ===")
+
+    try:
+        # Test the field registry directly
+        logger.debug(f"field_registry object: {field_registry}")
+        logger.debug(f"field_registry._fields exists: {hasattr(field_registry, '_fields')}")
+        if hasattr(field_registry, '_fields'):
+            logger.debug(f"field_registry._fields length: {len(field_registry._fields)}")
+            logger.debug(f"field_registry._fields keys: {list(field_registry._fields.keys())[:10]}")
+
+        basic_fields = field_registry.get_fields_for_tab("basic")
+        logger.debug(f"Direct field registry call returned {len(basic_fields)} fields")
+
+        if basic_fields:
+            sample_field = basic_fields[0]
+            logger.debug(f"First field: {sample_field.name} ({sample_field.field_type.value}) - {sample_field.ui_label}")
+
+        # Test field conversion
+        config_values = {}
+        converted_fields = [_convert_field_to_template_format(field, config_values) for field in basic_fields]
+        logger.debug(f"Converted {len(converted_fields)} fields successfully")
+
+        # Also check all tabs
+        all_tabs = ["basic", "model", "training", "advanced", "validation"]
+        tab_counts = {}
+        for tab in all_tabs:
+            tab_fields = field_registry.get_fields_for_tab(tab)
+            tab_counts[tab] = len(tab_fields)
+
+        html = f"""
+        <html>
+        <body>
+        <h1>Basic Fields Test</h1>
+        <p>Registry object exists: {field_registry is not None}</p>
+        <p>Registry has _fields: {hasattr(field_registry, '_fields')}</p>
+        <p>Total fields in registry: {len(field_registry._fields) if hasattr(field_registry, '_fields') else 'N/A'}</p>
+        <hr>
+        <p>Basic tab returned: {len(basic_fields)} fields</p>
+        <p>Converted: {len(converted_fields)} fields</p>
+
+        <h2>Fields by Tab:</h2>
+        <ul>
+        {"".join([f"<li>{tab}: {count} fields</li>" for tab, count in tab_counts.items()])}
+        </ul>
+
+        <h2>Basic Tab Fields:</h2>
+        <ul>
+        {"".join([f"<li>{f.get('id')} - {f.get('label')} ({f.get('type')})</li>" for f in converted_fields[:10]])}
+        </ul>
+        <p>Check logs for detailed debug information.</p>
+        </body>
+        </html>
+        """
+
+        logger.debug("=== END TESTING BASIC FIELDS ===")
+        return HTMLResponse(content=html)
+
+    except Exception as e:
+        logger.error(f"Error in test endpoint: {str(e)}", exc_info=True)
+        return HTMLResponse(content=f"<html><body><h1>Error</h1><p>{str(e)}</p><pre>{type(e).__name__}</pre></body></html>", status_code=500)

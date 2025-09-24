@@ -8,8 +8,23 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union, Callable
 
-from simpletuner.helpers.models.all import model_families
-from .arg_parser_integration import arg_parser_integration
+import logging
+
+logger = logging.getLogger(__name__)
+
+try:
+    from simpletuner.helpers.models.all import model_families
+    logger.debug(f"Successfully imported model_families with {len(model_families)} families")
+except ImportError as e:
+    logger.error(f"Failed to import model_families: {e}")
+    model_families = {}
+
+try:
+    from .arg_parser_integration import arg_parser_integration
+    logger.debug("Successfully imported arg_parser_integration")
+except ImportError as e:
+    logger.error(f"Failed to import arg_parser_integration: {e}")
+    arg_parser_integration = None
 
 
 class FieldType(Enum):
@@ -100,10 +115,13 @@ class FieldRegistry:
     def __init__(self):
         self._fields: Dict[str, ConfigField] = {}
         self._dependencies_map: Dict[str, List[str]] = {}  # field -> dependent fields
+        logger.debug("FieldRegistry.__init__ called")
         self._initialize_fields()
+        logger.debug(f"FieldRegistry initialized with {len(self._fields)} fields")
 
     def _initialize_fields(self):
         """Initialize all configuration fields."""
+        logger.debug("FieldRegistry._initialize_fields called")
         # Model Configuration Fields
         self._add_model_config_fields()
         # Training Parameter Fields
@@ -128,7 +146,7 @@ class FieldRegistry:
     def _add_field(self, field: ConfigField):
         """Add a field to the registry and update dependency maps."""
         # Auto-populate help text from cmd_args.py if not provided
-        if field.arg_name:
+        if field.arg_name and arg_parser_integration:
             arg_help = arg_parser_integration.get_argument_help(field.arg_name)
             if arg_help:
                 # Store cmd_args help separately for detailed tooltip
@@ -148,6 +166,7 @@ class FieldRegistry:
 
     def _add_model_config_fields(self):
         """Add model configuration fields."""
+        logger.debug("_add_model_config_fields called")
         # Model Type - The critical missing field
         self._add_field(ConfigField(
             name="model_type",
@@ -833,6 +852,12 @@ class FieldRegistry:
                     operator="equals",
                     value="full",
                     action="enable"
+                ),
+                FieldDependency(
+                    field="model_family",
+                    operator="equals",
+                    value="sd1x",
+                    action="show"
                 )
             ]
         ))
@@ -1852,7 +1877,15 @@ class FieldRegistry:
             help_text="SNR weighting gamma value (0 = disabled)",
             tooltip="Rebalances loss across timesteps. Recommended value: 5.0. Helps prevent overtraining on easy timesteps.",
             importance=ImportanceLevel.ADVANCED,
-            order=2
+            order=2,
+            dependencies=[
+                FieldDependency(
+                    field="model_family",
+                    operator="in",
+                    values=["sd1x", "sdxl", "kolors", "deepfloyd", "pixart_sigma"],
+                    action="show"
+                )
+            ]
         ))
 
     def _add_optimizer_fields(self):
