@@ -9,6 +9,34 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+try:
+    from simpletuner.helpers.configuration.cmd_args import (
+        get_argument_parser as _get_cli_argument_parser,
+        get_model_flavour_choices as _cli_get_model_flavour_choices,
+        model_family_choices as _cli_model_family_choices,
+    )
+except Exception:  # pragma: no cover - fallback when CLI utilities unavailable
+    _get_cli_argument_parser = None
+    _cli_get_model_flavour_choices = None
+    _cli_model_family_choices = []
+
+try:
+    from simpletuner.helpers.models.all import (
+        get_all_model_flavours as _get_all_model_flavours,
+        model_families as _MODEL_FAMILY_MAP,
+    )
+except Exception:  # pragma: no cover - fallback when model metadata unavailable
+    _get_all_model_flavours = None
+    _MODEL_FAMILY_MAP = {}
+
+if _get_cli_argument_parser:
+    try:
+        _CLI_ARGUMENT_PARSER = _get_cli_argument_parser()
+    except Exception:
+        _CLI_ARGUMENT_PARSER = None
+else:
+    _CLI_ARGUMENT_PARSER = None
+
 from pydantic import BaseModel, Field
 
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
@@ -23,6 +51,79 @@ _DEFAULT_CONFIG_DIR = "config"
 _DEFAULT_DATALOADER_DIR = "config/dataloaders"
 _DEFAULT_TEMPLATE_DIR = "config/templates"
 _DEFAULT_CONFIG_FILE = "config/config.json"
+
+
+def _extract_parser_choices(option_name: str) -> List[str]:
+    """Safely pull available choices for an argparse option."""
+
+    if not _CLI_ARGUMENT_PARSER:
+        return []
+
+    action = _CLI_ARGUMENT_PARSER._option_string_actions.get(option_name)  # type: ignore[attr-defined]
+    if not action or not getattr(action, "choices", None):
+        return []
+
+    return list(action.choices)
+
+
+def _load_model_family_choices() -> List[str]:
+    from simpletuner.configure import model_classes
+
+    return model_classes["full"]
+
+
+def _load_model_type_choices() -> List[str]:
+    choices = _extract_parser_choices("--model_type")
+    if choices:
+        return choices
+    # Fallback to historical defaults if parser metadata is unavailable
+    return ["lora", "full", "controlnet", "embedding"]
+
+
+def _load_model_flavour_choices() -> List[str]:
+    choices = _extract_parser_choices("--model_flavour")
+    if choices:
+        return choices
+    if _get_all_model_flavours:
+        try:
+            return list(_get_all_model_flavours())
+        except Exception:
+            return []
+    return []
+
+
+def _get_flavour_choices_for_family(model_family: Optional[str]) -> List[str]:
+    if not model_family:
+        return []
+
+    if _cli_get_model_flavour_choices:
+        try:
+            flavours = _cli_get_model_flavour_choices(model_family)
+            if isinstance(flavours, str):
+                return [flavours]
+            return list(flavours)
+        except Exception:
+            pass
+
+    if _MODEL_FAMILY_MAP and model_family in _MODEL_FAMILY_MAP:
+        try:
+            return list(_MODEL_FAMILY_MAP[model_family].get_flavour_choices())
+        except Exception:
+            return []
+
+    return []
+
+
+_MODEL_FAMILY_CHOICES = _load_model_family_choices()
+if not _MODEL_FAMILY_CHOICES:
+    raise RuntimeError("No model families available - check model metadata")
+_MODEL_FAMILY_SET = set(_MODEL_FAMILY_CHOICES)
+
+_MODEL_TYPE_CHOICES = _load_model_type_choices()
+_MODEL_TYPE_SET = set(_MODEL_TYPE_CHOICES)
+
+_MODEL_FLAVOUR_CHOICES = _load_model_flavour_choices()
+_MODEL_FLAVOUR_SET = set(_MODEL_FLAVOUR_CHOICES)
 
 
 class ConfigMetadata(BaseModel):
@@ -882,16 +983,29 @@ class ConfigStore:
                     validation.is_valid = False
 
             # Model family validation
-            if "--model_family" in config:
-                valid_families = ["flux", "sd3", "sdxl", "sd", "pixart", "ltxvideo"]
-                if config["--model_family"] not in valid_families:
-                    validation.warnings.append(f"Unknown model family: {config['--model_family']}")
+            model_family = config.get("--model_family")
+            if model_family and _MODEL_FAMILY_SET and model_family not in _MODEL_FAMILY_SET:
+                validation.warnings.append(f"Unknown model family: {model_family}")
 
             # Model type validation
-            if "--model_type" in config:
-                valid_types = ["lora", "full", "controlnet", "embedding"]
-                if config["--model_type"] not in valid_types:
-                    validation.warnings.append(f"Unknown model type: {config['--model_type']}")
+            model_type = config.get("--model_type")
+            if model_type and _MODEL_TYPE_SET and model_type not in _MODEL_TYPE_SET:
+                validation.warnings.append(f"Unknown model type: {model_type}")
+
+            # Model flavour validation
+            model_flavour = config.get("--model_flavour")
+            if model_flavour:
+                valid_flavours = _get_flavour_choices_for_family(model_family)
+                if not valid_flavours and _MODEL_FLAVOUR_SET:
+                    valid_flavours = list(_MODEL_FLAVOUR_SET)
+                valid_flavour_set = set(valid_flavours)
+                if valid_flavour_set and model_flavour not in valid_flavour_set:
+                    if model_family:
+                        validation.warnings.append(
+                            f"Unknown model flavour '{model_flavour}' for family '{model_family}'"
+                        )
+                    else:
+                        validation.warnings.append(f"Unknown model flavour: {model_flavour}")
 
             # LoRA specific validations
             if config.get("--model_type") == "lora":
