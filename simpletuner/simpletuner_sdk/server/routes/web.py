@@ -23,6 +23,7 @@ except ImportError as e:
 
 # Use the lazy wrapper for field registry
 from simpletuner.simpletuner_sdk.server.services.field_registry_wrapper import lazy_field_registry as field_registry
+from simpletuner.simpletuner_sdk.server.routes.fields import _build_data_backend_choices
 
 # Debug field registry status
 logger.info("Using lazy field registry wrapper")
@@ -93,6 +94,8 @@ def _convert_field_to_template_format(field, config_values) -> Dict[str, Any]:
         "description": field.help_text,
     }
 
+    field_dict["extra_classes"] = ""
+
     # Add cmd_args help for detailed tooltip
     if hasattr(field, 'cmd_args_help') and field.cmd_args_help:
         field_dict["cmd_args_help"] = field.cmd_args_help
@@ -119,7 +122,32 @@ def _convert_field_to_template_format(field, config_values) -> Dict[str, Any]:
 
     logger.debug(f"Field {field.name} type: {field.field_type.value}, is SELECT?: {field.field_type.value == 'SELECT'}")
     if field.field_type.value == "SELECT" or field.field_type.value.lower() == "select":
-        field_dict["options"] = field.choices or []
+        options = field.choices or []
+
+        if getattr(field, "dynamic_choices", False):
+            if field.name == "data_backend_config":
+                try:
+                    options = _build_data_backend_choices()
+                except Exception:
+                    logger.exception("Failed to build data backend choices", exc_info=True)
+
+                field_dict["custom_component"] = "dataset_config_select"
+                field_dict["options"] = options
+
+                selected_option = next((opt for opt in options if opt.get("value") == field_value), None)
+                field_dict["selected_environment"] = (
+                    selected_option.get("environment") if selected_option else "Select dataset"
+                )
+                field_dict["selected_path"] = selected_option.get("path") if selected_option else ""
+                field_dict["button_label"] = (
+                    f"{field_dict['selected_environment']} | {field_dict['selected_path']}"
+                    if selected_option
+                    else "Select dataset configuration"
+                )
+
+                return field_dict
+
+        field_dict["options"] = options
         logger.debug(f"Field {field.name} has {len(field_dict['options'])} options: {field_dict['options'][:3]}")
     else:
         logger.debug(f"Field {field.name} is not SELECT type, skipping options")

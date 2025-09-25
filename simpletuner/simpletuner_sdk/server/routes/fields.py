@@ -1,7 +1,8 @@
 """Field metadata API routes for dynamic UI configuration."""
 
+import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from fastapi import APIRouter, HTTPException, Query, status
 
@@ -18,7 +19,13 @@ except ImportError:
 from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
 from simpletuner.simpletuner_sdk.api_state import APIState
 from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
-from simpletuner.simpletuner_sdk.server.utils.paths import get_config_directory, get_simpletuner_root
+from simpletuner.simpletuner_sdk.server.services.dataset_plan import DatasetPlanStore
+from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
+from simpletuner.simpletuner_sdk.server.utils.paths import (
+    get_config_directory,
+    get_simpletuner_root,
+    resolve_config_path,
+)
 
 router = APIRouter(prefix="/api/fields", tags=["fields"])
 
@@ -34,61 +41,179 @@ def _format_dataset_path(path: Path) -> str:
 
 def _build_data_backend_choices() -> List[Dict[str, str]]:
     """Collect available dataset configurations for selection."""
-    choices: List[Dict[str, str]] = []
-    seen_values = set()
+    entries: List[Dict[str, str]] = []
+    seen_values: Set[str] = set()
 
+    config_roots: Set[Path] = set()
+
+    def _add_config_root(raw_path: Optional[Path]) -> None:
+        if not raw_path:
+            return
+        try:
+            candidate = Path(raw_path).expanduser().resolve(strict=False)
+        except Exception:
+            candidate = Path(raw_path).expanduser()
+        config_roots.add(candidate)
+
+    def _relative_to_config_roots(path: Path) -> str:
+        for root in sorted(config_roots, key=lambda p: len(str(p)), reverse=True):
+            try:
+                return str(path.relative_to(root))
+            except ValueError:
+                continue
+        try:
+            default_root = Path(get_config_directory()).expanduser().resolve(strict=False)
+            return str(path.relative_to(default_root))
+        except Exception:
+            pass
+        try:
+            project_root = Path(get_simpletuner_root()).expanduser().resolve(strict=False)
+            return str(path.relative_to(project_root))
+        except Exception:
+            pass
+        return path.name
+
+    def _extract_environment_name(path: Path) -> Optional[str]:
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            if isinstance(data, dict):
+                metadata = data.get("_metadata")
+                if isinstance(metadata, dict):
+                    name = metadata.get("name")
+                    if isinstance(name, str) and name.strip():
+                        return name.strip()
+        except Exception:
+            return None
+        return None
+
+    def _register_path(
+        path: Path,
+        env_name: Optional[str] = None,
+    ) -> None:
+        if not path:
+            return
+        resolved = path.expanduser().resolve(strict=False)
+        value = _format_dataset_path(resolved)
+        if value in seen_values:
+            return
+
+        rel_path = _relative_to_config_roots(resolved)
+        rel_path_path = Path(rel_path)
+        parent_segment = rel_path_path.parent if rel_path_path.parent != Path('.') else None
+
+        environment = env_name or _extract_environment_name(resolved) or resolved.stem
+        if not env_name and parent_segment:
+            environment = parent_segment.name
+
+        entries.append(
+            {
+                "value": value,
+                "environment": environment,
+                "path": rel_path,
+            }
+        )
+        seen_values.add(value)
+
+    candidate_dirs: Set[Path] = set()
+
+    def _add_candidate_dir(raw_path: Optional[Path]) -> None:
+        if not raw_path:
+            return
+        try:
+            candidate = Path(raw_path).expanduser()
+        except Exception:
+            return
+
+        try:
+            resolved_candidate = candidate.resolve(strict=False)
+        except Exception:
+            resolved_candidate = candidate
+
+        candidate_dirs.add(resolved_candidate)
+        _add_config_root(resolved_candidate)
+
+    # Include user-configured directories from WebUI defaults
+    try:
+        defaults = WebUIStateStore().load_defaults()
+        if defaults.configs_dir:
+            base = Path(defaults.configs_dir).expanduser()
+            _add_candidate_dir(base)
+            _add_candidate_dir(base / "dataloaders")
+    except Exception:
+        pass
+
+    # Include ConfigStore-managed dataloader configs and directory
     try:
         dataloader_store = ConfigStore(config_type="dataloader")
+        _add_candidate_dir(Path(dataloader_store.config_dir))
         for metadata in dataloader_store.list_configs():
             name = metadata.get("name")
             if not name:
                 continue
-
             try:
                 path = dataloader_store._get_config_path(name)
             except Exception:
                 continue
-
-            if not path:
+            if not path or not path.exists():
                 continue
 
-            value = _format_dataset_path(path)
-            if value in seen_values:
-                continue
-
-            dataset_count = metadata.get("dataset_count")
-            if isinstance(dataset_count, int):
-                label = f"{name} ({dataset_count} datasets)"
-            else:
-                label = name
-
-            choices.append({"value": value, "label": label})
-            seen_values.add(value)
+            _register_path(path, env_name=str(name))
     except Exception:
-        # If listing managed configs fails, continue with fallback discovery
         pass
 
+    # Include dataset plan store path (global plan)
     try:
-        config_root = Path(get_config_directory())
+        dataset_plan_store = DatasetPlanStore()
+        _add_candidate_dir(dataset_plan_store.path.parent)
+        if dataset_plan_store.path.exists():
+            _register_path(dataset_plan_store.path)
     except Exception:
-        config_root = None
+        pass
 
-    if config_root and config_root.exists():
-        for path in sorted(config_root.glob("**/multidatabackend*.json")):
-            value = _format_dataset_path(path)
-            if value in seen_values:
-                continue
+    # Include paths referenced by active configuration
+    try:
+        model_store = ConfigStore()
+        _add_candidate_dir(Path(model_store.config_dir))
+        active_name = model_store.get_active_config()
+        if active_name:
+            config, _ = model_store.load_config(active_name)
+            backend_path = config.get("--data_backend_config") or config.get("data_backend_config")
+            if backend_path:
+                resolved = resolve_config_path(backend_path, config_dir=model_store.config_dir, check_cwd_first=True)
+                if resolved and resolved.exists():
+                    _register_path(resolved)
+                    _add_candidate_dir(resolved.parent)
+    except Exception:
+        pass
 
-            try:
-                label = str(path.relative_to(config_root))
-            except ValueError:
-                label = path.name
+    # Always include the default config directory under the SimpleTuner installation
+    try:
+        _add_candidate_dir(Path(get_config_directory()))
+    except Exception:
+        pass
 
-            choices.append({"value": value, "label": label})
-            seen_values.add(value)
+    # Discover dataset configs within the candidate directories
+    for directory in sorted(candidate_dirs):
+        if not directory or not directory.exists():
+            continue
+        try:
+            for path in directory.glob("**/multidatabackend*.json"):
+                _register_path(path)
+        except Exception:
+            continue
 
-    choices.sort(key=lambda item: item["label"].lower())
-    return choices
+    if not entries:
+        return []
+
+    max_env_len = max(len(entry["environment"]) for entry in entries)
+    max_path_len = max(len(entry["path"]) for entry in entries)
+
+    for entry in entries:
+        entry["label"] = f"{entry['environment']:<{max_env_len}} | {entry['path']}"
+
+    entries.sort(key=lambda item: item["environment"].lower())
+    return entries
 
 
 @router.get("/metadata")
@@ -230,10 +355,9 @@ async def get_tab_fields(
                 dataset_choices = _build_data_backend_choices()
                 if dataset_choices:
                     field_data["choices"] = dataset_choices
-            except Exception:
-                # Keep default choices if listing datasets fails
-                pass
-
+            except Exception as e:
+                # log the error
+                print(f"Error loading dataset choices for field '{field.name}': {e}")
         fields_by_section[section_key].append(field_data)
 
     return {
