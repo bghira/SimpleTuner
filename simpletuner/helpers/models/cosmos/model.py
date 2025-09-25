@@ -343,3 +343,7 @@ class Cosmos2Image(VideoModelFoundation):
             ),
             self.config.tread_config["routes"],
         )
+
+
+from simpletuner.helpers.models.registry import ModelRegistry
+ModelRegistry.register("cosmos2image", Cosmos2Image)

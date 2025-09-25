@@ -1,39 +1,12 @@
-from simpletuner.helpers.models.auraflow.model import Auraflow
-from simpletuner.helpers.models.cosmos.model import Cosmos2Image
-from simpletuner.helpers.models.deepfloyd.model import DeepFloydIF
-from simpletuner.helpers.models.flux.model import Flux
-from simpletuner.helpers.models.hidream.model import HiDream
-from simpletuner.helpers.models.kolors.model import Kolors
-from simpletuner.helpers.models.ltxvideo.model import LTXVideo
-from simpletuner.helpers.models.lumina2.model import Lumina2
-from simpletuner.helpers.models.omnigen.model import OmniGen
-from simpletuner.helpers.models.pixart.model import PixartSigma
-from simpletuner.helpers.models.qwen_image.model import QwenImage
-from simpletuner.helpers.models.sana.model import Sana
-from simpletuner.helpers.models.sd1x.model import StableDiffusion1, StableDiffusion2
-from simpletuner.helpers.models.sd3.model import SD3
-from simpletuner.helpers.models.sdxl.model import SDXL
-from simpletuner.helpers.models.wan.model import Wan
+import logging
 
-model_families = {
-    "sd1x": StableDiffusion1,
-    "sd2x": StableDiffusion2,
-    "sd3": SD3,
-    "deepfloyd": DeepFloydIF,
-    "sana": Sana,
-    "sdxl": SDXL,
-    "kolors": Kolors,
-    "flux": Flux,
-    "wan": Wan,
-    "ltxvideo": LTXVideo,
-    "pixart_sigma": PixartSigma,
-    "omnigen": OmniGen,
-    "hidream": HiDream,
-    "auraflow": Auraflow,
-    "lumina2": Lumina2,
-    "cosmos2image": Cosmos2Image,
-    "qwen_image": QwenImage,
-}
+# Import the models package to trigger auto-discovery
+import simpletuner.helpers.models
+from simpletuner.helpers.models.registry import ModelRegistry
+
+logger = logging.getLogger(__name__)
+
+model_families = ModelRegistry.model_families()
 
 
 def get_all_model_flavours() -> list:
@@ -42,17 +15,33 @@ def get_all_model_flavours() -> list:
     """
     flavours = []
     for model_family, model_implementation in model_families.items():
-        flavours.extend(list(model_implementation.get_flavour_choices()))
+        try:
+            flavours.extend(list(model_implementation.get_flavour_choices()))
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Failed to collect flavours for '%s': %s", model_family, exc)
     return flavours
 
 
 def get_model_flavour_choices(key_to_find: str = None):
-    flavours = ""
-    for model_family, model_implementation in model_families.items():
-        if key_to_find is not None and model_family == key_to_find:
-            return model_implementation.get_flavour_choices()
-        flavours += f"""
-{model_family}: {model_implementation.get_flavour_choices()}
-"""
+    if key_to_find is not None:
+        implementation = model_families.get(key_to_find)
+        if implementation is None:
+            logger.warning("Requested flavours for unknown model family '%s'", key_to_find)
+            return []
+        try:
+            return list(implementation.get_flavour_choices())
+        except Exception as exc:
+            logger.error("Failed to fetch flavour choices for '%s': %s", key_to_find, exc)
+            return []
 
-    return flavours
+    flavour_map = {}
+    for model_family, model_implementation in model_families.items():
+        try:
+            flavour_map[model_family] = list(model_implementation.get_flavour_choices())
+        except Exception as exc:
+            logger.warning("Failed to collect flavours for '%s': %s", model_family, exc)
+            flavour_map[model_family] = []
+
+    # Preserve historical behaviour for consumers expecting a string summary
+    formatted_lines = [f"{family}: {choices}" for family, choices in flavour_map.items()]
+    return "\n".join(formatted_lines)

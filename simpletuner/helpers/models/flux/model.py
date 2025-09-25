@@ -1034,3 +1034,7 @@ class Flux(ImageModelFoundation):
 
 # Register Flux configuration requirements when module is imported
 Flux.register_config_requirements()
+
+
+from simpletuner.helpers.models.registry import ModelRegistry
+ModelRegistry.register("flux", Flux)

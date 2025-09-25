@@ -184,3 +184,7 @@ class Sana(ImageModelFoundation):
             ),
             self.config.tread_config["routes"],
         )
+
+
+from simpletuner.helpers.models.registry import ModelRegistry
+ModelRegistry.register("sana", Sana)

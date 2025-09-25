@@ -155,3 +155,7 @@ class OmniGen(ImageModelFoundation):
         )[0]
 
         return {"model_prediction": model_out}
+
+
+from simpletuner.helpers.models.registry import ModelRegistry
+ModelRegistry.register("omnigen", OmniGen)

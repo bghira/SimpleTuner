@@ -279,3 +279,8 @@ class StableDiffusion2(StableDiffusion1):
             self.PREDICTION_TYPE = PredictionTypes.from_str(self.config.prediction_type)
             if self.config.validation_noise_scheduler is None:
                 self.config.validation_noise_scheduler = self.DEFAULT_NOISE_SCHEDULER
+
+
+from simpletuner.helpers.models.registry import ModelRegistry
+ModelRegistry.register("sd1x", StableDiffusion1)
+ModelRegistry.register("sd2x", StableDiffusion2)

@@ -271,3 +271,7 @@ class Wan(VideoModelFoundation):
                 transforms.Normalize([0.5], [0.5]),
             ]
         )
+
+
+from simpletuner.helpers.models.registry import ModelRegistry
+ModelRegistry.register("wan", Wan)

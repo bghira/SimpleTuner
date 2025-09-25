@@ -424,3 +424,7 @@ class PixartSigma(ImageModelFoundation):
 
             return pixart_sigma_controlnet_code_example(self.config, repo_id, self)
         return None
+
+
+from simpletuner.helpers.models.registry import ModelRegistry
+ModelRegistry.register("pixart_sigma", PixartSigma)

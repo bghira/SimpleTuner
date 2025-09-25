@@ -281,3 +281,7 @@ class Lumina2(ImageModelFoundation):
         output_str = f" (parameters={output_args})" if output_args else ""
 
         return output_str
+
+
+from simpletuner.helpers.models.registry import ModelRegistry
+ModelRegistry.register("lumina2", Lumina2)

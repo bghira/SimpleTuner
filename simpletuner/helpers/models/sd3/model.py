@@ -533,3 +533,7 @@ class SD3(ImageModelFoundation):
         output_str = f" (extra parameters={output_args})" if output_args else " (no special parameters set)"
 
         return output_str
+
+
+from simpletuner.helpers.models.registry import ModelRegistry
+ModelRegistry.register("sd3", SD3)

@@ -607,3 +607,7 @@ class HiDream(ImageModelFoundation):
         clear_load_balancing_loss()
 
         return total_loss, aux_log_info
+
+
+from simpletuner.helpers.models.registry import ModelRegistry
+ModelRegistry.register("hidream", HiDream)
