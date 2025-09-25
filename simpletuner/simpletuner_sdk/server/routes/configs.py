@@ -100,13 +100,15 @@ async def get_data_backend_file(path: str) -> Any:
     """
     import json
     from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
+    from simpletuner.simpletuner_sdk.server.utils.security import validate_safe_path
 
     try:
-        # Sanitize the path to prevent directory traversal
-        if '..' in path:
+        # Perform comprehensive path validation
+        validated_path = validate_safe_path(path)
+        if not validated_path:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid path: directory traversal not allowed"
+                detail="Invalid path: security validation failed"
             )
 
         # Get the configuration store to find the user's config directory

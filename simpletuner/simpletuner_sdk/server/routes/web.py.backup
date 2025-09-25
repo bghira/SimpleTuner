@@ -39,6 +39,7 @@ logger.debug(f"Template directory absolute path: {os.path.abspath(template_dir)}
 logger.debug(f"Template directory exists: {os.path.exists(template_dir)}")
 templates = Jinja2Templates(directory=template_dir)
 
+
 def get_model_family_label(model_key: str) -> str:
     """Generate a human-readable label for a model family key."""
     labels = {
@@ -61,6 +62,7 @@ def get_model_family_label(model_key: str) -> str:
         "qwen_image": "Qwen Image"
     }
     return labels.get(model_key, model_key.upper())
+
 
 def _convert_field_to_template_format(field, config_values) -> Dict[str, Any]:
     """Convert a ConfigField to the format expected by the template."""
@@ -172,6 +174,7 @@ def _convert_field_to_template_format(field, config_values) -> Dict[str, Any]:
 
     return field_dict
 
+
 def _get_fields_for_section(tab_name: str, section_name: str, config_values: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Get fields for a specific section from the field registry."""
     fields = field_registry.get_fields_for_tab(tab_name)
@@ -179,6 +182,7 @@ def _get_fields_for_section(tab_name: str, section_name: str, config_values: Dic
 
     # Convert to template format
     return [_convert_field_to_template_format(field, config_values) for field in section_fields]
+
 
 def _load_active_config() -> Dict[str, Any]:
     """Load the active configuration values."""
@@ -203,6 +207,7 @@ def _load_active_config() -> Dict[str, Any]:
         pass
 
     return {}
+
 
 def _get_config_value(config_data: Dict[str, Any], key: str, default: Any = "") -> Any:
     """Get config value, checking both modern (no prefix) and legacy (-- prefix) formats.
@@ -234,15 +239,18 @@ def _get_config_value(config_data: Dict[str, Any], key: str, default: Any = "") 
 
     return default
 
+
 @router.get("/", response_class=HTMLResponse)
 async def web_home(request: Request):
     """Redirect to trainer page."""
     return templates.TemplateResponse("trainer_htmx.html", {"request": request, "title": "SimpleTuner Training Studio"})
 
+
 @router.get("/trainer", response_class=HTMLResponse)
 async def trainer_page(request: Request):
     """Enhanced trainer page with HTMX."""
     return templates.TemplateResponse("trainer_htmx.html", {"request": request, "title": "SimpleTuner Training Studio"})
+
 
 @router.get("/trainer/tabs/basic", response_class=HTMLResponse)
 async def basic_config_tab(request: Request):
@@ -372,6 +380,7 @@ async def basic_config_tab(request: Request):
 
     return templates.TemplateResponse("tabs/basic_config_multi.html", context)
 
+
 @router.get("/trainer/tabs/model", response_class=HTMLResponse)
 async def model_config_tab(request: Request):
     """Model configuration tab content."""
@@ -429,6 +438,7 @@ async def model_config_tab(request: Request):
     }
     logger.debug("=== END MODEL CONFIG TAB DEBUG ===")
     return templates.TemplateResponse("partials/form_section.html", context)
+
 
 @router.get("/trainer/tabs/training", response_class=HTMLResponse)
 async def training_config_tab(request: Request):
@@ -495,6 +505,7 @@ async def training_config_tab(request: Request):
     logger.debug("=== END TRAINING CONFIG TAB DEBUG ===")
     return templates.TemplateResponse("training_config_section.html", context)
 
+
 @router.get("/trainer/tabs/advanced", response_class=HTMLResponse)
 async def advanced_config_tab(request: Request):
     """Advanced configuration tab content."""
@@ -535,6 +546,7 @@ async def advanced_config_tab(request: Request):
     }
     logger.debug("=== END ADVANCED CONFIG TAB DEBUG ===")
     return templates.TemplateResponse("partials/form_section.html", context)
+
 
 @router.get("/trainer/tabs/datasets", response_class=HTMLResponse)
 async def datasets_tab(request: Request):
@@ -611,10 +623,12 @@ async def datasets_tab(request: Request):
 
     return templates.TemplateResponse("datasets_tab.html", context)
 
+
 @router.get("/trainer/tabs/environments", response_class=HTMLResponse)
 async def environments_tab(request: Request):
     """Environments configuration management tab."""
     return templates.TemplateResponse("environments_tab.html", {"request": request})
+
 
 @router.get("/trainer/tabs/validation", response_class=HTMLResponse)
 async def validation_config_tab(request: Request):
@@ -671,6 +685,7 @@ async def validation_config_tab(request: Request):
     logger.debug("=== END VALIDATION CONFIG TAB DEBUG ===")
     return templates.TemplateResponse("partials/form_section.html", context)
 
+
 @router.get("/datasets/new", response_class=HTMLResponse)
 async def new_dataset_modal(request: Request):
     """New dataset modal content."""
@@ -689,3 +704,333 @@ async def new_dataset_modal(request: Request):
 
     return templates.TemplateResponse("partials/dataset_card.html", context)
 
+
+@router.get("/debug/field-registry", response_class=HTMLResponse)
+async def debug_field_registry(request: Request):
+    """Debug endpoint to check field registry initialization and content."""
+    logger.debug("=== FIELD REGISTRY DEBUG ENDPOINT ===")
+
+    debug_info = {
+        "total_fields": len(field_registry._fields),
+        "field_names": list(field_registry._fields.keys()),
+        "tabs_with_field_counts": {},
+        "sections_by_tab": {},
+        "sample_fields": {},
+        "dependencies_map": field_registry._dependencies_map,
+    }
+
+    # Count fields by tab
+    for field_name, field in field_registry._fields.items():
+        tab = field.tab
+        if tab not in debug_info["tabs_with_field_counts"]:
+            debug_info["tabs_with_field_counts"][tab] = 0
+        debug_info["tabs_with_field_counts"][tab] += 1
+
+        # Collect sections by tab
+        if tab not in debug_info["sections_by_tab"]:
+            debug_info["sections_by_tab"][tab] = set()
+        debug_info["sections_by_tab"][tab].add(field.section)
+
+    # Convert sets to lists for JSON serialization
+    for tab in debug_info["sections_by_tab"]:
+        debug_info["sections_by_tab"][tab] = sorted(list(debug_info["sections_by_tab"][tab]))
+
+    # Get sample fields from each tab
+    for tab in debug_info["tabs_with_field_counts"]:
+        fields_for_tab = field_registry.get_fields_for_tab(tab)
+        if fields_for_tab:
+            sample_field = fields_for_tab[0]
+            debug_info["sample_fields"][tab] = {
+                "name": sample_field.name,
+                "ui_label": sample_field.ui_label,
+                "field_type": sample_field.field_type.value,
+                "section": sample_field.section,
+                "default_value": sample_field.default_value,
+                "help_text": sample_field.help_text[:100] + "..." if len(sample_field.help_text) > 100 else sample_field.help_text
+            }
+
+    logger.debug(f"Field registry contains {debug_info['total_fields']} total fields")
+    logger.debug(f"Fields by tab: {debug_info['tabs_with_field_counts']}")
+
+    # Test specific tab queries
+    test_results = {}
+    for tab in ["basic", "model", "training", "advanced", "validation"]:
+        tab_fields = field_registry.get_fields_for_tab(tab)
+        test_results[f"{tab}_tab_field_count"] = len(tab_fields)
+        test_results[f"{tab}_tab_field_names"] = [f.name for f in tab_fields[:5]]  # First 5 field names
+
+    debug_info["test_results"] = test_results
+
+    logger.debug("=== END FIELD REGISTRY DEBUG ===")
+
+    # Return as HTML table for easy viewing
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Field Registry Debug</title>
+        <style>
+            body {{ font-family: monospace; margin: 20px; }}
+            table {{ border-collapse: collapse; width: 100%; margin: 10px 0; }}
+            th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+            th {{ background-color: #f2f2f2; }}
+            .section {{ margin: 20px 0; }}
+            .json {{ background: #f5f5f5; padding: 10px; white-space: pre-wrap; }}
+        </style>
+    </head>
+    <body>
+        <h1>Field Registry Debug Information</h1>
+
+        <div class="section">
+            <h2>Summary</h2>
+            <p><strong>Total Fields:</strong> {debug_info['total_fields']}</p>
+            <p><strong>Total Dependencies:</strong> {len(debug_info['dependencies_map'])}</p>
+        </div>
+
+        <div class="section">
+            <h2>Fields by Tab</h2>
+            <table>
+                <tr><th>Tab</th><th>Field Count</th><th>Sections</th></tr>
+                {"".join([f"<tr><td>{tab}</td><td>{count}</td><td>{', '.join(debug_info['sections_by_tab'].get(tab, []))}</td></tr>"
+                         for tab, count in debug_info['tabs_with_field_counts'].items()])}
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Test Results</h2>
+            <table>
+                <tr><th>Test</th><th>Result</th></tr>
+                {"".join([f"<tr><td>{test}</td><td>{result}</td></tr>"
+                         for test, result in debug_info['test_results'].items()])}
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Sample Fields</h2>
+            <table>
+                <tr><th>Tab</th><th>Field Name</th><th>UI Label</th><th>Type</th><th>Section</th><th>Default</th><th>Help Text</th></tr>
+                {"".join([f"<tr><td>{tab}</td><td>{field['name']}</td><td>{field['ui_label']}</td><td>{field['field_type']}</td><td>{field['section']}</td><td>{field['default_value']}</td><td>{field['help_text']}</td></tr>"
+                         for tab, field in debug_info['sample_fields'].items()])}
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>All Field Names</h2>
+            <div class="json">{', '.join(debug_info['field_names'][:50])}{"..." if len(debug_info['field_names']) > 50 else ""}</div>
+        </div>
+    </body>
+    </html>
+    """
+
+    return HTMLResponse(content=html_content)
+
+
+@router.get("/debug/model-family", response_class=HTMLResponse)
+async def debug_model_family(request: Request):
+    """Debug model_family field specifically."""
+    try:
+        # Get basic tab fields
+        basic_fields = field_registry.get_fields_for_tab("basic")
+        model_family_field = None
+
+        for field in basic_fields:
+            if field.name == "model_family":
+                model_family_field = field
+                break
+
+        if not model_family_field:
+            return HTMLResponse(content="<html><body><h1>model_family field not found!</h1></body></html>")
+
+        # Debug field type
+        logger.info(f"model_family field_type: {model_family_field.field_type}")
+        logger.info(f"model_family field_type.value: {model_family_field.field_type.value}")
+        logger.info(f"Comparison test: {model_family_field.field_type.value} == 'SELECT' is {model_family_field.field_type.value == 'SELECT'}")
+        logger.info(f"Comparison test: {model_family_field.field_type.value} == 'select' is {model_family_field.field_type.value == 'select'}")
+
+        # Convert to template format
+        config_values = {"model_family": ""}
+        converted = _convert_field_to_template_format(model_family_field, config_values)
+
+        html = f"""
+        <html>
+        <body>
+        <h1>Model Family Field Debug</h1>
+        <h2>Field Registry Data:</h2>
+        <ul>
+            <li>Name: {model_family_field.name}</li>
+            <li>UI Label: {model_family_field.ui_label}</li>
+            <li>Field Type: {model_family_field.field_type.value}</li>
+            <li>Choices: {model_family_field.choices}</li>
+            <li>Choice Count: {len(model_family_field.choices) if model_family_field.choices else 0}</li>
+        </ul>
+
+        <h2>Converted Template Data:</h2>
+        <pre>{json.dumps(converted, indent=2, default=str)}</pre>
+
+        <h2>Model Families Import:</h2>
+        <ul>
+            <li>model_families dict: {list(model_families.keys()) if model_families else 'Empty!'}</li>
+            <li>Count: {len(model_families)}</li>
+        </ul>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html)
+    except Exception as e:
+        logger.error(f"Error in model family debug: {e}", exc_info=True)
+        return HTMLResponse(content=f"<html><body><h1>Error</h1><p>{str(e)}</p></body></html>", status_code=500)
+
+
+@router.get("/debug/num-train-epochs", response_class=HTMLResponse)
+async def debug_num_train_epochs(request: Request):
+    """Debug endpoint to check num_train_epochs field configuration."""
+    import json
+    field = field_registry.get_field('num_train_epochs')
+
+    if not field:
+        return HTMLResponse("Field not found")
+
+    # Get the field dict as it would be converted
+    config_values = {'num_train_epochs': 1}
+    field_dict = _convert_field_to_template_format(field, config_values)
+
+    html = f"""
+    <html>
+    <body>
+    <h1>num_train_epochs Debug</h1>
+    <h2>Field Registry Data</h2>
+    <pre>
+Name: {field.name}
+Type: {field.field_type.value}
+Default: {field.default_value}
+Validation Rules:
+{chr(10).join(f"  - Type: {rule.type.value}, Value: {rule.value}" for rule in field.validation_rules)}
+    </pre>
+
+    <h2>Converted Field Dict</h2>
+    <pre>{json.dumps(field_dict, indent=2)}</pre>
+
+    <h2>Rendered HTML</h2>
+    <input type="number"
+           id="num_train_epochs"
+           name="--num_train_epochs"
+           value="{field_dict.get('value', '')}"
+           {"min='" + str(field_dict['min']) + "'" if 'min' in field_dict else ""}
+           {"max='" + str(field_dict['max']) + "'" if 'max' in field_dict else ""}>
+
+    <h3>Test the field:</h3>
+    <form>
+        <input type="number"
+               id="test_epochs"
+               name="test_epochs"
+               value="1"
+               min="0"
+               max="1000">
+        <p>This input has min="0" max="1000"</p>
+    </form>
+    </body>
+    </html>
+    """
+    return HTMLResponse(html)
+
+@router.get("/debug/select-fields", response_class=HTMLResponse)
+async def debug_select_fields(request: Request):
+    """Debug endpoint to check SELECT field options."""
+    try:
+        # Get fields from all tabs
+        all_select_fields = []
+        for tab in ["basic", "model", "training", "advanced", "validation"]:
+            fields = field_registry.get_fields_for_tab(tab)
+            for field in fields:
+                if hasattr(field, 'field_type') and field.field_type.value.upper() == "SELECT":
+                    field_info = {
+                        "tab": tab,
+                        "name": field.name,
+                        "label": field.ui_label,
+                        "choices": field.choices,
+                        "choice_count": len(field.choices) if field.choices else 0
+                    }
+                    all_select_fields.append(field_info)
+
+        html = f"""
+        <html>
+        <body>
+        <h1>SELECT Field Debug</h1>
+        <table border="1">
+        <tr><th>Tab</th><th>Field Name</th><th>Label</th><th>Choice Count</th><th>First 3 Choices</th></tr>
+        {"".join([f"<tr><td>{f['tab']}</td><td>{f['name']}</td><td>{f['label']}</td><td>{f['choice_count']}</td><td>{str(f['choices'][:3]) if f['choices'] else 'None'}</td></tr>" for f in all_select_fields])}
+        </table>
+        <h2>Sample Field Details</h2>
+        <pre>{json.dumps(all_select_fields[:3], indent=2, default=str)}</pre>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html)
+    except Exception as e:
+        logger.error(f"Error in select fields debug: {e}", exc_info=True)
+        return HTMLResponse(content=f"<html><body><h1>Error</h1><p>{str(e)}</p></body></html>", status_code=500)
+
+
+@router.get("/debug/test-basic-fields", response_class=HTMLResponse)
+async def debug_test_basic_fields(request: Request):
+    """Quick test endpoint to verify basic tab field loading."""
+    logger.debug("=== TESTING BASIC FIELDS ENDPOINT ===")
+
+    try:
+        # Test the field registry directly
+        logger.debug(f"field_registry object: {field_registry}")
+        logger.debug(f"field_registry._fields exists: {hasattr(field_registry, '_fields')}")
+        if hasattr(field_registry, '_fields'):
+            logger.debug(f"field_registry._fields length: {len(field_registry._fields)}")
+            logger.debug(f"field_registry._fields keys: {list(field_registry._fields.keys())[:10]}")
+
+        basic_fields = field_registry.get_fields_for_tab("basic")
+        logger.debug(f"Direct field registry call returned {len(basic_fields)} fields")
+
+        if basic_fields:
+            sample_field = basic_fields[0]
+            logger.debug(f"First field: {sample_field.name} ({sample_field.field_type.value}) - {sample_field.ui_label}")
+
+        # Test field conversion
+        config_values = {}
+        converted_fields = [_convert_field_to_template_format(field, config_values) for field in basic_fields]
+        logger.debug(f"Converted {len(converted_fields)} fields successfully")
+
+        # Also check all tabs
+        all_tabs = ["basic", "model", "training", "advanced", "validation"]
+        tab_counts = {}
+        for tab in all_tabs:
+            tab_fields = field_registry.get_fields_for_tab(tab)
+            tab_counts[tab] = len(tab_fields)
+
+        html = f"""
+        <html>
+        <body>
+        <h1>Basic Fields Test</h1>
+        <p>Registry object exists: {field_registry is not None}</p>
+        <p>Registry has _fields: {hasattr(field_registry, '_fields')}</p>
+        <p>Total fields in registry: {len(field_registry._fields) if hasattr(field_registry, '_fields') else 'N/A'}</p>
+        <hr>
+        <p>Basic tab returned: {len(basic_fields)} fields</p>
+        <p>Converted: {len(converted_fields)} fields</p>
+
+        <h2>Fields by Tab:</h2>
+        <ul>
+        {"".join([f"<li>{tab}: {count} fields</li>" for tab, count in tab_counts.items()])}
+        </ul>
+
+        <h2>Basic Tab Fields:</h2>
+        <ul>
+        {"".join([f"<li>{f.get('id')} - {f.get('label')} ({f.get('type')})</li>" for f in converted_fields[:10]])}
+        </ul>
+        <p>Check logs for detailed debug information.</p>
+        </body>
+        </html>
+        """
+
+        logger.debug("=== END TESTING BASIC FIELDS ===")
+        return HTMLResponse(content=html)
+
+    except Exception as e:
+        logger.error(f"Error in test endpoint: {str(e)}", exc_info=True)
+        return HTMLResponse(content=f"<html><body><h1>Error</h1><p>{str(e)}</p><pre>{type(e).__name__}</pre></body></html>", status_code=500)

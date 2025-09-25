@@ -144,8 +144,7 @@ async def events_stream(request: Request):
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Headers": "Cache-Control",
+            # CORS headers are now handled by middleware - see security_middleware.py
         },
     )
 

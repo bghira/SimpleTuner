@@ -1,7 +1,9 @@
 """Wrapper for field registry to handle import issues gracefully."""
 
 import logging
-from typing import Dict, List, Any, Optional
+import time
+from typing import Dict, List, Any, Optional, Tuple
+from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +15,11 @@ class LazyFieldRegistry:
         self._registry = None
         self._import_error = None
         self._fields_cache = {}
+        self._sections_cache = {}
+        self._field_cache = {}  # Cache individual fields by name
+        self._dependent_fields_cache = {}
+        self._cache_ttl = 300  # 5 minutes cache TTL
+        self._cache_timestamps = {}
 
     def _get_registry(self):
         """Lazy load the field registry."""
@@ -30,11 +37,19 @@ class LazyFieldRegistry:
 
         return self._registry
 
+    def _is_cache_valid(self, cache_key: str) -> bool:
+        """Check if cached data is still valid based on TTL."""
+        if cache_key not in self._cache_timestamps:
+            return False
+        return (time.time() - self._cache_timestamps[cache_key]) < self._cache_ttl
+
     def get_fields_for_tab(self, tab_name: str) -> List[Any]:
-        """Get fields for a specific tab with caching."""
+        """Get fields for a specific tab with caching and TTL."""
         cache_key = f"tab_{tab_name}"
 
-        if cache_key in self._fields_cache:
+        # Check if we have valid cached data
+        if cache_key in self._fields_cache and self._is_cache_valid(cache_key):
+            logger.debug(f"Returning cached fields for tab '{tab_name}'")
             return self._fields_cache[cache_key]
 
         registry = self._get_registry()
@@ -46,31 +61,54 @@ class LazyFieldRegistry:
         try:
             fields = registry.get_fields_for_tab(tab_name)
             self._fields_cache[cache_key] = fields
+            self._cache_timestamps[cache_key] = time.time()
+            logger.debug(f"Cached {len(fields)} fields for tab '{tab_name}'")
             return fields
         except Exception as e:
             logger.error(f"Error getting fields for tab '{tab_name}': {e}", exc_info=True)
             return []
 
     def get_field(self, field_name: str) -> Optional[Any]:
-        """Get a specific field by name."""
+        """Get a specific field by name with caching."""
+        cache_key = f"field_{field_name}"
+
+        # Check if we have valid cached data
+        if cache_key in self._field_cache and self._is_cache_valid(cache_key):
+            logger.debug(f"Returning cached field '{field_name}'")
+            return self._field_cache[cache_key]
+
         registry = self._get_registry()
         if registry is None:
             return None
 
         try:
-            return registry.get_field(field_name)
+            field = registry.get_field(field_name)
+            if field is not None:
+                self._field_cache[cache_key] = field
+                self._cache_timestamps[cache_key] = time.time()
+            return field
         except Exception as e:
             logger.error(f"Error getting field '{field_name}': {e}")
             return None
 
     def get_sections_for_tab(self, tab_name: str) -> List[Dict[str, Any]]:
-        """Get sections for a specific tab."""
+        """Get sections for a specific tab with caching."""
+        cache_key = f"sections_{tab_name}"
+
+        # Check if we have valid cached data
+        if cache_key in self._sections_cache and self._is_cache_valid(cache_key):
+            logger.debug(f"Returning cached sections for tab '{tab_name}'")
+            return self._sections_cache[cache_key]
+
         registry = self._get_registry()
         if registry is None:
             return []
 
         try:
-            return registry.get_sections_for_tab(tab_name)
+            sections = registry.get_sections_for_tab(tab_name)
+            self._sections_cache[cache_key] = sections
+            self._cache_timestamps[cache_key] = time.time()
+            return sections
         except Exception as e:
             logger.error(f"Error getting sections for tab '{tab_name}': {e}")
             return []
@@ -109,6 +147,46 @@ class LazyFieldRegistry:
         except Exception as e:
             logger.error(f"Error getting all fields: {e}", exc_info=True)
             return []
+
+    def get_dependent_fields(self, field_name: str) -> List[str]:
+        """Get fields that depend on the given field with caching."""
+        cache_key = f"deps_{field_name}"
+
+        # Check if we have valid cached data
+        if cache_key in self._dependent_fields_cache and self._is_cache_valid(cache_key):
+            logger.debug(f"Returning cached dependent fields for '{field_name}'")
+            return self._dependent_fields_cache[cache_key]
+
+        registry = self._get_registry()
+        if registry is None:
+            return []
+
+        try:
+            # Try to get dependent fields from the registry
+            if hasattr(registry, 'get_dependent_fields'):
+                deps = registry.get_dependent_fields(field_name)
+                self._dependent_fields_cache[cache_key] = deps
+                self._cache_timestamps[cache_key] = time.time()
+                return deps
+            else:
+                return []
+        except Exception as e:
+            logger.error(f"Error getting dependent fields for '{field_name}': {e}", exc_info=True)
+            return []
+
+    def clear_cache(self) -> None:
+        """Clear all caches."""
+        self._fields_cache.clear()
+        self._sections_cache.clear()
+        self._field_cache.clear()
+        self._dependent_fields_cache.clear()
+        self._cache_timestamps.clear()
+        logger.info("Field registry caches cleared")
+
+    def set_cache_ttl(self, ttl_seconds: int) -> None:
+        """Set cache TTL in seconds."""
+        self._cache_ttl = ttl_seconds
+        logger.info(f"Cache TTL set to {ttl_seconds} seconds")
 
 
 # Create singleton instance
