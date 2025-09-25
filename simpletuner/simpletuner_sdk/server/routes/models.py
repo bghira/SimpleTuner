@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException
 
 logger = logging.getLogger("ModelRoutes")
 
-router = APIRouter(prefix="/models")
+router = APIRouter(prefix="/api/models")
 
 
 @router.get("")
