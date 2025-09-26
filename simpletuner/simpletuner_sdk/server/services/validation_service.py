@@ -117,7 +117,14 @@ class ValidationService:
         """Initialize validation service."""
         self.field_registry = lazy_field_registry
 
-    def validate_field(self, field_name: str, value: Any) -> Tuple[bool, Optional[str]]:
+    def validate_field(
+        self,
+        field_name: str,
+        value: Any,
+        *,
+        config: Optional[Dict[str, Any]] = None,
+        validate_paths: bool = False,
+    ) -> Tuple[bool, Optional[str]]:
         """Validate a single field value.
 
         Args:
@@ -129,15 +136,36 @@ class ValidationService:
         """
         field = self.field_registry.get_field(field_name)
         if not field:
+            normalized_field = self._normalize_field_name(field_name)
+            if normalized_field != field_name:
+                field = self.field_registry.get_field(normalized_field)
+        if not field:
             # If field not in registry, do basic validation
             return self._validate_unknown_field(field_name, value)
 
         # Use field registry validation rules
         if hasattr(field, 'validation_rules') and field.validation_rules:
             for rule in field.validation_rules:
-                is_valid, error_msg = self._apply_validation_rule(field, rule, value)
+                is_valid, error_msg = self._apply_validation_rule(field, rule, value, validate_paths)
                 if not is_valid:
                     return False, error_msg
+
+        # If additional configuration context is provided, run cross-field rules and
+        # surface any errors that target this specific field.
+        if config is not None:
+            working_config = dict(config)
+            normalized_field = self._normalize_field_name(field_name)
+            working_config[normalized_field] = value
+            working_config[field_name] = value
+            prefixed_name = field_name if field_name.startswith("--") else f"--{field_name}"
+            working_config[prefixed_name] = value
+            cross_result = ValidationResult()
+            self._validate_cross_fields(working_config, cross_result)
+
+            for message in cross_result.messages:
+                message_field_normalized = self._normalize_field_name(message.field)
+                if message.severity == ValidationSeverity.ERROR and message_field_normalized == normalized_field:
+                    return False, message.message
 
         return True, None
 
@@ -161,9 +189,14 @@ class ValidationService:
 
         # Validate each field
         for field_name, value in config.items():
-            is_valid, error_msg = self.validate_field(field_name, value)
+            is_valid, error_msg = self.validate_field(
+                field_name,
+                value,
+                config=None,
+                validate_paths=validate_paths,
+            )
             if not is_valid:
-                result.add_error(field_name, error_msg)
+                result.add_error(self._normalize_field_name(field_name), error_msg)
 
         # Additional cross-field validation
         self._validate_cross_fields(config, result)
@@ -177,12 +210,19 @@ class ValidationService:
             result.vram_estimate = self._estimate_vram(config)
 
         # Add success message if all valid
-        if result.is_valid and result.warning_count == 0:
-            result.add_success("configuration", "All configuration values are valid")
+        if result.is_valid:
+            result.add_success("configuration", "Configuration is valid and ready for training")
 
         return result
 
-    def get_field_validation_html(self, field_name: str, value: Any) -> str:
+    def get_field_validation_html(
+        self,
+        field_name: str,
+        value: Any,
+        *,
+        config: Optional[Dict[str, Any]] = None,
+        validate_paths: bool = False,
+    ) -> str:
         """Get HTML error fragment for field validation (HTMX compatibility).
 
         Args:
@@ -192,7 +232,12 @@ class ValidationService:
         Returns:
             HTML error string (empty if valid)
         """
-        is_valid, error_msg = self.validate_field(field_name, value)
+        is_valid, error_msg = self.validate_field(
+            field_name,
+            value,
+            config=config,
+            validate_paths=validate_paths,
+        )
         return "" if is_valid else error_msg
 
     def _validate_unknown_field(self, field_name: str, value: Any) -> Tuple[bool, Optional[str]]:
@@ -222,7 +267,13 @@ class ValidationService:
 
         return True, None
 
-    def _apply_validation_rule(self, field: Any, rule: Any, value: Any) -> Tuple[bool, Optional[str]]:
+    def _apply_validation_rule(
+        self,
+        field: Any,
+        rule: Any,
+        value: Any,
+        validate_paths: bool = False,
+    ) -> Tuple[bool, Optional[str]]:
         """Apply a single validation rule to a value."""
         rule_type = rule.get('type') if isinstance(rule, dict) else getattr(rule, 'type', None)
 
@@ -277,29 +328,82 @@ class ValidationService:
 
     def _validate_cross_fields(self, config: Dict[str, Any], result: ValidationResult):
         """Validate relationships between fields."""
-        # Example: num_train_epochs and max_train_steps
-        num_epochs = config.get("num_train_epochs", 0)
-        max_steps = config.get("max_train_steps", 0)
+        num_epochs_raw = self._get_config_value(config, "num_train_epochs") or 0
+        max_steps_raw = self._get_config_value(config, "max_train_steps") or 0
 
-        if num_epochs and max_steps:
-            result.add_warning(
-                "training",
-                "Both num_train_epochs and max_train_steps are set. max_train_steps will take precedence.",
-                "Consider using only one of these parameters"
-            )
+        def _to_int(value: Any) -> Tuple[Optional[int], Optional[str]]:
+            if value is None or value == "":
+                return 0, None
+            try:
+                return int(value), None
+            except (ValueError, TypeError):
+                return None, "must be a whole number"
+
+        num_epochs, epochs_error = _to_int(num_epochs_raw)
+        max_steps, steps_error = _to_int(max_steps_raw)
+
+        if epochs_error:
+            result.add_error("num_train_epochs", f"num_train_epochs {epochs_error}.")
+        if steps_error:
+            result.add_error("max_train_steps", f"max_train_steps {steps_error}.")
+
+        if epochs_error is None and steps_error is None:
+            if (num_epochs or 0) <= 0 and (max_steps or 0) <= 0:
+                result.add_error(
+                    "num_train_epochs",
+                    "Either num_train_epochs or max_train_steps must be greater than 0",
+                )
+            if (num_epochs or 0) > 0 and (max_steps or 0) > 0:
+                result.add_error(
+                    "max_train_steps",
+                    "num_train_epochs and max_train_steps cannot both be set. Set one of them to 0.",
+                )
 
         # Example: Model-specific validations
-        model_type = config.get("model_type", "").lower()
-        if model_type == "lora" and not config.get("lora_rank"):
+        model_type_raw = self._get_config_value(config, "model_type") or ""
+        model_type = str(model_type_raw).lower()
+        if model_type == "lora" and not self._get_config_value(config, "lora_rank"):
             result.add_error("lora_rank", "LoRA rank is required when using LoRA model type")
 
         # Learning rate scheduler validations
-        scheduler = config.get("lr_scheduler", "")
-        if scheduler == "polynomial" and not config.get("lr_scheduler_polynomial_power"):
+        scheduler = str(self._get_config_value(config, "lr_scheduler") or "")
+        if scheduler == "polynomial" and not self._get_config_value(config, "lr_scheduler_polynomial_power"):
             result.add_warning(
                 "lr_scheduler_polynomial_power",
-                "Polynomial power not specified, defaulting to 1.0"
+                "Polynomial power not specified, defaulting to 1.0",
             )
+
+        warmup_raw = self._get_config_value(config, "lr_warmup_steps") or 0
+        warmup_value, warmup_error = _to_int(warmup_raw)
+        if warmup_error:
+            result.add_error("lr_warmup_steps", "Warmup steps must be a whole number.")
+        elif scheduler == "constant" and warmup_value and warmup_value > 0:
+            result.add_error(
+                "lr_warmup_steps",
+                "Warmup steps are not supported with the 'constant' learning rate scheduler. Use 'constant_with_warmup' or set warmup steps to 0.",
+            )
+
+    @staticmethod
+    def _get_config_value(config: Dict[str, Any], field_name: str) -> Any:
+        """Fetch a field value considering CLI-prefixed variants."""
+        if field_name in config:
+            return config[field_name]
+
+        prefixed = field_name if field_name.startswith("--") else f"--{field_name}"
+        if prefixed in config:
+            return config[prefixed]
+
+        if field_name.startswith("--"):
+            stripped = field_name.lstrip("-")
+            if stripped in config:
+                return config[stripped]
+
+        return None
+
+    @staticmethod
+    def _normalize_field_name(field_name: str) -> str:
+        """Return a canonical representation for comparing field identifiers."""
+        return field_name.lstrip("-")
 
     def _validate_paths(self, config: Dict[str, Any], result: ValidationResult):
         """Validate file and directory paths in configuration."""
@@ -311,30 +415,45 @@ class ValidationService:
         ]
 
         for field_name, display_name in path_fields:
-            path_value = config.get(field_name)
-            if path_value and not path_value.startswith("http"):
-                # Skip validation for URLs
-                path = Path(path_value)
-                if field_name.endswith("_dir"):
-                    # Directory should exist or be creatable
-                    if not path.exists():
-                        try:
-                            path.mkdir(parents=True, exist_ok=True)
-                            result.add_info(field_name, f"{display_name} will be created: {path_value}")
-                        except Exception as e:
-                            result.add_error(field_name, f"Cannot create {display_name}: {str(e)}")
-                else:
-                    # File should exist
-                    if not path.exists():
-                        result.add_warning(field_name, f"{display_name} not found: {path_value}")
+            path_value = self._get_config_value(config, field_name)
+            if not path_value:
+                continue
+
+            if isinstance(path_value, str) and path_value.startswith("http"):
+                continue
+
+            path = Path(str(path_value))
+            normalized_field = self._normalize_field_name(field_name)
+
+            if normalized_field.endswith("_dir"):
+                # Directory should exist or be creatable
+                if not path.exists():
+                    try:
+                        path.mkdir(parents=True, exist_ok=True)
+                        result.add_info(normalized_field, f"{display_name} will be created: {path_value}")
+                    except Exception as exc:
+                        result.add_error(normalized_field, f"Cannot create {display_name}: {exc}")
+            else:
+                # File should exist
+                if not path.exists():
+                    result.add_warning(normalized_field, f"{display_name} not found: {path_value}")
 
     def _estimate_vram(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """Estimate VRAM usage based on configuration."""
         # Simple estimation logic - can be enhanced
-        model_type = config.get("model_type", "full")
-        batch_size = int(config.get("train_batch_size", 1))
-        gradient_accumulation = int(config.get("gradient_accumulation_steps", 1))
-        resolution = int(config.get("resolution", 512))
+        def _int_or_default(value: Any, default: int) -> int:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return default
+
+        model_type = str(self._get_config_value(config, "model_type") or "full").lower()
+        batch_size = _int_or_default(self._get_config_value(config, "train_batch_size"), 1)
+        gradient_accumulation = _int_or_default(
+            self._get_config_value(config, "gradient_accumulation_steps"),
+            1,
+        )
+        resolution = _int_or_default(self._get_config_value(config, "resolution"), 512)
 
         # Base estimates (in GB)
         base_vram = {
