@@ -12,6 +12,11 @@ from enum import Enum
 
 from ..services.field_registry_wrapper import lazy_field_registry
 
+try:  # pragma: no cover - optional import for UI hints
+    from simpletuner.helpers.models.registry import ModelRegistry
+except Exception:  # pragma: no cover - fall back when models unavailable
+    ModelRegistry = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,6 +40,40 @@ class FieldService:
             FieldFormat.CONFIG: self._convert_to_config_format,
             FieldFormat.COMMAND: self._convert_to_command_format,
         }
+
+    @staticmethod
+    def _coerce_bool(value: Any) -> bool:
+        """Convert assorted representations into a boolean."""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        if isinstance(value, str):
+            return value.strip().lower() in {"true", "1", "yes", "on"}
+        return False
+
+    @staticmethod
+    def _coerce_int(value: Any, default: int) -> int:
+        """Convert value to int, falling back to default on failure."""
+        if value in (None, ""):
+            return default
+        try:
+            if isinstance(value, bool):  # avoid True -> 1
+                return default
+            if isinstance(value, (int, float)):
+                return int(value)
+            if isinstance(value, str):
+                return int(value.strip())
+        except (ValueError, TypeError):
+            return default
+        return default
+
+    def _is_danger_mode_enabled(self, config_data: Dict[str, Any]) -> bool:
+        """Determine whether dangerous overrides are enabled."""
+        for key in ("i_know_what_i_am_doing", "--i_know_what_i_am_doing"):
+            if key in config_data and self._coerce_bool(config_data[key]):
+                return True
+        return False
 
     def convert_field(
         self,
@@ -214,9 +253,12 @@ class FieldService:
         # Extra CSS classes
         extra_classes = []
 
-        # Add cmd_args help for tooltip
+        # Add tooltip helpers
         if hasattr(field, 'cmd_args_help') and field.cmd_args_help:
             field_dict["cmd_args_help"] = field.cmd_args_help
+            field_dict["tooltip"] = field.cmd_args_help
+        elif getattr(field, "tooltip", None):
+            field_dict["tooltip"] = field.tooltip
 
         # Add section ID
         if hasattr(field, 'section') and field.section:
@@ -237,15 +279,51 @@ class FieldService:
                 field_dict["step"] = field.step
 
         # Add options for select fields
-        if field.field_type.value in ["SELECT", "MULTI_SELECT"]:
-            if hasattr(field, 'choices') and field.choices:
-                field_dict["options"] = [
-                    {"value": choice, "label": choice}
-                    for choice in field.choices
-                ]
+        field_type_upper = field.field_type.value.upper()
+
+        if field_type_upper in ["SELECT", "MULTI_SELECT"]:
+            choices = getattr(field, "choices", None) or []
+
+            if getattr(field, "dynamic_choices", False) and field.name == "data_backend_config":
+                try:
+                    from .dataset_service import build_data_backend_choices  # lazy import
+
+                    dataset_choices = build_data_backend_choices()
+                except Exception as exc:  # pragma: no cover - defensive guard
+                    logger.warning("Failed to build dataset choices for %s: %s", field.name, exc)
+                    dataset_choices = []
+
+                field_dict["custom_component"] = "dataset_config_select"
+                field_dict["options"] = dataset_choices
+
+                selected_option = next(
+                    (opt for opt in dataset_choices if opt.get("value") == field_value),
+                    None,
+                )
+
+                field_dict["selected_environment"] = (
+                    selected_option.get("environment") if selected_option else "Select dataset"
+                )
+                field_dict["selected_path"] = selected_option.get("path") if selected_option else ""
+                field_dict["button_label"] = (
+                    f"{field_dict['selected_environment']} | {field_dict['selected_path']}"
+                    if selected_option
+                    else "Select dataset configuration"
+                )
+            elif choices:
+                normalized_options = []
+                for choice in choices:
+                    if isinstance(choice, dict):
+                        normalized_options.append(choice)
+                    elif isinstance(choice, (tuple, list)) and len(choice) >= 2:
+                        normalized_options.append({"value": choice[0], "label": choice[1]})
+                    else:
+                        normalized_options.append({"value": choice, "label": str(choice)})
+
+                field_dict["options"] = normalized_options
 
         # Add placeholder
-        if field.field_type.value in ["TEXT", "TEXTAREA"]:
+        if field_type_upper in ["TEXT", "TEXTAREA"]:
             if hasattr(field, 'placeholder') and field.placeholder:
                 field_dict["placeholder"] = field.placeholder
 
@@ -255,9 +333,53 @@ class FieldService:
         if hasattr(field, 'disabled'):
             field_dict["disabled"] = field.disabled
 
+        if field.name == "data_backend_config":
+            field_dict["col_class"] = "col-md-6"
+
+        if field.name == "pretrained_model_name_or_path":
+            default_path = self._get_default_model_path(config_values)
+            if field_value is None or str(field_value).lower() == "none":
+                field_dict["value"] = ""
+                extra_classes.append("field-optional")
+            if default_path and default_path not in str(field_dict.get("placeholder", "")):
+                field_dict["placeholder"] = field_dict.get("placeholder") or default_path
+            if default_path:
+                hint = f"Defaults to {default_path} based on the selected model flavour."
+                if field_dict.get("description"):
+                    if default_path not in field_dict["description"]:
+                        field_dict["description"] = f"{field_dict['description']} {hint}"
+                else:
+                    field_dict["description"] = hint
+
         field_dict["extra_classes"] = " ".join(extra_classes)
 
         return field_dict
+
+    def _get_default_model_path(self, config_values: Dict[str, Any]) -> Optional[str]:
+        """Resolve the default model path for the selected family/flavour."""
+
+        if not ModelRegistry:
+            return None
+
+        model_family = config_values.get("model_family")
+        if not model_family:
+            return None
+
+        try:  # pragma: no cover - defensive import usage
+            model_class = ModelRegistry.get(model_family)
+        except Exception:
+            model_class = None
+
+        if not model_class:
+            return None
+
+        flavour = config_values.get("model_flavour") or getattr(model_class, "DEFAULT_MODEL_FLAVOUR", None)
+        huggingface_paths = getattr(model_class, "HUGGINGFACE_PATHS", {})
+
+        if not flavour or not huggingface_paths:
+            return None
+
+        return huggingface_paths.get(flavour)
 
     def _convert_to_api_format(
         self,
@@ -352,3 +474,91 @@ class FieldService:
             merged[field_name] = override_value
 
         return merged
+
+    def prepare_tab_field_values(
+        self,
+        tab_name: str,
+        config_data: Dict[str, Any],
+        webui_defaults: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Prepare field values for a tab with webui defaults and special handling.
+
+        This consolidates the logic previously duplicated across render_tab,
+        TabFieldsDependency, and TabService.
+
+        Args:
+            tab_name: Name of the tab
+            config_data: Current configuration data
+            webui_defaults: WebUI default settings
+
+        Returns:
+            Dictionary of field values with appropriate defaults
+        """
+        tab_fields = self.field_registry.get_fields_for_tab(tab_name)
+        config_values = {}
+
+        danger_mode_enabled = self._is_danger_mode_enabled(config_data)
+        lora_rank_value = self._coerce_int(
+            config_data.get("lora_rank", config_data.get("--lora_rank", 16)),
+            16,
+        )
+
+        for field in tab_fields:
+            # Special handling for output_dir in basic tab
+            if field.name == "output_dir" and tab_name == "basic":
+                if field.name in config_data:
+                    config_values[field.name] = config_data[field.name]
+                elif f"--{field.name}" in config_data:
+                    config_values[field.name] = config_data[f"--{field.name}"]
+                else:
+                    config_values[field.name] = webui_defaults.get("output_dir", "")
+            else:
+                value = None
+
+                # Prefer explicit config key, but fall back to legacy "--" prefix
+                candidate_keys = [field.name, f"--{field.name}"]
+                arg_name = getattr(field, 'arg_name', '')
+                if arg_name and arg_name not in candidate_keys:
+                    candidate_keys.append(arg_name)
+
+                for key in candidate_keys:
+                    if key not in config_data:
+                        continue
+
+                    candidate_value = config_data[key]
+
+                    if isinstance(candidate_value, str) and candidate_value.strip().lower() in {"none", "not configured"}:
+                        continue
+
+                    if candidate_value not in (None, ""):
+                        value = candidate_value
+                        break
+
+                if value is None:
+                    value = field.default_value
+
+                if field.name == "lora_rank":
+                    lora_rank_value = self._coerce_int(value, lora_rank_value)
+
+                if field.name == "i_know_what_i_am_doing":
+                    value = self._coerce_bool(value)
+                elif field.name == "lora_alpha":
+                    if not danger_mode_enabled:
+                        value = lora_rank_value
+                    elif value in (None, ""):
+                        value = lora_rank_value
+
+                config_values[field.name] = value
+                arg_name = getattr(field, 'arg_name', '')
+                if arg_name and arg_name != field.name:
+                    config_values[arg_name] = value
+                legacy_key = f"--{field.name}"
+                if legacy_key not in (field.name, arg_name):
+                    config_values[legacy_key] = value
+
+        # Add webui-specific values for basic tab
+        if tab_name == "basic":
+            config_values["configs_dir"] = webui_defaults.get("configs_dir", "")
+            config_values["job_id"] = config_data.get("job_id", "")
+
+        return config_values
