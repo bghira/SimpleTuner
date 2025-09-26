@@ -131,6 +131,8 @@ class Trainer:
     ):
         self.accelerator = None
         self.model = None
+        # Ensure checkpoint_manager attribute always exists
+        self.checkpoint_manager = None
         self.job_id = job_id
         StateTracker.set_job_id(job_id)
         self.parse_arguments(
