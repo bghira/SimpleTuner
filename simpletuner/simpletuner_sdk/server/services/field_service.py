@@ -41,6 +41,8 @@ class FieldService:
 
     _TEXT_ENCODER_PRECISION_FIELDS = {f"text_encoder_{idx}_precision" for idx in range(1, 5)}
 
+    _WEBUI_ONLY_FIELDS = {"configs_dir"}
+
     def __init__(self):
         """Initialize field service."""
         self.field_registry = lazy_field_registry
@@ -170,6 +172,9 @@ class FieldService:
 
         for field in fields:
             name = field.name
+
+            if name in self._WEBUI_ONLY_FIELDS:
+                continue
 
             if name in self._TEXT_ENCODER_TRAINING_FIELDS and not supports_text_encoder:
                 continue
@@ -310,6 +315,13 @@ class FieldService:
         field_value = config_values.get(field.name, field.default_value)
         field_value = self.apply_field_transformations(field.name, field_value, config_values)
 
+        display_key = f"{field.name}__display"
+        if display_key in config_values:
+            field_value = config_values.get(display_key, field_value)
+
+        resolved_value = config_values.get(f"{field.name}__resolved")
+        additional_hint = config_values.get(f"{field.name}__hint")
+
         field_dict = {
             "id": field.name,
             "name": field.arg_name,
@@ -318,6 +330,11 @@ class FieldService:
             "value": "" if field.field_type == FieldType.TEXT and field_value is None else field_value,
             "description": field.help_text,
         }
+
+        if resolved_value:
+            field_dict["resolved_value"] = resolved_value
+        if additional_hint:
+            field_dict["additional_hint"] = additional_hint
 
         if field.name in self._TEXT_ENCODER_PRECISION_FIELDS:
             encoder_config = self._get_text_encoder_configuration(config_values)
