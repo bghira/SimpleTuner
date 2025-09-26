@@ -92,18 +92,25 @@ async def get_webui_defaults() -> Dict[str, Any]:
     webui_defaults: Dict[str, str]
     try:
         state_store = WebUIStateStore()
-        defaults = state_store.load_defaults()
-
-        configs_dir = defaults.configs_dir or str(Path.home() / ".simpletuner" / "configs")
-        output_dir = defaults.output_dir or str(Path.home() / ".simpletuner" / "output")
+        bundle = state_store.get_defaults_bundle()
+        resolved = bundle["resolved"]
 
         webui_defaults = {
-            "configs_dir": configs_dir or "Not configured",
-            "output_dir": output_dir or "Not configured",
+            "configs_dir": resolved.get("configs_dir", "Not configured"),
+            "output_dir": resolved.get("output_dir", "Not configured"),
+            "theme": resolved.get("theme", "dark"),
+            "event_polling_interval": resolved.get("event_polling_interval", 5),
+            "event_stream_enabled": resolved.get("event_stream_enabled", True),
         }
     except Exception as e:
         logger.error(f"Error loading WebUI defaults: {e}")
-        webui_defaults = {"configs_dir": "Not configured", "output_dir": "Not configured"}
+        webui_defaults = {
+            "configs_dir": "Not configured",
+            "output_dir": "Not configured",
+            "theme": "dark",
+            "event_polling_interval": 5,
+            "event_stream_enabled": True,
+        }
 
     return webui_defaults
 
