@@ -77,3 +77,4 @@ coverage.xml
 .ruff_cache
 test-screenshots/
 node_modules
+package-lock.json
