@@ -167,30 +167,6 @@ class FieldRegistry:
     def _add_model_config_fields(self):
         """Add model configuration fields."""
         logger.debug("_add_model_config_fields called")
-        # Model Type - The critical missing field
-        self._add_field(ConfigField(
-            name="model_type",
-            arg_name="--model_type",
-            ui_label="Model Type",
-            field_type=FieldType.SELECT,
-            tab="basic",
-            section="model_config",
-            subsection="architecture",
-            default_value="full",
-            choices=[
-                {"value": "full", "label": "Full Model Training"},
-                {"value": "lora", "label": "LoRA (Low-Rank Adaptation)"}
-            ],
-            validation_rules=[
-                ValidationRule(ValidationRuleType.REQUIRED, message="Model type is required"),
-                ValidationRule(ValidationRuleType.CHOICES, value=["full", "lora"])
-            ],
-            help_text="Choose between full model training or LoRA adapter training",
-            tooltip="Full training updates all model weights. LoRA only trains small adapter matrices, using less memory and producing smaller files.",
-            importance=ImportanceLevel.ESSENTIAL,
-            order=1
-        ))
-
         # Model Family
         model_family_list = list(model_families.keys())
         self._add_field(ConfigField(
@@ -198,7 +174,7 @@ class FieldRegistry:
             arg_name="--model_family",
             ui_label="Model Family",
             field_type=FieldType.SELECT,
-            tab="basic",
+            tab="model",
             section="model_config",
             subsection="architecture",
             choices=[{"value": f, "label": f.upper()} for f in model_family_list],
@@ -218,7 +194,7 @@ class FieldRegistry:
             arg_name="--model_flavour",
             ui_label="Model Flavour",
             field_type=FieldType.SELECT,
-            tab="basic",
+            tab="model",
             section="model_config",
             subsection="architecture",
             default_value="",
@@ -238,16 +214,13 @@ class FieldRegistry:
             arg_name="--pretrained_model_name_or_path",
             ui_label="Base Model Path",
             field_type=FieldType.TEXT,
-            tab="basic",
+            tab="model",
             section="model_config",
             subsection="paths",
-            placeholder="black-forest-labs/FLUX.1-dev",
-            validation_rules=[
-                ValidationRule(ValidationRuleType.REQUIRED, message="Model path is required")
-            ],
-            help_text="Hugging Face model ID or local path to the base model",
-            tooltip="Can be a HuggingFace model ID (e.g., 'stabilityai/stable-diffusion-xl-base-1.0') or a local directory path",
-            importance=ImportanceLevel.ESSENTIAL,
+            placeholder="Leave blank to use the default for the selected flavour",
+            help_text="Optional override of the model checkpoint. Leave blank to use the default path for the selected model flavour.",
+            tooltip="Provide a custom Hugging Face model ID or local directory. If omitted, the selected model flavour determines the path.",
+            importance=ImportanceLevel.IMPORTANT,
             order=4
         ))
 
@@ -270,23 +243,18 @@ class FieldRegistry:
             order=5
         ))
 
-        # Project Name
         self._add_field(ConfigField(
-            name="project_name",
-            arg_name="--project_name",
-            ui_label="Project Name",
+            name="configs_dir",
+            arg_name="configs_dir",
+            ui_label="Config Directory",
             field_type=FieldType.TEXT,
             tab="basic",
             section="essential_settings",
-            subsection="project",
-            placeholder="my-training-run",
-            validation_rules=[
-                ValidationRule(ValidationRuleType.PATTERN, value=r"^[a-zA-Z0-9_-]+$",
-                             message="Project name can only contain letters, numbers, hyphens, and underscores")
-            ],
-            help_text="Name for this training run (used in logging and outputs)",
-            tooltip="A descriptive name for your training run. Used in file names and logging.",
-            importance=ImportanceLevel.ESSENTIAL,
+            subsection="paths",
+            default_value="",
+            help_text="Root folder SimpleTuner uses to store and load configuration files",
+            tooltip="Overrides the default ~/.simpletuner/configs directory when managing saved configs.",
+            importance=ImportanceLevel.IMPORTANT,
             order=6
         ))
 
@@ -306,43 +274,34 @@ class FieldRegistry:
             order=7
         ))
 
-        # Mixed Precision
         self._add_field(ConfigField(
-            name="mixed_precision",
-            arg_name="--mixed_precision",
-            ui_label="Mixed Precision",
+            name="model_type",
+            arg_name="--model_type",
+            ui_label="Model Type",
             field_type=FieldType.SELECT,
-            tab="basic",
-            section="hardware_config",
-            default_value="bf16",
+            tab="model",
+            section="model_config",
+            subsection="architecture",
+            default_value="full",
             choices=[
-                {"value": "no", "label": "Disabled (FP32)"},
-                {"value": "fp16", "label": "FP16 (Half Precision)"},
-                {"value": "bf16", "label": "BF16 (Brain Float)"},
-                {"value": "fp8-e4m3fn", "label": "FP8 E4M3 (H100/Ada)"},
-                {"value": "fp8-e5m2", "label": "FP8 E5M2 (H100/Ada)"}
+                {"value": "full", "label": "Full Model Training"},
+                {"value": "lora", "label": "LoRA (Low-Rank Adaptation)"}
             ],
-            help_text="Precision mode for training (affects memory usage and speed)",
-            tooltip="BF16 is recommended for most modern GPUs. FP16 saves memory but may have stability issues. FP8 requires H100 or newer.",
-            importance=ImportanceLevel.IMPORTANT,
-            order=8,
-            dependencies=[
-                FieldDependency(
-                    field="model_family",
-                    operator="equals",
-                    value="flux",
-                    action="show",
-                    condition_met_value="fp8-e4m3fn",
-                    condition_not_met_value="bf16"
-                )
-            ]
+            validation_rules=[
+                ValidationRule(ValidationRuleType.REQUIRED, message="Model type is required"),
+                ValidationRule(ValidationRuleType.CHOICES, value=["full", "lora"])
+            ],
+            help_text="Choose between full model training or LoRA adapter training",
+            tooltip="Full training updates all model weights. LoRA only trains small adapter matrices, using less memory and producing smaller files.",
+            importance=ImportanceLevel.ESSENTIAL,
+            order=1
         ))
 
-        # Random Seed
+        # Training Seed
         self._add_field(ConfigField(
             name="seed",
             arg_name="--seed",
-            ui_label="Random Seed",
+            ui_label="Training Seed",
             field_type=FieldType.NUMBER,
             tab="basic",
             section="hardware_config",
@@ -351,8 +310,8 @@ class FieldRegistry:
                 ValidationRule(ValidationRuleType.MIN, value=0, message="Seed must be non-negative"),
                 ValidationRule(ValidationRuleType.MAX, value=2147483647, message="Seed must fit in 32-bit integer")
             ],
-            help_text="Random seed for reproducible training",
-            tooltip="Use the same seed to get reproducible results across training runs",
+            help_text="Seed used for deterministic training behaviour",
+            tooltip="Use the same seed to reproduce runs precisely. Leave blank to randomise per launch.",
             importance=ImportanceLevel.ADVANCED,
             order=9
         ))
@@ -371,7 +330,7 @@ class FieldRegistry:
                 ValidationRule(ValidationRuleType.MAX, value=2048, message="Resolution too high for most GPUs"),
                 ValidationRule(ValidationRuleType.DIVISIBLE_BY, value=8, message="Resolution must be divisible by 8")
             ],
-            help_text="Image resolution for training (width and height)",
+            help_text="Default image resolution (width × height) applied when a dataset entry does not specify its own.",
             tooltip="Higher resolutions require more VRAM. SD 1.5: 512, SDXL: 1024, Flux: 1024+",
             importance=ImportanceLevel.ESSENTIAL,
             order=10,
@@ -432,7 +391,14 @@ class FieldRegistry:
             help_text="The parameterization type for the diffusion model",
             tooltip="Usually auto-detected from the model. Flow matching is used by Flux, SD3, and similar models.",
             importance=ImportanceLevel.ADVANCED,
-            order=10
+            order=10,
+            dependencies=[
+                FieldDependency(
+                    field="i_know_what_i_am_doing",
+                    operator="equals",
+                    value=True
+                )
+            ]
         ))
 
         # VAE Path
@@ -479,7 +445,7 @@ class FieldRegistry:
             field_type=FieldType.CHECKBOX,
             tab="model",
             section="vae_config",
-            default_value=False,
+            default_value=True,
             help_text="Pre-encode images with VAE to speed up training",
             tooltip="Requires additional disk space but significantly speeds up training",
             importance=ImportanceLevel.ADVANCED,
@@ -593,6 +559,12 @@ class FieldRegistry:
             ],
             dependencies=[
                 FieldDependency(
+                    field="model_type",
+                    operator="equals",
+                    value="lora",
+                    action="enable"
+                ),
+                FieldDependency(
                     field="base_model_precision",
                     operator="not_equals",
                     value="no_change",
@@ -612,11 +584,11 @@ class FieldRegistry:
             ui_label="Fused QKV Projections",
             field_type=FieldType.CHECKBOX,
             tab="model",
-            section="performance",
+            section="architecture",
             default_value=False,
             platform_specific=["cuda"],
-            help_text="Fuse QKV projections for H100/H200 GPUs",
-            tooltip="Requires NVIDIA H100/H200 with Flash Attention 3. Provides significant speedup.",
+            help_text="Enables Flash Attention 3 when supported; otherwise falls back to PyTorch SDPA.",
+            tooltip="Improves attention efficiency on modern NVIDIA GPUs. Uses native SDPA when Flash Attention 3 is unavailable.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=19
         ))
@@ -664,16 +636,16 @@ class FieldRegistry:
         self._add_field(ConfigField(
             name="train_batch_size",
             arg_name="--train_batch_size",
-            ui_label="Batch Size",
+            ui_label="Training Batch Size",
             field_type=FieldType.NUMBER,
-            tab="training",
-            section="training_schedule",
+            tab="basic",
+            section="training_data",
             default_value=4,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=1, message="Batch size must be at least 1"),
                 ValidationRule(ValidationRuleType.MAX, value=128, message="Batch size >128 is unusual")
             ],
-            help_text="Number of images to process in each training step",
+            help_text="Number of samples processed per forward/backward pass (per device).",
             tooltip="Higher batch sizes can improve training stability but require more VRAM. Start with 1-4 for most GPUs.",
             importance=ImportanceLevel.ESSENTIAL,
             order=3
@@ -710,8 +682,8 @@ class FieldRegistry:
             arg_name="--optimizer",
             ui_label="Optimizer",
             field_type=FieldType.SELECT,
-            tab="basic",
-            section="training_essentials",
+            tab="training",
+            section="optimizer_config",
             choices=[{"value": opt, "label": opt} for opt in optimizer_choices],
             validation_rules=[
                 ValidationRule(ValidationRuleType.REQUIRED, message="Optimizer is required"),
@@ -721,6 +693,20 @@ class FieldRegistry:
             tooltip="AdamW variants are most common. 8-bit versions save memory. Prodigy auto-adjusts learning rate.",
             importance=ImportanceLevel.ESSENTIAL,
             order=5
+        ))
+
+        self._add_field(ConfigField(
+            name="optimizer_config",
+            arg_name="--optimizer_config",
+            ui_label="Optimizer Extra Settings",
+            field_type=FieldType.TEXT,
+            tab="training",
+            section="optimizer_config",
+            placeholder="beta1=0.9,beta2=0.95,weight_decay=0.01",
+            help_text="Comma-separated key=value pairs forwarded to the selected optimizer",
+            tooltip="Example: beta1=0.9,beta2=0.95,weight_decay=0.01. Leave blank to use optimizer defaults.",
+            importance=ImportanceLevel.ADVANCED,
+            order=6
         ))
 
         # LR Scheduler
@@ -752,8 +738,8 @@ class FieldRegistry:
             arg_name="--gradient_accumulation_steps",
             ui_label="Gradient Accumulation Steps",
             field_type=FieldType.NUMBER,
-            tab="training",
-            section="training_schedule",
+            tab="model",
+            section="memory_optimization",
             default_value=1,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")
@@ -782,31 +768,13 @@ class FieldRegistry:
             order=3
         ))
 
-        # Save Steps
-        self._add_field(ConfigField(
-            name="save_every_n_steps",
-            arg_name="--save_every_n_steps",
-            ui_label="Save Checkpoint Every N Steps",
-            field_type=FieldType.NUMBER,
-            tab="training",
-            section="checkpointing",
-            default_value=500,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative (0 disables)")
-            ],
-            help_text="How often to save model checkpoints",
-            tooltip="Set to 0 to only save at end. Lower values = more frequent saves but more disk usage",
-            importance=ImportanceLevel.IMPORTANT,
-            order=1
-        ))
-
         # Max Checkpoints
         self._add_field(ConfigField(
             name="save_total_limit",
             arg_name="--save_total_limit",
             ui_label="Maximum Checkpoints to Keep",
             field_type=FieldType.NUMBER,
-            tab="training",
+            tab="basic",
             section="checkpointing",
             default_value=10,
             validation_rules=[
@@ -840,7 +808,7 @@ class FieldRegistry:
             ui_label="Train Text Encoder",
             field_type=FieldType.CHECKBOX,
             tab="training",
-            section="training_components",
+            section="training_checkpoints",
             default_value=False,
             help_text="Also train the text encoder (CLIP) model",
             tooltip="Can improve concept learning but uses more VRAM. Not recommended for LoRA",
@@ -855,8 +823,8 @@ class FieldRegistry:
                 ),
                 FieldDependency(
                     field="model_family",
-                    operator="equals",
-                    value="sd1x",
+                    operator="in",
+                    values=["sd1x", "sd2x"],
                     action="show"
                 )
             ]
@@ -869,7 +837,7 @@ class FieldRegistry:
             ui_label="Text Encoder Learning Rate",
             field_type=FieldType.NUMBER,
             tab="training",
-            section="learning_rate",
+            section="training_checkpoints",
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=0, message="Must be positive")
             ],
@@ -959,7 +927,7 @@ class FieldRegistry:
             help_text="Use soft clamping instead of hard clamping for Min-SNR",
             tooltip="Smoother transition at the clamping boundary. May improve training stability.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=2
+            order=8
         ))
 
         # EMA CPU Only
@@ -1216,9 +1184,8 @@ class FieldRegistry:
             arg_name="--vae_batch_size",
             ui_label="VAE Batch Size",
             field_type=FieldType.NUMBER,
-            tab="advanced",
-            section="memory_performance",
-            subsection="vae_settings",
+            tab="model",
+            section="vae_config",
             default_value=4,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=1, message="VAE batch size must be at least 1")
@@ -1354,11 +1321,11 @@ class FieldRegistry:
             order=1
         ))
 
-        # Maximum Token Length
+        # Tokenizer Max Length (Danger mode only)
         self._add_field(ConfigField(
-            name="maximum_caption_length",
-            arg_name="--maximum_caption_length",
-            ui_label="Maximum Caption Length",
+            name="tokenizer_max_length",
+            arg_name="--tokenizer_max_length",
+            ui_label="Tokenizer Max Length",
             field_type=FieldType.NUMBER,
             tab="data",
             section="caption_processing",
@@ -1367,9 +1334,17 @@ class FieldRegistry:
                 ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1"),
                 ValidationRule(ValidationRuleType.MAX, value=1024, message="Maximum reasonable length is 1024")
             ],
-            help_text="Maximum number of tokens in captions",
-            tooltip="Longer captions will be truncated. SD models typically use 77, SDXL/Flux can use more",
-            importance=ImportanceLevel.ADVANCED,
+            help_text="Override the tokenizer sequence length (advanced).",
+            tooltip="Only adjust when you understand the model's tokenizer limits.",
+            dependencies=[
+                FieldDependency(
+                    field="i_know_what_i_am_doing",
+                    operator="equals",
+                    value=True,
+                    action="show"
+                )
+            ],
+            importance=ImportanceLevel.EXPERIMENTAL,
             order=2
         ))
 
@@ -1391,6 +1366,20 @@ class FieldRegistry:
             tooltip="How often to generate validation images during training. Lower = more frequent validation.",
             importance=ImportanceLevel.IMPORTANT,
             order=1
+        ))
+
+        self._add_field(ConfigField(
+            name="disable_benchmark",
+            arg_name="--disable_benchmark",
+            ui_label="Skip Baseline Benchmark",
+            field_type=FieldType.CHECKBOX,
+            tab="validation",
+            section="validation_schedule",
+            default_value=False,
+            help_text="Skip generating baseline comparison images before training starts",
+            tooltip="Disable if you want to reduce startup time; recommended to keep enabled for qualitative comparisons.",
+            importance=ImportanceLevel.ADVANCED,
+            order=2
         ))
 
         # Validation Prompt
@@ -1424,7 +1413,7 @@ class FieldRegistry:
             help_text="Number of images to generate per validation",
             tooltip="More images give better sense of model performance but take longer to generate",
             importance=ImportanceLevel.ADVANCED,
-            order=2
+            order=3
         ))
 
         # Validation Guidance Scale
@@ -1434,8 +1423,7 @@ class FieldRegistry:
             ui_label="Guidance Scale",
             field_type=FieldType.NUMBER,
             tab="validation",
-            section="generation_settings",
-            subsection="guidance",
+            section="validation_guidance",
             default_value=7.5,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=1, message="Guidance must be at least 1"),
@@ -1445,6 +1433,24 @@ class FieldRegistry:
             tooltip="Higher values follow prompt more closely. 7-12 is typical. Set to 1 for distilled models.",
             importance=ImportanceLevel.ADVANCED,
             order=1
+        ))
+
+        # Validation Inference Steps
+        self._add_field(ConfigField(
+            name="validation_num_inference_steps",
+            arg_name="--validation_num_inference_steps",
+            ui_label="Inference Steps",
+            field_type=FieldType.NUMBER,
+            tab="validation",
+            section="validation_schedule",
+            default_value=20,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1 step")
+            ],
+            help_text="Number of diffusion steps for validation renders",
+            tooltip="Lower values speed up validation at the cost of quality. Typical range: 20-30.",
+            importance=ImportanceLevel.ADVANCED,
+            order=4
         ))
 
         # Validation on Startup
@@ -1459,7 +1465,7 @@ class FieldRegistry:
             help_text="Run validation on the base model before training starts",
             tooltip="Useful for comparing before/after results",
             importance=ImportanceLevel.ADVANCED,
-            order=2
+            order=5
         ))
 
         # Validation Using Datasets
@@ -1535,7 +1541,7 @@ class FieldRegistry:
             ui_label="Negative Prompt",
             field_type=FieldType.TEXTAREA,
             tab="validation",
-            section="validation_prompts",
+            section="prompt_management",
             default_value="blurry, cropped, ugly",
             help_text="Negative prompt for validation images",
             tooltip="What to avoid in generated images. Set to empty string to disable.",
@@ -1591,12 +1597,12 @@ class FieldRegistry:
             ui_label="Disable Validation",
             field_type=FieldType.CHECKBOX,
             tab="validation",
-            section="validation_options",
+            section="validation_schedule",
             default_value=False,
             help_text="Completely disable validation image generation",
             tooltip="Saves time and VRAM but you won't see progress during training",
             importance=ImportanceLevel.ADVANCED,
-            order=7
+            order=5
         ))
 
         # Validation Prompt Library
@@ -1606,7 +1612,7 @@ class FieldRegistry:
             ui_label="Use Prompt Library",
             field_type=FieldType.CHECKBOX,
             tab="validation",
-            section="validation_prompts",
+            section="prompt_management",
             default_value=False,
             help_text="Use SimpleTuner's built-in prompt library",
             tooltip="Generates multiple diverse validation images automatically",
@@ -1621,7 +1627,7 @@ class FieldRegistry:
             ui_label="Custom Prompt Library Path",
             field_type=FieldType.TEXT,
             tab="validation",
-            section="validation_prompts",
+            section="prompt_management",
             placeholder="/path/to/prompt_library.json",
             help_text="Path to custom JSON prompt library",
             tooltip="See user_prompt_library.json.example for format",
@@ -1684,6 +1690,21 @@ class FieldRegistry:
 
     def _add_advanced_config_fields(self):
         """Add advanced configuration fields."""
+        # Danger Mode Toggle
+        self._add_field(ConfigField(
+            name="i_know_what_i_am_doing",
+            arg_name="--i_know_what_i_am_doing",
+            ui_label="I Know What I'm Doing",
+            field_type=FieldType.CHECKBOX,
+            tab="advanced",
+            section="safety_overrides",
+            default_value=False,
+            help_text="Unlock experimental overrides and bypass built-in safety limits.",
+            tooltip="Only enable if you understand the implications. Required for editing prediction type and other safeguards.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=0
+        ))
+
         # Mixed Precision
         self._add_field(ConfigField(
             name="mixed_precision",
@@ -1703,7 +1724,14 @@ class FieldRegistry:
             help_text="Precision for training computations",
             tooltip="BF16 is recommended for stability. FP16 saves memory but less stable. FP8 is experimental.",
             importance=ImportanceLevel.IMPORTANT,
-            order=1
+            order=1,
+            dependencies=[
+                FieldDependency(
+                    field="i_know_what_i_am_doing",
+                    operator="equals",
+                    value=True
+                )
+            ]
         ))
 
         # Gradient Checkpointing
@@ -1741,26 +1769,6 @@ class FieldRegistry:
             tooltip="Xformers saves memory. SageAttention is faster but experimental. Diffusers is default.",
             importance=ImportanceLevel.ADVANCED,
             order=1
-        ))
-
-        # Gradient Precision
-        self._add_field(ConfigField(
-            name="gradient_precision",
-            arg_name="--gradient_precision",
-            ui_label="Gradient Precision",
-            field_type=FieldType.SELECT,
-            tab="advanced",
-            section="memory_performance",
-            subsection="precision",
-            default_value="unmodified",
-            choices=[
-                {"value": "unmodified", "label": "Unmodified (Default)"},
-                {"value": "fp32", "label": "FP32 (Full precision)"}
-            ],
-            help_text="Force gradient precision to FP32",
-            tooltip="Can improve stability with mixed precision training but uses more memory",
-            importance=ImportanceLevel.ADVANCED,
-            order=2
         ))
 
         # Disable TF32
@@ -1828,14 +1836,6 @@ class FieldRegistry:
                 ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be between 0 and 1"),
                 ValidationRule(ValidationRuleType.MAX, value=1.0, message="Must be between 0 and 1")
             ],
-            dependencies=[
-                FieldDependency(
-                    field="noise_offset",
-                    operator="greater_than",
-                    value=0,
-                    action="show"
-                )
-            ],
             help_text="Probability of applying noise offset",
             tooltip="Apply noise offset this fraction of the time. Default: 25%",
             importance=ImportanceLevel.ADVANCED,
@@ -1851,7 +1851,7 @@ class FieldRegistry:
             ui_label="Loss Function",
             field_type=FieldType.SELECT,
             tab="training",
-            section="loss_config",
+            section="loss_functions",
             default_value="l2",
             choices=[
                 {"value": "l2", "label": "L2 (MSE)"},
@@ -1864,6 +1864,58 @@ class FieldRegistry:
             order=1
         ))
 
+        # Huber Schedule
+        self._add_field(ConfigField(
+            name="huber_schedule",
+            arg_name="--huber_schedule",
+            ui_label="Huber Schedule",
+            field_type=FieldType.SELECT,
+            tab="training",
+            section="loss_functions",
+            default_value="snr",
+            choices=[
+                {"value": "snr", "label": "SNR (Default)"},
+                {"value": "exponential", "label": "Exponential"},
+                {"value": "constant", "label": "Constant"}
+            ],
+            dependencies=[
+                FieldDependency(
+                    field="loss_type",
+                    operator="equals",
+                    value="huber"
+                )
+            ],
+            help_text="Schedule for Huber loss transition threshold",
+            tooltip="Controls how huber_c evolves during training. Only applies when using Huber loss.",
+            importance=ImportanceLevel.ADVANCED,
+            order=2
+        ))
+
+        # Huber C Value
+        self._add_field(ConfigField(
+            name="huber_c",
+            arg_name="--huber_c",
+            ui_label="Huber C Threshold",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=0.1,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative")
+            ],
+            dependencies=[
+                FieldDependency(
+                    field="loss_type",
+                    operator="equals",
+                    value="huber"
+                )
+            ],
+            help_text="Transition point between L2 and L1 regions for Huber loss",
+            tooltip="Lower values emphasise L1 behaviour sooner; higher values behave more like L2.",
+            importance=ImportanceLevel.ADVANCED,
+            order=3
+        ))
+
         # SNR Gamma
         self._add_field(ConfigField(
             name="snr_gamma",
@@ -1871,15 +1923,14 @@ class FieldRegistry:
             ui_label="SNR Gamma",
             field_type=FieldType.NUMBER,
             tab="training",
-            section="loss_config",
-            subsection="snr_weighting",
+            section="loss_functions",
+            order=4,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=0, message="SNR gamma must be non-negative")
             ],
             help_text="SNR weighting gamma value (0 = disabled)",
             tooltip="Rebalances loss across timesteps. Recommended value: 5.0. Helps prevent overtraining on easy timesteps.",
             importance=ImportanceLevel.ADVANCED,
-            order=2,
             dependencies=[
                 FieldDependency(
                     field="model_family",
@@ -1890,8 +1941,85 @@ class FieldRegistry:
             ]
         ))
 
+        # Masked Loss Probability
+        self._add_field(ConfigField(
+            name="masked_loss_probability",
+            arg_name="--masked_loss_probability",
+            ui_label="Masked Loss Probability",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=1.0,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be between 0 and 1"),
+                ValidationRule(ValidationRuleType.MAX, value=1.0, message="Must be between 0 and 1")
+            ],
+            help_text="Probability of applying masked loss weighting per batch",
+            tooltip="Lower values reduce how often masked loss is applied, useful for datasets with sparse masks.",
+            importance=ImportanceLevel.ADVANCED,
+            order=5
+        ))
+
+        # HiDream Load Balancing Loss Toggle
+        self._add_field(ConfigField(
+            name="hidream_use_load_balancing_loss",
+            arg_name="--hidream_use_load_balancing_loss",
+            ui_label="Enable HiDream Load Balancing Loss",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            default_value=False,
+            dependencies=[
+                FieldDependency(
+                    field="model_family",
+                    operator="equals",
+                    value="hidream"
+                )
+            ],
+            help_text="Apply experimental load balancing loss when training HiDream models.",
+            tooltip="Balances expert contributions during HiDream training. Only available for HiDream model family.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=6
+        ))
+
+        # HiDream Load Balancing Weight
+        self._add_field(ConfigField(
+            name="hidream_load_balancing_loss_weight",
+            arg_name="--hidream_load_balancing_loss_weight",
+            ui_label="HiDream Load Balancing Weight",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative")
+            ],
+            dependencies=[
+                FieldDependency(
+                    field="hidream_use_load_balancing_loss",
+                    operator="equals",
+                    value=True
+                )
+            ],
+            help_text="Strength multiplier for HiDream load balancing loss.",
+            tooltip="Adjust if you need stronger balancing between experts. Leave blank to use the trainer default.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=7
+        ))
+
     def _add_optimizer_fields(self):
         """Add optimizer configuration fields."""
+        adam_like_optimizers = [
+            "adamw", "adamw_bf16", "adamw8bit", "adam", "adam8bit",
+            "ao-adamw8bit", "ao-adamw4bit", "ao-adamwfp8", "optimi-adamw",
+            "StableAdamWUnfused", "deepspeed-adamw"
+        ]
+        optimi_optimizers = [
+            "optimi-adamw", "optimi-lion", "optimi-stableadamw"
+        ]
+        accelerate_optimizers = [
+            "ao-adamw8bit", "ao-adamw4bit", "ao-adamwfp8"
+        ]
+
         # Adam Beta1
         self._add_field(ConfigField(
             name="adam_beta1",
@@ -1907,7 +2035,7 @@ class FieldRegistry:
                 ValidationRule(ValidationRuleType.MAX, value=1, message="Beta1 must be between 0 and 1")
             ],
             dependencies=[
-                FieldDependency(field="optimizer", values=["adamw", "adamw_bf16", "adamw8bit", "adam", "adam8bit"])
+                FieldDependency(field="optimizer", values=adam_like_optimizers)
             ],
             help_text="First moment decay rate for Adam optimizers",
             tooltip="Controls momentum. Default 0.9 works well. Lower values reduce momentum.",
@@ -1930,12 +2058,168 @@ class FieldRegistry:
                 ValidationRule(ValidationRuleType.MAX, value=1, message="Beta2 must be between 0 and 1")
             ],
             dependencies=[
-                FieldDependency(field="optimizer", values=["adamw", "adamw_bf16", "adamw8bit", "adam", "adam8bit"])
+                FieldDependency(field="optimizer", values=adam_like_optimizers)
             ],
             help_text="Second moment decay rate for Adam optimizers",
             tooltip="Controls adaptive learning rates. Default 0.999 is standard. Lower values make adaptation more aggressive.",
             importance=ImportanceLevel.ADVANCED,
             order=2
+        ))
+
+        # Adam Weight Decay
+        self._add_field(ConfigField(
+            name="adam_weight_decay",
+            arg_name="--adam_weight_decay",
+            ui_label="Weight Decay",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="optimizer_config",
+            subsection="adam_params",
+            default_value=1e-2,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative")
+            ],
+            dependencies=[
+                FieldDependency(field="optimizer", values=adam_like_optimizers)
+            ],
+            help_text="L2 regularisation strength for Adam-family optimizers.",
+            tooltip="Higher values encourage smaller weights. If unsure, keep at 0.01 or match your baseline config.",
+            importance=ImportanceLevel.ADVANCED,
+            order=3
+        ))
+
+        # Adam Epsilon
+        self._add_field(ConfigField(
+            name="adam_epsilon",
+            arg_name="--adam_epsilon",
+            ui_label="Adam Epsilon",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="optimizer_config",
+            subsection="adam_params",
+            default_value=1e-8,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be positive")
+            ],
+            dependencies=[
+                FieldDependency(field="optimizer", values=adam_like_optimizers)
+            ],
+            help_text="Small constant added for numerical stability.",
+            tooltip="Tweak only if you encounter numerical instabilities. Typical range 1e-8 to 1e-6.",
+            importance=ImportanceLevel.ADVANCED,
+            order=4
+        ))
+
+        # Prodigy Steps
+        self._add_field(ConfigField(
+            name="prodigy_steps",
+            arg_name="--prodigy_steps",
+            ui_label="Prodigy Adjustment Steps",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="optimizer_config",
+            default_value=0,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")
+            ],
+            dependencies=[
+                FieldDependency(field="optimizer", values=["prodigy"])
+            ],
+            help_text="Number of steps Prodigy should spend adapting its learning rate.",
+            tooltip="If unset, SimpleTuner estimates 25% of total training steps. Set explicitly for long or short runs.",
+            importance=ImportanceLevel.ADVANCED,
+            order=5
+        ))
+
+        # Max Gradient Norm
+        self._add_field(ConfigField(
+            name="max_grad_norm",
+            arg_name="--max_grad_norm",
+            ui_label="Max Gradient Norm",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="optimizer_config",
+            default_value=2.0,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative")
+            ],
+            help_text="Gradient clipping threshold to prevent exploding gradients.",
+            tooltip="Set to 0 to disable clipping. Value of 2.0 is a balanced default for diffusion models.",
+            importance=ImportanceLevel.IMPORTANT,
+            order=6
+        ))
+
+        # Gradient Clip Method
+        self._add_field(ConfigField(
+            name="grad_clip_method",
+            arg_name="--grad_clip_method",
+            ui_label="Gradient Clip Method",
+            field_type=FieldType.SELECT,
+            tab="training",
+            section="optimizer_config",
+            default_value="value",
+            choices=[
+                {"value": "value", "label": "Clip Individual Values"},
+                {"value": "norm", "label": "Clip By Norm"}
+            ],
+            help_text="Strategy for applying max_grad_norm during clipping.",
+            tooltip="'Value' clips offending gradients individually. 'Norm' rescales all gradients proportionally.",
+            importance=ImportanceLevel.ADVANCED,
+            order=7
+        ))
+
+        # Optimizer Offload Gradients
+        self._add_field(ConfigField(
+            name="optimizer_offload_gradients",
+            arg_name="--optimizer_offload_gradients",
+            ui_label="Offload Gradients to CPU",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="optimizer_config",
+            default_value=False,
+            dependencies=[
+                FieldDependency(field="optimizer", values=accelerate_optimizers + optimi_optimizers)
+            ],
+            help_text="Move optimizer gradients to CPU to save GPU memory.",
+            tooltip="Useful on large models when paired with Accelerate/Optimi optimizers. Increases CPU pressure.",
+            importance=ImportanceLevel.ADVANCED,
+            order=8
+        ))
+
+        # Fuse Optimizer Kernels
+        self._add_field(ConfigField(
+            name="fuse_optimizer",
+            arg_name="--fuse_optimizer",
+            ui_label="Use Fused Optimizer",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="optimizer_config",
+            default_value=False,
+            dependencies=[
+                FieldDependency(field="optimizer", values=accelerate_optimizers + optimi_optimizers)
+            ],
+            help_text="Enable fused kernels when offloading to reduce memory overhead.",
+            tooltip="May be slower but reduces memory when using CPU-offloaded optimizers.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=9
+        ))
+
+        # Optimizer Release Gradients
+        self._add_field(ConfigField(
+            name="optimizer_release_gradients",
+            arg_name="--optimizer_release_gradients",
+            ui_label="Release Gradients After Step",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="optimizer_config",
+            default_value=False,
+            dependencies=[
+                FieldDependency(field="optimizer", values=optimi_optimizers)
+            ],
+            help_text="Free gradient tensors immediately after optimizer step when using Optimi optimizers.",
+            tooltip="Saves memory on Optimi optimizers at the cost of extra allocations in the next step.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=10
         ))
 
     def _add_memory_performance_fields(self):
@@ -1958,27 +2242,6 @@ class FieldRegistry:
             order=4
         ))
 
-        # Base Model Precision
-        precision_choices = [
-            "no_change", "fp8-quanto", "fp8-torchao", "int8-quanto", "int8-torchao",
-            "int4-quanto", "int4-torchao", "int2-quanto", "fp4-bnb", "fp8-bnb", "int8-bnb", "int4-bnb"
-        ]
-        self._add_field(ConfigField(
-            name="base_model_precision",
-            arg_name="--base_model_precision",
-            ui_label="Base Model Quantization",
-            field_type=FieldType.SELECT,
-            tab="advanced",
-            section="memory_performance",
-            subsection="quantization",
-            default_value="no_change",
-            choices=[{"value": p, "label": p} for p in precision_choices],
-            help_text="Quantization for base model weights",
-            tooltip="Reduces VRAM usage by quantizing model. int8 saves ~50%, int4 saves ~75% but may impact quality.",
-            importance=ImportanceLevel.ADVANCED,
-            order=1
-        ))
-
     def _add_logging_fields(self):
         """Add logging and monitoring fields."""
         # Report To
@@ -1987,7 +2250,7 @@ class FieldRegistry:
             arg_name="--report_to",
             ui_label="Logging Platform",
             field_type=FieldType.SELECT,
-            tab="advanced",
+            tab="basic",
             section="logging",
             default_value="wandb",
             choices=[
@@ -2009,7 +2272,7 @@ class FieldRegistry:
             arg_name="--checkpointing_steps",
             ui_label="Checkpoint Every N Steps",
             field_type=FieldType.NUMBER,
-            tab="advanced",
+            tab="basic",
             section="checkpointing",
             default_value=500,
             validation_rules=[
@@ -2021,36 +2284,19 @@ class FieldRegistry:
             order=1
         ))
 
-        # Output Directory
-        self._add_field(ConfigField(
-            name="output_dir",
-            arg_name="--output_dir",
-            ui_label="Output Directory",
-            field_type=FieldType.TEXT,
-            tab="basic",
-            section="training_essentials",
-            default_value="simpletuner-results",
-            validation_rules=[
-                ValidationRule(ValidationRuleType.REQUIRED, message="Output directory is required")
-            ],
-            help_text="Where to save the trained model and checkpoints",
-            tooltip="Directory will be created if it doesn't exist. Use absolute paths for clarity.",
-            importance=ImportanceLevel.ESSENTIAL,
-            order=2
-        ))
-
         # Tracker Run Name
         self._add_field(ConfigField(
             name="tracker_run_name",
             arg_name="--tracker_run_name",
-            ui_label="Experiment Run Name",
+            ui_label="Run Name",
             field_type=FieldType.TEXT,
-            tab="advanced",
-            section="logging",
-            placeholder="my-training-run-1",
+            tab="basic",
+            section="project",
+            default_value="simpletuner-testing",
+            placeholder="simpletuner-testing",
             help_text="Name for this training run in tracking platforms",
             tooltip="Identifies this specific run in WandB/TensorBoard. If not set, uses a generated name.",
-            importance=ImportanceLevel.ADVANCED,
+            importance=ImportanceLevel.ESSENTIAL,
             order=2,
             dependencies=[
                 FieldDependency(
@@ -2068,21 +2314,14 @@ class FieldRegistry:
             arg_name="--tracker_project_name",
             ui_label="Project Name",
             field_type=FieldType.TEXT,
-            tab="advanced",
-            section="logging",
-            default_value="simpletuner-project",
+            tab="basic",
+            section="project",
+            default_value="simpletuner",
+            placeholder="simpletuner",
             help_text="Project name in tracking platforms",
             tooltip="Groups related training runs together in WandB/logging platforms",
-            importance=ImportanceLevel.ADVANCED,
-            order=3,
-            dependencies=[
-                FieldDependency(
-                    field="report_to",
-                    operator="not_equals",
-                    value="none",
-                    action="show"
-                )
-            ]
+            importance=ImportanceLevel.ESSENTIAL,
+            order=1
         ))
 
         # Tracker Image Layout
@@ -2091,7 +2330,7 @@ class FieldRegistry:
             arg_name="--tracker_image_layout",
             ui_label="Image Layout Style",
             field_type=FieldType.SELECT,
-            tab="advanced",
+            tab="basic",
             section="logging",
             default_value="gallery",
             choices=[
@@ -2118,7 +2357,7 @@ class FieldRegistry:
             arg_name="--logging_dir",
             ui_label="Local Logging Directory",
             field_type=FieldType.TEXT,
-            tab="advanced",
+            tab="basic",
             section="logging",
             default_value="logs",
             help_text="Directory for TensorBoard logs",

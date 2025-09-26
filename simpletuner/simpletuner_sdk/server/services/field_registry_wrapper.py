@@ -188,6 +188,32 @@ class LazyFieldRegistry:
         self._cache_ttl = ttl_seconds
         logger.info(f"Cache TTL set to {ttl_seconds} seconds")
 
+    def export_field_metadata(self) -> Dict[str, Any]:
+        """Export all field metadata for frontend consumption."""
+        registry = self._get_registry()
+        if registry is None:
+            logger.warning("Field registry not available, returning empty metadata")
+            return {"fields": {}, "dependencies_map": {}, "tabs": {}}
+
+        try:
+            return registry.export_field_metadata()
+        except Exception as e:
+            logger.error(f"Error exporting field metadata: {e}", exc_info=True)
+            return {"fields": {}, "dependencies_map": {}, "tabs": {}}
+
+    def validate_field_value(self, field_name: str, value: Any, context: Optional[Dict[str, Any]] = None) -> List[str]:
+        """Validate a field value against its rules."""
+        registry = self._get_registry()
+        if registry is None:
+            logger.warning(f"Field registry not available, cannot validate field '{field_name}'")
+            return []
+
+        try:
+            return registry.validate_field_value(field_name, value, context)
+        except Exception as e:
+            logger.error(f"Error validating field '{field_name}': {e}", exc_info=True)
+            return []
+
 
 # Create singleton instance
 lazy_field_registry = LazyFieldRegistry()
