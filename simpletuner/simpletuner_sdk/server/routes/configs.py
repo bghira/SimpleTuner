@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, status
@@ -100,22 +101,19 @@ async def get_data_backend_file(path: str) -> Any:
     """
     import json
     from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
-    from simpletuner.simpletuner_sdk.server.utils.security import validate_safe_path
+
+    def _is_relative_to(candidate: Path, base: Path) -> bool:
+        try:
+            candidate.relative_to(base)
+            return True
+        except ValueError:
+            return False
 
     try:
-        # Perform comprehensive path validation
-        validated_path = validate_safe_path(path)
-        if not validated_path:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid path: security validation failed"
-            )
-
-        # Get the configuration store to find the user's config directory
         store = _get_store()
+
         user_config_dir = store.config_dir
 
-        # Resolve the path using our utility function
         resolved_path = resolve_config_path(
             path,
             config_dir=user_config_dir,
@@ -128,8 +126,20 @@ async def get_data_backend_file(path: str) -> Any:
                 detail=f"Data backend config file not found: {path}"
             )
 
-        # Read and parse the JSON file
-        with open(resolved_path, 'r') as f:
+        allowed_dirs = [Path.cwd()]
+        try:
+            allowed_dirs.append(Path(user_config_dir))
+        except Exception:
+            pass
+
+        resolved_real = resolved_path.resolve()
+        if not any(_is_relative_to(resolved_real, directory.resolve()) for directory in allowed_dirs):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Resolved path is outside allowed directories",
+            )
+
+        with open(resolved_real, 'r', encoding='utf-8') as f:
             data = json.load(f)
 
         return data
