@@ -16,7 +16,7 @@ def get_simpletuner_root() -> Path:
     import simpletuner
 
     # Get the path to the simpletuner package
-    simpletuner_package = Path(simpletuner.__file__).parent
+    simpletuner_package = Path(simpletuner.__file__)
 
     # Go up one level to get the project root
     return simpletuner_package.parent
