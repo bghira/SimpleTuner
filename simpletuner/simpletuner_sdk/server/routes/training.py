@@ -18,6 +18,7 @@ from simpletuner.simpletuner_sdk.server.services.configs_service import ConfigsS
 from simpletuner.simpletuner_sdk import process_keeper
 from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
 from simpletuner.simpletuner_sdk.server.services.field_registry_wrapper import lazy_field_registry
+from simpletuner.simpletuner_sdk.server.dependencies.common import _load_active_config_cached
 
 router = APIRouter(prefix="/api/training", tags=["training"])
 
@@ -293,6 +294,12 @@ async def save_config(request: Request):
 
         # Use the new save_trainer_config method for flat JSON format
         store.save_trainer_config(active_config, save_config, overwrite=True)
+
+        # Invalidate cached config so UI reflects changes immediately
+        try:
+            _load_active_config_cached.clear_cache()
+        except AttributeError:
+            pass
 
         # Set as active config if it wasn't already
         if not store.get_active_config():
