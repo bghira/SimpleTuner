@@ -7,7 +7,7 @@ import os
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 _WEBUI_CONFIG_ENV = "SIMPLETUNER_WEB_UI_CONFIG"
 _XDG_HOME_ENV = "XDG_HOME"
@@ -37,6 +37,9 @@ class WebUIDefaults:
     output_dir: Optional[str] = None
     configs_dir: Optional[str] = None
     active_config: Optional[str] = None
+    theme: str = "dark"
+    event_polling_interval: int = 5
+    event_stream_enabled: bool = True
 
 
 @dataclass
@@ -98,11 +101,70 @@ class WebUIStateStore:
         payload = self._read_json("defaults")
         if not payload:
             return WebUIDefaults()
-        return WebUIDefaults(**{key: payload.get(key) for key in WebUIDefaults().__dict__.keys()})
+        data = {key: payload.get(key) for key in WebUIDefaults().__dict__.keys()}
+        defaults = WebUIDefaults(**data)
+
+        # Normalise theme selection
+        theme = (defaults.theme or "dark").lower().strip()
+        defaults.theme = theme if theme in {"dark", "tron"} else "dark"
+
+        # Ensure polling interval is a positive integer
+        try:
+            interval = int(defaults.event_polling_interval)
+        except (TypeError, ValueError):
+            interval = 5
+        defaults.event_polling_interval = max(1, interval)
+
+        # Normalise event stream toggle
+        stream_value = defaults.event_stream_enabled
+        if isinstance(stream_value, str):
+            defaults.event_stream_enabled = stream_value.strip().lower() in {"1", "true", "yes", "on"}
+        elif stream_value is None:
+            defaults.event_stream_enabled = True
+        else:
+            defaults.event_stream_enabled = bool(stream_value)
+
+        return defaults
 
     def save_defaults(self, defaults: WebUIDefaults) -> WebUIDefaults:
         self._write_json("defaults", asdict(defaults))
         return defaults
+
+    def _fallback_paths(self) -> Dict[str, str]:
+        home_dir = Path.home()
+        return {
+            "configs_dir": str(home_dir / ".simpletuner" / "configs"),
+            "output_dir": str(home_dir / ".simpletuner" / "output"),
+        }
+
+    def resolve_defaults(self, defaults: WebUIDefaults) -> Dict[str, Any]:
+        raw = asdict(defaults)
+        resolved = raw.copy()
+        fallbacks = self._fallback_paths()
+
+        configs_dir = resolved.get("configs_dir")
+        if configs_dir:
+            resolved["configs_dir__source"] = "stored"
+        else:
+            resolved["configs_dir"] = fallbacks["configs_dir"]
+            resolved["configs_dir__source"] = "fallback"
+
+        output_dir = resolved.get("output_dir")
+        if output_dir:
+            resolved["output_dir__source"] = "stored"
+        else:
+            resolved["output_dir"] = fallbacks["output_dir"]
+            resolved["output_dir__source"] = "fallback"
+
+        return {
+            "raw": raw,
+            "resolved": resolved,
+            "fallbacks": fallbacks,
+        }
+
+    def get_defaults_bundle(self) -> Dict[str, Dict[str, Any]]:
+        defaults = self.load_defaults()
+        return self.resolve_defaults(defaults)
 
     def load_onboarding(self) -> WebUIOnboardingState:
         payload = self._read_json("onboarding")
