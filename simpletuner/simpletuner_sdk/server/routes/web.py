@@ -15,6 +15,7 @@ from ..dependencies.common import (
     get_tab_render_data,
     TabRenderData,
 )
+from ..services.webui_state import WebUIStateStore
 from ..services.tab_service import TabService
 from ..utils.paths import get_template_directory
 
@@ -52,6 +53,8 @@ async def trainer_page(
 
     configs = config_store.list_configs()
     active_config = config_store.get_active_config()
+    defaults_bundle = WebUIStateStore().get_defaults_bundle()
+    resolved_defaults = defaults_bundle["resolved"]
 
     context = {
         "request": request,
@@ -59,6 +62,8 @@ async def trainer_page(
         "tabs": tabs,
         "configs": [c.to_dict() if not isinstance(c, dict) else c for c in configs],
         "active_config": active_config,
+        "webui_theme": resolved_defaults.get("theme", "dark"),
+        "webui_defaults": resolved_defaults,
     }
 
     return templates.TemplateResponse("trainer_htmx.html", context)
