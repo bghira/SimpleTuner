@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, status
@@ -63,6 +63,12 @@ class OnboardingStepUpdate(BaseModel):
 
 
 def _build_state_response(state: WebUIState, steps: List[OnboardingStepDefinition]) -> Dict[str, object]:
+    store = WebUIStateStore()
+    bundle = store.resolve_defaults(state.defaults)
+    defaults_dict = bundle["raw"]
+    resolved_defaults = bundle["resolved"]
+    fallbacks = bundle["fallbacks"]
+
     overlay_required = False
     onboarding_steps = []
 
@@ -90,7 +96,9 @@ def _build_state_response(state: WebUIState, steps: List[OnboardingStepDefinitio
         )
 
     return {
-        "defaults": asdict(state.defaults),
+        "defaults": defaults_dict,
+        "resolved_defaults": resolved_defaults,
+        "fallbacks": fallbacks,
         "onboarding": {
             "steps": onboarding_steps,
             "overlay_required": overlay_required,
@@ -180,6 +188,9 @@ class DefaultsUpdate(BaseModel):
     configs_dir: Optional[str] = None
     output_dir: Optional[str] = None
     active_config: Optional[str] = None
+    theme: Optional[str] = None
+    event_polling_interval: Optional[int] = None
+    event_stream_enabled: Optional[bool] = None
 
 
 @router.post("/defaults/update")
@@ -199,6 +210,17 @@ async def update_defaults(payload: DefaultsUpdate) -> Dict[str, object]:
             defaults.output_dir = normalized_path
         if payload.active_config is not None:
             defaults.active_config = payload.active_config
+        if payload.theme is not None:
+            theme = payload.theme.strip().lower()
+            defaults.theme = theme if theme in {"dark", "tron"} else "dark"
+        if payload.event_polling_interval is not None:
+            try:
+                interval = int(payload.event_polling_interval)
+            except (TypeError, ValueError):
+                interval = defaults.event_polling_interval
+            defaults.event_polling_interval = max(1, interval)
+        if payload.event_stream_enabled is not None:
+            defaults.event_stream_enabled = bool(payload.event_stream_enabled)
 
         # Save updated defaults
         store.save_defaults(defaults)
