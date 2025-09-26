@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import status
 
 from simpletuner.simpletuner_sdk.server.services.config_store import ConfigMetadata, ConfigStore
+from simpletuner.simpletuner_sdk.server.services.dataset_service import normalize_dataset_config_value
+from simpletuner.simpletuner_sdk.server.services.field_registry import FieldType
+from simpletuner.simpletuner_sdk.server.services.field_registry_wrapper import lazy_field_registry
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
 from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
 
@@ -299,6 +303,136 @@ class ConfigsService:
             "warnings": validation.warnings,
             "suggestions": validation.suggestions,
         }
+
+    # ------------------------------------------------------------------
+    # Shared helpers for config normalization
+    # ------------------------------------------------------------------
+    @staticmethod
+    def convert_value_by_type(value: Any, field_type: FieldType) -> Any:
+        """Convert a raw value into the appropriate Python type."""
+
+        if value is None:
+            return None
+
+        if field_type == FieldType.NUMBER:
+            if isinstance(value, (int, float)):
+                return value
+            if isinstance(value, str):
+                cleaned = value.strip()
+                if not cleaned:
+                    return value
+                try:
+                    if "." in cleaned or "e" in cleaned.lower():
+                        return float(cleaned)
+                    return int(cleaned)
+                except ValueError:
+                    return value
+            return value
+
+        if field_type == FieldType.CHECKBOX:
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (int, float)):
+                return value != 0
+            if isinstance(value, str):
+                return value.strip().lower() in {"true", "1", "yes", "on"}
+            return bool(value)
+
+        if field_type == FieldType.MULTI_SELECT:
+            if isinstance(value, str):
+                return [item.strip() for item in value.split(",") if item.strip()]
+            if isinstance(value, (list, tuple, set)):
+                return list(value)
+            return value
+
+        return value
+
+    @staticmethod
+    def normalize_form_to_config(
+        form_data: Dict[str, Any],
+        directory_fields: Optional[List[str]] = None,
+        output_root: Optional[str] = None,
+        configs_dir: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Normalize submitted form data into CLI-style config dict."""
+
+        directory_fields = directory_fields or []
+        config_dict: Dict[str, Any] = {}
+        excluded_fields = {"configs_dir", "__active_tab__"}
+
+        field_types: Dict[str, FieldType] = {
+            field.arg_name: field.field_type
+            for field in lazy_field_registry.get_all_fields()
+        }
+
+        numeric_fields = {
+            "--num_train_epochs",
+            "--max_train_steps",
+            "--lr_warmup_steps",
+            "--gradient_accumulation_steps",
+            "--train_batch_size",
+        }
+
+        always_include_fields = {"--model_flavour", "--optimizer_config"}
+
+        for key, value in form_data.items():
+            if key in excluded_fields:
+                continue
+
+            config_key = key if key.startswith("--") else f"--{key}"
+
+            if config_key in numeric_fields:
+                if value in (None, ""):
+                    value = "0"
+            elif config_key in always_include_fields:
+                if value in (None, ""):
+                    value = ""
+            elif value in (None, ""):
+                continue
+
+            if config_key in directory_fields and value:
+                expanded_value = os.path.expanduser(value)
+
+                if config_key == "--output_dir" and output_root:
+                    base_dir = os.path.abspath(os.path.expanduser(output_root))
+                    if not os.path.isabs(expanded_value):
+                        expanded_value = os.path.join(base_dir, expanded_value)
+
+                expanded_value = os.path.abspath(expanded_value)
+                config_dict[config_key] = os.path.normpath(expanded_value)
+                continue
+
+            field_type = field_types.get(config_key, FieldType.TEXT)
+            converted_value = ConfigsService.convert_value_by_type(value, field_type)
+
+            if (
+                isinstance(converted_value, str)
+                and converted_value
+                and converted_value.lower().endswith(".json")
+            ):
+                normalized_value = normalize_dataset_config_value(converted_value, configs_dir)
+                if normalized_value:
+                    converted_value = normalized_value
+
+            config_dict[config_key] = converted_value
+
+        return config_dict
+
+    @staticmethod
+    def coerce_config_values_by_field(config: Dict[str, Any]) -> Dict[str, Any]:
+        """Coerce config values to the correct Python types based on field metadata."""
+
+        coerced: Dict[str, Any] = {}
+        for key, value in config.items():
+            lookup_name = key[2:] if key.startswith("--") else key
+            field = lazy_field_registry.get_field(lookup_name)
+            if not field:
+                coerced[key] = value
+                continue
+
+            coerced[key] = ConfigsService.convert_value_by_type(value, field.field_type)
+
+        return coerced
 
 
 # Singleton instance used by routes
