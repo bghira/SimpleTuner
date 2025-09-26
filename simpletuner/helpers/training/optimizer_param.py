@@ -55,7 +55,7 @@ except:
 
 # Some optimizers are not available in multibackend bitsandbytes as of January 2025.
 is_ademamix_available = False
-if is_bitsandbytes_available:
+if is_bitsandbytes_available and hasattr(bitsandbytes, "optim"):
     if "AdEMAMix" in dir(bitsandbytes.optim):
         is_ademamix_available = True
 
@@ -283,7 +283,7 @@ optimizer_choices = {
     },
 }
 
-if is_bitsandbytes_available:
+if is_bitsandbytes_available and hasattr(bitsandbytes, "optim"):
     optimizer_choices.update(
         {
             "bnb-adagrad": {
