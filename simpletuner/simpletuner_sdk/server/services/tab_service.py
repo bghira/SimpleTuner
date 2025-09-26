@@ -17,6 +17,7 @@ from fastapi.requests import Request
 from fastapi.responses import HTMLResponse
 
 from .dataset_service import build_data_backend_choices
+from ..services.webui_state import WebUIStateStore
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ class TabType(str, Enum):
     DATASETS = "datasets"
     ENVIRONMENTS = "environments"
     VALIDATION = "validation"
+    UI_SETTINGS = "ui_settings"
 
 
 @dataclass
@@ -112,6 +114,14 @@ class TabService:
                 template="form_tab.html",
                 description="Configure visual validation jobs and output targets",
                 extra_context_handler=self._validation_tab_context
+            ),
+            TabType.UI_SETTINGS: TabConfig(
+                id="ui-settings",
+                title="UI Settings",
+                icon="fas fa-sliders",
+                template="ui_settings_tab.html",
+                description="Adjust WebUI preferences and behaviour",
+                extra_context_handler=self._ui_settings_tab_context
             ),
         }
 
@@ -345,6 +355,36 @@ class TabService:
         # Group fields under sections to reuse form_tab rendering
         context["grouped_fields"] = self._group_fields_by_section(fields, sections)
 
+        return context
+
+    def _ui_settings_tab_context(
+        self,
+        context: Dict[str, Any],
+        fields: List[Dict[str, Any]],
+        config_values: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Provide context data for UI settings tab."""
+        store = WebUIStateStore()
+        bundle = store.get_defaults_bundle()
+
+        context["ui_settings"] = {
+            "defaults": bundle["resolved"],
+            "raw_defaults": bundle["raw"],
+            "fallbacks": bundle["fallbacks"],
+            "themes": [
+                {
+                    "value": "dark",
+                    "label": "Dark",
+                    "description": "Classic SimpleTuner palette"
+                },
+                {
+                    "value": "tron",
+                    "label": "Tron Prototype",
+                    "description": "Experimental neon styling"
+                },
+            ],
+            "event_interval_options": [3, 5, 10, 15, 30, 60],
+        }
         return context
 
     def _datasets_tab_context(
