@@ -75,7 +75,7 @@ def _normalize_form_to_config(form_data: dict, directory_fields: list = None) ->
     """
     config_dict = {}
     # Fields that should be excluded from config dict
-    excluded_fields = {"configs_dir"}
+    excluded_fields = {"configs_dir", "__active_tab__"}
 
     # Get field registry to determine types
     field_types = {}
@@ -117,9 +117,6 @@ def _normalize_form_to_config(form_data: dict, directory_fields: list = None) ->
             # Convert value to appropriate type
             field_type = field_types.get(config_key, FieldType.TEXT)
             config_dict[config_key] = _convert_value_by_type(value, field_type)
-
-    if "--i_know_what_i_am_doing" not in config_dict:
-        config_dict["--i_know_what_i_am_doing"] = False
 
     return config_dict
 
@@ -254,6 +251,10 @@ async def save_config(request: Request):
     form_dict = dict(form_data)
     if "configs_dir" in form_dict:
         webui_settings["configs_dir"] = os.path.abspath(os.path.expanduser(form_dict["configs_dir"])) if form_dict["configs_dir"] else form_dict["configs_dir"]
+        form_dict.pop("configs_dir", None)
+
+    # Remove UI-only bookkeeping fields
+    form_dict.pop("__active_tab__", None)
 
     # Extract save options
     if "preserve_defaults" in form_dict:
@@ -264,7 +265,7 @@ async def save_config(request: Request):
         del form_dict["create_backup"]
 
     # Directory fields that need path expansion
-    directory_fields = ["--output_dir", "--instance_data_dir", "--logging_dir"]
+    directory_fields = ["--output_dir", "--instance_data_dir"]
 
     # Convert form data to config dict with path expansion for directory fields
     config_dict = _normalize_form_to_config(form_dict, directory_fields)
@@ -308,6 +309,15 @@ async def save_config(request: Request):
         all_defaults = _get_all_field_defaults()
         # Merge order: defaults < existing config < submitted form values
         complete_config = {**all_defaults, **existing_config_cli, **config_dict}
+
+        # Drop UI-only keys that should never reach the trainer config
+        for ui_key in ("configs_dir", "--configs_dir", "__active_tab__", "--__active_tab__"):
+            complete_config.pop(ui_key, None)
+
+        # Omit prediction_type when unset so models can auto-detect
+        prediction_key = "--prediction_type"
+        if prediction_key in complete_config and (complete_config[prediction_key] in (None, "")):
+            complete_config.pop(prediction_key, None)
 
         # Process the config for saving
         save_config = {}
