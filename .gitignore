@@ -76,3 +76,4 @@ coverage.xml
 .mypy_cache
 .ruff_cache
 test-screenshots/
+node_modules
