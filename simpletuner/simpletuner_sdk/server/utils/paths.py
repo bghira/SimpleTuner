@@ -61,8 +61,8 @@ def resolve_config_path(
     - Returns the path as-is if it exists
 
     For relative paths, checks in order:
-    1. Relative to current working directory (if check_cwd_first is True)
-    2. Relative to the provided config_dir
+    1. Relative to the provided config_dir (if supplied)
+    2. Relative to current working directory (if check_cwd_first is True)
     3. Relative to SimpleTuner's default config directory
     4. Relative to SimpleTuner's root directory (for paths like 'config/...')
 
@@ -87,14 +87,14 @@ def resolve_config_path(
     # For relative paths, try multiple resolution strategies
     paths_to_check = []
 
-    # 1. Check relative to CWD first (if enabled)
-    if check_cwd_first:
-        paths_to_check.append(Path.cwd() / expanded_path)
-
-    # 2. Check relative to provided config directory
+    # 1. Check relative to provided config directory (user preference wins)
     if config_dir:
         config_path = Path(os.path.expanduser(str(config_dir)))
         paths_to_check.append(config_path / expanded_path)
+
+    # 2. Check relative to CWD (only when explicitly allowed)
+    if check_cwd_first:
+        paths_to_check.append(Path.cwd() / expanded_path)
 
     # 3. Check relative to SimpleTuner's default config directory
     default_config = get_config_directory()
@@ -108,5 +108,21 @@ def resolve_config_path(
     for check_path in paths_to_check:
         if check_path.exists():
             return check_path.resolve()
+
+        # Handle legacy paths that redundantly include the config directory name,
+        # e.g. config/deepfloyd/multidatabackend.json when the configs_dir already
+        # points at .../config. In that scenario drop the leading segment and retry.
+        if (
+            config_dir
+            and not expanded_path.startswith(os.sep)
+            and Path(expanded_path).parts
+        ):
+            config_basename = Path(os.path.expanduser(str(config_dir))).name
+            parts = Path(expanded_path).parts
+            if parts and parts[0] == config_basename and len(parts) > 1:
+                trimmed_path = Path(os.path.join(*parts[1:]))
+                alt_candidate = Path(os.path.expanduser(str(config_dir))) / trimmed_path
+                if alt_candidate.exists():
+                    return alt_candidate.resolve()
 
     return None
