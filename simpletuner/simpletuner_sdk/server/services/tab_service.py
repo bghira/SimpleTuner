@@ -16,6 +16,8 @@ from fastapi.templating import Jinja2Templates
 from fastapi.requests import Request
 from fastapi.responses import HTMLResponse
 
+from .dataset_service import build_data_backend_choices
+
 logger = logging.getLogger(__name__)
 
 
@@ -60,7 +62,7 @@ class TabService:
                 id="basic-config",
                 title="Basic Configuration",
                 icon="fas fa-cog",
-                template="web/tabs/form_tab.html",
+                template="form_tab.html",
                 description="Essential settings to get started",
                 extra_context_handler=self._basic_tab_context
             ),
@@ -68,7 +70,7 @@ class TabService:
                 id="model-config",
                 title="Model Configuration",
                 icon="fas fa-brain",
-                template="web/tabs/form_tab.html",
+                template="form_tab.html",
                 description="Model architecture and settings",
                 extra_context_handler=self._model_tab_context
             ),
@@ -76,14 +78,14 @@ class TabService:
                 id="training-config",
                 title="Training Configuration",
                 icon="fas fa-graduation-cap",
-                template="web/tabs/form_tab.html",
+                template="form_tab.html",
                 description="Training parameters and optimization"
             ),
             TabType.ADVANCED: TabConfig(
                 id="advanced-config",
                 title="Advanced Configuration",
                 icon="fas fa-tools",
-                template="web/tabs/form_tab.html",
+                template="form_tab.html",
                 description="Advanced training options",
                 extra_context_handler=self._advanced_tab_context
             ),
@@ -91,7 +93,7 @@ class TabService:
                 id="datasets-config",
                 title="Dataset Configuration",
                 icon="fas fa-database",
-                template="web/tabs/datasets_tab.html",
+                template="datasets_tab.html",
                 description="Dataset loading and preprocessing",
                 extra_context_handler=self._datasets_tab_context
             ),
@@ -99,16 +101,17 @@ class TabService:
                 id="environments-config",
                 title="Environment Configuration",
                 icon="fas fa-server",
-                template="web/tabs/environments_tab.html",
+                template="environments_tab.html",
                 description="Environment and compute settings",
                 extra_context_handler=self._environments_tab_context
             ),
             TabType.VALIDATION: TabConfig(
-                id="validation-status",
-                title="Validation Status",
+                id="validation-config",
+                title="Validation & Output",
                 icon="fas fa-check-circle",
-                template="web/tabs/validation_tab.html",
-                description="Configuration validation status"
+                template="form_tab.html",
+                description="Configure visual validation jobs and output targets",
+                extra_context_handler=self._validation_tab_context
             ),
         }
 
@@ -140,25 +143,40 @@ class TabService:
         tab_name: str,
         fields: List[Dict[str, Any]],
         config_values: Dict[str, Any],
-        sections: Optional[List[Dict[str, Any]]] = None
+        sections: Optional[List[Dict[str, Any]]] = None,
+        raw_config: Optional[Dict[str, Any]] = None,
+        webui_defaults: Optional[Dict[str, Any]] = None,
     ) -> HTMLResponse:
-        """Render a tab with the provided fields and configuration.
+        """Render a tab with the provided fields and configuration."""
 
-        Args:
-            request: FastAPI request object
-            tab_name: Name of the tab to render
-            fields: List of field dictionaries
-            config_values: Current configuration values
-            sections: Optional list of sections for grouping fields
-
-        Returns:
-            HTMLResponse with rendered tab content
-        """
         tab_config = self.get_tab_config(tab_name)
 
-        # Base context for all tabs
+        def _coerce_bool(value: Any) -> bool:
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                return value.strip().lower() in {"1", "true", "yes", "on"}
+            if isinstance(value, (int, float)):
+                return value != 0
+            return False
+
+        raw_config = raw_config or {}
+        danger_mode_enabled = (
+            _coerce_bool(config_values.get("i_know_what_i_am_doing"))
+            or _coerce_bool(config_values.get("--i_know_what_i_am_doing"))
+            or _coerce_bool(raw_config.get("i_know_what_i_am_doing"))
+            or _coerce_bool(raw_config.get("--i_know_what_i_am_doing"))
+        )
+
         context = {
             "request": request,
+            "tab_name": tab_name,
+            "tab_config": {
+                "id": tab_config.id,
+                "title": tab_config.title,
+                "icon": tab_config.icon,
+                "description": tab_config.description,
+            },
             "section": {
                 "id": tab_config.id,
                 "title": tab_config.title,
@@ -167,6 +185,9 @@ class TabService:
             },
             "fields": fields,
             "config_values": config_values,
+            "raw_config": raw_config,
+            "webui_defaults": webui_defaults or {},
+            "danger_mode_enabled": danger_mode_enabled,
         }
 
         # Add sections if provided
@@ -218,13 +239,22 @@ class TabService:
         """Customize context for basic tab."""
         # Group fields into sections for basic tab
         sections = [
-            {"id": "webui", "title": "WebUI Settings", "icon": "fas fa-desktop"},
             {"id": "project", "title": "Project Settings", "icon": "fas fa-project-diagram"},
-            {"id": "model", "title": "Model Selection", "icon": "fas fa-cube"},
+            {"id": "training_data", "title": "Training Data", "icon": "fas fa-database"},
+            {"id": "logging", "title": "Logging & Checkpoints", "icon": "fas fa-stream"},
+            {"id": "other", "title": "Other Settings", "icon": "fas fa-sliders-h"},
         ]
 
-        context["sections"] = sections
-        context["grouped_fields"] = self._group_basic_fields(fields)
+        # Group fields and assign section_id to each field
+        grouped_fields = self._group_basic_fields(fields)
+        for section_id, section_fields in grouped_fields.items():
+            for field in section_fields:
+                field["section_id"] = section_id
+
+        sections_with_fields = [section for section in sections if grouped_fields.get(section["id"])]
+
+        context["sections"] = sections_with_fields
+        context["grouped_fields"] = grouped_fields
 
         return context
 
@@ -235,6 +265,10 @@ class TabService:
         config_values: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Customize context for model tab."""
+        danger_mode_enabled = context.get("danger_mode_enabled", False)
+        model_type_value = str(config_values.get("model_type") or "full")
+        is_lora_type = model_type_value == "lora"
+
         # Handle model_family label formatting
         for field_dict in fields:
             if field_dict["id"] == "model_family" and "options" in field_dict:
@@ -243,9 +277,36 @@ class TabService:
                     for opt in field_dict["options"]
                 ]
             elif field_dict["id"] == "lora_alpha":
-                # Always set lora_alpha to match lora_rank value
-                field_dict["value"] = config_values.get("lora_rank", "16")
+                if not is_lora_type:
+                    field_dict["disabled"] = True
+                elif danger_mode_enabled:
+                    field_dict.pop("disabled", None)
+                else:
+                    field_dict["value"] = config_values.get("lora_rank", "16")
+                    field_dict["disabled"] = True
+            elif field_dict["id"] == "prediction_type":
+                field_dict["disabled"] = not danger_mode_enabled
+                extra_classes = field_dict.get("extra_classes", "")
+                field_dict["extra_classes"] = f"{extra_classes} danger-mode-target".strip()
+            elif field_dict["id"] in {"base_model_precision", "text_encoder_1_precision", "quantize_via"}:
+                if is_lora_type:
+                    field_dict.pop("disabled", None)
+                    continue
+
                 field_dict["disabled"] = True
+                extra_classes = field_dict.get("extra_classes", "")
+                flag = "field-disabled"
+                field_dict["extra_classes"] = f"{extra_classes} {flag}".strip()
+
+        desired_order = {
+            "model_family": 0,
+            "model_flavour": 1,
+            "pretrained_model_name_or_path": 2,
+            "model_type": 3,
+            "base_model_precision": 4,
+            "gradient_accumulation_steps": 5,
+        }
+        fields.sort(key=lambda item: desired_order.get(item.get("id", ""), len(desired_order)))
 
         return context
 
@@ -262,6 +323,30 @@ class TabService:
         )
         return context
 
+    def _validation_tab_context(
+        self,
+        context: Dict[str, Any],
+        fields: List[Dict[str, Any]],
+        config_values: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Ensure validation tab renders its configuration fields."""
+        sections = context.get("sections") or []
+
+        if not sections:
+            sections = [
+                {
+                    "id": context["tab_config"]["id"],
+                    "title": context["tab_config"]["title"],
+                    "icon": context["tab_config"].get("icon"),
+                    "description": context["tab_config"].get("description"),
+                }
+            ]
+            context["sections"] = sections
+        # Group fields under sections to reuse form_tab rendering
+        context["grouped_fields"] = self._group_fields_by_section(fields, sections)
+
+        return context
+
     def _datasets_tab_context(
         self,
         context: Dict[str, Any],
@@ -270,13 +355,11 @@ class TabService:
     ) -> Dict[str, Any]:
         """Customize context for datasets tab."""
         # This tab uses a different template structure
-        # Import dataset-specific logic here
+        # Add data backend choices if available
         try:
-            from ..routes.fields import _build_data_backend_choices
-            # Add data backend choices if needed
-            context["data_backend_choices"] = _build_data_backend_choices()
-        except ImportError:
-            logger.warning("Could not import data backend choices builder")
+            context["data_backend_choices"] = build_data_backend_choices()
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.warning("Could not build data backend choices: %s", exc)
 
         return context
 
@@ -294,22 +377,54 @@ class TabService:
     def _group_basic_fields(self, fields: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
         """Group basic tab fields into sections."""
         grouped = {
-            "webui": [],
             "project": [],
-            "model": [],
+            "training_data": [],
+            "logging": [],
             "other": []
         }
 
+        project_order = [
+            "tracker_project_name",
+            "tracker_run_name",
+            "configs_dir",
+            "resume_from_checkpoint",
+            "output_dir",
+        ]
+
+        training_data_order = [
+            "data_backend_config",
+            "train_batch_size",
+            "resolution",
+        ]
+
+        logging_order = [
+            "checkpointing_steps",
+            "save_total_limit",
+            "report_to",
+            "logging_dir",
+            "tracker_image_layout",
+        ]
+
         for field in fields:
             field_id = field.get("id", "")
-            if field_id in ["configs_dir", "output_dir"]:
-                grouped["webui"].append(field)
-            elif field_id in ["job_id", "project_name", "tracker_project_name", "tracker_run_name"]:
+
+            if field_id in project_order:
                 grouped["project"].append(field)
-            elif field_id in ["model_type", "pretrained_model_name_or_path", "model_family", "base_model_precision"]:
-                grouped["model"].append(field)
+            elif field_id in training_data_order:
+                grouped["training_data"].append(field)
+            elif field_id in logging_order:
+                grouped["logging"].append(field)
             else:
                 grouped["other"].append(field)
+
+        # Enforce ordering within groups
+        def _sort_group(items, order):
+            order_map = {value: idx for idx, value in enumerate(order)}
+            return sorted(items, key=lambda item: order_map.get(item.get("id", ""), len(order_map)))
+
+        grouped["project"] = _sort_group(grouped["project"], project_order)
+        grouped["training_data"] = _sort_group(grouped["training_data"], training_data_order)
+        grouped["logging"] = _sort_group(grouped["logging"], logging_order)
 
         # Remove empty groups
         return {k: v for k, v in grouped.items() if v}
