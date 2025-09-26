@@ -9,6 +9,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Union, Callable
 
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +108,7 @@ class ConfigField:
     order: int = 0  # Display order within section
     dynamic_choices: bool = False  # Whether choices are dynamically loaded
     cmd_args_help: Optional[str] = None  # Formatted help text from cmd_args.py
+    step: Optional[float] = None  # Numeric input increment
 
 
 class FieldRegistry:
@@ -156,6 +158,11 @@ class FieldRegistry:
                 if not field.help_text:
                     field.help_text = arg_help
 
+        if field.field_type == FieldType.NUMBER and field.step is None:
+            auto_step = self._compute_default_step(field.default_value)
+            if auto_step is not None:
+                field.step = auto_step
+
         self._fields[field.name] = field
 
         # Update dependency map
@@ -163,6 +170,27 @@ class FieldRegistry:
             if dep.field not in self._dependencies_map:
                 self._dependencies_map[dep.field] = []
             self._dependencies_map[dep.field].append(field.name)
+
+    @staticmethod
+    def _compute_default_step(default_value: Any) -> Optional[float]:
+        """Derive a sensible numeric step based on the provided default value."""
+
+        if default_value in (None, ""):
+            return None
+
+        if isinstance(default_value, bool):
+            return None
+
+        if isinstance(default_value, int):
+            return 1.0
+
+        if isinstance(default_value, float):
+            if default_value == 0:
+                return 1.0
+            magnitude = math.pow(10, math.floor(math.log10(abs(default_value))))
+            return float(magnitude)
+
+        return None
 
     def _add_model_config_fields(self):
         """Add model configuration fields."""
@@ -483,25 +511,34 @@ class FieldRegistry:
             ]
         ))
 
-        # Text Encoder Precision
-        self._add_field(ConfigField(
-            name="text_encoder_1_precision",
-            arg_name="--text_encoder_1_precision",
-            ui_label="Text Encoder Precision",
-            field_type=FieldType.SELECT,
-            tab="model",
-            section="quantization",
-            default_value="no_change",
-            choices=[
-                {"value": "no_change", "label": "No Change"},
-                {"value": "int8-quanto", "label": "INT8 (Quanto)"},
-                {"value": "int4-quanto", "label": "INT4 (Quanto)"}
-            ],
-            help_text="Precision for text encoders. Lower precision saves memory.",
-            tooltip="Text encoder quantization has minimal impact on quality",
-            importance=ImportanceLevel.ADVANCED,
-            order=15
-        ))
+        text_encoder_precision_choices = [
+            {"value": "no_change", "label": "No Change"},
+            {"value": "int8-quanto", "label": "INT8 (Quanto)"},
+            {"value": "int4-quanto", "label": "INT4 (Quanto)"},
+            {"value": "int2-quanto", "label": "INT2 (Quanto)"},
+            {"value": "int8-torchao", "label": "INT8 (TorchAO)"},
+            {"value": "nf4-bnb", "label": "NF4 (BitsAndBytes)"},
+            {"value": "fp8-quanto", "label": "FP8 (Quanto)"},
+            {"value": "fp8uz-quanto", "label": "FP8UZ (Quanto)"},
+            {"value": "fp8-torchao", "label": "FP8 (TorchAO)"},
+        ]
+
+        for idx in range(1, 5):
+            ui_label = "Text Encoder Precision" if idx == 1 else f"Text Encoder {idx} Precision"
+            self._add_field(ConfigField(
+                name=f"text_encoder_{idx}_precision",
+                arg_name=f"--text_encoder_{idx}_precision",
+                ui_label=ui_label,
+                field_type=FieldType.SELECT,
+                tab="model",
+                section="quantization",
+                default_value="no_change",
+                choices=text_encoder_precision_choices,
+                help_text="Precision for text encoders. Lower precision saves memory.",
+                tooltip="Text encoder quantization has minimal impact on quality",
+                importance=ImportanceLevel.ADVANCED,
+                order=15 + idx - 1
+            ))
 
         # Gradient Checkpointing Interval
         self._add_field(ConfigField(
@@ -820,12 +857,6 @@ class FieldRegistry:
                     operator="equals",
                     value="full",
                     action="enable"
-                ),
-                FieldDependency(
-                    field="model_family",
-                    operator="in",
-                    values=["sd1x", "sd2x"],
-                    action="show"
                 )
             ]
         ))
