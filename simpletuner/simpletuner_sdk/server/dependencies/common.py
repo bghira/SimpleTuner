@@ -8,18 +8,24 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, status, Depends
 from fastapi.requests import Request
 
 from ..services.config_store import ConfigStore
 from ..services.webui_state import WebUIStateStore
 from ..services.field_registry_wrapper import lazy_field_registry
 from ..services.cache_service import cache_response
+from ..services.field_service import FieldService, FieldFormat
 
 logger = logging.getLogger(__name__)
+
+
+# Shared service instances
+_field_service = FieldService()
 
 
 # Cache for config data and webui defaults
@@ -32,8 +38,18 @@ def _load_active_config_cached() -> Dict[str, Any]:
     if active_config is None:
         return {}
 
-    # Load config file
-    config_path = Path(config_store.configs_dir) / active_config / "config.json"
+    # Ensure active_config is a string
+    if not isinstance(active_config, str):
+        logger.error(f"Invalid active_config type: {type(active_config)}, expected string")
+        return {}
+
+    # Validate config name doesn't contain path separators
+    if "/" in active_config or "\\" in active_config:
+        logger.error(f"Invalid config name contains path separator: {active_config}")
+        return {}
+
+    # Load config file - active_config is a string (config name)
+    config_path = Path(config_store.config_dir) / active_config / "config.json"
     if not config_path.exists():
         logger.warning(f"Active config file not found: {config_path}")
         return {}
@@ -61,13 +77,17 @@ async def get_webui_defaults() -> Dict[str, Any]:
     Returns:
         Dict with configs_dir and output_dir defaults
     """
-    webui_defaults = {}
+    webui_defaults: Dict[str, str]
     try:
         state_store = WebUIStateStore()
         defaults = state_store.load_defaults()
+
+        configs_dir = defaults.configs_dir or str(Path.home() / ".simpletuner" / "configs")
+        output_dir = defaults.output_dir or str(Path.home() / ".simpletuner" / "output")
+
         webui_defaults = {
-            "configs_dir": defaults.configs_dir or "Not configured",
-            "output_dir": defaults.output_dir or "Not configured",
+            "configs_dir": configs_dir or "Not configured",
+            "output_dir": output_dir or "Not configured",
         }
     except Exception as e:
         logger.error(f"Error loading WebUI defaults: {e}")
@@ -128,151 +148,55 @@ def get_config_value(config_data: Dict[str, Any], key: str, default: Any = "") -
         return default
 
 
-def convert_field_to_template_format(field: Any, config_values: Dict[str, Any]) -> Dict[str, Any]:
-    """Convert a ConfigField to the format expected by templates.
+@dataclass
+class TabRenderData:
+    """Prepared data required to render a trainer tab."""
 
-    Args:
-        field: ConfigField instance
-        config_values: Current configuration values
-
-    Returns:
-        Dict with field data formatted for templates
-    """
-    # Get the field value
-    field_value = config_values.get(field.name, field.default_value)
-
-    # Special handling for num_train_epochs and max_train_steps
-    if field.name == "num_train_epochs":
-        logger.debug(f"num_train_epochs raw value: {field_value}, type: {type(field_value)}, in config: {field.name in config_values}")
-        # Convert string "0" to integer 0
-        if str(field_value) == "0" or field_value == 0:
-            field_value = 0
-        elif field_value == 1 and field.name not in config_values:
-            # If using default value of 1, start empty to allow spinner to go to 0
-            field_value = ""
-        logger.debug(f"num_train_epochs final value: {field_value}")
-    elif field.name == "max_train_steps":
-        logger.debug(f"max_train_steps raw value: {field_value}, type: {type(field_value)}, in config: {field.name in config_values}")
-        # Convert string "0" to integer 0
-        if str(field_value) == "0" or field_value == 0:
-            field_value = 0
-        logger.debug(f"max_train_steps final value: {field_value}")
-
-    field_dict = {
-        "id": field.name,
-        "name": field.arg_name,
-        "label": field.ui_label,
-        "type": field.field_type.value.lower(),
-        "value": field_value,
-        "description": field.help_text,
-    }
-
-    field_dict["extra_classes"] = ""
-
-    # Add cmd_args help for detailed tooltip
-    if hasattr(field, 'cmd_args_help') and field.cmd_args_help:
-        field_dict["cmd_args_help"] = field.cmd_args_help
-
-    # Add section ID if present
-    if hasattr(field, 'section') and field.section:
-        field_dict["section_id"] = field.section
-
-    # Handle conditional display
-    if hasattr(field, 'conditional_on'):
-        field_dict["conditional_on"] = field.conditional_on
-        field_dict["extra_classes"] += " conditional-field"
-
-    # Add min/max for number fields
-    if field.field_type.value == "NUMBER":
-        if hasattr(field, 'min_value') and field.min_value is not None:
-            field_dict["min"] = field.min_value
-        if hasattr(field, 'max_value') and field.max_value is not None:
-            field_dict["max"] = field.max_value
-        if hasattr(field, 'step') and field.step is not None:
-            field_dict["step"] = field.step
-
-    # Add options for select/multi-select fields
-    if field.field_type.value in ["SELECT", "MULTI_SELECT"]:
-        if hasattr(field, 'choices') and field.choices:
-            field_dict["options"] = [{"value": choice, "label": choice} for choice in field.choices]
-
-    # Add placeholder for text fields
-    if field.field_type.value in ["TEXT", "TEXTAREA"]:
-        if hasattr(field, 'placeholder') and field.placeholder:
-            field_dict["placeholder"] = field.placeholder
-
-    # Add required flag
-    if hasattr(field, 'required'):
-        field_dict["required"] = field.required
-
-    # Add disabled flag
-    if hasattr(field, 'disabled'):
-        field_dict["disabled"] = field.disabled
-
-    return field_dict
+    fields: List[Dict[str, Any]]
+    config_values: Dict[str, Any]
+    sections: Optional[List[Dict[str, Any]]]
+    raw_config: Dict[str, Any]
+    webui_defaults: Dict[str, Any]
 
 
-class TabFieldsDependency:
-    """Dependency class for getting tab fields with template formatting."""
+async def get_tab_render_data(
+    tab_name: str,
+    field_registry = Depends(get_field_registry),
+    config_data: Dict[str, Any] = Depends(get_config_data),
+    webui_defaults: Dict[str, Any] = Depends(get_webui_defaults)
+) -> TabRenderData:
+    """Prepare template-ready data for a trainer tab."""
 
-    def __init__(self, tab_name: str):
-        self.tab_name = tab_name
+    try:
+        tab_fields = field_registry.get_fields_for_tab(tab_name)
+    except Exception as exc:  # pragma: no cover - defensive guard
+        logger.error("Failed to pull fields for tab %s: %s", tab_name, exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to load fields for tab '{tab_name}'"
+        ) from exc
 
-    async def __call__(
-        self,
-        field_registry = Depends(get_field_registry),
-        config_data: Dict[str, Any] = Depends(get_config_data),
-        webui_defaults: Dict[str, Any] = Depends(get_webui_defaults)
-    ) -> List[Dict[str, Any]]:
-        """Get fields for a specific tab formatted for templates.
+    config_values = _field_service.prepare_tab_field_values(
+        tab_name=tab_name,
+        config_data=config_data,
+        webui_defaults=webui_defaults,
+    )
 
-        Returns:
-            List of field dictionaries formatted for templates
-        """
-        # Get fields from registry
-        try:
-            tab_fields = field_registry.get_fields_for_tab(self.tab_name)
-            logger.debug(f"Field registry returned {len(tab_fields)} fields for '{self.tab_name}' tab")
-        except Exception as e:
-            logger.error(f"Error getting fields for tab '{self.tab_name}': {e}")
-            tab_fields = []
+    formatted_fields = _field_service.convert_fields(
+        tab_fields,
+        FieldFormat.TEMPLATE,
+        config_values,
+    )
 
-        # Build config values dictionary
-        config_values = {}
-        for field in tab_fields:
-            # Special handling for output_dir to use webui defaults
-            if field.name == "output_dir":
-                config_values[field.name] = get_config_value(
-                    config_data,
-                    field.name,
-                    webui_defaults.get("output_dir", "")
-                )
-            else:
-                config_values[field.name] = get_config_value(
-                    config_data,
-                    field.name,
-                    field.default_value
-                )
+    sections = field_registry.get_sections_for_tab(tab_name)
 
-        # Also add WebUI-specific values
-        if self.tab_name == "basic":
-            config_values["configs_dir"] = webui_defaults.get("configs_dir", "")
-            config_values["job_id"] = get_config_value(config_data, "job_id", "")
-
-        # Convert fields to template format
-        return [convert_field_to_template_format(field, config_values) for field in tab_fields]
-
-
-def get_tab_fields(tab_name: str) -> TabFieldsDependency:
-    """Factory function to create tab fields dependency.
-
-    Args:
-        tab_name: Name of the tab
-
-    Returns:
-        TabFieldsDependency instance
-    """
-    return TabFieldsDependency(tab_name)
+    return TabRenderData(
+        fields=formatted_fields,
+        config_values=config_values,
+        sections=sections or None,
+        raw_config=config_data,
+        webui_defaults=webui_defaults,
+    )
 
 
 # Request context dependencies
@@ -302,3 +226,12 @@ async def get_htmx_request(request: Request) -> bool:
         True if HTMX request, False otherwise
     """
     return request.headers.get("HX-Request") == "true"
+
+
+async def get_config_store() -> ConfigStore:
+    """FastAPI dependency to get cached ConfigStore instance.
+
+    Returns:
+        ConfigStore instance (singleton with caching)
+    """
+    return ConfigStore()  # Returns singleton instance with caching
