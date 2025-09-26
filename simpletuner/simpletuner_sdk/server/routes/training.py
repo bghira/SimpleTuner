@@ -5,18 +5,19 @@ from __future__ import annotations
 import os
 from datetime import datetime
 import asyncio
+from typing import Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from simpletuner.simpletuner_sdk.api_state import APIState
-from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore, ConfigMetadata
-from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
+from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
+from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore, WebUIDefaults
+from simpletuner.simpletuner_sdk.server.services.configs_service import ConfigsService
 from simpletuner.simpletuner_sdk import process_keeper
 from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
 from simpletuner.simpletuner_sdk.server.services.field_registry_wrapper import lazy_field_registry
-from simpletuner.simpletuner_sdk.server.services.field_registry import FieldType
 
 router = APIRouter(prefix="/api/training", tags=["training"])
 
@@ -33,92 +34,6 @@ class TrainingConfig(BaseModel):
     mixed_precision: str = "bf16"
 
 
-def _convert_value_by_type(value: str, field_type: FieldType) -> any:
-    """Convert a string value to the appropriate type based on field type.
-
-    Args:
-        value: The string value to convert
-        field_type: The field type from the field registry
-
-    Returns:
-        The converted value with the correct type
-    """
-    if not value and value != "0":
-        return value
-
-    if field_type == FieldType.NUMBER:
-        # Try to convert to int first, then float
-        try:
-            # Check if it's a float
-            if '.' in value or 'e' in value.lower():
-                return float(value)
-            return int(value)
-        except ValueError:
-            return value
-    elif field_type == FieldType.CHECKBOX:
-        # Convert checkbox values to boolean
-        return value.lower() in ('true', '1', 'yes', 'on')
-    else:
-        # TEXT, SELECT, TEXTAREA, FILE, etc. remain as strings
-        return value
-
-
-def _normalize_form_to_config(form_data: dict, directory_fields: list = None) -> dict:
-    """Convert form data to config dict with -- prefixes and proper type conversion.
-
-    Args:
-        form_data: The form data dictionary from the request
-        directory_fields: Optional list of fields that should have path expansion applied
-
-    Returns:
-        Dictionary with normalized config keys (all having -- prefix) and proper types
-    """
-    config_dict = {}
-    # Fields that should be excluded from config dict
-    excluded_fields = {"configs_dir", "__active_tab__"}
-
-    # Get field registry to determine types
-    field_types = {}
-    for field in lazy_field_registry.get_all_fields():
-        field_types[field.arg_name] = field.field_type
-
-    # Numeric fields that should always be included, even if "0"
-    numeric_fields = ["--num_train_epochs", "--max_train_steps", "--lr_warmup_steps",
-                      "--gradient_accumulation_steps", "--train_batch_size"]
-
-    # Fields that should always be included even if empty
-    always_include_fields = ["--model_flavour", "--optimizer_config"]
-
-    for key, value in form_data.items():
-        # Skip excluded fields
-        if key in excluded_fields:
-            continue
-
-        # Ensure -- prefix
-        config_key = key if key.startswith("--") else f"--{key}"
-
-        # For numeric fields, always include the value (even "0")
-        if config_key in numeric_fields:
-            # Always include numeric fields, even if the value is "0" or empty
-            if not value:
-                value = "0"
-        elif config_key in always_include_fields:
-            # Always include these fields even if empty
-            if not value:
-                value = ""
-        elif not value:
-            # Skip empty values for other fields
-            continue
-
-        # Apply directory path expansion if needed
-        if directory_fields and config_key in directory_fields and value:
-            config_dict[config_key] = os.path.abspath(os.path.expanduser(value))
-        else:
-            # Convert value to appropriate type
-            field_type = field_types.get(config_key, FieldType.TEXT)
-            config_dict[config_key] = _convert_value_by_type(value, field_type)
-
-    return config_dict
 
 
 def _get_config_store() -> ConfigStore:
@@ -133,6 +48,16 @@ def _get_config_store() -> ConfigStore:
     return ConfigStore()
 
 
+def _get_webui_state() -> Tuple[Optional[WebUIStateStore], WebUIDefaults]:
+    """Load WebUI state store and defaults with safe fallbacks."""
+    try:
+        store = WebUIStateStore()
+        defaults = store.load_defaults()
+        return store, defaults
+    except Exception:
+        return None, WebUIDefaults()
+
+
 def _get_all_field_defaults() -> dict:
     """Get all default values from field registry with proper types.
 
@@ -142,12 +67,10 @@ def _get_all_field_defaults() -> dict:
     defaults = {}
 
     for field in lazy_field_registry.get_all_fields():
-        if field.default_value is not None:
-            # Convert default value to proper type
-            defaults[field.arg_name] = _convert_value_by_type(
-                str(field.default_value) if not isinstance(field.default_value, bool) else str(field.default_value).lower(),
-                field.field_type
-            )
+        defaults[field.arg_name] = ConfigsService.convert_value_by_type(
+            field.default_value,
+            field.field_type,
+        )
 
     return defaults
 
@@ -158,7 +81,12 @@ async def validate_config(request: Request):
     form_data = await request.form()
 
     # Convert form data to config dict with -- prefixes
-    config_dict = _normalize_form_to_config(dict(form_data))
+    _, webui_defaults = _get_webui_state()
+    config_dict = ConfigsService.normalize_form_to_config(
+        dict(form_data),
+        output_root=webui_defaults.output_dir,
+        configs_dir=webui_defaults.configs_dir,
+    )
 
     # Get all field defaults and merge with form data for complete validation
     all_defaults = _get_all_field_defaults()
@@ -244,13 +172,23 @@ async def save_config(request: Request):
     form_data = await request.form()
 
     # Separate WebUI settings and save options from training config
-    webui_settings = {}
+    state_store, webui_defaults = _get_webui_state()
+    defaults_changed = False
     save_options = {}
 
     # Extract WebUI-specific settings and save options
     form_dict = dict(form_data)
     if "configs_dir" in form_dict:
-        webui_settings["configs_dir"] = os.path.abspath(os.path.expanduser(form_dict["configs_dir"])) if form_dict["configs_dir"] else form_dict["configs_dir"]
+        normalized_configs_dir = (
+            os.path.abspath(os.path.expanduser(form_dict["configs_dir"]))
+            if form_dict["configs_dir"]
+            else form_dict["configs_dir"]
+        )
+        form_dict.pop("configs_dir", None)
+        if webui_defaults.configs_dir != normalized_configs_dir:
+            webui_defaults.configs_dir = normalized_configs_dir
+            defaults_changed = True
+    else:
         form_dict.pop("configs_dir", None)
 
     # Remove UI-only bookkeeping fields
@@ -268,7 +206,12 @@ async def save_config(request: Request):
     directory_fields = ["--output_dir", "--instance_data_dir"]
 
     # Convert form data to config dict with path expansion for directory fields
-    config_dict = _normalize_form_to_config(form_dict, directory_fields)
+    config_dict = ConfigsService.normalize_form_to_config(
+        form_dict,
+        directory_fields,
+        output_root=webui_defaults.output_dir,
+        configs_dir=webui_defaults.configs_dir,
+    )
 
     # Debug log what we're saving
     import logging
@@ -298,17 +241,14 @@ async def save_config(request: Request):
 
     try:
         # Save WebUI settings if present
-        if webui_settings:
-            state_store = WebUIStateStore()
-            defaults = state_store.load_defaults()
-            for key, value in webui_settings.items():
-                setattr(defaults, key, value)
-            state_store.save_defaults(defaults)
+        if defaults_changed and state_store:
+            state_store.save_defaults(webui_defaults)
 
         # Get all field defaults and merge with existing config plus form data
         all_defaults = _get_all_field_defaults()
         # Merge order: defaults < existing config < submitted form values
         complete_config = {**all_defaults, **existing_config_cli, **config_dict}
+        complete_config = ConfigsService.coerce_config_values_by_field(complete_config)
 
         # Drop UI-only keys that should never reach the trainer config
         for ui_key in ("configs_dir", "--configs_dir", "__active_tab__", "--__active_tab__"):
@@ -380,7 +320,12 @@ async def start_training(request: Request):
     form_data = await request.form()
 
     # Convert form data to config dict with -- prefixes
-    config_dict = _normalize_form_to_config(dict(form_data))
+    _, webui_defaults = _get_webui_state()
+    config_dict = ConfigsService.normalize_form_to_config(
+        dict(form_data),
+        output_root=webui_defaults.output_dir,
+        configs_dir=webui_defaults.configs_dir,
+    )
 
     # Get all field defaults and merge with form data for complete validation
     all_defaults = _get_all_field_defaults()
