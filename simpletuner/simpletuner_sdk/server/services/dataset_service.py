@@ -21,6 +21,42 @@ def _format_dataset_path(path: Path) -> str:
         return str(resolved)
 
 
+def normalize_dataset_config_value(
+    value: Optional[str],
+    configs_dir: Optional[str] = None,
+) -> Optional[str]:
+    """Return a canonical dataset config string that matches selector option values."""
+
+    if not value:
+        return value
+
+    try:
+        resolved = resolve_config_path(value, config_dir=configs_dir, check_cwd_first=True)
+    except Exception:
+        resolved = None
+
+    if resolved:
+        return _format_dataset_path(resolved)
+
+    if configs_dir:
+        try:
+            config_basename = Path(configs_dir).expanduser().name
+            parts = Path(value).parts
+            if parts and parts[0] == config_basename and len(parts) > 1:
+                trimmed = Path(*parts[1:])
+                try:
+                    resolved_trimmed = resolve_config_path(trimmed, config_dir=configs_dir, check_cwd_first=True)
+                except Exception:
+                    resolved_trimmed = None
+                if resolved_trimmed:
+                    return _format_dataset_path(resolved_trimmed)
+                return trimmed.as_posix()
+        except Exception:
+            pass
+
+    return value
+
+
 def build_data_backend_choices() -> List[Dict[str, str]]:
     """Collect available dataset configuration candidates for selection widgets."""
 
