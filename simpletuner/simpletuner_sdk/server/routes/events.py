@@ -9,6 +9,9 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from sse_starlette.sse import EventSourceResponse
+
+from ..services.sse_manager import get_sse_manager
 
 logger = logging.getLogger("EventRoutes")
 
@@ -82,71 +85,118 @@ async def broadcast(request: Request, last_event_index: int = 0):
 @router.get("/api/events")
 async def events_stream(request: Request):
     """
-    Server-Sent Events endpoint for real-time updates.
+    Server-Sent Events endpoint for real-time updates with connection management.
     """
+    # Get SSE manager
+    sse_manager = get_sse_manager()
+
+    # Try to add connection with limits
+    connection = await sse_manager.add_connection(request)
+    if not connection:
+        # Connection limit reached
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "Connection limit reached",
+                "message": "Too many concurrent connections. Please try again later."
+            }
+        )
 
     async def event_generator():
-        """Generate SSE events."""
+        """Generate SSE events with proper connection management."""
         # Get event store
         event_store = getattr(request.app.state, "event_store", None)
         if not event_store:
             from ..services.event_store import get_default_store
-
             event_store = get_default_store()
 
         last_index = 0
 
-        # Send initial connection event
-        yield f"data: {json.dumps({'type': 'connected', 'message': 'Connected to SimpleTuner'})}\n\n"
-
         try:
-            while True:
-                # Check for new events
-                events = event_store.get_events_since(last_index)
+            # Send initial connection event
+            await sse_manager.send_to_connection(
+                connection.connection_id,
+                {'type': 'connected', 'message': 'Connected to SimpleTuner'},
+                event_type="connection"
+            )
 
-                for event in events:
-                    # Transform event data for frontend
-                    sse_event = {
-                        "type": event.get("message_type", "notification"),
-                        "data": event,
-                        "timestamp": event.get("timestamp"),
-                    }
+            # Set up event monitoring task
+            async def monitor_events():
+                nonlocal last_index
+                while connection.active:
+                    try:
+                        # Check for new events
+                        events = event_store.get_events_since(last_index)
 
-                    # Map specific event types
-                    if event.get("message_type") == "training_progress":
-                        sse_event["type"] = "training_progress"
-                        sse_event["progress"] = event.get("progress", {})
-                    elif event.get("message_type") == "validation_complete":
-                        sse_event["type"] = "validation_complete"
-                    elif event.get("message_type") == "error":
-                        sse_event["type"] = "error"
-                        sse_event["message"] = event.get("message", "Unknown error")
+                        for event in events:
+                            # Transform event data for frontend
+                            sse_event = {
+                                "type": event.get("message_type", "notification"),
+                                "data": event,
+                                "timestamp": event.get("timestamp"),
+                            }
+
+                            # Map specific event types
+                            if event.get("message_type") == "training_progress":
+                                sse_event["type"] = "training_progress"
+                                sse_event["progress"] = event.get("progress", {})
+                            elif event.get("message_type") == "validation_complete":
+                                sse_event["type"] = "validation_complete"
+                            elif event.get("message_type") == "error":
+                                sse_event["type"] = "error"
+                                sse_event["message"] = event.get("message", "Unknown error")
+                            else:
+                                sse_event["type"] = "notification"
+                                sse_event["message"] = event.get("message", str(event))
+                                sse_event["level"] = event.get("level", "info")
+
+                            # Send through SSE manager
+                            await sse_manager.send_to_connection(
+                                connection.connection_id,
+                                sse_event,
+                                event_type=sse_event["type"]
+                            )
+
+                        last_index += len(events)
+
+                        # Wait before checking for more events
+                        await asyncio.sleep(1)
+
+                    except asyncio.CancelledError:
+                        break
+                    except Exception as e:
+                        logger.error(f"Error in event monitor: {e}")
+                        await asyncio.sleep(5)  # Wait longer on error
+
+            # Start monitoring task
+            monitor_task = asyncio.create_task(monitor_events())
+
+            try:
+                # Use SSE manager's event generator
+                async for message in sse_manager.create_event_generator(connection):
+                    if message.get("event"):
+                        yield {
+                            "event": message["event"],
+                            "data": json.dumps(message["data"])
+                        }
                     else:
-                        sse_event["type"] = "notification"
-                        sse_event["message"] = event.get("message", str(event))
-                        sse_event["level"] = event.get("level", "info")
+                        yield {"data": json.dumps(message["data"])}
 
-                    yield f"data: {json.dumps(sse_event)}\n\n"
+            finally:
+                # Clean up monitoring task
+                monitor_task.cancel()
+                try:
+                    await monitor_task
+                except asyncio.CancelledError:
+                    pass
 
-                last_index += len(events)
+        except Exception as e:
+            logger.error(f"Error in SSE stream: {e}")
+        finally:
+            # Ensure connection is removed
+            await sse_manager.remove_connection(connection.connection_id)
 
-                # Wait before checking for more events
-                await asyncio.sleep(1)
-
-        except asyncio.CancelledError:
-            # Client disconnected
-            logger.info("SSE client disconnected")
-            return
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            # CORS headers are now handled by middleware - see security_middleware.py
-        },
-    )
+    return EventSourceResponse(event_generator())
 
 
 @router.get("/api/events/recent")
