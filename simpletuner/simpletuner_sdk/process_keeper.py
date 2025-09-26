@@ -196,6 +196,9 @@ try:
     send_event("state", {{"status": "completed", "result": str(result)}})
 except Exception as e:
     logger.error(f"Function error: {{e}}")
+    import traceback
+    traceback_str = traceback.format_exc()
+    logger.error(traceback_str)
     send_event("error", {{"message": str(e)}})
     send_event("state", {{"status": "failed"}})
 
