@@ -15,6 +15,7 @@ from simpletuner.simpletuner_sdk.server.services.field_registry import FieldType
 from simpletuner.simpletuner_sdk.server.services.field_registry_wrapper import lazy_field_registry
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
 from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
+from simpletuner.simpletuner_sdk.server.dependencies.common import _load_active_config_cached
 
 
 class ConfigServiceError(Exception):
@@ -28,6 +29,13 @@ class ConfigServiceError(Exception):
 
 class ConfigsService:
     """Coordinator for configuration-related operations."""
+
+    @staticmethod
+    def _invalidate_active_config_cache() -> None:
+        try:
+            _load_active_config_cached.clear_cache()
+        except AttributeError:
+            pass
 
     def _get_store(self, config_type: str = "model") -> ConfigStore:
         """Return a ConfigStore using user defaults when available."""
@@ -163,6 +171,7 @@ class ConfigsService:
         except FileExistsError as exc:
             raise ConfigServiceError(str(exc), status.HTTP_409_CONFLICT) from exc
 
+        self._invalidate_active_config_cache()
         return {
             "message": f"Configuration '{name}' created successfully",
             "metadata": saved.model_dump(),
@@ -194,6 +203,7 @@ class ConfigsService:
         existing_metadata.tags = tags if tags else existing_metadata.tags
 
         saved = store.save_config(name, config, existing_metadata, overwrite=True)
+        self._invalidate_active_config_cache()
         return {
             "message": f"Configuration '{name}' updated successfully",
             "metadata": saved.model_dump(),
@@ -205,6 +215,7 @@ class ConfigsService:
         if store.get_active_config() == name:
             raise ConfigServiceError("Cannot delete the active configuration", status.HTTP_400_BAD_REQUEST)
         if store.delete_config(name):
+            self._invalidate_active_config_cache()
             return {"message": f"Configuration '{name}' deleted successfully"}
         raise ConfigServiceError(f"Configuration '{name}' not found", status.HTTP_404_NOT_FOUND)
 
@@ -212,6 +223,7 @@ class ConfigsService:
         store = self._get_store(config_type)
         try:
             metadata = store.rename_config(name, new_name)
+            self._invalidate_active_config_cache()
             return {
                 "message": f"Configuration renamed from '{name}' to '{new_name}'",
                 "metadata": metadata.model_dump(),
@@ -225,6 +237,7 @@ class ConfigsService:
         store = self._get_store(config_type)
         try:
             metadata = store.copy_config(name, target_name)
+            self._invalidate_active_config_cache()
             return {
                 "message": f"Configuration '{name}' copied to '{target_name}'",
                 "metadata": metadata.model_dump(),
@@ -238,6 +251,7 @@ class ConfigsService:
         store = self._get_store()
         try:
             store.set_active_config(name)
+            self._invalidate_active_config_cache()
             return {"message": f"Configuration '{name}' is now active", "active": name}
         except FileNotFoundError as exc:
             raise ConfigServiceError(str(exc), status.HTTP_404_NOT_FOUND) from exc
@@ -253,6 +267,7 @@ class ConfigsService:
         store = self._get_store(config_type)
         try:
             metadata = store.import_config(data, name, overwrite)
+            self._invalidate_active_config_cache()
             return {
                 "message": f"Configuration imported as '{metadata.name}'",
                 "metadata": metadata.model_dump(),
@@ -269,6 +284,7 @@ class ConfigsService:
         store = self._get_store(config_type)
         try:
             metadata = store.create_from_template(template_name, config_name)
+            self._invalidate_active_config_cache()
             return {
                 "message": f"Configuration '{config_name}' created from template '{template_name}'",
                 "metadata": metadata.model_dump(),
