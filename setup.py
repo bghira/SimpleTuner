@@ -169,6 +169,7 @@ base_deps = [
     "torch-optimi>=0.2.1",
     "toml>=0.10.2",
     "fastapi[standard]>=0.115.0",
+    "sse-starlette>=1.6.5",
     "atomicwrites>=1.4.1",
     "beautifulsoup4>=4.12.3",
     "prodigy-plus-schedule-free>=1.9.2",
@@ -232,7 +233,7 @@ setup(
     author="bghira",
     # license handled by pyproject.toml
     packages=find_packages(),
-    python_requires=">=3.11,<3.13",
+    python_requires=">=3.11,<3.14",
     install_requires=base_deps,
     extras_require=extras_require,
     entry_points={
