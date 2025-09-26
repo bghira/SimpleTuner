@@ -55,8 +55,20 @@ def _load_active_config_cached() -> Dict[str, Any]:
         return {}
 
     try:
-        with open(config_path, "r") as f:
-            return json.load(f)
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        if isinstance(data, dict):
+            config_section = data.get("config")
+            if isinstance(config_section, dict):
+                merged = config_section.copy()
+                for key, value in data.items():
+                    if key == "config":
+                        continue
+                    merged.setdefault(key, value)
+                return merged
+
+        return data
     except Exception as e:
         logger.error(f"Error loading config: {e}")
         return {}
