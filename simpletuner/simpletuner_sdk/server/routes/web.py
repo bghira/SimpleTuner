@@ -1,691 +1,161 @@
-"""Web UI routes for HTMX enhanced trainer interface."""
+"""Refactored Web UI routes using service layer and shared dependencies."""
 
 from __future__ import annotations
 
 import os
 import logging
-import json
-from typing import Any, Dict, List
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Depends, HTTPException, status
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
-# Set up logging based on environment
+from ..dependencies.common import (
+    get_config_store,
+    get_tab_render_data,
+    TabRenderData,
+)
+from ..services.tab_service import TabService
+
 logger = logging.getLogger(__name__)
-# Use environment-based logging level
-log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
-logger.setLevel(getattr(logging, log_level, logging.INFO))
-
-try:
-    from simpletuner.helpers.models.all import model_families
-except ImportError as e:
-    logger.warning(f"Failed to import model_families: {e}")
-    model_families = {}
-
-# Use the lazy wrapper for field registry
-from simpletuner.simpletuner_sdk.server.services.field_registry_wrapper import lazy_field_registry as field_registry
-from simpletuner.simpletuner_sdk.server.routes.fields import _build_data_backend_choices
-
-# Debug field registry status
-logger.info("Using lazy field registry wrapper")
 
 router = APIRouter(prefix="/web", tags=["web"])
 
 # Get template directory from environment
 template_dir = os.environ.get("TEMPLATE_DIR", "templates")
-logger.debug(f"Template directory from env: {template_dir}")
-logger.debug(f"Template directory absolute path: {os.path.abspath(template_dir)}")
-logger.debug(f"Template directory exists: {os.path.exists(template_dir)}")
 templates = Jinja2Templates(directory=template_dir)
 
-def get_model_family_label(model_key: str) -> str:
-    """Generate a human-readable label for a model family key."""
-    labels = {
-        "sd1x": "Stable Diffusion 1.x",
-        "sd2x": "Stable Diffusion 2.x",
-        "sd3": "Stable Diffusion 3",
-        "deepfloyd": "DeepFloyd IF",
-        "sana": "Sana",
-        "sdxl": "Stable Diffusion XL",
-        "kolors": "Kolors",
-        "flux": "Flux",
-        "wan": "Wan",
-        "ltxvideo": "LTX Video",
-        "pixart_sigma": "PixArt-Σ",
-        "omnigen": "OmniGen",
-        "hidream": "HiDream",
-        "auraflow": "AuraFlow",
-        "lumina2": "Lumina 2",
-        "cosmos2image": "Cosmos2Image",
-        "qwen_image": "Qwen Image"
-    }
-    return labels.get(model_key, model_key.upper())
+# Initialize services
+tab_service = TabService(templates)
 
-def _convert_field_to_template_format(field, config_values) -> Dict[str, Any]:
-    """Convert a ConfigField to the format expected by the template."""
-    # Get the field value
-    field_value = config_values.get(field.name, field.default_value)
-
-    # For num_train_epochs and max_train_steps, handle default values specially
-    # to avoid browser spinner limitations
-    if field.name == "num_train_epochs":
-        logger.debug(f"num_train_epochs raw value: {field_value}, type: {type(field_value)}, in config: {field.name in config_values}")
-        # Convert string "0" to integer 0 to ensure proper handling
-        if str(field_value) == "0" or field_value == 0:
-            field_value = 0
-        elif field_value == 1 and field.name not in config_values:
-            # If using default value of 1, start empty to allow spinner to go to 0
-            field_value = ""
-        logger.debug(f"num_train_epochs final value: {field_value}")
-    elif field.name == "max_train_steps":
-        logger.debug(f"max_train_steps raw value: {field_value}, type: {type(field_value)}, in config: {field.name in config_values}")
-        # Convert string "0" to integer 0 to ensure proper handling
-        if str(field_value) == "0" or field_value == 0:
-            field_value = 0
-        logger.debug(f"max_train_steps final value: {field_value}")
-
-    field_dict = {
-        "id": field.name,
-        "name": field.arg_name,
-        "label": field.ui_label,
-        "type": field.field_type.value.lower(),
-        "value": field_value,
-        "description": field.help_text,
-    }
-
-    field_dict["extra_classes"] = ""
-
-    # Add cmd_args help for detailed tooltip
-    if hasattr(field, 'cmd_args_help') and field.cmd_args_help:
-        field_dict["cmd_args_help"] = field.cmd_args_help
-
-    # Add tooltip text (prefer cmd_args_help over general tooltip)
-    if hasattr(field, 'cmd_args_help') and field.cmd_args_help:
-        field_dict["tooltip"] = field.cmd_args_help
-    elif field.tooltip:
-        field_dict["tooltip"] = field.tooltip
-
-    # Add field-specific attributes
-    if field.placeholder:
-        field_dict["placeholder"] = field.placeholder
-
-    if field.field_type.value.upper() == "NUMBER":
-        # Add number-specific attributes
-        for rule in field.validation_rules:
-            if rule.type.value == "min":
-                field_dict["min"] = rule.value
-                logger.debug(f"Field {field.name} has min value: {rule.value}")
-            elif rule.type.value == "max":
-                field_dict["max"] = rule.value
-                logger.debug(f"Field {field.name} has max value: {rule.value}")
-
-    logger.debug(f"Field {field.name} type: {field.field_type.value}, is SELECT?: {field.field_type.value == 'SELECT'}")
-    if field.field_type.value == "SELECT" or field.field_type.value.lower() == "select":
-        options = field.choices or []
-
-        if getattr(field, "dynamic_choices", False):
-            if field.name == "data_backend_config":
-                try:
-                    options = _build_data_backend_choices()
-                except Exception:
-                    logger.exception("Failed to build data backend choices", exc_info=True)
-
-                field_dict["custom_component"] = "dataset_config_select"
-                field_dict["options"] = options
-
-                selected_option = next((opt for opt in options if opt.get("value") == field_value), None)
-                field_dict["selected_environment"] = (
-                    selected_option.get("environment") if selected_option else "Select dataset"
-                )
-                field_dict["selected_path"] = selected_option.get("path") if selected_option else ""
-                field_dict["button_label"] = (
-                    f"{field_dict['selected_environment']} | {field_dict['selected_path']}"
-                    if selected_option
-                    else "Select dataset configuration"
-                )
-
-                return field_dict
-
-        field_dict["options"] = options
-        logger.debug(f"Field {field.name} has {len(field_dict['options'])} options: {field_dict['options'][:3]}")
-    else:
-        logger.debug(f"Field {field.name} is not SELECT type, skipping options")
-
-    if field.field_type.value.upper() == "TEXTAREA":
-        field_dict["rows"] = getattr(field, "rows", 3)
-
-    # Check if field is required based on validation rules
-    for rule in field.validation_rules:
-        if rule.type.value == "required":
-            # Skip required attribute for num_train_epochs and max_train_steps
-            # to allow entering 0 values without browser interference
-            if field.name not in ["num_train_epochs", "max_train_steps"]:
-                field_dict["required"] = True
-            break
-
-    # Add any other field attributes
-    if hasattr(field, 'required') and field.required:
-        # Skip required attribute for num_train_epochs and max_train_steps
-        if field.name not in ["num_train_epochs", "max_train_steps"]:
-            field_dict["required"] = True
-
-    return field_dict
-
-def _get_fields_for_section(tab_name: str, section_name: str, config_values: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Get fields for a specific section from the field registry."""
-    fields = field_registry.get_fields_for_tab(tab_name)
-    section_fields = [f for f in fields if f.section == section_name]
-
-    # Convert to template format
-    return [_convert_field_to_template_format(field, config_values) for field in section_fields]
-
-def _load_active_config() -> Dict[str, Any]:
-    """Load the active configuration values."""
-    from ..services.config_store import ConfigStore
-    from ..services.webui_state import WebUIStateStore
-
-    try:
-        # Get config store with user defaults
-        state_store = WebUIStateStore()
-        defaults = state_store.load_defaults()
-        if defaults.configs_dir:
-            store = ConfigStore(config_dir=defaults.configs_dir)
-        else:
-            store = ConfigStore()
-
-        # Load active config
-        active_config = store.get_active_config()
-        if active_config:
-            config_data, _ = store.load_config(active_config)
-            return config_data
-    except Exception:
-        pass
-
-    return {}
-
-def _get_config_value(config_data: Dict[str, Any], key: str, default: Any = "") -> Any:
-    """Get config value, checking both modern (no prefix) and legacy (-- prefix) formats.
-
-    Args:
-        config_data: The configuration dictionary
-        key: The key to look for (without -- prefix)
-        default: Default value if not found
-
-    Returns:
-        The config value if found, otherwise the default
-    """
-    # First try modern format without --
-    if key in config_data:
-        value = config_data[key]
-        # Special handling for numeric fields that might be strings
-        if key in ["num_train_epochs", "max_train_steps"] and value == "0":
-            return 0
-        return value
-
-    # Then try legacy format with --
-    legacy_key = f"--{key}"
-    if legacy_key in config_data:
-        value = config_data[legacy_key]
-        # Special handling for numeric fields that might be strings
-        if key in ["num_train_epochs", "max_train_steps"] and value == "0":
-            return 0
-        return value
-
-    return default
-
-@router.get("/", response_class=HTMLResponse)
-async def web_home(request: Request):
-    """Redirect to trainer page."""
-    return templates.TemplateResponse("trainer_htmx.html", {"request": request, "title": "SimpleTuner Training Studio"})
 
 @router.get("/trainer", response_class=HTMLResponse)
-async def trainer_page(request: Request):
-    """Enhanced trainer page with HTMX."""
-    return templates.TemplateResponse("trainer_htmx.html", {"request": request, "title": "SimpleTuner Training Studio"})
+async def trainer_page(
+    request: Request,
+    config_store = Depends(get_config_store),
+):
+    """Main trainer page."""
+    # Get available tabs
+    tabs = tab_service.get_all_tabs()
 
-@router.get("/trainer/tabs/basic", response_class=HTMLResponse)
-async def basic_config_tab(request: Request):
-    """Basic configuration tab content."""
-    logger.debug("=== BASIC CONFIG TAB DEBUG ===")
-
-    # Load WebUI defaults
-    from ..services.webui_state import WebUIStateStore
-
-    webui_defaults = {}
-    try:
-        state_store = WebUIStateStore()
-        defaults = state_store.load_defaults()
-        webui_defaults = {
-            "configs_dir": defaults.configs_dir or "Not configured",
-            "output_dir": defaults.output_dir or "Not configured",
-        }
-    except Exception:
-        webui_defaults = {"configs_dir": "Not configured", "output_dir": "Not configured"}
-
-    # Load active config values
-    config_data = _load_active_config()
-
-    # Get all fields from the field registry for the basic tab
-    try:
-        tab_fields = field_registry.get_fields_for_tab("basic")
-        logger.debug(f"Field registry returned {len(tab_fields)} fields for 'basic' tab")
-
-        if tab_fields:
-            field_names = [f.name for f in tab_fields]
-            logger.debug(f"Basic tab field names: {field_names}")
-        else:
-            logger.warning("No fields returned from field registry for 'basic' tab!")
-            # Provide fallback fields for basic functionality
-            tab_fields = []
-    except Exception as e:
-        logger.error(f"Error getting fields from registry: {e}", exc_info=True)
-        tab_fields = []
-
-    # Extract all field names for config loading
-    config_values = {}
-    for field in tab_fields:
-        # Special handling for output_dir to use webui defaults
-        if field.name == "output_dir":
-            config_values[field.name] = _get_config_value(config_data, field.name, webui_defaults.get("output_dir", ""))
-        else:
-            config_values[field.name] = _get_config_value(config_data, field.name, field.default_value)
-
-    # Also add WebUI-specific values
-    config_values["configs_dir"] = webui_defaults.get("configs_dir", "")
-    config_values["job_id"] = _get_config_value(config_data, "job_id", "")
-
-    # Build all fields into template format
-    all_fields = [_convert_field_to_template_format(field, config_values) for field in tab_fields]
-    logger.debug(f"Converted {len(all_fields)} fields to template format from field registry")
-
-    # Handle special cases for model_family options
-    for field_dict in all_fields:
-        if field_dict["id"] == "model_family" and "options" in field_dict:
-            # Update options to use get_model_family_label for display
-            field_dict["options"] = [
-                {"value": opt["value"], "label": get_model_family_label(opt["value"])}
-                for opt in field_dict["options"]
-            ]
-
-    # Add WebUI-specific fields at the beginning
-    webui_fields = [
-        {
-            "id": "configs_dir",
-            "name": "configs_dir",
-            "label": "Configurations Directory",
-            "type": "text",
-            "placeholder": "/path/to/configs",
-            "required": True,
-            "value": config_values.get("configs_dir", ""),
-            "description": "Directory where training configurations are stored",
-        },
-        {
-            "id": "model_name",
-            "name": "--job_id",
-            "label": "Model Name",
-            "type": "text",
-            "placeholder": "my-awesome-model",
-            "required": True,
-            "value": config_values.get("job_id", ""),
-            "description": "Name for your trained model",
-        }
-    ]
-    logger.debug(f"Added {len(webui_fields)} WebUI-specific fields")
-
-    # Combine WebUI fields with registry fields
-    all_fields = webui_fields + all_fields
-    logger.debug(f"Final field count for basic tab: {len(all_fields)} fields total")
-
-    # Log field details for debugging
-    field_ids = [f.get("id") for f in all_fields]
-    logger.debug(f"Final field IDs: {field_ids}")
+    configs = config_store.list_configs()
+    active_config = config_store.get_active_config()
 
     context = {
         "request": request,
-        "section": {
-            "id": "basic-config",
-            "title": "Basic Configuration",
-            "icon": "fas fa-cog",
-            "description": "Essential settings to get started with training",
-            "expanded": True,
-            "fields": all_fields,
-            "actions": [
-                {
-                    "label": "Save Changes",
-                    "class": "btn-primary",
-                    "type": "button",
-                    "icon": "fas fa-save",
-                    "hx_post": "/api/training/config",
-                    "hx_include": "#trainer-form",
-                    "hx_indicator": "#save-spinner",
-                }
-            ],
-        },
+        "page_title": "SimpleTuner Training Interface",
+        "tabs": tabs,
+        "configs": [c.to_dict() if not isinstance(c, dict) else c for c in configs],
+        "active_config": active_config,
     }
 
-    # Debug context being sent to template
-    logger.debug(f"Template context - Section ID: {context['section']['id']}")
-    logger.debug(f"Template context - Fields count: {len(context['section']['fields'])}")
-    logger.debug(f"Template context - Field IDs being sent: {[f.get('id') for f in context['section']['fields']]}")
-    logger.debug("=== END BASIC CONFIG TAB DEBUG ===")
+    return templates.TemplateResponse("trainer_htmx.html", context)
 
-    return templates.TemplateResponse("tabs/basic_config_multi.html", context)
+
+@router.get("/trainer/tabs/{tab_name}", response_class=HTMLResponse)
+async def render_tab(
+    request: Request,
+    tab_name: str,
+    tab_data: TabRenderData = Depends(get_tab_render_data),
+):
+    """Unified tab handler using TabService.
+
+    This single endpoint replaces all individual tab handlers
+    by using the TabService to handle tab-specific logic.
+    """
+    logger.debug(f"=== RENDERING TAB: {tab_name} ===")
+
+    try:
+        # Render tab using TabService
+        return await tab_service.render_tab(
+            request=request,
+            tab_name=tab_name,
+            fields=tab_data.fields,
+            config_values=tab_data.config_values,
+            sections=tab_data.sections,
+            raw_config=tab_data.raw_config,
+            webui_defaults=tab_data.webui_defaults,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error rendering tab '{tab_name}': {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to render tab: {str(e)}"
+        )
+
+
+# Utility endpoints
+@router.get("/trainer/config-selector", response_class=HTMLResponse)
+async def config_selector(
+    request: Request,
+    config_store = Depends(get_config_store),
+):
+    """Config selector fragment for HTMX."""
+    configs = config_store.list_configs()
+    active_config = config_store.get_active_config()
+
+    context = {
+        "request": request,
+        "configs": [c.to_dict() for c in configs],
+        "active_config": active_config,
+    }
+
+    return templates.TemplateResponse("fragments/config_selector.html", context)
+
+
+@router.get("/trainer/tab-list", response_class=HTMLResponse)
+async def tab_list(request: Request):
+    """Tab list fragment for HTMX."""
+    tabs = tab_service.get_all_tabs()
+
+    context = {
+        "request": request,
+        "tabs": tabs,
+    }
+
+    return templates.TemplateResponse("fragments/tab_list.html", context)
+
+
+# Backward compatibility redirects
+@router.get("/trainer/tabs/basic", response_class=HTMLResponse)
+async def basic_tab_redirect(request: Request):
+    """Redirect old basic tab URL to new unified handler."""
+    return await render_tab(request, "basic")
+
 
 @router.get("/trainer/tabs/model", response_class=HTMLResponse)
-async def model_config_tab(request: Request):
-    """Model configuration tab content."""
-    logger.debug("=== MODEL CONFIG TAB DEBUG ===")
+async def model_tab_redirect(request: Request):
+    """Redirect old model tab URL to new unified handler."""
+    return await render_tab(request, "model")
 
-    # Load active config values
-    config_data = _load_active_config()
-
-    # Get all fields from the field registry for the model tab
-    tab_fields = field_registry.get_fields_for_tab("model")
-    logger.debug(f"Field registry returned {len(tab_fields)} fields for 'model' tab")
-
-    if tab_fields:
-        field_names = [f.name for f in tab_fields]
-        logger.debug(f"Model tab field names: {field_names}")
-    else:
-        logger.warning("No fields returned from field registry for 'model' tab!")
-
-    # Extract all field names for config loading
-    config_values = {}
-    for field in tab_fields:
-        config_values[field.name] = _get_config_value(config_data, field.name, field.default_value)
-
-    # Build all fields into template format
-    all_fields = [_convert_field_to_template_format(field, config_values) for field in tab_fields]
-    logger.debug(f"Converted {len(all_fields)} fields to template format from field registry")
-
-    # Handle special cases for model_family options
-    for field_dict in all_fields:
-        if field_dict["id"] == "model_family" and "options" in field_dict:
-            # Update options to use get_model_family_label for display
-            field_dict["options"] = [
-                {"value": opt["value"], "label": get_model_family_label(opt["value"])}
-                for opt in field_dict["options"]
-            ]
-        elif field_dict["id"] == "lora_alpha":
-            # Always set lora_alpha to match lora_rank value
-            field_dict["value"] = config_values.get("lora_rank", "16")
-            field_dict["disabled"] = True
-
-    logger.debug(f"Final field count for model tab: {len(all_fields)} fields total")
-    field_ids = [f.get("id") for f in all_fields]
-    logger.debug(f"Final model field IDs: {field_ids}")
-
-    context = {
-        "request": request,
-        "section": {
-            "id": "model-config",
-            "title": "Model Configuration",
-            "icon": "fas fa-brain",
-            "description": "Model architecture and LoRA settings",
-            "expanded": True,
-            "fields": all_fields,
-        },
-    }
-    logger.debug("=== END MODEL CONFIG TAB DEBUG ===")
-    return templates.TemplateResponse("partials/form_section.html", context)
 
 @router.get("/trainer/tabs/training", response_class=HTMLResponse)
-async def training_config_tab(request: Request):
-    """Training configuration tab content."""
-    logger.debug("=== TRAINING CONFIG TAB DEBUG ===")
+async def training_tab_redirect(request: Request):
+    """Redirect old training tab URL to new unified handler."""
+    return await render_tab(request, "training")
 
-    # Load active config values
-    config_data = _load_active_config()
-
-    # Get all fields from the field registry for the training tab
-    tab_fields = field_registry.get_fields_for_tab("training")
-    logger.debug(f"Field registry returned {len(tab_fields)} fields for 'training' tab")
-
-    if tab_fields:
-        field_names = [f.name for f in tab_fields]
-        logger.debug(f"Training tab field names: {field_names}")
-    else:
-        logger.warning("No fields returned from field registry for 'training' tab!")
-
-    # Extract all field names for config loading
-    config_values = {}
-    for field in tab_fields:
-        config_values[field.name] = _get_config_value(config_data, field.name, field.default_value)
-
-    # Debug log the values for epochs and steps
-    logger.info(f"Config values for training tab - num_train_epochs: {config_values.get('num_train_epochs')}, max_train_steps: {config_values.get('max_train_steps')}")
-    logger.info(f"Raw config_data keys: {list(config_data.keys())}")
-
-    # Build all fields into template format
-    all_fields = [_convert_field_to_template_format(field, config_values) for field in tab_fields]
-    logger.debug(f"Converted {len(all_fields)} fields to template format from field registry")
-
-    # Handle special Alpine.js bindings for epochs/steps mutual exclusion
-    for field_dict in all_fields:
-        if field_dict["id"] == "num_train_epochs":
-            field_dict["x_model"] = "numTrainEpochs"
-            field_dict["x_bind_disabled"] = "maxTrainSteps > 0"
-            field_dict["x_on_input"] = "handleEpochsChange()"
-            logger.info(f"num_train_epochs field value being sent to template: {field_dict.get('value')}")
-        elif field_dict["id"] == "max_train_steps":
-            field_dict["x_model"] = "maxTrainSteps"
-            # Don't disable max_train_steps - it should always be editable
-            # When max_train_steps > 0, it takes precedence over epochs
-            field_dict["x_on_input"] = "handleMaxStepsChange()"
-            logger.info(f"max_train_steps field value being sent to template: {field_dict.get('value')}")
-
-    logger.debug(f"Final field count for training tab: {len(all_fields)} fields total")
-    field_ids = [f.get("id") for f in all_fields]
-    logger.debug(f"Final training field IDs: {field_ids}")
-
-    context = {
-        "request": request,
-        "section": {
-            "id": "training-config",
-            "title": "Training Parameters",
-            "icon": "fas fa-graduation-cap",
-            "description": "Core training hyperparameters",
-            "expanded": True,
-            "fields": all_fields,
-        },
-    }
-    # Add config_values to the context so the template can access them
-    context["config_values"] = config_values
-    logger.debug("=== END TRAINING CONFIG TAB DEBUG ===")
-    return templates.TemplateResponse("training_config_section.html", context)
 
 @router.get("/trainer/tabs/advanced", response_class=HTMLResponse)
-async def advanced_config_tab(request: Request):
-    """Advanced configuration tab content."""
-    logger.debug("=== ADVANCED CONFIG TAB DEBUG ===")
+async def advanced_tab_redirect(request: Request):
+    """Redirect old advanced tab URL to new unified handler."""
+    return await render_tab(request, "advanced")
 
-    # Load active config values
-    config_data = _load_active_config()
-
-    # Get all fields from the field registry for the advanced tab
-    tab_fields = field_registry.get_fields_for_tab("advanced")
-    logger.debug(f"Field registry returned {len(tab_fields)} fields for 'advanced' tab")
-
-    if tab_fields:
-        field_names = [f.name for f in tab_fields]
-        logger.debug(f"Advanced tab field names: {field_names}")
-    else:
-        logger.warning("No fields returned from field registry for 'advanced' tab!")
-
-    # Extract all field names for config loading
-    config_values = {}
-    for field in tab_fields:
-        config_values[field.name] = _get_config_value(config_data, field.name, field.default_value)
-
-    # Build all fields into template format
-    all_fields = [_convert_field_to_template_format(field, config_values) for field in tab_fields]
-    logger.debug(f"Final field count for advanced tab: {len(all_fields)} fields total")
-
-    context = {
-        "request": request,
-        "section": {
-            "id": "advanced-config",
-            "title": "Advanced Options",
-            "icon": "fas fa-sliders-h",
-            "description": "Advanced training and optimization settings",
-            "expanded": True,
-            "fields": all_fields,
-        },
-    }
-    logger.debug("=== END ADVANCED CONFIG TAB DEBUG ===")
-    return templates.TemplateResponse("partials/form_section.html", context)
 
 @router.get("/trainer/tabs/datasets", response_class=HTMLResponse)
-async def datasets_tab(request: Request):
-    """Dataset configuration tab content."""
-    import json
-    from pathlib import Path
-    from ..services.dataset_plan import DatasetPlanStore
-    from ..utils.paths import resolve_config_path
+async def datasets_tab_redirect(request: Request):
+    """Redirect old datasets tab URL to new unified handler."""
+    return await render_tab(request, "datasets")
 
-    datasets = []
-
-    try:
-        # First, try to load from active configuration's data backend config
-        config_data = _load_active_config()
-        data_backend_config_path = _get_config_value(config_data, "data_backend_config", None)
-
-        # Debug logging
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"datasets_tab: data_backend_config_path = {data_backend_config_path}")
-
-        if data_backend_config_path:
-            # Resolve the path using our utility function
-            # Get config directory from webui state
-            from ..services.webui_state import WebUIStateStore
-            webui_state = WebUIStateStore()
-            defaults = webui_state.load_defaults()
-            config_dir = defaults.configs_dir if defaults.configs_dir else None
-
-            resolved_path = resolve_config_path(
-                data_backend_config_path,
-                config_dir=config_dir,
-                check_cwd_first=True
-            )
-
-            logger.info(f"datasets_tab: resolved_path = {resolved_path}")
-
-            if resolved_path and resolved_path.exists():
-                try:
-                    with open(resolved_path, 'r') as f:
-                        datasets = json.load(f)
-                        if not isinstance(datasets, list):
-                            datasets = []
-                        logger.info(f"datasets_tab: loaded {len(datasets)} datasets from {resolved_path}")
-                except (json.JSONDecodeError, IOError) as e:
-                    # Fall back to default behavior if we can't read the file
-                    pass
-
-        # Note: We don't fall back to global store if datasets is empty
-        # An empty dataset list is a valid configuration for an environment
-        logger.info(f"datasets_tab: Finished loading, have {len(datasets)} datasets")
-
-    except Exception as e:
-        # Fall back to default behavior on any error
-        logger.error(f"datasets_tab: Exception loading from config - {str(e)}")
-        try:
-            store = DatasetPlanStore()
-            datasets, _, _ = store.load()
-            logger.warning(f"datasets_tab: Fell back to global store, loaded {len(datasets)} datasets")
-        except ValueError:
-            datasets = []
-
-    context = {
-        "request": request,
-        "datasets": datasets,
-        # Add default config for compatibility with trainer_dataloader_section.html
-        "default_config": {
-            "model_families": [
-                {"value": key, "label": get_model_family_label(key), "selected": key == "sdxl"}
-                for key in sorted(model_families.keys())
-            ]
-        },
-    }
-
-    return templates.TemplateResponse("datasets_tab.html", context)
 
 @router.get("/trainer/tabs/environments", response_class=HTMLResponse)
-async def environments_tab(request: Request):
-    """Environments configuration management tab."""
-    return templates.TemplateResponse("environments_tab.html", {"request": request})
+async def environments_tab_redirect(request: Request):
+    """Redirect old environments tab URL to new unified handler."""
+    return await render_tab(request, "environments")
+
 
 @router.get("/trainer/tabs/validation", response_class=HTMLResponse)
-async def validation_config_tab(request: Request):
-    """Validation configuration tab content."""
-    logger.debug("=== VALIDATION CONFIG TAB DEBUG ===")
-
-    # Load active config values
-    config_data = _load_active_config()
-
-    # Get all fields from the field registry for the validation tab
-    tab_fields = field_registry.get_fields_for_tab("validation")
-    logger.debug(f"Field registry returned {len(tab_fields)} fields for 'validation' tab")
-
-    if tab_fields:
-        field_names = [f.name for f in tab_fields]
-        logger.debug(f"Validation tab field names: {field_names}")
-    else:
-        logger.warning("No fields returned from field registry for 'validation' tab!")
-
-    # Extract all field names for config loading
-    config_values = {}
-    for field in tab_fields:
-        config_values[field.name] = _get_config_value(config_data, field.name, field.default_value)
-
-    # Get sections for this tab
-    sections = field_registry.get_sections_for_tab("validation")
-    logger.debug(f"Validation tab sections: {[s.get('id', 'unknown') for s in sections]}")
-
-    # Build all fields into a single section (for now)
-    all_fields = [_convert_field_to_template_format(field, config_values) for field in tab_fields]
-    logger.debug(f"Final field count for validation tab: {len(all_fields)} fields total")
-
-    context = {
-        "request": request,
-        "section": {
-            "id": "validation-config",
-            "title": "Validation & Output",
-            "icon": "fas fa-check-circle",
-            "description": "Validation settings and model output configuration",
-            "expanded": True,
-            "fields": all_fields,
-            "actions": [
-                {
-                    "label": "Save Configuration",
-                    "type": "button",
-                    "class": "btn btn-primary",
-                    "hx_post": "/api/configs/update-validation",
-                    "hx_include": "#validation-config",
-                    "hx_indicator": "#save-indicator"
-                }
-            ]
-        }
-    }
-    logger.debug("=== END VALIDATION CONFIG TAB DEBUG ===")
-    return templates.TemplateResponse("partials/form_section.html", context)
-
-@router.get("/datasets/new", response_class=HTMLResponse)
-async def new_dataset_modal(request: Request):
-    """New dataset modal content."""
-    context = {
-        "request": request,
-        "dataset": {
-            "id": "",
-            "name": "",
-            "type": "local",
-            "dataset_type": "image",
-            "instance_data_dir": "",
-            "resolution": 1024,
-            "probability": 1.0,
-        },
-    }
-
-    return templates.TemplateResponse("partials/dataset_card.html", context)
-
+async def validation_tab_redirect(request: Request):
+    """Redirect old validation tab URL to new unified handler."""
+    return await render_tab(request, "validation")
