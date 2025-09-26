@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Dict, List, Optional, Set
+from pathlib import Path
 from enum import Enum
 
 from ..services.field_registry_wrapper import lazy_field_registry
+from .field_registry import FieldType
+from .dataset_service import normalize_dataset_config_value
 
 try:  # pragma: no cover - optional import for UI hints
     from simpletuner.helpers.models.registry import ModelRegistry
@@ -30,6 +33,13 @@ class FieldFormat(str, Enum):
 
 class FieldService:
     """Service for field conversion and manipulation."""
+
+    _TEXT_ENCODER_TRAINING_FIELDS = {
+        "train_text_encoder",
+        "text_encoder_lr",
+    }
+
+    _TEXT_ENCODER_PRECISION_FIELDS = {f"text_encoder_{idx}_precision" for idx in range(1, 5)}
 
     def __init__(self):
         """Initialize field service."""
@@ -75,6 +85,40 @@ class FieldService:
                 return True
         return False
 
+    def _get_model_class(self, config_values: Dict[str, Any]):
+        if ModelRegistry is None:
+            return None
+
+        model_family = (
+            config_values.get("model_family")
+            or config_values.get("--model_family")
+        )
+        if not model_family:
+            return None
+
+        try:
+            return ModelRegistry.get(model_family)
+        except Exception:
+            return None
+
+    def _get_text_encoder_configuration(self, config_values: Dict[str, Any]) -> Dict[str, Any]:
+        model_class = self._get_model_class(config_values)
+        if not model_class:
+            return {}
+
+        configuration = getattr(model_class, "TEXT_ENCODER_CONFIGURATION", None) or {}
+        if isinstance(configuration, dict):
+            return configuration
+        return {}
+
+    def _supports_text_encoder_training(self, config_values: Dict[str, Any]) -> bool:
+        """Check whether the selected model supports text encoder training."""
+        model_class = self._get_model_class(config_values)
+        if not model_class:
+            return False
+
+        return bool(getattr(model_class, "SUPPORTS_TEXT_ENCODER_TRAINING", False))
+
     def convert_field(
         self,
         field: Any,
@@ -117,9 +161,34 @@ class FieldService:
         Returns:
             List of converted field dictionaries
         """
+        supports_text_encoder = self._supports_text_encoder_training(config_values)
+        text_encoder_config = self._get_text_encoder_configuration(config_values)
+        available_text_encoders = list(text_encoder_config.keys()) if text_encoder_config else []
+        encoder_count = len(available_text_encoders)
+
+        filtered_fields: List[Any] = []
+
+        for field in fields:
+            name = field.name
+
+            if name in self._TEXT_ENCODER_TRAINING_FIELDS and not supports_text_encoder:
+                continue
+
+            if name in self._TEXT_ENCODER_PRECISION_FIELDS:
+                index = int(name.split("_")[2])
+                has_config = index <= encoder_count
+                has_existing_value = any(
+                    key in config_values for key in (name, f"--{name}")
+                )
+
+                if not (has_config or has_existing_value):
+                    continue
+
+            filtered_fields.append(field)
+
         return [
             self.convert_field(field, format, config_values, options)
-            for field in fields
+            for field in filtered_fields
         ]
 
     def get_fields_for_section(
@@ -246,9 +315,31 @@ class FieldService:
             "name": field.arg_name,
             "label": field.ui_label,
             "type": field.field_type.value.lower(),
-            "value": field_value,
+            "value": "" if field.field_type == FieldType.TEXT and field_value is None else field_value,
             "description": field.help_text,
         }
+
+        if field.name in self._TEXT_ENCODER_PRECISION_FIELDS:
+            encoder_config = self._get_text_encoder_configuration(config_values)
+            if encoder_config:
+                encoder_keys = list(encoder_config.keys())
+                try:
+                    index = int(field.name.split("_")[2]) - 1
+                except (ValueError, IndexError):
+                    index = -1
+                if 0 <= index < len(encoder_keys):
+                    encoder_entry = encoder_config.get(encoder_keys[index], {})
+                    encoder_name = encoder_entry.get("name") or encoder_keys[index].replace("_", " ").title()
+                    field_dict["label"] = f"{encoder_name} Precision"
+                    if encoder_entry.get("name"):
+                        field_dict.setdefault(
+                            "description",
+                            f"Set quantisation precision for {encoder_entry['name']} text encoder.",
+                        )
+                    field_dict.setdefault(
+                        "tooltip",
+                        f"Quantisation precision applied to the {encoder_name} text encoder.",
+                    )
 
         # Extra CSS classes
         extra_classes = []
@@ -540,6 +631,9 @@ class FieldService:
                 if field.name == "lora_rank":
                     lora_rank_value = self._coerce_int(value, lora_rank_value)
 
+                if isinstance(value, str) and value and value.lower().endswith(".json"):
+                    value = self._normalize_json_field_value(value, webui_defaults.get("configs_dir"))
+
                 if field.name == "i_know_what_i_am_doing":
                     value = self._coerce_bool(value)
                 elif field.name == "lora_alpha":
@@ -562,3 +656,28 @@ class FieldService:
             config_values["job_id"] = config_data.get("job_id", "")
 
         return config_values
+
+    @staticmethod
+    def _normalize_json_field_value(value: str, configs_dir: Optional[str]) -> str:
+        """Normalize JSON-backed config paths so selectors align with available choices."""
+
+        if not value:
+            return value
+
+        try:
+            normalized = normalize_dataset_config_value(value, configs_dir)
+            if normalized:
+                return normalized
+        except Exception:
+            pass
+
+        if configs_dir:
+            try:
+                config_basename = Path(configs_dir).expanduser().name
+                parts = Path(value).parts
+                if parts and parts[0] == config_basename and len(parts) > 1:
+                    return Path(*parts[1:]).as_posix()
+            except Exception:
+                return value
+
+        return value
