@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, status
@@ -13,6 +14,7 @@ from simpletuner.simpletuner_sdk.server.data.dataset_blueprints import get_datas
 from simpletuner.simpletuner_sdk.server.services.dataset_plan import DatasetPlanStore, ValidationMessage, compute_validations
 from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
 from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
+from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
 
@@ -42,7 +44,8 @@ def _store() -> DatasetPlanStore:
     """Create a dataset plan store using current environment settings."""
     # Try to get data backend config from active configuration
     try:
-        config_store = ConfigStore()
+        defaults = WebUIStateStore().load_defaults()
+        config_store = ConfigStore(config_dir=defaults.configs_dir) if defaults.configs_dir else ConfigStore()
         active_config_name = config_store.get_active_config()
 
         if active_config_name:
@@ -61,6 +64,13 @@ def _store() -> DatasetPlanStore:
                     return DatasetPlanStore(path=resolved_path)
     except Exception as e:
         pass  # Fall back to default behavior
+
+    try:
+        defaults = WebUIStateStore().load_defaults()
+        if defaults.configs_dir:
+            return DatasetPlanStore(path=Path(defaults.configs_dir).expanduser() / "multidatabackend.json")
+    except Exception:
+        pass
 
     return DatasetPlanStore()
 
