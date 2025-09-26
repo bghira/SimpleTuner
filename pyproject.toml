@@ -37,7 +37,7 @@ keywords = [
     "ai",
     "image-generation"
 ]
-requires-python = ">=3.11,<3.13"
+requires-python = ">=3.11,<3.14"
 
 # Dynamic fields are handled by setup.py above
 
