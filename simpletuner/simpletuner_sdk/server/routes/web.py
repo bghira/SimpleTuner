@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter, Request, Depends, HTTPException, status
 from fastapi.responses import HTMLResponse
@@ -15,14 +16,26 @@ from ..dependencies.common import (
     TabRenderData,
 )
 from ..services.tab_service import TabService
+from ..utils.paths import get_template_directory
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/web", tags=["web"])
 
-# Get template directory from environment
-template_dir = os.environ.get("TEMPLATE_DIR", "templates")
-templates = Jinja2Templates(directory=template_dir)
+# Resolve template directory with fallback to packaged templates
+_env_template = os.environ.get("TEMPLATE_DIR")
+
+if _env_template:
+    candidate = Path(_env_template).expanduser()
+    if not candidate.is_absolute():
+        candidate = Path.cwd() / candidate
+    if not candidate.exists():
+        logger.warning("Configured TEMPLATE_DIR '%s' not found; falling back to package templates", candidate)
+        candidate = get_template_directory()
+else:
+    candidate = get_template_directory()
+
+templates = Jinja2Templates(directory=str(candidate))
 
 # Initialize services
 tab_service = TabService(templates)
