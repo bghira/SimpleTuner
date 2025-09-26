@@ -87,7 +87,7 @@ def _normalize_form_to_config(form_data: dict, directory_fields: list = None) ->
                       "--gradient_accumulation_steps", "--train_batch_size"]
 
     # Fields that should always be included even if empty
-    always_include_fields = ["--model_flavour"]
+    always_include_fields = ["--model_flavour", "--optimizer_config"]
 
     for key, value in form_data.items():
         # Skip excluded fields
@@ -117,6 +117,9 @@ def _normalize_form_to_config(form_data: dict, directory_fields: list = None) ->
             # Convert value to appropriate type
             field_type = field_types.get(config_key, FieldType.TEXT)
             config_dict[config_key] = _convert_value_by_type(value, field_type)
+
+    if "--i_know_what_i_am_doing" not in config_dict:
+        config_dict["--i_know_what_i_am_doing"] = False
 
     return config_dict
 
@@ -180,15 +183,22 @@ async def validate_config(request: Request):
         epochs_val = int(num_epochs) if num_epochs else 0
         steps_val = int(max_steps) if max_steps else 0
 
-        # Check if both are zero
         if epochs_val == 0 and steps_val == 0:
             errors.append("Either num_train_epochs or max_train_steps must be greater than 0. You cannot set both to 0.")
 
-        # Don't error if one is 0 - this is the valid use case
-        # Only error if user is trying to use both methods simultaneously
-        # (No check needed here - it's valid to have one at 0 and one > 0)
+        if epochs_val > 0 and steps_val > 0:
+            errors.append("num_train_epochs and max_train_steps cannot both be set. Set one of them to 0.")
     except ValueError:
         errors.append("Invalid value for num_train_epochs or max_train_steps. Must be numeric.")
+
+    lr_scheduler = config_dict.get("--lr_scheduler", complete_config.get("--lr_scheduler", ""))
+    warmup_raw = config_dict.get("--lr_warmup_steps", complete_config.get("--lr_warmup_steps", 0))
+    try:
+        warmup_val = int(warmup_raw) if warmup_raw else 0
+        if lr_scheduler == "constant" and warmup_val > 0:
+            errors.append("Warmup steps are not supported with the 'constant' learning rate scheduler. Use 'constant_with_warmup' or set warmup steps to 0.")
+    except ValueError:
+        errors.append("Warmup steps must be a whole number.")
 
     # Generate HTML response
     if errors:
@@ -223,6 +233,12 @@ async def validate_config(request: Request):
         """
 
     return html
+
+
+@router.post("/configuration/check", response_class=HTMLResponse)
+async def configuration_check(request: Request):
+    """Compatibility endpoint for legacy clients expecting configuration/check."""
+    return await validate_config(request)
 
 
 @router.post("/config", response_class=HTMLResponse)
@@ -441,6 +457,12 @@ async def start_training(request: Request):
         """
 
 
+@router.post("/configuration/run", response_class=HTMLResponse)
+async def configuration_run(request: Request):
+    """Compatibility endpoint mapping to the legacy configuration/run URL."""
+    return await start_training(request)
+
+
 @router.post("/stop")
 async def stop_training():
     """Stop current training."""
@@ -455,6 +477,42 @@ async def stop_training():
             return {"message": "No active training job to stop"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/cancel", response_class=HTMLResponse)
+async def cancel_training(request: Request):
+    """Cancel current training and return HTML response for HTMX."""
+    try:
+        form_data = await request.form()
+        job_id = form_data.get("job_id", APIState.get_state("current_job_id"))
+
+        if job_id:
+            # Terminate the process
+            process_keeper.terminate_process(job_id)
+            APIState.set_state("training_status", "cancelled")
+            APIState.set_state("current_job_id", None)
+
+            return f"""
+            <div class="alert alert-warning">
+                <h6><i class="fas fa-hand-paper"></i> Training Cancelled</h6>
+                <p>Training job has been cancelled successfully.</p>
+                <p class="mb-0"><small>Job ID: {job_id}</small></p>
+            </div>
+            """
+        else:
+            return f"""
+            <div class="alert alert-info">
+                <h6><i class="fas fa-info-circle"></i> No Active Training</h6>
+                <p>There is no active training job to cancel.</p>
+            </div>
+            """
+    except Exception as e:
+        return f"""
+        <div class="alert alert-danger">
+            <h6><i class="fas fa-exclamation-triangle"></i> Failed to Cancel Training</h6>
+            <p>{str(e)}</p>
+        </div>
+        """
 
 
 @router.get("/status")
