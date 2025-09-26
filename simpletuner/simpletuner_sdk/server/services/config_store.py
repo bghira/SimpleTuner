@@ -41,6 +41,7 @@ from pydantic import BaseModel, Field
 
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
 from simpletuner.simpletuner_sdk.server.utils.paths import get_simpletuner_root
+from simpletuner.simpletuner_sdk.server.services.cache_service import get_config_cache
 
 # Environment variables for configuration paths
 _CONFIG_ENV_DIR = "SIMPLETUNER_CONFIG_DIR"
@@ -152,7 +153,24 @@ class ConfigValidation(BaseModel):
 
 
 class ConfigStore:
-    """Store for managing training configurations."""
+    """Store for managing training configurations.
+
+    Uses a singleton pattern with caching to avoid repeated filesystem hits.
+    """
+
+    _instances = {}  # Singleton instances keyed by (config_dir, config_type)
+
+    def __new__(cls, config_dir: Optional[Path | str] = None, config_type: str = "model"):
+        """Create or return existing instance (singleton pattern)."""
+        # Create cache key from params
+        key = (str(config_dir) if config_dir else None, config_type)
+
+        if key not in cls._instances:
+            instance = super().__new__(cls)
+            cls._instances[key] = instance
+            instance._initialized = False
+
+        return cls._instances[key]
 
     def __init__(self, config_dir: Optional[Path | str] = None, config_type: str = "model"):
         """Initialize the config store.
@@ -161,7 +179,12 @@ class ConfigStore:
             config_dir: Directory to store configurations. Defaults to config/environments or config/dataloaders.
             config_type: Type of configuration ('model' or 'dataloader'). Defaults to 'model'.
         """
+        # Skip initialization if already done (singleton pattern)
+        if self._initialized:
+            return
+
         self.config_type = config_type
+        self._cache = get_config_cache()  # Use global config cache
 
         if config_dir is not None:
             # Expand user home directory if present
@@ -171,12 +194,23 @@ class ConfigStore:
 
         self.template_dir = self._resolve_template_dir()
         self._ensure_directories()
+        self._initialized = True
 
     def _resolve_config_dir(self) -> Path:
         """Resolve the configuration directory from environment or default."""
         env_dir = os.environ.get(_CONFIG_ENV_DIR)
         if env_dir:
             return Path(env_dir)
+
+        try:
+            state_store = WebUIStateStore()
+            defaults = state_store.load_defaults()
+            if self.config_type == "model" and defaults.configs_dir:
+                return Path(defaults.configs_dir).expanduser()
+            if self.config_type == "dataloader" and defaults.configs_dir:
+                return Path(defaults.configs_dir).expanduser() / "dataloaders"
+        except Exception:
+            pass
 
         # Get SimpleTuner root and resolve relative to it
         simpletuner_root = get_simpletuner_root()
@@ -654,11 +688,18 @@ class ConfigStore:
         if not config_path.exists():
             raise FileNotFoundError(f"Configuration '{name}' not found")
 
-        try:
-            with config_path.open("r", encoding="utf-8") as f:
-                data = json.load(f)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in configuration '{name}': {e}")
+        # Try cache first
+        cached_data = self._cache.get(config_path)
+        if cached_data:
+            data = cached_data
+        else:
+            # Load from disk and cache
+            try:
+                with config_path.open("r", encoding="utf-8") as f:
+                    data = json.load(f)
+                self._cache.set(config_path, data)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Invalid JSON in configuration '{name}': {e}")
 
         # Handle both new format (with metadata) and legacy format
         if "_metadata" in data:
