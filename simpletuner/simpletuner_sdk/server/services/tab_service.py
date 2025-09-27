@@ -439,7 +439,7 @@ class TabService:
 
         logging_order = [
             "checkpointing_steps",
-            "save_total_limit",
+            "checkpoints_total_limit",
             "report_to",
             "logging_dir",
             "tracker_image_layout",
