@@ -29,7 +29,6 @@ class TestWebhookHandler(unittest.TestCase):
 
         # Instantiate the handler with the mocked config
         self.handler = WebhookHandler(
-            config_path="dummy_path",
             accelerator=self.mock_accelerator,
             project_name="TestProject",
             mock_webhook_config=self.mock_config_instance,
