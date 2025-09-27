@@ -17,6 +17,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+try:  # Optional dependency; used for robust process tree termination
+    import psutil  # type: ignore
+except Exception:  # pragma: no cover - psutil is optional
+    psutil = None
+
 logger = logging.getLogger("ProcessKeeper")
 
 # Registry of active processes
@@ -39,9 +44,9 @@ class TrainerProcess:
         self.event_thread = None
         self.events = []
         self.events_lock = threading.Lock()
-
         # Create temp directory for IPC
         self.ipc_dir = tempfile.mkdtemp(prefix=f"trainer_{job_id}_")
+        logger.info(f"IPC dir {self.ipc_dir}")
         self.command_file = os.path.join(self.ipc_dir, "commands.json")
         self.event_file = os.path.join(self.ipc_dir, "events.json")
         self.func_file = os.path.join(self.ipc_dir, "func.pkl")
@@ -206,12 +211,18 @@ logger.info("Subprocess exiting")
 '''
 
         # Start the subprocess
-        self.process = subprocess.Popen(
-            [sys.executable, "-c", runner_code],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,  # Merge stderr to stdout for easier debugging
-            text=True,
-        )
+        popen_kwargs = {
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.STDOUT,
+            "text": True,
+        }
+
+        if os.name != "nt":
+            popen_kwargs["preexec_fn"] = os.setsid
+        else:  # pragma: no cover - Windows specific
+            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+
+        self.process = subprocess.Popen([sys.executable, "-c", runner_code], **popen_kwargs)
 
         self.status = "running"
 
@@ -316,6 +327,27 @@ logger.info("Subprocess exiting")
         with open(self.command_file, "w") as f:
             json.dump(commands, f)
 
+    def _append_event(self, event_type: str, data: Optional[Dict] = None):
+        event = {
+            "type": event_type,
+            "timestamp": time.time(),
+            "data": data or {},
+        }
+
+        try:
+            with open(self.event_file, "r") as f:
+                events = json.load(f)
+        except Exception:
+            events = []
+
+        events.append(event)
+
+        try:
+            with open(self.event_file, "w") as f:
+                json.dump(events, f)
+        except Exception as exc:
+            logger.debug(f"Failed to append event for {self.job_id}: {exc}")
+
     def terminate(self, timeout: int = 5) -> bool:
         """Terminate the subprocess, first gracefully then forcefully."""
         if not self.process:
@@ -327,30 +359,19 @@ logger.info("Subprocess exiting")
 
             # Only try to send abort if process is still running
             if self.process.poll() is None:
-                # Try to send abort command first
                 try:
                     self.send_command("abort")
-                    # Give it a moment to process
-                    time.sleep(0.5)
-                except:
+                except Exception:
                     pass  # Process might not be responsive
 
-            # Try graceful termination
-            if self.process.poll() is None:
-                self.process.terminate()
-                try:
-                    self.process.wait(timeout=timeout)
-                except subprocess.TimeoutExpired:
-                    # Force kill if still running
-                    logger.warning(f"Force killing process {self.job_id}")
-                    self.process.kill()
-                    self.process.wait(timeout=1)
+                self._force_kill_process_tree(timeout)
 
             # Clean up resources
             self._cleanup_resources()
 
             self.status = "terminated"
             self.end_time = datetime.now().isoformat()
+            self._append_event("state", {"status": "terminated"})
 
             # Note: Registry update is handled by the caller (terminate_process)
             # since it already holds the lock. Attempting to acquire lock here
@@ -360,7 +381,56 @@ logger.info("Subprocess exiting")
 
         except Exception as e:
             logger.error(f"Error terminating process {self.job_id}: {e}")
-            return False
+        return False
+
+    def _force_kill_process_tree(self, timeout: int) -> None:
+        """Forcefully terminate the subprocess and any children."""
+
+        if not self.process or self.process.poll() is not None:
+            return
+
+        pid = self.process.pid
+
+        def _kill_with_psutil(proc_pid: int) -> None:
+            if not psutil:
+                return
+
+            try:
+                parent = psutil.Process(proc_pid)
+            except Exception:
+                return
+
+            for child in parent.children(recursive=True):
+                try:
+                    child.kill()
+                except Exception:
+                    pass
+
+            try:
+                parent.kill()
+            except Exception:
+                pass
+
+        try:
+            if os.name != "nt" and hasattr(os, "killpg"):
+                try:
+                    os.killpg(os.getpgid(pid), signal.SIGKILL)
+                except Exception as exc:
+                    logger.debug(f"killpg failed for {self.job_id}: {exc}")
+            else:  # pragma: no cover - Windows specific
+                try:
+                    self.process.kill()
+                except Exception as exc:
+                    logger.debug(f"kill() failed for {self.job_id}: {exc}")
+
+            _kill_with_psutil(pid)
+
+            try:
+                self.process.wait(timeout=timeout)
+            except Exception:
+                pass
+        except Exception as exc:
+            logger.debug(f"Error forcing kill for {self.job_id}: {exc}")
 
     def _cleanup_resources(self):
         """Clean up all resources associated with this process."""
