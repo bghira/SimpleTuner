@@ -80,7 +80,10 @@ def resize_validation_images(validation_images, edge_length):
     # we have to scale all the inputs to a stage4 image down to 64px smaller edge.
     resized_validation_samples = []
     for _sample in validation_images:
-        validation_shortname, validation_prompt, _, training_sample_image = _sample
+        if len(_sample) == 4:
+            validation_shortname, validation_prompt, _, training_sample_image = _sample
+        elif len(_sample) == 3:
+            validation_shortname, validation_prompt, training_sample_image = _sample
         resize_to, crop_to, new_aspect_ratio = MultiaspectImage.calculate_new_size_by_pixel_edge(
             aspect_ratio=MultiaspectImage.calculate_image_aspect_ratio(training_sample_image),
             resolution=int(edge_length),
