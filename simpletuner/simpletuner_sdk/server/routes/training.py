@@ -2,23 +2,16 @@
 
 from __future__ import annotations
 
-import os
-from datetime import datetime
 import asyncio
-from typing import Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from simpletuner.simpletuner_sdk.api_state import APIState
-from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
-from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore, WebUIDefaults
-from simpletuner.simpletuner_sdk.server.services.configs_service import ConfigsService
-from simpletuner.simpletuner_sdk import process_keeper
 from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
-from simpletuner.simpletuner_sdk.server.services.field_registry_wrapper import lazy_field_registry
-from simpletuner.simpletuner_sdk.server.dependencies.common import _load_active_config_cached
+from simpletuner.simpletuner_sdk import process_keeper
+from simpletuner.simpletuner_sdk.api_state import APIState
+from simpletuner.simpletuner_sdk.server.services import training_service
 
 router = APIRouter(prefix="/api/training", tags=["training"])
 
@@ -35,100 +28,25 @@ class TrainingConfig(BaseModel):
     mixed_precision: str = "bf16"
 
 
-
-
-def _get_config_store() -> ConfigStore:
-    """Get the configuration store instance with user defaults if available."""
-    try:
-        state_store = WebUIStateStore()
-        defaults = state_store.load_defaults()
-        if defaults.configs_dir:
-            return ConfigStore(config_dir=defaults.configs_dir)
-    except Exception:
-        pass
-    return ConfigStore()
-
-
-def _get_webui_state() -> Tuple[Optional[WebUIStateStore], WebUIDefaults]:
-    """Load WebUI state store and defaults with safe fallbacks."""
-    try:
-        store = WebUIStateStore()
-        defaults = store.load_defaults()
-        return store, defaults
-    except Exception:
-        return None, WebUIDefaults()
-
-
-def _get_all_field_defaults() -> dict:
-    """Get all default values from field registry with proper types.
-
-    Returns:
-        Dictionary with all field defaults with -- prefixes and proper types
-    """
-    defaults = {}
-
-    for field in lazy_field_registry.get_all_fields():
-        defaults[field.arg_name] = ConfigsService.convert_value_by_type(
-            field.default_value,
-            field.field_type,
-        )
-
-    return defaults
-
-
 @router.post("/validate", response_class=HTMLResponse)
 async def validate_config(request: Request):
     """Validate training configuration and return HTML feedback."""
     form_data = await request.form()
 
-    # Convert form data to config dict with -- prefixes
-    _, webui_defaults = _get_webui_state()
-    config_dict = ConfigsService.normalize_form_to_config(
-        dict(form_data),
-        output_root=webui_defaults.output_dir,
-        configs_dir=webui_defaults.configs_dir,
+    bundle = training_service.build_config_bundle(dict(form_data))
+    validation_result = training_service.validate_training_config(
+        bundle.store,
+        bundle.complete_config,
+        bundle.config_dict,
+        strict_epoch_exclusivity=True,
     )
 
-    # Get all field defaults and merge with form data for complete validation
-    all_defaults = _get_all_field_defaults()
-    complete_config = {**all_defaults, **config_dict}
+    errors = validation_result.errors
+    warnings = validation_result.warnings
+    suggestions = validation_result.suggestions
 
-    # Use ConfigStore validation on the complete config
-    store = _get_config_store()
-    validation = store.validate_config(complete_config)
-
-    errors = list(validation.errors) if validation.errors else []
-    warnings = list(validation.warnings) if validation.warnings else []
-    suggestions = list(validation.suggestions) if validation.suggestions else []
-
-    # Add custom validation for mutual exclusivity
-    num_epochs = config_dict.get("--num_train_epochs", "10")
-    max_steps = config_dict.get("--max_train_steps", "0")
-
-    try:
-        epochs_val = int(num_epochs) if num_epochs else 0
-        steps_val = int(max_steps) if max_steps else 0
-
-        if epochs_val == 0 and steps_val == 0:
-            errors.append("Either num_train_epochs or max_train_steps must be greater than 0. You cannot set both to 0.")
-
-        if epochs_val > 0 and steps_val > 0:
-            errors.append("num_train_epochs and max_train_steps cannot both be set. Set one of them to 0.")
-    except ValueError:
-        errors.append("Invalid value for num_train_epochs or max_train_steps. Must be numeric.")
-
-    lr_scheduler = config_dict.get("--lr_scheduler", complete_config.get("--lr_scheduler", ""))
-    warmup_raw = config_dict.get("--lr_warmup_steps", complete_config.get("--lr_warmup_steps", 0))
-    try:
-        warmup_val = int(warmup_raw) if warmup_raw else 0
-        if lr_scheduler == "constant" and warmup_val > 0:
-            errors.append("Warmup steps are not supported with the 'constant' learning rate scheduler. Use 'constant_with_warmup' or set warmup steps to 0.")
-    except ValueError:
-        errors.append("Warmup steps must be a whole number.")
-
-    # Generate HTML response
     if errors:
-        html = f"""
+        return f"""
         <div class="alert alert-danger">
             <h6><i class="fas fa-exclamation-triangle"></i> Validation Failed</h6>
             <ul class="mb-0">
@@ -136,7 +54,8 @@ async def validate_config(request: Request):
             </ul>
         </div>
         """
-    elif warnings or suggestions:
+
+    if warnings or suggestions:
         html = '<div class="alert alert-warning">'
         html += '<h6><i class="fas fa-exclamation-circle"></i> Validation Warnings</h6>'
         if warnings:
@@ -150,15 +69,14 @@ async def validate_config(request: Request):
             html += "</ul>"
         html += '<small class="text-muted">You can proceed but review these items.</small>'
         html += "</div>"
-    else:
-        html = """
-        <div class="alert alert-success">
-            <h6><i class="fas fa-check-circle"></i> Configuration Valid</h6>
-            <p class="mb-0">All settings look good! Ready to start training.</p>
-        </div>
-        """
+        return html
 
-    return html
+    return """
+    <div class="alert alert-success">
+        <h6><i class="fas fa-check-circle"></i> Configuration Valid</h6>
+        <p class="mb-0">All settings look good! Ready to start training.</p>
+    </div>
+    """
 
 
 @router.post("/configuration/check", response_class=HTMLResponse)
@@ -172,151 +90,18 @@ async def save_config(request: Request):
     """Save training configuration."""
     form_data = await request.form()
 
-    # Separate WebUI settings and save options from training config
-    state_store, webui_defaults = _get_webui_state()
-    defaults_changed = False
-    save_options = {}
-
-    # Extract WebUI-specific settings and save options
-    form_dict = dict(form_data)
-    if "configs_dir" in form_dict:
-        normalized_configs_dir = (
-            os.path.abspath(os.path.expanduser(form_dict["configs_dir"]))
-            if form_dict["configs_dir"]
-            else form_dict["configs_dir"]
-        )
-        form_dict.pop("configs_dir", None)
-        if webui_defaults.configs_dir != normalized_configs_dir:
-            webui_defaults.configs_dir = normalized_configs_dir
-            defaults_changed = True
-    else:
-        form_dict.pop("configs_dir", None)
-
-    # Remove UI-only bookkeeping fields
-    form_dict.pop("__active_tab__", None)
-
-    # Extract save options
-    if "preserve_defaults" in form_dict:
-        save_options["preserve_defaults"] = form_dict["preserve_defaults"] == "true"
-        del form_dict["preserve_defaults"]
-    if "create_backup" in form_dict:
-        save_options["create_backup"] = form_dict["create_backup"] == "true"
-        del form_dict["create_backup"]
-
-    # Directory fields that need path expansion
-    directory_fields = ["--output_dir", "--instance_data_dir"]
-
-    # Convert form data to config dict with path expansion for directory fields
-    config_dict = ConfigsService.normalize_form_to_config(
-        form_dict,
-        directory_fields,
-        output_root=webui_defaults.output_dir,
-        configs_dir=webui_defaults.configs_dir,
-    )
-
-    # Debug log what we're saving
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.info(f"Saving config_dict: {config_dict}")
-    logger.info(f"num_train_epochs value: {config_dict.get('--num_train_epochs', 'NOT FOUND')}")
-    logger.info(f"max_train_steps value: {config_dict.get('--max_train_steps', 'NOT FOUND')}")
-
-    # Prepare config store and active config information
-    store = _get_config_store()
-    active_config = store.get_active_config()
-
-    # Load existing configuration (if any) so values from other tabs are preserved
-    existing_config_cli = {}
-    if active_config:
-        try:
-            existing_config_data, _ = store.load_config(active_config)
-            if isinstance(existing_config_data, dict):
-                for key, value in existing_config_data.items():
-                    cli_key = key if key.startswith("--") else f"--{key}"
-                    existing_config_cli[cli_key] = value
-        except FileNotFoundError:
-            pass
-        except ValueError:
-            # Malformed config should not block saving new values
-            pass
-
     try:
-        # Save WebUI settings if present
-        if defaults_changed and state_store:
-            state_store.save_defaults(webui_defaults)
-
-        # Get all field defaults and merge with existing config plus form data
-        all_defaults = _get_all_field_defaults()
-        # Merge order: defaults < existing config < submitted form values
-        complete_config = {**all_defaults, **existing_config_cli, **config_dict}
-        complete_config = ConfigsService.coerce_config_values_by_field(complete_config)
-
-        # Drop UI-only keys that should never reach the trainer config
-        for ui_key in ("configs_dir", "--configs_dir", "__active_tab__", "--__active_tab__"):
-            complete_config.pop(ui_key, None)
-
-        # Omit prediction_type when unset so models can auto-detect
-        prediction_key = "--prediction_type"
-        if prediction_key in complete_config and (complete_config[prediction_key] in (None, "")):
-            complete_config.pop(prediction_key, None)
-
-        # Process the config for saving
-        save_config = {}
-        for key, value in complete_config.items():
-            # Remove "--" prefix from keys
-            clean_key = key[2:] if key.startswith("--") else key
-
-            # If preserve_defaults is true, only include non-default values
-            if save_options.get("preserve_defaults", False):
-                # Compare with default value
-                default_value = all_defaults.get(key)
-                if value != default_value:
-                    save_config[clean_key] = value
-            else:
-                save_config[clean_key] = value
-
-        # Save training config
-        # If no active config, use default
-        if not active_config:
-            active_config = "default"
-
-        # Handle backup option
-        if save_options.get("create_backup", False):
-            config_path = store._get_config_path(active_config)
-            if config_path.exists():
-                # Create backup with timestamp
-                import datetime
-                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                backup_path = config_path.with_suffix(f".json.backup-{timestamp}")
-                import shutil
-                shutil.copy2(config_path, backup_path)
-                logger.info(f"Created backup at {backup_path}")
-
-        # Use the new save_trainer_config method for flat JSON format
-        store.save_trainer_config(active_config, save_config, overwrite=True)
-
-        # Invalidate cached config so UI reflects changes immediately
-        try:
-            _load_active_config_cached.clear_cache()
-        except AttributeError:
-            pass
-
-        # Set as active config if it wasn't already
-        if not store.get_active_config():
-            store.set_active_config(active_config)
-
-        # Also store in API state for compatibility (use complete config with -- prefixes for internal use)
-        APIState.set_state("training_config", complete_config)
-
+        bundle = training_service.build_config_bundle(dict(form_data))
+        training_service.persist_config_bundle(bundle)
         return """
         <div class="text-success" x-data="{ show: true }" x-show="show" x-init="setTimeout(() => show = false, 3000)" x-transition.opacity.duration.500ms>
             <i class="fas fa-check"></i> Configuration saved
         </div>
         """
-    except Exception as e:
+    except Exception as exc:
         return f"""
         <div class="text-danger">
-            <i class="fas fa-exclamation-triangle"></i> Failed to save: {str(e)}
+            <i class="fas fa-exclamation-triangle"></i> Failed to save: {str(exc)}
         </div>
         """
 
@@ -325,83 +110,32 @@ async def save_config(request: Request):
 async def start_training(request: Request):
     """Start training with current configuration."""
     form_data = await request.form()
+    bundle = training_service.build_config_bundle(dict(form_data))
 
-    # Convert form data to config dict with -- prefixes
-    _, webui_defaults = _get_webui_state()
-    config_dict = ConfigsService.normalize_form_to_config(
-        dict(form_data),
-        output_root=webui_defaults.output_dir,
-        configs_dir=webui_defaults.configs_dir,
+    validation_result = training_service.validate_training_config(
+        bundle.store,
+        bundle.complete_config,
+        bundle.config_dict,
     )
 
-    # Get all field defaults and merge with form data for complete validation
-    all_defaults = _get_all_field_defaults()
-    complete_config = {**all_defaults, **config_dict}
+    errors = list(validation_result.errors)
+    if not validation_result.raw_validation.is_valid and not errors:
+        errors.append("Configuration validation failed. Please review your settings.")
 
-    # Validate using ConfigStore on the complete config
-    store = _get_config_store()
-    validation = store.validate_config(complete_config)
-
-    # Add custom validation for mutual exclusivity
-    errors = list(validation.errors) if validation.errors else []
-
-    num_epochs = config_dict.get("--num_train_epochs", "10")
-    max_steps = config_dict.get("--max_train_steps", "0")
-
-    try:
-        epochs_val = int(num_epochs) if num_epochs else 0
-        steps_val = int(max_steps) if max_steps else 0
-
-        # Check if both are zero
-        if epochs_val == 0 and steps_val == 0:
-            errors.append("Either num_train_epochs or max_train_steps must be greater than 0. You cannot set both to 0.")
-
-        # Don't error if one is 0 - this is the valid use case
-        # Only error if user is trying to use both methods simultaneously
-        # (No check needed here - it's valid to have one at 0 and one > 0)
-    except ValueError:
-        errors.append("Invalid value for num_train_epochs or max_train_steps. Must be numeric.")
-
-    if not validation.is_valid or errors:
+    if errors:
+        error_list = "".join(f"<li>{error}</li>" for error in errors)
         return f"""
         <div class="alert alert-danger">
             <h6><i class="fas fa-exclamation-triangle"></i> Cannot Start Training</h6>
             <ul class="mb-0">
-                {''.join(f'<li>{error}</li>' for error in (errors if errors else validation.errors))}
+                {error_list}
             </ul>
         </div>
         """
 
-    # Save config to active config
-    store = _get_config_store()
-    active_config = store.get_active_config()
-
     try:
-        # Load existing metadata if present
-        try:
-            _, metadata = store.load_config(active_config)
-        except:
-            metadata = None
-
-        # Save updated config
-        store.save_config(active_config, config_dict, metadata, overwrite=True)
-
-        # Store config in API state
-        APIState.set_state("training_config", config_dict)
-        APIState.set_state("training_status", "starting")
-
-        # Start the training process using process keeper functions
-        import uuid
-
-        job_id = str(uuid.uuid4())[:8]
-
-        # Submit training job
-        from simpletuner.helpers.training.trainer import Trainer
-
-        process_keeper.submit_job(job_id, Trainer, config_dict)
-
-        # Store job ID
-        APIState.set_state("current_job_id", job_id)
+        training_service.persist_config_bundle(bundle)
+        job_id = training_service.start_training_job(bundle.complete_config)
 
         return f"""
         <div class="alert alert-info">
@@ -410,11 +144,11 @@ async def start_training(request: Request):
             <p class="mb-0"><small>Job ID: {job_id}</small></p>
         </div>
         """
-    except Exception as e:
+    except Exception as exc:
         return f"""
         <div class="alert alert-danger">
             <h6><i class="fas fa-exclamation-triangle"></i> Failed to Start Training</h6>
-            <p>{str(e)}</p>
+            <p>{str(exc)}</p>
         </div>
         """
 
@@ -430,15 +164,11 @@ async def stop_training():
     """Stop current training."""
     try:
         job_id = APIState.get_state("current_job_id")
-        if job_id:
-            # Terminate the process
-            process_keeper.terminate_process(job_id)
-            APIState.set_state("training_status", "stopped")
+        if training_service.terminate_training_job(job_id, status="stopped", clear_job_id=False):
             return {"message": f"Training job {job_id} stop requested"}
-        else:
-            return {"message": "No active training job to stop"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"message": "No active training job to stop"}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.post("/cancel", response_class=HTMLResponse)
@@ -448,12 +178,7 @@ async def cancel_training(request: Request):
         form_data = await request.form()
         job_id = form_data.get("job_id", APIState.get_state("current_job_id"))
 
-        if job_id:
-            # Terminate the process
-            process_keeper.terminate_process(job_id)
-            APIState.set_state("training_status", "cancelled")
-            APIState.set_state("current_job_id", None)
-
+        if training_service.terminate_training_job(job_id, status="cancelled", clear_job_id=True):
             return f"""
             <div class="alert alert-warning">
                 <h6><i class="fas fa-hand-paper"></i> Training Cancelled</h6>
@@ -461,18 +186,17 @@ async def cancel_training(request: Request):
                 <p class="mb-0"><small>Job ID: {job_id}</small></p>
             </div>
             """
-        else:
-            return f"""
+        return f"""
             <div class="alert alert-info">
                 <h6><i class="fas fa-info-circle"></i> No Active Training</h6>
                 <p>There is no active training job to cancel.</p>
             </div>
             """
-    except Exception as e:
+    except Exception as exc:
         return f"""
         <div class="alert alert-danger">
             <h6><i class="fas fa-exclamation-triangle"></i> Failed to Cancel Training</h6>
-            <p>{str(e)}</p>
+            <p>{str(exc)}</p>
         </div>
         """
 
