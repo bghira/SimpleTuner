@@ -1,5 +1,6 @@
 # test_trainer.py
 
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
@@ -73,6 +74,43 @@ class TestTrainer(unittest.TestCase):
         trainer.config = Mock(seed=42, seed_for_each_device=False)
         trainer.init_seed()
         mock_set_seed.assert_called_with(42, False)
+
+    def test_run_trainer_job_aborts_promptly(self):
+        from simpletuner.helpers.training import trainer as trainer_module
+
+        class DummyTrainer:
+            last_instance = None
+
+            def __init__(self, config=None, job_id=None):
+                self.config = config
+                self.job_id = job_id
+                self.should_abort = False
+                self._external_abort_checker = None
+                self.abort_called = False
+                DummyTrainer.last_instance = self
+
+            def run(self):
+                deadline = time.time() + 1.0
+                while not self.should_abort and time.time() < deadline:
+                    time.sleep(0.01)
+                if not self.should_abort:
+                    raise AssertionError("Trainer run did not observe abort signal")
+
+            def abort(self):
+                self.abort_called = True
+                self.should_abort = True
+
+        with patch.object(trainer_module, "Trainer", DummyTrainer):
+            result = trainer_module.run_trainer_job({
+                "should_abort": lambda: True,
+                "__job_id__": "unit-test",
+            })
+
+        self.assertEqual(result["status"], "completed")
+        instance = DummyTrainer.last_instance
+        self.assertIsNotNone(instance)
+        self.assertTrue(instance.abort_called)
+        self.assertTrue(instance.should_abort)
 
     @patch("simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock())
     @patch(
