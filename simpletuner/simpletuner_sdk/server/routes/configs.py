@@ -51,6 +51,26 @@ class ConfigFromTemplateRequest(BaseModel):
     config_name: str
 
 
+class EnvironmentCreateRequest(BaseModel):
+    """Request parameters for creating a new environment."""
+
+    name: str
+    model_family: str
+    model_flavour: Optional[str] = None
+    model_type: Optional[str] = None
+    lora_type: Optional[str] = None
+    description: Optional[str] = None
+    example: Optional[str] = None
+    dataloader_path: Optional[str] = None
+    create_dataloader: bool = True
+
+
+class EnvironmentDataloaderRequest(BaseModel):
+    """Request parameters for creating a dataloader config for an environment."""
+
+    path: Optional[str] = None
+
+
 def _call_service(func, *args, **kwargs):
     """Execute a service call and translate domain errors to HTTP errors."""
     try:
@@ -77,6 +97,18 @@ async def list_templates() -> Dict[str, Any]:
     return _call_service(CONFIGS_SERVICE.list_templates)
 
 
+@router.get("/examples")
+async def list_examples() -> Dict[str, Any]:
+    """List available example environments."""
+    return _call_service(CONFIGS_SERVICE.list_examples)
+
+
+@router.get("/project-name")
+async def generate_project_name() -> Dict[str, str]:
+    """Generate a random project name slug."""
+    return _call_service(CONFIGS_SERVICE.generate_project_name)
+
+
 @router.get("/active")
 async def get_active_config() -> Dict[str, Any]:
     """Get the currently active configuration."""
@@ -100,6 +132,12 @@ async def create_config(request: ConfigRequest, config_type: str = "model") -> D
         tags=request.tags,
         config_type=config_type,
     )
+
+
+@router.post("/environments")
+async def create_environment(request: EnvironmentCreateRequest) -> Dict[str, Any]:
+    """Create a new training environment."""
+    return _call_service(CONFIGS_SERVICE.create_environment, request)
 
 
 @router.put("/{name}")
@@ -131,6 +169,12 @@ async def rename_config(name: str, request: ConfigRenameRequest, config_type: st
 async def copy_config(name: str, request: ConfigCopyRequest, config_type: str = "model") -> Dict[str, Any]:
     """Copy a configuration."""
     return _call_service(CONFIGS_SERVICE.copy_config, name, request.target_name, config_type)
+
+
+@router.post("/{name}/dataloader")
+async def create_environment_dataloader(name: str, request: EnvironmentDataloaderRequest) -> Dict[str, Any]:
+    """Create a dataloader configuration for an environment."""
+    return _call_service(CONFIGS_SERVICE.create_environment_dataloader, name, request.path)
 
 
 @router.post("/{name}/activate")
