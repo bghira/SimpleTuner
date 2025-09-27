@@ -7,7 +7,7 @@ from diffusers.pipelines import IFPipeline, IFSuperResolutionPipeline
 from diffusers.utils import convert_state_dict_to_diffusers, convert_unet_state_dict_to_peft
 from peft import set_peft_model_state_dict
 from peft.utils import get_peft_model_state_dict
-from transformers import T5EncoderModel, T5TokenizerFast
+from transformers import T5EncoderModel, AutoTokenizer
 
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 
@@ -54,7 +54,7 @@ class DeepFloydIF(ImageModelFoundation):
     TEXT_ENCODER_CONFIGURATION = {
         "text_encoder": {
             "name": "T5 XXL v1.1",
-            "tokenizer": T5TokenizerFast,
+            "tokenizer": AutoTokenizer,
             "subfolder": "text_encoder",
             "tokenizer_subfolder": "tokenizer",
             "model": T5EncoderModel,
