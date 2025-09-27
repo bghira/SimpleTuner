@@ -212,6 +212,9 @@ class ExampleConfigsService:
 
     @staticmethod
     def _extract_description(config: Dict[str, Any]) -> Optional[str]:
+        if not isinstance(config, dict):
+            return None
+
         metadata = config.get("_metadata")
         if isinstance(metadata, dict):
             description = metadata.get("description")
