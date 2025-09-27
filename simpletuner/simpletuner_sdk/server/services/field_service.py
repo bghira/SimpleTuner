@@ -344,6 +344,14 @@ class FieldService:
             "description": field.help_text,
         }
 
+        custom_component = getattr(field, "custom_component", None)
+        if custom_component:
+            field_dict["custom_component"] = custom_component
+
+        checkbox_label = getattr(field, "checkbox_label", None)
+        if checkbox_label:
+            field_dict["checkbox_label"] = checkbox_label
+
         if resolved_value:
             field_dict["resolved_value"] = resolved_value
         if additional_hint:
@@ -648,8 +656,18 @@ class FieldService:
 
                     candidate_value = config_data[key]
 
-                    if isinstance(candidate_value, str) and candidate_value.strip().lower() in {"none", "not configured"}:
-                        continue
+                    if isinstance(candidate_value, str):
+                        normalized = candidate_value.strip().lower()
+                        if normalized == "not configured":
+                            continue
+                        if normalized == "none":
+                            has_explicit_none_choice = any(
+                                isinstance(choice, dict)
+                                and str(choice.get("value", "")).strip().lower() == "none"
+                                for choice in (field.choices or [])
+                            )
+                            if not has_explicit_none_choice:
+                                continue
 
                     if candidate_value not in (None, ""):
                         value = candidate_value
