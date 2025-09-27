@@ -23,7 +23,7 @@ from simpletuner.simpletuner_sdk.server.routes.datasets import router as dataset
 class TrainerConfig(BaseModel):
     trainer_config: Dict[str, Any]
     dataloader_config: List[Dict[str, Any]]
-    webhooks_config: Dict[str, Any]
+    webhook_config: Dict[str, Any]
     job_id: str
 
 

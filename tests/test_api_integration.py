@@ -29,7 +29,7 @@ class TestConfigurationEndpoints:
         job_config = ConfigModel(
             trainer_config={"model_type": "lora", "model_family": "sdxl"},
             dataloader_config=[],
-            webhooks_config={},
+            webhook_config={},
             job_id="test_check",
         )
 
@@ -47,7 +47,7 @@ class TestConfigurationEndpoints:
         config_api = Configuration()
 
         job_config = ConfigModel(
-            trainer_config={"model_type": "lora"}, dataloader_config=[], webhooks_config={}, job_id="test_run_subprocess"
+            trainer_config={"model_type": "lora"}, dataloader_config=[], webhook_config={}, job_id="test_run_subprocess"
         )
 
         with patch("simpletuner.simpletuner_sdk.process_keeper.submit_job") as mock_submit:
@@ -69,7 +69,7 @@ class TestConfigurationEndpoints:
         with patch("simpletuner.simpletuner_sdk.thread_keeper.get_thread_status") as mock_status:
             mock_status.return_value = "running"
 
-            job_config = ConfigModel(trainer_config={}, dataloader_config=[], webhooks_config={}, job_id="new_job")
+            job_config = ConfigModel(trainer_config={}, dataloader_config=[], webhook_config={}, job_id="new_job")
 
             result = await config_api.run(job_config)
 
@@ -345,7 +345,7 @@ class TestConcurrentAPICalls:
 
         async def check_config(job_id):
             job_config = ConfigModel(
-                trainer_config={"model_type": "lora"}, dataloader_config=[], webhooks_config={}, job_id=job_id
+                trainer_config={"model_type": "lora"}, dataloader_config=[], webhook_config={}, job_id=job_id
             )
 
             with patch("simpletuner.helpers.training.trainer.Trainer"):
@@ -365,7 +365,7 @@ class TestConcurrentAPICalls:
         config_api = Configuration()
 
         async def submit_job(job_id):
-            job_config = ConfigModel(trainer_config={}, dataloader_config=[], webhooks_config={}, job_id=job_id)
+            job_config = ConfigModel(trainer_config={}, dataloader_config=[], webhook_config={}, job_id=job_id)
 
             try:
                 return await config_api.run(job_config)
@@ -437,7 +437,7 @@ class TestErrorResponses:
         config_api = Configuration()
 
         job_config = ConfigModel(
-            trainer_config={}, dataloader_config=[], webhooks_config={}, job_id="invalid_config"  # Missing required fields
+            trainer_config={}, dataloader_config=[], webhook_config={}, job_id="invalid_config"  # Missing required fields
         )
 
         with patch("simpletuner.helpers.training.trainer.Trainer") as MockTrainer:
@@ -473,7 +473,7 @@ class TestProcessModeIntegration:
         config_data = {
             "trainer_config": {"model_type": "lora", "model_family": "sdxl", "max_train_steps": 10},
             "dataloader_config": [],
-            "webhooks_config": {},
+            "webhook_config": {},
             "job_id": "integration_test",
         }
 

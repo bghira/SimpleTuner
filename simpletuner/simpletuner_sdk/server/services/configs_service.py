@@ -405,7 +405,7 @@ class ConfigsService:
 
         json_path_fields = {
             "--data_backend_config",
-            "--webhooks_config",
+            "--webhook_config",
             "--lycoris_config",
         }
 
@@ -423,7 +423,10 @@ class ConfigsService:
             if key in excluded_fields:
                 continue
 
-            config_key = key if key.startswith("--") else f"--{key}"
+            if key in {"webhooks_config", "--webhooks_config"}:
+                config_key = "--webhook_config"
+            else:
+                config_key = key if key.startswith("--") else f"--{key}"
 
             if config_key in numeric_fields:
                 if value in (None, ""):
@@ -522,6 +525,10 @@ class ConfigsService:
                 pass
             else:
                 migrated["--vae_cache_ondemand"] = True
+
+        legacy_webhook = ConfigsService._pop_legacy_value(migrated, "webhooks_config")
+        if legacy_webhook is not None and "--webhook_config" not in migrated:
+            migrated["--webhook_config"] = legacy_webhook
 
         # Remove dataset-level fields that should not be part of trainer CLI config
         for dataset_key in (

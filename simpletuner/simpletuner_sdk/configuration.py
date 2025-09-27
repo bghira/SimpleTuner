@@ -28,7 +28,7 @@ class ConfigModel(BaseModel):
     # what we will write as config/multidatabackend.json
     dataloader_config: list
     # what we will write as config/webhooks.json
-    webhooks_config: dict
+    webhook_config: dict
     # optional lycoris_config
     lycoris_config: dict = None
     # optional user_prompt_library
@@ -73,7 +73,7 @@ class Configuration:
             job_config.trainer_config["data_backend_config"] = "config/multidatabackend.json"
 
         with open("config/webhooks.json", mode="w") as file_handler:
-            json.dump(job_config.webhooks_config, file_handler, indent=4)
+            json.dump(job_config.webhook_config, file_handler, indent=4)
             job_config.trainer_config["webhook_config"] = "config/webhooks.json"
 
         if hasattr(job_config, "lycoris_config"):
@@ -206,7 +206,7 @@ class Configuration:
         config_dict = {
             "trainer_config": job_config.trainer_config,
             "dataloader_config": job_config.dataloader_config,
-            "webhooks_config": job_config.webhooks_config,
+            "webhook_config": job_config.webhook_config,
             "job_id": job_id,
         }
 
