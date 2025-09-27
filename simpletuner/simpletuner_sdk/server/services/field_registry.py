@@ -894,13 +894,12 @@ class FieldRegistry:
                 ui_label="Train Text Encoder",
                 field_type=FieldType.CHECKBOX,
                 tab="training",
-                section="training_checkpoints",
+                section="text_encoder_training",
                 default_value=False,
                 help_text="Also train the text encoder (CLIP) model",
                 tooltip="Can improve concept learning but uses more VRAM. Not recommended for LoRA",
                 importance=ImportanceLevel.ADVANCED,
                 order=1,
-                dependencies=[FieldDependency(field="model_type", operator="equals", value="full", action="enable")],
             )
         )
 
@@ -912,7 +911,7 @@ class FieldRegistry:
                 ui_label="Text Encoder Learning Rate",
                 field_type=FieldType.NUMBER,
                 tab="training",
-                section="training_checkpoints",
+                section="text_encoder_training",
                 validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be positive")],
                 help_text="Separate learning rate for text encoder",
                 tooltip="Usually lower than main LR. If not set, uses main learning rate",
