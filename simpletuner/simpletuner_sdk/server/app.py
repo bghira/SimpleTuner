@@ -7,8 +7,9 @@ import os
 from enum import Enum
 from typing import Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from .utils.paths import get_simpletuner_root, get_template_directory, get_static_directory
 
@@ -83,6 +84,17 @@ def create_app(
         template_path = get_template_directory()
         if template_path.exists():
             os.environ["TEMPLATE_DIR"] = str(template_path)
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    def favicon():
+        p = get_static_directory() / "favicon.ico"
+        if not p.is_file():
+            raise HTTPException(status_code=404, detail="favicon not found")
+        return FileResponse(
+            p,
+            media_type="image/x-icon",
+            headers={"Cache-Control": "public, max-age=31536000, immutable"},
+        )
 
     # Add routes based on mode
     if mode in (ServerMode.TRAINER, ServerMode.UNIFIED):
