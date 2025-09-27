@@ -412,6 +412,21 @@ class ConfigStore:
         """
         configs = []
 
+        def _extract_backend_path(config_obj: Any) -> Optional[str]:
+            if not isinstance(config_obj, dict):
+                return None
+            for key in (
+                "--data_backend_config",
+                "data_backend_config",
+                "--dataloader_config",
+                "dataloader_config",
+                "dataloader_path",
+            ):
+                value = config_obj.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value
+            return None
+
         if self.config_type == "model":
             # For model configs, look for config.json in subdirectories
             if self.config_dir.exists():
@@ -425,6 +440,8 @@ class ConfigStore:
                             except Exception:
                                 continue
 
+                            config_data = data.get("config", data) if isinstance(data, dict) else data
+                            backend_path = _extract_backend_path(config_data)
                             metadata: Optional[Dict[str, Any]] = None
                             if isinstance(data, dict) and "_metadata" in data:
                                 metadata = data["_metadata"].copy()
@@ -445,7 +462,6 @@ class ConfigStore:
                                     ).isoformat(),
                                 }
                                 # Extract model info from config data
-                                config_data = data.get("config", data) if isinstance(data, dict) else data
                                 if isinstance(config_data, dict):
                                     if "--model_family" in config_data:
                                         metadata["model_family"] = config_data["--model_family"]
@@ -466,6 +482,13 @@ class ConfigStore:
                                         metadata["lora_type"] = config_data["--lora_type"]
                                     elif "lora_type" in config_data:
                                         metadata["lora_type"] = config_data["lora_type"]
+
+                            if backend_path:
+                                metadata.setdefault("dataloader_path", backend_path)
+                                metadata.setdefault("data_backend_config", backend_path)
+                                metadata["has_dataloader"] = True
+                            else:
+                                metadata.setdefault("has_dataloader", False)
 
                             configs.append(metadata)
 
@@ -491,6 +514,9 @@ class ConfigStore:
                         if isinstance(data, dict) and "algo" in data:
                             continue
 
+                        config_data = data.get("config", data) if isinstance(data, dict) else data
+                        backend_path = _extract_backend_path(config_data)
+
                         metadata: Optional[Dict[str, Any]] = None
                         if isinstance(data, dict) and "_metadata" in data:
                             metadata = data["_metadata"].copy()
@@ -506,7 +532,6 @@ class ConfigStore:
                                 "created_at": datetime.fromtimestamp(config_file.stat().st_ctime, tz=timezone.utc).isoformat(),
                                 "modified_at": datetime.fromtimestamp(config_file.stat().st_mtime, tz=timezone.utc).isoformat(),
                             }
-                            config_data = data.get("config", data) if isinstance(data, dict) else data
                             if isinstance(config_data, dict):
                                 if "--model_family" in config_data:
                                     metadata["model_family"] = config_data["--model_family"]
@@ -527,6 +552,13 @@ class ConfigStore:
                                     metadata["lora_type"] = config_data["--lora_type"]
                                 elif "lora_type" in config_data:
                                     metadata["lora_type"] = config_data["lora_type"]
+
+                        if backend_path:
+                            metadata.setdefault("dataloader_path", backend_path)
+                            metadata.setdefault("data_backend_config", backend_path)
+                            metadata["has_dataloader"] = True
+                        else:
+                            metadata.setdefault("has_dataloader", False)
 
                         configs.append(metadata)
         elif self.config_type == "dataloader":
@@ -1222,13 +1254,6 @@ class ConfigStore:
         if active_config:
             return active_config
 
-        # Check if default config symlink exists in user's config directory
-        config_symlink = self.config_dir / "config.json"
-        if config_symlink.is_symlink():
-            target = config_symlink.readlink()
-            if target.parent == self.config_dir:
-                return target.stem
-
         # If no active config is set, try to find the first available config
         configs = self.list_configs()
         if configs:
@@ -1267,39 +1292,13 @@ class ConfigStore:
         # Also set environment variable for current session
         os.environ[_CONFIG_ACTIVE] = name
 
-        # Update symlink or copy in user's config directory
-        config_symlink = self.config_dir / "config.json"
-        if config_symlink.exists() or config_symlink.is_symlink():
-            if config_symlink.is_symlink():
-                try:
-                    config_symlink.unlink()
-                except FileNotFoundError:
-                    pass
-            else:
-                # Backup existing config
-                backup_path = config_symlink.with_suffix(".json.bak")
-                shutil.copy2(config_symlink, backup_path)
-                config_symlink.unlink()
-
-        # Ensure parent directory exists
-        config_symlink.parent.mkdir(parents=True, exist_ok=True)
-
-        # Create symlink to active config (or copy on Windows)
-        try:
-            # Use absolute paths for symlink
-            config_symlink.symlink_to(config_path.absolute())
-        except OSError:
-            # Fallback to copying on systems that don't support symlinks
+        # Remove legacy config.json if it exists (no longer maintained)
+        legacy_path = self.config_dir / "config.json"
+        if legacy_path.exists() or legacy_path.is_symlink():
             try:
-                shutil.copy2(config_path, config_symlink)
+                legacy_path.unlink()
             except FileNotFoundError:
-                # Handle leftover/broken links by removing and retrying once
-                try:
-                    if config_symlink.is_symlink() or config_symlink.exists():
-                        config_symlink.unlink()
-                except FileNotFoundError:
-                    pass
-                shutil.copy2(config_path, config_symlink)
+                pass
 
         return True
 
