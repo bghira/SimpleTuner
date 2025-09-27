@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -13,9 +15,14 @@ from simpletuner.simpletuner_sdk.server.services.config_store import ConfigMetad
 from simpletuner.simpletuner_sdk.server.services.dataset_service import normalize_dataset_config_value
 from simpletuner.simpletuner_sdk.server.services.field_registry import FieldType
 from simpletuner.simpletuner_sdk.server.services.field_registry_wrapper import lazy_field_registry
+from simpletuner.simpletuner_sdk.server.services.example_configs_service import (
+    EXAMPLE_CONFIGS_SERVICE,
+    ExampleConfigInfo,
+)
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
-from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
+from simpletuner.simpletuner_sdk.server.utils.paths import get_simpletuner_root, resolve_config_path
 from simpletuner.simpletuner_sdk.server.dependencies.common import _load_active_config_cached
+from simpletuner.helpers.models.registry import ModelRegistry
 
 
 class ConfigServiceError(Exception):
@@ -29,6 +36,121 @@ class ConfigServiceError(Exception):
 
 class ConfigsService:
     """Coordinator for configuration-related operations."""
+
+    _CONFIG_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
+
+    @classmethod
+    def _validate_config_name(cls, name: str) -> str:
+        candidate = (name or "").strip()
+        if not candidate:
+            raise ConfigServiceError("Configuration name is required", status.HTTP_400_BAD_REQUEST)
+        if not cls._CONFIG_NAME_PATTERN.match(candidate):
+            raise ConfigServiceError(
+                "Configuration name may only contain letters, numbers, '.', '_' or '-'",
+                status.HTTP_400_BAD_REQUEST,
+            )
+        return candidate
+
+    @staticmethod
+    def _resolve_pretrained_path(model_family: Optional[str], model_flavour: Optional[str]) -> Optional[str]:
+        if not model_family:
+            return None
+
+        model = ModelRegistry.get(model_family)
+        if not model:
+            return None
+
+        flavour = model_flavour or getattr(model, "DEFAULT_MODEL_FLAVOUR", None)
+        hf_paths = getattr(model, "HUGGINGFACE_PATHS", None)
+        if isinstance(hf_paths, dict) and hf_paths:
+            if flavour and flavour in hf_paths:
+                return hf_paths[flavour]
+            default_flavour = getattr(model, "DEFAULT_MODEL_FLAVOUR", None)
+            if default_flavour and default_flavour in hf_paths:
+                return hf_paths[default_flavour]
+            return next(iter(hf_paths.values()))
+
+        default_repo = getattr(model, "DEFAULT_MODEL_NAME", None)
+        if isinstance(default_repo, str) and default_repo.strip():
+            return default_repo.strip()
+
+        return None
+
+    @staticmethod
+    def _dataloader_destination(base_dir: Path, name: str, requested_path: Optional[str]) -> Path:
+        if requested_path:
+            candidate = Path(requested_path).expanduser()
+            if not candidate.is_absolute():
+                candidate = base_dir / candidate
+        else:
+            candidate = base_dir / name / "multidatabackend.json"
+
+        resolved = candidate.resolve(strict=False)
+
+        try:
+            resolved.relative_to(base_dir)
+        except ValueError as exc:
+            raise ConfigServiceError(
+                "Dataloader configs must live within the configs directory",
+                status.HTTP_400_BAD_REQUEST,
+            ) from exc
+
+        return resolved
+
+    @staticmethod
+    @staticmethod
+    def _format_relative_to_configs(path: Path, base_dir: Path) -> str:
+        try:
+            return path.resolve(strict=False).relative_to(base_dir.resolve(strict=False)).as_posix()
+        except Exception:
+            try:
+                root = get_simpletuner_root()
+                return path.resolve(strict=False).relative_to(root).as_posix()
+            except Exception:
+                try:
+                    return path.resolve(strict=False).as_posix()
+                except Exception:
+                    return path.as_posix()
+
+    @staticmethod
+    def _write_default_dataloader(path: Path, environment: str) -> None:
+        if path.exists():
+            raise ConfigServiceError(
+                f"Dataloader config already exists at '{path}'",
+                status.HTTP_409_CONFLICT,
+            )
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        default_plan: List[Dict[str, Any]] = [
+            {
+                "id": f"{environment}-images",
+                "type": "local",
+                "dataset_type": "image",
+                "instance_data_dir": "",
+                "resolution": 1024,
+                "resolution_type": "pixel_area",
+                "caption_strategy": "textfile",
+                "cache_dir_vae": "",
+                "minimum_image_size": 256,
+                "maximum_image_size": 4096,
+                "target_downsample_size": 1024,
+                "crop": True,
+                "crop_style": "center",
+                "crop_aspect": "square",
+            },
+            {
+                "id": f"{environment}-text-embeds",
+                "type": "local",
+                "dataset_type": "text_embeds",
+                "default": True,
+                "cache_dir": "",
+            },
+        ]
+
+        with path.open("w", encoding="utf-8") as handle:
+            json.dump(default_plan, handle, indent=2)
+            handle.write("\n")
 
     @staticmethod
     def _invalidate_active_config_cache() -> None:
@@ -100,6 +222,13 @@ class ConfigsService:
             "count": len(configs),
             "config_type": config_type,
         }
+
+    def list_examples(self) -> Dict[str, Any]:
+        examples = [example.to_public_dict() for example in EXAMPLE_CONFIGS_SERVICE.list_examples()]
+        return {"examples": examples, "count": len(examples)}
+
+    def generate_project_name(self) -> Dict[str, str]:
+        return {"name": EXAMPLE_CONFIGS_SERVICE.generate_project_name()}
 
     def list_templates(self) -> Dict[str, Any]:
         store = self._get_store()
@@ -230,6 +359,221 @@ class ConfigsService:
             "message": f"Configuration '{name}' updated successfully",
             "metadata": saved.model_dump(),
             "validation": {"warnings": validation.warnings, "suggestions": validation.suggestions},
+        }
+
+    def create_environment(self, request: Any) -> Dict[str, Any]:
+        name = self._validate_config_name(getattr(request, "name", None))
+        model_family = getattr(request, "model_family", None)
+        if not model_family:
+            raise ConfigServiceError("model_family is required", status.HTTP_400_BAD_REQUEST)
+
+        model_flavour = getattr(request, "model_flavour", None)
+        model_type = getattr(request, "model_type", None) or "lora"
+        lora_type = getattr(request, "lora_type", None)
+        description = getattr(request, "description", None)
+        example = getattr(request, "example", None)
+        dataloader_path = getattr(request, "dataloader_path", None)
+        create_dataloader = getattr(request, "create_dataloader", True)
+
+        if not create_dataloader and not dataloader_path:
+            raise ConfigServiceError(
+                "dataloader_path is required when referencing an existing configuration",
+                status.HTTP_400_BAD_REQUEST,
+            )
+
+        if model_type == "lora" and not lora_type and not example:
+            lora_type = "standard"
+
+        model_store = self._get_store("model")
+        env_dir = Path(model_store.config_dir) / name
+
+        if env_dir.exists():
+            raise ConfigServiceError(
+                f"Environment '{name}' already exists",
+                status.HTTP_409_CONFLICT,
+            )
+
+        dataloader_abs = self._dataloader_destination(Path(model_store.config_dir), name, dataloader_path)
+        dataloader_rel = self._format_relative_to_configs(dataloader_abs, Path(model_store.config_dir))
+
+        example_info: Optional[ExampleConfigInfo] = None
+        if example:
+            try:
+                example_info = EXAMPLE_CONFIGS_SERVICE.get_example(example)
+            except FileNotFoundError as exc:
+                available = [info.name for info in EXAMPLE_CONFIGS_SERVICE.list_examples()]
+                message = str(exc)
+                if available:
+                    message += f". Available examples: {', '.join(available)}"
+                raise ConfigServiceError(message, status.HTTP_404_NOT_FOUND) from exc
+
+            source_path = example_info.config_path
+            if source_path.name == "config.json" and source_path.parent.is_dir():
+                shutil.copytree(source_path.parent, env_dir)
+            else:
+                env_dir.mkdir(parents=True, exist_ok=True)
+                target_config = env_dir / "config.json"
+                try:
+                    with source_path.open("r", encoding="utf-8") as handle:
+                        data = json.load(handle)
+                except Exception as exc:
+                    raise ConfigServiceError(
+                        f"Failed to load example config '{example}': {exc}",
+                        status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    ) from exc
+                with target_config.open("w", encoding="utf-8") as handle:
+                    json.dump(data, handle, indent=2, sort_keys=True)
+                    handle.write("\n")
+        else:
+            env_dir.mkdir(parents=True, exist_ok=True)
+
+        # Determine base configuration
+        if example:
+            config_file = env_dir / "config.json"
+            if config_file.exists():
+                try:
+                    with config_file.open("r", encoding="utf-8") as handle:
+                        raw_config = json.load(handle)
+                    if isinstance(raw_config, dict) and "_metadata" in raw_config:
+                        config_payload = dict(raw_config.get("config", {}) or {})
+                    else:
+                        config_payload = dict(raw_config) if isinstance(raw_config, dict) else {}
+                except Exception:
+                    config_payload = {}
+            else:
+                config_payload = dict(example_info.defaults) if example_info else {}
+        else:
+            try:
+                base_config, _ = model_store.load_config("default")
+                config_payload = dict(base_config)
+            except Exception:
+                config_payload = {}
+
+        pretrained_path = self._resolve_pretrained_path(model_family, model_flavour)
+        if not pretrained_path:
+            pretrained_path = model_flavour or model_family
+
+        overrides = {
+            "data_backend_config": dataloader_rel,
+        }
+
+        if not example:
+            overrides.update(
+                {
+                    "--model_family": model_family,
+                    "--model_flavour": model_flavour,
+                    "--model_type": model_type,
+                    "--pretrained_model_name_or_path": pretrained_path,
+                    "--output_dir": f"output/{name}",
+                }
+            )
+            if model_type == "lora" and lora_type:
+                overrides["--lora_type"] = lora_type
+
+        for key, value in overrides.items():
+            if value is None:
+                continue
+            config_payload[key] = value
+
+        # Ensure canonical data backend key is present and remove deprecated duplicates
+        config_payload["data_backend_config"] = dataloader_rel
+        config_payload.pop("--data_backend_config", None)
+
+        overwrite = example is not None
+        model_store.save_config(name, config_payload, metadata=None, overwrite=overwrite)
+
+        # Update metadata description if provided
+        _, metadata = model_store.load_config(name)
+        if description:
+            metadata.description = description
+        if not example:
+            metadata.model_family = model_family or metadata.model_family
+            metadata.model_type = model_type or metadata.model_type
+            metadata.model_flavour = model_flavour or metadata.model_flavour
+            if model_type == "lora" and lora_type:
+                metadata.lora_type = lora_type
+        model_store.save_config(name, config_payload, metadata, overwrite=True)
+
+        # Handle dataloader file
+        if create_dataloader:
+            payload_written = False
+            if example_info and example_info.dataloader_payload is not None:
+                dataloader_abs.parent.mkdir(parents=True, exist_ok=True)
+                with dataloader_abs.open("w", encoding="utf-8") as handle:
+                    json.dump(example_info.dataloader_payload, handle, indent=2, sort_keys=True)
+                    handle.write("\n")
+                payload_written = True
+            else:
+                example_dataloader_candidates = list(env_dir.glob("multidatabackend*.json"))
+                if example_dataloader_candidates:
+                    selected = example_dataloader_candidates[0]
+                    if selected.resolve(strict=False) != dataloader_abs:
+                        dataloader_abs.parent.mkdir(parents=True, exist_ok=True)
+                        if dataloader_abs.exists():
+                            dataloader_abs.unlink()
+                        selected.replace(dataloader_abs)
+                    payload_written = True
+
+            if not payload_written:
+                self._write_default_dataloader(dataloader_abs, name)
+        else:
+            if not dataloader_abs.exists():
+                raise ConfigServiceError(
+                    f"Dataloader configuration not found: {dataloader_rel}",
+                    status.HTTP_404_NOT_FOUND,
+                )
+
+        self._invalidate_active_config_cache()
+
+        _, metadata = model_store.load_config(name)
+        metadata_dict = metadata.model_dump()
+        metadata_dict["path"] = str(env_dir)
+
+        return {
+            "message": f"Environment '{name}' created",
+            "environment": metadata_dict,
+            "config": config_payload,
+            "dataloader": {
+                "path": dataloader_rel,
+                "absolute_path": str(dataloader_abs),
+            },
+        }
+
+    def create_environment_dataloader(self, environment: str, requested_path: Optional[str]) -> Dict[str, Any]:
+        env_name = self._validate_config_name(environment)
+        model_store = self._get_store("model")
+
+        try:
+            config_payload, metadata = model_store.load_config(env_name)
+        except FileNotFoundError as exc:
+            raise ConfigServiceError(str(exc), status.HTTP_404_NOT_FOUND) from exc
+
+        config_payload = dict(config_payload)
+
+        dataloader_abs = self._dataloader_destination(Path(model_store.config_dir), env_name, requested_path)
+        dataloader_rel = self._format_relative_to_configs(dataloader_abs, Path(model_store.config_dir))
+
+        if dataloader_abs.exists():
+            raise ConfigServiceError(
+                f"Dataloader config already exists at '{dataloader_rel}'",
+                status.HTTP_409_CONFLICT,
+            )
+
+        self._write_default_dataloader(dataloader_abs, env_name)
+
+        config_payload["data_backend_config"] = dataloader_rel
+        config_payload.pop("--data_backend_config", None)
+
+        model_store.save_config(env_name, config_payload, metadata, overwrite=True)
+        self._invalidate_active_config_cache()
+
+        return {
+            "message": f"Dataloader for environment '{env_name}' created",
+            "environment": metadata.model_dump(),
+            "dataloader": {
+                "path": dataloader_rel,
+                "absolute_path": str(dataloader_abs),
+            },
         }
 
     def delete_config(self, name: str, config_type: str = "model") -> Dict[str, Any]:
