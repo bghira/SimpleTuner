@@ -8,6 +8,8 @@ import os
 import random
 import shutil
 import sys
+import threading
+import time
 from typing import Dict, Optional
 
 import huggingface_hub
@@ -150,6 +152,7 @@ class Trainer:
         self.lr_scheduler = None
         self.webhook_handler = None
         self.should_abort = False
+        self._external_abort_checker = None
         self.ema_model = None
         self.validation = None
         # this updates self.config further, so we will run it here.
@@ -262,11 +265,16 @@ class Trainer:
 
     def run(self):
         try:
+            self._exit_on_signal()
             # Initialize essential configurations and schedules
             self.configure_webhook()
+            self._exit_on_signal()
             self.init_noise_schedule()
+            self._exit_on_signal()
             self.init_seed()
+            self._exit_on_signal()
             self.init_huggingface_hub()
+            self._exit_on_signal()
 
             # Core initialization steps with signal checks after each step
             self._initialize_components_with_signal_check(
@@ -1657,6 +1665,16 @@ class Trainer:
             self.extra_lr_scheduler_kwargs["epoch"] = epoch
 
     def _exit_on_signal(self):
+        external_abort = False
+        if callable(getattr(self, "_external_abort_checker", None)):
+            try:
+                external_abort = bool(self._external_abort_checker())
+            except Exception:
+                external_abort = False
+
+        if external_abort and not self.should_abort:
+            self.abort()
+
         if self.should_abort:
             self._send_webhook_raw(
                 structured_data={"message": "Aborting training run."},
@@ -2405,3 +2423,43 @@ class Trainer:
             if self.hub_manager is not None and self.accelerator.is_main_process:
                 self.hub_manager.upload_model(validation_images, self.webhook_handler)
         self.accelerator.end_training()
+
+
+def run_trainer_job(config):
+    """Create a Trainer from the provided config and execute the full run loop."""
+
+    job_id = None
+    should_abort_callable = None
+
+    if hasattr(config, "__dict__"):
+        attrs = vars(config).copy()
+        should_abort_callable = attrs.pop("should_abort", None)
+        job_id = attrs.pop("__job_id__", None) or attrs.pop("job_id", None)
+        config_payload = attrs
+    elif isinstance(config, dict):
+        config_payload = dict(config)
+        job_id = config_payload.pop("__job_id__", None) or config_payload.pop("job_id", None)
+        should_abort_callable = config_payload.pop("should_abort", None)
+    else:
+        config_payload = config
+
+    trainer = Trainer(config=config_payload, job_id=job_id)
+
+    def _abort_monitor():
+        if not callable(should_abort_callable):
+            return
+        while not trainer.should_abort:
+            try:
+                if should_abort_callable():
+                    trainer.abort()
+                    return
+            except Exception:
+                return
+            time.sleep(0.5)
+
+    if callable(should_abort_callable):
+        trainer._external_abort_checker = should_abort_callable
+        threading.Thread(target=_abort_monitor, daemon=True).start()
+
+    trainer.run()
+    return {"status": "completed"}
