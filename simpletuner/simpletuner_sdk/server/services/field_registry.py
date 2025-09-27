@@ -109,6 +109,9 @@ class ConfigField:
     dynamic_choices: bool = False  # Whether choices are dynamically loaded
     cmd_args_help: Optional[str] = None  # Formatted help text from cmd_args.py
     step: Optional[float] = None  # Numeric input increment
+    custom_component: Optional[str] = None  # Custom renderer identifier for UI
+    checkbox_label: Optional[str] = None  # Alternate label for checkbox/toggle inputs
+    webui_onboarding: bool = False  # treated as WebUI-only state, never persisted to config
 
 
 class FieldRegistry:
@@ -2249,6 +2252,24 @@ class FieldRegistry:
             ]
         ))
 
+        # Merge environment configuration toggle
+        self._add_field(ConfigField(
+            name="merge_environment_config",
+            arg_name="merge_environment_config",
+            ui_label="Merge active environment defaults",
+            field_type=FieldType.CHECKBOX,
+            tab="basic",
+            section="project",
+            default_value=False,
+            help_text="When enabled, values from the active environment configuration fill in any unset training options.",
+            tooltip="Disable this if you want to start from an empty configuration instead of the environment defaults.",
+            importance=ImportanceLevel.ESSENTIAL,
+            order=0,
+            custom_component="merge_environment_toggle",
+            checkbox_label="Use environment defaults",
+            webui_onboarding=True,
+        ))
+
         # Tracker Project Name
         self._add_field(ConfigField(
             name="tracker_project_name",
@@ -2511,6 +2532,11 @@ class FieldRegistry:
                 section["subsections"] = sorted(list(section["subsections"]))
 
         return tabs
+
+    def get_webui_onboarding_fields(self) -> List[ConfigField]:
+        """Return fields that should be treated as WebUI onboarding state only."""
+
+        return [field for field in self._fields.values() if getattr(field, "webui_onboarding", False)]
 
 
 # Create a singleton instance
