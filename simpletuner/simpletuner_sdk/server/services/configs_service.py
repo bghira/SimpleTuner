@@ -65,6 +65,28 @@ class ConfigsService:
         except ValueError:
             return False
 
+    @staticmethod
+    def _resolve_under_base(base: Optional[str], value: str) -> str:
+        """Resolve relative paths under a given base directory and normalise."""
+
+        if not value:
+            return value
+
+        expanded_value = os.path.expanduser(value)
+        if os.path.isabs(expanded_value):
+            return os.path.normpath(expanded_value)
+
+        if base:
+            base_value = os.path.abspath(os.path.expanduser(base))
+            rel = expanded_value.lstrip("./")
+            base_name = os.path.basename(base_value.rstrip(os.sep))
+            prefix = f"{base_name}{os.sep}"
+            if rel.startswith(prefix):
+                rel = rel[len(prefix):]
+            return os.path.normpath(os.path.join(base_value, rel))
+
+        return os.path.normpath(os.path.abspath(expanded_value))
+
     # ------------------------------------------------------------------
     # Read operations
     # ------------------------------------------------------------------
@@ -381,6 +403,12 @@ class ConfigsService:
             for field in lazy_field_registry.get_all_fields()
         }
 
+        json_path_fields = {
+            "--data_backend_config",
+            "--webhooks_config",
+            "--lycoris_config",
+        }
+
         numeric_fields = {
             "--num_train_epochs",
             "--max_train_steps",
@@ -407,15 +435,9 @@ class ConfigsService:
                 continue
 
             if config_key in directory_fields and value:
-                expanded_value = os.path.expanduser(value)
-
-                if config_key == "--output_dir" and output_root:
-                    base_dir = os.path.abspath(os.path.expanduser(output_root))
-                    if not os.path.isabs(expanded_value):
-                        expanded_value = os.path.join(base_dir, expanded_value)
-
-                expanded_value = os.path.abspath(expanded_value)
-                config_dict[config_key] = os.path.normpath(expanded_value)
+                base_dir = output_root if config_key == "--output_dir" else None
+                expanded_value = ConfigsService._resolve_under_base(base_dir, value)
+                config_dict[config_key] = expanded_value
                 continue
 
             field_type = field_types.get(config_key, FieldType.TEXT)
@@ -426,13 +448,19 @@ class ConfigsService:
                 and converted_value
                 and converted_value.lower().endswith(".json")
             ):
+                if config_key in json_path_fields:
+                    converted_value = ConfigsService._resolve_under_base(configs_dir, converted_value)
+
                 normalized_value = normalize_dataset_config_value(converted_value, configs_dir)
                 if normalized_value:
                     converted_value = normalized_value
 
+                if config_key in json_path_fields:
+                    converted_value = ConfigsService._resolve_under_base(configs_dir, converted_value)
+
             config_dict[config_key] = converted_value
 
-        return config_dict
+        return ConfigsService._migrate_legacy_keys(config_dict)
 
     @staticmethod
     def coerce_config_values_by_field(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -449,6 +477,62 @@ class ConfigsService:
             coerced[key] = ConfigsService.convert_value_by_type(value, field.field_type)
 
         return coerced
+
+    # ------------------------------------------------------------------
+    # Legacy migrations
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_truthy(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        if isinstance(value, (int, float)):
+            return value != 0
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in {"", "0", "false", "no", "off", "none"}:
+                return False
+            if lowered in {"1", "true", "yes", "on"}:
+                return True
+        return bool(value)
+
+    @staticmethod
+    def _pop_legacy_value(config: Dict[str, Any], base_key: str) -> Any:
+        for variant in (base_key, f"--{base_key}"):
+            if variant in config:
+                return config.pop(variant)
+        return None
+
+    @staticmethod
+    def _migrate_legacy_keys(config: Dict[str, Any]) -> Dict[str, Any]:
+        """Rewrite legacy configuration keys to their current equivalents."""
+
+        migrated = dict(config)
+
+        legacy_limit = ConfigsService._pop_legacy_value(migrated, "save_total_limit")
+        if legacy_limit is not None and "--checkpoints_total_limit" not in migrated:
+            migrated["--checkpoints_total_limit"] = legacy_limit
+
+        legacy_vae = ConfigsService._pop_legacy_value(migrated, "vae_cache_preprocess")
+        if legacy_vae is not None and "--vae_cache_ondemand" not in migrated:
+            if ConfigsService._is_truthy(legacy_vae):
+                # Legacy true means preprocess; no flag required
+                pass
+            else:
+                migrated["--vae_cache_ondemand"] = True
+
+        # Remove dataset-level fields that should not be part of trainer CLI config
+        for dataset_key in (
+            "aspect_ratio_bucketing",
+            "aspect_ratio_bucket_min",
+            "aspect_ratio_bucket_max",
+            "repeats",
+        ):
+            ConfigsService._pop_legacy_value(migrated, dataset_key)
+
+        return migrated
 
 
 # Singleton instance used by routes
