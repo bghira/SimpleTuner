@@ -115,6 +115,7 @@ class FieldService:
         """Check whether the selected model supports text encoder training."""
         model_class = self._get_model_class(config_values)
         if not model_class:
+            logger.warning(f"Could not get model class for config: {config_values}")
             return False
 
         return bool(getattr(model_class, "SUPPORTS_TEXT_ENCODER_TRAINING", False))
@@ -153,8 +154,18 @@ class FieldService:
         Returns:
             List of converted field dictionaries
         """
-        supports_text_encoder = self._supports_text_encoder_training(config_values)
-        text_encoder_config = self._get_text_encoder_configuration(config_values)
+        options = options or {}
+        combined_config: Dict[str, Any] = {}
+
+        raw_config = options.get("raw_config")
+        if isinstance(raw_config, dict):
+            combined_config.update(raw_config)
+
+        if isinstance(config_values, dict):
+            combined_config.update(config_values)
+
+        supports_text_encoder = self._supports_text_encoder_training(combined_config)
+        text_encoder_config = self._get_text_encoder_configuration(combined_config)
         available_text_encoders = list(text_encoder_config.keys()) if text_encoder_config else []
         encoder_count = len(available_text_encoders)
 
@@ -179,7 +190,7 @@ class FieldService:
 
             filtered_fields.append(field)
 
-        return [self.convert_field(field, format, config_values, options) for field in filtered_fields]
+        return [self.convert_field(field, format, combined_config, options) for field in filtered_fields]
 
     def get_fields_for_section(
         self, tab_name: str, section_name: str, format: FieldFormat, config_values: Dict[str, Any]

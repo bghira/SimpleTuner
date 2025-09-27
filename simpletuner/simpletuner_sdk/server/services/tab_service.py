@@ -201,8 +201,10 @@ class TabService:
 
         # Add sections if provided
         if sections:
-            context["sections"] = sections
-            context["grouped_fields"] = self._group_fields_by_section(fields, sections)
+            grouped_fields = self._group_fields_by_section(fields, sections)
+            filtered_sections = [section for section in sections if section["id"] in grouped_fields]
+            context["sections"] = filtered_sections
+            context["grouped_fields"] = grouped_fields
 
         # Apply tab-specific context modifications
         if tab_config.extra_context_handler:
