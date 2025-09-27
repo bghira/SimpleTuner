@@ -202,7 +202,12 @@ class TabService:
         # Add sections if provided
         if sections:
             grouped_fields = self._group_fields_by_section(fields, sections)
-            filtered_sections = [section for section in sections if section["id"] in grouped_fields]
+            filtered_sections = []
+            for section in sections:
+                section_id = section["id"]
+                section_fields = grouped_fields.get(section_id, [])
+                if section_fields or section.get("empty_message"):
+                    filtered_sections.append(section)
             context["sections"] = filtered_sections
             context["grouped_fields"] = grouped_fields
 
@@ -235,8 +240,7 @@ class TabService:
             else:
                 grouped["uncategorized"].append(field)
 
-        # Remove empty sections
-        return {k: v for k, v in grouped.items() if v}
+        return grouped
 
     # Tab-specific context handlers
     def _basic_tab_context(

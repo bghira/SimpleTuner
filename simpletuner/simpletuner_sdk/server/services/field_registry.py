@@ -2492,13 +2492,16 @@ class FieldRegistry:
                     "id": cfg_field.section,
                     "title": cfg_field.section.replace("_", " ").title(),
                     "subsections": set(),
+                    "empty_message": None,
                 }
             if cfg_field.subsection:
                 sections[cfg_field.section]["subsections"].add(cfg_field.subsection)
 
         # Convert sets to lists
-        for section in sections.values():
+        for section_id, section in sections.items():
             section["subsections"] = sorted(list(section["subsections"]))
+            if section_id == "text_encoder_training":
+                section["empty_message"] = "This model does not support text encoder training."
 
         return list(sections.values())
 
