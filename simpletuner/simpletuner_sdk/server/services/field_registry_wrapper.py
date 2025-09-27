@@ -201,6 +201,21 @@ class LazyFieldRegistry:
             logger.error(f"Error exporting field metadata: {e}", exc_info=True)
             return {"fields": {}, "dependencies_map": {}, "tabs": {}}
 
+    def get_webui_onboarding_fields(self) -> List[Any]:
+        """Return fields that should be treated as WebUI onboarding state."""
+
+        registry = self._get_registry()
+        if registry is None:
+            return []
+
+        try:
+            if hasattr(registry, 'get_webui_onboarding_fields'):
+                return registry.get_webui_onboarding_fields()
+            return []
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.error("Error retrieving WebUI onboarding fields: %s", exc, exc_info=True)
+            return []
+
     def validate_field_value(self, field_name: str, value: Any, context: Optional[Dict[str, Any]] = None) -> List[str]:
         """Validate a field value against its rules."""
         registry = self._get_registry()
