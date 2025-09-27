@@ -465,17 +465,17 @@ class FieldRegistry:
             order=12
         ))
 
-        # VAE Cache Preprocessing
+        # VAE Cache On-Demand
         self._add_field(ConfigField(
-            name="vae_cache_preprocess",
-            arg_name="--vae_cache_preprocess",
-            ui_label="Enable VAE Cache Preprocessing",
+            name="vae_cache_ondemand",
+            arg_name="--vae_cache_ondemand",
+            ui_label="Use On-demand VAE Caching",
             field_type=FieldType.CHECKBOX,
             tab="model",
             section="vae_config",
-            default_value=True,
-            help_text="Pre-encode images with VAE to speed up training",
-            tooltip="Requires additional disk space but significantly speeds up training",
+            default_value=False,
+            help_text="Process VAE latents during training instead of precomputing them",
+            tooltip="Saves upfront time but slows each training step and increases memory pressure",
             importance=ImportanceLevel.ADVANCED,
             order=13
         ))
@@ -807,8 +807,8 @@ class FieldRegistry:
 
         # Max Checkpoints
         self._add_field(ConfigField(
-            name="save_total_limit",
-            arg_name="--save_total_limit",
+            name="checkpoints_total_limit",
+            arg_name="--checkpoints_total_limit",
             ui_label="Maximum Checkpoints to Keep",
             field_type=FieldType.NUMBER,
             tab="basic",
@@ -1260,96 +1260,6 @@ class FieldRegistry:
             tooltip="Options: crop, resize, rotate, flip, color_jitter",
             importance=ImportanceLevel.ADVANCED,
             order=3
-        ))
-
-        # Aspect Ratio Bucketing
-        self._add_field(ConfigField(
-            name="aspect_ratio_bucketing",
-            arg_name="--aspect_ratio_bucketing",
-            ui_label="Enable Aspect Ratio Bucketing",
-            field_type=FieldType.CHECKBOX,
-            tab="data",
-            section="image_processing",
-            subsection="bucketing",
-            default_value=True,
-            help_text="Group images by aspect ratio to reduce padding",
-            tooltip="Improves training efficiency and quality for datasets with varied aspect ratios",
-            importance=ImportanceLevel.IMPORTANT,
-            order=1
-        ))
-
-        # Minimum Aspect Ratio
-        self._add_field(ConfigField(
-            name="aspect_ratio_bucket_min",
-            arg_name="--aspect_ratio_bucket_min",
-            ui_label="Minimum Aspect Ratio",
-            field_type=FieldType.NUMBER,
-            tab="data",
-            section="image_processing",
-            subsection="bucketing",
-            default_value=0.5,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0.1, message="Must be greater than 0.1"),
-                ValidationRule(ValidationRuleType.MAX, value=2.0, message="Must be less than 2.0")
-            ],
-            help_text="Minimum aspect ratio for bucketing (width/height)",
-            tooltip="Images narrower than this will be padded or cropped",
-            importance=ImportanceLevel.ADVANCED,
-            order=2,
-            dependencies=[
-                FieldDependency(
-                    field="aspect_ratio_bucketing",
-                    operator="equals",
-                    value=True,
-                    action="show"
-                )
-            ]
-        ))
-
-        # Maximum Aspect Ratio
-        self._add_field(ConfigField(
-            name="aspect_ratio_bucket_max",
-            arg_name="--aspect_ratio_bucket_max",
-            ui_label="Maximum Aspect Ratio",
-            field_type=FieldType.NUMBER,
-            tab="data",
-            section="image_processing",
-            subsection="bucketing",
-            default_value=2.0,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0.5, message="Must be greater than 0.5"),
-                ValidationRule(ValidationRuleType.MAX, value=3.0, message="Must be less than 3.0")
-            ],
-            help_text="Maximum aspect ratio for bucketing (width/height)",
-            tooltip="Images wider than this will be padded or cropped",
-            importance=ImportanceLevel.ADVANCED,
-            order=3,
-            dependencies=[
-                FieldDependency(
-                    field="aspect_ratio_bucketing",
-                    operator="equals",
-                    value=True,
-                    action="show"
-                )
-            ]
-        ))
-
-        # Repeats
-        self._add_field(ConfigField(
-            name="repeats",
-            arg_name="--repeats",
-            ui_label="Dataset Repeats",
-            field_type=FieldType.NUMBER,
-            tab="data",
-            section="dataset_config",
-            default_value=1,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")
-            ],
-            help_text="Number of times to repeat the dataset per epoch",
-            tooltip="Useful for small datasets. Effectively multiplies dataset size",
-            importance=ImportanceLevel.ADVANCED,
-            order=1
         ))
 
         # Tokenizer Max Length (Danger mode only)
