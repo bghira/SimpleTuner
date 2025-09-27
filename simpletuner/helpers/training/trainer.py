@@ -361,7 +361,6 @@ class Trainer:
         from simpletuner.helpers.webhooks.handler import WebhookHandler
 
         self.webhook_handler = WebhookHandler(
-            self.config.webhook_config,
             self.accelerator,
             f"{self.config.tracker_project_name} {self.config.tracker_run_name}",
             send_video=(True if isinstance(self.model, VideoModelFoundation) else False),

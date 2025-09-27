@@ -2387,6 +2387,28 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             except Exception as e:
                 logger.error(f"Could not load controlnet_custom_config: {e}")
                 raise
+    if args.webhook_config is not None and type(args.webhook_config) is str:
+        if args.webhook_config.startswith("{"):
+            try:
+                import ast
+
+                args.webhook_config = ast.literal_eval(args.webhook_config)
+            except Exception as e:
+                logger.error(f"Could not load webhook_config: {e}")
+                raise
+        else:
+            # try to load from file
+            if os.path.isfile(args.webhook_config):
+                try:
+                    with open(args.webhook_config, "r") as f:
+                        import json
+
+                        args.webhook_config = json.load(f)
+                except Exception as e:
+                    logger.error(f"Could not load webhook_config from file: {e}")
+                    raise
+            else:
+                logger.error(f"Could not find webhook_config file: {args.webhook_config}")
 
     if args.tread_config is not None and type(args.tread_config) is str:
         if args.tread_config.startswith("{"):

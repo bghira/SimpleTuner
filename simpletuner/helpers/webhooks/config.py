@@ -25,22 +25,22 @@ def check_raw_webhook_config(config: dict) -> bool:
 
 
 class WebhookConfig:
-    def __init__(self, config_path: str):
-        self.config_path = config_path
-        self.values = self.load_config()
-        if "webhook_type" not in self.values or self.values["webhook_type"] not in supported_webhooks:
+    def __init__(self, config: dict):
+        self.config = config
+        if "webhook_type" not in self.config or self.config["webhook_type"] not in supported_webhooks:
             raise ValueError(f"Invalid webhook type specified in config. Supported values: {supported_webhooks}")
-        if check_discord_webhook_config(self.values):
+        if check_discord_webhook_config(self.config):
             self.webhook_type = "discord"
-        elif check_raw_webhook_config(self.values):
+        elif check_raw_webhook_config(self.config):
             self.webhook_type = "raw"
+        self.webhook_url = self.config.get("webhook_url") or self.config.get("callback_url")
 
     def load_config(self):
         with open(self.config_path, "r") as f:
             return load(f)
 
     def get_config(self):
-        return self.values
+        return self.config
 
     def __getattr__(self, name):
-        return self.values.get(name, None)
+        return self.config.get(name, None)

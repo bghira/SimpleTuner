@@ -28,7 +28,6 @@ else:
 class WebhookHandler:
     def __init__(
         self,
-        config_path: str,
         accelerator,
         project_name: str,
         args,
@@ -36,8 +35,8 @@ class WebhookHandler:
         send_video: bool = False,
     ):
         self.accelerator = accelerator
-        self.config = mock_webhook_config or WebhookConfig(config_path)
-        self.webhook_url = self.config.values.get("webhook_url", self.config.values.get("callback_url", None))
+        self.config = mock_webhook_config or WebhookConfig(args.webhook_config)
+        self.webhook_url = self.config.webhook_url
         self.webhook_type = self.config.webhook_type  # "discord" or "raw"
         self.message_prefix = (
             f"`({self.config.message_prefix})` " if self.config.message_prefix is not None else f"`({project_name})` "
