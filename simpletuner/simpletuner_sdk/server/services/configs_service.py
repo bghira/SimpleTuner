@@ -740,7 +740,18 @@ class ConfigsService:
 
         directory_fields = directory_fields or []
         config_dict: Dict[str, Any] = {}
-        excluded_fields = {"configs_dir", "__active_tab__"}
+        excluded_fields = {
+            "configs_dir",
+            "__active_tab__",
+        }
+
+        for onboarding_field in lazy_field_registry.get_webui_onboarding_fields():
+            excluded_fields.add(onboarding_field.name)
+            arg_name = onboarding_field.arg_name or ""
+            if arg_name:
+                excluded_fields.add(arg_name)
+                if not arg_name.startswith("--"):
+                    excluded_fields.add(f"--{arg_name}")
 
         field_types: Dict[str, FieldType] = {
             field.arg_name: field.field_type
