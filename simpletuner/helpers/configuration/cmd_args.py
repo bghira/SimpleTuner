@@ -5,6 +5,7 @@ import os
 import random
 import sys
 import time
+from collections.abc import Mapping
 from datetime import timedelta
 from typing import Dict, List, Optional, Tuple
 
@@ -12,6 +13,7 @@ import torch
 from accelerate import InitProcessGroupKwargs
 from accelerate.utils import ProjectConfiguration
 
+from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
 from simpletuner.helpers.models.all import get_all_model_flavours, get_model_flavour_choices, model_families
 from simpletuner.helpers.training import quantised_precision_levels
 from simpletuner.helpers.training.optimizer_param import (
@@ -2360,18 +2362,15 @@ def get_default_config():
 def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     parser = get_argument_parser()
     args = None
-    if input_args is not None:
+    try:
         for key_val in input_args:
             print_on_main_thread(f"{key_val}")
-        try:
-            args = parser.parse_args(input_args)
-        except:
-            logger.error(f"Could not parse input: {input_args}")
-            import traceback
+        args = parser.parse_args(input_args)
+    except Exception:  # pragma: no cover - parser handles errors consistently
+        logger.error(f"Could not parse input: {input_args}")
+        import traceback
 
-            logger.error(traceback.format_exc())
-    else:
-        args = parser.parse_args()
+        logger.error(traceback.format_exc())
 
     if args is None and exit_on_error:
         sys.exit(1)
@@ -2728,4 +2727,5 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             )
             sys.exit(1)
 
+    info_log(f"Parsed command line arguments: {args}")
     return args
