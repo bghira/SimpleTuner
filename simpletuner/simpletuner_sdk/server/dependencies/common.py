@@ -204,6 +204,7 @@ async def get_tab_render_data(
         tab_fields,
         FieldFormat.TEMPLATE,
         config_values,
+        options={"raw_config": config_data},
     )
 
     sections = field_registry.get_sections_for_tab(tab_name)
