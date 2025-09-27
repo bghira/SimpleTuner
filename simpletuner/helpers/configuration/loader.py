@@ -90,6 +90,10 @@ def load_config(args: dict = None, exit_on_error: bool = False):
     if "-h" in sys.argv or "--help" in sys.argv:
         return helpers["cmd"]()
 
+    if args is not None and hasattr(args, "__dict__"):
+        args = args.__dict__.copy()
+        args.pop("should_abort", None)
+
     mapped_config = args
     if mapped_config is None or not mapped_config:
         config_env = os.environ.get(
@@ -116,6 +120,36 @@ def load_config(args: dict = None, exit_on_error: bool = False):
         mapped_config = helpers[config_backend]()
         if config_backend == "cmd":
             return mapped_config
+
+    if isinstance(mapped_config, dict):
+        # Convert dict to list of command-line style arguments
+        list_arguments = []
+        for arg_name, value in mapped_config.items():
+            if isinstance(value, str) and value.startswith("'") and value.endswith("'"):
+                value = value[1:-1]
+            if isinstance(value, str) and value.startswith('"') and value.endswith('"'):
+                value = value[1:-1]
+            try:
+                float(value)
+                is_numeric = True
+            except (ValueError, TypeError):
+                is_numeric = False
+            if value is not None:
+                if isinstance(value, str) and value.lower() in ["true", "false"]:
+                    if value.lower() == "true":
+                        list_arguments.append(f"{arg_name}")
+                    else:
+                        continue
+                elif value is False:
+                    continue
+                elif value is True:
+                    list_arguments.append(f"{arg_name}")
+                elif is_numeric:
+                    list_arguments.append(f"{arg_name}={value}")
+                else:
+                    list_arguments.append(f"{arg_name}={value}")
+        mapped_config = list_arguments
+
 
     configuration = helpers["cmd"](input_args=mapped_config, exit_on_error=exit_on_error)
 
