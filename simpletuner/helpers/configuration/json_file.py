@@ -3,45 +3,15 @@ import logging
 import os
 from pathlib import Path
 
-# Set up logging
-from simpletuner.helpers.training.multi_process import _get_rank
+from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
+from simpletuner.helpers.training.multi_process import should_log
 
 logger = logging.getLogger("SimpleTuner")
-from simpletuner.helpers.training.multi_process import should_log
 
 if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 else:
     logger.setLevel("ERROR")
-
-
-def normalize_args(args_dict):
-    """
-    Normalize arguments, ensuring they have '--' at the start if necessary.
-
-    :param args_dict: A dictionary of arguments that may or may not have '--' prefixes.
-    :return: A normalized dictionary of arguments.
-    """
-    normalized = []
-    for key, value in args_dict.items():
-        # Add -- prefix if not present
-        if (type(value) is bool and value) or value == "true":
-            if not key.startswith("--"):
-                normalized_key = f"--{key}"
-            else:
-                normalized_key = key
-        elif type(value) is bool and not value or value == "false":
-            logger.warning(f"Skipping false argument: {key}")
-            continue
-        else:
-            if isinstance(value, str):
-                value = _resolve_example_path(value)
-            if not key.startswith("--"):
-                normalized_key = f"--{key}={value}"
-            else:
-                normalized_key = f"{key}={value}"
-        normalized.append(normalized_key)
-    return normalized
 
 
 def _candidate_json_paths(env: str | None) -> list[Path]:
@@ -106,7 +76,13 @@ def load_json_config():
         try:
             config = json.load(file)
             logger.info(f"[CONFIG.JSON] Loaded configuration from {config_json_path}")
-            return normalize_args(config)
+
+            def _transform(key: str, value: object) -> object:
+                if isinstance(value, str):
+                    return _resolve_example_path(value)
+                return value
+
+            return mapping_to_cli_args(config, transform=_transform)
         except json.JSONDecodeError as e:
             raise ValueError(f"Failed to parse JSON file {config_json_path}: {e}")
 
@@ -127,3 +103,7 @@ def _resolve_example_path(value: str) -> str:
         return str(candidate)
 
     return value
+def normalize_args(args_dict: dict[str, object]) -> list[str]:
+    """Backward-compatible helper returning CLI args for the given mapping."""
+
+    return mapping_to_cli_args(args_dict)
