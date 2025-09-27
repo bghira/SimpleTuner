@@ -42,6 +42,7 @@ class TrainingConfigBundle:
     complete_config: Dict[str, Any]
     config_dict: Dict[str, Any]
     save_config: Dict[str, Any]
+    merge_environment_defaults: bool = False
 
 
 @dataclass
@@ -104,6 +105,16 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
 
     form_dict = dict(form_data)
 
+    merge_defaults_raw = form_dict.pop("merge_environment_config", None)
+    merge_environment_defaults = False
+    if merge_defaults_raw is not None:
+        merge_environment_defaults = str(merge_defaults_raw).strip().lower() not in {
+            "false",
+            "0",
+            "no",
+            "off",
+        }
+
     resolved_defaults = None
     if state_store:
         try:
@@ -142,6 +153,7 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         save_options["preserve_defaults"] = form_dict.pop("preserve_defaults") == "true"
     if "create_backup" in form_dict:
         save_options["create_backup"] = form_dict.pop("create_backup") == "true"
+    save_options["merge_environment_defaults"] = merge_environment_defaults
 
     directory_fields = ["--output_dir", "--instance_data_dir"]
 
@@ -171,7 +183,13 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
     existing_config_cli = ConfigsService._migrate_legacy_keys(existing_config_cli)
 
     all_defaults = get_all_field_defaults()
-    complete_config = {**all_defaults, **existing_config_cli, **config_dict}
+    if merge_environment_defaults:
+        base_config = {**all_defaults, **existing_config_cli}
+    else:
+        logger.debug("Skipping merge of active environment defaults at user request")
+        base_config = dict(all_defaults)
+
+    complete_config = {**base_config, **config_dict}
     complete_config = ConfigsService.coerce_config_values_by_field(complete_config)
 
     for ui_key in ("configs_dir", "--configs_dir", "__active_tab__", "--__active_tab__"):
@@ -205,6 +223,7 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         complete_config=complete_config,
         config_dict=config_dict,
         save_config=save_config,
+        merge_environment_defaults=merge_environment_defaults,
     )
 
 
