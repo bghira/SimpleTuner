@@ -7,10 +7,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from simpletuner.simpletuner_sdk.server.services.configs_service import (
-    CONFIGS_SERVICE,
-    ConfigServiceError,
-)
+from simpletuner.simpletuner_sdk.server.services.configs_service import CONFIGS_SERVICE, ConfigServiceError
 
 router = APIRouter(prefix="/api/configs", tags=["configurations"])
 

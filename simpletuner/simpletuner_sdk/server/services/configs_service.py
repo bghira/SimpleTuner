@@ -11,18 +11,15 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import status
 
+from simpletuner.helpers.models.registry import ModelRegistry
+from simpletuner.simpletuner_sdk.server.dependencies.common import _load_active_config_cached
 from simpletuner.simpletuner_sdk.server.services.config_store import ConfigMetadata, ConfigStore
 from simpletuner.simpletuner_sdk.server.services.dataset_service import normalize_dataset_config_value
+from simpletuner.simpletuner_sdk.server.services.example_configs_service import EXAMPLE_CONFIGS_SERVICE, ExampleConfigInfo
 from simpletuner.simpletuner_sdk.server.services.field_registry import FieldType
 from simpletuner.simpletuner_sdk.server.services.field_registry_wrapper import lazy_field_registry
-from simpletuner.simpletuner_sdk.server.services.example_configs_service import (
-    EXAMPLE_CONFIGS_SERVICE,
-    ExampleConfigInfo,
-)
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
 from simpletuner.simpletuner_sdk.server.utils.paths import get_simpletuner_root, resolve_config_path
-from simpletuner.simpletuner_sdk.server.dependencies.common import _load_active_config_cached
-from simpletuner.helpers.models.registry import ModelRegistry
 
 
 class ConfigServiceError(Exception):
@@ -204,7 +201,7 @@ class ConfigsService:
             base_name = os.path.basename(base_value.rstrip(os.sep))
             prefix = f"{base_name}{os.sep}"
             if rel.startswith(prefix):
-                rel = rel[len(prefix):]
+                rel = rel[len(prefix) :]
             return os.path.normpath(os.path.join(base_value, rel))
 
         return os.path.normpath(os.path.abspath(expanded_value))
@@ -629,7 +626,9 @@ class ConfigsService:
         except FileNotFoundError as exc:
             raise ConfigServiceError(str(exc), status.HTTP_404_NOT_FOUND) from exc
 
-    def import_config(self, data: Dict[str, Any], name: Optional[str], overwrite: bool, config_type: str = "model") -> Dict[str, Any]:
+    def import_config(
+        self, data: Dict[str, Any], name: Optional[str], overwrite: bool, config_type: str = "model"
+    ) -> Dict[str, Any]:
         store = self._get_store(config_type)
         try:
             metadata = store.import_config(data, name, overwrite)
@@ -754,8 +753,7 @@ class ConfigsService:
                     excluded_fields.add(f"--{arg_name}")
 
         field_types: Dict[str, FieldType] = {
-            field.arg_name: field.field_type
-            for field in lazy_field_registry.get_all_fields()
+            field.arg_name: field.field_type for field in lazy_field_registry.get_all_fields()
         }
 
         json_path_fields = {
@@ -801,11 +799,7 @@ class ConfigsService:
             field_type = field_types.get(config_key, FieldType.TEXT)
             converted_value = ConfigsService.convert_value_by_type(value, field_type)
 
-            if (
-                isinstance(converted_value, str)
-                and converted_value
-                and converted_value.lower().endswith(".json")
-            ):
+            if isinstance(converted_value, str) and converted_value and converted_value.lower().endswith(".json"):
                 if config_key in json_path_fields:
                     converted_value = ConfigsService._resolve_under_base(configs_dir, converted_value)
 

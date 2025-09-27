@@ -112,11 +112,7 @@ def resolve_config_path(
         # Handle legacy paths that redundantly include the config directory name,
         # e.g. config/deepfloyd/multidatabackend.json when the configs_dir already
         # points at .../config. In that scenario drop the leading segment and retry.
-        if (
-            config_dir
-            and not expanded_path.startswith(os.sep)
-            and Path(expanded_path).parts
-        ):
+        if config_dir and not expanded_path.startswith(os.sep) and Path(expanded_path).parts:
             config_basename = Path(os.path.expanduser(str(config_dir))).name
             parts = Path(expanded_path).parts
             if parts and parts[0] == config_basename and len(parts) > 1:

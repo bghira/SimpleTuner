@@ -12,14 +12,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import HTTPException, status, Depends
+from fastapi import Depends, HTTPException, status
 from fastapi.requests import Request
 
-from ..services.config_store import ConfigStore
-from ..services.webui_state import WebUIStateStore
-from ..services.field_registry_wrapper import lazy_field_registry
 from ..services.cache_service import cache_response
-from ..services.field_service import FieldService, FieldFormat
+from ..services.config_store import ConfigStore
+from ..services.field_registry_wrapper import lazy_field_registry
+from ..services.field_service import FieldFormat, FieldService
+from ..services.webui_state import WebUIStateStore
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +130,7 @@ async def get_field_registry():
     if lazy_field_registry._registry is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Field registry is not available. Please check server logs."
+            detail="Field registry is not available. Please check server logs.",
         )
 
     return lazy_field_registry
@@ -180,9 +180,9 @@ class TabRenderData:
 
 async def get_tab_render_data(
     tab_name: str,
-    field_registry = Depends(get_field_registry),
+    field_registry=Depends(get_field_registry),
     config_data: Dict[str, Any] = Depends(get_config_data),
-    webui_defaults: Dict[str, Any] = Depends(get_webui_defaults)
+    webui_defaults: Dict[str, Any] = Depends(get_webui_defaults),
 ) -> TabRenderData:
     """Prepare template-ready data for a trainer tab."""
 
@@ -191,8 +191,7 @@ async def get_tab_render_data(
     except Exception as exc:  # pragma: no cover - defensive guard
         logger.error("Failed to pull fields for tab %s: %s", tab_name, exc)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unable to load fields for tab '{tab_name}'"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Unable to load fields for tab '{tab_name}'"
         ) from exc
 
     config_values = _field_service.prepare_tab_field_values(
@@ -231,6 +230,7 @@ async def get_request_id(request: Request) -> str:
     request_id = request.headers.get("X-Request-ID")
     if not request_id:
         import uuid
+
         request_id = str(uuid.uuid4())
     return request_id
 

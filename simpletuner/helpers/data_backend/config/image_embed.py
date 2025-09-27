@@ -1,9 +1,10 @@
 """Image embed backend configuration class."""
+
 from dataclasses import dataclass
 from typing import Any, Dict
 
-from .base import BaseBackendConfig
 from . import validators
+from .base import BaseBackendConfig
 
 
 @dataclass
@@ -19,7 +20,7 @@ class ImageEmbedBackendConfig(BaseBackendConfig):
             id=backend_dict["id"],
             backend_type=backend_dict.get("type", "local"),
             dataset_type="image_embeds",
-            disabled=backend_dict.get("disabled", backend_dict.get("disable", False))
+            disabled=backend_dict.get("disabled", backend_dict.get("disable", False)),
         )
 
         compress_arg = backend_dict.get("compress_cache", None)
@@ -44,17 +45,9 @@ class ImageEmbedBackendConfig(BaseBackendConfig):
 
         validators.validate_dataset_type(self.dataset_type, ["image_embeds"], self.id)
 
-        validators.check_for_caption_filter_list_misuse(
-            self.dataset_type,
-            False,
-            self.id
-        )
+        validators.check_for_caption_filter_list_misuse(self.dataset_type, False, self.id)
 
     def to_dict(self) -> Dict[str, Any]:
-        result = {
-            "id": self.id,
-            "dataset_type": "image_embeds",
-            "config": {}
-        }
+        result = {"id": self.id, "dataset_type": "image_embeds", "config": {}}
 
         return result

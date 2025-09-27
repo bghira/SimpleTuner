@@ -1037,4 +1037,5 @@ Flux.register_config_requirements()
 
 
 from simpletuner.helpers.models.registry import ModelRegistry
+
 ModelRegistry.register("flux", Flux)

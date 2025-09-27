@@ -9,13 +9,13 @@ This module provides comprehensive security features including:
 
 from __future__ import annotations
 
-import os
 import logging
+import os
 import time
-from typing import List, Optional, Dict, Any
 from collections import defaultdict
+from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, Request, Response, HTTPException, status
+from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.types import ASGIApp
@@ -75,7 +75,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "connect-src 'self'",
             "frame-ancestors 'none'",
             "base-uri 'self'",
-            "form-action 'self'"
+            "form-action 'self'",
         ]
         response.headers["Content-Security-Policy"] = "; ".join(csp_directives)
 
@@ -88,13 +88,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Simple rate limiting middleware."""
 
-    def __init__(
-        self,
-        app: ASGIApp,
-        calls: int = 100,
-        period: int = 60,
-        exclude_paths: Optional[List[str]] = None
-    ):
+    def __init__(self, app: ASGIApp, calls: int = 100, period: int = 60, exclude_paths: Optional[List[str]] = None):
         super().__init__(app)
         self.calls = calls
         self.period = period
@@ -111,17 +105,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         # Clean old entries
         now = time.time()
-        self.clients[client_ip] = [
-            timestamp for timestamp in self.clients[client_ip]
-            if timestamp > now - self.period
-        ]
+        self.clients[client_ip] = [timestamp for timestamp in self.clients[client_ip] if timestamp > now - self.period]
 
         # Check rate limit
         if len(self.clients[client_ip]) >= self.calls:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Rate limit exceeded"
-            )
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Rate limit exceeded")
 
         # Record this request
         self.clients[client_ip].append(now)
@@ -154,11 +142,7 @@ def setup_security_middleware(app: FastAPI) -> None:
     rate_limit_period = int(os.getenv("RATE_LIMIT_PERIOD", "60"))
 
     if rate_limit_calls > 0:  # Allow disabling with 0
-        app.add_middleware(
-            RateLimitMiddleware,
-            calls=rate_limit_calls,
-            period=rate_limit_period
-        )
+        app.add_middleware(RateLimitMiddleware, calls=rate_limit_calls, period=rate_limit_period)
         logger.info(f"Rate limiting enabled: {rate_limit_calls} calls per {rate_limit_period} seconds")
 
     logger.info("Security middleware configured successfully")

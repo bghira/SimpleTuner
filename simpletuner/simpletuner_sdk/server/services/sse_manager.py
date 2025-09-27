@@ -11,12 +11,13 @@ import asyncio
 import logging
 import time
 import uuid
-from typing import Dict, Set, Optional, Any
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
-from collections import defaultdict
-from sse_starlette import EventSourceResponse
+from typing import Any, Dict, Optional, Set
+
 from fastapi import Request
+from sse_starlette import EventSourceResponse
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ class SSEManager:
         max_total_connections: int = 100,
         heartbeat_interval: int = 30,
         cleanup_interval: int = 60,
-        connection_timeout: int = 300  # 5 minutes
+        connection_timeout: int = 300,  # 5 minutes
     ):
         self.max_connections_per_ip = max_connections_per_ip
         self.max_total_connections = max_total_connections
@@ -97,10 +98,7 @@ class SSEManager:
         # Check per-IP connection limit
         ip_connections = self.connections_by_ip.get(client_ip, set())
         if len(ip_connections) >= self.max_connections_per_ip:
-            logger.warning(
-                f"Per-IP connection limit reached for {client_ip} "
-                f"({self.max_connections_per_ip})"
-            )
+            logger.warning(f"Per-IP connection limit reached for {client_ip} " f"({self.max_connections_per_ip})")
             return None
 
         # Create new connection
@@ -110,7 +108,7 @@ class SSEManager:
             client_ip=client_ip,
             user_agent=user_agent,
             created_at=datetime.utcnow(),
-            last_activity=datetime.utcnow()
+            last_activity=datetime.utcnow(),
         )
 
         self.connections[conn_id] = connection
@@ -137,12 +135,7 @@ class SSEManager:
 
         logger.info(f"Removed SSE connection {connection_id}")
 
-    async def send_to_connection(
-        self,
-        connection_id: str,
-        data: Dict[str, Any],
-        event_type: Optional[str] = None
-    ):
+    async def send_to_connection(self, connection_id: str, data: Dict[str, Any], event_type: Optional[str] = None):
         """Send data to a specific connection."""
         if connection_id not in self.connections:
             return
@@ -153,19 +146,12 @@ class SSEManager:
 
         connection.last_activity = datetime.utcnow()
 
-        message = {
-            "data": data,
-            "event": event_type,
-            "timestamp": time.time()
-        }
+        message = {"data": data, "event": event_type, "timestamp": time.time()}
 
         await connection.queue.put(message)
 
     async def broadcast(
-        self,
-        data: Dict[str, Any],
-        event_type: Optional[str] = None,
-        filter_func: Optional[callable] = None
+        self, data: Dict[str, Any], event_type: Optional[str] = None, filter_func: Optional[callable] = None
     ):
         """Broadcast data to all connections (with optional filter)."""
         tasks = []
@@ -178,9 +164,7 @@ class SSEManager:
             if filter_func and not filter_func(connection):
                 continue
 
-            tasks.append(
-                self.send_to_connection(conn_id, data, event_type)
-            )
+            tasks.append(self.send_to_connection(conn_id, data, event_type))
 
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -216,10 +200,7 @@ class SSEManager:
         while True:
             try:
                 await asyncio.sleep(self.heartbeat_interval)
-                await self.broadcast(
-                    {"type": "heartbeat", "timestamp": time.time()},
-                    event_type="heartbeat"
-                )
+                await self.broadcast({"type": "heartbeat", "timestamp": time.time()}, event_type="heartbeat")
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -231,17 +212,11 @@ class SSEManager:
             while connection.active:
                 # Wait for messages with timeout
                 try:
-                    message = await asyncio.wait_for(
-                        connection.queue.get(),
-                        timeout=1.0
-                    )
+                    message = await asyncio.wait_for(connection.queue.get(), timeout=1.0)
 
                     # Format SSE message
                     if message.get("event"):
-                        yield {
-                            "event": message["event"],
-                            "data": message["data"]
-                        }
+                        yield {"event": message["event"], "data": message["data"]}
                     else:
                         yield {"data": message["data"]}
 
@@ -258,12 +233,9 @@ class SSEManager:
         """Get statistics about current connections."""
         return {
             "total_connections": len(self.connections),
-            "connections_by_ip": {
-                ip: len(conns)
-                for ip, conns in self.connections_by_ip.items()
-            },
+            "connections_by_ip": {ip: len(conns) for ip, conns in self.connections_by_ip.items()},
             "max_connections_per_ip": self.max_connections_per_ip,
-            "max_total_connections": self.max_total_connections
+            "max_total_connections": self.max_total_connections,
         }
 
 

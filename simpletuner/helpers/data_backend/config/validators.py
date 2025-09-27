@@ -1,6 +1,7 @@
 """Shared validation functions for backend configurations."""
-from typing import Any, Dict, List, Union, Optional
+
 import os
+from typing import Any, Dict, List, Optional, Union
 
 from simpletuner.helpers.training.state_tracker import StateTracker
 
@@ -16,9 +17,7 @@ def validate_crop_aspect(
 
 
 def validate_crop_aspect_buckets(
-    crop_aspect: str,
-    crop_aspect_buckets: Optional[List[Union[float, Dict[str, Any]]]],
-    backend_id: str
+    crop_aspect: str, crop_aspect_buckets: Optional[List[Union[float, Dict[str, Any]]]], backend_id: str
 ) -> None:
     if crop_aspect in ["random", "closest"]:
         if not crop_aspect_buckets or not isinstance(crop_aspect_buckets, list):
@@ -58,7 +57,7 @@ def validate_image_size_constraints(
     target_downsample_size: Optional[Union[int, float]],
     resolution_type: str,
     model_type: str,
-    backend_id: str
+    backend_id: str,
 ) -> None:
     if maximum_image_size and not target_downsample_size:
         raise ValueError(
@@ -75,11 +74,7 @@ def validate_image_size_constraints(
             raise ValueError(
                 f"(id={backend_id}) maximum_image_size must be less than 10 megapixels when resolution_type is 'area'."
             )
-        elif (
-            resolution_type == "pixel"
-            and maximum_image_size < 512
-            and "deepfloyd" not in model_type
-        ):
+        elif resolution_type == "pixel" and maximum_image_size < 512 and "deepfloyd" not in model_type:
             raise ValueError(
                 f"(id={backend_id}) maximum_image_size must be at least 512 pixels when resolution_type is 'pixel'."
             )
@@ -94,11 +89,7 @@ def validate_image_size_constraints(
             raise ValueError(
                 f"(id={backend_id}) target_downsample_size must be less than 10 megapixels when resolution_type is 'area'."
             )
-        elif (
-            resolution_type == "pixel"
-            and target_downsample_size < 512
-            and "deepfloyd" not in model_type
-        ):
+        elif resolution_type == "pixel" and target_downsample_size < 512 and "deepfloyd" not in model_type:
             raise ValueError(
                 f"(id={backend_id}) target_downsample_size must be at least 512 pixels when resolution_type is 'pixel'."
             )
@@ -111,10 +102,7 @@ def validate_resolution_constraints(*args, **kwargs) -> None:
 
 
 def validate_caption_strategy_compatibility(
-    caption_strategy: str,
-    metadata_backend: str,
-    backend_type: str,
-    backend_id: str
+    caption_strategy: str, metadata_backend: str, backend_type: str, backend_id: str
 ) -> None:
     # Check parquet + json/discovery incompatibility
     if caption_strategy == "parquet" and metadata_backend in ["json", "discovery"]:
@@ -130,10 +118,7 @@ def validate_caption_strategy_compatibility(
 
 
 def validate_huggingface_backend_settings(
-    backend_type: str,
-    metadata_backend: Optional[str],
-    caption_strategy: Optional[str],
-    backend_id: str
+    backend_type: str, metadata_backend: Optional[str], caption_strategy: Optional[str], backend_id: str
 ) -> Dict[str, str]:
     if backend_type != "huggingface":
         return {"metadata_backend": metadata_backend, "caption_strategy": caption_strategy}
@@ -151,17 +136,10 @@ def validate_huggingface_backend_settings(
         )
 
     # Set defaults
-    return {
-        "metadata_backend": metadata_backend or "huggingface",
-        "caption_strategy": caption_strategy or "huggingface"
-    }
+    return {"metadata_backend": metadata_backend or "huggingface", "caption_strategy": caption_strategy or "huggingface"}
 
 
-def validate_video_frame_settings(
-    min_frames: int,
-    num_frames: int,
-    backend_id: str
-) -> None:
+def validate_video_frame_settings(min_frames: int, num_frames: int, backend_id: str) -> None:
     # Check if both are integers
     if not all([isinstance(min_frames, int), isinstance(num_frames, int)]):
         raise ValueError(
@@ -186,11 +164,7 @@ def validate_backend_id(backend_id: str) -> None:
         raise ValueError("Backend configuration must have a non-empty 'id' field.")
 
 
-def check_for_caption_filter_list_misuse(
-    dataset_type: str,
-    has_caption_filter_list: bool,
-    backend_id: str
-) -> None:
+def check_for_caption_filter_list_misuse(dataset_type: str, has_caption_filter_list: bool, backend_id: str) -> None:
     if has_caption_filter_list and dataset_type != "text_embeds":
         raise ValueError(
             f"caption_filter_list is only a valid setting for text datasets. It is currently set for the {dataset_type} dataset {backend_id}."

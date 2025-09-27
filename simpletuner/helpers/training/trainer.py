@@ -13,9 +13,9 @@ import time
 from typing import Dict, Optional
 
 import huggingface_hub
-import wandb
 from accelerate.logging import get_logger
 
+import wandb
 from simpletuner.helpers import log_format  # noqa
 from simpletuner.helpers.caching.memory import reclaim_memory
 from simpletuner.helpers.configuration.loader import load_config
@@ -384,7 +384,7 @@ class Trainer:
         self.state["lr"] = 0.0
         # Initialize CheckpointManager with output directory
         self.checkpoint_manager = None
-        if hasattr(self, 'config') and getattr(self.config, 'output_dir', None):
+        if hasattr(self, "config") and getattr(self.config, "output_dir", None):
             self.checkpoint_manager = CheckpointManager(self.config.output_dir)
         # Global step represents the most recently *completed* optimization step, which means it
         #  takes into account the number of gradient_accumulation_steps. If we use 1 gradient_accumulation_step,

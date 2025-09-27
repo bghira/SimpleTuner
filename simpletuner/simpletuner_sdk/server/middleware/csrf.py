@@ -1,9 +1,10 @@
 """CSRF protection middleware for HTMX and regular requests."""
 
-import secrets
 import logging
+import secrets
 from typing import Optional
-from fastapi import Request, Response, HTTPException, status
+
+from fastapi import HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse
 
 logger = logging.getLogger(__name__)
@@ -57,7 +58,7 @@ class CSRFMiddleware:
                     </div>
                     """,
                     status_code=status.HTTP_403_FORBIDDEN,
-                    headers={"HX-Retarget": "#validation-results", "HX-Reswap": "innerHTML"}
+                    headers={"HX-Retarget": "#validation-results", "HX-Reswap": "innerHTML"},
                 )
                 await response(scope, receive, send)
                 return
@@ -109,7 +110,7 @@ async def get_csrf_token(request: Request, response: Response) -> str:
             httponly=True,
             samesite="strict",
             secure=request.url.scheme == "https",
-            max_age=3600 * 24  # 24 hours
+            max_age=3600 * 24,  # 24 hours
         )
 
     return token

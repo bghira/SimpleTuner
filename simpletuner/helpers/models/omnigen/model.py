@@ -158,4 +158,5 @@ class OmniGen(ImageModelFoundation):
 
 
 from simpletuner.helpers.models.registry import ModelRegistry
+
 ModelRegistry.register("omnigen", OmniGen)

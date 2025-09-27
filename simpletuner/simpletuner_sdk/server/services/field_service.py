@@ -7,13 +7,13 @@ applying transformations, and managing field metadata.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Set
-from pathlib import Path
 from enum import Enum
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set
 
 from ..services.field_registry_wrapper import lazy_field_registry
-from .field_registry import FieldType
 from .dataset_service import normalize_dataset_config_value
+from .field_registry import FieldType
 
 try:  # pragma: no cover - optional import for UI hints
     from simpletuner.helpers.models.registry import ModelRegistry
@@ -25,10 +25,11 @@ logger = logging.getLogger(__name__)
 
 class FieldFormat(str, Enum):
     """Supported field formats."""
+
     TEMPLATE = "template"  # Format for HTML templates
-    API = "api"            # Format for API responses
-    CONFIG = "config"      # Format for configuration files
-    COMMAND = "command"    # Format for command-line arguments
+    API = "api"  # Format for API responses
+    CONFIG = "config"  # Format for configuration files
+    COMMAND = "command"  # Format for command-line arguments
 
 
 class FieldService:
@@ -91,10 +92,7 @@ class FieldService:
         if ModelRegistry is None:
             return None
 
-        model_family = (
-            config_values.get("model_family")
-            or config_values.get("--model_family")
-        )
+        model_family = config_values.get("model_family") or config_values.get("--model_family")
         if not model_family:
             return None
 
@@ -122,11 +120,7 @@ class FieldService:
         return bool(getattr(model_class, "SUPPORTS_TEXT_ENCODER_TRAINING", False))
 
     def convert_field(
-        self,
-        field: Any,
-        format: FieldFormat,
-        config_values: Dict[str, Any],
-        options: Optional[Dict[str, Any]] = None
+        self, field: Any, format: FieldFormat, config_values: Dict[str, Any], options: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """Convert a field to the specified format.
 
@@ -146,11 +140,7 @@ class FieldService:
         return converter(field, config_values, options or {})
 
     def convert_fields(
-        self,
-        fields: List[Any],
-        format: FieldFormat,
-        config_values: Dict[str, Any],
-        options: Optional[Dict[str, Any]] = None
+        self, fields: List[Any], format: FieldFormat, config_values: Dict[str, Any], options: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """Convert multiple fields to the specified format.
 
@@ -182,26 +172,17 @@ class FieldService:
             if name in self._TEXT_ENCODER_PRECISION_FIELDS:
                 index = int(name.split("_")[2])
                 has_config = index <= encoder_count
-                has_existing_value = any(
-                    key in config_values for key in (name, f"--{name}")
-                )
+                has_existing_value = any(key in config_values for key in (name, f"--{name}"))
 
                 if not (has_config or has_existing_value):
                     continue
 
             filtered_fields.append(field)
 
-        return [
-            self.convert_field(field, format, config_values, options)
-            for field in filtered_fields
-        ]
+        return [self.convert_field(field, format, config_values, options) for field in filtered_fields]
 
     def get_fields_for_section(
-        self,
-        tab_name: str,
-        section_name: str,
-        format: FieldFormat,
-        config_values: Dict[str, Any]
+        self, tab_name: str, section_name: str, format: FieldFormat, config_values: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
         """Get fields for a specific section in the desired format.
 
@@ -227,7 +208,7 @@ class FieldService:
         all_fields = self.field_registry.get_fields_for_tab(tab_name)
 
         for field in all_fields:
-            if hasattr(field, 'section') and field.section == section_name:
+            if hasattr(field, "section") and field.section == section_name:
                 section_fields.append(field)
 
         return self.convert_fields(section_fields, format, config_values)
@@ -257,20 +238,15 @@ class FieldService:
             return set()
 
         dependencies = set()
-        if hasattr(field, 'conditional_on'):
+        if hasattr(field, "conditional_on"):
             dependencies.add(field.conditional_on)
 
-        if hasattr(field, 'depends_on') and isinstance(field.depends_on, list):
+        if hasattr(field, "depends_on") and isinstance(field.depends_on, list):
             dependencies.update(field.depends_on)
 
         return dependencies
 
-    def apply_field_transformations(
-        self,
-        field_name: str,
-        value: Any,
-        config_values: Dict[str, Any]
-    ) -> Any:
+    def apply_field_transformations(self, field_name: str, value: Any, config_values: Dict[str, Any]) -> Any:
         """Apply field-specific transformations to a value.
 
         Args:
@@ -318,10 +294,7 @@ class FieldService:
 
     # Format converters
     def _convert_to_template_format(
-        self,
-        field: Any,
-        config_values: Dict[str, Any],
-        options: Dict[str, Any]
+        self, field: Any, config_values: Dict[str, Any], options: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Convert field to template format for HTML rendering."""
         # Get the field value with transformations
@@ -383,28 +356,28 @@ class FieldService:
         extra_classes = []
 
         # Add tooltip helpers
-        if hasattr(field, 'cmd_args_help') and field.cmd_args_help:
+        if hasattr(field, "cmd_args_help") and field.cmd_args_help:
             field_dict["cmd_args_help"] = field.cmd_args_help
             field_dict["tooltip"] = field.cmd_args_help
         elif getattr(field, "tooltip", None):
             field_dict["tooltip"] = field.tooltip
 
         # Add section ID
-        if hasattr(field, 'section') and field.section:
+        if hasattr(field, "section") and field.section:
             field_dict["section_id"] = field.section
 
         # Handle conditional display
-        if hasattr(field, 'conditional_on'):
+        if hasattr(field, "conditional_on"):
             field_dict["conditional_on"] = field.conditional_on
             extra_classes.append("conditional-field")
 
         # Add min/max for number fields
         if field.field_type.value == "NUMBER":
-            if hasattr(field, 'min_value') and field.min_value is not None:
+            if hasattr(field, "min_value") and field.min_value is not None:
                 field_dict["min"] = field.min_value
-            if hasattr(field, 'max_value') and field.max_value is not None:
+            if hasattr(field, "max_value") and field.max_value is not None:
                 field_dict["max"] = field.max_value
-            if hasattr(field, 'step') and field.step is not None:
+            if hasattr(field, "step") and field.step is not None:
                 field_dict["step"] = field.step
 
         # Add options for select fields
@@ -453,13 +426,13 @@ class FieldService:
 
         # Add placeholder
         if field_type_upper in ["TEXT", "TEXTAREA"]:
-            if hasattr(field, 'placeholder') and field.placeholder:
+            if hasattr(field, "placeholder") and field.placeholder:
                 field_dict["placeholder"] = field.placeholder
 
         # Add flags
-        if hasattr(field, 'required'):
+        if hasattr(field, "required"):
             field_dict["required"] = field.required
-        if hasattr(field, 'disabled'):
+        if hasattr(field, "disabled"):
             field_dict["disabled"] = field.disabled
 
         if field.name == "data_backend_config":
@@ -510,12 +483,7 @@ class FieldService:
 
         return huggingface_paths.get(flavour)
 
-    def _convert_to_api_format(
-        self,
-        field: Any,
-        config_values: Dict[str, Any],
-        options: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    def _convert_to_api_format(self, field: Any, config_values: Dict[str, Any], options: Dict[str, Any]) -> Dict[str, Any]:
         """Convert field to API response format."""
         field_value = config_values.get(field.name, field.default_value)
 
@@ -525,16 +493,13 @@ class FieldService:
             "type": field.field_type.value.lower(),
             "label": field.ui_label,
             "description": field.help_text,
-            "required": getattr(field, 'required', False),
+            "required": getattr(field, "required", False),
             "default": field.default_value,
-            "validation_rules": getattr(field, 'validation_rules', [])
+            "validation_rules": getattr(field, "validation_rules", []),
         }
 
     def _convert_to_config_format(
-        self,
-        field: Any,
-        config_values: Dict[str, Any],
-        options: Dict[str, Any]
+        self, field: Any, config_values: Dict[str, Any], options: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Convert field to configuration file format."""
         field_value = config_values.get(field.name, field.default_value)
@@ -545,10 +510,7 @@ class FieldService:
         return {}
 
     def _convert_to_command_format(
-        self,
-        field: Any,
-        config_values: Dict[str, Any],
-        options: Dict[str, Any]
+        self, field: Any, config_values: Dict[str, Any], options: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Convert field to command-line argument format."""
         field_value = config_values.get(field.name, field.default_value)
@@ -568,10 +530,7 @@ class FieldService:
             return {"arg": arg_name, "value": str(field_value)}
 
     def merge_field_values(
-        self,
-        base_config: Dict[str, Any],
-        overrides: Dict[str, Any],
-        validate: bool = True
+        self, base_config: Dict[str, Any], overrides: Dict[str, Any], validate: bool = True
     ) -> Dict[str, Any]:
         """Merge field values with proper type conversion.
 
@@ -605,10 +564,7 @@ class FieldService:
         return merged
 
     def prepare_tab_field_values(
-        self,
-        tab_name: str,
-        config_data: Dict[str, Any],
-        webui_defaults: Dict[str, Any]
+        self, tab_name: str, config_data: Dict[str, Any], webui_defaults: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Prepare field values for a tab with webui defaults and special handling.
 
@@ -646,7 +602,7 @@ class FieldService:
 
                 # Prefer explicit config key, but fall back to legacy "--" prefix
                 candidate_keys = [field.name, f"--{field.name}"]
-                arg_name = getattr(field, 'arg_name', '')
+                arg_name = getattr(field, "arg_name", "")
                 if arg_name and arg_name not in candidate_keys:
                     candidate_keys.append(arg_name)
 
@@ -662,8 +618,7 @@ class FieldService:
                             continue
                         if normalized == "none":
                             has_explicit_none_choice = any(
-                                isinstance(choice, dict)
-                                and str(choice.get("value", "")).strip().lower() == "none"
+                                isinstance(choice, dict) and str(choice.get("value", "")).strip().lower() == "none"
                                 for choice in (field.choices or [])
                             )
                             if not has_explicit_none_choice:
@@ -691,7 +646,7 @@ class FieldService:
                         value = lora_rank_value
 
                 config_values[field.name] = value
-                arg_name = getattr(field, 'arg_name', '')
+                arg_name = getattr(field, "arg_name", "")
                 if arg_name and arg_name != field.name:
                     config_values[arg_name] = value
                 legacy_key = f"--{field.name}"

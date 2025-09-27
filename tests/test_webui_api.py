@@ -14,11 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from simpletuner.simpletuner_sdk.server import ServerMode, create_app
-from simpletuner.simpletuner_sdk.server.services.webui_state import (
-    WebUIDefaults,
-    WebUIOnboardingState,
-    WebUIStateStore,
-)
+from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIDefaults, WebUIOnboardingState, WebUIStateStore
 
 
 @pytest.fixture
@@ -65,39 +61,27 @@ class TestWebUIStateAPI:
 
     def test_update_onboarding_step(self, client):
         """Test POST /api/webui/onboarding/steps/{step_id} endpoint."""
-        response = client.post(
-            "/api/webui/onboarding/steps/default_configs_dir",
-            json={"value": "/home/user/configs"}
-        )
+        response = client.post("/api/webui/onboarding/steps/default_configs_dir", json={"value": "/home/user/configs"})
 
         assert response.status_code == 200
         data = response.json()
 
         # Find the step in the response
-        step = next(
-            (s for s in data["onboarding"]["steps"] if s["id"] == "default_configs_dir"),
-            None
-        )
+        step = next((s for s in data["onboarding"]["steps"] if s["id"] == "default_configs_dir"), None)
         assert step is not None
         assert step["value"] == os.path.abspath(os.path.expanduser("/home/user/configs"))
         assert step["is_complete"] is True
 
     def test_update_onboarding_invalid_step(self, client):
         """Test updating non-existent onboarding step."""
-        response = client.post(
-            "/api/webui/onboarding/steps/invalid_step",
-            json={"value": "test"}
-        )
+        response = client.post("/api/webui/onboarding/steps/invalid_step", json={"value": "test"})
 
         assert response.status_code == 404
         assert "Unknown onboarding step" in response.json()["detail"]
 
     def test_update_onboarding_empty_required_value(self, client):
         """Test updating required step with empty value."""
-        response = client.post(
-            "/api/webui/onboarding/steps/default_configs_dir",
-            json={"value": ""}
-        )
+        response = client.post("/api/webui/onboarding/steps/default_configs_dir", json={"value": ""})
 
         assert response.status_code == 422
         assert "required" in response.json()["detail"]
@@ -118,11 +102,7 @@ class TestWebUIStateAPI:
         """Test POST /api/webui/defaults/update endpoint."""
         response = client.post(
             "/api/webui/defaults/update",
-            json={
-                "configs_dir": "/new/configs",
-                "output_dir": "/new/output",
-                "active_config": "new-config"
-            }
+            json={"configs_dir": "/new/configs", "output_dir": "/new/output", "active_config": "new-config"},
         )
 
         assert response.status_code == 200
@@ -134,18 +114,11 @@ class TestWebUIStateAPI:
     def test_update_defaults_partial(self, client, mock_state_store):
         """Test partial update of defaults."""
         # Set initial state
-        defaults = WebUIDefaults(
-            configs_dir="/old/configs",
-            output_dir="/old/output",
-            active_config="old-config"
-        )
+        defaults = WebUIDefaults(configs_dir="/old/configs", output_dir="/old/output", active_config="old-config")
         mock_state_store.save_defaults(defaults)
 
         # Update only configs_dir
-        response = client.post(
-            "/api/webui/defaults/update",
-            json={"configs_dir": "/new/configs"}
-        )
+        response = client.post("/api/webui/defaults/update", json={"configs_dir": "/new/configs"})
 
         assert response.status_code == 200
         data = response.json()
@@ -173,10 +146,7 @@ class TestWebUIRoutes:
     def test_trainer_tabs_basic(self, client, mock_state_store):
         """Test /web/trainer/tabs/basic renders with correct context."""
         # Set up test defaults
-        defaults = WebUIDefaults(
-            configs_dir="/test/configs",
-            output_dir="/test/output"
-        )
+        defaults = WebUIDefaults(configs_dir="/test/configs", output_dir="/test/output")
         mock_state_store.save_defaults(defaults)
 
         response = client.get("/web/trainer/tabs/basic")
@@ -238,10 +208,7 @@ class TestTrainingAPI:
             "--resolution": "1024",
         }
 
-        response = client.post(
-            "/api/training/validate",
-            data=form_data
-        )
+        response = client.post("/api/training/validate", data=form_data)
 
         assert response.status_code == 200
         # Response should be HTML with validation results
@@ -255,10 +222,7 @@ class TestTrainingAPI:
         }
 
         with patch("simpletuner.simpletuner_sdk.api_state.APIState.set_state"):
-            response = client.post(
-                "/api/training/config",
-                data=form_data
-            )
+            response = client.post("/api/training/config", data=form_data)
 
             assert response.status_code == 200
             assert "Configuration saved" in response.text
@@ -275,10 +239,7 @@ class TestTrainingAPI:
         with patch("simpletuner.simpletuner_sdk.server.routes.training.process_keeper") as mock_pk:
             mock_pk.submit_job = Mock()
 
-            response = client.post(
-                "/api/training/start",
-                data=form_data
-            )
+            response = client.post("/api/training/start", data=form_data)
 
             assert response.status_code == 200
             assert "Training Starting" in response.text
@@ -303,7 +264,7 @@ class TestTrainingAPI:
             mock_get.side_effect = lambda key, default=None: {
                 "training_status": "running",
                 "current_job_id": "test-job",
-                "training_config": {"--model_type": "lora"}
+                "training_config": {"--model_type": "lora"},
             }.get(key, default)
 
             response = client.get("/api/training/status")
@@ -331,9 +292,9 @@ class TestConfigIntegration:
                 {
                     "--job_id": "my-model",
                     "--output_dir": "/path/to/output",
-                    "--pretrained_model_name_or_path": "black-forest-labs/FLUX.1-dev"
+                    "--pretrained_model_name_or_path": "black-forest-labs/FLUX.1-dev",
                 },
-                Mock()  # metadata
+                Mock(),  # metadata
             )
 
             # Set WebUI defaults

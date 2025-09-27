@@ -9,11 +9,11 @@ from __future__ import annotations
 import logging
 import traceback
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, Request, status
-from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -37,23 +37,17 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
             logger.error(
                 f"Unhandled error in request {request_id}: {str(e)}",
                 exc_info=True,
-                extra={"request_id": request_id, "path": request.url.path}
+                extra={"request_id": request_id, "path": request.url.path},
             )
             # Return generic error response
             return self._create_error_response(
                 request,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 message="An unexpected error occurred",
-                request_id=request_id
+                request_id=request_id,
             )
 
-    def _create_error_response(
-        self,
-        request: Request,
-        status_code: int,
-        message: str,
-        request_id: str
-    ) -> Response:
+    def _create_error_response(self, request: Request, status_code: int, message: str, request_id: str) -> Response:
         """Create appropriate error response based on request type."""
         # Check if this is an HTMX request
         is_htmx = request.headers.get("HX-Request") == "true"
@@ -61,18 +55,12 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
         if is_htmx:
             # Return HTML fragment for HTMX
             return HTMLResponse(
-                content=f'<div class="alert alert-danger" role="alert">{message}</div>',
-                status_code=status_code
+                content=f'<div class="alert alert-danger" role="alert">{message}</div>', status_code=status_code
             )
         else:
             # Return JSON for API requests
             return JSONResponse(
-                status_code=status_code,
-                content={
-                    "error": message,
-                    "status_code": status_code,
-                    "request_id": request_id
-                }
+                status_code=status_code, content={"error": message, "status_code": status_code, "request_id": request_id}
             )
 
 
@@ -91,11 +79,7 @@ def setup_error_handlers(app: FastAPI) -> None:
         # Log the error
         logger.warning(
             f"HTTP exception in request {request_id}: {exc.status_code} - {exc.detail}",
-            extra={
-                "request_id": request_id,
-                "path": request.url.path,
-                "status_code": exc.status_code
-            }
+            extra={"request_id": request_id, "path": request.url.path, "status_code": exc.status_code},
         )
 
         # Check if this is an HTMX request
@@ -109,11 +93,7 @@ def setup_error_handlers(app: FastAPI) -> None:
             # Return JSON error response
             return JSONResponse(
                 status_code=exc.status_code,
-                content={
-                    "error": exc.detail,
-                    "status_code": exc.status_code,
-                    "request_id": request_id
-                }
+                content={"error": exc.detail, "status_code": exc.status_code, "request_id": request_id},
             )
 
     @app.exception_handler(RequestValidationError)
@@ -125,15 +105,10 @@ def setup_error_handlers(app: FastAPI) -> None:
         errors = []
         for error in exc.errors():
             field_name = ".".join(str(loc) for loc in error["loc"])
-            errors.append({
-                "field": field_name,
-                "message": error["msg"],
-                "type": error["type"]
-            })
+            errors.append({"field": field_name, "message": error["msg"], "type": error["type"]})
 
         logger.warning(
-            f"Validation error in request {request_id}: {errors}",
-            extra={"request_id": request_id, "path": request.url.path}
+            f"Validation error in request {request_id}: {errors}", extra={"request_id": request_id, "path": request.url.path}
         )
 
         # Check if this is an HTMX request
@@ -142,19 +117,12 @@ def setup_error_handlers(app: FastAPI) -> None:
         if is_htmx:
             # Return HTML with field errors
             error_html = _get_validation_error_html(errors)
-            return HTMLResponse(
-                content=error_html,
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
-            )
+            return HTMLResponse(content=error_html, status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
         else:
             # Return JSON validation errors
             return JSONResponse(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                content={
-                    "error": "Validation failed",
-                    "errors": errors,
-                    "request_id": request_id
-                }
+                content={"error": "Validation failed", "errors": errors, "request_id": request_id},
             )
 
     @app.exception_handler(Exception)
@@ -166,11 +134,7 @@ def setup_error_handlers(app: FastAPI) -> None:
         logger.error(
             f"Unhandled exception in request {request_id}: {str(exc)}",
             exc_info=True,
-            extra={
-                "request_id": request_id,
-                "path": request.url.path,
-                "exception_type": type(exc).__name__
-            }
+            extra={"request_id": request_id, "path": request.url.path, "exception_type": type(exc).__name__},
         )
 
         # Create user-friendly error message
@@ -188,29 +152,19 @@ def setup_error_handlers(app: FastAPI) -> None:
 
         if is_htmx:
             # Return HTML error fragment
-            error_html = _get_htmx_error_html(
-                status.HTTP_500_INTERNAL_SERVER_ERROR,
-                error_message,
-                details
-            )
-            return HTMLResponse(
-                content=error_html,
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            error_html = _get_htmx_error_html(status.HTTP_500_INTERNAL_SERVER_ERROR, error_message, details)
+            return HTMLResponse(content=error_html, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
         else:
             # Return JSON error response
             content = {
                 "error": error_message,
                 "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
-                "request_id": request_id
+                "request_id": request_id,
             }
             if details:
                 content["details"] = details
 
-            return JSONResponse(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                content=content
-            )
+            return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=content)
 
 
 def _get_htmx_error_html(status_code: int, message: str, details: Optional[str] = None) -> str:
@@ -226,20 +180,20 @@ def _get_htmx_error_html(status_code: int, message: str, details: Optional[str] 
     """
     severity = "danger" if status_code >= 500 else "warning"
 
-    html = f'''
+    html = f"""
     <div class="alert alert-{severity} alert-dismissible fade show" role="alert">
         <strong>Error {status_code}:</strong> {message}
         <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
     </div>
-    '''
+    """
 
     if details:
-        html += f'''
+        html += f"""
         <details class="mt-2">
             <summary>Error Details</summary>
             <pre class="bg-light p-2 rounded"><code>{details}</code></pre>
         </details>
-        '''
+        """
 
     return html
 
@@ -259,7 +213,7 @@ def _get_validation_error_html(errors: List[Dict[str, Any]]) -> str:
         message = error["message"]
         error_items.append(f"<li><strong>{field}:</strong> {message}</li>")
 
-    return f'''
+    return f"""
     <div class="alert alert-danger alert-dismissible fade show" role="alert">
         <strong>Validation Error:</strong>
         <ul class="mb-0">
@@ -267,7 +221,7 @@ def _get_validation_error_html(errors: List[Dict[str, Any]]) -> str:
         </ul>
         <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
     </div>
-    '''
+    """
 
 
 def setup_error_middleware(app: FastAPI) -> None:

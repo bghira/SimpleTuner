@@ -1,21 +1,18 @@
 """Base builder class for creating data backend instances."""
-from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+
 import logging
 import os
+from abc import ABC, abstractmethod
+from typing import Any, Dict, Optional
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.config.base import BaseBackendConfig
-from simpletuner.helpers.training.state_tracker import StateTracker
 
 # Import metadata backends at module load so tests can patch these names.
-from simpletuner.helpers.metadata.backends.discovery import (
-    DiscoveryMetadataBackend as JsonMetadataBackend,
-)
+from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend as JsonMetadataBackend
+from simpletuner.helpers.metadata.backends.huggingface import HuggingfaceMetadataBackend
 from simpletuner.helpers.metadata.backends.parquet import ParquetMetadataBackend
-from simpletuner.helpers.metadata.backends.huggingface import (
-    HuggingfaceMetadataBackend,
-)
+from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("BaseBackendBuilder")
 
@@ -51,7 +48,7 @@ class BaseBackendBuilder(ABC):
         config: BaseBackendConfig,
         data_backend: BaseDataBackend,
         args: Dict[str, Any],
-        instance_data_dir: Optional[str] = None
+        instance_data_dir: Optional[str] = None,
     ) -> Any:
         backend_dict = config.to_dict()["config"]
         metadata_backend_args = {}
@@ -93,8 +90,7 @@ class BaseBackendBuilder(ABC):
 
         if instance_data_dir is None:
             instance_data_dir = backend_dict.get(
-                "instance_data_dir",
-                backend_dict.get("csv_cache_dir", backend_dict.get("aws_data_prefix", ""))
+                "instance_data_dir", backend_dict.get("csv_cache_dir", backend_dict.get("aws_data_prefix", ""))
             )
 
         video_config = config.config.get("video", {})

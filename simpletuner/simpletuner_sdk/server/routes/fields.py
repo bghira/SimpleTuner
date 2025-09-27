@@ -5,15 +5,19 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query, status
 
 from simpletuner.simpletuner_sdk.server.services.field_registry_wrapper import lazy_field_registry as field_registry
+
 try:
     from simpletuner.simpletuner_sdk.server.services.field_registry import ImportanceLevel
 except ImportError:
     from enum import Enum
+
     class ImportanceLevel(Enum):
         ESSENTIAL = "essential"
         IMPORTANT = "important"
         ADVANCED = "advanced"
         EXPERIMENTAL = "experimental"
+
+
 from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
 from simpletuner.simpletuner_sdk.server.services.dataset_service import build_data_backend_choices
 
@@ -48,7 +52,7 @@ async def get_tab_fields(
     model_type: Optional[str] = Query(None, description="Model type (full/lora) for filtering"),
     platform: Optional[str] = Query(None, description="Platform (cuda/mps) for filtering"),
     importance_level: Optional[str] = Query("important", description="Maximum importance level to show"),
-    include_advanced: bool = Query(False, description="Include advanced fields")
+    include_advanced: bool = Query(False, description="Include advanced fields"),
 ) -> Dict[str, Any]:
     """Get fields for a specific tab with context filtering.
 
@@ -83,14 +87,11 @@ async def get_tab_fields(
                 ImportanceLevel.ESSENTIAL,
                 ImportanceLevel.IMPORTANT,
                 ImportanceLevel.ADVANCED,
-                ImportanceLevel.EXPERIMENTAL
+                ImportanceLevel.EXPERIMENTAL,
             ]
             max_index = importance_order.index(max_importance)
 
-            fields = [
-                f for f in fields
-                if importance_order.index(f.importance) <= max_index
-            ]
+            fields = [f for f in fields if importance_order.index(f.importance) <= max_index]
         except ValueError:
             pass  # Invalid importance level, show all
 
@@ -118,16 +119,10 @@ async def get_tab_fields(
             "group": field.group,
             "order": field.order,
             "subsection": field.subsection,
-            "dynamic_choices": getattr(field, 'dynamic_choices', False),
+            "dynamic_choices": getattr(field, "dynamic_choices", False),
             "dependencies": [
-                {
-                    "field": d.field,
-                    "value": d.value,
-                    "values": d.values,
-                    "operator": d.operator
-                }
-                for d in field.dependencies
-            ]
+                {"field": d.field, "value": d.value, "values": d.values, "operator": d.operator} for d in field.dependencies
+            ],
         }
 
         # If this is the resume_from_checkpoint field and we have an output_dir in context, load checkpoints
@@ -139,15 +134,14 @@ async def get_tab_fields(
                 # Build dynamic choices
                 dynamic_choices = [
                     {"value": "", "label": "None (Start fresh)"},
-                    {"value": "latest", "label": "Latest checkpoint"}
+                    {"value": "latest", "label": "Latest checkpoint"},
                 ]
 
                 if checkpoints:
                     for checkpoint in checkpoints:
-                        dynamic_choices.append({
-                            "value": checkpoint["name"],
-                            "label": f"{checkpoint['name']} (Step {checkpoint['step']})"
-                        })
+                        dynamic_choices.append(
+                            {"value": checkpoint["name"], "label": f"{checkpoint['name']} (Step {checkpoint['step']})"}
+                        )
 
                 field_data["choices"] = dynamic_choices
             except Exception:
@@ -169,14 +163,13 @@ async def get_tab_fields(
         "sections": sections,
         "fields": fields_by_section,
         "field_count": len(fields),
-        "context": context
+        "context": context,
     }
 
 
 @router.get("/field/{field_name}")
 async def get_field_metadata(
-    field_name: str,
-    output_dir: Optional[str] = Query(None, description="Output directory for checkpoint loading")
+    field_name: str, output_dir: Optional[str] = Query(None, description="Output directory for checkpoint loading")
 ) -> Dict[str, Any]:
     """Get metadata for a specific field.
 
@@ -189,10 +182,7 @@ async def get_field_metadata(
     """
     field = field_registry.get_field(field_name)
     if not field:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Field '{field_name}' not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Field '{field_name}' not found")
 
     field_data = {
         "name": field.name,
@@ -204,24 +194,13 @@ async def get_field_metadata(
         "subsection": field.subsection,
         "default_value": field.default_value,
         "choices": field.choices,
-        "dynamic_choices": getattr(field, 'dynamic_choices', False),
+        "dynamic_choices": getattr(field, "dynamic_choices", False),
         "validation_rules": [
-            {
-                "type": rule.rule_type.value,
-                "value": rule.value,
-                "message": rule.message,
-                "condition": rule.condition
-            }
+            {"type": rule.rule_type.value, "value": rule.value, "message": rule.message, "condition": rule.condition}
             for rule in field.validation_rules
         ],
         "dependencies": [
-            {
-                "field": d.field,
-                "value": d.value,
-                "values": d.values,
-                "operator": d.operator
-            }
-            for d in field.dependencies
+            {"field": d.field, "value": d.value, "values": d.values, "operator": d.operator} for d in field.dependencies
         ],
         "help_text": field.help_text,
         "tooltip": field.tooltip,
@@ -231,7 +210,7 @@ async def get_field_metadata(
         "platform_specific": field.platform_specific,
         "warning": field.warning,
         "group": field.group,
-        "order": field.order
+        "order": field.order,
     }
 
     # Handle dynamic checkpoint loading for resume_from_checkpoint field
@@ -243,15 +222,14 @@ async def get_field_metadata(
             # Build dynamic choices
             dynamic_choices = [
                 {"value": "", "label": "None (Start fresh)"},
-                {"value": "latest", "label": "Latest checkpoint"}
+                {"value": "latest", "label": "Latest checkpoint"},
             ]
 
             if checkpoints:
                 for checkpoint in checkpoints:
-                    dynamic_choices.append({
-                        "value": checkpoint["name"],
-                        "label": f"{checkpoint['name']} (Step {checkpoint['step']})"
-                    })
+                    dynamic_choices.append(
+                        {"value": checkpoint["name"], "label": f"{checkpoint['name']} (Step {checkpoint['step']})"}
+                    )
 
             field_data["choices"] = dynamic_choices
         except Exception:
@@ -272,19 +250,11 @@ async def get_field_dependencies(field_name: str) -> Dict[str, Any]:
         List of dependent field names.
     """
     dependents = field_registry.get_dependent_fields(field_name)
-    return {
-        "field": field_name,
-        "dependents": dependents,
-        "count": len(dependents)
-    }
+    return {"field": field_name, "dependents": dependents, "count": len(dependents)}
 
 
 @router.post("/validate")
-async def validate_field_value(
-    field_name: str,
-    value: Any,
-    context: Optional[Dict[str, Any]] = None
-) -> Dict[str, Any]:
+async def validate_field_value(field_name: str, value: Any, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Validate a field value against its rules.
 
     Args:
@@ -297,27 +267,16 @@ async def validate_field_value(
     """
     field = field_registry.get_field(field_name)
     if not field:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Field '{field_name}' not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Field '{field_name}' not found")
 
     errors = field_registry.validate_field_value(field_name, value, context)
 
-    return {
-        "field": field_name,
-        "value": value,
-        "valid": len(errors) == 0,
-        "errors": errors
-    }
+    return {"field": field_name, "value": value, "valid": len(errors) == 0, "errors": errors}
 
 
 @router.get("/search")
 async def search_fields(
-    query: str,
-    tab: Optional[str] = None,
-    importance: Optional[str] = None,
-    include_experimental: bool = False
+    query: str, tab: Optional[str] = None, importance: Optional[str] = None, include_experimental: bool = False
 ) -> Dict[str, Any]:
     """Search for fields by name, label, or help text.
 
@@ -337,11 +296,13 @@ async def search_fields(
     matching_fields = []
     for field in all_fields:
         # Check if query matches
-        if (query_lower in field.name.lower() or
-            query_lower in field.ui_label.lower() or
-            query_lower in field.help_text.lower() or
-            query_lower in field.tooltip.lower() or
-            query_lower in field.arg_name.lower()):
+        if (
+            query_lower in field.name.lower()
+            or query_lower in field.ui_label.lower()
+            or query_lower in field.help_text.lower()
+            or query_lower in field.tooltip.lower()
+            or query_lower in field.arg_name.lower()
+        ):
 
             # Apply filters
             if tab and field.tab != tab:
@@ -351,21 +312,19 @@ async def search_fields(
             if not include_experimental and field.importance == ImportanceLevel.EXPERIMENTAL:
                 continue
 
-            matching_fields.append({
-                "name": field.name,
-                "arg_name": field.arg_name,
-                "ui_label": field.ui_label,
-                "tab": field.tab,
-                "section": field.section,
-                "importance": field.importance.value,
-                "help_text": field.help_text
-            })
+            matching_fields.append(
+                {
+                    "name": field.name,
+                    "arg_name": field.arg_name,
+                    "ui_label": field.ui_label,
+                    "tab": field.tab,
+                    "section": field.section,
+                    "importance": field.importance.value,
+                    "help_text": field.help_text,
+                }
+            )
 
-    return {
-        "query": query,
-        "results": matching_fields,
-        "count": len(matching_fields)
-    }
+    return {"query": query, "results": matching_fields, "count": len(matching_fields)}
 
 
 @router.get("/model-specific/{model_family}")
@@ -382,21 +341,19 @@ async def get_model_specific_fields(model_family: str) -> Dict[str, Any]:
 
     for field in field_registry._fields.values():
         if field.model_specific and model_family in field.model_specific:
-            model_specific_fields.append({
-                "name": field.name,
-                "arg_name": field.arg_name,
-                "ui_label": field.ui_label,
-                "tab": field.tab,
-                "section": field.section,
-                "importance": field.importance.value,
-                "help_text": field.help_text
-            })
+            model_specific_fields.append(
+                {
+                    "name": field.name,
+                    "arg_name": field.arg_name,
+                    "ui_label": field.ui_label,
+                    "tab": field.tab,
+                    "section": field.section,
+                    "importance": field.importance.value,
+                    "help_text": field.help_text,
+                }
+            )
 
-    return {
-        "model_family": model_family,
-        "fields": model_specific_fields,
-        "count": len(model_specific_fields)
-    }
+    return {"model_family": model_family, "fields": model_specific_fields, "count": len(model_specific_fields)}
 
 
 @router.get("/importance-levels")
@@ -411,22 +368,22 @@ async def get_importance_levels() -> Dict[str, Any]:
             {
                 "value": ImportanceLevel.ESSENTIAL.value,
                 "label": "Essential",
-                "description": "Required fields that must be configured for training to work"
+                "description": "Required fields that must be configured for training to work",
             },
             {
                 "value": ImportanceLevel.IMPORTANT.value,
                 "label": "Important",
-                "description": "Fields that significantly affect training results"
+                "description": "Fields that significantly affect training results",
             },
             {
                 "value": ImportanceLevel.ADVANCED.value,
                 "label": "Advanced",
-                "description": "Fine-tuning options for experienced users"
+                "description": "Fine-tuning options for experienced users",
             },
             {
                 "value": ImportanceLevel.EXPERIMENTAL.value,
                 "label": "Experimental",
-                "description": "Bleeding edge features that may be unstable"
-            }
+                "description": "Bleeding edge features that may be unstable",
+            },
         ]
     }

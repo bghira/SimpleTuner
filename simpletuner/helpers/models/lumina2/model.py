@@ -284,4 +284,5 @@ class Lumina2(ImageModelFoundation):
 
 
 from simpletuner.helpers.models.registry import ModelRegistry
+
 ModelRegistry.register("lumina2", Lumina2)

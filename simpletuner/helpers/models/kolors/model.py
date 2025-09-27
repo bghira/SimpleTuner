@@ -224,4 +224,5 @@ class Kolors(ImageModelFoundation):
 
 
 from simpletuner.helpers.models.registry import ModelRegistry
+
 ModelRegistry.register("kolors", Kolors)

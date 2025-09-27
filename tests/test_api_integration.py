@@ -202,10 +202,7 @@ class TestDatasetRoutes:
         data = response.json()
         assert data["datasets"] == []
         assert data["source"] == "default"
-        assert any(
-            message["message"].startswith("add at least one dataset")
-            for message in data.get("validations", [])
-        )
+        assert any(message["message"].startswith("add at least one dataset") for message in data.get("validations", []))
 
     def test_create_dataset_plan(self, test_client_trainer, dataset_plan_path):
         """Plan endpoint persists datasets and returns validations."""
@@ -508,7 +505,7 @@ class TestProcessModeIntegration:
             assert response.status_code == 200
             data = response.json()
             assert "cancel" in data.get("result", "").lower()
- 
+
 
 @pytest.fixture
 def dataset_plan_path(tmp_path, monkeypatch):

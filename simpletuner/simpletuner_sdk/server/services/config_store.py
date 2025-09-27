@@ -10,21 +10,17 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 try:
-    from simpletuner.helpers.configuration.cmd_args import (
-        get_argument_parser as _get_cli_argument_parser,
-        get_model_flavour_choices as _cli_get_model_flavour_choices,
-        model_family_choices as _cli_model_family_choices,
-    )
+    from simpletuner.helpers.configuration.cmd_args import get_argument_parser as _get_cli_argument_parser
+    from simpletuner.helpers.configuration.cmd_args import get_model_flavour_choices as _cli_get_model_flavour_choices
+    from simpletuner.helpers.configuration.cmd_args import model_family_choices as _cli_model_family_choices
 except Exception:  # pragma: no cover - fallback when CLI utilities unavailable
     _get_cli_argument_parser = None
     _cli_get_model_flavour_choices = None
     _cli_model_family_choices = []
 
 try:
-    from simpletuner.helpers.models.all import (
-        get_all_model_flavours as _get_all_model_flavours,
-        model_families as _MODEL_FAMILY_MAP,
-    )
+    from simpletuner.helpers.models.all import get_all_model_flavours as _get_all_model_flavours
+    from simpletuner.helpers.models.all import model_families as _MODEL_FAMILY_MAP
 except Exception:  # pragma: no cover - fallback when model metadata unavailable
     _get_all_model_flavours = None
     _MODEL_FAMILY_MAP = {}
@@ -39,9 +35,9 @@ else:
 
 from pydantic import BaseModel, Field
 
+from simpletuner.simpletuner_sdk.server.services.cache_service import get_config_cache
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
 from simpletuner.simpletuner_sdk.server.utils.paths import get_simpletuner_root
-from simpletuner.simpletuner_sdk.server.services.cache_service import get_config_cache
 
 # Environment variables for configuration paths
 _CONFIG_ENV_DIR = "SIMPLETUNER_CONFIG_DIR"
@@ -529,8 +525,12 @@ class ConfigStore:
                         if metadata is None:
                             metadata = {
                                 "name": config_file.stem,
-                                "created_at": datetime.fromtimestamp(config_file.stat().st_ctime, tz=timezone.utc).isoformat(),
-                                "modified_at": datetime.fromtimestamp(config_file.stat().st_mtime, tz=timezone.utc).isoformat(),
+                                "created_at": datetime.fromtimestamp(
+                                    config_file.stat().st_ctime, tz=timezone.utc
+                                ).isoformat(),
+                                "modified_at": datetime.fromtimestamp(
+                                    config_file.stat().st_mtime, tz=timezone.utc
+                                ).isoformat(),
                             }
                             if isinstance(config_data, dict):
                                 if "--model_family" in config_data:
@@ -633,7 +633,11 @@ class ConfigStore:
                         for config_file in env_dir.glob(pattern):
                             if not config_file.is_file():
                                 continue
-                            display_name = env_dir.name if config_file.name == "multidatabackend.json" else f"{env_dir.name}:{config_file.stem}"
+                            display_name = (
+                                env_dir.name
+                                if config_file.name == "multidatabackend.json"
+                                else f"{env_dir.name}:{config_file.stem}"
+                            )
                             _register_dataloader(config_file, display_name=display_name)
         elif self.config_type == "webhook":
             # For webhook configs, look for files with "webhook_type" key
@@ -914,7 +918,11 @@ class ConfigStore:
                     continue
                 prepared_config[key] = value
 
-            if "data_backend_config" not in prepared_config and isinstance(config, dict) and "--data_backend_config" in config:
+            if (
+                "data_backend_config" not in prepared_config
+                and isinstance(config, dict)
+                and "--data_backend_config" in config
+            ):
                 prepared_config["data_backend_config"] = config["--data_backend_config"]
 
             # Extract model info from config if not in metadata
@@ -1209,9 +1217,7 @@ class ConfigStore:
                 valid_flavour_set = set(valid_flavours)
                 if valid_flavour_set and model_flavour not in valid_flavour_set:
                     if model_family:
-                        validation.warnings.append(
-                            f"Unknown model flavour '{model_flavour}' for family '{model_family}'"
-                        )
+                        validation.warnings.append(f"Unknown model flavour '{model_flavour}' for family '{model_family}'")
                     else:
                         validation.warnings.append(f"Unknown model flavour: {model_flavour}")
 

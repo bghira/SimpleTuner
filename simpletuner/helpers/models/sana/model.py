@@ -187,4 +187,5 @@ class Sana(ImageModelFoundation):
 
 
 from simpletuner.helpers.models.registry import ModelRegistry
+
 ModelRegistry.register("sana", Sana)

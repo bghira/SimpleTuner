@@ -2,8 +2,9 @@
 
 import logging
 import os
+from typing import Any, Dict, Optional, Union
+
 import torch
-from typing import Dict, Any, Optional, Union
 
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 from simpletuner.helpers.training.multi_process import should_log
@@ -24,6 +25,7 @@ else:
 
 def prefetch_log_debug(message: str) -> None:
     from simpletuner.helpers.training.multi_process import rank_info
+
     prefetch_log.debug(f"{rank_info()} {message}")
 
 
@@ -73,9 +75,7 @@ def get_backend_weight(backend_id: str, backend: Any, step: int) -> float:
         dataset_length = StateTracker.get_dataset_size(backend_id)
 
         try:
-            total = sum(
-                StateTracker.get_dataset_size(b) for b in StateTracker.get_data_backends(_types=["image", "video"])
-            )
+            total = sum(StateTracker.get_dataset_size(b) for b in StateTracker.get_data_backends(_types=["image", "video"]))
         except Exception:
             total = 0
         if not total:

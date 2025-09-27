@@ -1,7 +1,8 @@
 """Integration between cmd_args.py and field registry for help text extraction."""
 
-from typing import Dict, Optional, Any
 import argparse
+from typing import Any, Dict, Optional
+
 from simpletuner.helpers.configuration.cmd_args import get_argument_parser
 
 
@@ -51,11 +52,11 @@ class ArgParserIntegration:
                 "type": action.type.__name__ if action.type else "str",
                 "default": action.default,
                 "choices": action.choices,
-                "required": action.required if hasattr(action, 'required') else False,
+                "required": action.required if hasattr(action, "required") else False,
                 "dest": action.dest,
                 "nargs": action.nargs,
                 "const": action.const,
-                "metavar": action.metavar
+                "metavar": action.metavar,
             }
 
             # Special handling for store_true/store_false actions
@@ -131,10 +132,11 @@ class ArgParserIntegration:
 
         # Replace multiple spaces with single space
         import re
-        help_text = re.sub(r'\s+', ' ', help_text)
+
+        help_text = re.sub(r"\s+", " ", help_text)
 
         # Remove internal references to args.*
-        help_text = re.sub(r'`?args\.(\w+)`?', r'\1', help_text)
+        help_text = re.sub(r"`?args\.(\w+)`?", r"\1", help_text)
 
         # Format lists nicely
         help_text = help_text.replace(". ", ".\n")

@@ -8,7 +8,6 @@ Benchmarks factory performance across various configuration sizes and complexity
 import json
 import logging
 import os
-import psutil
 import statistics
 import sys
 import tempfile
@@ -16,6 +15,8 @@ import time
 import tracemalloc
 from typing import Any, Dict, List, Optional, Tuple
 from unittest.mock import MagicMock
+
+import psutil
 
 # Add the SimpleTuner root to the path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -346,8 +347,8 @@ class FactoryBenchmark:
 
                 # Import and test original factory functions
                 from simpletuner.helpers.data_backend.factory import (
-                    sort_dataset_configs_by_dependencies,
                     fill_variables_in_config_paths,
+                    sort_dataset_configs_by_dependencies,
                 )
 
                 init_start = time.time()

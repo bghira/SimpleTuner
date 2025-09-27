@@ -1,11 +1,11 @@
 """Checkpoint management utilities for SimpleTuner."""
 
-import os
-import shutil
 import json
 import logging
-from typing import List, Dict, Optional, Tuple
+import os
+import shutil
 from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 

@@ -8,20 +8,18 @@ This module provides security-related utilities including:
 
 from __future__ import annotations
 
+import logging
 import os
 import re
-import logging
 from pathlib import Path
-from typing import Optional, List, Union
+from typing import List, Optional, Union
 from urllib.parse import unquote
 
 logger = logging.getLogger(__name__)
 
 
 def validate_safe_path(
-    path: str,
-    allowed_dirs: Optional[List[Union[str, Path]]] = None,
-    allow_symlinks: bool = False
+    path: str, allowed_dirs: Optional[List[Union[str, Path]]] = None, allow_symlinks: bool = False
 ) -> Optional[Path]:
     """Validate that a path is safe and within allowed directories.
 
@@ -50,27 +48,27 @@ def validate_safe_path(
 
     # Decode any URL encoding
     try:
-        decoded_path = unquote(path, errors='strict')
+        decoded_path = unquote(path, errors="strict")
     except Exception as e:
         logger.warning(f"Failed to decode path: {e}")
         return None
 
     # Check for null bytes
-    if '\x00' in decoded_path:
+    if "\x00" in decoded_path:
         logger.warning("Null byte detected in path")
         return None
 
     # Check for various path traversal patterns
     traversal_patterns = [
-        '..',  # Basic traversal
-        '..\\',  # Windows traversal
-        '../',  # Unix traversal
-        '..%2F',  # URL encoded forward slash
-        '..%5C',  # URL encoded backslash
-        '..%252F',  # Double encoded forward slash
-        '..%255C',  # Double encoded backslash
-        '\\..\\',  # Windows UNC paths
-        '/../',  # Unix absolute traversal
+        "..",  # Basic traversal
+        "..\\",  # Windows traversal
+        "../",  # Unix traversal
+        "..%2F",  # URL encoded forward slash
+        "..%5C",  # URL encoded backslash
+        "..%252F",  # Double encoded forward slash
+        "..%255C",  # Double encoded backslash
+        "\\..\\",  # Windows UNC paths
+        "/../",  # Unix absolute traversal
     ]
 
     for pattern in traversal_patterns:
@@ -80,9 +78,9 @@ def validate_safe_path(
 
     # Additional regex patterns for complex traversal attempts
     dangerous_patterns = [
-        r'\.\.+[/\\]',  # Multiple dots
-        r'[/\\]\.\.+',  # Dots after separator
-        r'\.\.[/\\]?\.\.',  # Chained traversals
+        r"\.\.+[/\\]",  # Multiple dots
+        r"[/\\]\.\.+",  # Dots after separator
+        r"\.\.[/\\]?\.\.",  # Chained traversals
     ]
 
     for pattern in dangerous_patterns:
@@ -160,14 +158,14 @@ def sanitize_filename(filename: str, max_length: int = 255) -> str:
     filename = os.path.basename(filename)
 
     # Remove null bytes
-    filename = filename.replace('\x00', '')
+    filename = filename.replace("\x00", "")
 
     # Replace problematic characters
     # Allow alphanumeric, dash, underscore, and dot
-    filename = re.sub(r'[^\w\-_.]', '_', filename)
+    filename = re.sub(r"[^\w\-_.]", "_", filename)
 
     # Remove leading dots (hidden files on Unix)
-    filename = filename.lstrip('.')
+    filename = filename.lstrip(".")
 
     # Ensure it's not empty after sanitization
     if not filename:
@@ -205,7 +203,7 @@ def is_safe_url(url: str, allowed_hosts: Optional[List[str]] = None) -> bool:
         parsed = urlparse(url)
 
         # Reject URLs with potentially dangerous schemes
-        dangerous_schemes = ['javascript', 'data', 'vbscript', 'file']
+        dangerous_schemes = ["javascript", "data", "vbscript", "file"]
         if parsed.scheme in dangerous_schemes:
             return False
 

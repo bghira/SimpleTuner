@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import os
 import json
 import logging
+import os
 from typing import Any, Dict
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
-from fastapi import status
 
 # Use the lazy wrapper for field registry
 from simpletuner.simpletuner_sdk.server.services.field_registry_wrapper import lazy_field_registry as field_registry
@@ -23,6 +22,7 @@ if os.getenv("DEBUG_MODE", "false").lower() == "true":
 else:
     # Return empty router if debug mode is not enabled
     router = APIRouter()
+
 
 def _convert_field_to_template_format(field: Any, config_values: Dict[str, Any]) -> Dict[str, Any]:
     """Convert a field to the format expected by templates.
@@ -38,7 +38,7 @@ def _convert_field_to_template_format(field: Any, config_values: Dict[str, Any])
     }
 
     # Add validation rules
-    if hasattr(field, 'validation_rules') and field.validation_rules:
+    if hasattr(field, "validation_rules") and field.validation_rules:
         for rule in field.validation_rules:
             if rule.type.value == "MIN" and rule.value is not None:
                 field_dict["min"] = rule.value
@@ -46,7 +46,7 @@ def _convert_field_to_template_format(field: Any, config_values: Dict[str, Any])
                 field_dict["max"] = rule.value
 
     # Add choices for select fields
-    if hasattr(field, 'choices') and field.choices:
+    if hasattr(field, "choices") and field.choices:
         field_dict["choices"] = field.choices
 
     return field_dict
@@ -96,7 +96,9 @@ if os.getenv("DEBUG_MODE", "false").lower() == "true":
                     "field_type": sample_field.field_type.value,
                     "section": sample_field.section,
                     "default_value": sample_field.default_value,
-                    "help_text": sample_field.help_text[:100] + "..." if len(sample_field.help_text) > 100 else sample_field.help_text
+                    "help_text": (
+                        sample_field.help_text[:100] + "..." if len(sample_field.help_text) > 100 else sample_field.help_text
+                    ),
                 }
 
         # Count fields by section for the "basic" tab
@@ -143,7 +145,6 @@ if os.getenv("DEBUG_MODE", "false").lower() == "true":
 
         return HTMLResponse(content=html_content)
 
-
     @router.get("/model-family", response_class=HTMLResponse)
     async def debug_model_family(request: Request):
         """Debug model_family field specifically."""
@@ -168,8 +169,12 @@ if os.getenv("DEBUG_MODE", "false").lower() == "true":
             # Debug field type
             logger.info(f"model_family field_type: {model_family_field.field_type}")
             logger.info(f"model_family field_type.value: {model_family_field.field_type.value}")
-            logger.info(f"Comparison test: {model_family_field.field_type.value} == 'SELECT' is {model_family_field.field_type.value == 'SELECT'}")
-            logger.info(f"Comparison test: {model_family_field.field_type.value} == 'select' is {model_family_field.field_type.value == 'select'}")
+            logger.info(
+                f"Comparison test: {model_family_field.field_type.value} == 'SELECT' is {model_family_field.field_type.value == 'SELECT'}"
+            )
+            logger.info(
+                f"Comparison test: {model_family_field.field_type.value} == 'select' is {model_family_field.field_type.value == 'select'}"
+            )
 
             # Convert to template format
             config_values = {"model_family": ""}
@@ -204,17 +209,16 @@ if os.getenv("DEBUG_MODE", "false").lower() == "true":
             logger.error(f"Error in model family debug: {e}", exc_info=True)
             return HTMLResponse(content=f"<html><body><h1>Error</h1><p>{str(e)}</p></body></html>", status_code=500)
 
-
     @router.get("/num-train-epochs", response_class=HTMLResponse)
     async def debug_num_train_epochs(request: Request):
         """Debug endpoint to check num_train_epochs field configuration."""
-        field = field_registry.get_field('num_train_epochs')
+        field = field_registry.get_field("num_train_epochs")
 
         if not field:
             return HTMLResponse("Field not found")
 
         # Get the field dict as it would be converted
-        config_values = {'num_train_epochs': 1}
+        config_values = {"num_train_epochs": 1}
         field_dict = _convert_field_to_template_format(field, config_values)
 
         html = f"""
@@ -265,13 +269,13 @@ Validation Rules:
             for tab in ["basic", "model", "training", "advanced", "validation"]:
                 fields = field_registry.get_fields_for_tab(tab)
                 for field in fields:
-                    if hasattr(field, 'field_type') and field.field_type.value.upper() == "SELECT":
+                    if hasattr(field, "field_type") and field.field_type.value.upper() == "SELECT":
                         field_info = {
                             "tab": tab,
                             "name": field.name,
                             "label": field.ui_label,
                             "choices": field.choices,
-                            "choice_count": len(field.choices) if field.choices else 0
+                            "choice_count": len(field.choices) if field.choices else 0,
                         }
                         all_select_fields.append(field_info)
 
@@ -293,7 +297,6 @@ Validation Rules:
             logger.error(f"Error in select fields debug: {e}", exc_info=True)
             return HTMLResponse(content=f"<html><body><h1>Error</h1><p>{str(e)}</p></body></html>", status_code=500)
 
-
     @router.get("/test-basic-fields", response_class=HTMLResponse)
     async def debug_test_basic_fields(request: Request):
         """Quick test endpoint to verify basic tab field loading."""
@@ -303,7 +306,7 @@ Validation Rules:
             # Test the field registry directly
             logger.debug(f"field_registry object: {field_registry}")
             logger.debug(f"field_registry._fields exists: {hasattr(field_registry, '_fields')}")
-            if hasattr(field_registry, '_fields'):
+            if hasattr(field_registry, "_fields"):
                 logger.debug(f"field_registry._fields length: {len(field_registry._fields)}")
                 logger.debug(f"field_registry._fields keys: {list(field_registry._fields.keys())[:10]}")
 
@@ -357,7 +360,7 @@ Validation Rules:
         except Exception as e:
             logger.error(f"Error in test basic fields endpoint: {e}", exc_info=True)
             import traceback
+
             return HTMLResponse(
-                f"<html><body><h1>Error</h1><pre>{str(e)}\n\n{traceback.format_exc()}</pre></body></html>",
-                status_code=500
+                f"<html><body><h1>Error</h1><pre>{str(e)}\n\n{traceback.format_exc()}</pre></body></html>", status_code=500
             )

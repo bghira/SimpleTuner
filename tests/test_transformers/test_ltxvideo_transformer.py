@@ -19,44 +19,45 @@ Functions tested:
 6. prepare_attention_mask (from base attention)
 """
 
-import unittest
-import torch
-import torch.nn as nn
-import torch.utils.checkpoint
-from typing import Dict, Any, Optional, Tuple, List
-from unittest.mock import Mock, MagicMock, patch
 import math
+import os
 
 # Import test base classes
 import sys
-import os
+import unittest
+from typing import Any, Dict, List, Optional, Tuple
+from unittest.mock import MagicMock, Mock, patch
+
+import torch
+import torch.nn as nn
+import torch.utils.checkpoint
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "utils"))
 
 from transformer_base_test import (
-    TransformerBaseTest,
     AttentionProcessorTestMixin,
     EmbeddingTestMixin,
+    TransformerBaseTest,
     TransformerBlockTestMixin,
 )
 from transformer_test_helpers import (
-    MockDiffusersConfig,
-    TensorGenerator,
     MockComponents,
-    ShapeValidator,
-    TypoTestUtils,
+    MockDiffusersConfig,
     PerformanceUtils,
+    ShapeValidator,
+    TensorGenerator,
+    TypoTestUtils,
 )
 
 # Import classes under test
 from simpletuner.helpers.models.ltxvideo.transformer import (
+    LTXAttention,
     LTXVideoAttentionProcessor2_0,
     LTXVideoAttnProcessor,
-    LTXAttention,
     LTXVideoRotaryPosEmbed,
-    LTXVideoTransformerBlock,
     LTXVideoTransformer3DModel,
+    LTXVideoTransformerBlock,
     apply_rotary_emb,
 )
 

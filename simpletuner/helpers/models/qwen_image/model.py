@@ -276,4 +276,5 @@ class QwenImage(ImageModelFoundation):
 
 
 from simpletuner.helpers.models.registry import ModelRegistry
+
 ModelRegistry.register("qwen_image", QwenImage)

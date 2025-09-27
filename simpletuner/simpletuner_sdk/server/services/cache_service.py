@@ -8,15 +8,15 @@ This module provides caching functionality for:
 
 from __future__ import annotations
 
-import os
-import json
-import time
 import hashlib
+import json
 import logging
-from pathlib import Path
-from typing import Any, Dict, Optional, Callable
-from functools import wraps
+import os
+import time
 from collections import OrderedDict
+from functools import wraps
+from pathlib import Path
+from typing import Any, Callable, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -118,14 +118,14 @@ class ConfigCache:
             cache_file = self._get_cache_file_path(file_path)
             if cache_file.exists():
                 try:
-                    with open(cache_file, 'r') as f:
+                    with open(cache_file, "r") as f:
                         cache_data = json.load(f)
-                    if self._is_cache_valid(file_path, cache_data.get('mtime', 0)):
+                    if self._is_cache_valid(file_path, cache_data.get("mtime", 0)):
                         logger.debug(f"Disk cache hit for {file_path}")
                         # Load into memory cache
-                        self.memory_cache[cache_key] = cache_data['data']
-                        self.file_mtimes[cache_key] = cache_data['mtime']
-                        return cache_data['data']
+                        self.memory_cache[cache_key] = cache_data["data"]
+                        self.file_mtimes[cache_key] = cache_data["mtime"]
+                        return cache_data["data"]
                 except Exception as e:
                     logger.error(f"Error reading cache file: {e}")
 
@@ -150,11 +150,8 @@ class ConfigCache:
         if self.cache_dir:
             cache_file = self._get_cache_file_path(file_path)
             try:
-                cache_data = {
-                    'mtime': mtime,
-                    'data': data
-                }
-                with open(cache_file, 'w') as f:
+                cache_data = {"mtime": mtime, "data": data}
+                with open(cache_file, "w") as f:
                     json.dump(cache_data, f)
             except Exception as e:
                 logger.error(f"Error writing cache file: {e}")
@@ -213,6 +210,7 @@ def cache_response(ttl_seconds: int = 60):
         wrapper.cache_info = lambda: {"size": len(cache), "keys": list(cache.keys())}
 
         return wrapper
+
     return decorator
 
 

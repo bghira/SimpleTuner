@@ -256,18 +256,12 @@ async def stream_training_events(websocket: WebSocket):
                     if events:
                         # Send each event
                         for event in events:
-                            await websocket.send_json({
-                                "job_id": job_id,
-                                "event": event
-                            })
+                            await websocket.send_json({"job_id": job_id, "event": event})
 
                         last_index += len(events)
                 except Exception as e:
                     # Send error but continue streaming
-                    await websocket.send_json({
-                        "error": str(e),
-                        "job_id": job_id
-                    })
+                    await websocket.send_json({"error": str(e), "job_id": job_id})
 
             # Wait a bit before checking for new events
             await asyncio.sleep(0.5)
@@ -313,11 +307,7 @@ async def list_checkpoints(output_dir: str = None):
         if checkpoints:
             checkpoints[0]["is_latest"] = True
 
-        return {
-            "output_dir": output_dir,
-            "checkpoints": checkpoints,
-            "total": len(checkpoints)
-        }
+        return {"output_dir": output_dir, "checkpoints": checkpoints, "total": len(checkpoints)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -351,7 +341,7 @@ async def validate_checkpoint(checkpoint_name: str, output_dir: str = None):
         return {
             "checkpoint": checkpoint_name,
             "valid": is_valid,
-            "message": error_message or "Checkpoint is valid and ready for resuming"
+            "message": error_message or "Checkpoint is valid and ready for resuming",
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

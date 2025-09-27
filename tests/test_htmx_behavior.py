@@ -5,11 +5,12 @@ These tests ensure HTMX requests work correctly and DOM updates happen as expect
 """
 
 import time
+
 import pytest
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 
 
 class TestHTMXFormSubmissions:
@@ -26,7 +27,8 @@ class TestHTMXFormSubmissions:
         driver.find_element(By.ID, "output_dir").send_keys("/test/output")
 
         # Intercept HTMX requests
-        driver.execute_script("""
+        driver.execute_script(
+            """
             window.htmxRequests = [];
             document.body.addEventListener('htmx:configRequest', function(evt) {
                 window.htmxRequests.push({
@@ -35,12 +37,11 @@ class TestHTMXFormSubmissions:
                     parameters: evt.detail.parameters
                 });
             });
-        """)
+        """
+        )
 
         # Find save button and click it
-        save_button = driver.find_element(
-            By.CSS_SELECTOR, "button[hx-post*='/api/training/config']"
-        )
+        save_button = driver.find_element(By.CSS_SELECTOR, "button[hx-post*='/api/training/config']")
         save_button.click()
 
         # Wait a bit for request to be captured
@@ -51,14 +52,14 @@ class TestHTMXFormSubmissions:
         assert len(requests) > 0, "No HTMX requests captured"
 
         last_request = requests[-1]
-        assert last_request['verb'] == 'post'
-        assert '/api/training/config' in last_request['path']
+        assert last_request["verb"] == "post"
+        assert "/api/training/config" in last_request["path"]
 
         # Check that all fields were included
-        params = last_request['parameters']
-        assert 'configs_dir' in params
-        assert '--job_id' in params  # model_name becomes --job_id
-        assert '--output_dir' in params
+        params = last_request["parameters"]
+        assert "configs_dir" in params
+        assert "--job_id" in params  # model_name becomes --job_id
+        assert "--output_dir" in params
 
     @pytest.mark.e2e
     def test_htmx_target_updates_correctly(self, driver):
@@ -66,7 +67,8 @@ class TestHTMXFormSubmissions:
         driver.get("http://localhost:8001/web/trainer")
 
         # Set up mutation observer for DOM changes
-        driver.execute_script("""
+        driver.execute_script(
+            """
             window.domChanges = [];
             const observer = new MutationObserver(function(mutations) {
                 mutations.forEach(function(mutation) {
@@ -83,12 +85,11 @@ class TestHTMXFormSubmissions:
                 });
             });
             observer.observe(document.body, { childList: true, subtree: true });
-        """)
+        """
+        )
 
         # Click save button
-        save_button = driver.find_element(
-            By.CSS_SELECTOR, "button[hx-post*='/api/training/config']"
-        )
+        save_button = driver.find_element(By.CSS_SELECTOR, "button[hx-post*='/api/training/config']")
         save_button.click()
 
         # Wait for response
@@ -106,9 +107,7 @@ class TestHTMXFormSubmissions:
         driver.get("http://localhost:8001/web/trainer")
 
         # Find a button with hx-indicator
-        buttons_with_indicator = driver.find_elements(
-            By.CSS_SELECTOR, "button[hx-indicator]"
-        )
+        buttons_with_indicator = driver.find_elements(By.CSS_SELECTOR, "button[hx-indicator]")
 
         if buttons_with_indicator:
             button = buttons_with_indicator[0]
@@ -122,7 +121,8 @@ class TestHTMXFormSubmissions:
             assert not indicator.is_displayed(), "Indicator visible before request"
 
             # Set up observer for indicator visibility
-            driver.execute_script("""
+            driver.execute_script(
+                """
                 window.indicatorShown = false;
                 const indicator = document.getElementById(arguments[0]);
                 if (indicator) {
@@ -136,7 +136,9 @@ class TestHTMXFormSubmissions:
                         attributeFilter: ['class']
                     });
                 }
-            """, indicator_id)
+            """,
+                indicator_id,
+            )
 
             # Click button
             button.click()
@@ -154,7 +156,8 @@ class TestHTMXFormSubmissions:
         driver.get("http://localhost:8001/web/trainer")
 
         # Set up response capture
-        driver.execute_script("""
+        driver.execute_script(
+            """
             window.htmxResponses = [];
             document.body.addEventListener('htmx:afterOnLoad', function(evt) {
                 window.htmxResponses.push({
@@ -164,12 +167,11 @@ class TestHTMXFormSubmissions:
                     }
                 });
             });
-        """)
+        """
+        )
 
         # Find validate button if exists
-        validate_buttons = driver.find_elements(
-            By.CSS_SELECTOR, "button[hx-post*='/api/training/validate']"
-        )
+        validate_buttons = driver.find_elements(By.CSS_SELECTOR, "button[hx-post*='/api/training/validate']")
 
         if validate_buttons:
             validate_buttons[0].click()
@@ -179,8 +181,8 @@ class TestHTMXFormSubmissions:
             responses = driver.execute_script("return window.htmxResponses;")
             if responses:
                 last_response = responses[-1]
-                assert last_response['xhr']['status'] == 200
-                assert 'alert' in last_response['xhr']['responseText']
+                assert last_response["xhr"]["status"] == 200
+                assert "alert" in last_response["xhr"]["responseText"]
 
     @pytest.mark.e2e
     def test_htmx_error_handling(self, driver):
@@ -188,7 +190,8 @@ class TestHTMXFormSubmissions:
         driver.get("http://localhost:8001/web/trainer")
 
         # Set up error event listener
-        driver.execute_script("""
+        driver.execute_script(
+            """
             window.htmxErrors = [];
             document.body.addEventListener('htmx:responseError', function(evt) {
                 window.htmxErrors.push({
@@ -196,16 +199,15 @@ class TestHTMXFormSubmissions:
                     statusText: evt.detail.xhr.statusText
                 });
             });
-        """)
+        """
+        )
 
         # Simulate an error by sending invalid data
         # This would depend on your validation logic
         driver.find_element(By.ID, "model_name").clear()  # Clear required field
 
         # Try to submit
-        submit_buttons = driver.find_elements(
-            By.CSS_SELECTOR, "button[hx-post*='/api/training/start']"
-        )
+        submit_buttons = driver.find_elements(By.CSS_SELECTOR, "button[hx-post*='/api/training/start']")
 
         if submit_buttons:
             submit_buttons[0].click()
@@ -225,21 +227,19 @@ class TestHTMXDynamicContent:
         driver.get("http://localhost:8001/web/trainer")
 
         # Set up content load tracking
-        driver.execute_script("""
+        driver.execute_script(
+            """
             window.tabLoads = [];
             document.body.addEventListener('htmx:afterSwap', function(evt) {
                 if (evt.detail.target.id && evt.detail.target.id.startsWith('tab-')) {
                     window.tabLoads.push(evt.detail.target.id);
                 }
             });
-        """)
+        """
+        )
 
         # Click through tabs
-        tabs = [
-            ("Model Config", "tab-model"),
-            ("Training", "tab-training"),
-            ("Advanced", "tab-advanced")
-        ]
+        tabs = [("Model Config", "tab-model"), ("Training", "tab-training"), ("Advanced", "tab-advanced")]
 
         for tab_text, expected_id in tabs:
             tab_link = driver.find_element(By.LINK_TEXT, tab_text)
@@ -282,9 +282,7 @@ class TestHTMXDynamicContent:
         initial_length = driver.execute_script("return window.history.length;")
 
         # Navigate through tabs with hx-push-url
-        tabs_with_history = driver.find_elements(
-            By.CSS_SELECTOR, "a[hx-push-url='true']"
-        )
+        tabs_with_history = driver.find_elements(By.CSS_SELECTOR, "a[hx-push-url='true']")
 
         if tabs_with_history:
             for tab in tabs_with_history[:3]:
@@ -305,7 +303,8 @@ class TestHTMXEventHandling:
         driver.get("http://localhost:8001/web/trainer")
 
         # Set up comprehensive event tracking
-        driver.execute_script("""
+        driver.execute_script(
+            """
             window.htmxEvents = [];
             const events = [
                 'htmx:configRequest',
@@ -325,12 +324,11 @@ class TestHTMXEventHandling:
                     });
                 });
             });
-        """)
+        """
+        )
 
         # Trigger an HTMX request
-        save_button = driver.find_element(
-            By.CSS_SELECTOR, "button[hx-post*='/api/training/config']"
-        )
+        save_button = driver.find_element(By.CSS_SELECTOR, "button[hx-post*='/api/training/config']")
         save_button.click()
 
         # Wait for events to complete
@@ -338,19 +336,14 @@ class TestHTMXEventHandling:
 
         # Check event order
         events = driver.execute_script("return window.htmxEvents;")
-        event_names = [e['name'] for e in events]
+        event_names = [e["name"] for e in events]
 
         # Verify events fired in correct order
-        expected_order = [
-            'htmx:configRequest',
-            'htmx:beforeRequest',
-            'htmx:afterRequest'
-        ]
+        expected_order = ["htmx:configRequest", "htmx:beforeRequest", "htmx:afterRequest"]
 
         for i, expected_event in enumerate(expected_order):
             if expected_event in event_names:
-                assert event_names.index(expected_event) >= i, \
-                    f"Event {expected_event} fired out of order"
+                assert event_names.index(expected_event) >= i, f"Event {expected_event} fired out of order"
 
     @pytest.mark.e2e
     def test_htmx_request_headers(self, driver):
@@ -358,21 +351,21 @@ class TestHTMXEventHandling:
         driver.get("http://localhost:8001/web/trainer")
 
         # Intercept and check request headers
-        driver.execute_script("""
+        driver.execute_script(
+            """
             window.capturedHeaders = null;
             document.body.addEventListener('htmx:configRequest', function(evt) {
                 window.capturedHeaders = evt.detail.headers;
             });
-        """)
+        """
+        )
 
         # Trigger request
-        save_button = driver.find_element(
-            By.CSS_SELECTOR, "button[hx-post*='/api/training/config']"
-        )
+        save_button = driver.find_element(By.CSS_SELECTOR, "button[hx-post*='/api/training/config']")
         save_button.click()
         time.sleep(0.5)
 
         # Check headers
         headers = driver.execute_script("return window.capturedHeaders;")
         assert headers is not None, "No headers captured"
-        assert 'HX-Request' in headers, "Missing HX-Request header"
+        assert "HX-Request" in headers, "Missing HX-Request header"

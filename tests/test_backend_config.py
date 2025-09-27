@@ -5,14 +5,14 @@ Validates configuration classes for handling configuration scenarios and validat
 """
 
 import unittest
+from typing import Any, Dict
 from unittest.mock import Mock, patch
-from typing import Dict, Any
 
 from simpletuner.helpers.data_backend.config import (
     BaseBackendConfig,
     ImageBackendConfig,
-    TextEmbedBackendConfig,
     ImageEmbedBackendConfig,
+    TextEmbedBackendConfig,
     create_backend_config,
     validators,
 )

@@ -2,21 +2,17 @@
 
 from __future__ import annotations
 
-import os
 import logging
+import os
 from pathlib import Path
 
-from fastapi import APIRouter, Request, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
-from ..dependencies.common import (
-    get_config_store,
-    get_tab_render_data,
-    TabRenderData,
-)
-from ..services.webui_state import WebUIStateStore
+from ..dependencies.common import TabRenderData, get_config_store, get_tab_render_data
 from ..services.tab_service import TabService
+from ..services.webui_state import WebUIStateStore
 from ..utils.paths import get_template_directory
 
 logger = logging.getLogger(__name__)
@@ -45,7 +41,7 @@ tab_service = TabService(templates)
 @router.get("/trainer", response_class=HTMLResponse)
 async def trainer_page(
     request: Request,
-    config_store = Depends(get_config_store),
+    config_store=Depends(get_config_store),
 ):
     """Main trainer page."""
     # Get available tabs
@@ -98,17 +94,14 @@ async def render_tab(
         raise
     except Exception as e:
         logger.error(f"Error rendering tab '{tab_name}': {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to render tab: {str(e)}"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to render tab: {str(e)}")
 
 
 # Utility endpoints
 @router.get("/trainer/config-selector", response_class=HTMLResponse)
 async def config_selector(
     request: Request,
-    config_store = Depends(get_config_store),
+    config_store=Depends(get_config_store),
 ):
     """Config selector fragment for HTMX."""
     configs = config_store.list_configs()

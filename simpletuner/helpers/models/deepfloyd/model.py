@@ -7,7 +7,7 @@ from diffusers.pipelines import IFPipeline, IFSuperResolutionPipeline
 from diffusers.utils import convert_state_dict_to_diffusers, convert_unet_state_dict_to_peft
 from peft import set_peft_model_state_dict
 from peft.utils import get_peft_model_state_dict
-from transformers import T5EncoderModel, AutoTokenizer
+from transformers import AutoTokenizer, T5EncoderModel
 
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 
@@ -194,4 +194,5 @@ class DeepFloydIF(ImageModelFoundation):
 
 
 from simpletuner.helpers.models.registry import ModelRegistry
+
 ModelRegistry.register("deepfloyd", DeepFloydIF)

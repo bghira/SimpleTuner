@@ -1,9 +1,4 @@
-from tests.test_pipelines._common import (
-    PipelineTestCase,
-    RescaleNoiseCfgMixin,
-    RetrieveLatentsMixin,
-    RetrieveTimestepsMixin,
-)
+from tests.test_pipelines._common import PipelineTestCase, RescaleNoiseCfgMixin, RetrieveLatentsMixin, RetrieveTimestepsMixin
 
 
 class TestSDXLPipeline(

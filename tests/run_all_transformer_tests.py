@@ -6,14 +6,14 @@ This script discovers and executes all transformer test files with comprehensive
 reporting, coverage analysis, and performance benchmarking.
 """
 
+import argparse
+import importlib.util
 import os
 import sys
-import unittest
 import time
-import argparse
-from typing import Dict, List, Optional
+import unittest
 from io import StringIO
-import importlib.util
+from typing import Dict, List, Optional
 
 
 class TransformerTestRunner:

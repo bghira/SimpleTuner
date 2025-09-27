@@ -11,10 +11,10 @@ from pydantic import BaseModel, ConfigDict
 
 from simpletuner.simpletuner_sdk.api_state import APIState
 from simpletuner.simpletuner_sdk.server.data.dataset_blueprints import get_dataset_blueprints
-from simpletuner.simpletuner_sdk.server.services.dataset_plan import DatasetPlanStore, ValidationMessage, compute_validations
-from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
 from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
+from simpletuner.simpletuner_sdk.server.services.dataset_plan import DatasetPlanStore, ValidationMessage, compute_validations
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
+from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
 
@@ -56,9 +56,7 @@ def _store() -> DatasetPlanStore:
             if data_backend_config:
                 # Resolve the path relative to config directory
                 resolved_path = resolve_config_path(
-                    data_backend_config,
-                    config_dir=config_store.config_dir,
-                    check_cwd_first=True
+                    data_backend_config, config_dir=config_store.config_dir, check_cwd_first=True
                 )
                 if resolved_path:
                     return DatasetPlanStore(path=resolved_path)
@@ -146,7 +144,7 @@ def _persist_plan(payload: DatasetPlanPayload) -> DatasetPlanResponse:
         validations=validations,
         source="disk",
         updated_at=updated_at,
-        backupPath=str(backup_path) if backup_path else None
+        backupPath=str(backup_path) if backup_path else None,
     )
 
 
@@ -307,8 +305,8 @@ async def validate_field(field_name: str, value: str = "") -> str:
     elif field_name == "instance_data_dir":
         if not value or not value.strip():
             error_html = "Instance data directory is required"
-        elif not value.startswith("/") and not ":" in value:
-            error_html = "Path must be absolute (start with /) or include drive letter on Windows"
+        elif not value.startswith("/"):
+            error_html = "Path must be absolute (start with /)"
 
     elif field_name == "resolution":
         try:

@@ -101,10 +101,12 @@ class TestTrainer(unittest.TestCase):
                 self.should_abort = True
 
         with patch.object(trainer_module, "Trainer", DummyTrainer):
-            result = trainer_module.run_trainer_job({
-                "should_abort": lambda: True,
-                "__job_id__": "unit-test",
-            })
+            result = trainer_module.run_trainer_job(
+                {
+                    "should_abort": lambda: True,
+                    "__job_id__": "unit-test",
+                }
+            )
 
         self.assertEqual(result["status"], "completed")
         instance = DummyTrainer.last_instance

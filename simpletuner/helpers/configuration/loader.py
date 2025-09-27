@@ -150,7 +150,6 @@ def load_config(args: dict = None, exit_on_error: bool = False):
                     list_arguments.append(f"{arg_name}={value}")
         mapped_config = list_arguments
 
-
     configuration = helpers["cmd"](input_args=mapped_config, exit_on_error=exit_on_error)
 
     return configuration

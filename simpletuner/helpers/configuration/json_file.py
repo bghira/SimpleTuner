@@ -103,6 +103,8 @@ def _resolve_example_path(value: str) -> str:
         return str(candidate)
 
     return value
+
+
 def normalize_args(args_dict: dict[str, object]) -> list[str]:
     """Backward-compatible helper returning CLI args for the given mapping."""
 

@@ -282,5 +282,6 @@ class StableDiffusion2(StableDiffusion1):
 
 
 from simpletuner.helpers.models.registry import ModelRegistry
+
 ModelRegistry.register("sd1x", StableDiffusion1)
 ModelRegistry.register("sd2x", StableDiffusion2)

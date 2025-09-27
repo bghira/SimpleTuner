@@ -256,6 +256,7 @@ class WebInterface:
 
         # Override a few UI-specific defaults
         import random
+
         defaults["job_id"] = f"training_run_{random.randint(1000, 9999)}"
         defaults["data_backend_config"] = "config/multidatabackend.json"
 

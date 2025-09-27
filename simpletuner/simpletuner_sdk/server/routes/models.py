@@ -5,10 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse
 
-from simpletuner.simpletuner_sdk.server.services.models_service import (
-    MODELS_SERVICE,
-    ModelServiceError,
-)
+from simpletuner.simpletuner_sdk.server.services.models_service import MODELS_SERVICE, ModelServiceError
 
 router = APIRouter(prefix="/api/models")
 
@@ -66,7 +63,7 @@ async def get_model_flavours_html(model_family: str, current_value: str = ""):
 
     options = ['<option value="">Default</option>']
     for flavour in flavours:
-        selected = 'selected' if flavour == current_value else ''
+        selected = "selected" if flavour == current_value else ""
         options.append(f'<option value="{flavour}" {selected}>{flavour}</option>')
 
     return "\n".join(options)

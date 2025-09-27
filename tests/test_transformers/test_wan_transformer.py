@@ -19,45 +19,46 @@ Functions tested:
 6. prepare_video_coords (coordinate preparation - inherited)
 """
 
+import math
+import os
+
+# Import test base classes
+import sys
 import unittest
+from typing import Any, Dict, List, Optional, Tuple
+from unittest.mock import MagicMock, Mock, patch
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint
-from typing import Dict, Any, Optional, Tuple, List
-from unittest.mock import Mock, MagicMock, patch
-import math
-
-# Import test base classes
-import sys
-import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "utils"))
 
 from transformer_base_test import (
-    TransformerBaseTest,
     AttentionProcessorTestMixin,
     EmbeddingTestMixin,
+    TransformerBaseTest,
     TransformerBlockTestMixin,
 )
 from transformer_test_helpers import (
-    MockDiffusersConfig,
-    TensorGenerator,
     MockComponents,
-    ShapeValidator,
-    TypoTestUtils,
+    MockDiffusersConfig,
     PerformanceUtils,
+    ShapeValidator,
+    TensorGenerator,
+    TypoTestUtils,
 )
 
 # Import classes under test
 from simpletuner.helpers.models.wan.transformer import (
     WanAttnProcessor2_0,
     WanImageEmbedding,
-    WanTimeTextImageEmbedding,
     WanRotaryPosEmbed,
-    WanTransformerBlock,
+    WanTimeTextImageEmbedding,
     WanTransformer3DModel,
+    WanTransformerBlock,
     _apply_rotary_emb_anyshape,
 )
 

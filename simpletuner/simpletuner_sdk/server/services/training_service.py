@@ -88,10 +88,10 @@ def get_all_field_defaults() -> Dict[str, Any]:
     """Return mapping of CLI arg names to default values from the field registry."""
 
     defaults: Dict[str, Any] = {}
-    for field in lazy_field_registry.get_all_fields():
-        defaults[field.arg_name] = ConfigsService.convert_value_by_type(
-            field.default_value,
-            field.field_type,
+    for registry_field in lazy_field_registry.get_all_fields():
+        defaults[registry_field.arg_name] = ConfigsService.convert_value_by_type(
+            registry_field.default_value,
+            registry_field.field_type,
         )
     return defaults
 
@@ -137,11 +137,7 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
 
     if "configs_dir" in form_dict:
         value = form_dict.pop("configs_dir")
-        normalized_configs_dir = (
-            os.path.abspath(os.path.expanduser(value))
-            if value
-            else value
-        )
+        normalized_configs_dir = os.path.abspath(os.path.expanduser(value)) if value else value
         if webui_defaults.configs_dir != normalized_configs_dir:
             webui_defaults.configs_dir = normalized_configs_dir
             defaults_changed = True
@@ -296,9 +292,7 @@ def validate_training_config(
         steps_val = _coerce_int(max_steps)
 
         if epochs_val == 0 and steps_val == 0:
-            errors.append(
-                "Either num_train_epochs or max_train_steps must be greater than 0. You cannot set both to 0."
-            )
+            errors.append("Either num_train_epochs or max_train_steps must be greater than 0. You cannot set both to 0.")
 
         if strict_epoch_exclusivity and epochs_val > 0 and steps_val > 0:
             errors.append("num_train_epochs and max_train_steps cannot both be set. Set one of them to 0.")

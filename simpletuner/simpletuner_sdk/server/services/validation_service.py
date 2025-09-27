@@ -6,12 +6,12 @@ validation rules, eliminating the need for hardcoded validation in routes.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
-import logging
+from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from enum import Enum
 
 from ..services.field_registry_wrapper import lazy_field_registry
 
@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 class ValidationSeverity(str, Enum):
     """Severity levels for validation messages."""
+
     ERROR = "error"
     WARNING = "warning"
     INFO = "info"
@@ -29,13 +30,7 @@ class ValidationSeverity(str, Enum):
 class ValidationMessage:
     """Represents a validation message."""
 
-    def __init__(
-        self,
-        field: str,
-        message: str,
-        severity: ValidationSeverity,
-        suggestion: Optional[str] = None
-    ):
+    def __init__(self, field: str, message: str, severity: ValidationSeverity, suggestion: Optional[str] = None):
         self.field = field
         self.message = message
         self.severity = severity
@@ -43,11 +38,7 @@ class ValidationMessage:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation."""
-        result = {
-            "field": self.field,
-            "message": self.message,
-            "severity": self.severity.value
-        }
+        result = {"field": self.field, "message": self.message, "severity": self.severity.value}
         if self.suggestion:
             result["suggestion"] = self.suggestion
         return result
@@ -103,7 +94,7 @@ class ValidationResult:
             "errors": self.error_count,
             "warnings": self.warning_count,
             "info": self.info_count,
-            "messages": [msg.to_dict() for msg in self.messages]
+            "messages": [msg.to_dict() for msg in self.messages],
         }
         if self.vram_estimate:
             result["vram_estimate"] = self.vram_estimate
@@ -144,7 +135,7 @@ class ValidationService:
             return self._validate_unknown_field(field_name, value)
 
         # Use field registry validation rules
-        if hasattr(field, 'validation_rules') and field.validation_rules:
+        if hasattr(field, "validation_rules") and field.validation_rules:
             for rule in field.validation_rules:
                 is_valid, error_msg = self._apply_validation_rule(field, rule, value, validate_paths)
                 if not is_valid:
@@ -170,10 +161,7 @@ class ValidationService:
         return True, None
 
     def validate_configuration(
-        self,
-        config: Dict[str, Any],
-        validate_paths: bool = True,
-        estimate_vram: bool = True
+        self, config: Dict[str, Any], validate_paths: bool = True, estimate_vram: bool = True
     ) -> ValidationResult:
         """Validate an entire configuration.
 
@@ -275,14 +263,14 @@ class ValidationService:
         validate_paths: bool = False,
     ) -> Tuple[bool, Optional[str]]:
         """Apply a single validation rule to a value."""
-        rule_type = rule.get('type') if isinstance(rule, dict) else getattr(rule, 'type', None)
+        rule_type = rule.get("type") if isinstance(rule, dict) else getattr(rule, "type", None)
 
-        if rule_type == 'required':
+        if rule_type == "required":
             if not value or (isinstance(value, str) and not value.strip()):
                 return False, f"{field.ui_label} is required"
 
-        elif rule_type == 'min':
-            min_val = rule.get('value') if isinstance(rule, dict) else getattr(rule, 'value', None)
+        elif rule_type == "min":
+            min_val = rule.get("value") if isinstance(rule, dict) else getattr(rule, "value", None)
             if min_val is not None:
                 try:
                     if float(value) < float(min_val):
@@ -290,8 +278,8 @@ class ValidationService:
                 except (ValueError, TypeError):
                     return False, f"{field.ui_label} must be a valid number"
 
-        elif rule_type == 'max':
-            max_val = rule.get('value') if isinstance(rule, dict) else getattr(rule, 'value', None)
+        elif rule_type == "max":
+            max_val = rule.get("value") if isinstance(rule, dict) else getattr(rule, "value", None)
             if max_val is not None:
                 try:
                     if float(value) > float(max_val):
@@ -299,24 +287,24 @@ class ValidationService:
                 except (ValueError, TypeError):
                     return False, f"{field.ui_label} must be a valid number"
 
-        elif rule_type == 'pattern':
-            pattern = rule.get('value') if isinstance(rule, dict) else getattr(rule, 'value', None)
+        elif rule_type == "pattern":
+            pattern = rule.get("value") if isinstance(rule, dict) else getattr(rule, "value", None)
             if pattern and not re.match(pattern, str(value)):
                 return False, f"{field.ui_label} format is invalid"
 
-        elif rule_type == 'choices':
-            choices = rule.get('value') if isinstance(rule, dict) else getattr(rule, 'value', None)
+        elif rule_type == "choices":
+            choices = rule.get("value") if isinstance(rule, dict) else getattr(rule, "value", None)
             if choices and value not in choices:
                 return False, f"{field.ui_label} must be one of: {', '.join(str(c) for c in choices)}"
 
-        elif rule_type == 'path_exists':
+        elif rule_type == "path_exists":
             if validate_paths and value:
                 path = Path(value)
                 if not path.exists():
                     return False, f"{field.ui_label} path does not exist: {value}"
 
-        elif rule_type == 'divisible_by':
-            divisor = rule.get('value') if isinstance(rule, dict) else getattr(rule, 'value', None)
+        elif rule_type == "divisible_by":
+            divisor = rule.get("value") if isinstance(rule, dict) else getattr(rule, "value", None)
             if divisor:
                 try:
                     if int(value) % int(divisor) != 0:
@@ -411,7 +399,7 @@ class ValidationService:
             ("pretrained_model_name_or_path", "Model path"),
             ("output_dir", "Output directory"),
             ("logging_dir", "Logging directory"),
-            ("resume_from_checkpoint", "Checkpoint path")
+            ("resume_from_checkpoint", "Checkpoint path"),
         ]
 
         for field_name, display_name in path_fields:
@@ -440,6 +428,7 @@ class ValidationService:
 
     def _estimate_vram(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """Estimate VRAM usage based on configuration."""
+
         # Simple estimation logic - can be enhanced
         def _int_or_default(value: Any, default: int) -> int:
             try:
@@ -456,11 +445,7 @@ class ValidationService:
         resolution = _int_or_default(self._get_config_value(config, "resolution"), 512)
 
         # Base estimates (in GB)
-        base_vram = {
-            "full": 24,
-            "lora": 12,
-            "dora": 16
-        }.get(model_type, 24)
+        base_vram = {"full": 24, "lora": 12, "dora": 16}.get(model_type, 24)
 
         # Adjust for batch size and resolution
         effective_batch = batch_size * gradient_accumulation
@@ -476,6 +461,6 @@ class ValidationService:
             "notes": [
                 f"Base requirement for {model_type}: {base_vram}GB",
                 f"Effective batch size: {effective_batch}",
-                f"Resolution scaling: {resolution_factor:.2f}x"
-            ]
+                f"Resolution scaling: {resolution_factor:.2f}x",
+            ],
         }

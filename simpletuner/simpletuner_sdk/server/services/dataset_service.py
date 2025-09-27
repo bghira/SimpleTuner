@@ -6,10 +6,10 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
+from ..utils.paths import get_config_directory, get_simpletuner_root, resolve_config_path
 from .config_store import ConfigStore
 from .dataset_plan import DatasetPlanStore
 from .webui_state import WebUIStateStore
-from ..utils.paths import get_config_directory, get_simpletuner_root, resolve_config_path
 
 
 def _format_dataset_path(path: Path) -> str:
@@ -119,7 +119,7 @@ def build_data_backend_choices() -> List[Dict[str, str]]:
 
         rel_path = _relative_to_config_roots(resolved)
         rel_path_path = Path(rel_path)
-        parent_segment = rel_path_path.parent if rel_path_path.parent != Path('.') else None
+        parent_segment = rel_path_path.parent if rel_path_path.parent != Path(".") else None
 
         environment = env_name or _extract_environment_name(resolved) or resolved.stem
         if not env_name and parent_segment:

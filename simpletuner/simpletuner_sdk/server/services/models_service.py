@@ -7,8 +7,8 @@ from typing import Any, Dict, Optional
 
 from fastapi import status
 
-from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.models.common import ModelFoundation, PipelineTypes
+from simpletuner.helpers.models.registry import ModelRegistry
 
 
 class ModelServiceError(Exception):
@@ -90,11 +90,17 @@ class ModelsService:
             for key, implementation in pipelines_raw.items():
                 pipeline_key = key.value if isinstance(key, PipelineTypes) else str(key)
                 pipeline_types.append(pipeline_key)
-                pipeline_mapping[pipeline_key] = self._class_path(implementation) if inspect.isclass(implementation) else None
+                pipeline_mapping[pipeline_key] = (
+                    self._class_path(implementation) if inspect.isclass(implementation) else None
+                )
 
         capabilities = {
-            "overrides_requires_conditioning_dataset": self._is_method_overridden(model_cls, "requires_conditioning_dataset"),
-            "overrides_requires_conditioning_latents": self._is_method_overridden(model_cls, "requires_conditioning_latents"),
+            "overrides_requires_conditioning_dataset": self._is_method_overridden(
+                model_cls, "requires_conditioning_dataset"
+            ),
+            "overrides_requires_conditioning_latents": self._is_method_overridden(
+                model_cls, "requires_conditioning_latents"
+            ),
             "overrides_requires_conditioning_validation_inputs": self._is_method_overridden(
                 model_cls, "requires_conditioning_validation_inputs"
             ),
@@ -104,7 +110,9 @@ class ModelsService:
             "overrides_conditioning_validation_dataset_type": self._is_method_overridden(
                 model_cls, "conditioning_validation_dataset_type"
             ),
-            "has_controlnet_pipeline": any(pt in pipeline_types for pt in {PipelineTypes.CONTROLNET.value, PipelineTypes.CONTROL.value}),
+            "has_controlnet_pipeline": any(
+                pt in pipeline_types for pt in {PipelineTypes.CONTROLNET.value, PipelineTypes.CONTROL.value}
+            ),
         }
 
         details = {

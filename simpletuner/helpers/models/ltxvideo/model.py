@@ -276,4 +276,5 @@ class LTXVideo(VideoModelFoundation):
 
 
 from simpletuner.helpers.models.registry import ModelRegistry
+
 ModelRegistry.register("ltxvideo", LTXVideo)

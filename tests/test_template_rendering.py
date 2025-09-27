@@ -5,9 +5,10 @@ Tests template components in isolation to ensure they render correctly
 and don't have issues like shared Alpine.js scopes or incorrect data binding.
 """
 
+from pathlib import Path
+
 import pytest
 from jinja2 import Environment, FileSystemLoader, select_autoescape
-from pathlib import Path
 
 
 @pytest.fixture
@@ -15,11 +16,7 @@ def jinja_env():
     """Create Jinja2 environment for testing templates."""
     template_dir = Path(__file__).parent.parent / "templates"
     env = Environment(
-        loader=FileSystemLoader([
-            template_dir,
-            template_dir / "partials"
-        ]),
-        autoescape=select_autoescape(['html', 'xml'])
+        loader=FileSystemLoader([template_dir, template_dir / "partials"]), autoescape=select_autoescape(["html", "xml"])
     )
     return env
 
@@ -38,7 +35,7 @@ class TestFormFieldTemplate:
                 "type": "text",
                 "label": "Test Field",
                 "value": "test_value",
-                "placeholder": "Enter test value"
+                "placeholder": "Enter test value",
             }
         }
 
@@ -51,10 +48,10 @@ class TestFormFieldTemplate:
         assert 'placeholder="Enter test value"' in rendered
 
         # Should NOT have x-model binding
-        assert 'x-model=' not in rendered
+        assert "x-model=" not in rendered
 
         # Should have proper Alpine.js data wrapper
-        assert 'x-data=' in rendered
+        assert "x-data=" in rendered
 
     def test_number_field_renders_without_x_model(self, jinja_env):
         """Test that number fields don't have x-model bindings."""
@@ -69,7 +66,7 @@ class TestFormFieldTemplate:
                 "value": "42",
                 "min": 0,
                 "max": 100,
-                "step": 1
+                "step": 1,
             }
         }
 
@@ -79,7 +76,7 @@ class TestFormFieldTemplate:
         assert 'min="0"' in rendered
         assert 'max="100"' in rendered
         assert 'step="1"' in rendered
-        assert 'x-model=' not in rendered
+        assert "x-model=" not in rendered
 
     def test_select_field_renders_without_x_model(self, jinja_env):
         """Test that select fields don't have x-model bindings."""
@@ -95,15 +92,15 @@ class TestFormFieldTemplate:
                 "options": [
                     {"value": "option1", "label": "Option 1"},
                     {"value": "option2", "label": "Option 2"},
-                    {"value": "option3", "label": "Option 3"}
-                ]
+                    {"value": "option3", "label": "Option 3"},
+                ],
             }
         }
 
         rendered = template.render(**field_data)
 
-        assert '<select' in rendered
-        assert 'x-model=' not in rendered
+        assert "<select" in rendered
+        assert "x-model=" not in rendered
         assert '<option value="option2" selected>' in rendered
 
     def test_textarea_field_renders_without_x_model(self, jinja_env):
@@ -117,15 +114,15 @@ class TestFormFieldTemplate:
                 "type": "textarea",
                 "label": "Textarea Field",
                 "value": "Multi\nline\ntext",
-                "placeholder": "Enter text..."
+                "placeholder": "Enter text...",
             }
         }
 
         rendered = template.render(**field_data)
 
-        assert '<textarea' in rendered
-        assert 'x-model=' not in rendered
-        assert 'Multi\nline\ntext</textarea>' in rendered
+        assert "<textarea" in rendered
+        assert "x-model=" not in rendered
+        assert "Multi\nline\ntext</textarea>" in rendered
 
     def test_checkbox_field_renders_without_x_model(self, jinja_env):
         """Test that checkbox fields don't have x-model bindings."""
@@ -137,15 +134,15 @@ class TestFormFieldTemplate:
                 "name": "checkbox_name",
                 "type": "checkbox",
                 "label": "Checkbox Field",
-                "value": True
+                "value": True,
             }
         }
 
         rendered = template.render(**field_data)
 
         assert 'type="checkbox"' in rendered
-        assert 'x-model=' not in rendered
-        assert 'checked' in rendered
+        assert "x-model=" not in rendered
+        assert "checked" in rendered
 
     def test_field_ids_and_names_are_unique(self, jinja_env):
         """Test that field IDs and names are properly set."""
@@ -180,14 +177,14 @@ class TestFormFieldTemplate:
                 "name": "required_name",
                 "type": "text",
                 "label": "Required Field",
-                "required": True
+                "required": True,
             }
         }
 
         rendered = template.render(**field_data)
 
         assert '<span class="text-danger">*</span>' in rendered
-        assert 'required' in rendered.lower()
+        assert "required" in rendered.lower()
 
     def test_field_description_renders(self, jinja_env):
         """Test that field descriptions render correctly."""
@@ -199,14 +196,14 @@ class TestFormFieldTemplate:
                 "name": "desc_name",
                 "type": "text",
                 "label": "Field with Description",
-                "description": "This is a helpful description"
+                "description": "This is a helpful description",
             }
         }
 
         rendered = template.render(**field_data)
 
-        assert 'This is a helpful description' in rendered
-        assert 'form-text' in rendered
+        assert "This is a helpful description" in rendered
+        assert "form-text" in rendered
 
 
 class TestFormSectionTemplate:
@@ -223,19 +220,9 @@ class TestFormSectionTemplate:
                 "description": "This is a test section",
                 "icon": "fas fa-test",
                 "fields": [
-                    {
-                        "id": "field1",
-                        "name": "field1_name",
-                        "type": "text",
-                        "label": "Field 1"
-                    },
-                    {
-                        "id": "field2",
-                        "name": "field2_name",
-                        "type": "number",
-                        "label": "Field 2"
-                    }
-                ]
+                    {"id": "field1", "name": "field1_name", "type": "text", "label": "Field 1"},
+                    {"id": "field2", "name": "field2_name", "type": "number", "label": "Field 2"},
+                ],
             }
         }
 
@@ -255,21 +242,16 @@ class TestFormSectionTemplate:
         template = jinja_env.get_template("form_section.html")
 
         section_data = {
-            "section": {
-                "id": "collapsible-section",
-                "title": "Collapsible Section",
-                "collapsible": True,
-                "expanded": False
-            }
+            "section": {"id": "collapsible-section", "title": "Collapsible Section", "collapsible": True, "expanded": False}
         }
 
         rendered = template.render(**section_data)
 
         # Should have click handler for collapsing
         assert '@click="expanded = !expanded"' in rendered
-        assert 'cursor-pointer' in rendered
+        assert "cursor-pointer" in rendered
         assert 'x-show="expanded"' in rendered
-        assert 'expanded: false' in rendered  # Should start collapsed
+        assert "expanded: false" in rendered  # Should start collapsed
 
     def test_section_actions_render(self, jinja_env):
         """Test that section actions render correctly."""
@@ -285,9 +267,9 @@ class TestFormSectionTemplate:
                         "class": "btn-primary",
                         "icon": "fas fa-save",
                         "hx_post": "/api/save",
-                        "hx_include": "#form"
+                        "hx_include": "#form",
                     }
-                ]
+                ],
             }
         }
 
@@ -314,9 +296,9 @@ class TestFormSectionTemplate:
                         "hx_post": "/api/submit",
                         "hx_target": "#result",
                         "hx_include": ".form-fields",
-                        "hx_indicator": "#spinner"
+                        "hx_indicator": "#spinner",
                     }
-                ]
+                ],
             }
         }
 
@@ -331,36 +313,24 @@ class TestFormSectionTemplate:
         """Test that nested form sections maintain proper isolation."""
         template = jinja_env.get_template("form_section.html")
 
-        section1 = {
-            "section": {
-                "id": "section1",
-                "title": "Section 1",
-                "expanded": True
-            }
-        }
+        section1 = {"section": {"id": "section1", "title": "Section 1", "expanded": True}}
 
-        section2 = {
-            "section": {
-                "id": "section2",
-                "title": "Section 2",
-                "expanded": False
-            }
-        }
+        section2 = {"section": {"id": "section2", "title": "Section 2", "expanded": False}}
 
         rendered1 = template.render(**section1)
         rendered2 = template.render(**section2)
 
         # Each should have its own Alpine.js scope
-        assert 'x-data=' in rendered1
-        assert 'x-data=' in rendered2
+        assert "x-data=" in rendered1
+        assert "x-data=" in rendered2
 
         # Each should have unique IDs
         assert 'id="section1"' in rendered1
         assert 'id="section2"' in rendered2
 
         # Expanded states should be independent
-        assert 'expanded: true' in rendered1
-        assert 'expanded: false' in rendered2
+        assert "expanded: true" in rendered1
+        assert "expanded: false" in rendered2
 
 
 class TestTemplateIntegration:

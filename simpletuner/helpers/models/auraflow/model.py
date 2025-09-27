@@ -350,4 +350,5 @@ class Auraflow(ImageModelFoundation):
 
 
 from simpletuner.helpers.models.registry import ModelRegistry
+
 ModelRegistry.register("auraflow", Auraflow)

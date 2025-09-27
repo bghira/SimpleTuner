@@ -85,7 +85,7 @@ class TestBasicConfigurationFlow:
             "configs_dir": "/unique/configs/path",
             "model_name": "unique-model-name",
             "output_dir": "/unique/output/path",
-            "base_model": "unique-base-model"
+            "base_model": "unique-base-model",
         }
 
         basic_tab.set_configs_dir(test_values["configs_dir"])

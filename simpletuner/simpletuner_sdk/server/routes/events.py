@@ -98,8 +98,8 @@ async def events_stream(request: Request):
             status_code=503,
             content={
                 "error": "Connection limit reached",
-                "message": "Too many concurrent connections. Please try again later."
-            }
+                "message": "Too many concurrent connections. Please try again later.",
+            },
         )
 
     async def event_generator():
@@ -108,6 +108,7 @@ async def events_stream(request: Request):
         event_store = getattr(request.app.state, "event_store", None)
         if not event_store:
             from ..services.event_store import get_default_store
+
             event_store = get_default_store()
 
         last_index = 0
@@ -116,8 +117,8 @@ async def events_stream(request: Request):
             # Send initial connection event
             await sse_manager.send_to_connection(
                 connection.connection_id,
-                {'type': 'connected', 'message': 'Connected to SimpleTuner'},
-                event_type="connection"
+                {"type": "connected", "message": "Connected to SimpleTuner"},
+                event_type="connection",
             )
 
             # Set up event monitoring task
@@ -152,9 +153,7 @@ async def events_stream(request: Request):
 
                             # Send through SSE manager
                             await sse_manager.send_to_connection(
-                                connection.connection_id,
-                                sse_event,
-                                event_type=sse_event["type"]
+                                connection.connection_id, sse_event, event_type=sse_event["type"]
                             )
 
                         last_index += len(events)
@@ -175,10 +174,7 @@ async def events_stream(request: Request):
                 # Use SSE manager's event generator
                 async for message in sse_manager.create_event_generator(connection):
                     if message.get("event"):
-                        yield {
-                            "event": message["event"],
-                            "data": json.dumps(message["data"])
-                        }
+                        yield {"event": message["event"], "data": json.dumps(message["data"])}
                     else:
                         yield {"data": json.dumps(message["data"])}
 

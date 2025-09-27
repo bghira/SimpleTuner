@@ -11,8 +11,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from .utils.paths import get_simpletuner_root, get_template_directory, get_static_directory
 
+from .utils.paths import get_simpletuner_root, get_static_directory, get_template_directory
 
 logger = logging.getLogger("SimpleTunerServer")
 
@@ -143,12 +143,12 @@ def _add_trainer_routes(app: FastAPI):
     # Add API routes
     from .routes.configs import router as configs_router
     from .routes.datasets import router as datasets_router
+    from .routes.fields import router as fields_router
     from .routes.models import router as models_router
-    from .routes.validation import router as validation_router
     from .routes.training import router as training_router
+    from .routes.validation import router as validation_router
     from .routes.web import router as web_router
     from .routes.webui_state import router as webui_state_router
-    from .routes.fields import router as fields_router
 
     app.include_router(models_router)
     app.include_router(datasets_router)

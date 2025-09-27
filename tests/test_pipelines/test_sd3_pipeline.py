@@ -1,7 +1,7 @@
 from tests.test_pipelines._common import (
-    PipelineTestCase,
     CalculateShiftMixin,
     OptimizedScaleMixin,
+    PipelineTestCase,
     RetrieveLatentsMixin,
     RetrieveTimestepsMixin,
 )

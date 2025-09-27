@@ -5,13 +5,12 @@ import inspect
 import types
 from dataclasses import dataclass
 from typing import Callable, Dict
+from unittest import mock
 
 import torch
 from PIL import Image
-from unittest import mock
 
 from tests.test_helpers import SimpleTunerTestCase
-
 
 _PIPELINE_MODULE_CACHE: Dict[str, types.ModuleType] = {}
 

@@ -13,63 +13,59 @@ Tests all 16 classes and 55+ functions with focus on:
 - Gradient checkpointing
 """
 
-import unittest
-import torch
-import torch.nn as nn
-import numpy as np
-from unittest.mock import Mock, MagicMock, patch
-from typing import Dict, Any, Optional, List, Tuple
+import os
 
 # Import the base test classes
 import sys
-import os
+import unittest
+from typing import Any, Dict, List, Optional, Tuple
+from unittest.mock import MagicMock, Mock, patch
+
+import numpy as np
+import torch
+import torch.nn as nn
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "utils"))
 
 from transformer_base_test import (
-    TransformerBaseTest,
     AttentionProcessorTestMixin,
     EmbeddingTestMixin,
+    TransformerBaseTest,
     TransformerBlockTestMixin,
 )
 from transformer_test_helpers import (
-    MockDiffusersConfig,
-    TensorGenerator,
     MockComponents,
-    ShapeValidator,
-    TypoTestUtils,
+    MockDiffusersConfig,
     PerformanceUtils,
+    ShapeValidator,
+    TensorGenerator,
+    TypoTestUtils,
 )
 
 # Import the modules under test
-from simpletuner.helpers.models.hidream.transformer import (
-    # Load balancing functions
-    save_load_balancing_loss,
-    clear_load_balancing_loss,
-    get_load_balancing_loss,
-    # Core functions
-    rope,
-    apply_rope,
-    attention,
-    # Embedding classes
+from simpletuner.helpers.models.hidream.transformer import (  # Load balancing functions; Core functions; Embedding classes; Attention and MLP classes; Block types and transformer classes
+    Attention,
+    BlockType,
     EmbedND,
+    FeedForward,
+    HiDreamAttnProcessor_flashattn,
+    HiDreamImageBlock,
+    HiDreamImageSingleTransformerBlock,
+    HiDreamImageTransformer2DModel,
+    HiDreamImageTransformerBlock,
+    MOEFeedForward,
+    MoEGate,
+    OutEmbed,
     PatchEmbed,
     PooledEmbed,
-    TimestepEmbed,
-    OutEmbed,
     TextProjection,
-    # Attention and MLP classes
-    Attention,
-    HiDreamAttnProcessor_flashattn,
-    FeedForward,
-    MoEGate,
-    MOEFeedForward,
-    # Block types and transformer classes
-    BlockType,
-    HiDreamImageSingleTransformerBlock,
-    HiDreamImageTransformerBlock,
-    HiDreamImageBlock,
-    HiDreamImageTransformer2DModel,
+    TimestepEmbed,
+    apply_rope,
+    attention,
+    clear_load_balancing_loss,
+    get_load_balancing_loss,
+    rope,
+    save_load_balancing_loss,
 )
 
 

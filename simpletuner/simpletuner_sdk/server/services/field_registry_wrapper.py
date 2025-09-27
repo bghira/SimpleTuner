@@ -2,8 +2,8 @@
 
 import logging
 import time
-from typing import Dict, List, Any, Optional, Tuple
 from functools import lru_cache
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,7 @@ class LazyFieldRegistry:
         if self._registry is None and self._import_error is None:
             try:
                 from simpletuner.simpletuner_sdk.server.services.field_registry import field_registry
+
                 self._registry = field_registry
                 logger.info(f"Successfully loaded field registry with {len(self._registry._fields)} fields")
             except ImportError as e:
@@ -119,7 +120,7 @@ class LazyFieldRegistry:
         registry = self._get_registry()
         if registry is None:
             return {}
-        return getattr(registry, '_fields', {})
+        return getattr(registry, "_fields", {})
 
     @property
     def _dependencies_map(self) -> Dict[str, List[str]]:
@@ -127,7 +128,7 @@ class LazyFieldRegistry:
         registry = self._get_registry()
         if registry is None:
             return {}
-        return getattr(registry, '_dependencies_map', {})
+        return getattr(registry, "_dependencies_map", {})
 
     def get_all_fields(self) -> List[Any]:
         """Get all fields from the registry."""
@@ -137,9 +138,9 @@ class LazyFieldRegistry:
 
         try:
             # Try to get all fields from the registry
-            if hasattr(registry, 'get_all_fields'):
+            if hasattr(registry, "get_all_fields"):
                 return registry.get_all_fields()
-            elif hasattr(registry, '_fields'):
+            elif hasattr(registry, "_fields"):
                 # Return all field values if _fields is a dict
                 return list(registry._fields.values())
             else:
@@ -163,7 +164,7 @@ class LazyFieldRegistry:
 
         try:
             # Try to get dependent fields from the registry
-            if hasattr(registry, 'get_dependent_fields'):
+            if hasattr(registry, "get_dependent_fields"):
                 deps = registry.get_dependent_fields(field_name)
                 self._dependent_fields_cache[cache_key] = deps
                 self._cache_timestamps[cache_key] = time.time()
@@ -209,7 +210,7 @@ class LazyFieldRegistry:
             return []
 
         try:
-            if hasattr(registry, 'get_webui_onboarding_fields'):
+            if hasattr(registry, "get_webui_onboarding_fields"):
                 return registry.get_webui_onboarding_fields()
             return []
         except Exception as exc:  # pragma: no cover - defensive guard

@@ -3,9 +3,9 @@
 import asyncio
 import multiprocessing
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Generator
-from datetime import datetime
 
 import pytest
 from selenium import webdriver

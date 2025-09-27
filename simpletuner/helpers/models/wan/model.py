@@ -274,4 +274,5 @@ class Wan(VideoModelFoundation):
 
 
 from simpletuner.helpers.models.registry import ModelRegistry
+
 ModelRegistry.register("wan", Wan)

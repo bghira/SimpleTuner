@@ -16,34 +16,35 @@ Focus areas:
 - Gradient checkpointing functionality
 """
 
-import unittest
-import torch
-import torch.nn as nn
-import numpy as np
-from typing import Dict, Any, List, Tuple, Optional, Union
-from unittest.mock import Mock, MagicMock, patch, create_autospec
+import os
 
 # Test base classes
 import sys
-import os
+import unittest
+from typing import Any, Dict, List, Optional, Tuple, Union
+from unittest.mock import MagicMock, Mock, create_autospec, patch
+
+import numpy as np
+import torch
+import torch.nn as nn
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "utils"))
 
-from transformer_base_test import TransformerBaseTest, TransformerBlockTestMixin, EmbeddingTestMixin
+from transformer_base_test import EmbeddingTestMixin, TransformerBaseTest, TransformerBlockTestMixin
 from transformer_test_helpers import (
-    MockDiffusersConfig,
-    TensorGenerator,
+    MockAttention,
     MockComponents,
-    TypoTestUtils,
+    MockDiffusersConfig,
+    MockingUtils,
     MockModule,
     MockNormLayer,
-    MockAttention,
-    MockingUtils,
+    TensorGenerator,
+    TypoTestUtils,
 )
 
 # Import components under test
-from simpletuner.helpers.models.sana.transformer import GLUMBConv, SanaTransformerBlock, SanaTransformer2DModel
+from simpletuner.helpers.models.sana.transformer import GLUMBConv, SanaTransformer2DModel, SanaTransformerBlock
 
 
 class TestGLUMBConv(TransformerBaseTest):

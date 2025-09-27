@@ -610,4 +610,5 @@ class HiDream(ImageModelFoundation):
 
 
 from simpletuner.helpers.models.registry import ModelRegistry
+
 ModelRegistry.register("hidream", HiDream)

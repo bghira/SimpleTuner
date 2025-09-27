@@ -10,9 +10,18 @@ class TrainerPage(BasePage):
     """Page object for the trainer interface."""
 
     # Locators
-    SAVE_CONFIG_BUTTON = (By.CSS_SELECTOR, 'button[x-on\:click="Alpine.store(\'trainer\').saveConfig()"]')
-    START_TRAINING_BUTTON = (By.CSS_SELECTOR, 'button[x-on\:click="Alpine.store(\'trainer\').startTraining()"]')
-    STOP_TRAINING_BUTTON = (By.CSS_SELECTOR, 'button[x-on\:click="Alpine.store(\'trainer\').stopTraining()"]')
+    SAVE_CONFIG_BUTTON = (
+        By.CSS_SELECTOR,
+        r"""button[x-on\:click="Alpine.store('trainer').saveConfig()"]""",
+    )
+    START_TRAINING_BUTTON = (
+        By.CSS_SELECTOR,
+        r"""button[x-on\:click="Alpine.store('trainer').startTraining()"]""",
+    )
+    STOP_TRAINING_BUTTON = (
+        By.CSS_SELECTOR,
+        r"""button[x-on\:click="Alpine.store('trainer').stopTraining()"]""",
+    )
 
     # Tab buttons
     BASIC_TAB = (By.CSS_SELECTOR, '[data-bs-target="#tab-basic"]')
@@ -24,13 +33,13 @@ class TrainerPage(BasePage):
 
     # Status indicators
     TRAINING_STATUS = (By.CSS_SELECTOR, '[x-show="trainingStatus"]')
-    STATUS_IDLE = (By.CSS_SELECTOR, '[x-show="trainingStatus == \'idle\'"]')
-    STATUS_RUNNING = (By.CSS_SELECTOR, '[x-show="trainingStatus == \'running\'"]')
-    STATUS_ERROR = (By.CSS_SELECTOR, '[x-show="trainingStatus == \'error\'"]')
+    STATUS_IDLE = (By.CSS_SELECTOR, "[x-show=\"trainingStatus == 'idle'\"]")
+    STATUS_RUNNING = (By.CSS_SELECTOR, "[x-show=\"trainingStatus == 'running'\"]")
+    STATUS_ERROR = (By.CSS_SELECTOR, "[x-show=\"trainingStatus == 'error'\"]")
 
     # Configuration validation
-    CONFIG_VALID_INDICATOR = (By.CSS_SELECTOR, '.config-valid')
-    CONFIG_INVALID_INDICATOR = (By.CSS_SELECTOR, '.config-invalid')
+    CONFIG_VALID_INDICATOR = (By.CSS_SELECTOR, ".config-valid")
+    CONFIG_INVALID_INDICATOR = (By.CSS_SELECTOR, ".config-invalid")
 
     def navigate_to_trainer(self):
         """Navigate to the trainer page."""
@@ -116,7 +125,10 @@ class BasicConfigTab(BasePage):
     BASE_MODEL_INPUT = (By.ID, "pretrained_model_name_or_path")
 
     # Save button (specific to Basic Config)
-    SAVE_BUTTON = (By.CSS_SELECTOR, '#tab-basic button[x-on\:click="Alpine.store(\'trainer\').saveConfig()"]')
+    SAVE_BUTTON = (
+        By.CSS_SELECTOR,
+        r"""#tab-basic button[x-on\:click="Alpine.store('trainer').saveConfig()"]""",
+    )
 
     def set_configs_dir(self, path):
         """Set the configurations directory."""
@@ -170,6 +182,7 @@ class ModelConfigTab(BasePage):
     def select_model_family(self, family):
         """Select model family."""
         from selenium.webdriver.support.select import Select
+
         select = Select(self.find_element(*self.MODEL_FAMILY_SELECT))
         select.select_by_value(family)
 
@@ -205,6 +218,7 @@ class TrainingConfigTab(BasePage):
     def select_mixed_precision(self, precision):
         """Select mixed precision mode."""
         from selenium.webdriver.support.select import Select
+
         select = Select(self.find_element(*self.MIXED_PRECISION_SELECT))
         select.select_by_value(precision)
 
@@ -212,7 +226,10 @@ class TrainingConfigTab(BasePage):
 class DatasetsTab(BasePage):
     """Page object for Datasets tab."""
 
-    ADD_DATASET_BUTTON = (By.CSS_SELECTOR, '[x-on\:click="Alpine.store(\'datasets\').showAddModal()"]')
+    ADD_DATASET_BUTTON = (
+        By.CSS_SELECTOR,
+        r"""[x-on\:click="Alpine.store('datasets').showAddModal()"]""",
+    )
     DATASET_CARDS = (By.CSS_SELECTOR, ".dataset-card")
     DATASET_DELETE_BUTTON = (By.CSS_SELECTOR, ".dataset-card .btn-danger")
 

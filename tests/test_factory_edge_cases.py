@@ -10,14 +10,14 @@ This test suite covers:
 5. Memory and performance edge cases
 """
 
-import os
-import sys
-import unittest
-import tempfile
-import shutil
 import json
+import os
+import shutil
+import sys
+import tempfile
+import unittest
+from typing import Any, Dict, List
 from unittest.mock import MagicMock, patch
-from typing import Dict, Any, List
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

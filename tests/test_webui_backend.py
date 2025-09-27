@@ -80,11 +80,7 @@ class TestWebUIStateStore:
 
     def test_record_onboarding_step(self, state_store):
         """Test recording an onboarding step."""
-        state_store.record_onboarding_step(
-            step_id="configs_dir",
-            version=2,
-            value="/new/configs"
-        )
+        state_store.record_onboarding_step(step_id="configs_dir", version=2, value="/new/configs")
 
         onboarding = state_store.load_onboarding()
         assert "configs_dir" in onboarding.steps
@@ -135,10 +131,7 @@ class TestWebUIStateStore:
 
     def test_path_normalization(self, state_store):
         """Test that paths are normalized when saving."""
-        defaults = WebUIDefaults(
-            configs_dir="~/configs/../configs",
-            output_dir="./output"
-        )
+        defaults = WebUIDefaults(configs_dir="~/configs/../configs", output_dir="./output")
 
         with patch.dict(os.environ, {"HOME": "/home/user"}):
             state_store.save_defaults(defaults)
@@ -178,11 +171,7 @@ class TestWebUIDefaultsUpdate:
     def test_update_configs_dir_only(self, state_store):
         """Test updating only configs_dir preserves other fields."""
         # Set initial state
-        defaults = WebUIDefaults(
-            configs_dir="/old/configs",
-            output_dir="/old/output",
-            active_config="old-config"
-        )
+        defaults = WebUIDefaults(configs_dir="/old/configs", output_dir="/old/output", active_config="old-config")
         state_store.save_defaults(defaults)
 
         # Update only configs_dir
@@ -214,18 +203,10 @@ class TestWebUIStateIntegration:
     def test_full_onboarding_flow(self, state_store):
         """Test complete onboarding flow."""
         # Step 1: User completes configs_dir
-        state_store.record_onboarding_step(
-            "default_configs_dir",
-            version=2,
-            value="/home/user/configs"
-        )
+        state_store.record_onboarding_step("default_configs_dir", version=2, value="/home/user/configs")
 
         # Step 2: User completes output_dir
-        state_store.record_onboarding_step(
-            "default_output_dir",
-            version=1,
-            value="/home/user/output"
-        )
+        state_store.record_onboarding_step("default_output_dir", version=1, value="/home/user/output")
 
         # Apply to defaults
         defaults = state_store.load_defaults()

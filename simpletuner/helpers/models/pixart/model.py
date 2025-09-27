@@ -427,4 +427,5 @@ class PixartSigma(ImageModelFoundation):
 
 
 from simpletuner.helpers.models.registry import ModelRegistry
+
 ModelRegistry.register("pixart_sigma", PixartSigma)

@@ -533,6 +533,7 @@ def cmd_server(args) -> int:
     except Exception as e:
         print(f"Error starting server: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 

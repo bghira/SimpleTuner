@@ -67,7 +67,9 @@ def test_start_training_job_updates_api_state(monkeypatch, api_state_guard):
     assert captured["config"]["--webhook_config"] == training_service.DEFAULT_WEBHOOK_CONFIG
     assert training_service.APIState.get_state("current_job_id") == job_id
     assert training_service.APIState.get_state("training_status") == "starting"
-    assert training_service.APIState.get_state("training_config")["--webhook_config"] == training_service.DEFAULT_WEBHOOK_CONFIG
+    assert (
+        training_service.APIState.get_state("training_config")["--webhook_config"] == training_service.DEFAULT_WEBHOOK_CONFIG
+    )
 
 
 def test_terminate_training_job_clears_state(monkeypatch, api_state_guard):

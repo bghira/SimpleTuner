@@ -346,4 +346,5 @@ class Cosmos2Image(VideoModelFoundation):
 
 
 from simpletuner.helpers.models.registry import ModelRegistry
+
 ModelRegistry.register("cosmos2image", Cosmos2Image)

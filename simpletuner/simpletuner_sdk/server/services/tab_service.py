@@ -7,23 +7,24 @@ field organization, template rendering, and tab-specific customizations.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException, status
-from fastapi.templating import Jinja2Templates
 from fastapi.requests import Request
 from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 
-from .dataset_service import build_data_backend_choices
 from ..services.webui_state import WebUIStateStore
+from .dataset_service import build_data_backend_choices
 
 logger = logging.getLogger(__name__)
 
 
 class TabType(str, Enum):
     """Available tab types in the trainer interface."""
+
     BASIC = "basic"
     MODEL = "model"
     TRAINING = "training"
@@ -37,6 +38,7 @@ class TabType(str, Enum):
 @dataclass
 class TabConfig:
     """Configuration for a single tab."""
+
     id: str
     title: str
     icon: str
@@ -66,7 +68,7 @@ class TabService:
                 icon="fas fa-cog",
                 template="form_tab.html",
                 description="Essential settings to get started",
-                extra_context_handler=self._basic_tab_context
+                extra_context_handler=self._basic_tab_context,
             ),
             TabType.MODEL: TabConfig(
                 id="model-config",
@@ -74,14 +76,14 @@ class TabService:
                 icon="fas fa-brain",
                 template="form_tab.html",
                 description="Model architecture and settings",
-                extra_context_handler=self._model_tab_context
+                extra_context_handler=self._model_tab_context,
             ),
             TabType.TRAINING: TabConfig(
                 id="training-config",
                 title="Training Configuration",
                 icon="fas fa-graduation-cap",
                 template="form_tab.html",
-                description="Training parameters and optimization"
+                description="Training parameters and optimization",
             ),
             TabType.ADVANCED: TabConfig(
                 id="advanced-config",
@@ -89,7 +91,7 @@ class TabService:
                 icon="fas fa-tools",
                 template="form_tab.html",
                 description="Advanced training options",
-                extra_context_handler=self._advanced_tab_context
+                extra_context_handler=self._advanced_tab_context,
             ),
             TabType.DATASETS: TabConfig(
                 id="datasets-config",
@@ -97,7 +99,7 @@ class TabService:
                 icon="fas fa-database",
                 template="datasets_tab.html",
                 description="Dataset loading and preprocessing",
-                extra_context_handler=self._datasets_tab_context
+                extra_context_handler=self._datasets_tab_context,
             ),
             TabType.ENVIRONMENTS: TabConfig(
                 id="environments-config",
@@ -105,7 +107,7 @@ class TabService:
                 icon="fas fa-server",
                 template="environments_tab.html",
                 description="Environment and compute settings",
-                extra_context_handler=self._environments_tab_context
+                extra_context_handler=self._environments_tab_context,
             ),
             TabType.VALIDATION: TabConfig(
                 id="validation-config",
@@ -113,7 +115,7 @@ class TabService:
                 icon="fas fa-check-circle",
                 template="form_tab.html",
                 description="Configure visual validation jobs and output targets",
-                extra_context_handler=self._validation_tab_context
+                extra_context_handler=self._validation_tab_context,
             ),
             TabType.UI_SETTINGS: TabConfig(
                 id="ui-settings",
@@ -121,7 +123,7 @@ class TabService:
                 icon="fas fa-sliders",
                 template="ui_settings_tab.html",
                 description="Adjust WebUI preferences and behaviour",
-                extra_context_handler=self._ui_settings_tab_context
+                extra_context_handler=self._ui_settings_tab_context,
             ),
         }
 
@@ -140,10 +142,7 @@ class TabService:
         try:
             tab_type = TabType(tab_name)
         except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Tab '{tab_name}' not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tab '{tab_name}' not found")
 
         return self._tab_configs.get(tab_type)
 
@@ -213,9 +212,7 @@ class TabService:
         return self.templates.TemplateResponse(tab_config.template, context)
 
     def _group_fields_by_section(
-        self,
-        fields: List[Dict[str, Any]],
-        sections: List[Dict[str, Any]]
+        self, fields: List[Dict[str, Any]], sections: List[Dict[str, Any]]
     ) -> Dict[str, List[Dict[str, Any]]]:
         """Group fields by their section.
 
@@ -241,10 +238,7 @@ class TabService:
 
     # Tab-specific context handlers
     def _basic_tab_context(
-        self,
-        context: Dict[str, Any],
-        fields: List[Dict[str, Any]],
-        config_values: Dict[str, Any]
+        self, context: Dict[str, Any], fields: List[Dict[str, Any]], config_values: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Customize context for basic tab."""
         # Group fields into sections for basic tab
@@ -269,10 +263,7 @@ class TabService:
         return context
 
     def _model_tab_context(
-        self,
-        context: Dict[str, Any],
-        fields: List[Dict[str, Any]],
-        config_values: Dict[str, Any]
+        self, context: Dict[str, Any], fields: List[Dict[str, Any]], config_values: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Customize context for model tab."""
         danger_mode_enabled = context.get("danger_mode_enabled", False)
@@ -321,10 +312,7 @@ class TabService:
         return context
 
     def _advanced_tab_context(
-        self,
-        context: Dict[str, Any],
-        fields: List[Dict[str, Any]],
-        config_values: Dict[str, Any]
+        self, context: Dict[str, Any], fields: List[Dict[str, Any]], config_values: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Customize context for advanced tab."""
         # Add a warning about advanced settings
@@ -334,10 +322,7 @@ class TabService:
         return context
 
     def _validation_tab_context(
-        self,
-        context: Dict[str, Any],
-        fields: List[Dict[str, Any]],
-        config_values: Dict[str, Any]
+        self, context: Dict[str, Any], fields: List[Dict[str, Any]], config_values: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Ensure validation tab renders its configuration fields."""
         sections = context.get("sections") or []
@@ -358,10 +343,7 @@ class TabService:
         return context
 
     def _ui_settings_tab_context(
-        self,
-        context: Dict[str, Any],
-        fields: List[Dict[str, Any]],
-        config_values: Dict[str, Any]
+        self, context: Dict[str, Any], fields: List[Dict[str, Any]], config_values: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Provide context data for UI settings tab."""
         store = WebUIStateStore()
@@ -372,26 +354,15 @@ class TabService:
             "raw_defaults": bundle["raw"],
             "fallbacks": bundle["fallbacks"],
             "themes": [
-                {
-                    "value": "dark",
-                    "label": "Dark",
-                    "description": "Classic SimpleTuner palette"
-                },
-                {
-                    "value": "tron",
-                    "label": "Tron Prototype",
-                    "description": "Experimental neon styling"
-                },
+                {"value": "dark", "label": "Dark", "description": "Classic SimpleTuner palette"},
+                {"value": "tron", "label": "Tron Prototype", "description": "Experimental neon styling"},
             ],
             "event_interval_options": [3, 5, 10, 15, 30, 60],
         }
         return context
 
     def _datasets_tab_context(
-        self,
-        context: Dict[str, Any],
-        fields: List[Dict[str, Any]],
-        config_values: Dict[str, Any]
+        self, context: Dict[str, Any], fields: List[Dict[str, Any]], config_values: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Customize context for datasets tab."""
         # This tab uses a different template structure
@@ -404,10 +375,7 @@ class TabService:
         return context
 
     def _environments_tab_context(
-        self,
-        context: Dict[str, Any],
-        fields: List[Dict[str, Any]],
-        config_values: Dict[str, Any]
+        self, context: Dict[str, Any], fields: List[Dict[str, Any]], config_values: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Customize context for environments tab."""
         # Add environment-specific context
@@ -416,12 +384,7 @@ class TabService:
 
     def _group_basic_fields(self, fields: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
         """Group basic tab fields into sections."""
-        grouped = {
-            "project": [],
-            "training_data": [],
-            "logging": [],
-            "other": []
-        }
+        grouped = {"project": [], "training_data": [], "logging": [], "other": []}
 
         project_order = [
             "tracker_project_name",
@@ -488,7 +451,7 @@ class TabService:
             "auraflow": "AuraFlow",
             "lumina2": "Lumina 2",
             "cosmos2image": "Cosmos2Image",
-            "qwen_image": "Qwen Image"
+            "qwen_image": "Qwen Image",
         }
         return labels.get(model_key, model_key.upper())
 
@@ -504,7 +467,7 @@ class TabService:
                 "name": tab_type.value,
                 "title": config.title,
                 "icon": config.icon,
-                "description": config.description
+                "description": config.description,
             }
             for tab_type, config in self._tab_configs.items()
         ]

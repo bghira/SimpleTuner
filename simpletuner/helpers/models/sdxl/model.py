@@ -313,4 +313,5 @@ class SDXL(ImageModelFoundation):
 
 
 from simpletuner.helpers.models.registry import ModelRegistry
+
 ModelRegistry.register("sdxl", SDXL)

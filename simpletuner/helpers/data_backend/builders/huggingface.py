@@ -1,13 +1,15 @@
 """Hugging Face backend builder for creating HuggingfaceDatasetsBackend instances."""
+
 import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional, Callable
+from typing import Any, Callable, Dict, Optional
 
-from simpletuner.helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
 from simpletuner.helpers.data_backend.config.base import BaseBackendConfig
+from simpletuner.helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
 from simpletuner.helpers.training.state_tracker import StateTracker
+
 from .base import BaseBackendBuilder
 
 logger = logging.getLogger("HuggingfaceBackendBuilder")
@@ -118,15 +120,11 @@ class HuggingfaceBackendBuilder(BaseBackendBuilder):
 
         metadata_backend = getattr(config, "metadata_backend", None) or "huggingface"
         if metadata_backend not in {"huggingface"}:
-            raise ValueError(
-                "metadata_backend must be 'huggingface' for HuggingFace backends."
-            )
+            raise ValueError("metadata_backend must be 'huggingface' for HuggingFace backends.")
 
         caption_strategy = getattr(config, "caption_strategy", "huggingface")
         if caption_strategy not in {"huggingface", "instanceprompt"}:
-            raise ValueError(
-                "caption_strategy must be 'huggingface' or 'instanceprompt' for HuggingFace backends."
-            )
+            raise ValueError("caption_strategy must be 'huggingface' or 'instanceprompt' for HuggingFace backends.")
 
     def _create_filter_function(self, backend_config: Dict[str, Any]) -> Optional[Callable]:
         hf_config = backend_config.get("huggingface", {})
@@ -160,11 +158,7 @@ class HuggingfaceBackendBuilder(BaseBackendBuilder):
 
         return filter_func
 
-    def build_with_metadata(
-        self,
-        config: BaseBackendConfig,
-        args: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    def build_with_metadata(self, config: BaseBackendConfig, args: Dict[str, Any]) -> Dict[str, Any]:
         # huggingface datasets don't have local instance_data_dir
         logger.info(f"(id={config.id}) Loading HuggingFace dataset.")
 
@@ -173,10 +167,7 @@ class HuggingfaceBackendBuilder(BaseBackendBuilder):
         instance_data_dir = ""
 
         metadata_backend = self.create_metadata_backend(
-            config=config,
-            data_backend=data_backend,
-            args=args,
-            instance_data_dir=instance_data_dir
+            config=config, data_backend=data_backend, args=args, instance_data_dir=instance_data_dir
         )
 
         return {
@@ -184,5 +175,5 @@ class HuggingfaceBackendBuilder(BaseBackendBuilder):
             "data_backend": data_backend,
             "metadata_backend": metadata_backend,
             "instance_data_dir": instance_data_dir,
-            "config": config.to_dict()["config"]
+            "config": config.to_dict()["config"],
         }

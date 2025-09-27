@@ -536,4 +536,5 @@ class SD3(ImageModelFoundation):
 
 
 from simpletuner.helpers.models.registry import ModelRegistry
+
 ModelRegistry.register("sd3", SD3)

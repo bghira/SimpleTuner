@@ -1,4 +1,4 @@
-from tests.test_pipelines._common import PipelineTestCase, CalculateShiftMixin, RetrieveTimestepsMixin
+from tests.test_pipelines._common import CalculateShiftMixin, PipelineTestCase, RetrieveTimestepsMixin
 
 
 class TestHiDreamPipeline(RetrieveTimestepsMixin, CalculateShiftMixin, PipelineTestCase):
