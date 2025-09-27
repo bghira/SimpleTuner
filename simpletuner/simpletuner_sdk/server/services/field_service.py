@@ -297,6 +297,19 @@ class FieldService:
                 return 0
             return value
 
+        elif field_name == "checkpoints_total_limit":
+            if value in (None, "") and "save_total_limit" in config_values:
+                return config_values.get("save_total_limit")
+            return value
+
+        elif field_name == "vae_cache_ondemand":
+            if field_name in config_values:
+                return self._coerce_bool(config_values[field_name])
+            legacy_value = config_values.get("vae_cache_preprocess")
+            if legacy_value is not None:
+                return not self._coerce_bool(legacy_value)
+            return value
+
         elif field_name == "lora_alpha":
             # Always match lora_rank value
             return config_values.get("lora_rank", 16)
