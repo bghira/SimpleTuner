@@ -241,19 +241,9 @@ class ConfigStore:
         """Create a default configuration file."""
         if self.config_type == "dataloader":
             # Default dataloader config
-            default_config = [
-                {
-                    "id": "default-dataset",
-                    "type": "local",
-                    "dataset_type": "image",
-                    "instance_data_dir": "",
-                    "resolution": 1024,
-                    "caption_strategy": "textfile",
-                }
-            ]
+            default_config: list[dict[str, Any]] = []
 
             metadata = self._create_metadata("default", "Default dataloader configuration")
-            config_with_metadata = {"_metadata": metadata.model_dump(), "datasets": default_config}
         else:
             # Get onboarding values for default config
             output_dir = "output/models"
@@ -284,11 +274,13 @@ class ConfigStore:
             }
 
             metadata = self._create_metadata("default", "Default training configuration")
-            config_with_metadata = {"_metadata": metadata.model_dump(), "config": default_config}
 
         with path.open("w", encoding="utf-8") as f:
-            json.dump(config_with_metadata, f, indent=2, sort_keys=True)
+            json.dump(default_config, f, indent=2, sort_keys=True)
             f.write("\n")
+
+        # Persist metadata alongside the flattened config for quick lookup
+        self._save_metadata_sidecar(path, metadata)
 
     def _create_metadata(self, name: str, description: str = None) -> ConfigMetadata:
         """Create metadata for a configuration."""
@@ -905,37 +897,50 @@ class ConfigStore:
             metadata.name = name
 
         if self.config_type == "dataloader":
-            # For dataloader configs, keep existing datasets wrapper for compatibility
-            data = {"_metadata": metadata.model_dump(), "datasets": config}
+            # Preserve original dataset payload shape (list or dict) without injecting metadata.
+            data = config if config is not None else []
         else:
-            prepared_config: Dict[str, Any] = {}
-            for key, value in (config or {}).items():
-                if key in {"_metadata", "config"}:
-                    continue
-                if key == "--data_backend_config":
-                    if "data_backend_config" not in prepared_config:
-                        prepared_config["data_backend_config"] = value
-                    continue
-                prepared_config[key] = value
+            combined: Dict[str, Any] = {}
+            if isinstance(config, dict):
+                nested = config.get("config") if isinstance(config.get("config"), dict) else None
+                if nested:
+                    for key, value in nested.items():
+                        if key == "_metadata":
+                            continue
+                        if key == "--data_backend_config" and "data_backend_config" not in combined:
+                            combined["data_backend_config"] = value
+                            continue
+                        combined[key] = value
+
+                for key, value in config.items():
+                    if key in {"_metadata", "config"}:
+                        continue
+                    if key == "--data_backend_config":
+                        combined.setdefault("data_backend_config", value)
+                        continue
+                    combined[key] = value
+
+            prepared_config = combined if combined else (config if isinstance(config, dict) else {})
 
             if (
-                "data_backend_config" not in prepared_config
-                and isinstance(config, dict)
+                isinstance(config, dict)
+                and "data_backend_config" not in prepared_config
                 and "--data_backend_config" in config
             ):
                 prepared_config["data_backend_config"] = config["--data_backend_config"]
 
-            # Extract model info from config if not in metadata
-            if not metadata.model_family and "--model_family" in config:
-                metadata.model_family = config["--model_family"]
-            if not metadata.model_type and "--model_type" in config:
-                metadata.model_type = config["--model_type"]
-            if not metadata.model_flavour and "--model_flavour" in config:
-                metadata.model_flavour = config["--model_flavour"]
-            if not metadata.lora_type and "--lora_type" in config:
-                metadata.lora_type = config["--lora_type"]
+            # Extract model info from config if not already present in metadata
+            source_dict = prepared_config if isinstance(prepared_config, dict) else {}
+            if not metadata.model_family:
+                metadata.model_family = source_dict.get("--model_family") or source_dict.get("model_family")
+            if not metadata.model_type:
+                metadata.model_type = source_dict.get("--model_type") or source_dict.get("model_type")
+            if not metadata.model_flavour:
+                metadata.model_flavour = source_dict.get("--model_flavour") or source_dict.get("model_flavour")
+            if not metadata.lora_type:
+                metadata.lora_type = source_dict.get("--lora_type") or source_dict.get("lora_type")
 
-            data = prepared_config
+            data = prepared_config if isinstance(prepared_config, dict) else {}
 
         # Create parent directory if it doesn't exist (for subdirectory configs)
         config_path.parent.mkdir(parents=True, exist_ok=True)
