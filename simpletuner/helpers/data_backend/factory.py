@@ -1687,15 +1687,19 @@ class FactoryRegistry:
         self, backend: Dict[str, Any], init_backend: Dict[str, Any], conditioning_type: Optional[str]
     ) -> None:
         """Create the dataset and sampler objects."""
+        caption_strategy = backend.get("caption_strategy", self.args.caption_strategy)
+        prepend_instance_prompt = backend.get("prepend_instance_prompt", self.args.prepend_instance_prompt)
+        instance_prompt = backend.get("instance_prompt", self.args.instance_prompt)
+
         use_captions = True
         is_regularisation_data = backend.get("is_regularisation_data", backend.get("is_regularization_data", False))
         is_i2v_data = backend.get("video", {}).get(
             "is_i2v", True if getattr(self.args, "ltx_train_mode", None) == "i2v" else False
         )
 
-        if "only_instance_prompt" in backend and backend["only_instance_prompt"]:
+        if backend.get("only_instance_prompt") or getattr(self.args, "only_instance_prompt", False):
             use_captions = False
-        elif self.args.only_instance_prompt:
+        elif caption_strategy == "instanceprompt":
             use_captions = False
 
         init_backend["train_dataset"] = MultiAspectDataset(
@@ -1731,10 +1735,10 @@ class FactoryRegistry:
             delete_unwanted_images=backend.get("delete_unwanted_images", self.args.delete_unwanted_images),
             resolution=backend.get("resolution", self.args.resolution),
             resolution_type=backend.get("resolution_type", self.args.resolution_type),
-            caption_strategy=backend.get("caption_strategy", self.args.caption_strategy),
+            caption_strategy=caption_strategy,
             use_captions=use_captions,
-            prepend_instance_prompt=backend.get("prepend_instance_prompt", self.args.prepend_instance_prompt),
-            instance_prompt=backend.get("instance_prompt", self.args.instance_prompt),
+            prepend_instance_prompt=prepend_instance_prompt,
+            instance_prompt=instance_prompt,
             conditioning_type=conditioning_type,
             is_regularisation_data=is_regularisation_data,
             dataset_type=backend.get("dataset_type"),
@@ -1752,13 +1756,11 @@ class FactoryRegistry:
             persistent_workers=False,
         )
 
-        prepend_instance_prompt = backend.get("prepend_instance_prompt", self.args.prepend_instance_prompt)
-        instance_prompt = backend.get("instance_prompt", self.args.instance_prompt)
         if prepend_instance_prompt and instance_prompt is None:
             raise ValueError(
                 f"Backend {init_backend['id']} has prepend_instance_prompt=True, but no instance_prompt was provided. You must provide an instance_prompt, or disable this option."
             )
-        if instance_prompt is None and backend.get("caption_strategy", self.args.caption_strategy) == "instanceprompt":
+        if instance_prompt is None and caption_strategy == "instanceprompt":
             raise ValueError(
                 f"Backend {init_backend['id']} has caption_strategy=instanceprompt, but no instance_prompt was provided. You must provide an instance_prompt, or change the caption_strategy."
                 f"\n -> backend: {init_backend}"
@@ -1784,12 +1786,13 @@ class FactoryRegistry:
                 logger.debug("Skipping text embedding processing due to missing output_dir in args.")
                 return
             info_log(f"(id={init_backend['id']}) Collecting captions.")
+            caption_strategy = backend.get("caption_strategy", self.args.caption_strategy)
             prepend_instance_prompt = backend.get("prepend_instance_prompt", self.args.prepend_instance_prompt)
             instance_prompt = backend.get("instance_prompt", self.args.instance_prompt)
             use_captions = True
-            if "only_instance_prompt" in backend and backend["only_instance_prompt"]:
+            if backend.get("only_instance_prompt") or getattr(self.args, "only_instance_prompt", False):
                 use_captions = False
-            elif self.args.only_instance_prompt:
+            elif caption_strategy == "instanceprompt":
                 use_captions = False
 
             try:
@@ -1799,7 +1802,7 @@ class FactoryRegistry:
                     prepend_instance_prompt=prepend_instance_prompt,
                     instance_prompt=instance_prompt,
                     use_captions=use_captions,
-                    caption_strategy=backend.get("caption_strategy", self.args.caption_strategy),
+                    caption_strategy=caption_strategy,
                 )
             except AttributeError:
                 logger.debug("Skipping text embedding processing due to incomplete StateTracker configuration.")
@@ -1808,7 +1811,6 @@ class FactoryRegistry:
             if len(images_missing_captions) > 0 and hasattr(init_backend["metadata_backend"], "remove_images"):
                 # we'll tell the aspect bucket manager to remove these images.
                 init_backend["metadata_backend"].remove_images(images_missing_captions)
-            caption_strategy = backend.get("caption_strategy", self.args.caption_strategy)
             info_log(
                 f"(id={init_backend['id']}) Initialise text embed pre-computation using the {caption_strategy} caption strategy. We have {len(captions)} captions to process."
             )
