@@ -191,10 +191,7 @@ base_deps = [
 extras_require = {
     "jxl": ["pillow-jxl-plugin>=1.3.1"],
     "dev": [
-        "pytest>=7.0.0",
-        "pytest-selenium>=4.0.0",
-        "pytest-asyncio>=0.21.0",
-        "pytest-xdist>=3.0.0",
+        "selenium>=4.0.0",
         "black>=23.0.0",
         "isort>=5.12.0",
         "flake8>=6.0.0",
