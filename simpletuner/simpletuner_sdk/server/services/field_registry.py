@@ -1012,8 +1012,8 @@ class FieldRegistry:
                     {"value": "cpu", "label": "CPU"},
                 ],
                 dependencies=[FieldDependency(field="use_ema", operator="equals", value=True, action="show")],
-                help_text="Where to keep the EMA weights during updates.",
-                tooltip="'Accelerator' keeps EMA on the training device for fastest updates. 'CPU' keeps weights off-device.",
+                help_text="Where to keep the EMA weights in-between updates.",
+                tooltip="'Accelerator' keeps EMA on the training device for fastest updates. 'CPU' allows moving weights off-device.",
                 importance=ImportanceLevel.ADVANCED,
                 order=1,
             )
