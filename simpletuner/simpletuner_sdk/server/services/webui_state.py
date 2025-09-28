@@ -85,11 +85,31 @@ class WebUIStateStore:
     def _write_json(self, category: str, data: Dict[str, object]) -> None:
         path = self._category_path(category)
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = path.with_suffix(path.suffix + ".tmp")
-        with tmp_path.open("w", encoding="utf-8") as handle:
-            json.dump(data, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-        tmp_path.replace(path)
+
+        from tempfile import NamedTemporaryFile
+
+        with NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            delete=False,
+            dir=str(path.parent),
+            prefix=path.name,
+            suffix=".tmp",
+        ) as tmp_handle:
+            json.dump(data, tmp_handle, indent=2, sort_keys=True)
+            tmp_handle.write("\n")
+            tmp_path = Path(tmp_handle.name)
+
+        try:
+            tmp_path.replace(path)
+        except FileNotFoundError:
+            # Another writer may have already moved the temporary file; fall back to direct write
+            with path.open("w", encoding="utf-8") as handle:
+                json.dump(data, handle, indent=2, sort_keys=True)
+                handle.write("\n")
+        finally:
+            if tmp_path.exists():
+                tmp_path.unlink(missing_ok=True)
 
     def load_state(self) -> WebUIState:
         return WebUIState(
