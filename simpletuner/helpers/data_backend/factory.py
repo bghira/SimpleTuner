@@ -1245,21 +1245,18 @@ class FactoryRegistry:
                     preserve_data_backend_cache=preserve_data_backend_cache,
                 )
 
-            init_backend["vae_cache"] = VAECache(
+            init_backend["vaecache"] = VAECache(
                 vae=StateTracker.get_vae(),
                 data_backend=init_backend["data_backend"],
                 accelerator=self.accelerator,
                 instance_data_dir=init_backend.get("instance_data_dir", ""),
                 cache_dir=init_backend["cache_dir"],
-                resolution=self.args.resolution,
-                resolution_type=self.args.resolution_type,
-                minimum_image_size=self.args.minimum_image_size,
                 cache_file_suffix=self.args.cache_file_suffix,
                 write_batch_size=backend.get("write_batch_size", self.args.write_batch_size),
                 read_batch_size=backend.get("read_batch_size", self.args.read_batch_size),
             )
 
-            init_backend["vae_cache"].discover_all_files()
+            init_backend["vaecache"].discover_all_files()
             self.image_embed_backends[init_backend["id"]] = init_backend
 
     def _prevalidate_backend_ids(self, data_backend_config: List[Dict[str, Any]]) -> None:
@@ -1888,21 +1885,7 @@ class FactoryRegistry:
             cache_data_backend=image_embed_data_backend["data_backend"],
             instance_data_dir=init_backend["instance_data_dir"],
             delete_problematic_images=backend.get("delete_problematic_images", self.args.delete_problematic_images),
-            resolution=backend.get("resolution", self.args.resolution),
-            resolution_type=backend.get("resolution_type", self.args.resolution_type),
             num_video_frames=video_config.get("num_frames", None),
-            maximum_image_size=backend.get(
-                "maximum_image_size",
-                self.args.maximum_image_size or backend.get("resolution", self.args.resolution) * 1.5,
-            ),
-            target_downsample_size=backend.get(
-                "target_downsample_size",
-                self.args.target_downsample_size or backend.get("resolution", self.args.resolution) * 1.25,
-            ),
-            minimum_image_size=backend.get(
-                "minimum_image_size",
-                self.args.minimum_image_size,
-            ),
             vae_batch_size=backend.get("vae_batch_size", self.args.vae_batch_size),
             write_batch_size=backend.get("write_batch_size", self.args.write_batch_size),
             read_batch_size=backend.get("read_batch_size", self.args.read_batch_size),
