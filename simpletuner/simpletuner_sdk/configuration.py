@@ -68,6 +68,9 @@ class Configuration:
                 os.remove(file)
 
     def _config_save(self, job_config: ConfigModel):
+        job_config.trainer_config.setdefault("--report_to", "none")
+        job_config.trainer_config.setdefault("report_to", "none")
+
         with open("config/multidatabackend.json", mode="w") as file_handler:
             json.dump(job_config.dataloader_config, file_handler, indent=4)
             job_config.trainer_config["data_backend_config"] = "config/multidatabackend.json"
@@ -112,9 +115,10 @@ class Configuration:
             import traceback
 
             logger.error(traceback.format_exc())
+            message = str(e) or "unknown error"
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Could not validate configuration: {str(e)}",
+                detail=f"Invalid config: {message}",
             )
 
     async def default(self) -> dict:
