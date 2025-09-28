@@ -20,6 +20,11 @@ try:  # pragma: no cover - optional import for UI hints
 except Exception:  # pragma: no cover - fall back when models unavailable
     ModelRegistry = None
 
+try:  # pragma: no cover - optional import for prediction type introspection
+    from simpletuner.helpers.models.common import PredictionTypes
+except Exception:  # pragma: no cover - degraded mode if helpers unavailable
+    PredictionTypes = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -41,6 +46,7 @@ class FieldService:
     }
 
     _TEXT_ENCODER_PRECISION_FIELDS = {f"text_encoder_{idx}_precision" for idx in range(1, 5)}
+    _NOISE_OFFSET_FIELDS = {"noise_offset", "noise_offset_probability"}
 
     _WEBUI_ONLY_FIELDS = {"configs_dir"}
 
@@ -81,6 +87,47 @@ class FieldService:
             return default
         return default
 
+    @staticmethod
+    def _extract_config_payload(raw_config: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalise raw config to the actual parameter payload."""
+
+        if not isinstance(raw_config, dict):
+            return {}
+
+        if "config" in raw_config and isinstance(raw_config["config"], dict):
+            other_keys = {key for key in raw_config.keys() if key != "config"}
+            if not other_keys or other_keys == {"_metadata"}:
+                return dict(raw_config["config"])
+
+        return raw_config
+
+    @staticmethod
+    def _config_has_field(raw_config: Dict[str, Any], field_name: str) -> bool:
+        """Check if a raw config explicitly sets a given field."""
+
+        if not raw_config:
+            return False
+
+        base_name = field_name[2:] if field_name.startswith("--") else field_name
+        variants = {
+            field_name,
+            f"--{base_name}",
+            base_name,
+            base_name.lower(),
+            base_name.replace("_", "").lower(),
+        }
+
+        for key in variants:
+            if key in raw_config:
+                value = raw_config[key]
+                if value is None:
+                    continue
+                if isinstance(value, str) and not value.strip():
+                    continue
+                return True
+
+        return False
+
     def _is_danger_mode_enabled(self, config_data: Dict[str, Any]) -> bool:
         """Determine whether dangerous overrides are enabled."""
         for key in ("i_know_what_i_am_doing", "--i_know_what_i_am_doing"):
@@ -120,6 +167,46 @@ class FieldService:
 
         return bool(getattr(model_class, "SUPPORTS_TEXT_ENCODER_TRAINING", False))
 
+    def _supports_noise_offset(self, config_values: Dict[str, Any]) -> bool:
+        """Determine if noise offset settings are compatible with the model."""
+
+        prediction_type = self._resolve_prediction_type(config_values)
+        if not prediction_type:
+            return True  # default to visible when prediction type unknown
+
+        prediction_type = prediction_type.lower()
+        return prediction_type in {"epsilon", "v_prediction"}
+
+    def _resolve_prediction_type(self, config_values: Dict[str, Any]) -> Optional[str]:
+        """Resolve the effective prediction type from config or model defaults."""
+
+        for key in ("prediction_type", "--prediction_type"):
+            if key in config_values and config_values[key]:
+                return self._normalise_prediction_type(config_values[key])
+
+        model_class = self._get_model_class(config_values)
+        if not model_class:
+            return None
+
+        attr = getattr(model_class, "PREDICTION_TYPE", None)
+        return self._normalise_prediction_type(attr)
+
+    @staticmethod
+    def _normalise_prediction_type(value: Any) -> Optional[str]:
+        if value is None:
+            return None
+
+        if PredictionTypes and isinstance(value, PredictionTypes):
+            return value.value
+
+        if hasattr(value, "value"):
+            try:
+                return str(value.value)
+            except Exception:
+                pass
+
+        return str(value).strip().lower() if str(value).strip() else None
+
     def convert_field(
         self, field: Any, format: FieldFormat, config_values: Dict[str, Any], options: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
@@ -158,13 +245,16 @@ class FieldService:
         combined_config: Dict[str, Any] = {}
 
         raw_config = options.get("raw_config")
+        raw_config_data: Dict[str, Any] = {}
         if isinstance(raw_config, dict):
             combined_config.update(raw_config)
+            raw_config_data = self._extract_config_payload(raw_config)
 
         if isinstance(config_values, dict):
             combined_config.update(config_values)
 
         supports_text_encoder = self._supports_text_encoder_training(combined_config)
+        supports_noise_offset = self._supports_noise_offset(combined_config)
         text_encoder_config = self._get_text_encoder_configuration(combined_config)
         available_text_encoders = list(text_encoder_config.keys()) if text_encoder_config else []
         encoder_count = len(available_text_encoders)
@@ -183,14 +273,42 @@ class FieldService:
             if name in self._TEXT_ENCODER_PRECISION_FIELDS:
                 index = int(name.split("_")[2])
                 has_config = index <= encoder_count
-                has_existing_value = any(key in config_values for key in (name, f"--{name}"))
+                has_existing_value = self._config_has_field(raw_config_data, name)
 
                 if not (has_config or has_existing_value):
+                    continue
+
+            if name in self._NOISE_OFFSET_FIELDS and not supports_noise_offset:
+                if not self._config_has_field(raw_config_data, name):
+                    continue
+
+            if name in {"hidream_use_load_balancing_loss", "hidream_load_balancing_loss_weight"}:
+                model_family = self._get_config_value(combined_config, "model_family")
+                if model_family != "hidream":
                     continue
 
             filtered_fields.append(field)
 
         return [self.convert_field(field, format, combined_config, options) for field in filtered_fields]
+
+    @staticmethod
+    def _get_config_value(config_values: Dict[str, Any], key: str) -> Any:
+        if not isinstance(config_values, dict) or not key:
+            return None
+
+        variants = {key}
+        base = key[2:] if key.startswith("--") else key
+        variants.add(base)
+        variants.add(base.lower())
+        variants.add(base.replace("-", "_"))
+        variants.add(base.replace("-", "").lower())
+        variants.add(base.replace("_", "").lower())
+        variants.add(f"--{base}")
+
+        for candidate in variants:
+            if candidate in config_values:
+                return config_values[candidate]
+        return None
 
     def get_fields_for_section(
         self, tab_name: str, section_name: str, format: FieldFormat, config_values: Dict[str, Any]

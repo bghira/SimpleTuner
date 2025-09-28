@@ -711,6 +711,13 @@ class ConfigsService:
             return value
 
         if field_type == FieldType.CHECKBOX:
+            if isinstance(value, (list, tuple, set)):
+                if not value:
+                    return False
+                for item in value:
+                    if ConfigsService.convert_value_by_type(item, field_type):
+                        return True
+                return False
             if isinstance(value, bool):
                 return value
             if isinstance(value, (int, float)):
@@ -781,6 +788,9 @@ class ConfigsService:
             else:
                 config_key = key if key.startswith("--") else f"--{key}"
 
+            if isinstance(value, (list, tuple)):
+                value = list(value)
+
             if config_key in numeric_fields:
                 if value in (None, ""):
                     value = "0"
@@ -797,6 +807,13 @@ class ConfigsService:
                 continue
 
             field_type = field_types.get(config_key, FieldType.TEXT)
+            if isinstance(value, list):
+                if field_type == FieldType.CHECKBOX or field_type == FieldType.MULTI_SELECT:
+                    converted_value = ConfigsService.convert_value_by_type(value, field_type)
+                    config_dict[config_key] = converted_value
+                    continue
+                value = value[-1] if value else ""
+
             converted_value = ConfigsService.convert_value_by_type(value, field_type)
 
             if isinstance(converted_value, str) and converted_value and converted_value.lower().endswith(".json"):

@@ -979,6 +979,46 @@ class FieldRegistry:
             )
         )
 
+        # Use EMA Toggle
+        self._add_field(
+            ConfigField(
+                name="use_ema",
+                arg_name="--use_ema",
+                ui_label="Enable EMA",
+                field_type=FieldType.CHECKBOX,
+                tab="training",
+                section="ema_config",
+                default_value=False,
+                checkbox_label="Use EMA",
+                help_text="Maintain an exponential moving average copy of the model during training.",
+                tooltip="Improves convergence stability at the cost of extra memory and compute.",
+                importance=ImportanceLevel.ADVANCED,
+                order=0,
+            )
+        )
+
+        # EMA Device
+        self._add_field(
+            ConfigField(
+                name="ema_device",
+                arg_name="--ema_device",
+                ui_label="EMA Device",
+                field_type=FieldType.SELECT,
+                tab="training",
+                section="ema_config",
+                default_value="cpu",
+                choices=[
+                    {"value": "accelerator", "label": "Training Accelerator"},
+                    {"value": "cpu", "label": "CPU"},
+                ],
+                dependencies=[FieldDependency(field="use_ema", operator="equals", value=True, action="show")],
+                help_text="Where to keep the EMA weights during updates.",
+                tooltip="'Accelerator' keeps EMA on the training device for fastest updates. 'CPU' keeps weights off-device.",
+                importance=ImportanceLevel.ADVANCED,
+                order=1,
+            )
+        )
+
         # EMA CPU Only
         self._add_field(
             ConfigField(
@@ -990,8 +1030,9 @@ class FieldRegistry:
                 section="ema_config",
                 default_value=False,
                 dependencies=[FieldDependency(field="use_ema", operator="equals", value=True, action="show")],
-                help_text="Keep EMA weights on CPU to save VRAM",
-                tooltip="Slower EMA updates but saves significant VRAM for large models",
+                checkbox_label="Keep EMA on CPU only",
+                help_text="Keep EMA weights exclusively on CPU even when ema_device would normally move them.",
+                tooltip="Combine with ema_device=cpu to avoid shuttling weights; trades speed for lower VRAM use.",
                 importance=ImportanceLevel.ADVANCED,
                 order=2,
             )
@@ -1015,6 +1056,47 @@ class FieldRegistry:
                 tooltip="Higher values = faster training but less smooth EMA. Default: 10",
                 importance=ImportanceLevel.ADVANCED,
                 order=3,
+            )
+        )
+
+        # EMA Foreach Disable
+        self._add_field(
+            ConfigField(
+                name="ema_foreach_disable",
+                arg_name="--ema_foreach_disable",
+                ui_label="Disable EMA Foreach Ops",
+                field_type=FieldType.CHECKBOX,
+                tab="training",
+                section="ema_config",
+                default_value=False,
+                dependencies=[FieldDependency(field="use_ema", operator="equals", value=True, action="show")],
+                checkbox_label="Disable torch.foreach",
+                help_text="Fallback to standard tensor ops instead of torch.foreach updates.",
+                tooltip="Enable if your hardware or backend has issues with torch.foreach kernels.",
+                importance=ImportanceLevel.ADVANCED,
+                order=4,
+            )
+        )
+
+        # EMA Decay
+        self._add_field(
+            ConfigField(
+                name="ema_decay",
+                arg_name="--ema_decay",
+                ui_label="EMA Decay",
+                field_type=FieldType.NUMBER,
+                tab="training",
+                section="ema_config",
+                default_value=0.995,
+                validation_rules=[
+                    ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be positive"),
+                    ValidationRule(ValidationRuleType.MAX, value=0.9999, message="Must be less than 1"),
+                ],
+                dependencies=[FieldDependency(field="use_ema", operator="equals", value=True, action="show")],
+                help_text="Smoothing factor for EMA updates (closer to 1.0 = slower drift).",
+                tooltip="Common values: 0.99 for responsive EMA, 0.999 for very smooth outputs.",
+                importance=ImportanceLevel.ADVANCED,
+                order=5,
             )
         )
 

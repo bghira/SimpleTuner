@@ -103,9 +103,26 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
     defaults_changed = False
     save_options: Dict[str, bool] = {}
 
-    form_dict = dict(form_data)
+    if hasattr(form_data, "getlist"):
+        # Preserve multiple values (e.g. checkbox fallbacks) when provided
+        form_dict: Dict[str, Any] = {}
+        for key in form_data.keys():
+            values = form_data.getlist(key)
+            if not values:
+                form_dict[key] = None
+            elif len(values) == 1:
+                form_dict[key] = values[0]
+            else:
+                form_dict[key] = values
+    else:
+        form_dict = dict(form_data)
 
-    merge_defaults_raw = form_dict.pop("merge_environment_config", None)
+    def _coerce_single(value: Any) -> Any:
+        if isinstance(value, (list, tuple)):
+            return value[-1] if value else None
+        return value
+
+    merge_defaults_raw = _coerce_single(form_dict.pop("merge_environment_config", None))
     merge_environment_defaults = False
     if merge_defaults_raw is not None:
         merge_environment_defaults = str(merge_defaults_raw).strip().lower() not in {
@@ -136,7 +153,7 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         resolved_output_dir = resolved_map.get("output_dir", resolved_output_dir)
 
     if "configs_dir" in form_dict:
-        value = form_dict.pop("configs_dir")
+        value = _coerce_single(form_dict.pop("configs_dir"))
         normalized_configs_dir = os.path.abspath(os.path.expanduser(value)) if value else value
         if webui_defaults.configs_dir != normalized_configs_dir:
             webui_defaults.configs_dir = normalized_configs_dir
@@ -146,9 +163,9 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
     form_dict.pop("__active_tab__", None)
 
     if "preserve_defaults" in form_dict:
-        save_options["preserve_defaults"] = form_dict.pop("preserve_defaults") == "true"
+        save_options["preserve_defaults"] = _coerce_single(form_dict.pop("preserve_defaults")) == "true"
     if "create_backup" in form_dict:
-        save_options["create_backup"] = form_dict.pop("create_backup") == "true"
+        save_options["create_backup"] = _coerce_single(form_dict.pop("create_backup")) == "true"
     save_options["merge_environment_defaults"] = merge_environment_defaults
 
     directory_fields = ["--output_dir", "--instance_data_dir"]

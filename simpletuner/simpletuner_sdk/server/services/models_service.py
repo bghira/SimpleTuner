@@ -37,6 +37,7 @@ class ModelsService:
         "PREDICTION_TYPE",
         "MODEL_TYPE",
         "TEXT_ENCODER_CONFIGURATION",
+        "SUPPORTS_TEXT_ENCODER_TRAINING",
         "AUTOENCODER_CLASS",
         "LATENT_CHANNEL_COUNT",
         "REQUIRES_FLAVOUR",
@@ -177,6 +178,8 @@ class ModelsService:
                     key_str = str(key)
                 serialized[key_str] = ModelsService._serialize_value(item)
             return serialized
+        if isinstance(value, bool):
+            return value
         if inspect.isclass(value):
             return ModelsService._class_path(value)
         if hasattr(value, "value") and not isinstance(value, (str, bytes)):

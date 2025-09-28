@@ -33,7 +33,7 @@ async def validate_config(request: Request):
     """Validate training configuration and return HTML feedback."""
     form_data = await request.form()
 
-    bundle = training_service.build_config_bundle(dict(form_data))
+    bundle = training_service.build_config_bundle(form_data)
     validation_result = training_service.validate_training_config(
         bundle.store,
         bundle.complete_config,
@@ -91,7 +91,7 @@ async def save_config(request: Request):
     form_data = await request.form()
 
     try:
-        bundle = training_service.build_config_bundle(dict(form_data))
+        bundle = training_service.build_config_bundle(form_data)
         training_service.persist_config_bundle(bundle)
         return """
         <div class="text-success" x-data="{ show: true }" x-show="show" x-init="setTimeout(() => show = false, 3000)" x-transition.opacity.duration.500ms>
@@ -110,7 +110,7 @@ async def save_config(request: Request):
 async def start_training(request: Request):
     """Start training with current configuration."""
     form_data = await request.form()
-    bundle = training_service.build_config_bundle(dict(form_data))
+    bundle = training_service.build_config_bundle(form_data)
 
     validation_result = training_service.validate_training_config(
         bundle.store,
