@@ -141,6 +141,7 @@ def _add_trainer_routes(app: FastAPI):
     app.include_router(training_host.router)
 
     # Add API routes
+    from .routes.caption_filters import router as caption_filters_router
     from .routes.configs import router as configs_router
     from .routes.datasets import router as datasets_router
     from .routes.fields import router as fields_router
@@ -152,6 +153,7 @@ def _add_trainer_routes(app: FastAPI):
 
     app.include_router(models_router)
     app.include_router(datasets_router)
+    app.include_router(caption_filters_router)
     app.include_router(configs_router)
     app.include_router(validation_router)
     app.include_router(training_router)
