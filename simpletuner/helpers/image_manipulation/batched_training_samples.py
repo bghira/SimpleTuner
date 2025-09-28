@@ -120,7 +120,6 @@ class BatchedTrainingSamples:
         self,
         grouped_data: Dict[str, List[Tuple[str, Any, str]]],
         metadata_backend=None,
-        resolution: int = 1024,
     ) -> List[Tuple[str, np.ndarray, Dict[str, Any]]]:
         processed_results = []
 
@@ -186,8 +185,7 @@ class BatchedTrainingSamples:
                         if metadata and "target_size" in metadata:
                             target_size = metadata["target_size"]
                         else:
-                            # fallback to model resolution
-                            target_size = (resolution, resolution)
+                            raise RuntimeError(f"No target_size in metadata, cannot continue. Filename: {filepath}, Metadata: {metadata}")
 
                         current_shape = batch_images[i].shape[:2]  # (H, W)
                         current_size = (current_shape[1], current_shape[0])  # (W, H)
@@ -196,9 +194,9 @@ class BatchedTrainingSamples:
                             needs_resize.append(i)
                             target_sizes.append(target_size)
                     except Exception as e:
-                        logger.debug(f"Error checking resize for {filepath}: {e}")
-                        needs_resize.append(i)
-                        target_sizes.append((resolution, resolution))
+                        logger.error(f"Error checking resize for {filepath}: {e}", exc_info=True)
+
+                        raise e
 
                 if needs_resize and len(needs_resize) > 1:
                     try:
