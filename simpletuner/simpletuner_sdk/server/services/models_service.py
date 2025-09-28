@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import inspect
+import re
+from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
 from fastapi import status
@@ -130,6 +132,67 @@ class ModelsService:
         }
         return details
 
+    def evaluate_requirements(
+        self,
+        model_family: str,
+        config: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Evaluate conditioning requirements for a model configuration."""
+
+        if not model_family:
+            raise ModelServiceError("model_family is required", status.HTTP_400_BAD_REQUEST)
+
+        model_cls = self._get_model_class(model_family)
+
+        normalized: Dict[str, Any] = {}
+        normalized.update(self._normalise_config_dict(config or {}))
+        if metadata:
+            normalized.update(self._normalise_config_dict(metadata))
+
+        normalized.setdefault("model_family", model_family)
+
+        config_namespace = _ConfigNamespace()
+        for key, value in normalized.items():
+            sanitised = self._sanitize_key(key)
+            if not sanitised:
+                continue
+            config_namespace.setdefault(sanitised, value)
+
+        config_namespace.setdefault("model_family", model_family)
+        config_namespace.setdefault("model_flavour", normalized.get("model_flavour") or normalized.get("modelflavour"))
+        config_namespace.setdefault("model_type", normalized.get("model_type"))
+        config_namespace.setdefault("controlnet", bool(config_namespace.get("controlnet")))
+        config_namespace.setdefault("control", bool(config_namespace.get("control")))
+
+        placeholder = SimpleNamespace(config=config_namespace)
+
+        def _safe_call(attr: str, default):
+            method = getattr(model_cls, attr, None)
+            if not callable(method):
+                return default
+            try:
+                result = method(placeholder)
+            except Exception:
+                return default
+            return result if result is not None else default
+
+        requires_dataset = bool(_safe_call("requires_conditioning_dataset", False))
+        requires_latents = bool(_safe_call("requires_conditioning_latents", False))
+        requires_validation_inputs = bool(_safe_call("requires_conditioning_validation_inputs", False))
+        requires_edit_captions = bool(_safe_call("requires_validation_edit_captions", False))
+        dataset_type = _safe_call("conditioning_validation_dataset_type", "conditioning")
+        if not isinstance(dataset_type, str) or not dataset_type:
+            dataset_type = "conditioning"
+
+        return {
+            "requires_conditioning_dataset": requires_dataset,
+            "requires_conditioning_latents": requires_latents,
+            "requires_conditioning_validation_inputs": requires_validation_inputs,
+            "requires_validation_edit_captions": requires_edit_captions,
+            "conditioning_dataset_type": dataset_type,
+        }
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -198,5 +261,60 @@ class ModelsService:
             return False
         return getattr(method, "__code__", None) is not getattr(base_method, "__code__", None)
 
+    @staticmethod
+    def _sanitize_key(key: str) -> str:
+        if not key or not isinstance(key, str):
+            return ""
+        trimmed = key.strip()
+        if trimmed.startswith("--"):
+            trimmed = trimmed[2:]
+        trimmed = trimmed.replace("-", "_")
+        trimmed = trimmed.replace(" ", "_")
+        trimmed = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", trimmed)
+        trimmed = re.sub(r"__+", "_", trimmed)
+        trimmed = re.sub(r"[^0-9a-zA-Z_]", "_", trimmed)
+        trimmed = trimmed.lower()
+        if trimmed and trimmed[0].isdigit():
+            trimmed = f"_{trimmed}"
+        return trimmed
+
+    @staticmethod
+    def _normalise_config_dict(config: Dict[str, Any]) -> Dict[str, Any]:
+        normalised: Dict[str, Any] = {}
+        for raw_key, value in config.items():
+            if not isinstance(raw_key, str):
+                continue
+            key_variants = set()
+            trimmed = raw_key.strip()
+            key_variants.add(trimmed)
+            no_prefix = trimmed[2:] if trimmed.startswith("--") else trimmed
+            key_variants.add(no_prefix)
+            key_variants.add(no_prefix.lower())
+            snake = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", no_prefix)
+            snake = re.sub(r"[-\s]+", "_", snake).lower()
+            key_variants.add(snake)
+            key_variants.add(snake.replace("__", "_"))
+            key_variants.add(snake.replace("_", ""))
+
+            for variant in key_variants:
+                if variant:
+                    normalised[variant] = value
+        return normalised
+
 
 MODELS_SERVICE = ModelsService()
+
+
+class _ConfigNamespace(dict):
+    """Dictionary with attribute-style access used for model config stubs."""
+
+    __slots__ = ()
+
+    def __getattr__(self, item):
+        try:
+            return self[item]
+        except KeyError as exc:  # pragma: no cover - defensive
+            raise AttributeError(item) from exc
+
+    def __setattr__(self, key, value):
+        self[key] = value
