@@ -9,7 +9,27 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from sse_starlette.sse import EventSourceResponse
+
+try:  # pragma: no cover - optional dependency
+    from sse_starlette.sse import EventSourceResponse  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - fallback to basic streaming
+    class EventSourceResponse(StreamingResponse):
+        """Minimal fallback when sse-starlette is unavailable."""
+
+        def __init__(self, content, *args, **kwargs):
+            async def _adapt():
+                async for message in content:
+                    event = message.get("event")
+                    data = message.get("data")
+                    payload_parts = []
+                    if event:
+                        payload_parts.append(f"event: {event}\n")
+                    if data is not None:
+                        payload_parts.append(f"data: {data}\n")
+                    payload_parts.append("\n")
+                    yield "".join(payload_parts).encode("utf-8")
+
+            super().__init__(_adapt(), media_type="text/event-stream", *args, **kwargs)
 
 from ..services.sse_manager import get_sse_manager
 
