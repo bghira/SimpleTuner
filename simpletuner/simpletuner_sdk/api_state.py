@@ -86,3 +86,15 @@ class APIState:
     @classmethod
     def get_trainer(cls):
         return cls.trainer
+
+    @classmethod
+    def get_active_jobs(cls):
+        jobs = cls.state.get("jobs")
+        if isinstance(jobs, dict):
+            return jobs
+
+        current_job_id = cls.state.get("current_job_id")
+        current_job = cls.state.get("current_job")
+        if current_job_id and current_job:
+            return {current_job_id: current_job}
+        return {}
