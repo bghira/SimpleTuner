@@ -10,7 +10,6 @@ from typing import Any, Dict, List, Optional, Tuple
 from unittest.mock import MagicMock, Mock, patch
 
 import numpy as np
-import pytest
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

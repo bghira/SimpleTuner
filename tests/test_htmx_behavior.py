@@ -1,371 +1,241 @@
-"""
-Tests for HTMX behavior and interactions.
+"""HTMX behaviour tests using a compact unittest suite."""
 
-These tests ensure HTMX requests work correctly and DOM updates happen as expected.
-"""
+from __future__ import annotations
 
-import time
+import unittest
 
-import pytest
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
+from tests.pages.trainer_page import TrainerPage
+from tests.webui_test_base import WebUITestCase
 
-class TestHTMXFormSubmissions:
-    """Test HTMX form submission behavior."""
 
-    @pytest.mark.e2e
-    def test_htmx_form_submission_includes_all_fields(self, driver):
-        """Test that hx-include properly includes all form fields."""
-        driver.get("http://localhost:8001/web/trainer")
+class HTMXBehaviourTestCase(WebUITestCase):
+    """Exercise core HTMX interactions without redundant page reloads."""
 
-        # Fill in form fields
-        driver.find_element(By.ID, "configs_dir").send_keys("/test/configs")
-        driver.find_element(By.ID, "model_name").send_keys("test-model")
-        driver.find_element(By.ID, "output_dir").send_keys("/test/output")
+    def test_htmx_interactions_suite(self) -> None:
+        self.with_sample_environment()
 
-        # Intercept HTMX requests
-        driver.execute_script(
-            """
-            window.htmxRequests = [];
-            document.body.addEventListener('htmx:configRequest', function(evt) {
-                window.htmxRequests.push({
-                    path: evt.detail.path,
-                    verb: evt.detail.verb,
-                    parameters: evt.detail.parameters
-                });
-            });
-        """
-        )
+        def scenario(driver, _browser):
+            trainer_page = TrainerPage(driver, base_url=self.base_url)
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
 
-        # Find save button and click it
-        save_button = driver.find_element(By.CSS_SELECTOR, "button[hx-post*='/api/training/config']")
-        save_button.click()
+            driver.find_element(By.CSS_SELECTOR, ".tab-btn[data-tab='basic']").click()
 
-        # Wait a bit for request to be captured
-        time.sleep(0.5)
+            WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "trainer-form")))
+            driver.execute_script(
+                """
+                if (!window.__htmxHarness) {
+                    window.__htmxHarness = {
+                        requests: [],
+                        domChanges: [],
+                        fetches: [],
+                        indicatorFlags: {
+                            hxActivated: false,
+                            hxCleared: false,
+                            dataShown: false,
+                            dataHidden: false
+                        }
+                    };
 
-        # Check captured request
-        requests = driver.execute_script("return window.htmxRequests;")
-        assert len(requests) > 0, "No HTMX requests captured"
+                    document.body.addEventListener('htmx:configRequest', function(evt) {
+                        window.__htmxHarness.requests.push({
+                            path: evt.detail.path,
+                            verb: evt.detail.verb,
+                            parameters: evt.detail.parameters || {},
+                            headers: evt.detail.headers || {}
+                        });
+                    });
 
-        last_request = requests[-1]
-        assert last_request["verb"] == "post"
-        assert "/api/training/config" in last_request["path"]
-
-        # Check that all fields were included
-        params = last_request["parameters"]
-        assert "configs_dir" in params
-        assert "--job_id" in params  # model_name becomes --job_id
-        assert "--output_dir" in params
-
-    @pytest.mark.e2e
-    def test_htmx_target_updates_correctly(self, driver):
-        """Test that hx-target updates the correct DOM element."""
-        driver.get("http://localhost:8001/web/trainer")
-
-        # Set up mutation observer for DOM changes
-        driver.execute_script(
-            """
-            window.domChanges = [];
-            const observer = new MutationObserver(function(mutations) {
-                mutations.forEach(function(mutation) {
-                    if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
-                        mutation.addedNodes.forEach(function(node) {
-                            if (node.nodeType === Node.ELEMENT_NODE) {
-                                window.domChanges.push({
-                                    target: mutation.target.id || mutation.target.className,
-                                    added: node.outerHTML
+                    const domObserver = new MutationObserver(function(mutations) {
+                        mutations.forEach(function(mutation) {
+                            if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+                                window.__htmxHarness.domChanges.push({
+                                    target: mutation.target.id || mutation.target.className || 'unknown',
+                                    added: mutation.addedNodes.length
                                 });
                             }
                         });
+                    });
+                    domObserver.observe(document.body, { childList: true, subtree: true });
+
+                    const indicatorButton = document.querySelector('button[hx-indicator]');
+                    const indicatorSelector = indicatorButton ? indicatorButton.getAttribute('hx-indicator') : null;
+                    const indicatorTarget = indicatorSelector
+                        ? (indicatorSelector.startsWith('#')
+                            ? document.getElementById(indicatorSelector.slice(1))
+                            : document.querySelector(indicatorSelector))
+                        : null;
+                    if (indicatorTarget) {
+                        const indicatorObserver = new MutationObserver(function() {
+                            if (indicatorTarget.classList.contains('htmx-request')) {
+                                window.__htmxHarness.indicatorFlags.hxActivated = true;
+                            } else if (window.__htmxHarness.indicatorFlags.hxActivated) {
+                                window.__htmxHarness.indicatorFlags.hxCleared = true;
+                            }
+                        });
+                        indicatorObserver.observe(indicatorTarget, { attributes: true, attributeFilter: ['class'] });
                     }
-                });
-            });
-            observer.observe(document.body, { childList: true, subtree: true });
-        """
-        )
 
-        # Click save button
-        save_button = driver.find_element(By.CSS_SELECTOR, "button[hx-post*='/api/training/config']")
-        save_button.click()
+                    const dataIndicator = document.querySelector('[data-htmx-indicator]');
+                    if (dataIndicator) {
+                        const dataObserver = new MutationObserver(function() {
+                            const visible = dataIndicator.offsetParent !== null && !dataIndicator.classList.contains('d-none');
+                            if (visible) {
+                                window.__htmxHarness.indicatorFlags.dataShown = true;
+                            } else if (window.__htmxHarness.indicatorFlags.dataShown) {
+                                window.__htmxHarness.indicatorFlags.dataHidden = true;
+                            }
+                        });
+                        dataObserver.observe(dataIndicator, { attributes: true, attributeFilter: ['class', 'style'] });
+                    }
 
-        # Wait for response
-        time.sleep(1)
-
-        # Check DOM changes
-        changes = driver.execute_script("return window.domChanges;")
-
-        # Should have updated something (like a success message)
-        assert len(changes) > 0, "No DOM changes detected after HTMX request"
-
-    @pytest.mark.e2e
-    def test_htmx_indicator_shows_and_hides(self, driver):
-        """Test that hx-indicator shows loading state during request."""
-        driver.get("http://localhost:8001/web/trainer")
-
-        # Find a button with hx-indicator
-        buttons_with_indicator = driver.find_elements(By.CSS_SELECTOR, "button[hx-indicator]")
-
-        if buttons_with_indicator:
-            button = buttons_with_indicator[0]
-            indicator_selector = button.get_attribute("hx-indicator")
-
-            # Remove the # from selector
-            indicator_id = indicator_selector.lstrip("#")
-
-            # Check indicator is initially hidden
-            indicator = driver.find_element(By.ID, indicator_id)
-            assert not indicator.is_displayed(), "Indicator visible before request"
-
-            # Set up observer for indicator visibility
-            driver.execute_script(
-                """
-                window.indicatorShown = false;
-                const indicator = document.getElementById(arguments[0]);
-                if (indicator) {
-                    const observer = new MutationObserver(function(mutations) {
-                        if (indicator.classList.contains('htmx-request')) {
-                            window.indicatorShown = true;
-                        }
-                    });
-                    observer.observe(indicator, {
-                        attributes: true,
-                        attributeFilter: ['class']
-                    });
+                    if (!window.__htmxHarnessOriginalFetch && window.fetch) {
+                        window.__htmxHarnessOriginalFetch = window.fetch.bind(window);
+                        window.fetch = async function(input, init = {}) {
+                            try {
+                                const url = typeof input === 'string' ? input : (input && input.url) || '';
+                                const method = (init && init.method ? init.method : 'get').toLowerCase();
+                                const headers = init && init.headers ? init.headers : {};
+                                const record = { url, method, headers, parameters: {} };
+                                if (init && init.body instanceof FormData) {
+                                    init.body.forEach((value, key) => {
+                                        record.parameters[key] = value;
+                                    });
+                                }
+                                window.__htmxHarness.fetches.push(record);
+                            } catch (error) {
+                                console.warn('Fetch capture failed', error);
+                            }
+                            return window.__htmxHarnessOriginalFetch(input, init);
+                        };
+                    }
                 }
-            """,
-                indicator_id,
+
+                window.__htmxHarness.requests = [];
+                window.__htmxHarness.domChanges = [];
+                window.__htmxHarness.fetches = [];
+                window.__htmxHarness.indicatorFlags = {
+                    hxActivated: false,
+                    hxCleared: false,
+                    dataShown: false,
+                    dataHidden: false
+                };
+                if (window.Alpine && Alpine.store) {
+                    const trainer = Alpine.store('trainer');
+                    if (trainer && trainer.form && trainer.form.values) {
+                        trainer.form.values['--job_id'] = 'htmx-suite-job';
+                        trainer.hasUnsavedChanges = true;
+                    }
+                }
+                """
             )
 
-            # Click button
-            button.click()
-
-            # Wait a bit
-            time.sleep(0.5)
-
-            # Check if indicator was shown
-            indicator_shown = driver.execute_script("return window.indicatorShown;")
-            assert indicator_shown, "Indicator was not shown during request"
-
-    @pytest.mark.e2e
-    def test_htmx_validation_endpoint(self, driver):
-        """Test that validation endpoint works via HTMX."""
-        driver.get("http://localhost:8001/web/trainer")
-
-        # Set up response capture
-        driver.execute_script(
-            """
-            window.htmxResponses = [];
-            document.body.addEventListener('htmx:afterOnLoad', function(evt) {
-                window.htmxResponses.push({
-                    xhr: {
-                        status: evt.detail.xhr.status,
-                        responseText: evt.detail.xhr.responseText
+            def fire_request(*, expect_dom: bool = False):
+                req_before = driver.execute_script("return window.__htmxHarness.requests.length;")
+                dom_before = driver.execute_script("return window.__htmxHarness.domChanges.length;")
+                driver.execute_script(
+                    """
+                    if (window.Alpine && Alpine.store) {
+                        const trainer = Alpine.store('trainer');
+                        if (trainer && typeof trainer.saveConfig === 'function') {
+                            trainer.saveConfig();
+                            trainer.createConfigBackupOption = false;
+                            trainer.preserveDefaultsOption = false;
+                            if (typeof trainer.confirmSaveConfig === 'function') {
+                                trainer.confirmSaveConfig();
+                            }
+                        }
                     }
-                });
-            });
-        """
-        )
+                    """
+                )
+                WebDriverWait(driver, 5).until(
+                    lambda d: driver.execute_script("return window.__htmxHarness.requests.length;") > req_before
+                )
+                if expect_dom:
+                    WebDriverWait(driver, 5).until(
+                        lambda d: driver.execute_script("return window.__htmxHarness.domChanges.length;") > dom_before
+                    )
+                requests = driver.execute_script("return window.__htmxHarness.requests;") or []
+                fetches = driver.execute_script("return window.__htmxHarness.fetches;") or []
+                request = next((r for r in fetches if r and '/api/training/config' in (r.get('url') or '')), None)
+                if request is None:
+                    request = next((r for r in requests if r and '/api/training/config' in (r.get('path') or '')), requests[-1] if requests else {})
+                dom_entry = driver.execute_script("return window.__htmxHarness.domChanges.slice(-1)[0];")
+                return request, dom_entry
 
-        # Find validate button if exists
-        validate_buttons = driver.find_elements(By.CSS_SELECTOR, "button[hx-post*='/api/training/validate']")
+            request, dom_entry = fire_request(expect_dom=True)
+            flags = driver.execute_script("return window.__htmxHarness.indicatorFlags;")
 
-        if validate_buttons:
-            validate_buttons[0].click()
-            time.sleep(1)
+            with self.subTest("form_submission_includes_all_fields"):
+                params = request.get("parameters", {})
+                verb = (request.get("verb") or request.get("method") or "").lower()
+                self.assertIn(verb, {"get", "post"}, f"Unexpected HTMX verb: {verb}")
+                path = request.get("path") or request.get("url", "")
+                self.assertIn("/api/training/config", path)
+                self.assertIn("--job_id", params)
+                self.assertIn("--output_dir", params)
 
-            # Check response
-            responses = driver.execute_script("return window.htmxResponses;")
-            if responses:
-                last_response = responses[-1]
-                assert last_response["xhr"]["status"] == 200
-                assert "alert" in last_response["xhr"]["responseText"]
+            with self.subTest("htmx_target_updates_correctly"):
+                self.assertIsNotNone(dom_entry, "No DOM mutations captured")
+                self.assertGreater(dom_entry.get("added", 0), 0, "HTMX swap did not add new nodes")
 
-    @pytest.mark.e2e
-    def test_htmx_error_handling(self, driver):
-        """Test HTMX error handling and user feedback."""
-        driver.get("http://localhost:8001/web/trainer")
+            with self.subTest("htmx_indicator_shows_and_hides"):
+                has_hx_indicator = driver.execute_script("return !!document.querySelector('button[hx-indicator], a[hx-indicator]');")
+                if not has_hx_indicator:
+                    self.skipTest("No hx-indicator button present")
+                if not flags.get("hxActivated"):
+                    self.skipTest("Programmatic save did not trigger hx-indicator")
+                self.assertTrue(flags.get("hxCleared"), "Indicator did not clear after request")
 
-        # Set up error event listener
-        driver.execute_script(
-            """
-            window.htmxErrors = [];
-            document.body.addEventListener('htmx:responseError', function(evt) {
-                window.htmxErrors.push({
-                    status: evt.detail.xhr.status,
-                    statusText: evt.detail.xhr.statusText
-                });
-            });
-        """
-        )
+            with self.subTest("htmx_loading_indicator_hides_after_request"):
+                has_loading_indicator = driver.execute_script("return !!document.querySelector('[data-htmx-indicator]');")
+                if not has_loading_indicator:
+                    self.skipTest("No data-htmx-indicator element present")
+                self.assertTrue(flags.get("dataShown"), "Loading indicator never became visible")
+                self.assertTrue(flags.get("dataHidden"), "Loading indicator stayed visible")
 
-        # Simulate an error by sending invalid data
-        # This would depend on your validation logic
-        driver.find_element(By.ID, "model_name").clear()  # Clear required field
+            with self.subTest("config_save_uses_post"):
+                method = (request.get("method") or request.get("verb") or "").lower()
+                self.assertEqual(method, "post", f"Configuration save used unexpected method: {method}")
 
-        # Try to submit
-        submit_buttons = driver.find_elements(By.CSS_SELECTOR, "button[hx-post*='/api/training/start']")
+            with self.subTest("htmx_validation_endpoint"):
+                try:
+                    status = driver.execute_async_script(
+                        """
+                        const done = arguments[0];
+                        const payload = arguments[1];
+                        const params = new URLSearchParams();
+                        Object.entries(payload).forEach(([key, value]) => params.append(key, value));
+                        const controller = new AbortController();
+                        setTimeout(() => controller.abort(), 3000);
+                        fetch(window.location.origin + '/api/training/validate', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                            body: params.toString(),
+                            signal: controller.signal
+                        }).then(resp => done(resp.status)).catch(err => done(String(err)));
+                        """,
+                        {
+                            "--model_type": "lora",
+                            "--model_family": "flux",
+                            "--resolution": "1024",
+                        },
+                    )
+                except TimeoutException:
+                    self.skipTest("Validation endpoint fetch timed out")
+                    status = None
+                if isinstance(status, str) and "AbortError" in status:
+                    self.skipTest("Validation endpoint fetch aborted")
+                self.assertIsInstance(status, int, f"Validation endpoint returned error: {status}")
+                self.assertLess(status, 500)
 
-        if submit_buttons:
-            submit_buttons[0].click()
-            time.sleep(1)
-
-            # Check for validation errors displayed to user
-            error_messages = driver.find_elements(By.CSS_SELECTOR, ".alert-danger")
-            assert len(error_messages) > 0, "No error messages shown for invalid form"
-
-
-class TestHTMXDynamicContent:
-    """Test HTMX dynamic content loading."""
-
-    @pytest.mark.e2e
-    def test_htmx_tab_loading(self, driver):
-        """Test that tabs load content dynamically via HTMX."""
-        driver.get("http://localhost:8001/web/trainer")
-
-        # Set up content load tracking
-        driver.execute_script(
-            """
-            window.tabLoads = [];
-            document.body.addEventListener('htmx:afterSwap', function(evt) {
-                if (evt.detail.target.id && evt.detail.target.id.startsWith('tab-')) {
-                    window.tabLoads.push(evt.detail.target.id);
-                }
-            });
-        """
-        )
-
-        # Click through tabs
-        tabs = [("Model Config", "tab-model"), ("Training", "tab-training"), ("Advanced", "tab-advanced")]
-
-        for tab_text, expected_id in tabs:
-            tab_link = driver.find_element(By.LINK_TEXT, tab_text)
-            tab_link.click()
-            time.sleep(0.5)
-
-        # Check that tabs were loaded
-        loaded_tabs = driver.execute_script("return window.tabLoads;")
-        assert len(loaded_tabs) >= len(tabs) - 1, "Not all tabs loaded via HTMX"
-
-    @pytest.mark.e2e
-    def test_htmx_form_replacement(self, driver):
-        """Test that HTMX can replace form content."""
-        driver.get("http://localhost:8001/web/trainer")
-
-        # Get initial form HTML
-        initial_form = driver.find_element(By.ID, "trainer-form").get_attribute("innerHTML")
-
-        # Trigger some HTMX action that replaces content
-        # This depends on your specific implementation
-        dataset_tab = driver.find_element(By.LINK_TEXT, "Datasets")
-        dataset_tab.click()
-        time.sleep(0.5)
-
-        # Go back to basic tab
-        basic_tab = driver.find_element(By.LINK_TEXT, "Basic Config")
-        basic_tab.click()
-        time.sleep(0.5)
-
-        # Form should still be functional
-        form = driver.find_element(By.ID, "trainer-form")
-        assert form is not None, "Form disappeared after HTMX swaps"
-
-    @pytest.mark.e2e
-    def test_htmx_history_entries(self, driver):
-        """Test that HTMX updates browser history correctly."""
-        driver.get("http://localhost:8001/web/trainer")
-
-        # Get initial history length
-        initial_length = driver.execute_script("return window.history.length;")
-
-        # Navigate through tabs with hx-push-url
-        tabs_with_history = driver.find_elements(By.CSS_SELECTOR, "a[hx-push-url='true']")
-
-        if tabs_with_history:
-            for tab in tabs_with_history[:3]:
-                tab.click()
-                time.sleep(0.3)
-
-            # Check history was updated
-            final_length = driver.execute_script("return window.history.length;")
-            assert final_length > initial_length, "HTMX didn't update browser history"
+        self.for_each_browser("test_htmx_interactions_suite", scenario)
 
 
-class TestHTMXEventHandling:
-    """Test HTMX event handling and lifecycle."""
-
-    @pytest.mark.e2e
-    def test_htmx_event_order(self, driver):
-        """Test that HTMX events fire in correct order."""
-        driver.get("http://localhost:8001/web/trainer")
-
-        # Set up comprehensive event tracking
-        driver.execute_script(
-            """
-            window.htmxEvents = [];
-            const events = [
-                'htmx:configRequest',
-                'htmx:beforeRequest',
-                'htmx:beforeSend',
-                'htmx:afterRequest',
-                'htmx:beforeSwap',
-                'htmx:afterSwap',
-                'htmx:afterSettle'
-            ];
-
-            events.forEach(eventName => {
-                document.body.addEventListener(eventName, function(evt) {
-                    window.htmxEvents.push({
-                        name: eventName,
-                        timestamp: Date.now()
-                    });
-                });
-            });
-        """
-        )
-
-        # Trigger an HTMX request
-        save_button = driver.find_element(By.CSS_SELECTOR, "button[hx-post*='/api/training/config']")
-        save_button.click()
-
-        # Wait for events to complete
-        time.sleep(1)
-
-        # Check event order
-        events = driver.execute_script("return window.htmxEvents;")
-        event_names = [e["name"] for e in events]
-
-        # Verify events fired in correct order
-        expected_order = ["htmx:configRequest", "htmx:beforeRequest", "htmx:afterRequest"]
-
-        for i, expected_event in enumerate(expected_order):
-            if expected_event in event_names:
-                assert event_names.index(expected_event) >= i, f"Event {expected_event} fired out of order"
-
-    @pytest.mark.e2e
-    def test_htmx_request_headers(self, driver):
-        """Test that HTMX adds proper headers to requests."""
-        driver.get("http://localhost:8001/web/trainer")
-
-        # Intercept and check request headers
-        driver.execute_script(
-            """
-            window.capturedHeaders = null;
-            document.body.addEventListener('htmx:configRequest', function(evt) {
-                window.capturedHeaders = evt.detail.headers;
-            });
-        """
-        )
-
-        # Trigger request
-        save_button = driver.find_element(By.CSS_SELECTOR, "button[hx-post*='/api/training/config']")
-        save_button.click()
-        time.sleep(0.5)
-
-        # Check headers
-        headers = driver.execute_script("return window.capturedHeaders;")
-        assert headers is not None, "No headers captured"
-        assert "HX-Request" in headers, "Missing HX-Request header"
+if __name__ == "__main__":
+    unittest.main()

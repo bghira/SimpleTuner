@@ -9,7 +9,6 @@ import unittest
 from typing import Any, Dict, List, Optional, Tuple
 from unittest.mock import MagicMock, Mock, patch
 
-import pytest
 import torch
 import torch.nn as nn
 

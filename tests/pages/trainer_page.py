@@ -24,12 +24,12 @@ class TrainerPage(BasePage):
     )
 
     # Tab buttons
-    BASIC_TAB = (By.CSS_SELECTOR, '[data-bs-target="#tab-basic"]')
-    MODEL_TAB = (By.CSS_SELECTOR, '[data-bs-target="#tab-model"]')
-    TRAINING_TAB = (By.CSS_SELECTOR, '[data-bs-target="#tab-training"]')
-    ADVANCED_TAB = (By.CSS_SELECTOR, '[data-bs-target="#tab-advanced"]')
-    DATASETS_TAB = (By.CSS_SELECTOR, '[data-bs-target="#tab-datasets"]')
-    ENVIRONMENTS_TAB = (By.CSS_SELECTOR, '[data-bs-target="#tab-environments"]')
+    BASIC_TAB = (By.CSS_SELECTOR, ".tab-btn[data-tab='basic']")
+    MODEL_TAB = (By.CSS_SELECTOR, ".tab-btn[data-tab='model']")
+    TRAINING_TAB = (By.CSS_SELECTOR, ".tab-btn[data-tab='training']")
+    ADVANCED_TAB = (By.CSS_SELECTOR, ".tab-btn[data-tab='advanced']")
+    DATASETS_TAB = (By.CSS_SELECTOR, ".tab-btn[data-tab='datasets']")
+    ENVIRONMENTS_TAB = (By.CSS_SELECTOR, ".tab-btn[data-tab='environments']")
 
     # Status indicators
     TRAINING_STATUS = (By.CSS_SELECTOR, '[x-show="trainingStatus"]')
