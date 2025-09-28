@@ -346,22 +346,31 @@ A lot of settings are instead set through the [dataloader config](/documentation
 - **What**: Keeping an exponential moving average of your weights over the models' training lifetime is like periodically back-merging the model into itself.
 - **Why**: It can improve training stability at the cost of more system resources, and a slight increase in training runtime.
 
-## `--ema_device`
+### `--ema_device`
 
-- **Choices**: `cpu`, `accelerator`, default: `cpu`
-- **What**: Place the EMA weights on the accelerator instead of CPU.
-- **Why**: The default location of CPU for EMA weights might result in a substantial slowdown on some systems. However, `--ema_cpu_only` will override this value if provided.
+- **Choices**: `cpu`, `accelerator`; default: `cpu`
+- **What**: Chooses where the EMA weights live between updates.
+- **Why**: Keeping the EMA on the accelerator gives the fastest updates but costs VRAM. Keeping it on CPU reduces memory pressure but requires shuttling weights unless `--ema_cpu_only` is set.
 
 ### `--ema_cpu_only`
 
-- **What**: Keeps EMA weights on the CPU. The default behaviour is to move the EMA weights to the GPU before updating them.
-- **Why**: Moving the EMA weights to the GPU is unnecessary, as the update on CPU can be nearly just as quick. However, some systems may experience a substantial slowdown, so EMA weights will remain on GPU by default.
+- **What**: Prevents the EMA weights from being moved back to the accelerator for updates when `--ema_device=cpu`.
+- **Why**: Saves the host-to-device transfer time and VRAM usage for large EMAs. Has no effect if `--ema_device=accelerator` because the weights already reside on the accelerator.
+
+### `--ema_foreach_disable`
+
+- **What**: Disables the use of `torch._foreach_*` kernels for EMA updates.
+- **Why**: Some back-ends or hardware combinations have issues with foreach ops. Disabling them falls back to the scalar implementation at the cost of slightly slower updates.
 
 ### `--ema_update_interval`
 
-- **What**: Reduce the update interval of your EMA shadow parameters.
-- **Why**: Updating the EMA weights on every step could be an unnecessary waste of resources. Providing `--ema_update_interval=100` will update the EMA weights only once every 100 optimizer steps.
+- **What**: Reduces how often the EMA shadow parameters are updated.
+- **Why**: Updating every step is unnecessary for many workflows. For example, `--ema_update_interval=100` only performs an EMA update once every 100 optimizer steps, reducing overhead when `--ema_device=cpu` or `--ema_cpu_only` is enabled.
 
+### `--ema_decay`
+
+- **What**: Controls the smoothing factor used when applying EMA updates.
+- **Why**: Higher values (e.g. `0.999`) make the EMA respond slowly but produce very stable weights. Lower values (e.g. `0.99`) adapt faster to new training signals.
 
 ### `--snr_gamma`
 
