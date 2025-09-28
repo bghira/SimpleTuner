@@ -846,3 +846,100 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
 
     def create_directory(self, directory_path):
         os.makedirs(directory_path, exist_ok=True)
+
+
+def test_huggingface_dataset(
+    dataset_name: str,
+    dataset_config: Optional[str] = None,
+    split: Optional[str] = None,
+    revision: Optional[str] = None,
+    streaming: bool = False,
+    use_auth_token: Optional[str] = None,
+    sample_count: int = 1,
+) -> Dict[str, Any]:
+    """Load lightweight dataset metadata and sample rows for validation."""
+
+    if not dataset_name:
+        raise ValueError("dataset_name is required")
+
+    try:
+        from datasets import load_dataset, load_dataset_builder
+    except ImportError as exc:  # pragma: no cover - optional dependency
+        raise ImportError("datasets library is required to test Hugging Face connections") from exc
+
+    split = split or "train"
+
+    try:
+        builder = load_dataset_builder(
+            dataset_name,
+            name=dataset_config,
+            revision=revision,
+            token=use_auth_token,
+            use_auth_token=use_auth_token,
+        )
+    except Exception as exc:
+        raise ValueError(f"Failed to load dataset metadata: {exc}") from exc
+
+    features = list(getattr(builder.info, "features", {}).keys())
+    available_splits = list(getattr(builder.info, "splits", {}).keys())
+    sample = None
+    sample_via_streaming = streaming
+
+    if sample_count > 0:
+        try:
+            dataset_stream = load_dataset(
+                dataset_name,
+                name=dataset_config,
+                split=split,
+                revision=revision,
+                streaming=True,
+                use_auth_token=use_auth_token,
+            )
+            iterator = iter(dataset_stream)
+            try:
+                sample = next(iterator)
+            except StopIteration:
+                sample = None
+            else:
+                if sample_count > 1:
+                    import itertools
+
+                    samples = [sample]
+                    samples.extend(list(itertools.islice(iterator, max(sample_count - 1, 0))))
+                    sample = samples
+        except Exception:
+            sample_via_streaming = False
+            try:
+                limited_split = f"{split}[:{max(sample_count, 1)}]"
+                dataset_slice = load_dataset(
+                    dataset_name,
+                    name=dataset_config,
+                    split=limited_split,
+                    revision=revision,
+                    streaming=False,
+                    use_auth_token=use_auth_token,
+                )
+                if sample_count == 1:
+                    sample = dataset_slice[0] if len(dataset_slice) else None
+                else:
+                    sample = [dataset_slice[i] for i in range(min(sample_count, len(dataset_slice)))]
+            except Exception as exc:
+                raise ValueError(f"Failed to fetch dataset sample: {exc}") from exc
+
+    info = builder.info
+    dataset_size = None
+    if hasattr(info, "splits") and split in info.splits:
+        dataset_size = info.splits[split].num_examples
+
+    return {
+        "dataset_name": dataset_name,
+        "dataset_config": dataset_config,
+        "split": split,
+        "revision": revision,
+        "features": features,
+        "available_splits": available_splits,
+        "description": getattr(info, "description", None),
+        "sample": sample,
+        "streaming_used": sample_via_streaming,
+        "estimated_num_examples": dataset_size,
+    }
