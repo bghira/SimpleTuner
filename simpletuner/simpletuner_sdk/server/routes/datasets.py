@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
@@ -12,11 +13,23 @@ from pydantic import BaseModel, ConfigDict
 from simpletuner.simpletuner_sdk.api_state import APIState
 from simpletuner.simpletuner_sdk.server.data.dataset_blueprints import get_dataset_blueprints
 from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
+from simpletuner.simpletuner_sdk.server.services.dataset_connection_service import (
+    DatasetConnectionError,
+    DatasetConnectionService,
+)
 from simpletuner.simpletuner_sdk.server.services.dataset_plan import DatasetPlanStore, ValidationMessage, compute_validations
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
 from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
+
+
+class DatasetConnectionRequest(BaseModel):
+    dataset: Dict[str, Any]
+    configs_dir: Optional[str] = None
+
+
+_connection_service = DatasetConnectionService()
 
 
 class DatasetPlanEntry(BaseModel):
@@ -42,6 +55,13 @@ class DatasetPlanResponse(BaseModel):
 
 def _store() -> DatasetPlanStore:
     """Create a dataset plan store using current environment settings."""
+    env_path = os.environ.get("SIMPLETUNER_DATASET_PLAN_PATH")
+    if env_path:
+        try:
+            return DatasetPlanStore(path=Path(env_path).expanduser())
+        except Exception:
+            return DatasetPlanStore(path=Path(env_path))
+
     # Try to get data backend config from active configuration
     try:
         defaults = WebUIStateStore().load_defaults()
@@ -97,6 +117,19 @@ async def get_dataset_plan() -> DatasetPlanResponse:
         source=source,
         updated_at=updated_at,
     )
+
+
+@router.post("/test-connection")
+async def test_dataset_connection(request: DatasetConnectionRequest) -> Dict[str, Any]:
+    """Run a lightweight connection test for a dataset payload."""
+
+    try:
+        return _connection_service.test_connection(request.dataset, request.configs_dir)
+    except DatasetConnectionError as exc:
+        detail: Dict[str, Any] = {"message": exc.message}
+        if exc.backend:
+            detail["backend"] = exc.backend
+        raise HTTPException(status_code=exc.status_code, detail=detail)
 
 
 def _persist_plan(payload: DatasetPlanPayload) -> DatasetPlanResponse:
