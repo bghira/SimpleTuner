@@ -1342,6 +1342,7 @@ class Trainer:
             public_args = copy.deepcopy(self.config)
             delattr(public_args, "accelerator_project_config")
             delattr(public_args, "process_group_kwargs")
+            delattr(public_args, "webhook_config")
             delattr(public_args, "weight_dtype")
             delattr(public_args, "base_weight_dtype")
             if hasattr(public_args, "vae_kwargs"):
