@@ -248,6 +248,24 @@ class FieldRegistry:
             )
         )
 
+        # ControlNet toggle
+        self._add_field(
+            ConfigField(
+                name="controlnet",
+                arg_name="--controlnet",
+                ui_label="Enable ControlNet Training",
+                field_type=FieldType.CHECKBOX,
+                tab="model",
+                section="model_config",
+                subsection="architecture",
+                default_value=False,
+                help_text="Train ControlNet (full or LoRA) branches alongside the primary network.",
+                tooltip="When enabled, ControlNet datasets and conditioning tools become available in the Dataset Builder.",
+                importance=ImportanceLevel.IMPORTANT,
+                order=4,
+            )
+        )
+
         # Pretrained Model Path
         self._add_field(
             ConfigField(
