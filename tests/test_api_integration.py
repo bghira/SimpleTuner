@@ -305,22 +305,39 @@ class ConcurrentAPICallTests(AsyncAPITestCase, unittest.IsolatedAsyncioTestCase)
             except HTTPException as exc:
                 return {"error": str(exc.detail)}
 
-        with patch("simpletuner.simpletuner_sdk.thread_keeper.submit_job") as mock_submit:
-            mock_submit.side_effect = lambda jid, func: Mock()
+        with patch("simpletuner.helpers.training.trainer.Trainer") as mock_trainer_cls:
+            mock_trainer_cls.return_value = Mock()
 
-            call_count = 0
+            with patch("simpletuner.simpletuner_sdk.thread_keeper.submit_job") as mock_submit:
+                mock_submit.side_effect = lambda jid, func: Mock()
 
-            def status_side_effect(job_id):
-                nonlocal call_count
-                call_count += 1
-                return "not_found" if call_count == 1 else "running"
+                # Track which job gets through first
+                current_job_tracker = {"job_id": None}
 
-            with patch(
-                "simpletuner.simpletuner_sdk.thread_keeper.get_thread_status",
-                side_effect=status_side_effect,
-            ):
-                tasks = [submit_job(f"job_{i}") for i in range(5)]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
+                def status_side_effect(job_id):
+                    # If no job is current, return "not_found"
+                    if current_job_tracker["job_id"] is None:
+                        return "not_found"
+                    # If this is the current job, return its status
+                    if job_id == current_job_tracker["job_id"]:
+                        return "running"
+                    # Otherwise, it's not found
+                    return "not_found"
+
+                with patch(
+                    "simpletuner.simpletuner_sdk.thread_keeper.get_thread_status",
+                    side_effect=status_side_effect,
+                ):
+                    # Patch APIState.set_state to track which job becomes current
+                    original_set_state = APIState.set_state
+                    def track_current_job(key, value):
+                        if key == "current_job_id":
+                            current_job_tracker["job_id"] = value
+                        return original_set_state(key, value)
+
+                    with patch.object(APIState, 'set_state', side_effect=track_current_job):
+                        tasks = [submit_job(f"job_{i}") for i in range(5)]
+                        results = await asyncio.gather(*tasks, return_exceptions=True)
 
         success_count = sum(1 for result in results if isinstance(result, dict) and result.get("status") == "success")
         self.assertGreaterEqual(success_count, 1)

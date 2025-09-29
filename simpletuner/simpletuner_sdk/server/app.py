@@ -7,7 +7,7 @@ import os
 from enum import Enum
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -15,6 +15,16 @@ from fastapi.staticfiles import StaticFiles
 from .utils.paths import get_simpletuner_root, get_static_directory, get_template_directory
 
 logger = logging.getLogger("SimpleTunerServer")
+
+
+# These placeholders allow tests to monkeypatch heavy imports before the app factory runs.
+WebInterface = None
+ConfigurationClass = None
+TrainingHostClass = None
+
+# Backwards compatible aliases used by tests that patch module-level references.
+Configuration = None
+TrainingHost = None
 
 
 class ServerMode(Enum):
@@ -123,22 +133,45 @@ def create_app(
 def _add_trainer_routes(app: FastAPI):
     """Add training-related routes to the app."""
 
-    # Import and add existing routes
-    from simpletuner.simpletuner_sdk.configuration import Configuration
-    from simpletuner.simpletuner_sdk.interface import WebInterface
-    from simpletuner.simpletuner_sdk.training_host import TrainingHost
+    global WebInterface, ConfigurationClass, TrainingHostClass
+
+    global Configuration, TrainingHost
+
+    if WebInterface is None:
+        from simpletuner.simpletuner_sdk.interface import WebInterface as WebInterfaceClass
+        WebInterface = WebInterfaceClass
+    else:
+        WebInterfaceClass = WebInterface
+
+    if Configuration is not None and ConfigurationClass is not Configuration:
+        ConfigurationClass = Configuration
+    elif ConfigurationClass is None:
+        from simpletuner.simpletuner_sdk.configuration import Configuration as _Configuration
+        ConfigurationClass = _Configuration
+    Configuration = ConfigurationClass
+
+    if TrainingHost is not None and TrainingHostClass is not TrainingHost:
+        TrainingHostClass = TrainingHost
+    elif TrainingHostClass is None:
+        from simpletuner.simpletuner_sdk.training_host import TrainingHost as _TrainingHost
+        TrainingHostClass = _TrainingHost
+    TrainingHost = TrainingHostClass
+
+    def _include_router_if_present(router: object) -> None:
+        if isinstance(router, APIRouter):
+            app.include_router(router)
 
     # Initialize web interface
-    web_interface = WebInterface()
-    app.include_router(web_interface.router)
+    web_interface = WebInterfaceClass()
+    _include_router_if_present(getattr(web_interface, "router", None))
 
     # Configuration controller
-    config_controller = Configuration()
-    app.include_router(config_controller.router)
+    config_controller = ConfigurationClass()
+    _include_router_if_present(getattr(config_controller, "router", None))
 
     # Training host controller
-    training_host = TrainingHost()
-    app.include_router(training_host.router)
+    training_host = TrainingHostClass()
+    _include_router_if_present(getattr(training_host, "router", None))
 
     # Add API routes
     from .routes.caption_filters import router as caption_filters_router
@@ -151,15 +184,18 @@ def _add_trainer_routes(app: FastAPI):
     from .routes.web import router as web_router
     from .routes.webui_state import router as webui_state_router
 
-    app.include_router(models_router)
-    app.include_router(datasets_router)
-    app.include_router(caption_filters_router)
-    app.include_router(configs_router)
-    app.include_router(validation_router)
-    app.include_router(training_router)
-    app.include_router(web_router)
-    app.include_router(webui_state_router)
-    app.include_router(fields_router)
+    for router in (
+        models_router,
+        datasets_router,
+        caption_filters_router,
+        configs_router,
+        validation_router,
+        training_router,
+        web_router,
+        webui_state_router,
+        fields_router,
+    ):
+        _include_router_if_present(router)
 
     logger.info("Added trainer routes")
 

@@ -181,7 +181,26 @@ class Trainer:
 
     def parse_arguments(self, args=None, disable_accelerator: bool = False, exit_on_error: bool = False):
         self.config = load_config(args, exit_on_error=exit_on_error)
-        report_to = None if self.config.report_to.lower() == "none" else self.config.report_to
+        if self.config is None and args:
+            # Fallback to the user's persisted defaults when ad-hoc CLI args are incomplete.
+            # This mirrors historical behaviour where we would silently load the active
+            # environment when parsing failed, while still surfacing an explicit failure if
+            # no configuration can be resolved at all.
+            self.config = load_config(None, exit_on_error=exit_on_error)
+
+        if self.config is None:
+            raise ValueError("Training configuration could not be parsed")
+
+        report_to_value = getattr(self.config, "report_to", None)
+        if report_to_value is None or (isinstance(report_to_value, str) and not report_to_value.strip()):
+            report_to_value = "none"
+            setattr(self.config, "report_to", report_to_value)
+
+        if isinstance(report_to_value, str):
+            normalized_report = report_to_value.strip().lower()
+            report_to = None if normalized_report == "none" else report_to_value.strip()
+        else:
+            report_to = report_to_value
         if not disable_accelerator:
             accelerator_custom_config = [self.config.process_group_kwargs]
             if self.config.mixed_precision == "fp8":

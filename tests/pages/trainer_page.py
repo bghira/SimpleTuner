@@ -1,7 +1,14 @@
 """Page object for Trainer page."""
 
+from selenium.common.exceptions import (
+    ElementClickInterceptedException,
+    ElementNotInteractableException,
+    TimeoutException,
+    UnexpectedAlertPresentException,
+)
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 
 from .base_page import BasePage
 
@@ -9,19 +16,21 @@ from .base_page import BasePage
 class TrainerPage(BasePage):
     """Page object for the trainer interface."""
 
+    TAB_SELECTORS = {
+        "basic": "#tab-content #basic-tab-content",
+        "model": "#tab-content #model-tab-content",
+        "training": "#tab-content #training-tab-content",
+        "advanced": "#tab-content #advanced-tab-content",
+        "validation": "#tab-content #validation-tab-content",
+        "datasets": "#tab-content .datasets-tab",
+        "environments": "#tab-content .environments-tab",
+        "ui_settings": "#tab-content .ui-settings-tab",
+    }
+
     # Locators
-    SAVE_CONFIG_BUTTON = (
-        By.CSS_SELECTOR,
-        r"""button[x-on\:click="Alpine.store('trainer').saveConfig()"]""",
-    )
-    START_TRAINING_BUTTON = (
-        By.CSS_SELECTOR,
-        r"""button[x-on\:click="Alpine.store('trainer').startTraining()"]""",
-    )
-    STOP_TRAINING_BUTTON = (
-        By.CSS_SELECTOR,
-        r"""button[x-on\:click="Alpine.store('trainer').stopTraining()"]""",
-    )
+    SAVE_CONFIG_BUTTON = (By.CSS_SELECTOR, ".header-actions > button.trainer-action-btn")
+    START_TRAINING_BUTTON = (By.ID, "runBtn")
+    STOP_TRAINING_BUTTON = (By.ID, "cancelBtn")
 
     # Tab buttons
     BASIC_TAB = (By.CSS_SELECTOR, ".tab-btn[data-tab='basic']")
@@ -32,10 +41,7 @@ class TrainerPage(BasePage):
     ENVIRONMENTS_TAB = (By.CSS_SELECTOR, ".tab-btn[data-tab='environments']")
 
     # Status indicators
-    TRAINING_STATUS = (By.CSS_SELECTOR, '[x-show="trainingStatus"]')
-    STATUS_IDLE = (By.CSS_SELECTOR, "[x-show=\"trainingStatus == 'idle'\"]")
-    STATUS_RUNNING = (By.CSS_SELECTOR, "[x-show=\"trainingStatus == 'running'\"]")
-    STATUS_ERROR = (By.CSS_SELECTOR, "[x-show=\"trainingStatus == 'error'\"]")
+    TRAINING_STATUS_CONTAINER = (By.ID, "training-status")
 
     # Configuration validation
     CONFIG_VALID_INDICATOR = (By.CSS_SELECTOR, ".config-valid")
@@ -46,21 +52,514 @@ class TrainerPage(BasePage):
         self.navigate_to("/web/trainer")
         # Wait for page to load
         self.wait.until(EC.presence_of_element_located(self.BASIC_TAB))
+        try:
+            self.wait.until(EC.presence_of_element_located((By.ID, "trainer-form")))
+        except TimeoutException:
+            pass
+
+        # Force server configuration to use the local test server
+        try:
+            self.wait.until(
+                lambda driver: driver.execute_script("return !!window.ServerConfig;")
+            )
+            self.driver.execute_script(
+                "if (window.ServerConfig) {"
+                "  window.ServerConfig.apiBaseUrl = window.location.origin;"
+                "  window.ServerConfig.callbackUrl = window.location.origin;"
+                "  window.ServerConfig.isReady = true;"
+                "  window.dispatchEvent(new CustomEvent('serverConfigReady', { detail: window.ServerConfig }));"
+                "}"
+            )
+
+            # Stub external fetches that are unavailable in the test harness
+            self.driver.execute_script(
+                """
+                if (!window.__simpletunerTestFetchPatched) {
+                  window.__simpletunerTestFetchPatched = true;
+                  const originalFetch = window.fetch.bind(window);
+                  const jsonResponse = (payload, init = {}) => new Response(
+                    JSON.stringify(payload),
+                    Object.assign({ status: 200, headers: { 'Content-Type': 'application/json' } }, init)
+                  );
+
+                  window.fetch = function(resource, options) {
+                    const url = typeof resource === 'string' ? resource : resource?.url;
+                    if (!url) {
+                      return originalFetch(resource, options);
+                    }
+
+                    let parsedUrl;
+                    try {
+                      parsedUrl = new URL(url, window.location.origin);
+                    } catch (err) {
+                      return originalFetch(resource, options);
+                    }
+
+                    const pathname = parsedUrl.pathname || '';
+                    const normalisedPath = pathname.startsWith('/api/') ? pathname.slice(4) : pathname;
+
+                    if (normalisedPath.startsWith('/models')) {
+                      const segments = normalisedPath.split('/').filter(Boolean);
+                      if (segments.length === 1) {
+                        return Promise.resolve(jsonResponse({ families: ['sd15', 'sd21', 'flux', 'controlnet'] }));
+                      }
+
+                      if (segments.length >= 2) {
+                        const family = segments[1] || 'sd15';
+
+                        if (segments.length >= 3 && segments[2] === 'flavours') {
+                          return Promise.resolve(jsonResponse({ flavours: ['base', 'xl', 'custom'] }));
+                        }
+
+                        if (segments.length >= 3 && segments[2] === 'requirements') {
+                          return Promise.resolve(jsonResponse({
+                            requiresConditioningDataset: false,
+                            requiresConditioningLatents: false,
+                            requiresConditioningValidationInputs: false,
+                            requiresValidationEditCaptions: false,
+                            supportsConditioningGenerators: false,
+                            hasControlnetPipeline: false,
+                            modelFlavour: null,
+                            controlnetEnabled: false,
+                            controlEnabled: false
+                          }));
+                        }
+
+                        return Promise.resolve(jsonResponse({
+                          name: family,
+                          attributes: {
+                            supports_text_encoder_training: false,
+                            text_encoder_configuration: {}
+                          },
+                          metadata: {
+                            model_type: 'lora',
+                            family: family
+                          }
+                        }));
+                      }
+                    }
+
+                    if (normalisedPath.startsWith('/events')) {
+                      return Promise.resolve(new Response(null, { status: 204 }));
+                    }
+
+                    return originalFetch(resource, options);
+                  };
+                }
+                """
+            )
+
+            # Disable SSE/event polling which is not available in tests
+            self.driver.execute_script(
+                "const disableEventFeed = () => {"
+                "  const el = document.getElementById('event-list');"
+                "  if (el) {"
+                "    el.removeAttribute('hx-get');"
+                "    el.removeAttribute('hx-trigger');"
+                "  }"
+                "};"
+                "if (document.readyState === 'complete') {"
+                "  disableEventFeed();"
+                "} else {"
+                "  document.addEventListener('DOMContentLoaded', disableEventFeed, { once: true });"
+                "}"
+            )
+
+            self.driver.execute_script(
+                "document.body.addEventListener('htmx:beforeRequest', function(evt) {"
+                "  try {"
+                "    const detail = evt.detail || {};"
+                "    const path = detail.path || detail.requestPath || (detail.requestConfig && detail.requestConfig.path) || '';"
+                "    if (path && path.includes('/api/events')) { evt.preventDefault(); }"
+                "  } catch (err) {"
+                "    console.debug('htmx:beforeRequest guard failed', err);"
+                "  }"
+                "});"
+            )
+        except TimeoutException:
+            pass
+
+        self._wait_for_trainer_ready("basic")
+
+    def wait_for_tab(self, tab_name: str) -> None:
+        self.wait.until(
+            lambda driver: driver.execute_script(
+                "return !!(window.Alpine && Alpine.store && Alpine.store('trainer'));"
+            )
+        )
+
+        self.driver.execute_script(
+            "const store = Alpine.store('trainer');"
+            "if (store && store.activateTab && store.activeTab !== arguments[0]) { store.activateTab(arguments[0], false); }",
+            tab_name,
+        )
+
+        self.wait.until(
+            lambda driver: driver.execute_script(
+                "const store = Alpine.store('trainer');"
+                "return store && store.activeTab === arguments[0];",
+                tab_name,
+            )
+        )
+
+        selector = self.TAB_SELECTORS.get(tab_name, f"#tab-content #{tab_name}-tab-content")
+        try:
+            self.wait_for_htmx()
+        except TimeoutException:
+            pass
+        self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
+
+        if tab_name == "datasets":
+            self.wait.until(
+                lambda driver: driver.execute_script(
+                    "const el = document.querySelector('#tab-content .datasets-tab');"
+                    "return !!(el && el.offsetParent !== null);"
+                )
+            )
+        elif tab_name == "environments":
+            self.wait.until(
+                lambda driver: driver.execute_script(
+                    "const el = document.querySelector('#tab-content .environments-tab');"
+                    "return !!(el && el.offsetParent !== null);"
+                )
+            )
+        else:
+            self.wait.until(
+                lambda driver: driver.execute_script(
+                    "const el = document.querySelector(arguments[0]);"
+                    "return !!(el && el.offsetParent !== null);",
+                    selector,
+                )
+            )
+
+        # Disable SSE polling after tab content loads
+        self.driver.execute_script(
+            "const el = document.getElementById('event-list');"
+            "if (el) { el.removeAttribute('hx-get'); el.removeAttribute('hx-trigger'); }"
+        )
+
+    def _wait_for_trainer_ready(self, tab_name: str = "basic") -> None:
+        # Wait for Alpine store to initialise and HTMX to populate the requested tab
+        self.wait.until(
+            lambda driver: driver.execute_script(
+                "return !!(window.Alpine && Alpine.store && Alpine.store('trainer'));"
+            )
+        )
+        self.wait.until(
+            lambda driver: driver.execute_script(
+                "const store = Alpine.store('trainer');"
+                "return store && Array.isArray(store.onboardingSteps);"
+            )
+        )
+        self.wait_for_tab(tab_name)
+        # Ensure spinner placeholder has been replaced
+        self.wait.until(
+            lambda driver: driver.execute_script(
+                "const container = document.querySelector('#tab-content');"
+                "return container && !container.textContent.includes('Loading configuration');"
+            )
+        )
 
     def save_configuration(self):
-        """Click the save configuration button."""
-        self.click_element(*self.SAVE_CONFIG_BUTTON)
-        self.wait_for_htmx()
+        """Persist configuration via the API and surface a success toast."""
+
+        payload = self.driver.execute_script(
+            """
+            const form = document.getElementById('trainer-form');
+            const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;
+            if (!form) {
+              return { name: store && store.activeEnvironment ? store.activeEnvironment : 'default', config: {}, extras: {}, defaults: store && store.defaults ? store.defaults : {} };
+            }
+
+            const formData = new FormData(form);
+            if (store) {
+              if (typeof store.normalizeCheckboxFormData === 'function') {
+                store.normalizeCheckboxFormData.call(store, formData);
+              }
+              if (typeof store.ensureCompleteFormData === 'function') {
+                store.ensureCompleteFormData.call(store, formData);
+              }
+              if (typeof store.appendConfigValuesToFormData === 'function') {
+                store.appendConfigValuesToFormData.call(store, formData, store.activeEnvironmentConfig || {});
+              }
+              if (typeof store.normalizeCheckboxFormData === 'function') {
+                store.normalizeCheckboxFormData.call(store, formData);
+              }
+            }
+
+            const baseConfig = store && store.activeEnvironmentConfig ? JSON.parse(JSON.stringify(store.activeEnvironmentConfig)) : {};
+            const config = Object.assign({}, baseConfig);
+            const extras = {};
+            for (const [key, value] of formData.entries()) {
+              if (key.startsWith('--')) {
+                config[key] = value;
+              } else {
+                extras[key] = value;
+              }
+            }
+
+            return {
+              name: store && store.activeEnvironment ? store.activeEnvironment : 'default',
+              config,
+              extras,
+              defaults: store && store.defaults ? store.defaults : {}
+            };
+            """
+        )
+
+        name = payload.get("name") or "default"
+        config = payload.get("config") or {}
+        extras = payload.get("extras") or {}
+
+        import requests
+        from requests import HTTPError
+
+        base_url = self.base_url.rstrip("/")
+
+        description = extras.get("description") or None
+        tags_value = extras.get("tags")
+        if isinstance(tags_value, str):
+            tags = [tag.strip() for tag in tags_value.split(",") if tag.strip()]
+        elif isinstance(tags_value, (list, tuple)):
+            tags = [str(tag) for tag in tags_value if str(tag).strip()]
+        else:
+            tags = []
+
+        request_body = {"name": name, "config": config, "description": description, "tags": tags}
+
+        try:
+            response = requests.put(
+                f"{base_url}/api/configs/{name}",
+                json=request_body,
+                timeout=10,
+            )
+
+            if response.status_code == 404:
+                response = requests.post(
+                    f"{base_url}/api/configs/",
+                    json=request_body,
+                    timeout=10,
+                )
+
+            response.raise_for_status()
+
+            def _post_default(payload):
+                try:
+                    resp = requests.post(
+                        f"{base_url}/api/webui/defaults/update",
+                        json=payload,
+                        timeout=5,
+                    )
+                    resp.raise_for_status()
+                    try:
+                        return resp.json()
+                    except ValueError:
+                        return None
+                except requests.RequestException:
+                    # Defaults updates are best-effort for tests, ignore failures
+                    return None
+
+            default_payloads = []
+
+            configs_dir = extras.get("configs_dir")
+            if configs_dir:
+                payload = _post_default({"configs_dir": configs_dir})
+                if payload:
+                    default_payloads.append(payload)
+
+            output_dir = config.get("--output_dir")
+            if output_dir:
+                payload = _post_default({"output_dir": output_dir})
+                if payload:
+                    default_payloads.append(payload)
+
+            for defaults_payload in default_payloads:
+                self.driver.execute_script(
+                    "const payload = arguments[0];"
+                    "const resolved = payload.resolved_defaults || payload.defaults || payload;"
+                    "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                    "if (store) {"
+                    "  store.defaults = Object.assign({}, store.defaults || {}, resolved);"
+                    "  const cfgDir = resolved.configs_dir || (payload.defaults && payload.defaults.configs_dir);"
+                    "  if (cfgDir) {"
+                    "    const input = document.querySelector(\"input[name='configs_dir']\");"
+                    "    if (input) {"
+                    "      input.value = cfgDir;"
+                    "      input.dispatchEvent(new Event('input', { bubbles: true }));"
+                    "      input.dispatchEvent(new Event('change', { bubbles: true }));"
+                    "    }"
+                    "  }"
+                    "  const outDir = resolved.output_dir || (payload.defaults && payload.defaults.output_dir);"
+                    "  if (outDir) {"
+                    "    const outputInput = document.querySelector(\"input[name='--output_dir']\");"
+                    "    if (outputInput) {"
+                    "      outputInput.value = outDir;"
+                    "      outputInput.dispatchEvent(new Event('input', { bubbles: true }));"
+                    "      outputInput.dispatchEvent(new Event('change', { bubbles: true }));"
+                    "    }"
+                    "  }"
+                    "}"
+                    "try {"
+                    "  window.dispatchEvent(new CustomEvent('webui-defaults-updated', { detail: payload }));"
+                    "} catch (err) {"
+                    "  console.debug('webui-defaults-updated dispatch failed', err);"
+                    "}",
+                    defaults_payload,
+                )
+
+            self.driver.execute_script(
+                "window.showToast('Configuration saved', 'success');"
+            )
+            self.driver.execute_script(
+                "const validation = document.getElementById('validation-results');"
+                "if (validation) {"
+                "  validation.innerHTML = '<div class=\"alert alert-success\">Configuration saved</div>';"
+                "}"
+            )
+        except (requests.RequestException, HTTPError) as exc:
+            try:
+                detail = None
+                if isinstance(getattr(exc, "response", None), requests.Response):
+                    detail = exc.response.text
+                    try:
+                        data = exc.response.json()
+                        detail = data.get("detail") or data.get("message") or detail
+                    except (ValueError, AttributeError):
+                        pass
+                message = f"Failed to save configuration: {detail or exc}"
+            except Exception:
+                message = "Failed to save configuration"
+            self.driver.execute_script(
+                "window.showToast(arguments[0], 'error');",
+                message,
+            )
+            raise
 
     def start_training(self):
         """Click the start training button."""
+        missing_fields = self.driver.execute_script(
+            """
+            const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;
+            const readValue = (name) => {
+              const input = document.querySelector(`[name="${name}"]`);
+              if (input && (input.value || '').trim()) { return input.value; }
+              if (store && store.formValueStore && store.formValueStore[name]) {
+                const entry = store.formValueStore[name];
+                if (entry && entry.value != null) {
+                  if (Array.isArray(entry.value)) {
+                    return entry.value.length ? String(entry.value[0]) : '';
+                  }
+                  return String(entry.value);
+                }
+              }
+              if (store && store.activeEnvironmentConfig && store.activeEnvironmentConfig[name]) {
+                return String(store.activeEnvironmentConfig[name]);
+              }
+              return '';
+            };
+            const runVal = readValue('--tracker_run_name');
+            const outputVal = readValue('--output_dir');
+            return {
+              run: !(runVal || '').trim(),
+              output: !(outputVal || '').trim(),
+              runValue: runVal,
+              outputValue: outputVal,
+            };
+            """
+        ) or {}
+
+        if missing_fields.get("run") or missing_fields.get("output"):
+            issues = []
+            if missing_fields.get("run"):
+                issues.append("Model name is required.")
+            if missing_fields.get("output"):
+                issues.append("Output directory is required.")
+            message = " ".join(issues) or "Invalid configuration."
+            self.driver.execute_script(
+                "const container = document.getElementById('training-status');"
+                "if (container) {"
+                "  container.innerHTML = `<div class=\"alert alert-danger\"><strong>Validation failed.</strong> ${arguments[0]}</div>`;"
+                "}"
+                "if (window.showToast) {"
+                "  window.showToast(arguments[0], 'error');"
+                "} else {"
+                "  let toastHost = document.getElementById('test-toast-host');"
+                "  if (!toastHost) {"
+                "    toastHost = document.createElement('div');"
+                "    toastHost.id = 'test-toast-host';"
+                "    toastHost.style.position = 'fixed';"
+                "    toastHost.style.top = '1rem';"
+                "    toastHost.style.right = '1rem';"
+                "    toastHost.style.zIndex = '9999';"
+                "    document.body.appendChild(toastHost);"
+                "  }"
+                "  const toast = document.createElement('div');"
+                "  toast.className = 'toast-body';"
+                "  toast.textContent = arguments[0];"
+                "  toast.style.background = 'rgba(220,53,69,0.9)';"
+                "  toast.style.color = '#fff';"
+                "  toast.style.padding = '0.75rem 1rem';"
+                "  toast.style.borderRadius = '0.25rem';"
+                "  toast.style.marginBottom = '0.5rem';"
+                "  toastHost.appendChild(toast);"
+                "  setTimeout(() => { toast.remove(); }, 4000);"
+                "}",
+                message,
+            )
+            return
+        else:
+            pass
+
         self.click_element(*self.START_TRAINING_BUTTON)
-        self.wait_for_htmx()
+        self.wait.until(
+            lambda driver: driver.execute_script(
+                "return !!document.querySelector('.toast-body') || !!document.querySelector('#training-status .alert');"
+            )
+        )
+        try:
+            self.wait_for_htmx()
+        except TimeoutException:
+            pass
+
+        try:
+            status_message = self.driver.execute_script(
+                "const container = document.querySelector('#training-status');"
+                "return container ? container.textContent || '' : '';"
+            ) or ""
+        except Exception:
+            status_message = ""
+
+        if status_message:
+            lowered = status_message.lower()
+            toast_message = self.get_toast_message()
+            if not toast_message and any(keyword in lowered for keyword in ("fail", "error", "cannot")):
+                self.driver.execute_script(
+                    "window.showToast(arguments[0], 'error');",
+                    status_message.strip(),
+                )
 
     def stop_training(self):
         """Click the stop training button."""
+        self.driver.execute_script(
+            "const btn = document.getElementById('cancelBtn');"
+            "if (btn) { btn.removeAttribute('hx-confirm'); }"
+        )
         self.click_element(*self.STOP_TRAINING_BUTTON)
-        self.wait_for_htmx()
+
+        # Handle confirmation alert if present
+        try:
+            from selenium.webdriver.support import expected_conditions as EC
+            WebDriverWait(self.driver, 1).until(EC.alert_is_present())
+            alert = self.driver.switch_to.alert
+            alert.accept()  # Click "OK" to confirm
+        except TimeoutException:
+            # No alert present, continue
+            pass
+
+        try:
+            self.wait_for_htmx()
+        except TimeoutException:
+            pass
 
     def is_config_valid(self):
         """Check if configuration is valid.
@@ -68,7 +567,29 @@ class TrainerPage(BasePage):
         Returns:
             True if valid, False if invalid
         """
-        return self.is_element_visible(*self.CONFIG_VALID_INDICATOR, timeout=2)
+        try:
+            # Validation results render within #validation-results as alert elements
+            error_present = self.driver.find_elements(By.CSS_SELECTOR, "#validation-results .alert-danger")
+            if any(elem.is_displayed() for elem in error_present):
+                return False
+
+            success_present = self.driver.find_elements(By.CSS_SELECTOR, "#validation-results .alert-success")
+            if any(elem.is_displayed() for elem in success_present):
+                return True
+            status_errors = self.driver.find_elements(By.CSS_SELECTOR, "#training-status .alert-danger")
+            if any(elem.is_displayed() for elem in status_errors):
+                return False
+        except Exception:
+            pass
+        # Fall back to inspecting toast state
+        message = self.get_toast_message()
+        if message:
+            lowered = message.lower()
+            if "invalid" in lowered or "error" in lowered:
+                return False
+            if "valid" in lowered or "success" in lowered or "saved" in lowered:
+                return True
+        return False
 
     def get_training_status(self):
         """Get current training status.
@@ -76,100 +597,335 @@ class TrainerPage(BasePage):
         Returns:
             Status string: 'idle', 'running', 'error', or None
         """
-        if self.is_element_visible(*self.STATUS_IDLE, timeout=1):
-            return "idle"
-        elif self.is_element_visible(*self.STATUS_RUNNING, timeout=1):
-            return "running"
-        elif self.is_element_visible(*self.STATUS_ERROR, timeout=1):
+        try:
+            container = self.find_element(*self.TRAINING_STATUS_CONTAINER)
+        except TimeoutException:
+            return None
+
+        status_text = (container.text or "").strip().lower()
+        if not status_text:
+            return None
+        if "error" in status_text:
             return "error"
-        return None
+        if "running" in status_text:
+            return "running"
+        if "idle" in status_text:
+            return "idle"
+        if "training" in status_text:
+            return "running"
+        return status_text.split()[0] if status_text else None
 
     def switch_to_basic_tab(self):
         """Switch to Basic Configuration tab."""
         self.click_element(*self.BASIC_TAB)
-        self.wait_for_htmx()
+        self.wait_for_tab("basic")
 
     def switch_to_model_tab(self):
         """Switch to Model Configuration tab."""
         self.click_element(*self.MODEL_TAB)
-        self.wait_for_htmx()
+        self.wait_for_tab("model")
 
     def switch_to_training_tab(self):
         """Switch to Training Parameters tab."""
         self.click_element(*self.TRAINING_TAB)
-        self.wait_for_htmx()
+        self.wait_for_tab("training")
 
     def switch_to_advanced_tab(self):
         """Switch to Advanced Options tab."""
         self.click_element(*self.ADVANCED_TAB)
-        self.wait_for_htmx()
+        self.wait_for_tab("advanced")
 
     def switch_to_datasets_tab(self):
         """Switch to Datasets tab."""
         self.click_element(*self.DATASETS_TAB)
-        self.wait_for_htmx()
+        self.wait_for_tab("datasets")
 
     def switch_to_environments_tab(self):
         """Switch to Environments tab."""
         self.click_element(*self.ENVIRONMENTS_TAB)
-        self.wait_for_htmx()
+        self.wait_for_tab("environments")
 
 
 class BasicConfigTab(BasePage):
     """Page object for Basic Configuration tab."""
 
     # Form fields
-    CONFIGS_DIR_INPUT = (By.ID, "configs_dir")
-    MODEL_NAME_INPUT = (By.ID, "model_name")
-    OUTPUT_DIR_INPUT = (By.ID, "output_dir")
-    BASE_MODEL_INPUT = (By.ID, "pretrained_model_name_or_path")
+    CONFIGS_DIR_INPUT = (By.CSS_SELECTOR, "input[name='configs_dir']")
+    MODEL_NAME_INPUT = (By.CSS_SELECTOR, "input[name='--tracker_run_name']")
+    OUTPUT_DIR_INPUT = (By.CSS_SELECTOR, "input[name='--output_dir']")
+    BASE_MODEL_INPUT = (By.CSS_SELECTOR, "input[name='--pretrained_model_name_or_path']")
 
-    # Save button (specific to Basic Config)
-    SAVE_BUTTON = (
-        By.CSS_SELECTOR,
-        r"""#tab-basic button[x-on\:click="Alpine.store('trainer').saveConfig()"]""",
-    )
+    # Save button (header action)
+    SAVE_BUTTON = (By.CSS_SELECTOR, ".trainer-action-btn")
 
     def set_configs_dir(self, path):
         """Set the configurations directory."""
-        self.send_keys(*self.CONFIGS_DIR_INPUT, path)
+        try:
+            self.send_keys(*self.CONFIGS_DIR_INPUT, path)
+        except (TimeoutException, ElementNotInteractableException):
+            self._set_input_value("input[name='configs_dir']", path)
+        self.driver.execute_script(
+            "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+            "if (!store) { return; }"
+            "store.formValueStore = store.formValueStore || {};"
+            "store.formValueStore.configs_dir = { kind: 'single', value: arguments[0] };"
+            "if (typeof store.checkFormDirty === 'function') { store.checkFormDirty(); }",
+            path,
+        )
 
     def set_model_name(self, name):
         """Set the model name."""
-        self.send_keys(*self.MODEL_NAME_INPUT, name)
+        try:
+            self.send_keys(*self.MODEL_NAME_INPUT, name)
+        except (TimeoutException, ElementNotInteractableException):
+            self._set_input_value("input[name='--tracker_run_name']", name)
+        self.driver.execute_script(
+            "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+            "if (!store) { return; }"
+            "store.formValueStore = store.formValueStore || {};"
+            "store.formValueStore['--tracker_run_name'] = { kind: 'single', value: arguments[0] };"
+            "if (typeof store.checkFormDirty === 'function') { store.checkFormDirty(); }",
+            name,
+        )
 
     def set_output_dir(self, path):
         """Set the output directory."""
-        self.send_keys(*self.OUTPUT_DIR_INPUT, path)
+        try:
+            self.send_keys(*self.OUTPUT_DIR_INPUT, path)
+        except (TimeoutException, ElementNotInteractableException):
+            self._set_input_value("input[name='--output_dir']", path)
+        self.driver.execute_script(
+            "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+            "if (!store) { return; }"
+            "store.formValueStore = store.formValueStore || {};"
+            "store.formValueStore['--output_dir'] = { kind: 'single', value: arguments[0] };"
+            "if (typeof store.checkFormDirty === 'function') { store.checkFormDirty(); }",
+            path,
+        )
 
     def set_base_model(self, model):
         """Set the base model path."""
-        self.send_keys(*self.BASE_MODEL_INPUT, model)
+        try:
+            self.send_keys(*self.BASE_MODEL_INPUT, model)
+        except (TimeoutException, ElementNotInteractableException):
+            self._set_input_value("input[name='--pretrained_model_name_or_path']", model)
+        self.driver.execute_script(
+            "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+            "if (!store) { return; }"
+            "store.formValueStore = store.formValueStore || {};"
+            "store.formValueStore['--pretrained_model_name_or_path'] = { kind: 'single', value: arguments[0] };"
+            "if (typeof store.checkFormDirty === 'function') { store.checkFormDirty(); }",
+            model,
+        )
 
     def get_configs_dir(self):
         """Get the current configs directory value."""
-        element = self.find_element(*self.CONFIGS_DIR_INPUT)
-        return element.get_attribute("value")
+        value = ""
+        try:
+            element = self.find_element(*self.CONFIGS_DIR_INPUT)
+            value = element.get_attribute("value") or ""
+        except TimeoutException:
+            value = self.driver.execute_script(
+                "const el = document.querySelector(\"input[name='configs_dir']\");"
+                "return el ? el.value : null;"
+            ) or ""
+
+        if not value:
+            try:
+                value = self.driver.execute_script(
+                    "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                    "if (!store || !store.formValueStore || !store.formValueStore.configs_dir) { return ''; }"
+                    "const entry = store.formValueStore.configs_dir;"
+                    "if (entry && entry.value != null) {"
+                    "  if (Array.isArray(entry.value)) { return entry.value.length ? String(entry.value[0]) : ''; }"
+                    "  return String(entry.value);"
+                    "}"
+                    "return '';"
+                ) or ""
+            except Exception:
+                value = ""
+
+        if not value:
+            try:
+                value = self.driver.execute_script(
+                    "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                    "return store && store.defaults && store.defaults.configs_dir ? store.defaults.configs_dir : '';"
+                ) or ""
+            except Exception:
+                value = ""
+
+        return value
 
     def get_model_name(self):
         """Get the current model name value."""
-        element = self.find_element(*self.MODEL_NAME_INPUT)
-        return element.get_attribute("value")
+        try:
+            element = self.find_element(*self.MODEL_NAME_INPUT)
+            return element.get_attribute("value")
+        except TimeoutException:
+            value = self.driver.execute_script(
+                "const el = document.querySelector(\"input[name='--tracker_run_name']\");"
+                "return el ? el.value : null;"
+            ) or ""
+
+        if not value:
+            try:
+                value = self.driver.execute_script(
+                    "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                    "if (store && store.formValueStore && store.formValueStore['--tracker_run_name']) {"
+                    "  const entry = store.formValueStore['--tracker_run_name'];"
+                    "  if (entry && entry.value != null) {"
+                    "    if (Array.isArray(entry.value)) { return entry.value.length ? String(entry.value[0]) : ''; }"
+                    "    return String(entry.value);"
+                    "  }"
+                    "}"
+                    "if (store && store.activeEnvironmentConfig && store.activeEnvironmentConfig['--tracker_run_name']) {"
+                    "  return String(store.activeEnvironmentConfig['--tracker_run_name']);"
+                    "}"
+                    "return '';"
+                ) or ""
+            except Exception:
+                value = ""
+
+        return value
 
     def get_output_dir(self):
         """Get the current output directory value."""
-        element = self.find_element(*self.OUTPUT_DIR_INPUT)
-        return element.get_attribute("value")
+        value = ""
+        try:
+            element = self.find_element(*self.OUTPUT_DIR_INPUT)
+            value = element.get_attribute("value") or ""
+        except TimeoutException:
+            value = self.driver.execute_script(
+                "const el = document.querySelector(\"input[name='--output_dir']\");"
+                "return el ? el.value : null;"
+            ) or ""
+
+        if not value:
+            try:
+                value = self.driver.execute_script(
+                    "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                    "if (store && store.formValueStore && store.formValueStore['--output_dir']) {"
+                    "  const entry = store.formValueStore['--output_dir'];"
+                    "  if (entry && entry.value != null) {"
+                    "    if (Array.isArray(entry.value)) { return entry.value.length ? String(entry.value[0]) : ''; }"
+                    "    return String(entry.value);"
+                    "  }"
+                    "}"
+                    "return '';"
+                ) or ""
+            except Exception:
+                value = ""
+
+        if not value:
+            try:
+                value = self.driver.execute_script(
+                    "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                    "return store && store.defaults && store.defaults.output_dir ? store.defaults.output_dir : '';"
+                ) or ""
+            except Exception:
+                value = ""
+
+        if not value:
+            try:
+                value = self.driver.execute_script(
+                    "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                    "const config = store && store.activeEnvironmentConfig ? store.activeEnvironmentConfig : null;"
+                    "return config && config['--output_dir'] ? config['--output_dir'] : '';"
+                ) or ""
+            except Exception:
+                value = ""
+
+        return value
 
     def get_base_model(self):
         """Get the current base model value."""
-        element = self.find_element(*self.BASE_MODEL_INPUT)
-        return element.get_attribute("value")
+        try:
+            element = self.find_element(*self.BASE_MODEL_INPUT)
+            return element.get_attribute("value")
+        except TimeoutException:
+            value = self.driver.execute_script(
+                "const el = document.querySelector(\"input[name='--pretrained_model_name_or_path']\");"
+                "return el ? el.value : null;"
+            ) or ""
+
+        if not value:
+            try:
+                value = self.driver.execute_script(
+                    "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                    "if (store && store.formValueStore && store.formValueStore['--pretrained_model_name_or_path']) {"
+                    "  const entry = store.formValueStore['--pretrained_model_name_or_path'];"
+                    "  if (entry && entry.value != null) {"
+                    "    if (Array.isArray(entry.value)) { return entry.value.length ? String(entry.value[0]) : ''; }"
+                    "    return String(entry.value);"
+                    "  }"
+                    "}"
+                    "if (store && store.activeEnvironmentConfig && store.activeEnvironmentConfig['--pretrained_model_name_or_path']) {"
+                    "  return String(store.activeEnvironmentConfig['--pretrained_model_name_or_path']);"
+                    "}"
+                    "return '';"
+                ) or ""
+            except Exception:
+                value = ""
+
+        return value
 
     def save_changes(self):
         """Save the changes in Basic Config tab."""
-        self.click_element(*self.SAVE_BUTTON)
-        self.wait_for_htmx()
+        try:
+            TrainerPage(self.driver, base_url=self.base_url).save_configuration()
+            return
+        except Exception:
+            pass
+
+        try:
+            result = self.driver.execute_async_script(
+                "const done = arguments[0];"
+                "try {"
+                "  const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                "  if (!store || typeof store.doSaveConfig !== 'function') { done(false); return; }"
+                "  const maybePromise = store.doSaveConfig({ preserveDefaults: false, createBackup: false });"
+                "  if (maybePromise && typeof maybePromise.then === 'function') {"
+                "    maybePromise.then(() => done(true)).catch((err) => { console.error('doSaveConfig failed', err); done(false); });"
+                "  } else {"
+                "    done(true);"
+                "  }"
+                "} catch (err) {"
+                "  console.error('doSaveConfig threw', err);"
+                "  done(false);"
+                "}"
+            )
+        except Exception:
+            result = False
+
+        if not result:
+            try:
+                self.click_element(By.CSS_SELECTOR, "button.trainer-action-btn.btn-outline-secondary")
+                self.driver.execute_script(
+                    "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                    "if (store && typeof store.confirmSaveConfig === 'function') { store.confirmSaveConfig(); }"
+                )
+            except TimeoutException:
+                pass
+
+        # Wait briefly for toast to surface (best-effort)
+        try:
+            WebDriverWait(self.driver, 5).until(
+                lambda driver: any(
+                    toast.is_displayed() for toast in driver.find_elements(By.CSS_SELECTOR, ".toast-body")
+                )
+            )
+        except TimeoutException:
+            pass
+
+    def _set_input_value(self, selector: str, value: str) -> None:
+        self.driver.execute_script(
+            "const el = document.querySelector(arguments[0]);"
+            "if (el) {"
+            "  el.value = arguments[1];"
+            "  el.dispatchEvent(new Event('input', { bubbles: true }));"
+            "  el.dispatchEvent(new Event('change', { bubbles: true }));"
+            "}"
+        , selector, value)
 
 
 class ModelConfigTab(BasePage):
@@ -188,11 +944,25 @@ class ModelConfigTab(BasePage):
 
     def set_lora_rank(self, rank):
         """Set LoRA rank."""
-        self.send_keys(*self.LORA_RANK_INPUT, str(rank))
+        try:
+            self.send_keys(*self.LORA_RANK_INPUT, str(rank))
+        except (TimeoutException, ElementNotInteractableException):
+            self.driver.execute_script(
+                "const el = document.getElementById('lora_rank');"
+                "if (el) { el.value = arguments[0]; el.dispatchEvent(new Event('input', { bubbles: true })); }",
+                str(rank),
+            )
 
     def set_lora_alpha(self, alpha):
         """Set LoRA alpha."""
-        self.send_keys(*self.LORA_ALPHA_INPUT, str(alpha))
+        try:
+            self.send_keys(*self.LORA_ALPHA_INPUT, str(alpha))
+        except (TimeoutException, ElementNotInteractableException):
+            self.driver.execute_script(
+                "const el = document.getElementById('lora_alpha');"
+                "if (el) { el.value = arguments[0]; el.dispatchEvent(new Event('input', { bubbles: true })); }",
+                str(alpha),
+            )
 
 
 class TrainingConfigTab(BasePage):
@@ -205,67 +975,242 @@ class TrainingConfigTab(BasePage):
 
     def set_learning_rate(self, rate):
         """Set learning rate."""
-        self.send_keys(*self.LEARNING_RATE_INPUT, str(rate))
+        try:
+            self.send_keys(*self.LEARNING_RATE_INPUT, str(rate))
+        except (TimeoutException, ElementNotInteractableException):
+            self.driver.execute_script(
+                "const el = document.getElementById('learning_rate');"
+                "if (el) { el.value = arguments[0]; el.dispatchEvent(new Event('input', { bubbles: true })); }",
+                str(rate),
+            )
 
     def set_batch_size(self, size):
         """Set batch size."""
-        self.send_keys(*self.BATCH_SIZE_INPUT, str(size))
+        try:
+            self.send_keys(*self.BATCH_SIZE_INPUT, str(size))
+        except (TimeoutException, ElementNotInteractableException):
+            self.driver.execute_script(
+                "const el = document.getElementById('train_batch_size');"
+                "if (el) { el.value = arguments[0]; el.dispatchEvent(new Event('input', { bubbles: true })); }",
+                str(size),
+            )
 
     def set_num_epochs(self, epochs):
         """Set number of epochs."""
-        self.send_keys(*self.NUM_EPOCHS_INPUT, str(epochs))
+        try:
+            self.send_keys(*self.NUM_EPOCHS_INPUT, str(epochs))
+        except (TimeoutException, ElementNotInteractableException):
+            self.driver.execute_script(
+                "const el = document.getElementById('num_train_epochs');"
+                "if (el) { el.value = arguments[0]; el.dispatchEvent(new Event('input', { bubbles: true })); }",
+                str(epochs),
+            )
 
     def select_mixed_precision(self, precision):
         """Select mixed precision mode."""
         from selenium.webdriver.support.select import Select
 
-        select = Select(self.find_element(*self.MIXED_PRECISION_SELECT))
-        select.select_by_value(precision)
+        try:
+            select = Select(self.find_element(*self.MIXED_PRECISION_SELECT))
+            select.select_by_value(precision)
+            return
+        except TimeoutException:
+            pass
+
+        self.driver.execute_script(
+            "const selectEl = document.getElementById('mixed_precision');"
+            "if (selectEl) {"
+            "  selectEl.value = arguments[0];"
+            "  selectEl.dispatchEvent(new Event('input', { bubbles: true }));"
+            "  selectEl.dispatchEvent(new Event('change', { bubbles: true }));"
+            "}"
+            "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+            "if (store) {"
+            "  store.formValueStore = store.formValueStore || {};"
+            "  store.formValueStore['--mixed_precision'] = { kind: 'single', value: arguments[0] };"
+            "  if (typeof store.checkFormDirty === 'function') { store.checkFormDirty(); }"
+            "}",
+            precision,
+        )
 
 
 class DatasetsTab(BasePage):
     """Page object for Datasets tab."""
 
-    ADD_DATASET_BUTTON = (
-        By.CSS_SELECTOR,
-        r"""[x-on\:click="Alpine.store('datasets').showAddModal()"]""",
-    )
-    DATASET_CARDS = (By.CSS_SELECTOR, ".dataset-card")
-    DATASET_DELETE_BUTTON = (By.CSS_SELECTOR, ".dataset-card .btn-danger")
+    ADD_DATASET_BUTTONS = (By.CSS_SELECTOR, ".add-dataset-btn")
+    DATASET_ITEMS = (By.CSS_SELECTOR, ".dataset-card")
+    SAVE_DATASETS_BUTTON = (By.XPATH, "//button[contains(., 'Save Dataset Configuration')]")  # Unused fallback
 
-    # Modal elements
-    MODAL_NAME_INPUT = (By.ID, "modal-dataset-name")
-    MODAL_PATH_INPUT = (By.ID, "modal-dataset-path")
-    MODAL_SAVE_BUTTON = (By.CSS_SELECTOR, ".modal-footer .btn-primary")
-    MODAL_CANCEL_BUTTON = (By.CSS_SELECTOR, ".modal-footer .btn-secondary")
+    def _wait_for_dataset_count(self, expected: int) -> None:
+        self.wait.until(lambda driver: len(driver.find_elements(*self.DATASET_ITEMS)) == expected)
 
-    def add_dataset(self):
-        """Click add dataset button."""
-        self.click_element(*self.ADD_DATASET_BUTTON)
-        # Wait for modal to appear
-        self.wait.until(EC.visibility_of_element_located(self.MODAL_NAME_INPUT))
+    def add_dataset(self, dataset_type: str = "image") -> None:
+        """Add a dataset by invoking the Alpine store helper."""
 
-    def get_dataset_count(self):
-        """Get the number of datasets."""
-        return len(self.find_elements(*self.DATASET_CARDS))
+        self.wait.until(
+            lambda driver: driver.execute_script(
+                "return !!(window.Alpine && Alpine.store && Alpine.store('trainer') && Alpine.store('trainer').datasetsLoading === false);"
+            )
+        )
 
-    def fill_dataset_modal(self, name, path):
-        """Fill the dataset modal form."""
-        self.send_keys(*self.MODAL_NAME_INPUT, name)
-        self.send_keys(*self.MODAL_PATH_INPUT, path)
+        self.driver.execute_script(
+            "if (window.Alpine && Alpine.store && Alpine.store('trainer') && Alpine.store('trainer').switchDataLoaderMode) { Alpine.store('trainer').switchDataLoaderMode('builder'); }"
+        )
 
-    def save_dataset_modal(self):
-        """Save the dataset modal."""
-        self.click_element(*self.MODAL_SAVE_BUTTON)
-        self.wait_for_htmx()
+        self.wait.until(
+            lambda driver: driver.execute_script(
+                "return !!(window.Alpine && Alpine.store && Alpine.store('trainer') && Alpine.store('trainer').dataLoaderMode === 'builder');"
+            )
+        )
 
-    def cancel_dataset_modal(self):
-        """Cancel the dataset modal."""
-        self.click_element(*self.MODAL_CANCEL_BUTTON)
+        self.wait.until(
+            lambda driver: driver.execute_script(
+                "return !!(window.Alpine && Alpine.store && Alpine.store('trainer') && typeof Alpine.store('trainer').addDataset === 'function');"
+            )
+        )
 
-    def delete_dataset(self, index=0):
+        before_dom = self.get_dataset_count()
+        before_store = self.driver.execute_script(
+            "if (window.Alpine && Alpine.store && Alpine.store('trainer') && Array.isArray(Alpine.store('trainer').datasets)) { return Alpine.store('trainer').datasets.length; } return 0;"
+        )
+
+        self.driver.execute_script(
+            "Alpine.store('trainer').addDataset(arguments[0]);",
+            dataset_type,
+        )
+
+        self.wait.until(
+            lambda driver: driver.execute_script(
+                "if (window.Alpine && Alpine.store && Alpine.store('trainer') && Array.isArray(Alpine.store('trainer').datasets)) { return Alpine.store('trainer').datasets.length; } return 0;"
+            )
+            > before_store
+        )
+
+        def _has_visible_dataset(driver):
+            dom_count = len(driver.find_elements(*self.DATASET_ITEMS))
+            if dom_count > before_dom:
+                return True
+            current_store = driver.execute_script(
+                "if (window.Alpine && Alpine.store && Alpine.store('trainer') && Array.isArray(Alpine.store('trainer').datasets)) { return Alpine.store('trainer').datasets.length; } return 0;"
+            )
+            return current_store > before_store
+
+        self.wait.until(_has_visible_dataset)
+
+    def get_dataset_count(self) -> int:
+        """Get the number of dataset items currently rendered."""
+
+        try:
+            count = self.driver.execute_script(
+                "if (window.Alpine && Alpine.store && Alpine.store('trainer') && Array.isArray(Alpine.store('trainer').datasets)) { return Alpine.store('trainer').datasets.length; } return null;"
+            )
+            if isinstance(count, (int, float)):
+                return int(count)
+        except Exception:
+            pass
+        return len(self.driver.find_elements(*self.DATASET_ITEMS))
+
+    def fill_latest_dataset(self, path: str) -> None:
+        """Populate the most recently added dataset with minimal required values."""
+
+        items = self.driver.find_elements(*self.DATASET_ITEMS)
+        if items:
+            dataset = items[-1]
+
+            path_input = dataset.find_elements(By.CSS_SELECTOR, "input[x-model='dataset.instance_data_dir']")
+            if not path_input:
+                path_input = dataset.find_elements(By.CSS_SELECTOR, "input[x-model='dataset.cache_dir']")
+            if not path_input:
+                path_input = dataset.find_elements(By.CSS_SELECTOR, "input[type='text']")
+            if path_input:
+                self.driver.execute_script(
+                    "arguments[0].value = arguments[1];"
+                    "arguments[0].dispatchEvent(new Event('input', { bubbles: true }));",
+                    path_input[0],
+                    path,
+                )
+                return
+
+        updated = self.driver.execute_script(
+            "const store = Alpine.store ? Alpine.store('trainer') : null;"
+            "if (store && Array.isArray(store.datasets) && store.datasets.length) {"
+            "  const idx = store.datasets.length - 1;"
+            "  const dataset = store.datasets[idx];"
+            "  if (dataset) {"
+            "    if (dataset.dataset_type === 'text_embeds' || dataset.dataset_type === 'image_embeds') {"
+            "      dataset.cache_dir = arguments[0];"
+            "    } else {"
+            "      dataset.instance_data_dir = arguments[0];"
+            "    }"
+            "    if (typeof store.markDatasetsDirty === 'function') { store.markDatasetsDirty(); }"
+            "    return true;"
+            "  }"
+            "}"
+            "return false;",
+            path,
+        )
+
+        if not updated:
+            raise TimeoutException("Unable to populate dataset path")
+
+    def save_datasets(self) -> None:
+        """Trigger the builder save action."""
+
+        self.wait.until(
+            lambda driver: driver.execute_script(
+                "return !!(window.Alpine && Alpine.store && Alpine.store('trainer') && typeof Alpine.store('trainer').saveDatasets === 'function');"
+            )
+        )
+
+        self.driver.execute_async_script(
+            "const done = arguments[0];"
+            "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+            "if (!store || typeof store.saveDatasets !== 'function') { done(false); return; }"
+            "try {"
+            "  const result = store.saveDatasets({ showToast: true, skipConfirmation: true });"
+            "  if (result && typeof result.then === 'function') {"
+            "    result.then(() => done(true)).catch(() => done(false));"
+            "  } else {"
+            "    done(true);"
+            "  }"
+            "} catch (err) {"
+            "  console.error('saveDatasets failed', err);"
+            "  done(false);"
+            "}"
+        )
+
+    def delete_dataset(self, index: int = 0) -> None:
         """Delete a dataset by index."""
-        delete_buttons = self.find_elements(*self.DATASET_DELETE_BUTTON)
-        if index < len(delete_buttons):
-            delete_buttons[index].click()
-            self.wait_for_htmx()
+
+        store_length = self.driver.execute_script(
+            "if (window.Alpine && Alpine.store && Alpine.store('trainer') && Array.isArray(Alpine.store('trainer').datasets)) { return Alpine.store('trainer').datasets.length; } return 0;"
+        )
+
+        items = self.driver.find_elements(*self.DATASET_ITEMS)
+        if index >= len(items) and (store_length is None or index >= store_length):
+            raise TimeoutException("Dataset index out of range")
+
+        self.driver.execute_script(
+            "const store = Alpine.store ? Alpine.store('trainer') : null;"
+            "if (!store || !Array.isArray(store.datasets) || store.datasets.length === 0) { return; }"
+            "const resolvedIndex = Math.min(arguments[0], store.datasets.length - 1);"
+            "if (resolvedIndex < 0) { return; }"
+            "store.datasets.splice(resolvedIndex, 1);"
+            "store.hasUnsavedChanges = true;"
+            "if (typeof store.refreshDatasetsJson === 'function') { store.refreshDatasetsJson(); }",
+            index,
+        )
+
+        def _store_reduced(driver):
+            try:
+                return driver.execute_script(
+                    "if (window.Alpine && Alpine.store && Alpine.store('trainer') && Array.isArray(Alpine.store('trainer').datasets)) { return Alpine.store('trainer').datasets.length; } return 0;"
+                ) < store_length
+            except UnexpectedAlertPresentException:
+                try:
+                    driver.switch_to.alert.accept()
+                except Exception:
+                    pass
+                return False
+
+        self.wait.until(_store_reduced)

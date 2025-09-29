@@ -1,6 +1,6 @@
 """Base page class for Page Object Model."""
 
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import ElementNotInteractableException, TimeoutException
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
@@ -74,9 +74,24 @@ class BasePage:
             clear: Whether to clear the field first
         """
         element = self.find_element(by, value)
-        if clear:
-            element.clear()
-        element.send_keys(text)
+        try:
+            if clear:
+                element.clear()
+            element.send_keys(text)
+            self.driver.execute_script(
+                "arguments[0].dispatchEvent(new Event('input', { bubbles: true }));"
+                "arguments[0].dispatchEvent(new Event('change', { bubbles: true }));",
+                element,
+            )
+        except ElementNotInteractableException:
+            # Fallback to programmatic value assignment when native interaction fails
+            self.driver.execute_script(
+                "arguments[0].value = arguments[1];"
+                "arguments[0].dispatchEvent(new Event('input', { bubbles: true }));"
+                "arguments[0].dispatchEvent(new Event('change', { bubbles: true }));",
+                element,
+                text,
+            )
 
     def get_text(self, by, value):
         """Get text from an element.
@@ -142,7 +157,11 @@ class BasePage:
             timeout: Maximum wait time
         """
         WebDriverWait(self.driver, timeout).until(
-            lambda driver: driver.execute_script("return typeof htmx !== 'undefined' ? htmx.ready : true")
+            lambda driver: driver.execute_script(
+                "if (typeof htmx === 'undefined') { return true; }"
+                "const active = document.querySelector('[hx-request]');"
+                "return !active;"
+            )
         )
 
     def get_toast_message(self):
@@ -151,11 +170,28 @@ class BasePage:
         Returns:
             Toast message text or None if no toast visible
         """
+        message = None
         try:
-            toast = self.find_element(By.CSS_SELECTOR, ".toast-body")
-            return toast.text if toast.is_displayed() else None
-        except:
-            return None
+            toasts = self.driver.find_elements(By.CSS_SELECTOR, ".toast-body")
+            for toast in reversed(toasts):
+                if toast.is_displayed():
+                    message = toast.text
+                    break
+        except Exception:
+            message = None
+
+        if message:
+            return message
+
+        try:
+            alerts = self.driver.find_elements(By.CSS_SELECTOR, "#training-status .alert")
+            for alert in reversed(alerts):
+                if alert.is_displayed():
+                    return alert.text
+        except Exception:
+            pass
+
+        return None
 
     def dismiss_toast(self):
         """Dismiss the current toast notification."""

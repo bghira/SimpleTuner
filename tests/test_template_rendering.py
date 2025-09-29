@@ -1,5 +1,6 @@
 """Unit tests for Jinja2 template rendering using unittest."""
 
+import re
 import unittest
 from pathlib import Path
 
@@ -9,7 +10,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 class TemplateRenderingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        template_dir = Path(__file__).parent.parent / "templates"
+        template_dir = Path(__file__).parent.parent / "simpletuner" / "templates"
         cls.env = Environment(
             loader=FileSystemLoader([template_dir, template_dir / "partials"]),
             autoescape=select_autoescape(["html", "xml"]),
@@ -36,7 +37,7 @@ class TemplateRenderingTests(unittest.TestCase):
         self.assertIn('value="test_value"', rendered)
         self.assertIn('placeholder="Enter test value"', rendered)
         self.assertNotIn("x-model=", rendered)
-        self.assertIn("x-data=", rendered)
+        self.assertIn('class="form-control"', rendered)
 
     def test_number_field_limits_are_rendered(self):
         rendered = self.render_field(
@@ -76,7 +77,9 @@ class TemplateRenderingTests(unittest.TestCase):
 
         self.assertIn("<select", rendered)
         self.assertNotIn("x-model=", rendered)
-        self.assertIn('<option value="option2" selected>', rendered)
+        selected_option = re.search(r"<option[^>]*value=\"option2\"[^>]*>", rendered)
+        self.assertIsNotNone(selected_option, "Selected option was not rendered")
+        self.assertIn("selected", selected_option.group(0))
 
     def test_textarea_contents_render(self):
         rendered = self.render_field(

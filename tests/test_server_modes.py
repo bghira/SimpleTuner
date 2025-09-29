@@ -152,7 +152,7 @@ class ModelRoutesTestCase(unittest.TestCase):
     """Model metadata endpoints."""
 
     @patch("simpletuner.simpletuner_sdk.server.routes.models.model_families", {"sdxl": Mock(), "flux": Mock()})
-    def test_get_model_families_endpoint(self, _mock_families) -> None:
+    def test_get_model_families_endpoint(self) -> None:
         app = create_app(mode=ServerMode.TRAINER)
         with TestClient(app) as client:
             response = client.get("/models")
@@ -164,7 +164,7 @@ class ModelRoutesTestCase(unittest.TestCase):
 
     @patch("simpletuner.simpletuner_sdk.server.routes.models.get_model_flavour_choices")
     @patch("simpletuner.simpletuner_sdk.server.routes.models.model_families", {"sdxl": Mock()})
-    def test_get_model_flavours_endpoint(self, mock_get_flavours, _mock_families) -> None:
+    def test_get_model_flavours_endpoint(self, mock_get_flavours) -> None:
         mock_get_flavours.return_value = ["base-1.0", "refiner-1.0"]
         app = create_app(mode=ServerMode.TRAINER)
         with TestClient(app) as client:

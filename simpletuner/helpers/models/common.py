@@ -620,6 +620,41 @@ class ModelFoundation(ABC):
         if self.tokenizers is not None:
             self.tokenizers = None
 
+    def unload(self):
+        """
+        Comprehensively unload all model components to free GPU memory.
+        This moves all models to the 'meta' device which releases GPU memory.
+        """
+        logger.info("Unloading all model components...")
+
+        # Unload VAE
+        self.unload_vae()
+
+        # Unload text encoders
+        self.unload_text_encoder()
+
+        # Unload main model (transformer/unet)
+        if hasattr(self, "model") and self.model is not None:
+            if hasattr(self.model, "to"):
+                self.model.to("meta")
+            self.model = None
+
+        # Unload controlnet if present
+        if hasattr(self, "controlnet") and self.controlnet is not None:
+            if hasattr(self.controlnet, "to"):
+                self.controlnet.to("meta")
+            self.controlnet = None
+
+        # Clear any cached pipelines
+        if hasattr(self, "pipelines") and self.pipelines:
+            self.pipelines.clear()
+
+        # Reclaim memory
+        from simpletuner.helpers.caching.memory import reclaim_memory
+        reclaim_memory()
+
+        logger.info("Model components unloaded successfully.")
+
     def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
         """
         A stub method for child classes to augment pretrained class load arguments with.

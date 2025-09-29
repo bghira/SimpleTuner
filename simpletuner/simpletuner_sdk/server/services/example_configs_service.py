@@ -6,7 +6,7 @@ import json
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from simpletuner.simpletuner_sdk.server.utils.paths import get_simpletuner_root, resolve_config_path
 
@@ -158,16 +158,17 @@ class ExampleConfigsService:
 
         try:
             with config_path.open("r", encoding="utf-8") as handle:
-                config_data = json.load(handle)
+                raw_data = json.load(handle)
         except Exception:
             return None
 
-        if not isinstance(config_data, dict):
+        config_data, metadata = self._normalise_config_document(raw_data)
+        if not config_data:
             # Skip dataloader-only JSON helpers or malformed configs
             return None
 
         defaults = self._extract_defaults(config_data)
-        description = self._extract_description(config_data)
+        description = self._extract_description(config_data, metadata)
         dataloader_value = defaults.get("data_backend_config")
 
         dataloader_path: Optional[Path] = None
@@ -196,6 +197,8 @@ class ExampleConfigsService:
 
     @staticmethod
     def _extract_defaults(config: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(config, dict):
+            return {}
         def _get(*keys: str) -> Optional[Any]:
             for key in keys:
                 if key in config:
@@ -211,16 +214,56 @@ class ExampleConfigsService:
         return defaults
 
     @staticmethod
-    def _extract_description(config: Dict[str, Any]) -> Optional[str]:
+    def _extract_description(config: Dict[str, Any], metadata: Optional[Dict[str, Any]]) -> Optional[str]:
+        if isinstance(config, list):
+            return None
         if not isinstance(config, dict):
             return None
+        def _clean(text: Optional[str]) -> Optional[str]:
+            if isinstance(text, str):
+                stripped = text.strip()
+                return stripped or None
+            return None
 
-        metadata = config.get("_metadata")
         if isinstance(metadata, dict):
-            description = metadata.get("description")
-            if isinstance(description, str):
-                return description
+            for key in ("description", "summary", "notes"):
+                candidate = _clean(metadata.get(key))
+                if candidate:
+                    return candidate
+
+        for key in (
+            "project_description",
+            "_project_description",
+            "description",
+            "--project_description",
+        ):
+            candidate = _clean(config.get(key))
+            if candidate:
+                return candidate
+
         return None
+
+    @staticmethod
+    def _normalise_config_document(raw: Any) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+        if not isinstance(raw, dict):
+            return {}, None
+
+        metadata: Optional[Dict[str, Any]] = None
+        if isinstance(raw.get("_metadata"), dict):
+            metadata = raw["_metadata"]
+
+        combined: Dict[str, Any] = {}
+
+        # Prefer nested "config" payloads when present but allow top-level
+        for source in (raw.get("config"), raw):
+            if not isinstance(source, dict):
+                continue
+            for key, value in source.items():
+                if key == "_metadata":
+                    continue
+                combined[key] = value
+
+        return combined, metadata
 
 
 EXAMPLE_CONFIGS_SERVICE = ExampleConfigsService()

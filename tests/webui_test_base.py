@@ -46,14 +46,20 @@ class WebUITestCase(SeleniumTestCase):
         return config_path
 
     def with_sample_environment(self) -> None:
-        self.write_config(
-            "test-config",
-            {
-                "--job_id": "test-model",
-                "--output_dir": "/test/output",
-                "--pretrained_model_name_or_path": "black-forest-labs/FLUX.1-dev",
-            },
-        )
+        env_dir = self.config_dir / "test-config"
+        env_dir.mkdir(parents=True, exist_ok=True)
+        config_payload = {
+            "--model_family": "flux",
+            "--model_type": "lora",
+            "--model_flavour": "v0.3",
+            "--pretrained_model_name_or_path": "black-forest-labs/FLUX.1-dev",
+            "--output_dir": "/test/output",
+            "--data_backend_config": str(env_dir / "multidatabackend.json"),
+            "--job_id": "test-model",
+            "--report_to": "none",
+        }
+        (env_dir / "config.json").write_text(json.dumps(config_payload), encoding="utf-8")
+        (env_dir / "multidatabackend.json").write_text("[]", encoding="utf-8")
         self.seed_defaults(active_config="test-config")
 
     def _seed_default_environment(self) -> None:

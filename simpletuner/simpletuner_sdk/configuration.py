@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -15,9 +16,17 @@ from pydantic import BaseModel
 
 from simpletuner.helpers.configuration.cmd_args import get_default_config
 from simpletuner.helpers.configuration.json_file import normalize_args
-from simpletuner.helpers.training.trainer import Trainer
+from simpletuner.simpletuner_sdk import thread_keeper
 from simpletuner.simpletuner_sdk.api_state import APIState
-from simpletuner.simpletuner_sdk.thread_keeper import get_thread_status, submit_job
+from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
+
+
+def _import_trainer_class():
+    """Return the Trainer class, deferring import so tests can patch easily."""
+
+    from simpletuner.helpers.training.trainer import Trainer as TrainerClass
+
+    return TrainerClass
 
 
 # Define a Pydantic model for input validation
@@ -48,7 +57,8 @@ class Configuration:
         Download models for a given configuration
         """
         training_config = None
-        trainer = Trainer(config=training_config)
+        TrainerClass = _import_trainer_class()
+        trainer = TrainerClass(config=training_config)
         trainer.init_preprocessing_models(move_to_accelerator=False)
         trainer.init_unload_vae()
         trainer.init_unload_text_encoder()
@@ -93,6 +103,35 @@ class Configuration:
                 f.write(json.dumps(job_config.user_prompt_library, indent=4))
                 job_config.trainer_config["user_prompt_library"] = "config/user_prompt_library.json"
 
+    def _load_base_trainer_config(self) -> Dict[str, Any]:
+        store = ConfigStore()
+        candidates = []
+
+        active_config = store.get_active_config()
+        if active_config:
+            candidates.append(active_config)
+
+        # Prefer a folder-based default if the active config is missing
+        candidates.extend(["default", "Default"])
+
+        for name in candidates:
+            try:
+                config, _ = store.load_config(name)
+                if isinstance(config, dict):
+                    return config
+            except (FileNotFoundError, ValueError):
+                continue
+
+        # Fallback to CLI parser defaults when no stored config exists
+        defaults = get_default_config()
+        return {f"--{key}": value for key, value in defaults.items() if value not in (None, "")}
+
+    def _build_trainer_cli_args(self, trainer_config: Dict[str, Any]) -> List[str]:
+        base_config = self._load_base_trainer_config()
+        merged_config = dict(base_config)
+        merged_config.update(trainer_config or {})
+        return normalize_args(merged_config)
+
     async def check(self, job_config: ConfigModel):
         """
         Check for problems with a given configuration
@@ -106,10 +145,12 @@ class Configuration:
                 }
             self._config_clear()
             self._config_save(job_config)
-            trainer = Trainer(config=normalize_args(job_config.trainer_config))
+            TrainerClass = _import_trainer_class()
+            cli_args = self._build_trainer_cli_args(job_config.trainer_config)
+            trainer = TrainerClass(config=cli_args)
             return {
-                "status": True,
-                "result": f"Configuration validated successfully",
+                "status": "success",
+                "result": "Configuration validated successfully",
             }
         except Exception as e:
             import traceback
@@ -137,11 +178,17 @@ class Configuration:
         execution_mode = os.environ.get("SIMPLETUNER_EXECUTION_MODE", "thread")
         if execution_mode == "process":
             return await self._run_subprocess(job_config)
-        trainer = APIState.get_trainer()
         current_job_id = APIState.get_state("current_job_id")
         job_id = job_config.job_id
-        current_job_status = get_thread_status(current_job_id)
-        if trainer and current_job_status.lower() == "running":
+        current_job_status = thread_keeper.get_thread_status(current_job_id)
+        if current_job_id and isinstance(current_job_status, str) and current_job_status.lower() in {"running", "pending"}:
+            return {
+                "status": False,
+                "result": f"Could not run job, '{current_job_id}' is already {current_job_status}.",
+            }
+
+        trainer = APIState.get_trainer()
+        if trainer and isinstance(current_job_status, str) and current_job_status.lower() == "running":
             return {
                 "status": False,
                 "result": f"Could not run job, '{current_job_id}' is already running.",
@@ -150,7 +197,9 @@ class Configuration:
         self._config_save(job_config)
         try:
             logger.info("Creating new Trainer instance..")
-            trainer = Trainer(config=normalize_args(job_config.trainer_config), job_id=job_id)
+            TrainerClass = _import_trainer_class()
+            cli_args = self._build_trainer_cli_args(job_config.trainer_config)
+            trainer = TrainerClass(config=cli_args, job_id=job_id)
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -166,7 +215,7 @@ class Configuration:
                 "result": "No training job has been configured yet. Trainer was unavailable.",
             }
 
-        if current_job_status.lower() in ["running", "pending"]:
+        if isinstance(current_job_status, str) and current_job_status.lower() in ["running", "pending"]:
             return {
                 "status": "error",
                 "result": f"The training job '{job_config.job_id}' is already {current_job_status}.",
@@ -174,7 +223,7 @@ class Configuration:
         try:
             # Submit the job to the thread manager
             logger.info("Submitting job to thread..")
-            submit_job(job_id, trainer.run)
+            thread_keeper.submit_job(job_id, trainer.run)
             APIState.set_state("status", "Running")
             return {
                 "status": "success",
@@ -222,9 +271,9 @@ class Configuration:
             logger.info(f"Submitting job {job_id} to subprocess..")
 
             # trainer_func will be handled by subprocess wrapper
-            from simpletuner.helpers.training.trainer import Trainer
+            TrainerClass = _import_trainer_class()
 
-            process = submit_process_job(job_id, Trainer, config_dict["trainer_config"])
+            process = submit_process_job(job_id, TrainerClass, config_dict["trainer_config"])
 
             APIState.set_state("status", "running")
             APIState.set_state("execution_mode", "process")
