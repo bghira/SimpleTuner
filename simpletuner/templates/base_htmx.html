@@ -23,6 +23,7 @@
     <link rel="preload" href="/static/css/base.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
     <link rel="preload" href="/static/css/trainer.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
     <link rel="preload" href="/static/css/browser-compat.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <link rel="preload" href="/static/css/dataset-card.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
 
     <!-- Fallback for browsers without JS -->
     <noscript>
@@ -31,6 +32,7 @@
         <link href="/static/css/base.css" rel="stylesheet">
         <link href="/static/css/trainer.css" rel="stylesheet">
         <link href="/static/css/browser-compat.css" rel="stylesheet">
+        <link href="/static/css/dataset-card.css" rel="stylesheet">
     </noscript>
 
     <!-- CSS loading helper -->
@@ -121,20 +123,6 @@
             box-shadow: 0 0 0 0.2rem rgba(25, 135, 84, 0.25) !important;
         }
 
-        /* Enhanced dataset cards */
-        .dataset-card {
-            transition: all 0.3s ease;
-            border: 1px solid rgba(255,255,255,0.1);
-        }
-
-        .dataset-card:hover {
-            border-color: rgba(255,255,255,0.2);
-            transform: translateY(-2px);
-        }
-
-        .dataset-card.expanded {
-            border-color: #38bdf8;
-        }
 
         /* Connection status indicator */
         .connection-status {
@@ -242,7 +230,7 @@
 
         // Mark styles as loaded when all CSS files are ready
         var loadedStyles = 0;
-        var totalStyles = 5; // bootstrap, fontawesome, base, trainer, browser-compat
+        var totalStyles = 6; // bootstrap, fontawesome, base, trainer, browser-compat, dataset-card
 
         function checkStylesLoaded() {
             loadedStyles++;

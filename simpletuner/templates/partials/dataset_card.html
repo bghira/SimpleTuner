@@ -124,158 +124,151 @@ function datasetAdvancedOptionsComponent() {
 
 <div class="dataset-card"
      x-data="datasetCardComponent({{ dataset | tojson }}, {{ dataset | tojson }})"
+     x-bind:class="{ 'loading': saving }"
      hx-target="this"
      hx-swap="outerHTML">
 
     <!-- Card Header -->
-    <div class="card-header d-flex justify-content-between align-items-center"
-         @click="toggleExpanded()"
-         style="cursor: pointer;">
-
-        <div class="d-flex align-items-center">
-            <!-- Dataset Icon & Status -->
-            <div class="me-3">
-                <i class="fas fa-database text-primary"
+    <div class="dataset-card-header" @click="toggleExpanded()">
+        <div class="dataset-card-header-content">
+            <div class="dataset-card-info">
+                <!-- Dataset Icon & Status -->
+                <i class="fas fa-database dataset-card-icon"
                    x-bind:class="{
-                       'text-success': !hasErrors && !editing,
-                       'text-warning': editing,
-                       'text-danger': hasErrors
+                       'status-success': !hasErrors && !editing,
+                       'status-warning': editing,
+                       'status-error': hasErrors
                    }"></i>
+
+                <!-- Dataset Info -->
+                <div class="dataset-card-details">
+                    <div class="dataset-card-title" x-text="dataset.name || dataset.id">{{ dataset_name }}</div>
+                    <div class="dataset-card-meta">
+                        <span x-text="dataset.type">{{ dataset_type }}</span>
+                        •
+                        <span x-text="dataset.dataset_type || 'image'">image</span>
+                    </div>
+                </div>
+
+                <!-- Status Badges -->
+                <div class="dataset-card-badges">
+                    <span x-show="hasChanges && !saving"
+                          class="dataset-badge dataset-badge-modified"
+                          x-transition>
+                        <i class="fas fa-edit"></i> Modified
+                    </span>
+                    <span x-show="saving"
+                          class="dataset-badge dataset-badge-saving"
+                          x-transition>
+                        <i class="fas fa-spinner fa-spin"></i> Saving
+                    </span>
+                    <span x-show="hasErrors"
+                          class="dataset-badge dataset-badge-error"
+                          x-transition>
+                        <i class="fas fa-exclamation-triangle"></i> Errors
+                    </span>
+                </div>
             </div>
 
-            <!-- Dataset Info -->
-            <div>
-                <h6 class="mb-0" x-text="dataset.name || dataset.id">{{ dataset_name }}</h6>
-                <small class="text-muted">
-                    <span x-text="dataset.type">{{ dataset_type }}</span>
-                    •
-                    <span x-text="dataset.dataset_type || 'image'">image</span>
-                </small>
-            </div>
-
-            <!-- Status Badges -->
-            <div class="ms-3">
-                <span x-show="hasChanges && !saving"
-                      class="badge bg-warning"
-                      x-transition>
-                    <i class="fas fa-edit"></i> Modified
-                </span>
-                <span x-show="saving"
-                      class="badge bg-info"
-                      x-transition>
-                    <i class="fas fa-spinner fa-spin"></i> Saving
-                </span>
-                <span x-show="hasErrors"
-                      class="badge bg-danger"
-                      x-transition>
-                    <i class="fas fa-exclamation-triangle"></i> Errors
-                </span>
-            </div>
+            <!-- Expand/Collapse Icon -->
+            <i class="fas fa-chevron-down dataset-card-toggle"
+               x-bind:class="{ 'expanded': expanded }"
+               @click.stop="toggleExpanded()"></i>
         </div>
-
-        <!-- Expand/Collapse Icon -->
-        <i class="fas fa-chevron-down transition-transform"
-           x-bind:class="{ 'rotate-180': expanded }"
-           @click.stop="toggleExpanded()"></i>
     </div>
 
     <!-- Card Body (Collapsible) -->
-    <div class="card-body"
+    <div class="dataset-card-body dataset-card-collapse"
+         x-bind:class="{ 'expanded': expanded, 'collapsed': !expanded }"
          x-show="expanded"
-         x-transition:enter="transition ease-out duration-300"
-         x-transition:enter-start="opacity-0 max-h-0"
-         x-transition:enter-end="opacity-100 max-h-96"
-         x-transition:leave="transition ease-in duration-200"
-         x-transition:leave-start="opacity-100 max-h-96"
-         x-transition:leave-end="opacity-0 max-h-0"
-         style="overflow: hidden;">
+         x-transition>
 
         <!-- Summary View (when not editing) -->
         <div x-show="!editing" x-transition>
-            <div class="row g-3">
-                <div class="col-md-6">
-                    <strong>Path:</strong>
-                    <code class="ms-2" x-text="dataset.instance_data_dir || 'Not specified'">{{ dataset_path }}</code>
+            <div class="dataset-summary">
+                <div class="dataset-field">
+                    <div class="dataset-field-label">Path</div>
+                    <div class="dataset-field-value">
+                        <code x-text="dataset.instance_data_dir || 'Not specified'">{{ dataset_path }}</code>
+                    </div>
                 </div>
-                <div class="col-md-6">
-                    <strong>Backend:</strong>
-                    <span class="ms-2" x-text="dataset.type">{{ dataset_type }}</span>
+                <div class="dataset-field">
+                    <div class="dataset-field-label">Backend</div>
+                    <div class="dataset-field-value" x-text="dataset.type">{{ dataset_type }}</div>
                 </div>
-                <div class="col-md-6">
-                    <strong>Resolution:</strong>
-                    <span class="ms-2" x-text="dataset.resolution || 1024">1024</span>
+                <div class="dataset-field">
+                    <div class="dataset-field-label">Resolution</div>
+                    <div class="dataset-field-value" x-text="dataset.resolution || 1024">1024</div>
                 </div>
-                <div class="col-md-6">
-                    <strong>Probability:</strong>
-                    <span class="ms-2" x-text="dataset.probability || 1.0">1.0</span>
+                <div class="dataset-field">
+                    <div class="dataset-field-label">Probability</div>
+                    <div class="dataset-field-value" x-text="dataset.probability || 1.0">1.0</div>
                 </div>
-                <div class="col-md-6" x-show="dataset.repeats && dataset.repeats > 0">
-                    <strong>Repeats:</strong>
-                    <span class="ms-2" x-text="dataset.repeats">0</span>
+                <div class="dataset-field" x-show="dataset.repeats && dataset.repeats > 0">
+                    <div class="dataset-field-label">Repeats</div>
+                    <div class="dataset-field-value" x-text="dataset.repeats">0</div>
                 </div>
-                <div class="col-md-6" x-show="dataset.caption_strategy">
-                    <strong>Caption Strategy:</strong>
-                    <span class="ms-2" x-text="dataset.caption_strategy">textfile</span>
+                <div class="dataset-field" x-show="dataset.caption_strategy">
+                    <div class="dataset-field-label">Caption Strategy</div>
+                    <div class="dataset-field-value" x-text="dataset.caption_strategy">textfile</div>
                 </div>
             </div>
 
             <!-- Validation Status -->
-            <div x-show="hasErrors" class="mt-3">
-                <div class="alert alert-danger">
-                    <strong>Validation Issues:</strong>
-                    <ul class="mb-0 mt-2">
-                        <template x-for="(error, field) in validationErrors" :key="field">
-                            <li x-text="`${field}: ${error}`"></li>
-                        </template>
-                    </ul>
-                </div>
+            <div x-show="hasErrors" class="dataset-validation-alert">
+                <strong>Validation Issues:</strong>
+                <ul>
+                    <template x-for="(error, field) in validationErrors" :key="field">
+                        <li x-text="`${field}: ${error}`"></li>
+                    </template>
+                </ul>
             </div>
         </div>
 
         <!-- Edit Form (when editing) -->
         <div x-show="editing" x-transition>
-            <form @submit.prevent="saveChanges()">
-                <div class="row g-3">
+            <form @submit.prevent="saveChanges()" class="dataset-edit-form">
+                <div class="dataset-form-grid">
                     <!-- Basic Fields -->
-                    <div class="col-md-6">
-                        <label class="form-label">Dataset ID</label>
+                    <div class="dataset-form-group">
+                        <label class="dataset-form-label">Dataset ID</label>
                         <input type="text"
-                               class="form-control"
+                               class="dataset-form-control"
                                x-model="dataset.id"
                                x-bind:class="{ 'is-invalid': validationErrors.id }"
                                required>
                         <div x-show="validationErrors.id"
-                             class="invalid-feedback"
+                             class="dataset-form-error"
                              x-text="validationErrors.id"></div>
                     </div>
 
-                    <div class="col-md-6">
-                        <label class="form-label">Display Name</label>
+                    <div class="dataset-form-group">
+                        <label class="dataset-form-label">Display Name</label>
                         <input type="text"
-                               class="form-control"
+                               class="dataset-form-control"
                                x-model="dataset.name"
                                x-bind:class="{ 'is-invalid': validationErrors.name }">
                         <div x-show="validationErrors.name"
-                             class="invalid-feedback"
+                             class="dataset-form-error"
                              x-text="validationErrors.name"></div>
                     </div>
 
-                    <div class="col-md-12">
-                        <label class="form-label">Instance Data Directory</label>
+                    <div class="dataset-form-group" style="grid-column: 1 / -1;">
+                        <label class="dataset-form-label">Instance Data Directory</label>
                         <input type="text"
-                               class="form-control"
+                               class="dataset-form-control"
                                x-model="dataset.instance_data_dir"
                                x-bind:class="{ 'is-invalid': validationErrors.instance_data_dir }"
                                placeholder="/path/to/training/images"
                                required>
                         <div x-show="validationErrors.instance_data_dir"
-                             class="invalid-feedback"
+                             class="dataset-form-error"
                              x-text="validationErrors.instance_data_dir"></div>
                     </div>
 
-                    <div class="col-md-6">
-                        <label class="form-label">Backend Type</label>
-                        <select class="form-select"
+                    <div class="dataset-form-group">
+                        <label class="dataset-form-label">Backend Type</label>
+                        <select class="dataset-form-control"
                                 x-model="dataset.type"
                                 x-bind:class="{ 'is-invalid': validationErrors.type }">
                             <option value="local">Local</option>
@@ -283,13 +276,13 @@ function datasetAdvancedOptionsComponent() {
                             <option value="huggingface">Hugging Face</option>
                         </select>
                         <div x-show="validationErrors.type"
-                             class="invalid-feedback"
+                             class="dataset-form-error"
                              x-text="validationErrors.type"></div>
                     </div>
 
-                    <div class="col-md-6">
-                        <label class="form-label">Dataset Type</label>
-                        <select class="form-select"
+                    <div class="dataset-form-group">
+                        <label class="dataset-form-label">Dataset Type</label>
+                        <select class="dataset-form-control"
                                 x-model="dataset.dataset_type"
                                 x-bind:class="{ 'is-invalid': validationErrors.dataset_type }">
                             <option value="image">Image</option>
@@ -297,28 +290,28 @@ function datasetAdvancedOptionsComponent() {
                             <option value="eval">Evaluation</option>
                         </select>
                         <div x-show="validationErrors.dataset_type"
-                             class="invalid-feedback"
+                             class="dataset-form-error"
                              x-text="validationErrors.dataset_type"></div>
                     </div>
 
-                    <div class="col-md-6">
-                        <label class="form-label">Resolution</label>
+                    <div class="dataset-form-group">
+                        <label class="dataset-form-label">Resolution</label>
                         <input type="number"
-                               class="form-control"
+                               class="dataset-form-control"
                                x-model="dataset.resolution"
                                x-bind:class="{ 'is-invalid': validationErrors.resolution }"
                                min="256"
                                step="64"
                                value="1024">
                         <div x-show="validationErrors.resolution"
-                             class="invalid-feedback"
+                             class="dataset-form-error"
                              x-text="validationErrors.resolution"></div>
                     </div>
 
-                    <div class="col-md-6">
-                        <label class="form-label">Sampling Probability</label>
+                    <div class="dataset-form-group">
+                        <label class="dataset-form-label">Sampling Probability</label>
                         <input type="number"
-                               class="form-control"
+                               class="dataset-form-control"
                                x-model="dataset.probability"
                                x-bind:class="{ 'is-invalid': validationErrors.probability }"
                                min="0"
@@ -326,30 +319,29 @@ function datasetAdvancedOptionsComponent() {
                                step="0.1"
                                value="1.0">
                         <div x-show="validationErrors.probability"
-                             class="invalid-feedback"
+                             class="dataset-form-error"
                              x-text="validationErrors.probability"></div>
                     </div>
 
                     <!-- Advanced collapsible section -->
-                    <div class="col-12">
-                        <div class="border rounded p-3"
-                             x-data="datasetAdvancedOptionsComponent()">
+                    <div class="dataset-advanced-section" style="grid-column: 1 / -1;">
+                        <div x-data="datasetAdvancedOptionsComponent()">
                             <button type="button"
-                                    class="btn btn-outline-secondary btn-sm"
+                                    class="dataset-advanced-toggle"
                                     @click="showAdvanced = !showAdvanced">
-                                <i class="fas fa-cog me-1"></i>
+                                <i class="fas fa-cog"></i>
                                 Advanced Options
-                                <i class="fas fa-chevron-down ms-1"
-                                   x-bind:class="{ 'rotate-180': showAdvanced }"></i>
+                                <i class="fas fa-chevron-down"
+                                   x-bind:class="{ 'expanded': showAdvanced }"></i>
                             </button>
 
                             <div x-show="showAdvanced"
                                  x-transition
-                                 class="mt-3">
-                                <div class="row g-3">
-                                    <div class="col-md-6">
-                                        <label class="form-label">Caption Strategy</label>
-                                        <select class="form-select" x-model="dataset.caption_strategy">
+                                 class="dataset-advanced-content">
+                                <div class="dataset-form-grid">
+                                    <div class="dataset-form-group">
+                                        <label class="dataset-form-label">Caption Strategy</label>
+                                        <select class="dataset-form-control" x-model="dataset.caption_strategy">
                                             <option value="textfile">Text File</option>
                                             <option value="filename">Filename</option>
                                             <option value="csv">CSV Column</option>
@@ -358,19 +350,19 @@ function datasetAdvancedOptionsComponent() {
                                         </select>
                                     </div>
 
-                                    <div class="col-md-6">
-                                        <label class="form-label">Repeats</label>
+                                    <div class="dataset-form-group">
+                                        <label class="dataset-form-label">Repeats</label>
                                         <input type="number"
-                                               class="form-control"
+                                               class="dataset-form-control"
                                                x-model="dataset.repeats"
                                                min="0"
                                                value="0">
                                     </div>
 
-                                    <div class="col-md-12">
-                                        <label class="form-label">VAE Cache Directory</label>
+                                    <div class="dataset-form-group" style="grid-column: 1 / -1;">
+                                        <label class="dataset-form-label">VAE Cache Directory</label>
                                         <input type="text"
-                                               class="form-control"
+                                               class="dataset-form-control"
                                                x-model="dataset.cache_dir_vae"
                                                placeholder="cache/vae">
                                     </div>
@@ -382,45 +374,46 @@ function datasetAdvancedOptionsComponent() {
             </form>
         </div>
 
-        <!-- Action Buttons -->
-        <div class="mt-4 pt-3 border-top d-flex justify-content-between">
-            <div>
-                <button type="button"
-                        class="btn btn-outline-primary btn-sm me-2"
-                        x-show="!editing"
-                        @click="startEditing()">
-                    <i class="fas fa-edit me-1"></i> Edit
-                </button>
+    </div>
 
-                <button type="button"
-                        class="btn btn-outline-secondary btn-sm me-2"
-                        @click="duplicateDataset()">
-                    <i class="fas fa-copy me-1"></i> Duplicate
-                </button>
+    <!-- Action Buttons -->
+    <div class="dataset-card-actions">
+        <div class="dataset-actions-group">
+            <button type="button"
+                    class="dataset-action-btn btn-outline-primary"
+                    x-show="!editing"
+                    @click="startEditing()">
+                <i class="fas fa-edit"></i> Edit
+            </button>
 
-                <button type="button"
-                        class="btn btn-outline-danger btn-sm"
-                        @click="deleteDataset()">
-                    <i class="fas fa-trash me-1"></i> Delete
-                </button>
-            </div>
+            <button type="button"
+                    class="dataset-action-btn btn-outline-secondary"
+                    @click="duplicateDataset()">
+                <i class="fas fa-copy"></i> Duplicate
+            </button>
 
-            <div x-show="editing">
-                <button type="button"
-                        class="btn btn-secondary btn-sm me-2"
-                        @click="cancelEdit()">
-                    Cancel
-                </button>
+            <button type="button"
+                    class="dataset-action-btn btn-outline-danger"
+                    @click="deleteDataset()">
+                <i class="fas fa-trash"></i> Delete
+            </button>
+        </div>
 
-                <button type="button"
-                        class="btn btn-primary btn-sm"
-                        @click="saveChanges()"
-                        :disabled="saving">
-                    <i class="fas fa-save me-1"></i>
-                    <span x-show="!saving">Save Changes</span>
-                    <span x-show="saving">Saving...</span>
-                </button>
-            </div>
+        <div class="dataset-actions-group" x-show="editing">
+            <button type="button"
+                    class="dataset-action-btn btn-secondary"
+                    @click="cancelEdit()">
+                Cancel
+            </button>
+
+            <button type="button"
+                    class="dataset-action-btn btn-primary"
+                    @click="saveChanges()"
+                    :disabled="saving">
+                <i class="fas fa-save"></i>
+                <span x-show="!saving">Save Changes</span>
+                <span x-show="saving">Saving...</span>
+            </button>
         </div>
     </div>
 </div>

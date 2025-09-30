@@ -50,6 +50,9 @@ function dataloaderSectionComponent() {
     storeReady: false,
     _storeReadyHandled: false,
     dangerMode: false,
+    _trainerCache: null,
+    _captionFilterCache: null,
+    _captionFilterCacheTime: 0,
 
     init() {
         this.dangerMode = this.computeDangerModeEnabled();
@@ -86,7 +89,10 @@ function dataloaderSectionComponent() {
     },
 
     get trainer() {
-        return Alpine.store('trainer') || {};
+        if (!this._trainerCache) {
+            this._trainerCache = Alpine.store('trainer') || {};
+        }
+        return this._trainerCache;
     },
     get dataLoaderMode() {
         return this.trainer.dataLoaderMode || 'builder';
@@ -134,11 +140,19 @@ function dataloaderSectionComponent() {
         return CONDITIONING_GENERATOR_TYPES;
     },
     get captionFilterOptions() {
+        const now = Date.now();
+        if (this._captionFilterCache && (now - this._captionFilterCacheTime) < 1000) {
+            return this._captionFilterCache;
+        }
+
         const trainer = Alpine.store('trainer');
         if (!trainer || !Array.isArray(trainer.captionFilters)) {
+            this._captionFilterCache = [];
+            this._captionFilterCacheTime = now;
             return [];
         }
-        return trainer.captionFilters.map((filter) => {
+
+        this._captionFilterCache = trainer.captionFilters.map((filter) => {
             if (!filter) {
                 return { value: '', label: '', description: '' };
             }
@@ -150,6 +164,8 @@ function dataloaderSectionComponent() {
                 description: filter.description || ''
             };
         }).filter((option) => option.value);
+        this._captionFilterCacheTime = now;
+        return this._captionFilterCache;
     },
     ensureCaptionFiltersLoaded() {
         const trainer = Alpine.store('trainer');
@@ -735,13 +751,18 @@ function dataloaderSectionComponent() {
     },
 
     markAsUnsaved() {
-        const trainer = Alpine.store('trainer');
-        if (trainer) {
-            if (typeof trainer.markDatasetsDirty === 'function') {
-                trainer.markDatasetsDirty();
-            } else {
-                trainer.hasUnsavedChanges = true;
-            }
+        if (!this._markAsUnsavedDebounce) {
+            this._markAsUnsavedDebounce = requestAnimationFrame(() => {
+                const trainer = Alpine.store('trainer');
+                if (trainer) {
+                    if (typeof trainer.markDatasetsDirty === 'function') {
+                        trainer.markDatasetsDirty();
+                    } else {
+                        trainer.hasUnsavedChanges = true;
+                    }
+                }
+                this._markAsUnsavedDebounce = null;
+            });
         }
     }
     }
@@ -825,7 +846,8 @@ function dataloaderSectionComponent() {
         </div>
     
     <!-- Builder Mode -->
-    <div x-show="dataLoaderMode === 'builder'">
+    <template x-if="dataLoaderMode === 'builder'">
+    <div>
         <!-- Presets -->
         <div class="preset-container mb-4">
             <h6 class="subsection-title">Quick Start Presets</h6>
@@ -956,46 +978,29 @@ function dataloaderSectionComponent() {
                                  x-text="getFieldError(dataset.id, 'dataset_type')">
                             </div>
                         </div>
-                        <div class="col-md-6 mb-2"
-                             x-show="dataset.type === 'local' && dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'">
-                            <label class="form-label">Instance Data Dir</label>
-                            <input type="text" class="form-control form-control-sm"
-                                   x-model="dataset.instance_data_dir"
-                                   @input="markAsUnsaved()"
-                                   placeholder="/path/to/data">
-                        </div>
-                        <div class="col-md-6 mb-2"
-                             x-show="dataset.type === 'local' && dataset.dataset_type === 'text_embeds'">
-                            <label class="form-label">Cache Dir</label>
-                            <input type="text" class="form-control form-control-sm"
-                                   x-model="dataset.cache_dir"
-                                   @input="markAsUnsaved()"
-                                   placeholder="/path/to/cache">
-                            <div class="form-text">Location to store or reuse prompt embeddings.</div>
-                        </div>
                     </div>
                     <div class="dataset-subgroup"
                          x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'">
-                        <div class="dataset-subgroup-title">Sizing &amp; Cropping</div>
-                        <div class="row g-3 align-items-end">
-                            <div class="col-md-4">
+                        <div class="dataset-subgroup-title">Sizing</div>
+                        <div class="row g-3">
+                            <div class="col-md-3">
                                 <label class="form-label">Resolution</label>
                                 <input type="number"
                                        class="form-control form-control-sm"
                                        min="0"
                                        step="1"
-                                       x-model.number="dataset.resolution"
+                                       x-model.number.lazy="dataset.resolution"
                                        @input="markAsUnsaved()"
                                        placeholder="1024">
                                 <div class="form-text"
                                      x-text="dataset.resolution_type === 'pixel_area'
-                                        ? 'Enter the shorter edge in pixels; the trainer squares it to derive pixel area.'
-                                        : 'Shorter edge target in pixels (aspect preserved).'
+                                        ? 'Shorter edge (squared for area)'
+                                        : 'Shorter edge in pixels'
                                      ">
-                                    Enter the shorter edge in pixels; the trainer squares it to derive pixel area.
+                                    Shorter edge (squared for area)
                                 </div>
                             </div>
-                            <div class="col-md-4">
+                            <div class="col-md-3">
                                 <label class="form-label">Resolution Type</label>
                                 <select class="form-select form-select-sm"
                                         x-model="dataset.resolution_type"
@@ -1004,68 +1009,62 @@ function dataloaderSectionComponent() {
                                     <option value="pixel_area">Pixel area (megapixels)</option>
                                 </select>
                             </div>
-                            <div class="col-md-4">
-                                <label class="form-label">Minimum Image Size</label>
+                            <div class="col-md-3">
+                                <label class="form-label">Min Size</label>
                                 <input type="number" class="form-control form-control-sm"
-                                       x-model.number="dataset.minimum_image_size"
+                                       x-model.number.lazy="dataset.minimum_image_size"
                                        min="0"
                                        step="1"
                                        @input="markAsUnsaved()"
                                        placeholder="0 (disabled)">
-                                <div class="form-text"
-                                     x-text="dataset.resolution_type === 'pixel_area'
-                                        ? 'Minimum shorter edge in pixels (squared internally for pixel-area mode).'
-                                        : 'Minimum shorter edge length in pixels.'
-                                     ">
-                                    Minimum shorter edge in pixels (squared internally for pixel-area mode).
+                                <div class="form-text">
+                                    Skip smaller images
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Max Size</label>
+                                <input type="number" class="form-control form-control-sm"
+                                       x-model.number.lazy="dataset.maximum_image_size"
+                                       min="0"
+                                       step="1"
+                                       @input="markAsUnsaved()"
+                                       placeholder="0 (disabled)">
+                                <div class="form-text">
+                                    Skip larger images
                                 </div>
                             </div>
                         </div>
-                        <div class="row g-3 align-items-end mt-2">
-                            <div class="col-md-4">
-                                <label class="form-label">Maximum Image Size</label>
+                        <div class="row g-3 mt-3">
+                            <div class="col-md-3">
+                                <label class="form-label">Downsample Target</label>
                                 <input type="number" class="form-control form-control-sm"
-                                       x-model.number="dataset.maximum_image_size"
-                                       min="0"
-                                       step="1"
-                                       @input="markAsUnsaved()"
-                                       placeholder="0 (disabled)">
-                                <div class="form-text"
-                                     x-text="dataset.resolution_type === 'pixel_area'
-                                        ? 'Skip samples whose shorter edge exceeds this value (squared internally for pixel-area mode).'
-                                        : 'Skip samples whose shorter edge exceeds this value.'
-                                     ">
-                                    Skip samples whose shorter edge exceeds this value (squared internally for pixel-area mode).
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label">Target Downsample Size</label>
-                                <input type="number" class="form-control form-control-sm"
-                                       x-model.number="dataset.target_downsample_size"
+                                       x-model.number.lazy="dataset.target_downsample_size"
                                        min="0"
                                        step="1"
                                        @input="markAsUnsaved()"
                                        placeholder="Auto">
-                                <div class="form-text"
-                                     x-text="dataset.resolution_type === 'pixel_area'
-                                        ? 'Optional shorter-edge target (pixels). Converted internally for pixel-area mode.'
-                                        : 'Optional shorter-edge target when preprocessing.'
-                                     ">
-                                    Optional shorter-edge target (pixels). Converted internally for pixel-area mode.
+                                <div class="form-text">
+                                    Pre-resize to this size
                                 </div>
                             </div>
-                            <div class="col-md-4">
-                                <div class="form-check mt-2">
+                        </div>
+                    </div>
+                    <div class="dataset-subgroup"
+                         x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'">
+                        <div class="dataset-subgroup-title">Cropping</div>
+                        <div class="row g-3 align-items-end">
+                            <div class="col-12">
+                                <div class="form-check">
                                     <input class="form-check-input"
                                            type="checkbox"
                                            :id="`dataset-crop-${datasetSafeId(dataset)}`"
                                            x-model="dataset.crop"
                                            @change="markAsUnsaved()">
-                                    <label class="form-check-label" :for="`dataset-crop-${datasetSafeId(dataset)}`">Crop images</label>
+                                    <label class="form-check-label" :for="`dataset-crop-${datasetSafeId(dataset)}`">Enable image cropping</label>
                                 </div>
                             </div>
                         </div>
-                        <div class="row g-3 align-items-end mt-2" x-show="dataset.crop" x-cloak>
+                        <div class="row g-3 mt-3" x-show="dataset.crop" x-cloak>
                             <div class="col-md-6">
                                 <label class="form-label">Crop Style</label>
                                 <select class="form-select form-select-sm"
@@ -1093,8 +1092,14 @@ function dataloaderSectionComponent() {
                                 <input type="text" class="form-control form-control-sm"
                                        x-model="dataset._cropAspectBucketsText"
                                        @input="markAsUnsaved()"
+                                       :disabled="dataset.crop_aspect !== 'closest'"
                                        placeholder="0.75, 1.0, 1.33">
-                                <div class="form-text">Comma separated list of aspect ratios to prefer when cropping.</div>
+                                <div class="form-text"
+                                     x-text="dataset.crop_aspect === 'closest'
+                                        ? 'Comma separated list of aspect ratios to prefer when cropping.'
+                                        : 'Select &quot;Closest bucket&quot; to enable custom aspect buckets.'">
+                                    Comma separated list of aspect ratios to prefer when cropping.
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1103,21 +1108,57 @@ function dataloaderSectionComponent() {
                     <div class="dataset-section">
                         <div class="dataset-section-header">Storage</div>
                         <div class="dataset-section-body">
-                            <div class="row g-3 align-items-end">
-                                <div class="col-md-4">
-                                    <label class="form-label">Storage Backend</label>
-                                    <select class="form-select form-select-sm"
-                                            x-model="dataset.type"
-                                            @change="onStorageBackendChange(dataset)">
-                                        <option value="local">Local filesystem</option>
-                                        <option value="aws">AWS S3 / compatible</option>
-                                        <option value="csv">CSV URL list</option>
-                                        <option value="huggingface">Hugging Face dataset</option>
-                                    </select>
+                            <div class="dataset-subgroup">
+                                <div class="dataset-subgroup-title">Backend Configuration</div>
+                                <div class="row g-3">
+                                    <div class="col-md-12">
+                                        <label class="form-label">Storage Backend</label>
+                                        <select class="form-select form-select-sm"
+                                                x-model="dataset.type"
+                                                @change="onStorageBackendChange(dataset)">
+                                            <option value="local">Local filesystem</option>
+                                            <option value="aws">AWS S3 / compatible</option>
+                                            <option value="csv">CSV URL list</option>
+                                            <option value="huggingface">Hugging Face dataset</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="dataset-subgroup mt-3">
+                                <div class="dataset-subgroup-title">Storage Paths</div>
+                                <div class="row g-3">
+                                    <div class="col-md-6"
+                                         x-show="dataset.type === 'local' && dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'">
+                                        <label class="form-label">Instance Data Directory</label>
+                                        <input type="text" class="form-control form-control-sm"
+                                               x-model.lazy="dataset.instance_data_dir"
+                                               @input="markAsUnsaved()"
+                                               placeholder="/path/to/data">
+                                        <div class="form-text">Path to your training images or videos.</div>
+                                    </div>
+                                    <div class="col-md-6"
+                                         x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'">
+                                        <label class="form-label">VAE Cache Directory</label>
+                                        <input type="text" class="form-control form-control-sm"
+                                               x-model.lazy="dataset.cache_dir_vae"
+                                               @input="markAsUnsaved()"
+                                               placeholder="/path/to/cache/vae">
+                                        <div class="form-text">Where VAE-encoded latents are cached.</div>
+                                    </div>
+                                    <div class="col-md-6"
+                                         x-show="dataset.type === 'local' && dataset.dataset_type === 'text_embeds'">
+                                        <label class="form-label">Text Embed Cache</label>
+                                        <input type="text" class="form-control form-control-sm"
+                                               x-model.lazy="dataset.cache_dir"
+                                               @input="markAsUnsaved()"
+                                               placeholder="/path/to/cache">
+                                        <div class="form-text">Location to store or reuse prompt embeddings.</div>
+                                    </div>
                                 </div>
                             </div>
                             <div class="storage-config mt-3">
-                                <div class="dataset-subgroup" x-show="dataset.type === 'aws'">
+                                <template x-if="dataset.type === 'aws'">
+                                <div class="dataset-subgroup">
                                     <div class="dataset-subgroup-title">Bucket Settings</div>
                                     <div class="row g-3">
                                         <div class="col-md-4">
@@ -1195,97 +1236,108 @@ function dataloaderSectionComponent() {
                                         </div>
                                     </div>
                                 </div>
-                                <div class="row g-3" x-show="dataset.type === 'csv'">
-                                    <div class="col-md-4">
-                                        <label class="form-label">CSV File</label>
-                                        <input type="text" class="form-control form-control-sm"
-                                               x-model="dataset.csv_file"
-                                               @input="touchConnectionField(dataset)"
-                                               placeholder="/path/to/urls.csv">
-                                    </div>
-                                    <div class="col-md-4">
-                                        <label class="form-label">Caption Column</label>
-                                        <input type="text" class="form-control form-control-sm"
-                                               x-model="dataset.csv_caption_column"
-                                               @input="touchConnectionField(dataset)"
-                                               placeholder="caption">
-                                    </div>
-                                    <div class="col-md-4">
-                                        <label class="form-label">Cache Directory</label>
-                                        <input type="text" class="form-control form-control-sm"
-                                               x-model="dataset.csv_cache_dir"
-                                               @input="touchConnectionField(dataset)"
-                                               placeholder="/path/to/cache">
-                                    </div>
-                                </div>
-                                <div class="row g-3" x-show="dataset.type === 'huggingface'">
-                                    <div class="col-md-4">
-                                        <label class="form-label">Dataset Name</label>
-                                        <input type="text" class="form-control form-control-sm"
-                                               x-model="dataset.dataset_name"
-                                               @input="touchConnectionField(dataset)"
-                                               placeholder="username/dataset">
-                                    </div>
-                                    <div class="col-md-4">
-                                        <label class="form-label">Dataset Config</label>
-                                        <input type="text" class="form-control form-control-sm"
-                                               x-model="dataset.dataset_config"
-                                               @input="touchConnectionField(dataset)"
-                                               placeholder="default">
-                                    </div>
-                                    <div class="col-md-4">
-                                        <label class="form-label">Split</label>
-                                        <input type="text" class="form-control form-control-sm"
-                                               x-model="dataset.split"
-                                               @input="touchConnectionField(dataset)"
-                                               placeholder="train">
-                                    </div>
-                                </div>
-                                <div class="row g-3 mt-1" x-show="dataset.type === 'huggingface'">
-                                    <div class="col-md-4">
-                                        <label class="form-label">Revision</label>
-                                        <input type="text" class="form-control form-control-sm"
-                                               x-model="dataset.revision"
-                                               @input="touchConnectionField(dataset)"
-                                               placeholder="main">
-                                    </div>
-                                    <div class="col-md-4">
-                                        <label class="form-label">Image Column</label>
-                                        <input type="text" class="form-control form-control-sm"
-                                               x-model="dataset.image_column"
-                                               @input="touchConnectionField(dataset)"
-                                               placeholder="image">
-                                    </div>
-                                    <div class="col-md-4">
-                                        <label class="form-label">Caption Column</label>
-                                        <input type="text" class="form-control form-control-sm"
-                                               x-model="dataset.caption_column"
-                                               @input="touchConnectionField(dataset)"
-                                               placeholder="text">
-                                    </div>
-                                </div>
-                                <div class="row g-3 mt-1" x-show="dataset.type === 'huggingface'">
-                                    <div class="col-md-4">
-                                        <div class="form-check mt-4">
-                                            <input class="form-check-input"
-                                                   type="checkbox"
-                                                   :id="`dataset-streaming-${datasetSafeId(dataset)}`"
-                                                   x-model="dataset.streaming"
-                                                   @change="touchConnectionField(dataset)">
-                                            <label class="form-check-label" :for="`dataset-streaming-${datasetSafeId(dataset)}`">
-                                                Enable streaming
-                                            </label>
+                                </template>
+                                <template x-if="dataset.type === 'csv'">
+                                <div class="dataset-subgroup">
+                                    <div class="dataset-subgroup-title">CSV Configuration</div>
+                                    <div class="row g-3">
+                                        <div class="col-md-4">
+                                            <label class="form-label">CSV File</label>
+                                            <input type="text" class="form-control form-control-sm"
+                                                   x-model="dataset.csv_file"
+                                                   @input="touchConnectionField(dataset)"
+                                                   placeholder="/path/to/urls.csv">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label">Caption Column</label>
+                                            <input type="text" class="form-control form-control-sm"
+                                                   x-model="dataset.csv_caption_column"
+                                                   @input="touchConnectionField(dataset)"
+                                                   placeholder="caption">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label">Cache Directory</label>
+                                            <input type="text" class="form-control form-control-sm"
+                                                   x-model="dataset.csv_cache_dir"
+                                                   @input="touchConnectionField(dataset)"
+                                                   placeholder="/path/to/cache">
                                         </div>
                                     </div>
-                                    <div class="col-md-8">
-                                        <label class="form-label">Auth Token</label>
-                                        <input type="password" class="form-control form-control-sm"
-                                               x-model="dataset.auth_token"
-                                               @input="touchConnectionField(dataset)"
-                                               placeholder="hf_...">
-                                        <div class="form-text">Optional token for private datasets.</div>
+                                </div>
+                                </template>
+                                <template x-if="dataset.type === 'huggingface'">
+                                <div class="dataset-subgroup">
+                                    <div class="dataset-subgroup-title">Hugging Face Settings</div>
+                                    <div class="row g-3">
+                                        <div class="col-md-4">
+                                            <label class="form-label">Dataset Name</label>
+                                            <input type="text" class="form-control form-control-sm"
+                                                   x-model="dataset.dataset_name"
+                                                   @input="touchConnectionField(dataset)"
+                                                   placeholder="username/dataset">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label">Dataset Config</label>
+                                            <input type="text" class="form-control form-control-sm"
+                                                   x-model="dataset.dataset_config"
+                                                   @input="touchConnectionField(dataset)"
+                                                   placeholder="default">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label">Split</label>
+                                            <input type="text" class="form-control form-control-sm"
+                                                   x-model="dataset.split"
+                                                   @input="touchConnectionField(dataset)"
+                                                   placeholder="train">
+                                        </div>
+                                    </div>
+                                    <div class="row g-3 mt-3">
+                                        <div class="col-md-4">
+                                            <label class="form-label">Revision</label>
+                                            <input type="text" class="form-control form-control-sm"
+                                                   x-model="dataset.revision"
+                                                   @input="touchConnectionField(dataset)"
+                                                   placeholder="main">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label">Image Column</label>
+                                            <input type="text" class="form-control form-control-sm"
+                                                   x-model="dataset.image_column"
+                                                   @input="touchConnectionField(dataset)"
+                                                   placeholder="image">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label">Caption Column</label>
+                                            <input type="text" class="form-control form-control-sm"
+                                                   x-model="dataset.caption_column"
+                                                   @input="touchConnectionField(dataset)"
+                                                   placeholder="text">
+                                        </div>
+                                    </div>
+                                    <div class="row g-3 mt-3">
+                                        <div class="col-md-4">
+                                            <div class="form-check mt-4">
+                                                <input class="form-check-input"
+                                                       type="checkbox"
+                                                       :id="`dataset-streaming-${datasetSafeId(dataset)}`"
+                                                       x-model="dataset.streaming"
+                                                       @change="touchConnectionField(dataset)">
+                                                <label class="form-check-label" :for="`dataset-streaming-${datasetSafeId(dataset)}`">
+                                                    Enable streaming
+                                                </label>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-8">
+                                            <label class="form-label">Auth Token</label>
+                                            <input type="password" class="form-control form-control-sm"
+                                                   x-model="dataset.auth_token"
+                                                   @input="touchConnectionField(dataset)"
+                                                   placeholder="hf_...">
+                                            <div class="form-text">Optional token for private datasets.</div>
+                                        </div>
                                     </div>
                                 </div>
+                                </template>
                             </div>
                         </div>
                     </div>
@@ -1294,32 +1346,37 @@ function dataloaderSectionComponent() {
                          x-cloak>
                         <div class="dataset-section-header">Captions &amp; Metadata</div>
                         <div class="dataset-section-body">
-                            <div class="row g-3">
-                                <div class="col-md-6">
-                                    <label class="form-label">Caption Strategy</label>
-                                    <select class="form-select form-select-sm"
-                                            x-model="dataset.caption_strategy"
-                                            @change="markAsUnsaved()">
-                                        <option value="textfile">Text files (.txt)</option>
-                                        <option value="csv">CSV</option>
-                                        <option value="parquet">Parquet</option>
-                                        <option value="jsonl">JSON Lines</option>
-                                        <option value="instanceprompt">Instance prompt only</option>
-                                        <option value="">Use dataset default</option>
-                                    </select>
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="form-label">Metadata Backend</label>
-                                    <select class="form-select form-select-sm"
-                                            x-model="dataset.metadata_backend"
-                                            @change="markAsUnsaved()">
-                                        <option value="">Auto discover (default)</option>
-                                        <option value="discovery">Discovery scan</option>
-                                        <option value="json">JSON manifest</option>
-                                        <option value="parquet">Parquet index</option>
-                                        <option value="csv">CSV index</option>
-                                        <option value="huggingface">Hugging Face dataset</option>
-                                    </select>
+                            <div class="dataset-subgroup">
+                                <div class="dataset-subgroup-title">Caption &amp; Metadata Strategy</div>
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label">Caption Strategy</label>
+                                        <select class="form-select form-select-sm"
+                                                x-model="dataset.caption_strategy"
+                                                @change="markAsUnsaved()">
+                                            <option value="textfile">Text files (.txt)</option>
+                                            <option value="csv">CSV</option>
+                                            <option value="parquet">Parquet</option>
+                                            <option value="jsonl">JSON Lines</option>
+                                            <option value="instanceprompt">Instance prompt only</option>
+                                            <option value="">Use dataset default</option>
+                                        </select>
+                                        <div class="form-text">How captions are stored and loaded.</div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">Metadata Backend</label>
+                                        <select class="form-select form-select-sm"
+                                                x-model="dataset.metadata_backend"
+                                                @change="markAsUnsaved()">
+                                            <option value="">Auto discover (default)</option>
+                                            <option value="discovery">Discovery scan</option>
+                                            <option value="json">JSON manifest</option>
+                                            <option value="parquet">Parquet index</option>
+                                            <option value="csv">CSV index</option>
+                                            <option value="huggingface">Hugging Face dataset</option>
+                                        </select>
+                                        <div class="form-text">How file metadata is indexed and accessed.</div>
+                                    </div>
                                 </div>
                             </div>
                             <div class="dataset-subgroup mt-3"
@@ -1436,256 +1493,313 @@ function dataloaderSectionComponent() {
                              x-show="dataset._showAdvanced"
                              x-transition
                              x-cloak>
-                            <div class="row g-3">
-                                <div class="col-md-3"
-                                     x-show="!['text_embeds','image_embeds'].includes(dataset.dataset_type)">
-                                    <label class="form-label d-flex align-items-center gap-2">Repeats
-                                        <i class="fas fa-info-circle text-muted"
-                                           tabindex="0"
-                                           title="SimpleTuner treats 0 repeats as a single pass. Set to 1 to run two passes, and so on."
-                                           aria-label="SimpleTuner treats 0 repeats as a single pass. Set to 1 to run two passes, and so on."></i>
-                                    </label>
-                                    <input type="number" class="form-control form-control-sm"
-                                           min="0"
-                                           step="1"
-                                           x-model.number="dataset.repeats"
-                                           @input="markAsUnsaved()"
-                                           placeholder="0">
-                                    <div class="form-text">Set to 0 for a single pass. Each repeat adds another sweep through the dataset.</div>
-                                </div>
-                                <div class="col-md-3"
-                                     x-show="!['text_embeds','image_embeds'].includes(dataset.dataset_type)"
-                                     :class="{'danger-mode-locked': !dangerModeEnabled()}">
-                                    <label class="form-label">Probability</label>
-                                    <input type="number" class="form-control form-control-sm"
-                                           min="0"
-                                           max="1"
-                                           step="0.05"
-                                           x-model.number="dataset.probability"
-                                           :disabled="!dangerModeEnabled()"
-                                           @input="markAsUnsaved()"
-                                           placeholder="1.0">
-                                    <div class="form-text" x-show="dangerModeEnabled()">Relative sampling weight when mixing datasets.</div>
-                                    <div class="form-text text-warning danger-mode-hint" x-show="!dangerModeEnabled()">
-                                        Enable "I Know What I'm Doing" in Advanced settings to adjust probability.
+                            <div class="dataset-subgroup"
+                                 x-show="!['text_embeds','image_embeds'].includes(dataset.dataset_type)">
+                                <div class="dataset-subgroup-title">Sampling &amp; Repeats</div>
+                                <div class="row g-3">
+                                    <div class="col-md-4">
+                                        <label class="form-label d-flex align-items-center gap-2">Repeats
+                                            <i class="fas fa-info-circle text-muted"
+                                               tabindex="0"
+                                               title="SimpleTuner treats 0 repeats as a single pass. Set to 1 to run two passes, and so on."
+                                               aria-label="SimpleTuner treats 0 repeats as a single pass. Set to 1 to run two passes, and so on."></i>
+                                        </label>
+                                        <input type="number" class="form-control form-control-sm"
+                                               min="0"
+                                               step="1"
+                                               x-model.number.lazy="dataset.repeats"
+                                               @input="markAsUnsaved()"
+                                               placeholder="0">
+                                        <div class="form-text">Set to 0 for a single pass. Each repeat adds another sweep through the dataset.</div>
+                                    </div>
+                                    <div class="col-md-4"
+                                         :class="{'danger-mode-locked': !dangerModeEnabled()}">
+                                        <label class="form-label">Probability</label>
+                                        <input type="number" class="form-control form-control-sm"
+                                               min="0"
+                                               max="1"
+                                               step="0.05"
+                                               x-model.number.lazy="dataset.probability"
+                                               :disabled="!dangerModeEnabled()"
+                                               @input="markAsUnsaved()"
+                                               placeholder="1.0">
+                                        <div class="form-text" x-show="dangerModeEnabled()">Relative sampling weight when mixing datasets.</div>
+                                        <div class="form-text text-warning danger-mode-hint" x-show="!dangerModeEnabled()">
+                                            Enable "I Know What I'm Doing" in Advanced settings to adjust probability.
+                                        </div>
                                     </div>
                                 </div>
-                            <div class="col-md-3" x-show="dataset.dataset_type === 'text_embeds' || dataset.dataset_type === 'image_embeds'">
-                                <label class="form-label">Write Batch Size</label>
-                                <input type="number" class="form-control form-control-sm"
-                                       min="1"
-                                       step="1"
-                                       x-model.number="dataset.write_batch_size"
-                                       @input="markAsUnsaved()"
-                                       placeholder="128">
-                                <div class="form-text">Controls embed cache flush size.</div>
                             </div>
-                        </div>
-                        <div class="row g-3 mt-1" x-show="!['text_embeds','image_embeds'].includes(dataset.dataset_type)">
-                            <div class="col-md-3">
-                                <label class="form-label">Min Aspect Ratio</label>
-                                <input type="number" class="form-control form-control-sm"
-                                       min="0"
-                                       step="0.01"
-                                       x-model.number="dataset.minimum_aspect_ratio"
-                                       @input="markAsUnsaved()"
-                                       placeholder="0.5">
+                            <div class="dataset-subgroup" x-show="dataset.dataset_type === 'text_embeds' || dataset.dataset_type === 'image_embeds'">
+                                <div class="dataset-subgroup-title">Embed Options</div>
+                                <div class="row g-3">
+                                    <div class="col-md-4">
+                                        <label class="form-label">Write Batch Size</label>
+                                        <input type="number" class="form-control form-control-sm"
+                                               min="1"
+                                               step="1"
+                                               x-model.number.lazy="dataset.write_batch_size"
+                                               @input="markAsUnsaved()"
+                                               placeholder="128">
+                                        <div class="form-text">Controls embed cache flush size.</div>
+                                    </div>
+                                </div>
                             </div>
-                            <div class="col-md-3">
-                                <label class="form-label">Max Aspect Ratio</label>
-                                <input type="number" class="form-control form-control-sm"
-                                       min="0"
-                                       step="0.01"
-                                       x-model.number="dataset.maximum_aspect_ratio"
-                                       @input="markAsUnsaved()"
-                                       placeholder="3.0">
+                            <div class="dataset-subgroup mt-3"
+                                 x-show="!['text_embeds','image_embeds'].includes(dataset.dataset_type)">
+                                <div class="dataset-subgroup-title">Aspect Ratio Limits</div>
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label">Min Aspect Ratio</label>
+                                        <input type="number" class="form-control form-control-sm"
+                                               min="0"
+                                               step="0.01"
+                                               x-model.number.lazy="dataset.minimum_aspect_ratio"
+                                               @input="markAsUnsaved()"
+                                               placeholder="0.5">
+                                        <div class="form-text">Skip images with aspect ratio below this value.</div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">Max Aspect Ratio</label>
+                                        <input type="number" class="form-control form-control-sm"
+                                               min="0"
+                                               step="0.01"
+                                               x-model.number.lazy="dataset.maximum_aspect_ratio"
+                                               @input="markAsUnsaved()"
+                                               placeholder="3.0">
+                                        <div class="form-text">Skip images with aspect ratio above this value.</div>
+                                    </div>
+                                </div>
                             </div>
-                        </div>
                         <div class="dataset-subgroup mt-3"
                              x-show="dataset.dataset_type === 'image' || dataset.dataset_type === 'video'">
                             <div class="dataset-subgroup-title">Discovery Overrides</div>
-                            <div class="row g-3">
+                            <div class="row">
                                 <template x-for="option in skipDiscoveryOptions()" :key="option.value">
                                     <div class="col-md-3">
-                                        <div class="form-check">
-                                            <input class="form-check-input"
-                                                   type="checkbox"
-                                                   :id="`dataset-skip-${option.value}-${datasetSafeId(dataset)}`"
-                                                   :checked="hasSkipDiscovery(dataset, option.value)"
-                                                   @change="setSkipDiscovery(dataset, option.value, $event.target.checked)">
-                                            <label class="form-check-label"
-                                                   :for="`dataset-skip-${option.value}-${datasetSafeId(dataset)}`"
-                                                   x-text="option.label"></label>
+                                        <div class="checkbox-item">
+                                            <div class="form-check">
+                                                <input class="form-check-input"
+                                                       type="checkbox"
+                                                       :id="`dataset-skip-${option.value}-${datasetSafeId(dataset)}`"
+                                                       :checked="hasSkipDiscovery(dataset, option.value)"
+                                                       @change="setSkipDiscovery(dataset, option.value, $event.target.checked)">
+                                                <div class="checkbox-content">
+                                                    <label class="form-check-label"
+                                                           :for="`dataset-skip-${option.value}-${datasetSafeId(dataset)}`"
+                                                           x-text="option.label"></label>
+                                                    <div class="form-text" x-text="option.hint"></div>
+                                                </div>
+                                            </div>
                                         </div>
-                                        <div class="form-text" x-text="option.hint"></div>
                                     </div>
                                 </template>
                             </div>
-                            <div class="form-text text-warning mt-2">Disable discovery only after embeds and caches are fully generated.</div>
+                            <div class="form-text text-warning mt-3">Disable discovery only after embeds and caches are fully generated.</div>
                         </div>
-                        <div class="row g-3 mt-1" x-show="dataset.dataset_type === 'text_embeds'">
-                            <div class="col-md-6">
-                                <label class="form-label">Caption Filter List</label>
-                                <select class="form-select form-select-sm"
-                                        x-model="dataset._selectedCaptionFilter"
-                                        @change="onCaptionFilterSelect(dataset)">
-                                    <option value="">None</option>
-                                    <template x-for="filter in captionFilterOptions" :key="filter.value">
-                                        <option :value="filter.value"
-                                                :title="filter.description"
-                                                x-text="filter.label"></option>
-                                    </template>
-                                    <option value="__custom__">Custom path / inline list…</option>
-                                </select>
-                                <div class="mt-2" x-show="dataset._selectedCaptionFilter === '__custom__'">
-                                    <input type="text" class="form-control form-control-sm"
-                                           x-model="dataset.caption_filter_list"
-                                           @input="markAsUnsaved()"
-                                           placeholder="/path/to/filter.txt or JSON literal">
-                                    <div class="form-text">Provide a path or inline JSON/line list to apply custom filtering.</div>
+                            <div class="dataset-subgroup mt-3" x-show="dataset.dataset_type === 'text_embeds'">
+                                <div class="dataset-subgroup-title">Caption Filtering</div>
+                                <div class="row g-3">
+                                    <div class="col-md-8">
+                                        <label class="form-label">Caption Filter List</label>
+                                        <select class="form-select form-select-sm"
+                                                x-model="dataset._selectedCaptionFilter"
+                                                @change="onCaptionFilterSelect(dataset)">
+                                            <option value="">None</option>
+                                            <template x-for="filter in captionFilterOptions" :key="filter.value">
+                                                <option :value="filter.value"
+                                                        :title="filter.description"
+                                                        x-text="filter.label"></option>
+                                            </template>
+                                            <option value="__custom__">Custom path / inline list…</option>
+                                        </select>
+                                        <div class="mt-2" x-show="dataset._selectedCaptionFilter === '__custom__'">
+                                            <input type="text" class="form-control form-control-sm"
+                                                   x-model="dataset.caption_filter_list"
+                                                   @input="markAsUnsaved()"
+                                                   placeholder="/path/to/filter.txt or JSON literal">
+                                            <div class="form-text">Provide a path or inline JSON/line list to apply custom filtering.</div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                        <div class="row g-3 mt-1"
-                             x-show="dataset.dataset_type === 'image' || dataset.dataset_type === 'video'">
-                            <div class="col-md-6">
-                                <label class="form-label">Text Embeds Dataset</label>
-                                <select class="form-select form-select-sm"
-                                        x-model="dataset.text_embeds"
-                                        @change="markAsUnsaved()">
-                                    <option value="">Use default text embed backend</option>
-                                    <template x-for="option in datasetOptionsForType(dataset, 'text_embeds')" :key="option.id">
-                                        <option :value="option.id" x-text="option.label"></option>
-                                    </template>
-                                </select>
-                                <div class="invalid-feedback d-block"
-                                     x-show="hasFieldError(dataset.id, 'text_embeds')"
-                                     x-text="getFieldError(dataset.id, 'text_embeds')"></div>
-                                <div class="form-text">
-                                    Leaving this empty keeps caption embeds with this dataset using its cache directory.
+                            <div class="dataset-subgroup mt-3"
+                                 x-show="dataset.dataset_type === 'image' || dataset.dataset_type === 'video'">
+                                <div class="dataset-subgroup-title">Embed Dataset Links</div>
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label">Text Embeds Dataset</label>
+                                        <select class="form-select form-select-sm"
+                                                x-model="dataset.text_embeds"
+                                                @change="markAsUnsaved()">
+                                            <option value="">Use default text embed backend</option>
+                                            <template x-for="option in datasetOptionsForType(dataset, 'text_embeds')" :key="option.id">
+                                                <option :value="option.id" x-text="option.label"></option>
+                                            </template>
+                                        </select>
+                                        <div class="invalid-feedback d-block"
+                                             x-show="hasFieldError(dataset.id, 'text_embeds')"
+                                             x-text="getFieldError(dataset.id, 'text_embeds')"></div>
+                                        <div class="form-text">
+                                            Leaving this empty keeps caption embeds with this dataset using its cache directory.
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">Image Embeds Dataset</label>
+                                        <select class="form-select form-select-sm"
+                                                x-model="dataset.image_embeds"
+                                                @change="markAsUnsaved()">
+                                            <option value="">None</option>
+                                            <template x-for="option in datasetOptionsForType(dataset, 'image_embeds')" :key="option.id">
+                                                <option :value="option.id" x-text="option.label"></option>
+                                            </template>
+                                        </select>
+                                        <div class="invalid-feedback d-block"
+                                             x-show="hasFieldError(dataset.id, 'image_embeds')"
+                                             x-text="getFieldError(dataset.id, 'image_embeds')"></div>
+                                        <div class="form-text">
+                                            None keeps image embeds in this dataset&#39;s storage backend; selecting another dataset reuses that dataset&#39;s embed cache location.
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Image Embeds Dataset</label>
-                                <select class="form-select form-select-sm"
-                                        x-model="dataset.image_embeds"
-                                        @change="markAsUnsaved()">
-                                    <option value="">None</option>
-                                    <template x-for="option in datasetOptionsForType(dataset, 'image_embeds')" :key="option.id">
-                                        <option :value="option.id" x-text="option.label"></option>
-                                    </template>
-                                </select>
-                                <div class="invalid-feedback d-block"
-                                     x-show="hasFieldError(dataset.id, 'image_embeds')"
-                                     x-text="getFieldError(dataset.id, 'image_embeds')"></div>
-                                <div class="form-text">
-                                    None keeps image embeds in this dataset&#39;s storage backend; selecting another dataset reuses that dataset&#39;s embed cache location.
+                            <div class="dataset-subgroup mt-3">
+                                <div class="dataset-subgroup-title">Cache &amp; Processing Options</div>
+                                <div class="checkbox-group-row">
+                                    <div class="row">
+                                        <div class="col-md-4"
+                                             x-show="!['text_embeds','image_embeds'].includes(dataset.dataset_type)">
+                                            <div class="checkbox-item">
+                                                <div class="form-check">
+                                                    <input class="form-check-input"
+                                                           type="checkbox"
+                                                           :id="`dataset-hash-${datasetSafeId(dataset)}`"
+                                                           x-model="dataset.hash_filenames"
+                                                           @change="markAsUnsaved()">
+                                                    <div class="checkbox-content">
+                                                        <label class="form-check-label" :for="`dataset-hash-${datasetSafeId(dataset)}`">
+                                                            Hash cached filenames
+                                                        </label>
+                                                        <div class="form-text">
+                                                            Creates shorter, hashed names for VAE cache files to avoid filesystem path length limits.
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-4"
+                                             x-show="dataset.dataset_type !== 'image_embeds'">
+                                            <div class="checkbox-item">
+                                                <div class="form-check">
+                                                    <input class="form-check-input"
+                                                           type="checkbox"
+                                                           :id="`dataset-cache-${datasetSafeId(dataset)}`"
+                                                           x-model="dataset.preserve_data_backend_cache"
+                                                           @change="markAsUnsaved()">
+                                                    <div class="checkbox-content">
+                                                        <label class="form-check-label" :for="`dataset-cache-${datasetSafeId(dataset)}`">
+                                                            Preserve backend cache
+                                                        </label>
+                                                        <div class="form-text">
+                                                            Keeps the file list cache between epochs. Essential for large datasets on AWS S3 or slow storage.
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-4"
+                                             x-show="!['text_embeds','image_embeds'].includes(dataset.dataset_type)">
+                                            <div class="checkbox-item">
+                                                <div class="form-check">
+                                                    <input class="form-check-input"
+                                                           type="checkbox"
+                                                           :id="`dataset-regularisation-${datasetSafeId(dataset)}`"
+                                                           x-model="dataset.is_regularisation_data"
+                                                           @change="markAsUnsaved()">
+                                                    <div class="checkbox-content">
+                                                        <label class="form-check-label" :for="`dataset-regularisation-${datasetSafeId(dataset)}`">
+                                                            Regularisation data
+                                                        </label>
+                                                        <div class="form-text">
+                                                            Uses the base model's predictions on this dataset to prevent the model from drifting outside the intended class token. Requires another non-regularisation image/video dataset.
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                        <div class="row g-3 mt-1">
-                            <div class="col-md-4"
-                                 x-show="!['text_embeds','image_embeds'].includes(dataset.dataset_type)">
-                                <div class="form-check mt-4">
-                                    <input class="form-check-input"
-                                           type="checkbox"
-                                           :id="`dataset-hash-${datasetSafeId(dataset)}`"
-                                           x-model="dataset.hash_filenames"
-                                           @change="markAsUnsaved()">
-                                    <label class="form-check-label" :for="`dataset-hash-${datasetSafeId(dataset)}`">
-                                        Hash cached filenames
-                                    </label>
-                                </div>
-                            </div>
-                            <div class="col-md-4"
-                                 x-show="dataset.dataset_type !== 'image_embeds'">
-                                <div class="form-check mt-4">
-                                    <input class="form-check-input"
-                                           type="checkbox"
-                                           :id="`dataset-cache-${datasetSafeId(dataset)}`"
-                                           x-model="dataset.preserve_data_backend_cache"
-                                           @change="markAsUnsaved()">
-                                    <label class="form-check-label" :for="`dataset-cache-${datasetSafeId(dataset)}`">
-                                        Preserve backend cache
-                                    </label>
-                                </div>
-                            </div>
-                            <div class="col-md-4"
-                                 x-show="!['text_embeds','image_embeds'].includes(dataset.dataset_type)">
-                                <div class="form-check mt-4">
-                                    <input class="form-check-input"
-                                           type="checkbox"
-                                           :id="`dataset-regularisation-${datasetSafeId(dataset)}`"
-                                           x-model="dataset.is_regularisation_data"
-                                           @change="markAsUnsaved()">
-                                    <label class="form-check-label" :for="`dataset-regularisation-${datasetSafeId(dataset)}`"
-                                           title="Marks dataset as parent-teacher regularisation for LyCORIS adapters.">
-                                        Regularisation data
-                                    </label>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="row g-3 mt-1"
-                             x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'">
-                            <div class="col-md-6">
-                                <label class="form-label">VAE Cache Directory</label>
-                                <input type="text" class="form-control form-control-sm"
-                                       x-model="dataset.cache_dir_vae"
-                                       @input="markAsUnsaved()"
-                                       placeholder="/path/to/cache/vae">
-                            </div>
-                        </div>
                         </div>
                     </div>
                     <template x-if="dataset.dataset_type === 'video'">
-                        <div class="video-settings mt-3 pt-3 border-top">
-                            <h6 class="mb-2">Video Settings</h6>
-                            <div class="row g-3 align-items-end">
-                                <div class="col-md-3">
-                                    <label class="form-label">Frames per Clip</label>
-                                    <input type="number"
-                                           class="form-control form-control-sm"
-                                           min="1"
-                                           x-model.number="dataset.video.num_frames"
-                                           @input="markAsUnsaved()"
-                                           placeholder="125">
-                                    <div class="form-text">Target frame count extracted from each video.</div>
+                        <div class="dataset-section video-settings">
+                            <div class="dataset-section-header">Video Settings</div>
+                            <div class="dataset-section-body">
+                                <div class="dataset-subgroup">
+                                    <div class="dataset-subgroup-title">Frame Configuration</div>
+                                    <div class="row g-3">
+                                        <div class="col-md-4">
+                                            <label class="form-label">Frames per Clip</label>
+                                            <input type="number"
+                                                   class="form-control form-control-sm"
+                                                   min="1"
+                                                   x-model.number.lazy="dataset.video.num_frames"
+                                                   @input="markAsUnsaved()"
+                                                   placeholder="125">
+                                            <div class="form-text">Target frame count extracted from each video.</div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label">Min Frames</label>
+                                            <input type="number"
+                                                   class="form-control form-control-sm"
+                                                   min="1"
+                                                   x-model.number.lazy="dataset.video.min_frames"
+                                                   @input="markAsUnsaved()"
+                                                   placeholder="125">
+                                            <div class="form-text">Excludes videos with fewer frames than this.</div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label">Max Frames</label>
+                                            <input type="number"
+                                                   class="form-control form-control-sm"
+                                                   min="1"
+                                                   x-model.number.lazy="dataset.video.max_frames"
+                                                   @input="markAsUnsaved()"
+                                                   placeholder="250">
+                                            <div class="form-text">Excludes videos with more frames than this. 0 = no limit.</div>
+                                        </div>
+                                    </div>
                                 </div>
-                                <div class="col-md-3">
-                                    <label class="form-label">Min Frames</label>
-                                    <input type="number"
-                                           class="form-control form-control-sm"
-                                           min="1"
-                                           x-model.number="dataset.video.min_frames"
-                                           @input="markAsUnsaved()"
-                                           placeholder="125">
-                                </div>
-                                <div class="col-md-3">
-                                    <label class="form-label">Max Frames</label>
-                                    <input type="number"
-                                           class="form-control form-control-sm"
-                                           min="1"
-                                           x-model.number="dataset.video.max_frames"
-                                           @input="markAsUnsaved()"
-                                           placeholder="250">
-                                </div>
-                                <div class="col-md-3">
-                                    <div class="form-check mt-4">
-                                        <input class="form-check-input"
-                                               type="checkbox"
-                                               :id="`video-i2v-${datasetSafeId(dataset)}`"
-                                               x-model="dataset.video.is_i2v"
-                                               @change="markAsUnsaved()">
-                                        <label class="form-check-label" :for="`video-i2v-${datasetSafeId(dataset)}`">
-                                            Enable I2V augmentation
-                                        </label>
+                                <div class="dataset-subgroup mt-3">
+                                    <div class="dataset-subgroup-title">Video Processing</div>
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="checkbox-item">
+                                                <div class="form-check">
+                                                    <input class="form-check-input"
+                                                           type="checkbox"
+                                                           :id="`video-i2v-${datasetSafeId(dataset)}`"
+                                                           x-model="dataset.video.is_i2v"
+                                                           @change="markAsUnsaved()">
+                                                    <div class="checkbox-content">
+                                                        <label class="form-check-label" :for="`video-i2v-${datasetSafeId(dataset)}`">
+                                                            Enable I2V augmentation
+                                                        </label>
+                                                        <div class="form-text">
+                                                            Enables image-to-video augmentation mode for training.
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
                         </div>
                     </template>
                     <template x-if="shouldShowConditioningSection(dataset)">
-                        <div class="conditioning-section mt-3 pt-3 border-top">
+                        <div class="dataset-section conditioning-section">
                             <div class="mb-3">
                                 <div class="d-flex justify-content-between align-items-center mb-1">
                                     <label class="form-label mb-0">Conditioning Datasets</label>
@@ -1860,9 +1974,11 @@ function dataloaderSectionComponent() {
             </button>
         </div>
     </div>
-    
+    </template>
+
     <!-- JSON Mode -->
-    <div x-show="dataLoaderMode === 'json'">
+    <template x-if="dataLoaderMode === 'json'">
+    <div>
         <div class="json-editor-container">
             <div class="json-actions">
                 <button type="button" class="btn btn-secondary" @click="if (trainer.dataLoaderJson) { trainer.dataLoaderJson = JSON.stringify(JSON.parse(trainer.dataLoaderJson), null, 2) }">
@@ -1903,6 +2019,7 @@ function dataloaderSectionComponent() {
             </div>
         </div>
     </div>
+    </template>
     </div><!-- End of main content wrapper -->
 
 </div>

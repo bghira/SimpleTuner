@@ -60,7 +60,8 @@
             target_downsample_size: 1024,
             crop: true,
             crop_style: "center",
-            crop_aspect: "square"
+            crop_aspect: "square",
+            hash_filenames: true
         }];
         this.render();
         this.syncToJSON();
@@ -334,7 +335,8 @@
                 crop_aspect: 'square',
                 cache_dir_vae: 'cache/vae',
                 repeats: 0,
-                disabled: false
+                disabled: false,
+                hash_filenames: true
             },
             text_embeds: {
                 id: `text-embeds-${Date.now()}`,
@@ -359,7 +361,8 @@
                 conditioning_type: 'controlnet',
                 instance_data_dir: '/path/to/conditioning',
                 cache_dir_vae: 'cache/vae/conditioning',
-                disabled: false
+                disabled: false,
+                hash_filenames: true
             },
             video: {
                 id: `video-${Date.now()}`,
@@ -378,7 +381,8 @@
                     is_i2v: true
                 },
                 repeats: 0,
-                disabled: false
+                disabled: false,
+                hash_filenames: true
             }
         };
         
@@ -775,7 +779,8 @@
                     crop: true,
                     crop_style: "random",
                     crop_aspect: "square",
-                    repeats: 0
+                    repeats: 0,
+                    hash_filenames: true
                 },
                 {
                     id: "text-embeds",
@@ -800,7 +805,8 @@
                     resolution_type: "pixel_area",
                     caption_strategy: "textfile",
                     image_embeds: "local-image-embeds",
-                    text_embeds: "local-text-embeds"
+                    text_embeds: "local-text-embeds",
+                    hash_filenames: true
                 },
                 {
                     id: "local-image-embeds",
@@ -830,7 +836,8 @@
                         num_frames: 125,
                         min_frames: 125,
                         is_i2v: true
-                    }
+                    },
+                    hash_filenames: true
                 },
                 {
                     id: "text-embeds",
@@ -859,7 +866,8 @@
                                 high_threshold: 200
                             }
                         }
-                    ]
+                    ],
+                    hash_filenames: true
                 },
                 {
                     id: "canny-conditioning",
