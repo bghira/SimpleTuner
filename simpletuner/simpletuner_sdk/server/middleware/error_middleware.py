@@ -117,11 +117,11 @@ def setup_error_handlers(app: FastAPI) -> None:
         if is_htmx:
             # Return HTML with field errors
             error_html = _get_validation_error_html(errors)
-            return HTMLResponse(content=error_html, status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
+            return HTMLResponse(content=error_html, status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
         else:
             # Return JSON validation errors
             return JSONResponse(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 content={"error": "Validation failed", "errors": errors, "request_id": request_id},
             )
 

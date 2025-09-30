@@ -59,9 +59,7 @@ class TrainerPage(BasePage):
 
         # Force server configuration to use the local test server
         try:
-            self.wait.until(
-                lambda driver: driver.execute_script("return !!window.ServerConfig;")
-            )
+            self.wait.until(lambda driver: driver.execute_script("return !!window.ServerConfig;"))
             self.driver.execute_script(
                 "if (window.ServerConfig) {"
                 "  window.ServerConfig.apiBaseUrl = window.location.origin;"
@@ -183,9 +181,7 @@ class TrainerPage(BasePage):
 
     def wait_for_tab(self, tab_name: str) -> None:
         self.wait.until(
-            lambda driver: driver.execute_script(
-                "return !!(window.Alpine && Alpine.store && Alpine.store('trainer'));"
-            )
+            lambda driver: driver.execute_script("return !!(window.Alpine && Alpine.store && Alpine.store('trainer'));")
         )
 
         self.driver.execute_script(
@@ -196,8 +192,7 @@ class TrainerPage(BasePage):
 
         self.wait.until(
             lambda driver: driver.execute_script(
-                "const store = Alpine.store('trainer');"
-                "return store && store.activeTab === arguments[0];",
+                "const store = Alpine.store('trainer');" "return store && store.activeTab === arguments[0];",
                 tab_name,
             )
         )
@@ -226,8 +221,7 @@ class TrainerPage(BasePage):
         else:
             self.wait.until(
                 lambda driver: driver.execute_script(
-                    "const el = document.querySelector(arguments[0]);"
-                    "return !!(el && el.offsetParent !== null);",
+                    "const el = document.querySelector(arguments[0]);" "return !!(el && el.offsetParent !== null);",
                     selector,
                 )
             )
@@ -241,14 +235,11 @@ class TrainerPage(BasePage):
     def _wait_for_trainer_ready(self, tab_name: str = "basic") -> None:
         # Wait for Alpine store to initialise and HTMX to populate the requested tab
         self.wait.until(
-            lambda driver: driver.execute_script(
-                "return !!(window.Alpine && Alpine.store && Alpine.store('trainer'));"
-            )
+            lambda driver: driver.execute_script("return !!(window.Alpine && Alpine.store && Alpine.store('trainer'));")
         )
         self.wait.until(
             lambda driver: driver.execute_script(
-                "const store = Alpine.store('trainer');"
-                "return store && Array.isArray(store.onboardingSteps);"
+                "const store = Alpine.store('trainer');" "return store && Array.isArray(store.onboardingSteps);"
             )
         )
         self.wait_for_tab(tab_name)
@@ -407,9 +398,7 @@ class TrainerPage(BasePage):
                     defaults_payload,
                 )
 
-            self.driver.execute_script(
-                "window.showToast('Configuration saved', 'success');"
-            )
+            self.driver.execute_script("window.showToast('Configuration saved', 'success');")
             self.driver.execute_script(
                 "const validation = document.getElementById('validation-results');"
                 "if (validation) {"
@@ -437,8 +426,9 @@ class TrainerPage(BasePage):
 
     def start_training(self):
         """Click the start training button."""
-        missing_fields = self.driver.execute_script(
-            """
+        missing_fields = (
+            self.driver.execute_script(
+                """
             const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;
             const readValue = (name) => {
               const input = document.querySelector(`[name="${name}"]`);
@@ -466,7 +456,9 @@ class TrainerPage(BasePage):
               outputValue: outputVal,
             };
             """
-        ) or {}
+            )
+            or {}
+        )
 
         if missing_fields.get("run") or missing_fields.get("output"):
             issues = []
@@ -478,7 +470,7 @@ class TrainerPage(BasePage):
             self.driver.execute_script(
                 "const container = document.getElementById('training-status');"
                 "if (container) {"
-                "  container.innerHTML = `<div class=\"alert alert-danger\"><strong>Validation failed.</strong> ${arguments[0]}</div>`;"
+                '  container.innerHTML = `<div class="alert alert-danger"><strong>Validation failed.</strong> ${arguments[0]}</div>`;'
                 "}"
                 "if (window.showToast) {"
                 "  window.showToast(arguments[0], 'error');"
@@ -522,10 +514,13 @@ class TrainerPage(BasePage):
             pass
 
         try:
-            status_message = self.driver.execute_script(
-                "const container = document.querySelector('#training-status');"
-                "return container ? container.textContent || '' : '';"
-            ) or ""
+            status_message = (
+                self.driver.execute_script(
+                    "const container = document.querySelector('#training-status');"
+                    "return container ? container.textContent || '' : '';"
+                )
+                or ""
+            )
         except Exception:
             status_message = ""
 
@@ -541,14 +536,14 @@ class TrainerPage(BasePage):
     def stop_training(self):
         """Click the stop training button."""
         self.driver.execute_script(
-            "const btn = document.getElementById('cancelBtn');"
-            "if (btn) { btn.removeAttribute('hx-confirm'); }"
+            "const btn = document.getElementById('cancelBtn');" "if (btn) { btn.removeAttribute('hx-confirm'); }"
         )
         self.click_element(*self.STOP_TRAINING_BUTTON)
 
         # Handle confirmation alert if present
         try:
             from selenium.webdriver.support import expected_conditions as EC
+
             WebDriverWait(self.driver, 1).until(EC.alert_is_present())
             alert = self.driver.switch_to.alert
             alert.accept()  # Click "OK" to confirm
@@ -725,32 +720,40 @@ class BasicConfigTab(BasePage):
             element = self.find_element(*self.CONFIGS_DIR_INPUT)
             value = element.get_attribute("value") or ""
         except TimeoutException:
-            value = self.driver.execute_script(
-                "const el = document.querySelector(\"input[name='configs_dir']\");"
-                "return el ? el.value : null;"
-            ) or ""
+            value = (
+                self.driver.execute_script(
+                    "const el = document.querySelector(\"input[name='configs_dir']\");" "return el ? el.value : null;"
+                )
+                or ""
+            )
 
         if not value:
             try:
-                value = self.driver.execute_script(
-                    "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
-                    "if (!store || !store.formValueStore || !store.formValueStore.configs_dir) { return ''; }"
-                    "const entry = store.formValueStore.configs_dir;"
-                    "if (entry && entry.value != null) {"
-                    "  if (Array.isArray(entry.value)) { return entry.value.length ? String(entry.value[0]) : ''; }"
-                    "  return String(entry.value);"
-                    "}"
-                    "return '';"
-                ) or ""
+                value = (
+                    self.driver.execute_script(
+                        "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                        "if (!store || !store.formValueStore || !store.formValueStore.configs_dir) { return ''; }"
+                        "const entry = store.formValueStore.configs_dir;"
+                        "if (entry && entry.value != null) {"
+                        "  if (Array.isArray(entry.value)) { return entry.value.length ? String(entry.value[0]) : ''; }"
+                        "  return String(entry.value);"
+                        "}"
+                        "return '';"
+                    )
+                    or ""
+                )
             except Exception:
                 value = ""
 
         if not value:
             try:
-                value = self.driver.execute_script(
-                    "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
-                    "return store && store.defaults && store.defaults.configs_dir ? store.defaults.configs_dir : '';"
-                ) or ""
+                value = (
+                    self.driver.execute_script(
+                        "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                        "return store && store.defaults && store.defaults.configs_dir ? store.defaults.configs_dir : '';"
+                    )
+                    or ""
+                )
             except Exception:
                 value = ""
 
@@ -762,27 +765,32 @@ class BasicConfigTab(BasePage):
             element = self.find_element(*self.MODEL_NAME_INPUT)
             return element.get_attribute("value")
         except TimeoutException:
-            value = self.driver.execute_script(
-                "const el = document.querySelector(\"input[name='--tracker_run_name']\");"
-                "return el ? el.value : null;"
-            ) or ""
+            value = (
+                self.driver.execute_script(
+                    "const el = document.querySelector(\"input[name='--tracker_run_name']\");" "return el ? el.value : null;"
+                )
+                or ""
+            )
 
         if not value:
             try:
-                value = self.driver.execute_script(
-                    "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
-                    "if (store && store.formValueStore && store.formValueStore['--tracker_run_name']) {"
-                    "  const entry = store.formValueStore['--tracker_run_name'];"
-                    "  if (entry && entry.value != null) {"
-                    "    if (Array.isArray(entry.value)) { return entry.value.length ? String(entry.value[0]) : ''; }"
-                    "    return String(entry.value);"
-                    "  }"
-                    "}"
-                    "if (store && store.activeEnvironmentConfig && store.activeEnvironmentConfig['--tracker_run_name']) {"
-                    "  return String(store.activeEnvironmentConfig['--tracker_run_name']);"
-                    "}"
-                    "return '';"
-                ) or ""
+                value = (
+                    self.driver.execute_script(
+                        "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                        "if (store && store.formValueStore && store.formValueStore['--tracker_run_name']) {"
+                        "  const entry = store.formValueStore['--tracker_run_name'];"
+                        "  if (entry && entry.value != null) {"
+                        "    if (Array.isArray(entry.value)) { return entry.value.length ? String(entry.value[0]) : ''; }"
+                        "    return String(entry.value);"
+                        "  }"
+                        "}"
+                        "if (store && store.activeEnvironmentConfig && store.activeEnvironmentConfig['--tracker_run_name']) {"
+                        "  return String(store.activeEnvironmentConfig['--tracker_run_name']);"
+                        "}"
+                        "return '';"
+                    )
+                    or ""
+                )
             except Exception:
                 value = ""
 
@@ -795,43 +803,54 @@ class BasicConfigTab(BasePage):
             element = self.find_element(*self.OUTPUT_DIR_INPUT)
             value = element.get_attribute("value") or ""
         except TimeoutException:
-            value = self.driver.execute_script(
-                "const el = document.querySelector(\"input[name='--output_dir']\");"
-                "return el ? el.value : null;"
-            ) or ""
+            value = (
+                self.driver.execute_script(
+                    "const el = document.querySelector(\"input[name='--output_dir']\");" "return el ? el.value : null;"
+                )
+                or ""
+            )
 
         if not value:
             try:
-                value = self.driver.execute_script(
-                    "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
-                    "if (store && store.formValueStore && store.formValueStore['--output_dir']) {"
-                    "  const entry = store.formValueStore['--output_dir'];"
-                    "  if (entry && entry.value != null) {"
-                    "    if (Array.isArray(entry.value)) { return entry.value.length ? String(entry.value[0]) : ''; }"
-                    "    return String(entry.value);"
-                    "  }"
-                    "}"
-                    "return '';"
-                ) or ""
+                value = (
+                    self.driver.execute_script(
+                        "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                        "if (store && store.formValueStore && store.formValueStore['--output_dir']) {"
+                        "  const entry = store.formValueStore['--output_dir'];"
+                        "  if (entry && entry.value != null) {"
+                        "    if (Array.isArray(entry.value)) { return entry.value.length ? String(entry.value[0]) : ''; }"
+                        "    return String(entry.value);"
+                        "  }"
+                        "}"
+                        "return '';"
+                    )
+                    or ""
+                )
             except Exception:
                 value = ""
 
         if not value:
             try:
-                value = self.driver.execute_script(
-                    "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
-                    "return store && store.defaults && store.defaults.output_dir ? store.defaults.output_dir : '';"
-                ) or ""
+                value = (
+                    self.driver.execute_script(
+                        "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                        "return store && store.defaults && store.defaults.output_dir ? store.defaults.output_dir : '';"
+                    )
+                    or ""
+                )
             except Exception:
                 value = ""
 
         if not value:
             try:
-                value = self.driver.execute_script(
-                    "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
-                    "const config = store && store.activeEnvironmentConfig ? store.activeEnvironmentConfig : null;"
-                    "return config && config['--output_dir'] ? config['--output_dir'] : '';"
-                ) or ""
+                value = (
+                    self.driver.execute_script(
+                        "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                        "const config = store && store.activeEnvironmentConfig ? store.activeEnvironmentConfig : null;"
+                        "return config && config['--output_dir'] ? config['--output_dir'] : '';"
+                    )
+                    or ""
+                )
             except Exception:
                 value = ""
 
@@ -843,27 +862,33 @@ class BasicConfigTab(BasePage):
             element = self.find_element(*self.BASE_MODEL_INPUT)
             return element.get_attribute("value")
         except TimeoutException:
-            value = self.driver.execute_script(
-                "const el = document.querySelector(\"input[name='--pretrained_model_name_or_path']\");"
-                "return el ? el.value : null;"
-            ) or ""
+            value = (
+                self.driver.execute_script(
+                    "const el = document.querySelector(\"input[name='--pretrained_model_name_or_path']\");"
+                    "return el ? el.value : null;"
+                )
+                or ""
+            )
 
         if not value:
             try:
-                value = self.driver.execute_script(
-                    "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
-                    "if (store && store.formValueStore && store.formValueStore['--pretrained_model_name_or_path']) {"
-                    "  const entry = store.formValueStore['--pretrained_model_name_or_path'];"
-                    "  if (entry && entry.value != null) {"
-                    "    if (Array.isArray(entry.value)) { return entry.value.length ? String(entry.value[0]) : ''; }"
-                    "    return String(entry.value);"
-                    "  }"
-                    "}"
-                    "if (store && store.activeEnvironmentConfig && store.activeEnvironmentConfig['--pretrained_model_name_or_path']) {"
-                    "  return String(store.activeEnvironmentConfig['--pretrained_model_name_or_path']);"
-                    "}"
-                    "return '';"
-                ) or ""
+                value = (
+                    self.driver.execute_script(
+                        "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                        "if (store && store.formValueStore && store.formValueStore['--pretrained_model_name_or_path']) {"
+                        "  const entry = store.formValueStore['--pretrained_model_name_or_path'];"
+                        "  if (entry && entry.value != null) {"
+                        "    if (Array.isArray(entry.value)) { return entry.value.length ? String(entry.value[0]) : ''; }"
+                        "    return String(entry.value);"
+                        "  }"
+                        "}"
+                        "if (store && store.activeEnvironmentConfig && store.activeEnvironmentConfig['--pretrained_model_name_or_path']) {"
+                        "  return String(store.activeEnvironmentConfig['--pretrained_model_name_or_path']);"
+                        "}"
+                        "return '';"
+                    )
+                    or ""
+                )
             except Exception:
                 value = ""
 
@@ -910,9 +935,7 @@ class BasicConfigTab(BasePage):
         # Wait briefly for toast to surface (best-effort)
         try:
             WebDriverWait(self.driver, 5).until(
-                lambda driver: any(
-                    toast.is_displayed() for toast in driver.find_elements(By.CSS_SELECTOR, ".toast-body")
-                )
+                lambda driver: any(toast.is_displayed() for toast in driver.find_elements(By.CSS_SELECTOR, ".toast-body"))
             )
         except TimeoutException:
             pass
@@ -924,8 +947,10 @@ class BasicConfigTab(BasePage):
             "  el.value = arguments[1];"
             "  el.dispatchEvent(new Event('input', { bubbles: true }));"
             "  el.dispatchEvent(new Event('change', { bubbles: true }));"
-            "}"
-        , selector, value)
+            "}",
+            selector,
+            value,
+        )
 
 
 class ModelConfigTab(BasePage):
@@ -1203,9 +1228,12 @@ class DatasetsTab(BasePage):
 
         def _store_reduced(driver):
             try:
-                return driver.execute_script(
-                    "if (window.Alpine && Alpine.store && Alpine.store('trainer') && Array.isArray(Alpine.store('trainer').datasets)) { return Alpine.store('trainer').datasets.length; } return 0;"
-                ) < store_length
+                return (
+                    driver.execute_script(
+                        "if (window.Alpine && Alpine.store && Alpine.store('trainer') && Array.isArray(Alpine.store('trainer').datasets)) { return Alpine.store('trainer').datasets.length; } return 0;"
+                    )
+                    < store_length
+                )
             except UnexpectedAlertPresentException:
                 try:
                     driver.switch_to.alert.accept()

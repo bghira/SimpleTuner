@@ -153,10 +153,8 @@ class Configuration:
                 "result": "Configuration validated successfully",
             }
         except Exception as e:
-            import traceback
-
-            logger.error(traceback.format_exc())
             message = str(e) or "unknown error"
+            logger.debug(f"Configuration check failed: {message}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid config: {message}",

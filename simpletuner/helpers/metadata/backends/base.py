@@ -451,7 +451,7 @@ class MetadataBackend:
 
     def _iterate_buckets_with_progress(self, desc: str):
         buckets = list(self.aspect_ratio_bucket_indices.keys())
-        progress = tqdm(total=len(buckets), leave=False, desc=desc)
+        progress = tqdm(total=len(buckets), leave=False, desc=desc, disable=True if len(buckets) < 100 else False, ncols=125)
         try:
             for bucket in buckets:
                 yield bucket

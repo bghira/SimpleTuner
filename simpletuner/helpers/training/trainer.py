@@ -13,9 +13,9 @@ import time
 from typing import Dict, Optional
 
 import huggingface_hub
+import wandb
 from accelerate.logging import get_logger
 
-import wandb
 from simpletuner.helpers import log_format  # noqa
 from simpletuner.helpers.caching.memory import reclaim_memory
 from simpletuner.helpers.configuration.loader import load_config

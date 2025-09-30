@@ -45,8 +45,10 @@ class ServerCreationTestCase(unittest.TestCase):
     def test_unified_mode_creation(self) -> None:
         if not SSE_AVAILABLE:
             self.skipTest("sse-starlette not installed")
-        with patch("simpletuner.simpletuner_sdk.server.app._add_callback_routes"), \
-            patch("simpletuner.simpletuner_sdk.server.app._add_trainer_routes"):
+        with (
+            patch("simpletuner.simpletuner_sdk.server.app._add_callback_routes"),
+            patch("simpletuner.simpletuner_sdk.server.app._add_trainer_routes"),
+        ):
             app = create_app(mode=ServerMode.UNIFIED)
         self.assertIsNotNone(app)
         self.assertIn("Unified", app.title)
@@ -91,8 +93,10 @@ class RouteInclusionTestCase(unittest.TestCase):
     def test_unified_mode_has_all_routes(self) -> None:
         if not SSE_AVAILABLE:
             self.skipTest("sse-starlette not installed")
-        with patch("simpletuner.simpletuner_sdk.server.app._add_callback_routes"), \
-            patch("simpletuner.simpletuner_sdk.server.app._add_trainer_routes"):
+        with (
+            patch("simpletuner.simpletuner_sdk.server.app._add_callback_routes"),
+            patch("simpletuner.simpletuner_sdk.server.app._add_trainer_routes"),
+        ):
             app = create_app(mode=ServerMode.UNIFIED)
         with TestClient(app) as client:
             response = client.get("/health")
@@ -106,8 +110,10 @@ class UnifiedModeTestCase(unittest.TestCase):
     def test_shared_event_store_in_unified_mode(self) -> None:
         if not SSE_AVAILABLE:
             self.skipTest("sse-starlette not installed")
-        with patch("simpletuner.simpletuner_sdk.server.app._add_callback_routes"), \
-            patch("simpletuner.simpletuner_sdk.server.app._add_trainer_routes"):
+        with (
+            patch("simpletuner.simpletuner_sdk.server.app._add_callback_routes"),
+            patch("simpletuner.simpletuner_sdk.server.app._add_trainer_routes"),
+        ):
             app = create_unified_app()
         self.assertTrue(hasattr(app.state, "event_store"))
         self.assertIsNotNone(app.state.event_store)
@@ -116,8 +122,10 @@ class UnifiedModeTestCase(unittest.TestCase):
     def test_event_store_sharing_between_routes(self) -> None:
         if not SSE_AVAILABLE:
             self.skipTest("sse-starlette not installed")
-        with patch("simpletuner.simpletuner_sdk.server.app._add_callback_routes"), \
-            patch("simpletuner.simpletuner_sdk.server.app._add_trainer_routes"):
+        with (
+            patch("simpletuner.simpletuner_sdk.server.app._add_callback_routes"),
+            patch("simpletuner.simpletuner_sdk.server.app._add_trainer_routes"),
+        ):
             app = create_unified_app()
         with TestClient(app) as client:
             payload = {"type": "test", "message": "test_event"}
@@ -215,9 +223,11 @@ class RootRedirectTestCase(unittest.TestCase):
     """Root path behaviour per mode."""
 
     def test_trainer_mode_root_redirect(self) -> None:
-        with patch("simpletuner.simpletuner_sdk.server.app.WebInterface"), \
-            patch("simpletuner.simpletuner_sdk.server.app.Configuration"), \
-            patch("simpletuner.simpletuner_sdk.server.app.TrainingHost"):
+        with (
+            patch("simpletuner.simpletuner_sdk.server.app.WebInterface"),
+            patch("simpletuner.simpletuner_sdk.server.app.Configuration"),
+            patch("simpletuner.simpletuner_sdk.server.app.TrainingHost"),
+        ):
             app = create_app(mode=ServerMode.TRAINER)
             with TestClient(app) as client:
                 response = client.get("/", follow_redirects=False)

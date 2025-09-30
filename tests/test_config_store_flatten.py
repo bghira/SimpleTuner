@@ -44,9 +44,7 @@ class ConfigStoreSaveBehaviourTests(unittest.TestCase):
     def test_dataloader_save_preserves_list_payload(self) -> None:
         store = ConfigStore(config_dir=self.config_root / "dataloaders", config_type="dataloader")
 
-        datasets = [
-            {"id": "primary", "type": "local", "dataset_type": "image", "instance_data_dir": "data"}
-        ]
+        datasets = [{"id": "primary", "type": "local", "dataset_type": "image", "instance_data_dir": "data"}]
 
         store.save_config("example-env", datasets, overwrite=False)
 

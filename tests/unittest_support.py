@@ -43,6 +43,10 @@ class APITestEnvironmentMixin:
         dataset_plan = self.tmp_path / "dataset_plan.json"
         os.environ["SIMPLETUNER_DATASET_PLAN_PATH"] = str(dataset_plan)
 
+        # Disable TQDM progress bars during tests
+        self._previous_tqdm_disable = os.environ.get("TQDM_DISABLE")
+        os.environ["TQDM_DISABLE"] = "1"
+
         self._api_state_guard = _APIStateGuard(self.tmp_path / "api_state.json")
         self._api_state_guard.__enter__()
 
@@ -52,6 +56,13 @@ class APITestEnvironmentMixin:
             os.environ["SIMPLETUNER_DATASET_PLAN_PATH"] = self._previous_dataset_plan
         else:
             os.environ.pop("SIMPLETUNER_DATASET_PLAN_PATH", None)
+
+        # Restore TQDM setting
+        if self._previous_tqdm_disable is not None:
+            os.environ["TQDM_DISABLE"] = self._previous_tqdm_disable
+        else:
+            os.environ.pop("TQDM_DISABLE", None)
+
         self._tmpdir.cleanup()
 
     def create_test_client(self, mode: ServerMode) -> TestClient:

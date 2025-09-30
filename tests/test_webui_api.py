@@ -244,12 +244,15 @@ class ConfigIntegrationTestCase(_WebUIBaseTestCase):
         defaults = WebUIDefaults(configs_dir="/configs", output_dir="/default/output")
         self.state_store.save_defaults(defaults)
 
-        with patch(
-            "simpletuner.simpletuner_sdk.server.services.config_store.ConfigStore",
-            return_value=mock_store,
-        ), patch(
-            "simpletuner.simpletuner_sdk.server.dependencies.common._load_active_config_cached",
-            return_value=mock_store.load_config.return_value[0],
+        with (
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.config_store.ConfigStore",
+                return_value=mock_store,
+            ),
+            patch(
+                "simpletuner.simpletuner_sdk.server.dependencies.common._load_active_config_cached",
+                return_value=mock_store.load_config.return_value[0],
+            ),
         ):
             response = self.client.get("/web/trainer/tabs/basic")
 

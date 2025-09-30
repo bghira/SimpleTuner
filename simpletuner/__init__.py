@@ -18,6 +18,8 @@ def _suppress_swigvarlink(message, *args, **kwargs):
     category = kwargs.get("category", DeprecationWarning)
     if "swigvarlink" in text and category is DeprecationWarning:
         return None
+    if "MPS autocast" in text:
+        return None
     return _original_warn(message, *args, **kwargs)
 
 

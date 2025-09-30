@@ -2,10 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from simpletuner.simpletuner_sdk.server.services.caption_filters_service import (
-    CaptionFilterError,
-    CaptionFiltersService,
-)
+from simpletuner.simpletuner_sdk.server.services.caption_filters_service import CaptionFilterError, CaptionFiltersService
 
 
 class CaptionFiltersServiceTestCase(unittest.TestCase):

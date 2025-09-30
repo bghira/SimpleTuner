@@ -228,6 +228,7 @@ class WebInterface:
     async def get_trainer_page(self, request: Request):
         """Serve the HTMX-based trainer interface for legacy links."""
         return self.templates.TemplateResponse(
+            request,
             "trainer_htmx.html",
             {
                 "request": request,

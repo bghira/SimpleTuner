@@ -16,6 +16,14 @@ from simpletuner.helpers.publishing.metadata import (
 
 
 class TestMetadataFunctions(unittest.TestCase):
+    def tearDown(self):
+        """Clean up test-folder after each test."""
+        import shutil
+
+        if os.path.exists("test-folder"):
+            shutil.rmtree("test-folder", ignore_errors=True)
+        super().tearDown()
+
     def setUp(self):
         # Mock the args object
         self.args = MagicMock()

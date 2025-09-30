@@ -58,19 +58,20 @@ class APIState:
     @classmethod
     def clear_state(cls):
         # Clean up trainer if it exists
-        if hasattr(cls, 'trainer') and cls.trainer is not None:
+        if hasattr(cls, "trainer") and cls.trainer is not None:
             try:
                 # Abort any running processes
-                if hasattr(cls.trainer, 'abort'):
+                if hasattr(cls.trainer, "abort"):
                     cls.trainer.abort()
 
                 # Unload model components to free GPU memory
-                if hasattr(cls.trainer, 'model') and cls.trainer.model is not None:
-                    if hasattr(cls.trainer.model, 'unload'):
+                if hasattr(cls.trainer, "model") and cls.trainer.model is not None:
+                    if hasattr(cls.trainer.model, "unload"):
                         cls.trainer.model.unload()
             except Exception as e:
                 # Log but don't fail on cleanup errors
                 import logging
+
                 logger = logging.getLogger(__name__)
                 logger.warning(f"Error during trainer cleanup: {e}")
             finally:

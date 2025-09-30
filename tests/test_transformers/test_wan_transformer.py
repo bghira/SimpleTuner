@@ -1169,7 +1169,12 @@ class TestWanTransformer3DModel(TransformerBaseTest):
         """Test gradient checkpointing functionality."""
         model = WanTransformer3DModel(**self.model_config)
         model.gradient_checkpointing = True
-        model._gradient_checkpointing_func = torch.utils.checkpoint.checkpoint
+
+        # Use a wrapper to pass use_reentrant=False
+        def checkpoint_func(func, *args, **kwargs):
+            return torch.utils.checkpoint.checkpoint(func, *args, use_reentrant=False, **kwargs)
+
+        model._gradient_checkpointing_func = checkpoint_func
 
         batch_size, in_channels, num_frames, height, width = 1, 16, 2, 4, 4
         hidden_states = torch.randn(batch_size, in_channels, num_frames, height, width, requires_grad=True)

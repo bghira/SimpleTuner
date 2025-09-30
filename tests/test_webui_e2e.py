@@ -40,7 +40,6 @@ class BasicConfigurationFlowTestCase(_TrainerPageMixin, WebUITestCase):
 
             basic_tab.save_changes()
             toast_message = trainer_page.get_toast_message()
-            print('toast after save:', toast_message)
             self.assertIsNotNone(toast_message)
             self.assertTrue("saved" in toast_message.lower() or "success" in toast_message.lower())
 
@@ -228,11 +227,13 @@ class TabNavigationTestCase(_TrainerPageMixin, WebUITestCase):
                 selector = trainer_page.TAB_SELECTORS.get(tab_name, f"#tab-content #{tab_name}-tab-content")
 
                 # Wait for element to be present and visible
-                is_visible = driver.execute_script(f"""
+                is_visible = driver.execute_script(
+                    f"""
                     const selector = '{selector}';
                     const el = document.querySelector(selector);
                     return el && el.offsetParent !== null && el.offsetHeight > 0;
-                """)
+                """
+                )
 
                 if not is_visible:
                     # If not immediately visible, wait a bit
@@ -240,10 +241,12 @@ class TabNavigationTestCase(_TrainerPageMixin, WebUITestCase):
 
                     def element_is_visible(driver):
                         try:
-                            return driver.execute_script(f"""
+                            return driver.execute_script(
+                                f"""
                                 const el = document.querySelector('{selector}');
                                 return el && el.offsetParent !== null && el.offsetHeight > 0;
-                            """)
+                            """
+                            )
                         except:
                             return False
 
@@ -302,13 +305,16 @@ class OnboardingFlowTestCase(_TrainerPageMixin, WebUITestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        # Ensure a clean slate for onboarding test
-        onboarding_file = self.state_dir / "onboarding.json"
-        onboarding_file.unlink(missing_ok=True)
 
-        # Also remove defaults.json to ensure onboarding is triggered
-        defaults_file = self.state_dir / "defaults.json"
-        defaults_file.unlink(missing_ok=True)
+        # Reset the server's onboarding state via API
+        import requests
+
+        response = requests.post(f"{self.base_url}/api/webui/onboarding/reset")
+        response.raise_for_status()
+
+        # Clear any defaults as well
+        # Note: We're not manipulating directories directly since the server
+        # is running in a separate process with its own environment
 
     def test_first_time_user_onboarding(self) -> None:
         # Do not seed defaults so onboarding overlay is required.
@@ -317,17 +323,20 @@ class OnboardingFlowTestCase(_TrainerPageMixin, WebUITestCase):
             trainer_page = self._trainer_page(driver)
             trainer_page.navigate_to_trainer()
 
-            # Wait for the page to fully load and check for overlay
+            # Wait for overlay to be visible (wait for opacity transition)
             try:
-                WebDriverWait(driver, 3).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, '.onboarding-overlay'))
+                onboarding_overlay = WebDriverWait(driver, 5).until(
+                    EC.visibility_of_element_located((By.CSS_SELECTOR, ".onboarding-overlay"))
                 )
+                self.assertTrue(onboarding_overlay.is_displayed())
             except TimeoutException:
-                # If overlay not found, check if page loaded properly
-                self.fail("Onboarding overlay not found - page may have cached state from previous tests")
-
-            onboarding_overlay = driver.find_element(By.CSS_SELECTOR, '.onboarding-overlay')
-            self.assertTrue(onboarding_overlay.is_displayed())
+                # If still not visible, check what's wrong
+                try:
+                    overlay = driver.find_element(By.CSS_SELECTOR, ".onboarding-overlay")
+                    print(f"DEBUG: Overlay found but not visible, style: {overlay.get_attribute('style')}")
+                except:
+                    print("DEBUG: Overlay element not found at all")
+                self.fail("Onboarding overlay not visible after waiting")
 
         self.for_each_browser("test_first_time_user_onboarding", scenario)
 

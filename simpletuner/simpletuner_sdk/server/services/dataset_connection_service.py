@@ -72,7 +72,9 @@ class DatasetConnectionService:
         if dataset_type == "aws":
             return self._test_aws(dataset)
 
-        raise DatasetConnectionError(f"Connection tests are not supported for dataset type '{dataset_type}'.", backend=dataset_type)
+        raise DatasetConnectionError(
+            f"Connection tests are not supported for dataset type '{dataset_type}'.", backend=dataset_type
+        )
 
     def _test_csv(self, dataset: Dict[str, Any]) -> Dict[str, Any]:
         csv_file = dataset.get("csv_file")
@@ -93,9 +95,11 @@ class DatasetConnectionService:
         if details.get("warnings"):
             message = "CSV manifest accessible with warnings"
 
-        details.update({
-            "resolved_path": str(resolved) if resolved else None,
-        })
+        details.update(
+            {
+                "resolved_path": str(resolved) if resolved else None,
+            }
+        )
 
         return {
             "status": "ok",
@@ -123,7 +127,9 @@ class DatasetConnectionService:
                 sample_count=1,
             )
         except ImportError as exc:
-            raise DatasetConnectionError(str(exc), status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, backend="huggingface") from exc
+            raise DatasetConnectionError(
+                str(exc), status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, backend="huggingface"
+            ) from exc
         except ValueError as exc:
             raise DatasetConnectionError(str(exc), backend="huggingface") from exc
 

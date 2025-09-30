@@ -76,5 +76,7 @@ coverage.xml
 .mypy_cache
 .ruff_cache
 test-screenshots/
+test-folder/
 node_modules
 package-lock.json
+**/config

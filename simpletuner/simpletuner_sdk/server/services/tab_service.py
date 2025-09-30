@@ -216,7 +216,7 @@ class TabService:
             context = tab_config.extra_context_handler(context, fields, config_values)
 
         # Render template
-        return self.templates.TemplateResponse(tab_config.template, context)
+        return self.templates.TemplateResponse(request=context["request"], name=tab_config.template, context=context)
 
     def _group_fields_by_section(
         self, fields: List[Dict[str, Any]], sections: List[Dict[str, Any]]

@@ -199,6 +199,7 @@ class ExampleConfigsService:
     def _extract_defaults(config: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(config, dict):
             return {}
+
         def _get(*keys: str) -> Optional[Any]:
             for key in keys:
                 if key in config:
@@ -219,6 +220,7 @@ class ExampleConfigsService:
             return None
         if not isinstance(config, dict):
             return None
+
         def _clean(text: Optional[str]) -> Optional[str]:
             if isinstance(text, str):
                 stripped = text.strip()

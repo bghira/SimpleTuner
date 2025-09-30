@@ -139,7 +139,7 @@ def _persist_plan(payload: DatasetPlanPayload) -> DatasetPlanResponse:
     errors = [message for message in validations if message.level == "error"]
     if errors:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={
                 "message": "dataset plan failed validation",
                 "validations": [message.model_dump() for message in validations],

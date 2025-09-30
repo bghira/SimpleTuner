@@ -185,7 +185,9 @@ class BatchedTrainingSamples:
                         if metadata and "target_size" in metadata:
                             target_size = metadata["target_size"]
                         else:
-                            raise RuntimeError(f"No target_size in metadata, cannot continue. Filename: {filepath}, Metadata: {metadata}")
+                            raise RuntimeError(
+                                f"No target_size in metadata, cannot continue. Filename: {filepath}, Metadata: {metadata}"
+                            )
 
                         current_shape = batch_images[i].shape[:2]  # (H, W)
                         current_size = (current_shape[1], current_shape[0])  # (W, H)

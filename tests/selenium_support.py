@@ -97,6 +97,9 @@ def _cleanup_global_home() -> None:
         os.environ["HOME"] = _GLOBAL_PREVIOUS_HOME
     else:
         os.environ.pop("HOME", None)
+    # Also clean up the WebUI config environment variable
+    os.environ.pop("SIMPLETUNER_WEB_UI_CONFIG", None)
+    os.environ.pop("TQDM_DISABLE", None)
     if _GLOBAL_HOME_TMPDIR is not None:
         _GLOBAL_HOME_TMPDIR.cleanup()
     _GLOBAL_HOME_TMPDIR = None
@@ -215,6 +218,10 @@ def iter_browsers(enabled: Optional[Iterable[str]] = None) -> Iterable[str]:
 def configure_home(temp_path: Path) -> None:
     """Point HOME to the provided path for the duration of a test."""
     os.environ["HOME"] = str(temp_path)
+    # Also set the WebUI config path to ensure test isolation
+    os.environ["SIMPLETUNER_WEB_UI_CONFIG"] = str(temp_path / ".simpletuner" / "webui")
+    # Disable TQDM progress bars during tests
+    os.environ["TQDM_DISABLE"] = "1"
 
 
 import unittest
@@ -243,6 +250,17 @@ class SeleniumTestCase(unittest.TestCase):
                 pass
         if hasattr(cls, "_driver_cache"):
             cls._driver_cache.clear()
+
+        # Clean up test-screenshots directory if empty
+        screenshot_dir = Path("test-screenshots")
+        if screenshot_dir.exists():
+            try:
+                # Only remove if empty
+                screenshot_dir.rmdir()
+            except OSError:
+                # Directory not empty, leave it for debugging
+                pass
+
         super().tearDownClass()
 
     def _ensure_browser(self, browser: str) -> webdriver.Remote:

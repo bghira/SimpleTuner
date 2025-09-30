@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 try:  # pragma: no cover - optional dependency
     from sse_starlette.sse import EventSourceResponse  # type: ignore
 except ModuleNotFoundError:  # pragma: no cover - fallback to basic streaming
+
     class EventSourceResponse(StreamingResponse):
         """Minimal fallback when sse-starlette is unavailable."""
 
@@ -30,6 +31,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback to basic streaming
                     yield "".join(payload_parts).encode("utf-8")
 
             super().__init__(_adapt(), media_type="text/event-stream", *args, **kwargs)
+
 
 from ..services.sse_manager import get_sse_manager
 

@@ -149,7 +149,7 @@ async def update_onboarding_step(step_id: str, payload: OnboardingStepUpdate) ->
     value = _normalise_value(definition, payload.value)
     if definition.required and not value:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="A value is required to complete this step.",
         )
 

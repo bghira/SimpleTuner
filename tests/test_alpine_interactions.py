@@ -9,6 +9,7 @@ from datetime import datetime
 
 from selenium.common.exceptions import (
     JavascriptException,
+    TimeoutException,
     UnexpectedAlertPresentException,
     WebDriverException,
 )
@@ -30,12 +31,12 @@ class AlpineComponentIsolationTestCase(WebUITestCase):
     - Batched JavaScript execution where possible
     """
 
-    FAST_MODE = os.environ.get('TEST_FAST_MODE', '').lower() == 'true'
-    PERFORMANCE_LOG = os.environ.get('TEST_PERF_LOG', '').lower() == 'true'
+    FAST_MODE = os.environ.get("TEST_FAST_MODE", "").lower() == "true"
+    PERFORMANCE_LOG = os.environ.get("TEST_PERF_LOG", "").lower() == "true"
 
     # Override browser selection for faster testing
-    if os.environ.get('TEST_SINGLE_BROWSER', '').lower() == 'true':
-        BROWSERS = ['chrome']
+    if os.environ.get("TEST_SINGLE_BROWSER", "").lower() == "true":
+        BROWSERS = ["chrome"]
 
     def _navigate(self, driver) -> None:
         driver.get(f"{self.base_url}/web/trainer")
@@ -69,7 +70,7 @@ class AlpineComponentIsolationTestCase(WebUITestCase):
                 }
             });
             """,
-            elements
+            elements,
         )
 
     def _log_performance(self, operation: str, duration: float) -> None:
@@ -154,11 +155,30 @@ class AlpineComponentIsolationTestCase(WebUITestCase):
 
             with self.subTest("data_binding_independence"):
                 start_time = time.time()
-                def _locate(selector: str):
-                    return driver.execute_script("return document.querySelector(arguments[0]);", selector)
 
-                job_id_input = _locate("input[name='job_id']") or _locate("input[name='--job_id']")
-                backend_input = _locate("input[name='--data_backend_config']")
+                def _wait_for_selectors(selectors, timeout=5):
+                    for selector in selectors:
+                        try:
+                            element = WebDriverWait(driver, timeout).until(
+                                lambda d, sel=selector: d.execute_script(
+                                    "return document.querySelector(arguments[0]);",
+                                    sel,
+                                )
+                            )
+                            if element:
+                                return element
+                        except TimeoutException:
+                            continue
+                    return None
+
+                job_id_input = _wait_for_selectors(
+                    ["input[name='job_id']", "input[name='--job_id']"],
+                    timeout=10,
+                )
+                backend_input = _wait_for_selectors(
+                    ["input[name='--data_backend_config']", "select[name='--data_backend_config']"],
+                    timeout=10,
+                )
                 if not job_id_input or not backend_input:
                     self.skipTest("Basic config inputs not present")
                 # Batch element queries
@@ -179,10 +199,10 @@ class AlpineComponentIsolationTestCase(WebUITestCase):
                     };
                     """,
                     job_id_input,
-                    backend_input
+                    backend_input,
                 )
-                self.assertFalse(components['areEqual'])
-                backend_data = components['backendData']
+                self.assertFalse(components["areEqual"])
+                backend_data = components["backendData"]
                 self.assertNotEqual(backend_data.get("value"), "test-value")
                 self.assertNotEqual(backend_data.get("error"), "test-error")
                 self._log_performance("data_binding_independence", time.time() - start_time)
@@ -301,10 +321,14 @@ class AlpineComponentIsolationTestCase(WebUITestCase):
                     return count;
                     """
                 )
-                WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".tab-btn[data-tab='model']"))).click()
+                WebDriverWait(driver, 10).until(
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, ".tab-btn[data-tab='model']"))
+                ).click()
                 self._wait_for_alpine_update(driver)
                 self.dismiss_onboarding(driver)
-                WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".tab-btn[data-tab='basic']"))).click()
+                WebDriverWait(driver, 10).until(
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, ".tab-btn[data-tab='basic']"))
+                ).click()
                 self._wait_for_alpine_update(driver)
                 final_count = driver.execute_script(
                     """
@@ -350,6 +374,7 @@ class AlpineComponentIsolationTestCase(WebUITestCase):
             self._log_performance("complete_suite", time.time() - suite_start)
 
         self.for_each_browser("test_alpine_component_suite", scenario)
+
 
 if __name__ == "__main__":
     unittest.main()

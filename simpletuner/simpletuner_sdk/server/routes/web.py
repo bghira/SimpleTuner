@@ -62,7 +62,7 @@ async def trainer_page(
         "webui_defaults": resolved_defaults,
     }
 
-    return templates.TemplateResponse("trainer_htmx.html", context)
+    return templates.TemplateResponse(request=request, name="trainer_htmx.html", context=context)
 
 
 @router.get("/trainer/tabs/{tab_name}", response_class=HTMLResponse)
@@ -113,7 +113,7 @@ async def config_selector(
         "active_config": active_config,
     }
 
-    return templates.TemplateResponse("fragments/config_selector.html", context)
+    return templates.TemplateResponse(request=request, name="fragments/config_selector.html", context=context)
 
 
 @router.get("/trainer/tab-list", response_class=HTMLResponse)
@@ -126,7 +126,7 @@ async def tab_list(request: Request):
         "tabs": tabs,
     }
 
-    return templates.TemplateResponse("fragments/tab_list.html", context)
+    return templates.TemplateResponse(request=request, name="fragments/tab_list.html", context=context)
 
 
 # Backward compatibility redirects

@@ -14,7 +14,6 @@ from simpletuner.simpletuner_sdk.api_state import APIState
 from simpletuner.simpletuner_sdk.configuration import ConfigModel, Configuration
 from simpletuner.simpletuner_sdk.server import ServerMode
 from simpletuner.simpletuner_sdk.training_host import TrainingHost
-
 from tests.unittest_support import APITestCase, AsyncAPITestCase
 
 
@@ -330,12 +329,13 @@ class ConcurrentAPICallTests(AsyncAPITestCase, unittest.IsolatedAsyncioTestCase)
                 ):
                     # Patch APIState.set_state to track which job becomes current
                     original_set_state = APIState.set_state
+
                     def track_current_job(key, value):
                         if key == "current_job_id":
                             current_job_tracker["job_id"] = value
                         return original_set_state(key, value)
 
-                    with patch.object(APIState, 'set_state', side_effect=track_current_job):
+                    with patch.object(APIState, "set_state", side_effect=track_current_job):
                         tasks = [submit_job(f"job_{i}") for i in range(5)]
                         results = await asyncio.gather(*tasks, return_exceptions=True)
 

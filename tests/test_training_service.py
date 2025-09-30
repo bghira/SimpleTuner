@@ -63,9 +63,7 @@ class TrainingServiceTests(unittest.TestCase):
         self.assertEqual(job_id, captured["job_id"])
         self.assertIs(captured["func"], training_service.run_trainer_job)
         self.assertEqual(captured["config"]["__job_id__"], job_id)
-        self.assertEqual(
-            captured["config"]["--webhook_config"], training_service.DEFAULT_WEBHOOK_CONFIG
-        )
+        self.assertEqual(captured["config"]["--webhook_config"], training_service.DEFAULT_WEBHOOK_CONFIG)
         self.assertEqual(training_service.APIState.get_state("current_job_id"), job_id)
         self.assertEqual(training_service.APIState.get_state("training_status"), "starting")
         self.assertEqual(

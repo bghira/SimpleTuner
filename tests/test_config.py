@@ -11,6 +11,9 @@ from io import StringIO
 # Tests that use assertLogs() need logging to work
 os.environ.setdefault("SIMPLETUNER_LOG_LEVEL", "ERROR")
 
+# Suppress the annoying PyTorch distributed elastic multiprocessing NOTE
+logging.getLogger("torch.distributed.elastic.multiprocessing.redirects").setLevel(logging.ERROR)
+
 # Suppress specific warnings that commonly appear in tests
 warnings.filterwarnings("ignore", category=UserWarning, module="torch.amp.autocast_mode")
 warnings.filterwarnings("ignore", message="NOTE: Redirects are currently not supported")

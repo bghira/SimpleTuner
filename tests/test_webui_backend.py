@@ -18,16 +18,21 @@ class WebUIStateStoreTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmpdir = tempfile.TemporaryDirectory()
         self.temp_path = Path(self._tmpdir.name)
-        self._home_patch = patch.dict(os.environ, {"HOME": str(self.temp_path)})
-        self._home_patch.start()
+        # Ensure we're using a clean isolated directory by setting SIMPLETUNER_WEB_UI_CONFIG
+        self.webui_dir = self.temp_path / "webui_state"
+        self._env_patches = patch.dict(
+            os.environ, {"HOME": str(self.temp_path), "SIMPLETUNER_WEB_UI_CONFIG": str(self.webui_dir)}
+        )
+        self._env_patches.start()
         self.store = WebUIStateStore()
 
     def tearDown(self) -> None:
-        self._home_patch.stop()
+        self._env_patches.stop()
         self._tmpdir.cleanup()
 
     def test_initialization_creates_directory(self) -> None:
-        expected = self.temp_path / ".simpletuner" / "webui"
+        # Since we're setting SIMPLETUNER_WEB_UI_CONFIG, it should use that path
+        expected = self.webui_dir
         self.assertTrue(expected.exists())
         self.assertEqual(self.store.base_dir, expected)
 

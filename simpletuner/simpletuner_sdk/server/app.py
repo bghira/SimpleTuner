@@ -139,6 +139,7 @@ def _add_trainer_routes(app: FastAPI):
 
     if WebInterface is None:
         from simpletuner.simpletuner_sdk.interface import WebInterface as WebInterfaceClass
+
         WebInterface = WebInterfaceClass
     else:
         WebInterfaceClass = WebInterface
@@ -147,6 +148,7 @@ def _add_trainer_routes(app: FastAPI):
         ConfigurationClass = Configuration
     elif ConfigurationClass is None:
         from simpletuner.simpletuner_sdk.configuration import Configuration as _Configuration
+
         ConfigurationClass = _Configuration
     Configuration = ConfigurationClass
 
@@ -154,6 +156,7 @@ def _add_trainer_routes(app: FastAPI):
         TrainingHostClass = TrainingHost
     elif TrainingHostClass is None:
         from simpletuner.simpletuner_sdk.training_host import TrainingHost as _TrainingHost
+
         TrainingHostClass = _TrainingHost
     TrainingHost = TrainingHostClass
 

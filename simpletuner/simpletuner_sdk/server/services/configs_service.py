@@ -252,7 +252,7 @@ class ConfigsService:
         except FileNotFoundError as exc:
             raise ConfigServiceError(str(exc), status.HTTP_404_NOT_FOUND) from exc
         except ValueError as exc:
-            raise ConfigServiceError(str(exc), status.HTTP_422_UNPROCESSABLE_ENTITY) from exc
+            raise ConfigServiceError(str(exc), status.HTTP_422_UNPROCESSABLE_CONTENT) from exc
 
         return {"name": name, "config": config, "metadata": metadata.model_dump(), "config_type": config_type}
 
@@ -279,7 +279,7 @@ class ConfigsService:
         except json.JSONDecodeError as exc:
             raise ConfigServiceError(
                 f"Invalid JSON in data backend config file: {exc}",
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
             ) from exc
         except OSError as exc:
             raise ConfigServiceError(
@@ -303,7 +303,7 @@ class ConfigsService:
         if not validation.is_valid:
             raise ConfigServiceError(
                 "Configuration validation failed",
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
             )
 
         metadata = ConfigMetadata(
@@ -339,7 +339,7 @@ class ConfigsService:
         if not validation.is_valid:
             raise ConfigServiceError(
                 "Configuration validation failed",
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
             )
 
         try:
@@ -416,7 +416,7 @@ class ConfigsService:
                 except Exception as exc:
                     raise ConfigServiceError(
                         f"Failed to load example config '{example}': {exc}",
-                        status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        status.HTTP_422_UNPROCESSABLE_CONTENT,
                     ) from exc
                 with target_config.open("w", encoding="utf-8") as handle:
                     json.dump(data, handle, indent=2, sort_keys=True)
@@ -642,7 +642,7 @@ class ConfigsService:
         except Exception as exc:  # pragma: no cover - defensive guard
             raise ConfigServiceError(
                 f"Failed to import configuration: {exc}",
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
             ) from exc
 
     def create_from_template(self, template_name: str, config_name: str, config_type: str = "model") -> Dict[str, Any]:

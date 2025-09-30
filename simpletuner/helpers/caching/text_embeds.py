@@ -333,7 +333,7 @@ class TextEmbeddingCache(WebhookMixin):
             desc="Write embeds to disk",
             leave=False,
             ncols=125,
-            disable=return_concat,
+            disable=return_concat or len(local_caption_split) < 100,
             total=len(local_caption_split),
             position=get_rank(),
         )

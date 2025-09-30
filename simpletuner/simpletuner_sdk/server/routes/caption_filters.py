@@ -7,10 +7,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from simpletuner.simpletuner_sdk.server.services.caption_filters_service import (
-    CAPTION_FILTERS_SERVICE,
-    CaptionFilterError,
-)
+from simpletuner.simpletuner_sdk.server.services.caption_filters_service import CAPTION_FILTERS_SERVICE, CaptionFilterError
 
 router = APIRouter(prefix="/api/caption-filters", tags=["caption-filters"])
 

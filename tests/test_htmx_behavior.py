@@ -162,9 +162,12 @@ class HTMXBehaviourTestCase(WebUITestCase):
                     )
                 requests = driver.execute_script("return window.__htmxHarness.requests;") or []
                 fetches = driver.execute_script("return window.__htmxHarness.fetches;") or []
-                request = next((r for r in fetches if r and '/api/training/config' in (r.get('url') or '')), None)
+                request = next((r for r in fetches if r and "/api/training/config" in (r.get("url") or "")), None)
                 if request is None:
-                    request = next((r for r in requests if r and '/api/training/config' in (r.get('path') or '')), requests[-1] if requests else {})
+                    request = next(
+                        (r for r in requests if r and "/api/training/config" in (r.get("path") or "")),
+                        requests[-1] if requests else {},
+                    )
                 dom_entry = driver.execute_script("return window.__htmxHarness.domChanges.slice(-1)[0];")
                 return request, dom_entry
 
@@ -185,7 +188,9 @@ class HTMXBehaviourTestCase(WebUITestCase):
                 self.assertGreater(dom_entry.get("added", 0), 0, "HTMX swap did not add new nodes")
 
             with self.subTest("htmx_indicator_shows_and_hides"):
-                has_hx_indicator = driver.execute_script("return !!document.querySelector('button[hx-indicator], a[hx-indicator]');")
+                has_hx_indicator = driver.execute_script(
+                    "return !!document.querySelector('button[hx-indicator], a[hx-indicator]');"
+                )
                 if not has_hx_indicator:
                     self.skipTest("No hx-indicator button present")
                 if not flags.get("hxActivated"):

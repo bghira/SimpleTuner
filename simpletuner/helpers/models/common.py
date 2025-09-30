@@ -651,6 +651,7 @@ class ModelFoundation(ABC):
 
         # Reclaim memory
         from simpletuner.helpers.caching.memory import reclaim_memory
+
         reclaim_memory()
 
         logger.info("Model components unloaded successfully.")
