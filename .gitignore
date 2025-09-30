@@ -62,8 +62,6 @@ webhooks.json
 untracked/
 config/*/
 config/*.toml
-static
-templates
 api_state.json
 images/
 datasets/
