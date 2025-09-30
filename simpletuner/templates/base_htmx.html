@@ -1,0 +1,405 @@
+<!-- templates/base_htmx.html - Enhanced base template with HTMX + Alpine.js -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    {% if csrf_token %}
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    {% endif %}
+    <title>{% block title %}SimpleTuner Training Studio{% endblock %}</title>
+
+    <!-- Critical CSS (inline for performance) -->
+    <link href="/static/css/critical.css" rel="stylesheet">
+    <link rel="icon" href="/favicon.ico" type="image/x-icon">
+    <!-- External CSS (preconnect for performance) -->
+    <link rel="preconnect" href="https://cdn.jsdelivr.net">
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com">
+
+    <!-- Non-critical CSS (loaded asynchronously) -->
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <link rel="preload" href="/static/css/base.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <link rel="preload" href="/static/css/trainer.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <link rel="preload" href="/static/css/browser-compat.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+
+    <!-- Fallback for browsers without JS -->
+    <noscript>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+        <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+        <link href="/static/css/base.css" rel="stylesheet">
+        <link href="/static/css/trainer.css" rel="stylesheet">
+        <link href="/static/css/browser-compat.css" rel="stylesheet">
+    </noscript>
+
+    <!-- CSS loading helper -->
+    <script>
+        // Helper for CSS preloading
+        !function(r){"use strict";r.loadCSS||(r.loadCSS=function(){});var o=loadCSS.relpreload={};if(o.support=function(){var e;try{e=r.document.createElement("link").relList.supports("preload")}catch(t){e=!1}return function(){return e}}(),o.bindMediaToggle=function(t){var e=t.media||"all";function a(){t.addEventListener?t.removeEventListener("load",a):t.attachEvent&&t.detachEvent("onload",a),t.setAttribute("onload",null),t.media=e}t.addEventListener?t.addEventListener("load",a):t.attachEvent&&t.attachEvent("onload",a),setTimeout(function(){t.rel="stylesheet",t.media="only x"}),setTimeout(a,3e3)},o.poly=function(){if(!o.support())for(var t=r.document.getElementsByTagName("link"),e=0;e<t.length;e++){var a=t[e];"preload"!==a.rel||"style"!==a.getAttribute("as")||a.getAttribute("data-loadcss")||(a.setAttribute("data-loadcss",!0),o.bindMediaToggle(a))}},!o.support()){o.poly();var t=r.setInterval(o.poly,500);r.addEventListener?r.addEventListener("load",function(){o.poly(),r.clearInterval(t)}):r.attachEvent&&r.attachEvent("onload",function(){o.poly(),r.clearInterval(t)})}"undefined"!=typeof exports?exports.loadCSS=loadCSS:r.loadCSS=loadCSS}("undefined"!=typeof global?global:this);
+    </script>
+
+    <!-- JavaScript Polyfills for Browser Compatibility -->
+    <script src="/static/js/polyfills.js"></script>
+
+    <!-- Debouncing utility for performance -->
+    <script src="/static/js/debounce.js" defer></script>
+
+    <!-- Lazy loading for heavy components -->
+    <script src="/static/js/lazy-load.js" defer></script>
+
+    <!-- HTMX for dynamic HTML updates -->
+    <script src="https://unpkg.com/htmx.org@2.0.3/dist/htmx.min.js"></script>
+
+    <!-- Alpine.js for reactive UI components -->
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+    <!-- Custom HTMX/Alpine styles -->
+    <style>
+        /* Dark theme overrides for Bootstrap */
+        body, .modal-content {
+            background-color: #0a0a0a !important;
+            color: #f8f9fa !important;
+        }
+
+        /* Fix form labels and text for dark theme */
+        .form-label, label {
+            color: #94a3b8 !important;
+            font-weight: 500;
+        }
+
+        .form-control, .form-select {
+            background-color: rgba(255, 255, 255, 0.03) !important;
+            border: 1px solid rgba(255, 255, 255, 0.06) !important;
+            color: #f8f9fa !important;
+        }
+
+        .form-control:focus, .form-select:focus {
+            background-color: rgba(255, 255, 255, 0.05) !important;
+            border-color: #667eea !important;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1) !important;
+            color: #f8f9fa !important;
+        }
+
+        .form-control::placeholder {
+            color: rgba(148, 163, 184, 0.5) !important;
+        }
+
+        .form-text, .text-muted {
+            color: #64748b !important;
+        }
+
+        .card-title, h1, h2, h3, h4, h5, h6 {
+            color: #f8f9fa !important;
+        }
+
+        /* Loading indicator for HTMX requests */
+        .htmx-indicator {
+            opacity: 0;
+            transition: opacity 300ms ease-in;
+        }
+        .htmx-request .htmx-indicator {
+            opacity: 1;
+        }
+        .htmx-request.htmx-indicator {
+            opacity: 1;
+        }
+
+        /* Alpine.js transitions */
+        [x-cloak] {
+            display: none !important;
+        }
+
+        /* Form validation styling */
+        .field-error {
+            border-color: #dc3545 !important;
+            box-shadow: 0 0 0 0.2rem rgba(220, 53, 69, 0.25) !important;
+        }
+
+        .field-success {
+            border-color: #198754 !important;
+            box-shadow: 0 0 0 0.2rem rgba(25, 135, 84, 0.25) !important;
+        }
+
+        /* Enhanced dataset cards */
+        .dataset-card {
+            transition: all 0.3s ease;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .dataset-card:hover {
+            border-color: rgba(255,255,255,0.2);
+            transform: translateY(-2px);
+        }
+
+        .dataset-card.expanded {
+            border-color: #38bdf8;
+        }
+
+        /* Connection status indicator */
+        .connection-status {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1050;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        .connection-status.connected {
+            background-color: rgba(34, 197, 94, 0.9);
+            color: white;
+        }
+
+        .connection-status.disconnected {
+            background-color: rgba(239, 68, 68, 0.9);
+            color: white;
+        }
+
+        .connection-status.reconnecting {
+            background-color: rgba(249, 115, 22, 0.9);
+            color: white;
+        }
+
+        /* Toast notifications */
+        .toast-container {
+            position: fixed;
+            top: 60px;
+            right: 20px;
+            z-index: 1060;
+            max-width: 350px;
+        }
+
+        .toast {
+            margin-bottom: 10px;
+            background-color: rgba(33, 37, 41, 0.95);
+            border: 1px solid rgba(255,255,255,0.1);
+            color: #f8f9fa;
+        }
+
+        .toast.success {
+            border-left: 4px solid #198754;
+        }
+
+        .toast.error {
+            border-left: 4px solid #dc3545;
+        }
+
+        .toast.warning {
+            border-left: 4px solid #fd7e14;
+        }
+
+        .toast.info {
+            border-left: 4px solid #0dcaf0;
+        }
+
+        .toast-header {
+            background-color: transparent;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            padding: 0.5rem 0.75rem;
+        }
+    </style>
+
+    {% block extra_css %}{% endblock %}
+</head>
+
+<body data-theme="{{ webui_theme|default('dark') }}">
+    <script>
+        (function() {
+            const THEME_CLASSES = ['dark-theme', 'tron-theme'];
+
+            window.applyTheme = function(theme) {
+                const themeName = (theme || 'dark').toLowerCase();
+                const body = document.body;
+                if (!body) {
+                    return;
+                }
+
+                body.dataset.theme = themeName;
+                document.documentElement.setAttribute('data-theme', themeName);
+
+                THEME_CLASSES.forEach(cls => body.classList.remove(cls));
+
+                if (themeName === 'tron') {
+                    body.classList.add('tron-theme');
+                }
+
+                if (!body.classList.contains('dark-theme')) {
+                    body.classList.add('dark-theme');
+                }
+
+                document.documentElement.style.backgroundColor = '#0a0a0a';
+                document.body.style.backgroundColor = '#0a0a0a';
+            };
+
+            const initialTheme = document.body.dataset.theme || '{{ webui_theme|default("dark") }}';
+            window.applyTheme(initialTheme);
+        })();
+
+        // Prepare for style loading signals
+
+        // Mark styles as loaded when all CSS files are ready
+        var loadedStyles = 0;
+        var totalStyles = 5; // bootstrap, fontawesome, base, trainer, browser-compat
+
+        function checkStylesLoaded() {
+            loadedStyles++;
+            if (loadedStyles >= totalStyles) {
+                document.body.classList.add('styles-loaded');
+            }
+        }
+
+        // Monitor preloaded stylesheets
+        document.addEventListener('DOMContentLoaded', function() {
+            var preloadLinks = document.querySelectorAll('link[rel="preload"][as="style"]');
+            preloadLinks.forEach(function(link) {
+                if (link.sheet) {
+                    checkStylesLoaded();
+                } else {
+                    link.addEventListener('load', checkStylesLoaded);
+                }
+            });
+        });
+    </script>
+
+    <!-- Connection Status Indicator (hidden by default, shown inline in topbar) -->
+
+    <!-- Toast Notification Container -->
+    <div id="toast-container" class="toast-container">
+        <!-- Toasts will be dynamically inserted here -->
+    </div>
+
+    <!-- Main Content -->
+    {% block body %}{% endblock %}
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+    <!-- HTMX Configuration -->
+    <script>
+        // Configure HTMX defaults
+        htmx.config.defaultSwapStyle = 'outerHTML';
+        htmx.config.defaultSwapDelay = 100;
+        htmx.config.defaultSettleDelay = 100;
+
+        // Global error handler
+        document.body.addEventListener('htmx:responseError', function(evt) {
+            console.error('HTMX Error:', evt.detail);
+            showToast('Network error occurred', 'error');
+        });
+
+        // Global success handler
+        document.body.addEventListener('htmx:afterRequest', function(evt) {
+            if (evt.detail.xhr.status >= 200 && evt.detail.xhr.status < 300) {
+                // Check for success messages in response headers
+                const successMsg = evt.detail.xhr.getResponseHeader('X-Success-Message');
+                if (successMsg) {
+                    showToast(successMsg, 'success');
+                }
+            }
+        });
+
+        // Toast notification function
+        window.showToast = function(message, type = 'info', duration = 3000) {
+            const container = document.getElementById('toast-container');
+            const toastId = 'toast-' + Date.now();
+
+            const iconMap = {
+                success: 'fas fa-check-circle',
+                error: 'fas fa-exclamation-circle',
+                warning: 'fas fa-exclamation-triangle',
+                info: 'fas fa-info-circle'
+            };
+
+            const toast = document.createElement('div');
+            toast.id = toastId;
+            toast.className = `toast ${type} show`;
+            toast.innerHTML = `
+                <div class="toast-header">
+                    <i class="${iconMap[type]} me-2"></i>
+                    <strong class="me-auto">${type.charAt(0).toUpperCase() + type.slice(1)}</strong>
+                </div>
+                <div class="toast-body">
+                    ${message}
+                </div>
+            `;
+
+            container.appendChild(toast);
+
+            // Auto-remove after duration
+            if (duration > 0) {
+                setTimeout(() => removeToast(toastId), duration);
+            }
+        }
+
+        function removeToast(toastId) {
+            const toast = document.getElementById(toastId);
+            if (toast) {
+                toast.remove();
+            }
+        }
+
+        // Connection monitoring
+        function updateConnectionStatus(status, message) {
+            const statusEl = document.getElementById('connection-status');
+            if (statusEl && statusEl._x_dataStack && statusEl._x_dataStack[0]) {
+                statusEl._x_dataStack[0].status = status;
+                statusEl._x_dataStack[0].message = message;
+            }
+        }
+
+        // Server-Sent Events for real-time updates using SSE Manager
+        function initializeEventStream() {
+            // Load SSE Manager script first if not already loaded
+            if (typeof window.SSEManager === 'undefined') {
+                var script = document.createElement('script');
+                script.src = '/static/js/sse-manager.js';
+                script.onload = function() {
+                    setupSSE();
+                };
+                document.head.appendChild(script);
+            } else {
+                setupSSE();
+            }
+        }
+
+        function setupSSE() {
+            // Initialize SSE Manager
+            window.sseManager = window.SSEManager.init({
+                url: '/api/events',
+                maxRetries: 10,
+                baseRetryDelay: 1000,
+                maxRetryDelay: 30000
+            });
+
+            // Add custom event listeners
+            window.sseManager.addEventListener('training_progress', function(data) {
+                if (window.htmx) {
+                    htmx.trigger('#training-progress', 'update-progress', data);
+                }
+            });
+
+            window.sseManager.addEventListener('validation_complete', function(data) {
+                showToast('Validation completed', 'success');
+            });
+
+            window.sseManager.addEventListener('error', function(data) {
+                showToast(data.message || 'An error occurred', 'error');
+            });
+
+            window.sseManager.addEventListener('notification', function(data) {
+                showToast(data.message, data.level || 'info');
+            });
+        }
+
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeEventStream();
+        });
+    </script>
+
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

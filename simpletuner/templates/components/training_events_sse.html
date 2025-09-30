@@ -1,0 +1,303 @@
+<!-- HTMX SSE component for real-time training events -->
+<div id="training-events-container" class="training-events">
+    <!-- SSE connection status -->
+    <div id="sse-status" class="alert alert-info d-none">
+        <i class="fas fa-plug"></i> <span id="sse-status-text">Connecting to event stream...</span>
+    </div>
+
+    <!-- Progress display -->
+    <div id="training-progress" class="d-none mb-4">
+        <h6>Training Progress</h6>
+        <div class="progress mb-2" style="height: 25px;">
+            <div id="progress-bar"
+                 class="progress-bar progress-bar-striped progress-bar-animated"
+                 role="progressbar"
+                 style="width: 0%"
+                 aria-valuenow="0"
+                 aria-valuemin="0"
+                 aria-valuemax="100">
+                <span id="progress-text">0%</span>
+            </div>
+        </div>
+        <div class="row text-muted small">
+            <div class="col">
+                <i class="fas fa-layer-group"></i> Step: <span id="current-step">0</span>/<span id="total-steps">0</span>
+            </div>
+            <div class="col">
+                <i class="fas fa-sync-alt"></i> Epoch: <span id="current-epoch">0</span>/<span id="total-epochs">0</span>
+            </div>
+            <div class="col">
+                <i class="fas fa-chart-line"></i> Loss: <span id="current-loss">0.000</span>
+            </div>
+            <div class="col">
+                <i class="fas fa-tachometer-alt"></i> LR: <span id="learning-rate">0.0000</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Event log -->
+    <div id="event-log-container">
+        <h6>Event Log</h6>
+        <div id="event-log" class="event-log-scroll">
+            <!-- Events will be inserted here -->
+        </div>
+    </div>
+
+    <!-- SSE connection with HTMX extension -->
+    <div hx-ext="sse"
+         sse-connect="/api/events"
+         sse-swap="none"
+         id="sse-source">
+        <!-- Listen for different event types -->
+        <div sse-swap="message" hx-trigger="sse:message" hx-target="#event-log" hx-swap="afterbegin">
+            <!-- Message handler -->
+        </div>
+    </div>
+</div>
+
+<script>
+// Initialize SSE handling
+(function() {
+    let eventSource = null;
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 10;
+
+    function connectSSE() {
+        if (eventSource) {
+            eventSource.close();
+        }
+
+        const apiBaseUrl = window.ServerConfig?.apiBaseUrl || '/';
+        eventSource = new EventSource(`${apiBaseUrl}/api/events`);
+
+        // Connection opened
+        eventSource.addEventListener('open', function(e) {
+            console.log('SSE connection opened');
+            reconnectAttempts = 0;
+            updateConnectionStatus('connected');
+        });
+
+        // Handle messages
+        eventSource.addEventListener('message', function(e) {
+            try {
+                const data = JSON.parse(e.data);
+                handleSSEEvent(data);
+            } catch (error) {
+                console.error('Failed to parse SSE data:', error);
+            }
+        });
+
+        // Handle errors
+        eventSource.addEventListener('error', function(e) {
+            console.error('SSE error:', e);
+            updateConnectionStatus('error');
+
+            if (eventSource.readyState === EventSource.CLOSED) {
+                // Connection closed, attempt reconnect
+                if (reconnectAttempts < maxReconnectAttempts) {
+                    reconnectAttempts++;
+                    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+                    console.log(`Reconnecting in ${delay}ms (attempt ${reconnectAttempts})`);
+                    setTimeout(connectSSE, delay);
+                } else {
+                    updateConnectionStatus('failed');
+                }
+            }
+        });
+    }
+
+    function updateConnectionStatus(status) {
+        const statusEl = document.getElementById('sse-status');
+        const statusTextEl = document.getElementById('sse-status-text');
+
+        if (!statusEl || !statusTextEl) return;
+
+        statusEl.classList.remove('d-none', 'alert-info', 'alert-success', 'alert-warning', 'alert-danger');
+
+        switch(status) {
+            case 'connected':
+                statusEl.classList.add('alert-success');
+                statusTextEl.textContent = 'Connected to event stream';
+                setTimeout(() => statusEl.classList.add('d-none'), 3000);
+                break;
+            case 'error':
+                statusEl.classList.add('alert-warning');
+                statusTextEl.textContent = 'Connection interrupted, reconnecting...';
+                break;
+            case 'failed':
+                statusEl.classList.add('alert-danger');
+                statusTextEl.textContent = 'Failed to connect to event stream';
+                break;
+        }
+    }
+
+    function handleSSEEvent(event) {
+        console.log('SSE Event:', event);
+
+        switch(event.type) {
+            case 'connected':
+                addEventToLog('Connected to SimpleTuner', 'success');
+                break;
+
+            case 'training_progress':
+                updateTrainingProgress(event.progress || event.data);
+                break;
+
+            case 'validation_complete':
+                addEventToLog('Validation complete', 'info');
+                break;
+
+            case 'error':
+                addEventToLog(event.message || 'An error occurred', 'danger');
+                break;
+
+            case 'notification':
+                addEventToLog(event.message, event.level || 'info');
+                break;
+
+            default:
+                // Handle other event types
+                if (event.data && event.data.message) {
+                    addEventToLog(event.data.message, 'secondary');
+                }
+        }
+    }
+
+    function updateTrainingProgress(progress) {
+        const progressContainer = document.getElementById('training-progress');
+        if (!progressContainer) return;
+
+        progressContainer.classList.remove('d-none');
+
+        // Update progress bar
+        const progressBar = document.getElementById('progress-bar');
+        const progressText = document.getElementById('progress-text');
+        const percentage = progress.percentage || 0;
+
+        if (progressBar) {
+            progressBar.style.width = percentage + '%';
+            progressBar.setAttribute('aria-valuenow', percentage);
+        }
+        if (progressText) {
+            progressText.textContent = percentage.toFixed(1) + '%';
+        }
+
+        // Update metrics
+        updateMetric('current-step', progress.current_step);
+        updateMetric('total-steps', progress.total_steps);
+        updateMetric('current-epoch', progress.epoch);
+        updateMetric('total-epochs', progress.total_epochs);
+        updateMetric('current-loss', progress.loss?.toFixed(4));
+        updateMetric('learning-rate', progress.lr?.toExponential(2));
+
+        // Add progress event to log
+        if (progress.current_step % 10 === 0) { // Log every 10 steps
+            addEventToLog(
+                `Step ${progress.current_step}/${progress.total_steps} - Loss: ${progress.loss?.toFixed(4)}`,
+                'primary'
+            );
+        }
+    }
+
+    function updateMetric(id, value) {
+        const element = document.getElementById(id);
+        if (element && value !== undefined) {
+            element.textContent = value;
+        }
+    }
+
+    function addEventToLog(message, level = 'info') {
+        const eventLog = document.getElementById('event-log');
+        if (!eventLog) return;
+
+        const timestamp = new Date().toLocaleTimeString();
+        const eventHtml = `
+            <div class="event-item alert alert-${level} py-2 mb-2 fade-in">
+                <small class="text-muted">${timestamp}</small>
+                <span class="ms-2">${message}</span>
+            </div>
+        `;
+
+        eventLog.insertAdjacentHTML('afterbegin', eventHtml);
+
+        // Limit log to 100 entries
+        const events = eventLog.querySelectorAll('.event-item');
+        if (events.length > 100) {
+            events[events.length - 1].remove();
+        }
+    }
+
+    // Public API
+    window.initSSE = function() {
+        connectSSE();
+    };
+
+    window.closeSSE = function() {
+        if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+            updateConnectionStatus('closed');
+        }
+    };
+
+    // Auto-initialize if training is active
+    document.addEventListener('DOMContentLoaded', function() {
+        // Check if we should auto-connect (e.g., if training is already running)
+        const trainingActive = document.body.dataset.trainingActive === 'true';
+        if (trainingActive) {
+            connectSSE();
+        }
+    });
+})();
+</script>
+
+<style>
+/* Event log styling */
+.event-log-scroll {
+    max-height: 400px;
+    overflow-y: auto;
+    border: 1px solid rgba(0, 0, 0, 0.125);
+    border-radius: 0.25rem;
+    padding: 1rem;
+    background-color: var(--bs-gray-100);
+}
+
+.event-item {
+    animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Progress bar enhancements */
+.progress {
+    background-color: var(--bs-gray-200);
+}
+
+.progress-bar {
+    transition: width 0.6s ease;
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+    .event-log-scroll {
+        background-color: var(--bs-gray-900);
+        border-color: var(--bs-gray-700);
+    }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .event-log-scroll {
+        max-height: 300px;
+    }
+}
+</style>

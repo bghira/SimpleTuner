@@ -1,0 +1,114 @@
+<!-- Basic Config tab -->
+<div class="tab-pane fade show active" id="basic" role="tabpanel" aria-labelledby="basic-tab"
+     hx-on:htmx:after-settle="if(window.loadModelFlavoursAfterSettle) window.loadModelFlavoursAfterSettle()">
+    {% include 'partials/form_section.html' %}
+
+    <!-- Dynamic model flavour loading -->
+    <script>
+    (function() {
+        // Function to load model flavours
+        async function loadModelFlavours() {
+            const modelFamilySelect = document.getElementById('model_family');
+            const modelFlavourSelect = document.getElementById('model_flavour');
+
+            if (!modelFamilySelect || !modelFlavourSelect) {
+                console.debug('Model family or flavour select not found');
+                return;
+            }
+
+            const modelFamily = modelFamilySelect.value;
+            console.debug('Loading flavours for model family:', modelFamily);
+
+            if (!modelFamily) {
+                // Clear flavours if no model family selected
+                modelFlavourSelect.innerHTML = '<option value="">-- Select Model Flavour --</option>';
+                modelFlavourSelect.disabled = true;
+                return;
+            }
+
+            try {
+                // Show loading state
+                modelFlavourSelect.disabled = true;
+                // Store the initial value - check multiple sources
+                let initialValue = modelFlavourSelect.value;
+                console.debug('Initial value from select:', initialValue);
+
+                // If no value, check if there's a selected option (server-rendered)
+                if (!initialValue) {
+                    const selectedOption = modelFlavourSelect.querySelector('option[selected]');
+                    if (selectedOption) {
+                        initialValue = selectedOption.value;
+                        console.debug('Initial value from selected option:', initialValue);
+                    }
+                }
+
+                // Also check for saved value from HTMX swap
+                if (!initialValue) {
+                    initialValue = modelFlavourSelect.getAttribute('data-saved-value');
+                    console.debug('Initial value from data attribute:', initialValue);
+                }
+
+                console.debug('Final initial value to restore:', initialValue);
+
+                // Fetch flavours from API
+                const response = await fetch(`/api/models/${modelFamily}/flavours`);
+                const data = await response.json();
+
+                // Clear current options
+                modelFlavourSelect.innerHTML = '<option value="">-- Select Model Flavour --</option>';
+
+                // Add flavour options
+                if (data.flavours && data.flavours.length > 0) {
+                    data.flavours.forEach(flavour => {
+                        const option = document.createElement('option');
+                        option.value = flavour;
+                        option.text = flavour.charAt(0).toUpperCase() + flavour.slice(1);
+                        // Mark as selected if it matches the initial value
+                        if (flavour === initialValue) {
+                            option.selected = true;
+                        }
+                        modelFlavourSelect.appendChild(option);
+                    });
+                    modelFlavourSelect.disabled = false;
+                }
+
+                // Explicitly set the value to ensure it's selected
+                if (initialValue && Array.from(modelFlavourSelect.options).some(opt => opt.value === initialValue)) {
+                    modelFlavourSelect.value = initialValue;
+                }
+
+            } catch (error) {
+                console.error('Error loading model flavours:', error);
+                modelFlavourSelect.innerHTML = '<option value="">Error loading flavours</option>';
+                modelFlavourSelect.disabled = true;
+            }
+        }
+
+        // Initialize on page load
+        const modelFamilySelect = document.getElementById('model_family');
+        if (modelFamilySelect) {
+            // Load immediately if model family already has a value
+            if (modelFamilySelect.value) {
+                loadModelFlavours();
+            }
+
+            // Load when model family changes
+            modelFamilySelect.addEventListener('change', loadModelFlavours);
+        }
+
+        // Expose function to be called after HTMX settles
+        window.loadModelFlavoursAfterSettle = function() {
+            const modelFamilySelect = document.getElementById('model_family');
+            if (modelFamilySelect) {
+                // Re-attach listener
+                modelFamilySelect.addEventListener('change', loadModelFlavours);
+
+                // Load flavours if model family has a value
+                if (modelFamilySelect.value) {
+                    loadModelFlavours();
+                }
+            }
+        };
+    })();
+    </script>
+</div>

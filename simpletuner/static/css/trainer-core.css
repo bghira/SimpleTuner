@@ -1,0 +1,307 @@
+/* trainer-core.css - Core styles extracted from trainer_htmx.html inline styles */
+
+/* Connection status display */
+.connection-status-inline {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    color: var(--text-secondary);
+    font-size: var(--typography-font-size-sm);
+}
+
+/* Main content layout */
+.main-content {
+    margin-left: 280px;
+}
+
+@media (max-width: 1024px) {
+    .main-content {
+        margin-left: 0;
+    }
+}
+
+.tab-fragment .card {
+    background: rgba(18, 21, 30, 0.92);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: var(--radius-xl);
+    box-shadow: 0 16px 40px rgba(2, 6, 23, 0.35);
+    color: #e2e8f0;
+}
+
+.tab-fragment .card-header,
+.tab-fragment .card-body,
+.tab-fragment .card-footer {
+    background: transparent;
+    color: inherit;
+}
+
+.tab-fragment .form-label,
+.tab-fragment .card-title,
+.tab-fragment .section-title {
+    color: #e2e8f0;
+}
+
+.tab-fragment .form-text,
+.tab-fragment .text-muted {
+    color: rgba(226, 232, 240, 0.75) !important;
+}
+
+.tab-fragment .form-control,
+.tab-fragment .form-select,
+.tab-fragment .form-control:focus,
+.tab-fragment .form-select:focus {
+    background: rgba(15, 18, 26, 0.85);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    color: #e2e8f0;
+    box-shadow: none;
+}
+
+.tab-fragment .form-control::placeholder {
+    color: rgba(226, 232, 240, 0.4);
+}
+
+.danger-mode-locked {
+    opacity: 0.6;
+    position: relative;
+}
+
+.danger-mode-locked select:disabled,
+.danger-mode-locked input:disabled {
+    cursor: not-allowed;
+}
+
+.tab-fragment .btn,
+.tab-fragment .btn-outline-secondary {
+    color: rgba(226, 232, 240, 0.9);
+}
+
+.tab-fragment .btn-outline-secondary {
+    border-color: rgba(148, 163, 184, 0.3);
+}
+
+/* Event Dock Styles */
+.event-dock-shell {
+    position: fixed;
+    left: 280px;
+    right: 0;
+    bottom: 0;
+    padding: 0 2rem;
+    display: flex;
+    justify-content: center;
+    align-items: flex-end;
+    pointer-events: none;
+    z-index: 1030;
+}
+
+.event-dock {
+    width: 100%;
+    max-width: calc(1400px + 4rem);
+    background: rgba(15, 18, 26, 0.96);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-bottom: none;
+    border-radius: 12px 12px 0 0;
+    box-shadow: 0 -18px 40px rgba(2, 6, 23, 0.35);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transition: height 0.2s ease;
+    pointer-events: auto;
+}
+
+.event-dock.collapsed {
+    cursor: pointer;
+}
+
+.event-dock.resizing {
+    user-select: none;
+    cursor: ns-resize;
+}
+
+.event-dock-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--spacing-md) var(--spacing-lg);
+    background: rgba(255, 255, 255, 0.04);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.event-dock-title {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    font-weight: 600;
+}
+
+.event-dock-title i {
+    color: var(--accent-blue);
+}
+
+.event-dock-actions {
+    display: flex;
+    gap: var(--spacing-sm);
+}
+
+.event-dock-actions .btn {
+    border-color: rgba(255, 255, 255, 0.18);
+    color: rgba(248, 250, 252, 0.9);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.event-dock-actions .btn:hover {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.28);
+}
+
+.event-dock-resize-handle {
+    display: flex;
+    justify-content: center;
+    padding: 0.35rem 0;
+    cursor: ns-resize;
+    background: rgba(255, 255, 255, 0.03);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.event-dock-resize-handle span {
+    width: 48px;
+    height: 4px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.25);
+}
+
+.event-dock-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    backdrop-filter: blur(6px);
+}
+
+.event-dock .event-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--spacing-lg);
+    background: rgba(12, 14, 22, 0.65);
+}
+
+/* Event dock responsive styles */
+@media (max-width: 1024px) {
+    .event-dock-shell {
+        left: 0;
+        padding: 0 1.25rem;
+    }
+}
+
+@media (max-width: 768px) {
+    .event-dock-title span {
+        font-size: 0.9rem;
+    }
+
+    .event-dock-actions .btn {
+        padding: 0.35rem 0.6rem;
+    }
+}
+
+/* Training Status Pill */
+.training-status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    background: rgba(15, 18, 26, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    padding: 0.35rem 0.75rem;
+    font-size: 0.85rem;
+    color: #e2e8f0;
+    box-shadow: 0 10px 24px rgba(2, 6, 23, 0.35);
+    margin-left: 1rem;
+}
+
+.training-status-pill i {
+    color: var(--accent-cyan);
+}
+
+/* Onboarding Overlay & Modal */
+.onboarding-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(8, 10, 16, 0.92);
+    backdrop-filter: blur(6px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--spacing-2xl);
+    z-index: 1200;
+}
+
+.onboarding-modal {
+    width: min(560px, 100%);
+    background: rgba(13, 16, 24, 0.95);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 16px;
+    padding: var(--spacing-2xl);
+    box-shadow: 0 24px 60px rgba(2, 6, 23, 0.45);
+}
+
+.onboarding-modal h2 {
+    font-size: 1.75rem;
+    margin-bottom: var(--spacing-md);
+}
+
+/* Save Dataset Modal */
+.save-dataset-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(8, 10, 16, 0.82);
+    backdrop-filter: blur(4px);
+}
+
+.save-dataset-modal {
+    width: min(480px, 90vw);
+    background: rgba(13, 16, 24, 0.96);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    padding: var(--spacing-2xl);
+    box-shadow: 0 24px 48px rgba(2, 6, 23, 0.55);
+    color: var(--text-primary);
+}
+
+.save-dataset-modal h3 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.save-dataset-modal p,
+.save-dataset-modal .form-check-label {
+    color: var(--text-secondary);
+}
+
+.save-dataset-modal code {
+    color: var(--text-primary);
+}
+
+/* Onboarding UI Components */
+.onboarding-prompt {
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-xl);
+}
+
+.onboarding-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--spacing-md);
+    margin-top: var(--spacing-xl);
+}
+
+.onboarding-actions .btn-primary {
+    min-width: 160px;
+}
+
+/* Progress bar styles */
+.training-progress-bar {
+    transition: width 0.3s ease;
+}

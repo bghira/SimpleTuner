@@ -1,0 +1,64 @@
+<!-- templates/partials/notification.html - Toast notification component -->
+{% set notification_id = id or 'notification-' + (timestamp | string) %}
+{% set notification_type = type or 'info' %}
+{% set notification_message = message or 'Notification' %}
+{% set notification_title = title or (notification_type | capitalize) %}
+{% set auto_hide = auto_hide if auto_hide is defined else true %}
+{% set duration = duration or 5000 %}
+
+{% set icon_map = {
+    'success': 'fas fa-check-circle',
+    'error': 'fas fa-exclamation-circle',
+    'warning': 'fas fa-exclamation-triangle',
+    'info': 'fas fa-info-circle'
+} %}
+
+<script>
+function notificationComponent(duration, autoHide) {
+    return {
+         show: true,
+         init() {
+             if (autoHide) {
+                 setTimeout(() => {
+                     this.hide();
+                 }, duration);
+             }
+         },
+         hide() {
+             this.show = false;
+             setTimeout(() => {
+                 this.$el.remove();
+             }, 300);
+         }
+    }
+}
+</script>
+
+<div id="{{ notification_id }}"
+     class="toast {{ notification_type }} show"
+     role="alert"
+     aria-live="assertive"
+     aria-atomic="true"
+     x-data="notificationComponent({{ duration }}, {{ 'true' if auto_hide else 'false' }})"
+     x-show="show"
+     x-transition:enter="transition ease-out duration-300"
+     x-transition:enter-start="opacity-0 transform scale-95 translate-x-full"
+     x-transition:enter-end="opacity-100 transform scale-100 translate-x-0"
+     x-transition:leave="transition ease-in duration-200"
+     x-transition:leave-start="opacity-100 transform scale-100 translate-x-0"
+     x-transition:leave-end="opacity-0 transform scale-95 translate-x-full">
+
+    <div class="toast-header">
+        <i class="{{ icon_map[notification_type] }} me-2"></i>
+        <strong class="me-auto">{{ notification_title }}</strong>
+        <small class="text-muted">just now</small>
+        <button type="button"
+                class="btn-close btn-close-white"
+                @click="hide()"
+                aria-label="Close"></button>
+    </div>
+
+    <div class="toast-body">
+        {{ notification_message }}
+    </div>
+</div>

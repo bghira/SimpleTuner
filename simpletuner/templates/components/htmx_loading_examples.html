@@ -1,0 +1,206 @@
+<!-- HTMX Loading States Examples -->
+<div class="htmx-loading-examples">
+    <h5>HTMX Loading State Examples</h5>
+
+    <!-- Example 1: Button with inline spinner -->
+    <div class="example mb-4">
+        <h6>Button with Inline Spinner</h6>
+        <button type="button"
+                class="btn btn-primary"
+                hx-get="/api/example/slow-endpoint"
+                hx-indicator="#inline-spinner">
+            Load Data
+            <span id="inline-spinner" class="htmx-indicator ms-2">
+                <span class="spinner-border spinner-border-sm" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </span>
+            </span>
+        </button>
+    </div>
+
+    <!-- Example 2: Form with overlay -->
+    <div class="example mb-4">
+        <h6>Form with Loading Overlay</h6>
+        <form hx-post="/api/example/form-submit"
+              hx-target="#form-result"
+              style="position: relative;">
+            <div class="mb-3">
+                <input type="text" class="form-control" placeholder="Enter text">
+            </div>
+            <button type="submit" class="btn btn-primary">Submit</button>
+
+            <!-- Section overlay -->
+            <div class="htmx-section-overlay htmx-indicator">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Processing...</span>
+                </div>
+            </div>
+        </form>
+        <div id="form-result" class="mt-3"></div>
+    </div>
+
+    <!-- Example 3: Content with skeleton loader -->
+    <div class="example mb-4">
+        <h6>Content with Skeleton Loader</h6>
+        <button hx-get="/api/example/content"
+                hx-target="#skeleton-content"
+                hx-indicator="#skeleton-loader"
+                class="btn btn-secondary mb-3">
+            Load Content
+        </button>
+
+        <div id="skeleton-content">
+            <div id="skeleton-loader" class="htmx-indicator">
+                <div class="htmx-loading-skeleton" style="width: 100%;"></div>
+                <div class="htmx-loading-skeleton" style="width: 80%;"></div>
+                <div class="htmx-loading-skeleton" style="width: 90%;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Example 4: Progress bar for long operations -->
+    <div class="example mb-4">
+        <h6>Progress Bar for Long Operations</h6>
+        <button hx-post="/api/example/long-operation"
+                hx-indicator="#progress-indicator"
+                class="btn btn-warning mb-2">
+            Start Long Operation
+        </button>
+        <div id="progress-indicator" class="htmx-progress-bar htmx-indicator"></div>
+    </div>
+
+    <!-- Example 5: Tab loading -->
+    <div class="example mb-4">
+        <h6>Tab Loading State</h6>
+        <ul class="nav nav-tabs mb-3">
+            <li class="nav-item">
+                <a class="nav-link active"
+                   hx-get="/api/example/tab1"
+                   hx-target="#tab-content"
+                   hx-indicator="#tab-content">Tab 1</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link"
+                   hx-get="/api/example/tab2"
+                   hx-target="#tab-content"
+                   hx-indicator="#tab-content">Tab 2</a>
+            </li>
+        </ul>
+        <div id="tab-content" class="tab-content p-3 border">
+            <p>Select a tab to load content</p>
+        </div>
+    </div>
+
+    <!-- Example 6: Loading message -->
+    <div class="example mb-4">
+        <h6>Loading Message</h6>
+        <button hx-get="/api/example/data"
+                hx-indicator="#loading-msg"
+                class="btn btn-info">
+            Load with Message
+        </button>
+        <div id="loading-msg" class="htmx-loading-message htmx-indicator">
+            Fetching data from server...
+        </div>
+    </div>
+
+    <!-- Example 7: Multiple indicators -->
+    <div class="example mb-4">
+        <h6>Multiple Loading Indicators</h6>
+        <button hx-post="/api/example/multi"
+                hx-indicator=".multi-indicator"
+                class="btn btn-dark">
+            Trigger Multiple Indicators
+        </button>
+
+        <div class="mt-3">
+            <span class="multi-indicator htmx-indicator badge bg-primary me-2">
+                <span class="spinner-border spinner-border-sm me-1"></span>
+                Processing...
+            </span>
+            <span class="multi-indicator htmx-indicator badge bg-secondary">
+                <span class="spinner-border spinner-border-sm me-1"></span>
+                Please wait...
+            </span>
+        </div>
+    </div>
+
+    <!-- Example 8: Custom animations with classes -->
+    <div class="example mb-4">
+        <h6>Custom State Classes</h6>
+        <form hx-post="/api/example/validate"
+              hx-target="this"
+              hx-swap="outerHTML"
+              class="needs-validation">
+            <input type="email"
+                   class="form-control mb-3"
+                   placeholder="Email"
+                   hx-post="/api/example/check-email"
+                   hx-trigger="blur"
+                   hx-target="next .feedback"
+                   hx-indicator="this">
+            <div class="feedback"></div>
+            <button type="submit" class="btn btn-primary">Submit</button>
+        </form>
+    </div>
+</div>
+
+<style>
+/* Example-specific styles */
+.htmx-loading-examples .example {
+    padding: 20px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    border: 1px solid #dee2e6;
+}
+
+.htmx-loading-examples h6 {
+    color: #495057;
+    margin-bottom: 15px;
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+    .htmx-loading-examples .example {
+        background: #1a1a1a;
+        border-color: #333;
+    }
+
+    .htmx-loading-examples h6 {
+        color: #adb5bd;
+    }
+}
+</style>
+
+<script>
+// Add HTMX event listeners for feedback
+document.addEventListener('htmx:beforeRequest', function(evt) {
+    console.log('HTMX request starting:', evt.detail.elt);
+});
+
+document.addEventListener('htmx:afterRequest', function(evt) {
+    console.log('HTMX request completed:', evt.detail);
+
+    // Add success/error classes based on response
+    if (evt.detail.successful) {
+        evt.detail.elt.classList.add('htmx-success');
+        setTimeout(() => {
+            evt.detail.elt.classList.remove('htmx-success');
+        }, 2000);
+    } else {
+        evt.detail.elt.classList.add('htmx-error');
+        setTimeout(() => {
+            evt.detail.elt.classList.remove('htmx-error');
+        }, 2000);
+    }
+});
+
+// Custom loading cursor for entire page during requests
+document.addEventListener('htmx:beforeRequest', function() {
+    document.body.classList.add('htmx-loading-cursor');
+});
+
+document.addEventListener('htmx:afterRequest', function() {
+    document.body.classList.remove('htmx-loading-cursor');
+});
+</script>

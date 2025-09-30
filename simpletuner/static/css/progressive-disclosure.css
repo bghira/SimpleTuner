@@ -1,0 +1,231 @@
+/* Progressive Disclosure Styles */
+
+/* Importance Level Indicators */
+.form-label {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.importance-badge {
+    font-size: 0.75rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 12px;
+    font-weight: 500;
+    margin-left: 0.5rem;
+}
+
+.importance-essential {
+    background: rgba(34, 197, 94, 0.1);
+    color: #86efac;
+    border: 1px solid rgba(34, 197, 94, 0.2);
+}
+
+.importance-important {
+    background: rgba(59, 130, 246, 0.1);
+    color: #93bbfc;
+    border: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+.importance-advanced {
+    background: rgba(168, 85, 247, 0.1);
+    color: #c4b5fd;
+    border: 1px solid rgba(168, 85, 247, 0.2);
+}
+
+/* Progressive Disclosure Controls */
+.disclosure-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 0.75rem 1rem;
+    margin: 1rem 0 0.5rem 0;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    color: rgba(248, 250, 252, 0.8);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.disclosure-toggle:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+.disclosure-toggle i {
+    transition: transform 0.2s ease;
+}
+
+.disclosure-toggle.active i {
+    transform: rotate(180deg);
+}
+
+/* Field Sections */
+.field-section {
+    margin-bottom: 1.5rem;
+    padding: 1rem;
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.field-section-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: rgba(248, 250, 252, 0.9);
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* Advanced Fields Container */
+.advanced-fields {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.advanced-fields.collapsed {
+    display: none;
+}
+
+/* Field Dependencies Visual Feedback */
+.field-disabled {
+    opacity: 0.5;
+    pointer-events: none;
+    position: relative;
+}
+
+.field-disabled::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 4px;
+}
+
+.field-hidden {
+    display: none !important;
+}
+
+/* Dependency Indicator */
+.dependency-indicator {
+    position: absolute;
+    right: -20px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 16px;
+    height: 16px;
+    background: rgba(251, 191, 36, 0.2);
+    border: 1px solid rgba(251, 191, 36, 0.4);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.dependency-indicator::after {
+    content: '→';
+    font-size: 10px;
+    color: #fbbf24;
+}
+
+/* Conditional Field Highlight */
+.field-conditional {
+    border-left: 3px solid rgba(251, 191, 36, 0.4);
+    padding-left: 1rem;
+    margin-left: -1rem;
+}
+
+/* Section Expand/Collapse Animation */
+.config-card {
+    overflow: hidden;
+    transition: max-height 0.3s ease;
+}
+
+.config-card.collapsed .form-grid-2,
+.config-card.collapsed .form-grid-3,
+.config-card.collapsed .form-check,
+.config-card.collapsed .mb-3 {
+    display: none;
+}
+
+.config-card.collapsed {
+    max-height: 60px;
+}
+
+/* Show More/Less Button */
+.show-more-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    margin-top: 1rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    color: #93bbfc;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.show-more-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.15);
+}
+
+/* Visual Grouping */
+.related-fields {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+
+.related-fields-title {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: rgba(248, 250, 252, 0.7);
+    margin-bottom: 0.75rem;
+}
+
+/* Progressive Loading Animation */
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.field-appearing {
+    animation: slideDown 0.3s ease forwards;
+}
+
+/* Help Text Progressive Disclosure */
+.help-text-toggle {
+    display: inline-block;
+    margin-left: 0.5rem;
+    color: #93bbfc;
+    cursor: help;
+    font-size: 0.875rem;
+}
+
+.help-text-expanded {
+    margin-top: 0.5rem;
+    padding: 0.5rem;
+    background: rgba(59, 130, 246, 0.1);
+    border-left: 3px solid #3b82f6;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    color: rgba(248, 250, 252, 0.8);
+}

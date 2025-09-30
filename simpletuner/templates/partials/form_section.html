@@ -1,0 +1,179 @@
+<!-- templates/partials/form_section.html - Form section with collapsible groups -->
+{% set section_id = section.id or id %}
+{% set section_title = section.title or title %}
+{% set section_description = section.description or description or '' %}
+{% set section_fields = section.fields or fields or [] %}
+{% set section_collapsible = section.collapsible if section.collapsible is defined else (collapsible if collapsible is defined else false) %}
+{% set section_expanded = section.expanded if section.expanded is defined else (expanded if expanded is defined else true) %}
+{% set section_icon = section.icon or icon or 'fas fa-cog' %}
+
+<script>
+function formSectionComponent(expanded) {
+    return {
+        expanded: expanded
+    }
+}
+</script>
+
+<div class="config-card mb-4"
+     x-data="formSectionComponent({{ 'true' if section_expanded else 'false' }})">
+
+    <!-- Section Header -->
+    <div class="card-header {% if section_collapsible %}cursor-pointer{% endif %}"
+         {% if section_collapsible %}@click="expanded = !expanded"{% endif %}>
+        <div class="d-flex justify-content-between align-items-center">
+            <div class="d-flex align-items-center">
+                <i class="{{ section_icon }} me-2"></i>
+                <h5 class="card-title mb-0">{{ section_title }}</h5>
+
+            </div>
+
+            {% if section_collapsible %}
+                <i class="fas fa-chevron-down transition-transform"
+                   x-bind:class="{ 'rotate-180': expanded }"></i>
+            {% endif %}
+        </div>
+
+        {% if section_description %}
+            <p class="text-muted mt-2 mb-0">{{ section_description }}</p>
+        {% endif %}
+    </div>
+
+    <!-- Section Content -->
+    <div id="{{ section_id }}"
+         class="card-body"
+         {% if section_collapsible %}
+         x-show="expanded"
+         x-transition:enter="transition ease-out duration-300"
+         x-transition:enter-start="opacity-0 max-h-0"
+         x-transition:enter-end="opacity-100 max-h-screen"
+         x-transition:leave="transition ease-in duration-200"
+         x-transition:leave-start="opacity-100 max-h-screen"
+         x-transition:leave-end="opacity-0 max-h-0"
+         {% endif %}>
+
+        {% if section_fields %}
+            <!-- DEBUG: Field count and list -->
+            <!-- DEBUG: Section '{{ section_id }}' has {{ section_fields|length }} fields: {{ section_fields|map(attribute='id')|list|join(', ') }} -->
+            <!-- Render fields in grid -->
+            <div class="row">
+                {% for field in section_fields %}
+                    <!-- DEBUG: Rendering field {{ loop.index }}/{{ section_fields|length }}: {{ field.id }} ({{ field.type }}) -->
+                    <div class="col-md-6 mb-3">
+                        {% include 'partials/form_field.html' %}
+                    </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <!-- DEBUG: No fields found for section '{{ section_id }}' -->
+            <!-- Render slot content -->
+            {{ caller() if caller }}
+        {% endif %}
+
+        <!-- Section Actions -->
+        {% if section.actions or actions %}
+            <div class="section-actions mt-4 pt-3 border-top">
+                <div class="d-flex gap-2">
+                    {% for action in (section.actions or actions) %}
+                        <button type="{{ action.type or 'button' }}"
+                                class="btn {{ action.class or 'btn-secondary' }}"
+                                {% if action.hx_post %}hx-post="{{ action.hx_post }}"{% endif %}
+                                {% if action.hx_target %}hx-target="{{ action.hx_target }}"{% endif %}
+                                {% if action.hx_include %}hx-include="{{ action.hx_include }}"{% endif %}
+                                {% if action.hx_indicator %}hx-indicator="{{ action.hx_indicator }}"{% endif %}
+                                {% if action.confirm %}onclick="return confirm('{{ action.confirm }}')"{% endif %}
+                                {% if action.onclick %}onclick="{{ action.onclick }}"{% endif %}
+                                {% if action.x_on_click %}x-on:click="{{ action.x_on_click }}"{% endif %}
+                                {% if action.hx_post %}@htmx:after-request="if(event.detail.successful) window.showToast('Configuration saved', 'success')"{% endif %}>
+                            {% if action.icon %}
+                                <i class="{{ action.icon }} me-1"></i>
+                            {% endif %}
+                            {{ action.label }}
+                            {% if action.hx_indicator %}
+                                <i id="{{ action.hx_indicator[1:] }}" class="fas fa-spinner fa-spin htmx-indicator ms-1"></i>
+                            {% endif %}
+                        </button>
+                    {% endfor %}
+                </div>
+            </div>
+        {% endif %}
+    </div>
+</div>
+
+<style>
+    .cursor-pointer {
+        cursor: pointer;
+    }
+
+    .rotate-180 {
+        transform: rotate(180deg);
+    }
+
+    .transition-transform {
+        transition: transform 0.3s ease;
+    }
+
+    .max-h-0 {
+        max-height: 0;
+        overflow: hidden;
+    }
+
+    .max-h-screen {
+        max-height: 100vh;
+    }
+
+    .dataset-dropdown .dataset-toggle {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.75rem;
+        font-family: var(--bs-font-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+        font-size: 0.9rem;
+        white-space: nowrap;
+    }
+
+    .dataset-dropdown .dataset-toggle .dataset-path {
+        flex: 1 1 auto;
+        text-align: right;
+        color: var(--bs-secondary-color, #6c757d);
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .dataset-dropdown .dataset-toggle .dataset-env {
+        flex: 0 0 auto;
+    }
+
+    .dataset-dropdown .dataset-separator {
+        flex: 0 0 auto;
+        opacity: 0.7;
+    }
+
+    .dataset-dropdown-menu {
+        max-height: 280px;
+        overflow-y: auto;
+        min-width: 100%;
+    }
+
+    .dataset-dropdown-menu .dataset-option {
+        font-family: var(--bs-font-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+        font-size: 0.9rem;
+        gap: 0.75rem;
+    }
+
+    .dataset-dropdown-menu .dataset-option .dataset-env {
+        flex: 0 0 auto;
+    }
+
+    .dataset-dropdown-menu .dataset-option .dataset-path {
+        flex: 1 1 auto;
+        text-align: right;
+        color: var(--bs-secondary-color, #6c757d);
+    }
+
+    .dataset-dropdown-menu .dataset-option.active,
+    .dataset-dropdown-menu .dataset-option:active {
+        color: var(--bs-body-color);
+        background-color: var(--bs-dropdown-link-active-bg);
+    }
+</style>

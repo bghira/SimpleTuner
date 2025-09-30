@@ -1,0 +1,73 @@
+<!-- Validation Result Item Partial -->
+<div class="validation-item {{ result.level }}"
+     data-field="{{ result.field }}"
+     data-tab="{{ result.tab }}"
+     role="alert">
+    <div class="d-flex align-items-start">
+        <!-- Icon -->
+        <div class="flex-shrink-0 me-3">
+            {% if result.level == 'error' %}
+                <i class="fas fa-times-circle text-danger fa-lg"></i>
+            {% elif result.level == 'warning' %}
+                <i class="fas fa-exclamation-triangle text-warning fa-lg"></i>
+            {% elif result.level == 'info' %}
+                <i class="fas fa-info-circle text-info fa-lg"></i>
+            {% else %}
+                <i class="fas fa-check-circle text-success fa-lg"></i>
+            {% endif %}
+        </div>
+
+        <!-- Content -->
+        <div class="flex-grow-1">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <h6 class="mb-1">{{ result.title }}</h6>
+                    <p class="mb-2 text-muted">{{ result.message }}</p>
+
+                    <!-- Field Information -->
+                    {% if result.field %}
+                    <div class="small text-muted">
+                        <i class="fas fa-tag"></i>
+                        Field: <code>{{ result.field }}</code>
+                        {% if result.tab %}
+                        in <span class="badge bg-secondary">{{ result.tab|title }}</span> tab
+                        {% endif %}
+                    </div>
+                    {% endif %}
+
+                    <!-- Suggestion -->
+                    {% if result.suggestion %}
+                    <div class="mt-2 p-2 bg-dark bg-opacity-25 rounded">
+                        <small class="text-muted">
+                            <i class="fas fa-lightbulb"></i> Suggestion:
+                        </small>
+                        <p class="mb-0 small">{{ result.suggestion }}</p>
+                    </div>
+                    {% endif %}
+                </div>
+
+                <!-- Actions -->
+                <div class="ms-3">
+                    {% if result.field and result.tab %}
+                    <button class="btn btn-sm btn-outline-primary"
+                            title="Go to field"
+                            onclick="navigateToField('{{ result.field }}', '{{ result.tab }}')">
+                        <i class="fas fa-arrow-right"></i>
+                    </button>
+                    {% endif %}
+
+                    {% if result.auto_fix %}
+                    <button class="btn btn-sm btn-outline-success ms-1"
+                            title="Apply suggested fix"
+                            hx-post="/api/validation/fix/{{ result.id }}"
+                            hx-target="#validation-results"
+                            hx-swap="innerHTML"
+                            hx-confirm="Apply suggested fix: {{ result.auto_fix.description }}?">
+                        <i class="fas fa-magic"></i>
+                    </button>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

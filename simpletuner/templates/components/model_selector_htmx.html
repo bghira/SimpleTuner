@@ -1,0 +1,153 @@
+<!-- HTMX-enabled model selector with dynamic flavour loading -->
+<div class="model-selector-container">
+    <!-- Model Family Select -->
+    <div class="mb-3">
+        <label for="model_family" class="form-label">Model Family</label>
+        <select id="model_family"
+                name="--model_family"
+                class="form-select"
+                hx-get="/api/models/{value}/flavours-select"
+                hx-target="#model_flavour"
+                hx-trigger="change"
+                hx-indicator="#flavour-spinner">
+            <option value="">-- Select Model Family --</option>
+            {% for family in model_families %}
+                <option value="{{ family.value }}" {% if family.value == current_model_family %}selected{% endif %}>
+                    {{ family.label }}
+                </option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <!-- Model Flavour Select (dynamically loaded) -->
+    <div class="mb-3" id="model-flavour-group" {% if not current_model_family %}style="display: none;"{% endif %}>
+        <label for="model_flavour" class="form-label">
+            Model Flavour
+            <span id="flavour-spinner" class="htmx-indicator ms-2">
+                <span class="spinner-border spinner-border-sm" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </span>
+            </span>
+        </label>
+        <select id="model_flavour"
+                name="--model_flavour"
+                class="form-select"
+                hx-on::after-swap="handleFlavourChange(this)">
+            {% if current_model_family %}
+                <!-- Pre-load options if a family is selected -->
+                <option value="">Loading flavours...</option>
+            {% else %}
+                <option value="">Select a model family first</option>
+            {% endif %}
+        </select>
+    </div>
+
+    <!-- Model Path (auto-populated based on flavour) -->
+    <div class="mb-3">
+        <label for="model_path" class="form-label">Model Path</label>
+        <input type="text"
+               id="model_path"
+               name="--pretrained_model_name_or_path"
+               class="form-control"
+               placeholder="Will be set based on model flavour"
+               value="{{ current_model_path }}">
+        <div class="form-text">Path will be automatically set when you select a model flavour</div>
+    </div>
+</div>
+
+<script>
+// Model flavour paths mapping (will be populated from backend)
+const modelFlavourPaths = {
+    // Example structure:
+    // 'sd15': {
+    //     'runwayml/stable-diffusion-v1-5': '/path/to/sd15/model',
+    //     'CompVis/stable-diffusion-v1-4': '/path/to/sd14/model'
+    // }
+};
+
+// Handle model family change
+document.getElementById('model_family').addEventListener('change', function(e) {
+    const flavourGroup = document.getElementById('model-flavour-group');
+
+    if (e.target.value) {
+        // Show flavour selector
+        flavourGroup.style.display = 'block';
+
+        // Clear model path when family changes
+        document.getElementById('model_path').value = '';
+    } else {
+        // Hide flavour selector
+        flavourGroup.style.display = 'none';
+
+        // Clear both flavour and path
+        document.getElementById('model_flavour').innerHTML = '<option value="">Select a model family first</option>';
+        document.getElementById('model_path').value = '';
+    }
+});
+
+// Handle flavour selection
+function handleFlavourChange(select) {
+    const modelFamily = document.getElementById('model_family').value;
+    const selectedFlavour = select.value;
+    const modelPath = document.getElementById('model_path');
+
+    if (selectedFlavour && modelFamily) {
+        // For now, just use the flavour as the path
+        // In a real implementation, this would lookup the actual path
+        modelPath.value = selectedFlavour;
+
+        // Trigger any dependent updates
+        if (window.dispatchEvent) {
+            modelPath.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+    } else if (!selectedFlavour) {
+        modelPath.value = '';
+    }
+}
+
+// Initialize on page load if model family is pre-selected
+document.addEventListener('DOMContentLoaded', function() {
+    const modelFamily = document.getElementById('model_family');
+    if (modelFamily.value) {
+        // Trigger HTMX to load flavours
+        htmx.trigger(modelFamily, 'change');
+    }
+});
+
+// Re-initialize after HTMX swaps
+document.body.addEventListener('htmx:afterSwap', function(evt) {
+    if (evt.detail.target.closest('.model-selector-container')) {
+        const modelFamily = document.getElementById('model_family');
+        if (modelFamily && modelFamily.value) {
+            const flavourGroup = document.getElementById('model-flavour-group');
+            if (flavourGroup) {
+                flavourGroup.style.display = 'block';
+            }
+        }
+    }
+});
+</script>
+
+<style>
+/* HTMX indicator styling */
+.htmx-indicator {
+    display: none;
+}
+
+.htmx-request .htmx-indicator {
+    display: inline-block;
+}
+
+/* Smooth transitions */
+#model-flavour-group {
+    transition: all 0.3s ease;
+}
+
+/* Loading state for select */
+select.htmx-request {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M8 2v4m0 4v4m4-6H8m0 0H4'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
+    background-size: 16px 16px;
+}
+</style>

@@ -1,0 +1,1626 @@
+<!-- templates/environments_tab.html - Configuration management tab -->
+<script>
+function environmentsTabComponent() {
+    return {
+         configs: [],
+         templates: [],
+         selectedConfigs: [],
+         searchTerm: '',
+         activePanel: 'configs',
+         captionFilterSearch: '',
+         filterEditor: {
+             open: false,
+             mode: 'create',
+             name: '',
+             originalName: '',
+             label: '',
+             description: '',
+             entriesText: '',
+             testInput: '',
+             testResult: null,
+             testing: false,
+         },
+         viewMode: localStorage.getItem('environmentsViewMode') || 'cards',
+         configType: 'model',  // 'model', 'dataloader', 'webhook', or 'lycoris'
+         createEnvironmentModal: false,
+         createEnvironmentLoading: false,
+         newEnvironmentPathTouched: false,
+         newEnvironment: {
+             name: '',
+             model_family: '',
+             model_flavour: '',
+             model_type: 'lora',
+             lora_type: 'standard',
+             dataloader_path: '',
+             description: '',
+             example: ''
+         },
+         modelFamilies: [],
+         modelFlavours: [],
+         modelFlavourCache: {},
+         modelTypes: [
+             { value: 'lora', label: 'LoRA' },
+             { value: 'full', label: 'Full Model' },
+         ],
+         loraTypes: [
+             { value: 'standard', label: 'Standard', disabled: false },
+             { value: 'lycoris', label: 'LyCORIS (coming soon)', disabled: true },
+         ],
+         examples: [],
+         examplesMap: {},
+         dataloaderConfigs: [],
+         createNewDataloader: true,
+         selectedDataloaderPath: '',
+         exampleLocked: false,
+        dataloaderModal: {
+            open: false,
+            environment: '',
+            path: '',
+            loading: false
+        },
+
+        hasDataloader(config) {
+            if (!config) {
+                return false;
+            }
+            const candidateKeys = [
+                'dataloader_path',
+                'data_backend_config',
+                '--data_backend_config',
+                'dataloader_config',
+                '--dataloader_config',
+            ];
+            for (const key of candidateKeys) {
+                const value = config[key];
+                if (typeof value === 'string' && value.trim() !== '') {
+                    return true;
+                }
+            }
+            return Boolean(config.has_dataloader);
+        },
+        get captionFilters() {
+            const trainer = Alpine.store('trainer');
+            return (trainer && Array.isArray(trainer.captionFilters)) ? trainer.captionFilters : [];
+        },
+        filteredCaptionFilters() {
+            if (!this.captionFilterSearch) {
+                return this.captionFilters;
+            }
+            const needle = this.captionFilterSearch.toLowerCase();
+            return this.captionFilters.filter((filter) => {
+                const label = (filter.label || filter.name || '').toLowerCase();
+                const description = (filter.description || '').toLowerCase();
+                return label.includes(needle) || description.includes(needle);
+            });
+        },
+        ensureCaptionFiltersLoaded(force = false) {
+            const trainer = Alpine.store('trainer');
+            if (trainer && typeof trainer.loadCaptionFilters === 'function') {
+                return trainer.loadCaptionFilters(force);
+            }
+            return Promise.resolve([]);
+        },
+        switchPanel(panel) {
+            if (this.activePanel === panel) {
+                return;
+            }
+            this.activePanel = panel;
+            if (panel === 'configs') {
+                this.switchConfigType(this.configType);
+            } else if (panel === 'filters') {
+                this.ensureCaptionFiltersLoaded();
+            }
+        },
+        resetFilterEditor() {
+            this.filterEditor = {
+                open: false,
+                mode: 'create',
+                name: '',
+                originalName: '',
+                label: '',
+                description: '',
+                entriesText: '',
+                testInput: '',
+                testResult: null,
+                testing: false,
+            };
+        },
+        openFilterEditor(filter = null) {
+            if (filter) {
+                this.filterEditor = {
+                    open: true,
+                    mode: 'edit',
+                    name: filter.name || '',
+                    originalName: filter.name || '',
+                    label: filter.label || '',
+                    description: filter.description || '',
+                    entriesText: Array.isArray(filter.entries) ? filter.entries.join('\n') : '',
+                    testInput: '',
+                    testResult: null,
+                    testing: false,
+                };
+            } else {
+                this.resetFilterEditor();
+                this.filterEditor.open = true;
+            }
+        },
+        duplicateCaptionFilter(filter) {
+            if (!filter) {
+                return;
+            }
+            this.filterEditor = {
+                open: true,
+                mode: 'create',
+                name: `${filter.name || 'filter'}-copy`,
+                originalName: '',
+                label: filter.label ? `${filter.label} (copy)` : '',
+                description: filter.description || '',
+                entriesText: Array.isArray(filter.entries) ? filter.entries.join('\n') : '',
+                testInput: '',
+                testResult: null,
+                testing: false,
+            };
+        },
+        closeFilterEditor() {
+            this.resetFilterEditor();
+        },
+        async saveCaptionFilter() {
+            const name = (this.filterEditor.name || '').trim();
+            if (!name) {
+                window.showToast('Filter name is required.', 'warning');
+                return;
+            }
+            const entries = (this.filterEditor.entriesText || '')
+                .split(/\r?\n/)
+                .map((line) => line.trim())
+                .filter((line) => line !== '');
+
+            const payload = {
+                name,
+                label: (this.filterEditor.label || '').trim() || null,
+                description: (this.filterEditor.description || '').trim() || null,
+                entries,
+            };
+
+            try {
+                const endpoint = this.filterEditor.mode === 'edit'
+                    ? `/api/caption-filters/${encodeURIComponent(this.filterEditor.originalName)}`
+                    : '/api/caption-filters';
+                const method = this.filterEditor.mode === 'edit' ? 'PUT' : 'POST';
+                const response = await fetch(endpoint, {
+                    method,
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                });
+                if (!response.ok) {
+                    const error = await response.json().catch(() => ({}));
+                    throw new Error(error.detail || 'Failed to save caption filter');
+                }
+                window.showToast(`Caption filter ${this.filterEditor.mode === 'edit' ? 'updated' : 'created'}`, 'success');
+                this.closeFilterEditor();
+                await this.ensureCaptionFiltersLoaded(true);
+            } catch (error) {
+                console.error('Failed to save caption filter:', error);
+                window.showToast(error.message || 'Failed to save caption filter', 'error');
+            }
+        },
+        async deleteCaptionFilter(name) {
+            if (!name) {
+                return;
+            }
+            if (!confirm(`Delete caption filter "${name}"?`)) {
+                return;
+            }
+            try {
+                const response = await fetch(`/api/caption-filters/${encodeURIComponent(name)}`, {
+                    method: 'DELETE'
+                });
+                if (!response.ok) {
+                    const error = await response.json().catch(() => ({}));
+                    throw new Error(error.detail || 'Failed to delete caption filter');
+                }
+                window.showToast('Caption filter deleted', 'success');
+                await this.ensureCaptionFiltersLoaded(true);
+            } catch (error) {
+                console.error('Failed to delete caption filter:', error);
+                window.showToast(error.message || 'Failed to delete caption filter', 'error');
+            }
+        },
+        async testCaptionFilter() {
+            const entries = (this.filterEditor.entriesText || '')
+                .split(/\r?\n/)
+                .map((line) => line.trim())
+                .filter((line) => line !== '');
+            const sample = (this.filterEditor.testInput || '').toString();
+            if (!entries.length) {
+                window.showToast('Add at least one filter entry before testing.', 'warning');
+                return;
+            }
+            if (!sample) {
+                window.showToast('Provide a sample caption to test.', 'warning');
+                return;
+            }
+            this.filterEditor.testing = true;
+            this.filterEditor.testResult = null;
+            try {
+                const response = await fetch('/api/caption-filters/test', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        entries,
+                        sample
+                    })
+                });
+                if (!response.ok) {
+                    const error = await response.json().catch(() => ({}));
+                    throw new Error(error.detail || 'Failed to test caption filter');
+                }
+                const result = await response.json();
+                this.filterEditor.testResult = result.output || '';
+            } catch (error) {
+                console.error('Failed to test caption filter:', error);
+                window.showToast(error.message || 'Failed to test caption filter', 'error');
+                this.filterEditor.testResult = null;
+            } finally {
+                this.filterEditor.testing = false;
+            }
+        },
+
+        setViewMode(mode) {
+            this.viewMode = mode;
+            localStorage.setItem('environmentsViewMode', mode);
+        },
+
+        async switchConfigType(type) {
+            this.configType = type;
+            this.selectedConfigs = [];
+            await this.loadConfigs();
+            if (type === 'model') {
+                await this.loadTemplates();
+            } else {
+                this.templates = [];  // Clear templates for non-model types
+            }
+        },
+
+        resetNewEnvironment() {
+            this.newEnvironment = {
+                name: '',
+                model_family: '',
+                model_flavour: '',
+                model_type: 'lora',
+                lora_type: 'standard',
+                dataloader_path: '',
+                description: '',
+                example: ''
+            };
+            this.newEnvironmentPathTouched = false;
+            this.modelFlavours = [];
+            this.createNewDataloader = true;
+            this.selectedDataloaderPath = '';
+            this.exampleLocked = false;
+        },
+
+        updateNewEnvironmentName(value) {
+            const trimmed = value.trim();
+            this.newEnvironment.name = trimmed;
+            if (this.createNewDataloader && !this.newEnvironmentPathTouched) {
+                this.newEnvironment.dataloader_path = trimmed ? `${trimmed}/multidatabackend.json` : '';
+            }
+        },
+
+        markEnvironmentPathTouched() {
+            this.newEnvironmentPathTouched = true;
+        },
+
+        selectExistingDataloader(path) {
+            this.selectedDataloaderPath = path;
+            if (!this.createNewDataloader) {
+                this.newEnvironment.dataloader_path = path;
+            }
+        },
+
+        handleModelTypeChange(value) {
+            this.newEnvironment.model_type = value;
+            if (value !== 'lora') {
+                this.newEnvironment.lora_type = 'standard';
+            }
+        },
+
+        async handleExampleSelection(value) {
+            this.newEnvironment.example = value;
+            if (!value) {
+                this.exampleLocked = false;
+                this.newEnvironment.description = '';
+                if (this.dataloaderConfigs.length > 0) {
+                    this.createNewDataloader = false;
+                    this.selectedDataloaderPath = this.dataloaderConfigs[0]?.path || '';
+                    if (this.selectedDataloaderPath) {
+                        this.newEnvironment.dataloader_path = this.selectedDataloaderPath;
+                    }
+                } else {
+                    this.createNewDataloader = true;
+                    this.newEnvironmentPathTouched = false;
+                    this.newEnvironment.dataloader_path = this.computeDefaultDataloaderPath();
+                }
+                return;
+            }
+
+            const example = this.examplesMap[value];
+            if (!example || !example.defaults) {
+                this.exampleLocked = false;
+                return;
+            }
+
+            const defaults = example.defaults;
+            if (defaults.model_family) {
+                this.newEnvironment.model_family = defaults.model_family;
+                await this.loadModelFlavours(defaults.model_family);
+            }
+            this.newEnvironment.model_flavour = defaults.model_flavour || '';
+
+            const modelType = defaults.model_type || 'lora';
+            this.newEnvironment.model_type = modelType;
+            this.handleModelTypeChange(modelType);
+            if (modelType === 'lora') {
+                this.newEnvironment.lora_type = defaults.lora_type || 'standard';
+            }
+
+            this.newEnvironment.description = example.description || '';
+            this.exampleLocked = true;
+            this.createNewDataloader = true;
+            this.newEnvironmentPathTouched = false;
+            this.newEnvironment.dataloader_path = this.computeDefaultDataloaderPath();
+            this.selectedDataloaderPath = '';
+        },
+
+        async generateProjectName() {
+            try {
+                const response = await fetch('/api/configs/project-name');
+                if (!response.ok) {
+                    throw new Error('Failed to generate name');
+                }
+                const data = await response.json();
+                if (data?.name) {
+                    this.updateNewEnvironmentName(data.name);
+                }
+            } catch (error) {
+                console.error('Failed to generate project name:', error);
+                window.showToast('Could not generate project name', 'error');
+            }
+        },
+
+        async ensureModelFamilies() {
+            if (this.modelFamilies.length > 0) {
+                return;
+            }
+            try {
+                const response = await fetch('/api/models');
+                if (response.ok) {
+                    const data = await response.json();
+                    this.modelFamilies = data.families || [];
+                }
+            } catch (error) {
+                console.error('Failed to load model families:', error);
+            }
+        },
+
+        async loadModelFlavours(family) {
+            if (!family) {
+                this.modelFlavours = [];
+                return;
+            }
+            if (this.modelFlavourCache[family]) {
+                this.modelFlavours = this.modelFlavourCache[family];
+                return;
+            }
+            try {
+                const response = await fetch(`/api/models/${family}/flavours`);
+                if (response.ok) {
+                    const data = await response.json();
+                    const flavours = data.flavours || [];
+                    this.modelFlavourCache[family] = flavours;
+                    this.modelFlavours = flavours;
+                } else {
+                    this.modelFlavours = [];
+                }
+            } catch (error) {
+                console.error('Failed to load model flavours:', error);
+                this.modelFlavours = [];
+            }
+        },
+
+        async ensureExamples() {
+            if (this.examples.length > 0) {
+                return;
+            }
+            try {
+                const response = await fetch('/api/configs/examples');
+                if (response.ok) {
+                    const data = await response.json();
+                    this.examples = data.examples || [];
+                    this.examplesMap = Object.fromEntries((this.examples || []).map(example => [example.name, example]));
+                }
+            } catch (error) {
+                console.error('Failed to load examples:', error);
+            }
+        },
+
+        async ensureDataloaderConfigs() {
+            if (this.dataloaderConfigs.length > 0) {
+                return;
+            }
+            try {
+                const response = await fetch('/api/configs/?config_type=dataloader');
+                if (response.ok) {
+                    const data = await response.json();
+                    this.dataloaderConfigs = (data.configs || []).map(item => ({
+                        name: item.name,
+                        path: item.path || '',
+                        dataset_count: item.dataset_count || 0
+                    })).filter(item => item.path);
+                }
+            } catch (error) {
+                console.error('Failed to load dataloader configs:', error);
+            }
+        },
+
+        computeDefaultDataloaderPath() {
+            if (!this.newEnvironment.name) {
+                return '';
+            }
+            return `${this.newEnvironment.name}/multidatabackend.json`;
+        },
+
+        toggleCreateNewDataloader(checked) {
+            this.createNewDataloader = checked;
+            if (checked) {
+                if (!this.newEnvironmentPathTouched) {
+                    this.newEnvironment.dataloader_path = this.computeDefaultDataloaderPath();
+                }
+            } else {
+                if (this.dataloaderConfigs.length > 0) {
+                    if (!this.selectedDataloaderPath) {
+                        this.selectedDataloaderPath = this.dataloaderConfigs[0].path;
+                    }
+                    this.newEnvironment.dataloader_path = this.selectedDataloaderPath;
+                } else {
+                    this.createNewDataloader = true;
+                    if (!this.newEnvironmentPathTouched) {
+                        this.newEnvironment.dataloader_path = this.computeDefaultDataloaderPath();
+                    }
+                }
+            }
+        },
+
+        async openCreateEnvironmentModal() {
+            this.resetNewEnvironment();
+            await this.ensureModelFamilies();
+            await this.ensureExamples();
+            await this.ensureDataloaderConfigs();
+            if (this.modelFamilies.length > 0) {
+                const defaultFamily = this.modelFamilies[0];
+                this.newEnvironment.model_family = defaultFamily;
+                await this.loadModelFlavours(defaultFamily);
+            }
+            if (this.dataloaderConfigs.length > 0) {
+                this.createNewDataloader = false;
+                this.selectedDataloaderPath = this.dataloaderConfigs[0].path;
+                this.newEnvironment.dataloader_path = this.selectedDataloaderPath;
+            } else {
+                this.createNewDataloader = true;
+                this.newEnvironment.dataloader_path = this.computeDefaultDataloaderPath();
+            }
+            this.exampleLocked = false;
+            this.createEnvironmentModal = true;
+        },
+
+        closeCreateEnvironmentModal() {
+            this.createEnvironmentModal = false;
+            this.createEnvironmentLoading = false;
+        },
+
+        async createEnvironmentSubmit() {
+            if (!this.newEnvironment.name || !this.newEnvironment.model_family) {
+                window.showToast('Name and model family are required', 'warning');
+                return;
+            }
+            this.createEnvironmentLoading = true;
+            const payload = {
+                name: this.newEnvironment.name,
+                model_family: this.newEnvironment.model_family,
+                model_flavour: this.newEnvironment.model_flavour || null,
+                model_type: this.newEnvironment.model_type || 'lora',
+                lora_type: this.newEnvironment.model_type === 'lora' ? this.newEnvironment.lora_type || 'standard' : null,
+                description: this.newEnvironment.description || null,
+                example: this.newEnvironment.example || null,
+                dataloader_path: this.createNewDataloader ? (this.newEnvironment.dataloader_path || null) : (this.selectedDataloaderPath || null),
+                create_dataloader: this.createNewDataloader,
+            };
+            if (!payload.dataloader_path && this.createNewDataloader) {
+                const fallback = this.computeDefaultDataloaderPath();
+                payload.dataloader_path = fallback || null;
+            }
+            if (!payload.dataloader_path && !this.createNewDataloader && this.selectedDataloaderPath) {
+                payload.dataloader_path = this.selectedDataloaderPath;
+            }
+            if (!payload.dataloader_path && !this.createNewDataloader && this.dataloaderConfigs.length > 0) {
+                payload.dataloader_path = this.dataloaderConfigs[0].path;
+            }
+            try {
+                const response = await fetch('/api/configs/environments', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                if (response.ok) {
+                    const result = await response.json().catch(() => null);
+                    this.closeCreateEnvironmentModal();
+                    await this.loadConfigs();
+                    this.dataloaderConfigs = [];
+                    const trainerStore = Alpine.store('trainer');
+                    if (trainerStore) {
+                        if (typeof trainerStore.loadEnvironmentConfigs === 'function') {
+                            await trainerStore.loadEnvironmentConfigs();
+                        }
+
+                        if (result && result.environment && Array.isArray(trainerStore.environments)) {
+                            const exists = trainerStore.environments.some(
+                                (entry) => entry && entry.name === result.environment.name
+                            );
+                            if (!exists) {
+                                trainerStore.environments.push(result.environment);
+                            }
+                        }
+
+                        let switched = false;
+                        if (result && result.environment && typeof trainerStore.switchEnvironment === 'function') {
+                            try {
+                                await trainerStore.switchEnvironment(result.environment.name);
+                                switched = true;
+                            } catch (error) {
+                                console.error('Failed to switch to new environment automatically:', error);
+                            }
+                        }
+
+                        if (!switched && typeof trainerStore.updateConfigSelectors === 'function') {
+                            await trainerStore.updateConfigSelectors();
+                        }
+                    }
+                    window.dispatchEvent(new CustomEvent('configs-updated', {
+                        detail: {
+                            source: 'environment-create',
+                            name: payload.name,
+                            environment: result && result.environment ? result.environment : null,
+                        }
+                    }));
+                    window.showToast(`Environment "${payload.name}" created`, 'success');
+                } else {
+                    const error = await response.json().catch(() => ({}));
+                    window.showToast(error.detail || 'Failed to create environment', 'error');
+                }
+            } catch (error) {
+                console.error('Failed to create environment:', error);
+                window.showToast('Failed to create environment', 'error');
+            } finally {
+                this.createEnvironmentLoading = false;
+            }
+        },
+
+        openCreateDataloaderModal(environmentName) {
+            this.dataloaderModal.environment = environmentName;
+            this.dataloaderModal.path = `${environmentName}/multidatabackend.json`;
+            this.dataloaderModal.open = true;
+        },
+
+        closeCreateDataloaderModal() {
+            this.dataloaderModal.open = false;
+            this.dataloaderModal.loading = false;
+        },
+
+        async createEnvironmentDataloader() {
+            if (!this.dataloaderModal.environment) {
+                window.showToast('Environment name missing', 'warning');
+                return;
+            }
+            this.dataloaderModal.loading = true;
+            const payload = {
+                path: this.dataloaderModal.path || null
+            };
+            try {
+                const response = await fetch(`/api/configs/${this.dataloaderModal.environment}/dataloader`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                if (response.ok) {
+                this.closeCreateDataloaderModal();
+                if (this.configType === 'dataloader') {
+                    await this.loadConfigs();
+                } else {
+                    this.dataloaderConfigs = [];
+                }
+                window.showToast('Dataloader configuration created', 'success');
+            } else {
+                const error = await response.json().catch(() => ({}));
+                window.showToast(error.detail || 'Failed to create dataloader', 'error');
+                }
+            } catch (error) {
+                console.error('Failed to create dataloader:', error);
+                window.showToast('Failed to create dataloader', 'error');
+            } finally {
+                this.dataloaderModal.loading = false;
+            }
+        },
+
+         async loadConfigs() {
+             try {
+                 const response = await fetch(`/api/configs/?config_type=${this.configType}`);
+                 const data = await response.json();
+                 this.configs = data.configs || [];
+             } catch (error) {
+                 console.error('Failed to load configs:', error);
+             }
+         },
+
+         async loadTemplates() {
+             try {
+                 const response = await fetch('/api/configs/templates');
+                 const data = await response.json();
+                 this.templates = data.templates || [];
+             } catch (error) {
+                 console.error('Failed to load templates:', error);
+             }
+         },
+
+         filteredConfigs() {
+             if (!this.configs || !Array.isArray(this.configs)) return [];
+             if (!this.searchTerm) return this.configs;
+             return this.configs.filter(config =>
+                 config.name && config.name.toLowerCase().includes(this.searchTerm.toLowerCase()) ||
+                 (config.description && config.description.toLowerCase().includes(this.searchTerm.toLowerCase()))
+             );
+         },
+
+         toggleSelection(configName) {
+             const index = this.selectedConfigs.indexOf(configName);
+             if (index > -1) {
+                 this.selectedConfigs.splice(index, 1);
+             } else {
+                 this.selectedConfigs.push(configName);
+             }
+         },
+
+         isSelected(configName) {
+             return this.selectedConfigs.includes(configName);
+         },
+
+         async deleteConfig(name) {
+             if (!confirm('Are you sure you want to delete ' + name + '?')) {
+                 return;
+             }
+
+             try {
+                 const response = await fetch('/api/configs/' + name + '?config_type=' + this.configType, {
+                     method: 'DELETE'
+                 });
+
+                 if (response.ok) {
+                     await this.loadConfigs();
+                     window.showToast('Deleted configuration: ' + name, 'success');
+                 } else {
+                     const error = await response.json();
+                     // Show more specific error for active config
+                     let errorMsg = error.detail || 'Failed to delete configuration';
+                     if (error.detail && error.detail.includes('active configuration')) {
+                         errorMsg = 'Cannot delete the active configuration. Please activate a different configuration first.';
+                     }
+                     window.showToast(errorMsg, 'error');
+                 }
+             } catch (error) {
+                 console.error('Failed to delete config:', error);
+                 window.showToast('Failed to delete configuration', 'error');
+             }
+         },
+
+         async deleteSelected() {
+             if (this.selectedConfigs.length === 0) {
+                 window.showToast('No configurations selected', 'warning');
+                 return;
+             }
+
+             if (!confirm('Delete ' + this.selectedConfigs.length + ' selected configurations?')) {
+                 return;
+             }
+
+             for (const name of this.selectedConfigs) {
+                 await this.deleteConfig(name);
+             }
+
+             this.selectedConfigs = [];
+         },
+
+         async duplicateConfig(name) {
+             const newName = prompt('Enter name for duplicate of ' + name);
+             if (!newName) return;
+
+             try {
+                 const response = await fetch('/api/configs/' + name + '/copy?config_type=' + this.configType, {
+                     method: 'POST',
+                     headers: {
+                         'Content-Type': 'application/json',
+                     },
+                     body: JSON.stringify({
+                         target_name: newName
+                     })
+                 });
+
+                 if (response.ok) {
+                     await this.loadConfigs();
+                     window.showToast('Created duplicate: ' + newName, 'success');
+                 }
+             } catch (error) {
+                 console.error('Failed to duplicate config:', error);
+                 window.showToast('Failed to duplicate configuration', 'error');
+             }
+         },
+
+         async renameConfig(name) {
+             const newName = prompt('Rename ' + name + ' to:');
+             if (!newName || newName === name) return;
+
+             try {
+                 const response = await fetch('/api/configs/' + name + '/rename?config_type=' + this.configType, {
+                     method: 'POST',
+                     headers: {
+                         'Content-Type': 'application/json',
+                     },
+                     body: JSON.stringify({
+                         new_name: newName
+                     })
+                 });
+
+                 if (response.ok) {
+                     await this.loadConfigs();
+                     window.showToast('Renamed to: ' + newName, 'success');
+                 }
+             } catch (error) {
+                 console.error('Failed to rename config:', error);
+                 window.showToast('Failed to rename configuration', 'error');
+             }
+         },
+
+         async exportConfig(name) {
+             try {
+                 const response = await fetch('/api/configs/' + name + '/export?config_type=' + this.configType + '&include_metadata=false');
+                 const data = await response.json();
+
+                 const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+                 const url = URL.createObjectURL(blob);
+                 const a = document.createElement('a');
+                 a.href = url;
+                 a.download = name + '_config.json';
+                 a.click();
+                 URL.revokeObjectURL(url);
+
+                 window.showToast('Exported configuration: ' + name, 'success');
+             } catch (error) {
+                 console.error('Failed to export config:', error);
+                 window.showToast('Failed to export configuration', 'error');
+             }
+         },
+
+         async createFromTemplate(templateName) {
+             const configName = prompt('Enter name for new configuration from template: ' + templateName);
+             if (!configName) return;
+
+             try {
+                 const response = await fetch('/api/configs/from-template?config_type=' + this.configType, {
+                     method: 'POST',
+                     headers: {
+                         'Content-Type': 'application/json',
+                     },
+                     body: JSON.stringify({
+                         template_name: templateName,
+                         config_name: configName
+                     })
+                 });
+
+                 if (response.ok) {
+                     await this.loadConfigs();
+                     window.showToast('Created configuration from template: ' + configName, 'success');
+                 }
+             } catch (error) {
+                 console.error('Failed to create from template:', error);
+                 window.showToast('Failed to create from template', 'error');
+             }
+         },
+
+         async importConfig(event) {
+             const file = event.target.files[0];
+             if (!file) return;
+
+             try {
+                 const text = await file.text();
+                 const config = JSON.parse(text);
+
+                 const name = prompt('Enter name for imported configuration: ' + file.name.replace('.json', ''));
+                 if (!name) return;
+
+                 const response = await fetch('/api/configs/import?config_type=' + this.configType, {
+                     method: 'POST',
+                     headers: {
+                         'Content-Type': 'application/json',
+                     },
+                     body: JSON.stringify({
+                         name: name,
+                         data: JSON.parse(text)
+                     })
+                 });
+
+                 if (response.ok) {
+                     await this.loadConfigs();
+                     window.showToast('Imported configuration: ' + name, 'success');
+                 }
+             } catch (error) {
+                 console.error('Failed to import config:', error);
+                 window.showToast('Failed to import configuration', 'error');
+             }
+         }
+    }
+}
+</script>
+
+<div class="environments-tab"
+     x-data="environmentsTabComponent()"
+     x-init="loadConfigs(); loadTemplates()">
+
+    <div class="d-flex flex-wrap align-items-center justify-content-between mb-3 gap-2">
+        <div class="btn-group" role="group">
+            <button type="button" class="btn"
+                    :class="activePanel === 'configs' ? 'btn-primary' : 'btn-outline-secondary'"
+                    @click="switchPanel('configs')">
+                <i class="fas fa-folder"></i> Configurations
+            </button>
+            <button type="button" class="btn"
+                    :class="activePanel === 'filters' ? 'btn-primary' : 'btn-outline-secondary'"
+                    @click="switchPanel('filters')">
+                <i class="fas fa-filter"></i> Caption Filters
+            </button>
+        </div>
+        <div x-show="activePanel === 'filters'" class="ms-auto">
+            <button type="button" class="btn btn-sm btn-success" @click="openFilterEditor()">
+                <i class="fas fa-plus"></i> New Filter
+            </button>
+        </div>
+    </div>
+
+    <div x-show="activePanel === 'configs'">
+    <!-- Config Type Tabs -->
+    <div class="btn-group mb-3" role="group">
+        <button type="button" class="btn"
+                :class="configType === 'model' ? 'btn-primary' : 'btn-outline-secondary'"
+                @click="switchConfigType('model')">
+            <i class="fas fa-cog"></i> Model Configs
+        </button>
+        <button type="button" class="btn"
+                :class="configType === 'dataloader' ? 'btn-primary' : 'btn-outline-secondary'"
+                @click="switchConfigType('dataloader')">
+            <i class="fas fa-database"></i> Dataloader Configs
+        </button>
+        <button type="button" class="btn"
+                :class="configType === 'webhook' ? 'btn-primary' : 'btn-outline-secondary'"
+                @click="switchConfigType('webhook')">
+            <i class="fas fa-webhook"></i> Webhook Configs
+        </button>
+        <button type="button" class="btn"
+                :class="configType === 'lycoris' ? 'btn-primary' : 'btn-outline-secondary'"
+                @click="switchConfigType('lycoris')">
+            <i class="fas fa-brain"></i> LyCORIS Configs
+        </button>
+    </div>
+
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h5><i class="fas fa-folder-open"></i> Configuration Environments</h5>
+
+        <div class="d-flex align-items-center gap-3">
+            <!-- Search -->
+            <div class="input-group input-group-sm" style="width: 250px;">
+                <input type="text"
+                       class="form-control"
+                       placeholder="Search configurations..."
+                       x-model="searchTerm">
+                <span class="input-group-text">
+                    <i class="fas fa-search"></i>
+                </span>
+            </div>
+
+            <!-- View Mode -->
+            <div class="btn-group btn-group-sm">
+                <button type="button"
+                        class="btn"
+                        :class="viewMode === 'cards' ? 'btn-primary' : 'btn-outline-secondary'"
+                        @click="setViewMode('cards')">
+                    <i class="fas fa-th-large"></i>
+                </button>
+                <button type="button"
+                        class="btn"
+                        :class="viewMode === 'list' ? 'btn-primary' : 'btn-outline-secondary'"
+                        @click="setViewMode('list')">
+                    <i class="fas fa-list"></i>
+                </button>
+            </div>
+
+            <!-- Actions -->
+            <button type="button"
+                    class="btn btn-sm btn-success"
+                    x-show="configType === 'model'"
+                    @click="openCreateEnvironmentModal()">
+                <i class="fas fa-plus"></i> Create Environment
+            </button>
+            <button type="button"
+                    class="btn btn-sm btn-primary"
+                    onclick="document.getElementById('import-file').click()">
+                <i class="fas fa-upload"></i> Import
+            </button>
+            <input type="file"
+                   id="import-file"
+                   style="display: none;"
+                   accept=".json"
+                   @change="importConfig($event)">
+
+            <button type="button"
+                    class="btn btn-sm btn-danger"
+                    @click="deleteSelected()"
+                    :disabled="selectedConfigs.length === 0">
+                <i class="fas fa-trash"></i> Delete Selected
+            </button>
+        </div>
+    </div>
+
+    <!-- Templates Section -->
+    <div class="mb-4" x-show="configType === 'model' && templates.length > 0">
+        <h6 class="text-muted mb-3">
+            <i class="fas fa-magic"></i> Quick Start Templates
+        </h6>
+        <div class="row g-3">
+            <template x-for="template in templates" :key="template.name">
+                <div class="col-md-3">
+                    <div class="card template-card">
+                        <div class="card-body p-3">
+                            <h6 class="card-title" x-text="template.name"></h6>
+                            <p class="card-text small text-muted" x-text="template.description"></p>
+                            <button class="btn btn-sm btn-outline-primary w-100"
+                                    @click="createFromTemplate(template.name)">
+                                <i class="fas fa-plus"></i> Use Template
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- Configurations Grid/List -->
+    <div class="configurations-container">
+        <div class="alert alert-info d-flex align-items-start gap-2 small" x-show="configType === 'model'" x-cloak>
+            <i class="fas fa-info-circle mt-1"></i>
+            <span>
+                The <strong>Default</strong> environment is optionally merged with the active environment when training begins.<br />
+                You can enable or disable this from <strong>Basic Config → Project Settings → "Merge active environment defaults"</strong>.
+            </span>
+        </div>
+        <!-- Cards View -->
+        <div x-show="viewMode === 'cards'" class="row g-3">
+            <template x-for="config in filteredConfigs()" :key="config.name">
+                <div class="col-md-4">
+                    <div class="card config-card"
+                         :class="{'selected': isSelected(config.name)}">
+                        <div class="card-body">
+                            <!-- Selection checkbox -->
+                            <div class="form-check position-absolute top-0 end-0 m-2">
+                                <input type="checkbox"
+                                       class="form-check-input"
+                                       :checked="isSelected(config.name)"
+                                       @change="toggleSelection(config.name)">
+                            </div>
+
+                            <h6 class="card-title">
+                                <i class="fas fa-file-alt text-primary"></i>
+                                <span x-text="config.name"></span>
+                            </h6>
+
+                            <p class="card-text small text-muted" x-text="config.description || 'No description'"></p>
+
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <small class="text-muted">
+                                    <template x-if="configType === 'model'">
+                                        <span>
+                                            <span x-text="config.model_type === 'lora' ? (config.lora_type === 'lycoris' ? 'LyCORIS' : 'LoRA') : (config.model_type ? config.model_type.toUpperCase() : 'UNKNOWN')"></span> •
+                                            <span x-text="config.model_family || '-'"></span>
+                                            <span x-show="config.model_flavour" class="text-muted small">
+                                                (<span x-text="config.model_flavour"></span>)
+                                            </span>
+                                        </span>
+                                    </template>
+                                    <template x-if="configType === 'dataloader'">
+                                        <span>
+                                            <i class="fas fa-database"></i>
+                                            <span x-text="config.dataset_count || 0"></span> datasets
+                                        </span>
+                                    </template>
+                                    <template x-if="configType === 'webhook'">
+                                        <span>
+                                            <i class="fas fa-webhook"></i>
+                                            <span x-text="config.webhook_type || 'Unknown'"></span> webhook
+                                        </span>
+                                    </template>
+                                    <template x-if="configType === 'lycoris'">
+                                        <span>
+                                            <i class="fas fa-brain"></i>
+                                            Algorithm: <span x-text="config.algo || 'Unknown'"></span>
+                                        </span>
+                                    </template>
+                                </small>
+                                <small class="text-muted" x-text="new Date(config.modified_at).toLocaleDateString()"></small>
+                            </div>
+
+                            <div class="btn-group btn-group-sm w-100">
+                                <button type="button"
+                                        class="btn btn-outline-secondary"
+                                        x-show="configType === 'model' && !hasDataloader(config)"
+                                        @click="openCreateDataloaderModal(config.name)"
+                                        title="Create Dataloader">
+                                    <i class="fas fa-database"></i>
+                                </button>
+                                <button type="button"
+                                        class="btn btn-outline-secondary"
+                                        @click="renameConfig(config.name)"
+                                        title="Rename">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                <button type="button"
+                                        class="btn btn-outline-secondary"
+                                        @click="duplicateConfig(config.name)"
+                                        title="Duplicate">
+                                    <i class="fas fa-copy"></i>
+                                </button>
+                                <button type="button"
+                                        class="btn btn-outline-secondary"
+                                        @click="exportConfig(config.name)"
+                                        title="Export">
+                                    <i class="fas fa-download"></i>
+                                </button>
+                                <button type="button"
+                                        class="btn btn-outline-danger"
+                                        @click="deleteConfig(config.name)"
+                                        title="Delete">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </div>
+
+        <!-- List View -->
+        <div x-show="viewMode === 'list'">
+            <table class="table table-dark table-hover">
+                <thead>
+                    <tr>
+                        <th width="30">
+                            <input type="checkbox"
+                                   class="form-check-input"
+                                   @change="selectedConfigs = $event.target.checked ? configs.map(c => c.name) : []">
+                        </th>
+                        <th>Name</th>
+                        <th>Description</th>
+                        <th x-show="configType === 'model'">Type</th>
+                        <th x-text="configType === 'model' ? 'Model' : configType === 'dataloader' ? 'Datasets' : configType === 'webhook' ? 'Webhook Type' : 'Algorithm'"></th>
+                        <th>Modified</th>
+                        <th width="150">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="config in filteredConfigs()" :key="config.name">
+                        <tr :class="{'table-active': isSelected(config.name)}">
+                            <td>
+                                <input type="checkbox"
+                                       class="form-check-input"
+                                       :checked="isSelected(config.name)"
+                                       @change="toggleSelection(config.name)">
+                            </td>
+                            <td>
+                                <i class="fas fa-file-alt text-primary me-2"></i>
+                                <span x-text="config.name"></span>
+                            </td>
+                            <td x-text="config.description || '-'"></td>
+                            <td x-show="configType === 'model'">
+                                <span x-text="config.model_type === 'lora' ? (config.lora_type === 'lycoris' ? 'LyCORIS' : 'LoRA') : (config.model_type ? config.model_type.toUpperCase() : '-')"></span>
+                            </td>
+                            <td>
+                                <template x-if="configType === 'model'">
+                                    <span>
+                                        <span x-text="config.model_family || '-'"></span>
+                                        <span x-show="config.model_flavour" class="text-muted small">
+                                            (<span x-text="config.model_flavour"></span>)
+                                        </span>
+                                    </span>
+                                </template>
+                                <template x-if="configType === 'dataloader'">
+                                    <span>
+                                        <span x-text="config.dataset_count || 0"></span> datasets
+                                    </span>
+                                </template>
+                                <template x-if="configType === 'webhook'">
+                                    <span>
+                                        <span x-text="config.webhook_type || 'Unknown'"></span> webhook
+                                    </span>
+                                </template>
+                                <template x-if="configType === 'lycoris'">
+                                    <span>
+                                        Algorithm: <span x-text="config.algo || 'Unknown'"></span>
+                                    </span>
+                                </template>
+                            </td>
+                            <td x-text="new Date(config.modified_at).toLocaleDateString()"></td>
+                            <td>
+                                <div class="btn-group btn-group-sm">
+                                    <button type="button"
+                                            class="btn btn-outline-secondary"
+                                            x-show="configType === 'model' && !hasDataloader(config)"
+                                            @click="openCreateDataloaderModal(config.name)"
+                                            title="Create Dataloader">
+                                        <i class="fas fa-database"></i>
+                                    </button>
+                                    <button type="button"
+                                            class="btn btn-outline-secondary"
+                                            @click="renameConfig(config.name)"
+                                            title="Rename">
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                    <button type="button"
+                                            class="btn btn-outline-secondary"
+                                            @click="duplicateConfig(config.name)"
+                                            title="Duplicate">
+                                        <i class="fas fa-copy"></i>
+                                    </button>
+                                    <button type="button"
+                                            class="btn btn-outline-secondary"
+                                            @click="exportConfig(config.name)"
+                                            title="Export">
+                                        <i class="fas fa-download"></i>
+                                    </button>
+                                    <button type="button"
+                                            class="btn btn-outline-danger"
+                                            @click="deleteConfig(config.name)"
+                                            title="Delete">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Empty State -->
+        <div x-show="filteredConfigs().length === 0" class="text-center py-5">
+            <i class="fas fa-folder-open fa-3x text-muted mb-3"></i>
+            <h5 class="text-muted">No configurations found</h5>
+            <p class="text-muted">Create your first configuration or import an existing one.</p>
+        </div>
+    </div>
+
+    <div x-show="activePanel === 'filters'" class="caption-filters-panel">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <div class="input-group input-group-sm" style="max-width: 320px;">
+                <span class="input-group-text"><i class="fas fa-search"></i></span>
+                <input type="text"
+                       class="form-control"
+                       placeholder="Search filters..."
+                       x-model="captionFilterSearch">
+            </div>
+            <button type="button" class="btn btn-sm btn-outline-secondary" @click="ensureCaptionFiltersLoaded(true)">
+                <i class="fas fa-sync"></i> Refresh
+            </button>
+        </div>
+
+        <template x-if="filteredCaptionFilters().length === 0">
+            <div class="alert alert-info">
+                No caption filters defined yet. Create one to reuse filtering rules across datasets.
+            </div>
+        </template>
+
+        <div class="row g-3" x-show="filteredCaptionFilters().length > 0">
+            <template x-for="filter in filteredCaptionFilters()" :key="filter.name">
+                <div class="col-md-6">
+                    <div class="card caption-filter-card h-100">
+                        <div class="card-body d-flex flex-column">
+                            <div class="d-flex justify-content-between align-items-start mb-2">
+                                <div>
+                                    <h6 class="card-title mb-1" x-text="filter.label || filter.name"></h6>
+                                    <small class="text-muted" x-text="filter.name"></small>
+                                </div>
+                                <span class="badge bg-secondary" x-text="`${(filter.entries || []).length} rule(s)`"></span>
+                            </div>
+                            <p class="card-text flex-grow-1" x-text="filter.description || 'No description provided.'"></p>
+                            <div class="card-text">
+                                <strong>Preview:</strong>
+                                <template x-if="(filter.entries || []).length === 0">
+                                    <span class="text-muted">No rules</span>
+                                </template>
+                                <ul class="mb-2" x-show="(filter.entries || []).length > 0">
+                                    <template x-for="entry in (filter.entries || []).slice(0, 3)" :key="entry">
+                                        <li><code x-text="entry"></code></li>
+                                    </template>
+                                    <li x-show="(filter.entries || []).length > 3" class="text-muted">…</li>
+                                </ul>
+                            </div>
+                            <div class="d-flex justify-content-end gap-2 mt-auto">
+                                <button type="button" class="btn btn-sm btn-outline-primary"
+                                        @click="openFilterEditor(filter)">
+                                    <i class="fas fa-edit"></i> Edit
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary"
+                                        @click="duplicateCaptionFilter(filter)">
+                                    <i class="fas fa-clone"></i> Duplicate
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-danger"
+                                        @click="deleteCaptionFilter(filter.name)">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </div>
+
+        <!-- Caption Filter Editor Modal -->
+        <div x-cloak x-show="filterEditor.open" class="modal-backdrop" @keydown.escape.window="closeFilterEditor()" x-transition.opacity>
+            <div class="modal-dialog modal-lg" @click.stop>
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-filter"></i>
+                        <span x-text="filterEditor.mode === 'edit' ? 'Edit Caption Filter' : 'New Caption Filter'"></span>
+                    </h5>
+                    <button type="button" class="btn-close" aria-label="Close" @click="closeFilterEditor()"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Name</label>
+                            <input type="text" class="form-control" x-model="filterEditor.name"
+                                   :readonly="filterEditor.mode === 'edit'">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Display Label <span class="text-muted">(optional)</span></label>
+                            <input type="text" class="form-control" x-model="filterEditor.label">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Description</label>
+                            <textarea class="form-control" rows="2" x-model="filterEditor.description"
+                                      placeholder="Explain when to use this filter list"></textarea>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Filter Rules</label>
+                            <textarea class="form-control font-monospace" rows="6"
+                                      x-model="filterEditor.entriesText"
+                                      placeholder="One rule per line. Supports plain strings, regex, or sed-style replacements."></textarea>
+                            <div class="form-text">
+                                Examples: <code>arafed</code>, <code>^remove this prefix</code>, <code>s/find/replace/</code>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Test Sample</label>
+                            <div class="input-group">
+                                <input type="text" class="form-control" x-model="filterEditor.testInput"
+                                       placeholder="Paste a caption to preview the filter output">
+                                <button class="btn btn-outline-primary" type="button"
+                                        @click="testCaptionFilter()" :disabled="filterEditor.testing">
+                                    <span x-show="!filterEditor.testing"><i class="fas fa-vial"></i> Test</span>
+                                    <span x-show="filterEditor.testing"><i class="fas fa-spinner fa-spin"></i></span>
+                                </button>
+                            </div>
+                            <div class="mt-2" x-show="filterEditor.testResult !== null">
+                                <label class="form-label">Result</label>
+                                <div class="card bg-dark-subtle">
+                                    <div class="card-body">
+                                        <code x-text="filterEditor.testResult"></code>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" @click="closeFilterEditor()">Cancel</button>
+                    <button type="button" class="btn btn-primary" @click="saveCaptionFilter()">
+                        <i class="fas fa-save"></i>
+                        <span x-text="filterEditor.mode === 'edit' ? 'Save Changes' : 'Create Filter'"></span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Environment Modal -->
+    <div x-cloak x-show="createEnvironmentModal" class="modal-backdrop" @keydown.escape.window="closeCreateEnvironmentModal()" x-transition.opacity>
+        <div class="modal-dialog" @click.stop>
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-plus-circle"></i> Create Environment</h5>
+                <button type="button" class="btn-close" aria-label="Close" @click="closeCreateEnvironmentModal()"></button>
+            </div>
+            <form @submit.prevent="createEnvironmentSubmit">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Environment Name</label>
+                        <div class="input-group">
+                            <input type="text"
+                                   class="form-control"
+                                   :value="newEnvironment.name"
+                                   placeholder="my-environment"
+                                   required
+                                   @input="updateNewEnvironmentName($event.target.value)">
+                            <button type="button"
+                                    class="btn btn-outline-secondary"
+                                    title="Generate project name"
+                                    @click="generateProjectName()">
+                                <i class="fas fa-random"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Model Family</label>
+                        <select class="form-select"
+                                x-model="newEnvironment.model_family"
+                                required
+                                :disabled="exampleLocked"
+                                @change="loadModelFlavours($event.target.value); newEnvironment.model_flavour='';">
+                            <option value="" disabled>Select a model family</option>
+                            <template x-for="family in modelFamilies" :key="family">
+                                <option :value="family" x-text="family"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Model Flavour</label>
+                        <select class="form-select" x-model="newEnvironment.model_flavour" :disabled="exampleLocked">
+                            <option value="">Default</option>
+                            <template x-for="flavour in modelFlavours" :key="flavour">
+                                <option :value="flavour" x-text="flavour"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Model Type</label>
+                        <select class="form-select"
+                                x-model="newEnvironment.model_type"
+                                :disabled="exampleLocked"
+                                @change="handleModelTypeChange($event.target.value)">
+                            <template x-for="type in modelTypes" :key="type.value">
+                                <option :value="type.value" x-text="type.label"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Bootstrap From Example</label>
+                        <select class="form-select"
+                                x-model="newEnvironment.example"
+                                @change="handleExampleSelection($event.target.value)">
+                            <option value="">None</option>
+                            <template x-for="example in examples" :key="example.name">
+                                <option :value="example.name" x-text="example.name"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div class="mb-3" x-show="newEnvironment.model_type === 'lora'">
+                        <label class="form-label">LoRA Type</label>
+                        <select class="form-select" x-model="newEnvironment.lora_type" :disabled="exampleLocked">
+                            <template x-for="lora in loraTypes" :key="lora.value">
+                                <option :value="lora.value" :disabled="lora.disabled" x-text="lora.label"></option>
+                            </template>
+                        </select>
+                        <small class="text-muted">LyCORIS option is temporarily unavailable for new configs.</small>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Dataset Configuration</label>
+                        <div class="form-check mb-2" x-show="dataloaderConfigs.length > 0">
+                            <input class="form-check-input" type="checkbox" id="createNewDataloader"
+                                   :checked="createNewDataloader"
+                                   @change="toggleCreateNewDataloader($event.target.checked)">
+                            <label class="form-check-label" for="createNewDataloader">
+                                Create new dataloader config for this environment
+                            </label>
+                        </div>
+                        <select class="form-select mb-2"
+                                :disabled="createNewDataloader || dataloaderConfigs.length === 0"
+                                x-model="selectedDataloaderPath"
+                                @change="selectExistingDataloader($event.target.value)">
+                            <template x-if="dataloaderConfigs.length === 0">
+                                <option value="">No dataloader configs available</option>
+                            </template>
+                            <template x-for="config in dataloaderConfigs" :key="config.path">
+                                <option :value="config.path"
+                                        x-text="config.dataset_count !== undefined ? `${config.name} (${config.dataset_count} datasets)` : config.name"></option>
+                            </template>
+                        </select>
+                        <input type="text"
+                               class="form-control"
+                               placeholder="my-environment/multidatabackend.json"
+                               :disabled="!createNewDataloader"
+                               :value="newEnvironment.dataloader_path"
+                               @input="markEnvironmentPathTouched(); newEnvironment.dataloader_path = $event.target.value">
+                        <small class="text-muted" x-show="createNewDataloader">
+                            Path is relative to your configs directory. Leave blank to use the default location.
+                        </small>
+                        <small class="text-muted" x-show="!createNewDataloader">
+                            The selected dataloader configuration will be referenced by this environment.
+                        </small>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Description</label>
+                        <textarea class="form-control" rows="2" x-model="newEnvironment.description" placeholder="Optional description"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" @click="closeCreateEnvironmentModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary" :disabled="createEnvironmentLoading">
+                        <span x-show="!createEnvironmentLoading"><i class="fas fa-check"></i> Create</span>
+                        <span x-show="createEnvironmentLoading"><i class="fas fa-spinner fa-spin"></i> Creating...</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Create Dataloader Modal -->
+    <div x-cloak x-show="dataloaderModal.open" class="modal-backdrop" @keydown.escape.window="closeCreateDataloaderModal()" x-transition.opacity>
+        <div class="modal-dialog" @click.stop>
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-database"></i> Create Dataloader</h5>
+                <button type="button" class="btn-close" aria-label="Close" @click="closeCreateDataloaderModal()"></button>
+            </div>
+            <form @submit.prevent="createEnvironmentDataloader()">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Environment</label>
+                        <input type="text" class="form-control" :value="dataloaderModal.environment" readonly>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Dataloader Path</label>
+                        <input type="text"
+                               class="form-control"
+                               :value="dataloaderModal.path"
+                               @input="dataloaderModal.path = $event.target.value">
+                        <small class="text-muted">Relative to configs directory. Leave empty to use the default location.</small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" @click="closeCreateDataloaderModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary" :disabled="dataloaderModal.loading">
+                        <span x-show="!dataloaderModal.loading"><i class="fas fa-check"></i> Create</span>
+                        <span x-show="dataloaderModal.loading"><i class="fas fa-spinner fa-spin"></i> Creating...</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<style>
+.environments-tab {
+    padding: 1rem;
+}
+
+.config-card {
+    background: rgba(23, 25, 35, 0.9);
+    border: 1px solid rgba(255,255,255,0.1);
+    transition: all 0.3s ease;
+}
+
+.config-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(255,255,255,0.2);
+}
+
+.config-card.selected {
+    border-color: #38bdf8;
+    background: rgba(56, 189, 248, 0.1);
+}
+
+.template-card {
+    background: rgba(102, 126, 234, 0.1);
+    border: 1px solid rgba(102, 126, 234, 0.3);
+}
+
+.template-card:hover {
+    background: rgba(102, 126, 234, 0.15);
+}
+
+.caption-filter-card {
+    background: rgba(32, 36, 50, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.caption-filter-card code {
+    font-size: 0.85rem;
+}
+
+[x-cloak] { display: none !important; }
+
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.65);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1050;
+    padding: 1.5rem;
+    pointer-events: none;
+}
+
+.modal-dialog {
+    background: #1c1f2e;
+    border-radius: 0.75rem;
+    width: 100%;
+    max-width: 520px;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    pointer-events: auto;
+}
+
+.modal-header {
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-title {
+    margin: 0;
+    font-size: 1.1rem;
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+}
+
+.modal-body {
+    padding: 1.25rem;
+}
+
+.modal-footer {
+    padding: 1rem 1.25rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+}
+
+.btn-close {
+    background: none;
+    border: 0;
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 1.1rem;
+}
+
+.btn-close:hover {
+    color: #fff;
+}
+</style>
+</style>

@@ -1,0 +1,646 @@
+<!-- HTMX Form Field Partial -->
+<!-- Renders a single form field with HTMX enhancements -->
+{% set field_id = field.id or field.name %}
+{% set field_name = field.name %}
+{% set field_value = field.value if field.value is defined else '' %}
+{% set field_type = field.type|lower %}
+{% set col_class = field.col_class|default('col-md-6') %}
+{% set custom_component = field.custom_component|default('') %}
+{% set uses_custom_label = custom_component == 'merge_environment_toggle' %}
+
+<div class="{{ col_class }} mb-3 {{ field.extra_classes|default('') }}"
+     x-on:input="$store.trainer.markFormDirty()"
+     x-on:change="$store.trainer.markFormDirty()"
+     {% if field.conditional_on %}
+     data-conditional-on="{{ field.conditional_on }}"
+     {% endif %}>
+
+    <!-- Field Label -->
+    {% if not uses_custom_label %}
+    <label for="{{ field_id }}" class="form-label">
+        {{ field.label }}
+        {% if field.required %}
+        <span class="text-danger">*</span>
+        {% endif %}
+
+        <!-- Help Icon with Tooltip -->
+        {% if field.description or field.cmd_args_help %}
+        <i class="fas fa-question-circle text-muted ms-1"
+           data-bs-toggle="tooltip"
+           data-bs-placement="top"
+           title="{{ field.cmd_args_help|default(field.description) }}"></i>
+        {% endif %}
+    </label>
+    {% endif %}
+
+    <!-- Field Input based on type -->
+    {% if custom_component == 'dataset_config_select' %}
+        <div class="dataset-dropdown dropdown w-100" data-field-id="{{ field_id }}">
+            <input type="hidden"
+                   id="{{ field_id }}"
+                   name="{{ field_name }}"
+                   value="{{ field_value }}"
+                   {% if field.required %}data-required="true"{% endif %}>
+
+            <button class="btn btn-outline-secondary w-100 dropdown-toggle text-start dataset-toggle"
+                    type="button"
+                    data-bs-toggle="dropdown"
+                    aria-expanded="false">
+                <span class="dataset-toggle-label d-flex justify-content-between align-items-center">
+                    {% if field.selected_path %}
+                        <span class="dataset-env">{{ field.selected_environment }}</span>
+                        <span class="dataset-path">{{ field.selected_path }}</span>
+                    {% else %}
+                        <span class="text-muted">Select dataset configuration</span>
+                    {% endif %}
+                </span>
+            </button>
+
+            <div class="dropdown-menu w-100 dataset-dropdown-menu">
+                {% for option in field.options %}
+                    <button class="dropdown-item dataset-option d-flex justify-content-between align-items-center"
+                            type="button"
+                            data-value="{{ option.value }}"
+                            data-environment="{{ option.environment }}"
+                            data-path="{{ option.path }}">
+                        <span class="dataset-env">{{ option.environment }}</span>
+                        <span class="dataset-path text-muted">{{ option.path }}</span>
+                    </button>
+                {% endfor %}
+            </div>
+        </div>
+
+        <script>
+            (function() {
+                if (!window.__datasetDropdownInit) {
+                    window.__datasetDropdownInit = true;
+
+                    window.__setDatasetSelection = function(dropdown, env, path, value, triggerChange) {
+                        if (!dropdown) return;
+                        const hiddenInput = dropdown.querySelector('input[type="hidden"]');
+                        const toggle = dropdown.querySelector('.dataset-toggle-label');
+
+                        if (hiddenInput) {
+                            const previousValue = hiddenInput.value;
+                            hiddenInput.value = value || '';
+                            if (triggerChange && previousValue !== hiddenInput.value) {
+                                hiddenInput.dispatchEvent(new Event('change', { bubbles: true }));
+                            }
+                        }
+
+                        if (toggle) {
+                            if (env && path) {
+                                toggle.innerHTML = `
+                                    <span class="dataset-env">${env}</span>
+                                    <span class="dataset-path">${path}</span>
+                                `;
+                            } else {
+                                toggle.innerHTML = '<span class="text-muted">Select dataset configuration</span>';
+                            }
+                        }
+                    };
+
+                    document.addEventListener('click', function(event) {
+                        const optionEl = event.target.closest('.dataset-option');
+                        if (!optionEl) {
+                            return;
+                        }
+
+                        const dropdown = optionEl.closest('.dataset-dropdown');
+                        if (!dropdown) {
+                            return;
+                        }
+
+                        const env = optionEl.dataset.environment || '';
+                        const path = optionEl.dataset.path || '';
+                        const value = optionEl.dataset.value || '';
+
+                        window.__setDatasetSelection(dropdown, env, path, value, true);
+
+                        const toggleButton = dropdown.querySelector('.dataset-toggle');
+                        if (toggleButton && window.bootstrap && window.bootstrap.Dropdown) {
+                            try {
+                                const instance = window.bootstrap.Dropdown.getInstance(toggleButton) || new window.bootstrap.Dropdown(toggleButton);
+                                instance.hide();
+                            } catch (err) {
+                                console.debug('dataset dropdown hide failed', err);
+                            }
+                        }
+                    });
+
+                    document.addEventListener('htmx:afterSwap', function() {
+                        document.querySelectorAll('.dataset-dropdown').forEach(function(dropdown) {
+                            const hiddenInput = dropdown.querySelector('input[type="hidden"]');
+                            const currentValue = hiddenInput ? hiddenInput.value : '';
+                            const option = currentValue
+                                ? dropdown.querySelector(`.dataset-option[data-value="${CSS.escape(currentValue)}"]`)
+                                : null;
+                            if (option) {
+                                window.__setDatasetSelection(dropdown, option.dataset.environment, option.dataset.path, currentValue, false);
+                            } else {
+                                window.__setDatasetSelection(dropdown, '', '', '', false);
+                            }
+                        });
+                    });
+                }
+
+                const dropdown = document.querySelector('.dataset-dropdown[data-field-id="{{ field_id }}"]');
+                if (dropdown) {
+                    const hiddenInput = dropdown.querySelector('input[type="hidden"]');
+                    const currentValue = hiddenInput ? hiddenInput.value : '';
+                    const optionEl = currentValue
+                        ? dropdown.querySelector(`.dataset-option[data-value="${CSS.escape(currentValue)}"]`)
+                        : null;
+                    if (optionEl) {
+                        window.__setDatasetSelection(dropdown, optionEl.dataset.environment, optionEl.dataset.path, currentValue, false);
+                    } else {
+                        window.__setDatasetSelection(dropdown, '', '', '', false);
+                    }
+                }
+            })();
+        </script>
+
+    {% elif custom_component == 'merge_environment_toggle' %}
+        <div class="merge-env-toggle" x-data="mergeEnvironmentPopover('{{ 'true' if field_value else 'false' }}')">
+            <input type="hidden" name="{{ field_name }}" x-model="mergeEnabledString">
+
+            <div class="d-flex align-items-start gap-2">
+                <div class="form-check form-switch mb-0">
+                    <input type="checkbox"
+                           class="form-check-input"
+                           id="{{ field_id }}"
+                           :checked="mergeEnabled"
+                           @change="mergeEnabled = $event.target.checked">
+                    <label class="form-check-label" for="{{ field_id }}">
+                        {{ field.checkbox_label|default(field.label) }}
+                    </label>
+                </div>
+                <div class="position-relative" @mouseenter="open = true" @mouseleave="open = false">
+                    <button type="button"
+                            class="btn btn-link btn-sm p-0 text-info help-icon"
+                            @focus="open = true"
+                            @blur="open = false"
+                            @click.prevent="open = !open"
+                            title="Show environment defaults"
+                            aria-label="Show environment defaults">
+                        ℹ️
+                    </button>
+                    <div class="merge-env-popover" x-cloak x-show="open" @mouseenter="open = true" @mouseleave="open = false" @keydown.escape.window="open = false">
+                        <div class="merge-env-popover__content">
+                            <template x-if="hasDefaults">
+                                <pre x-text="defaultsJson"></pre>
+                            </template>
+                            <template x-if="!hasDefaults">
+                                <span class="text-muted">No active environment configuration loaded.</span>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {% if field.description %}
+            <p class="form-text mt-2">{{ field.description }}</p>
+            {% endif %}
+        </div>
+
+        <script>
+        if (!window.__mergeEnvPopoverStyles) {
+            window.__mergeEnvPopoverStyles = true;
+            const style = document.createElement('style');
+            style.textContent = `
+            .merge-env-toggle { position: relative; }
+            .merge-env-popover {
+                position: absolute;
+                top: 0;
+                right: -12px;
+                transform: translateY(100%);
+                background-color: rgba(17, 24, 39, 0.95);
+                border: 1px solid rgba(148, 163, 184, 0.25);
+                box-shadow: 0 10px 30px rgba(15, 23, 42, 0.35);
+                border-radius: 0.5rem;
+                padding: 0.75rem;
+                min-width: 320px;
+                max-width: 420px;
+                z-index: 1080;
+            }
+            .merge-env-popover__content {
+                max-height: 280px;
+                overflow-y: auto;
+                font-family: var(--bs-font-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+                font-size: 0.8rem;
+                color: #e2e8f0;
+                white-space: pre;
+            }
+            .merge-env-popover__content pre {
+                margin: 0;
+                white-space: pre-wrap;
+                word-break: break-word;
+            }
+            `;
+            document.head.appendChild(style);
+        }
+
+        if (!window.mergeEnvironmentPopover) {
+            window.mergeEnvironmentPopover = function(initialValue) {
+                const initial = typeof initialValue === 'string'
+                    ? initialValue.toLowerCase() !== 'false'
+                    : Boolean(initialValue);
+                return {
+                    open: false,
+                    mergeEnabled: initial,
+                    init() {
+                        try {
+                            const stored = localStorage.getItem('simpletuner.mergeEnvironmentConfig');
+                            if (stored === 'true' || stored === 'false') {
+                                this.mergeEnabled = stored === 'true';
+                            }
+                        } catch (err) {
+                            console.debug('mergeEnvironmentPopover storage unavailable', err);
+                        }
+
+                        if (Alpine.store('trainer')) {
+                            Alpine.store('trainer').mergeEnvironmentDefaults = this.mergeEnabled;
+                        }
+
+                        this.$watch('mergeEnabled', (value) => {
+                            try {
+                                localStorage.setItem('simpletuner.mergeEnvironmentConfig', value ? 'true' : 'false');
+                            } catch (err) {
+                                console.debug('mergeEnvironmentPopover storage unavailable', err);
+                            }
+                            if (Alpine.store('trainer')) {
+                                Alpine.store('trainer').mergeEnvironmentDefaults = value;
+                            }
+                        });
+                    },
+                    get mergeEnabledString() {
+                        return this.mergeEnabled ? 'true' : 'false';
+                    },
+                    set mergeEnabledString(value) {
+                        this.mergeEnabled = String(value).toLowerCase() !== 'false';
+                    },
+                    get hasDefaults() {
+                        const store = Alpine.store('trainer');
+                        const config = store ? store.activeEnvironmentConfig : null;
+                        return config && Object.keys(config).length > 0;
+                    },
+                    get defaultsJson() {
+                        try {
+                            const store = Alpine.store('trainer');
+                            const config = store ? store.activeEnvironmentConfig : null;
+                            if (!config || Object.keys(config).length === 0) {
+                                return 'No environment configuration loaded.';
+                            }
+                            return JSON.stringify(config, null, 2);
+                        } catch (err) {
+                            return 'Unable to render environment configuration.';
+                        }
+                    }
+                };
+            };
+        }
+        </script>
+
+    {% elif field_type == 'checkbox' %}
+        <div class="form-check form-switch">
+            <input type="checkbox"
+                   class="form-check-input"
+                   id="{{ field_id }}"
+                   name="{{ field_name }}"
+                   value="true"
+                   {% if field_value %}checked{% endif %}
+                   {% if field.disabled %}disabled{% endif %}
+                   data-debounce="300"
+                   hx-post="/api/validate/{{ field_id }}"
+                   hx-trigger="change"
+                   hx-target="#field-feedback-{{ field_id }}"
+                   hx-swap="innerHTML"
+                   hx-on::after-request="window.handleFieldValidation(event, this)"
+                   data-feedback-id="field-feedback-{{ field_id }}">
+            <label class="form-check-label" for="{{ field_id }}">
+                {{ field.checkbox_label|default('Enable') }}
+            </label>
+        </div>
+
+    {% elif field_type == 'select' %}
+        <select class="form-select"
+                id="{{ field_id }}"
+                name="{{ field_name }}"
+                data-initial-value="{{ field_value }}"
+                {% if field.disabled %}disabled{% endif %}
+                data-debounce="300"
+                hx-post="/api/validate/{{ field_id }}"
+                hx-trigger="change"
+                hx-target="#field-feedback-{{ field_id }}"
+                hx-swap="innerHTML"
+                hx-on::after-request="window.handleFieldValidation(event, this)"
+                data-feedback-id="field-feedback-{{ field_id }}">
+            {% if not field.required %}
+            <option value="">-- Select --</option>
+            {% endif %}
+            {% for option in field.options %}
+                {% if option is mapping %}
+                    <option value="{{ option.value }}"
+                            {% if option.value == field_value %}selected{% endif %}>
+                        {{ option.label }}
+                    </option>
+                {% else %}
+                    <option value="{{ option }}"
+                            {% if option == field_value %}selected{% endif %}>
+                        {{ option }}
+                    </option>
+                {% endif %}
+            {% endfor %}
+        </select>
+
+    {% elif field_type == 'multi_select' %}
+        <select class="form-select"
+                id="{{ field_id }}"
+                name="{{ field_name }}"
+                multiple
+                {% if field.disabled %}disabled{% endif %}
+                data-debounce="300"
+                hx-post="/api/validate/{{ field_id }}"
+                hx-trigger="change"
+                hx-target="#field-feedback-{{ field_id }}"
+                hx-swap="innerHTML"
+                hx-on::after-request="window.handleFieldValidation(event, this)"
+                data-feedback-id="field-feedback-{{ field_id }}">
+            {% for option in field.options %}
+                {% if option is mapping %}
+                    <option value="{{ option.value }}"
+                            {% if option.value in field_value %}selected{% endif %}>
+                        {{ option.label }}
+                    </option>
+                {% else %}
+                    <option value="{{ option }}"
+                            {% if option in field_value %}selected{% endif %}>
+                        {{ option }}
+                    </option>
+                {% endif %}
+            {% endfor %}
+        </select>
+
+    {% elif field_type == 'textarea' %}
+        <textarea class="form-control"
+                  id="{{ field_id }}"
+                  name="{{ field_name }}"
+                  rows="{{ field.rows|default(3) }}"
+                  {% if field.placeholder %}placeholder="{{ field.placeholder }}"{% endif %}
+                  {% if field.disabled %}disabled{% endif %}
+                  data-debounce="500"
+                  hx-post="/api/validate/{{ field_id }}"
+                  hx-trigger="change"
+                  hx-target="#field-feedback-{{ field_id }}"
+                  hx-swap="innerHTML"
+                  hx-on::after-request="window.handleFieldValidation(event, this)"
+                  data-feedback-id="field-feedback-{{ field_id }}">{{ field_value }}</textarea>
+
+    {% elif field_type == 'number' %}
+        <input type="number"
+               class="form-control"
+               id="{{ field_id }}"
+               name="{{ field_name }}"
+               value="{{ field_value }}"
+               {% if field.min is defined %}min="{{ field.min }}"{% endif %}
+               {% if field.max is defined %}max="{{ field.max }}"{% endif %}
+               {% if field.step is defined %}step="{{ field.step }}"{% endif %}
+               {% if field.placeholder %}placeholder="{{ field.placeholder }}"{% endif %}
+               {% if field.disabled %}disabled{% endif %}
+               {% if field.required %}required{% endif %}
+               data-debounce="500"
+               hx-post="/api/validate/{{ field_id }}"
+               hx-trigger="change"
+               hx-target="#field-feedback-{{ field_id }}"
+               hx-swap="innerHTML"
+               hx-on::after-request="window.handleFieldValidation(event, this)"
+               data-feedback-id="field-feedback-{{ field_id }}">
+
+    {% elif field_type == 'file' %}
+        <input type="file"
+               class="form-control"
+               id="{{ field_id }}"
+               name="{{ field_name }}"
+               {% if field.accept %}accept="{{ field.accept }}"{% endif %}
+               {% if field.disabled %}disabled{% endif %}
+               {% if field.required %}required{% endif %}
+               hx-post="/api/validate/{{ field_id }}"
+               hx-trigger="change"
+               hx-target="#field-feedback-{{ field_id }}"
+               hx-swap="innerHTML"
+               hx-on::after-request="window.handleFieldValidation(event, this)"
+               data-feedback-id="field-feedback-{{ field_id }}"
+               hx-encoding="multipart/form-data">
+
+    {% elif field_type == 'path' %}
+        <div class="input-group">
+            <input type="text"
+                   class="form-control"
+                   id="{{ field_id }}"
+                   name="{{ field_name }}"
+                   value="{{ field_value }}"
+                   {% if field.placeholder %}placeholder="{{ field.placeholder }}"{% endif %}
+                   {% if field.disabled %}disabled{% endif %}
+                   {% if field.required %}required{% endif %}
+                   data-debounce="500"
+                   hx-post="/api/validate/{{ field_id }}"
+                   hx-trigger="change"
+                   hx-target="#field-feedback-{{ field_id }}"
+                   hx-swap="innerHTML"
+                   hx-on::after-request="window.handleFieldValidation(event, this)"
+                   data-feedback-id="field-feedback-{{ field_id }}">
+            <button class="btn btn-outline-secondary"
+                    type="button"
+                    hx-get="/api/browse/{{ field.browse_type|default('file') }}"
+                    hx-target="#{{ field_id }}"
+                    hx-swap="value"
+                    {% if field.disabled %}disabled{% endif %}>
+                <i class="fas fa-folder-open"></i>
+            </button>
+        </div>
+
+    {% else %}
+        <!-- Default text input -->
+        <input type="text"
+               class="form-control"
+               id="{{ field_id }}"
+               name="{{ field_name }}"
+               value="{{ field_value }}"
+               {% if field.placeholder %}placeholder="{{ field.placeholder }}"{% endif %}
+               {% if field.disabled %}disabled{% endif %}
+               {% if field.required %}required{% endif %}
+               data-debounce="500"
+               hx-post="/api/validate/{{ field_id }}"
+               hx-trigger="change"
+               hx-target="#field-feedback-{{ field_id }}"
+               hx-swap="innerHTML"
+               hx-on::after-request="window.handleFieldValidation(event, this)"
+               data-feedback-id="field-feedback-{{ field_id }}">
+    {% endif %}
+
+    <!-- Help Text -->
+    {% if field.description and field_type != 'checkbox' %}
+    <div class="form-text">{{ field.description }}</div>
+    {% endif %}
+
+    <!-- HTMX Feedback Area -->
+    <div id="field-feedback-{{ field_id }}" class="invalid-feedback" style="display: none;" data-validation-swap="true"></div>
+
+    <!-- Loading indicator for this field -->
+    <div class="field-loading htmx-indicator">
+        <span class="spinner-border spinner-border-sm text-primary" role="status"></span>
+    </div>
+</div>
+
+<style>
+/* Field-specific loading indicator */
+.field-loading {
+    position: absolute;
+    right: 10px;
+    top: 38px;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.htmx-request .field-loading {
+    opacity: 1;
+}
+
+/* Path input group styling */
+.input-group .btn-outline-secondary {
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+.input-group .btn-outline-secondary:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Multi-select styling */
+select[multiple] {
+    min-height: 100px;
+}
+
+/* Dataset dropdown styling */
+.dataset-dropdown .dataset-toggle-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.dataset-dropdown .dataset-env {
+    font-weight: 600;
+    flex: 0 0 auto;
+}
+
+.dataset-dropdown .dataset-path {
+    flex: 1 1 auto;
+    text-align: right;
+    font-family: var(--bs-font-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+}
+
+.dataset-dropdown .dataset-toggle {
+    background-color: rgba(15, 23, 42, 0.65);
+    color: #e2e8f0;
+    border: 1px solid rgba(148, 163, 184, 0.4);
+}
+
+.dataset-dropdown .dataset-toggle:hover,
+.dataset-dropdown .dataset-toggle:focus {
+    background-color: rgba(30, 41, 59, 0.85);
+    border-color: rgba(148, 163, 184, 0.65);
+    color: #f8fafc;
+    box-shadow: 0 0 12px rgba(56, 189, 248, 0.25);
+}
+
+.dataset-dropdown .dataset-dropdown-menu {
+    max-height: 280px;
+    overflow-y: auto;
+    background-color: rgba(15, 23, 42, 0.95);
+    border: 1px solid rgba(56, 189, 248, 0.25);
+    box-shadow: 0 18px 40px rgba(8, 47, 73, 0.45);
+    backdrop-filter: blur(6px);
+}
+
+.dataset-dropdown .dataset-option {
+    gap: 0.5rem;
+    color: #e2e8f0;
+}
+
+.dataset-dropdown .dataset-option:hover,
+.dataset-dropdown .dataset-option:focus,
+.dataset-dropdown .dataset-option.active,
+.dataset-dropdown .dataset-option:active {
+    background-color: rgba(56, 189, 248, 0.25);
+    color: #f8fafc;
+    border-left: 2px solid rgba(125, 211, 252, 0.6);
+}
+
+.dataset-dropdown .dataset-option .dataset-path {
+    color: rgba(148, 163, 184, 0.85);
+}
+
+.dataset-dropdown .dataset-option:hover .dataset-path,
+.dataset-dropdown .dataset-option:focus .dataset-path,
+.dataset-dropdown .dataset-option.active .dataset-path {
+    color: rgba(203, 213, 225, 0.9);
+}
+
+/* File input styling */
+input[type="file"].form-control {
+    padding: 0.375rem 0.75rem;
+}
+
+input[type="file"].form-control::file-selector-button {
+    padding: 0.375rem 0.75rem;
+    margin-right: 0.75rem;
+    background-color: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #f8f9fa;
+}
+
+input[type="file"].form-control::file-selector-button:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+</style>
+
+<script>
+window.handleFieldValidation = window.handleFieldValidation || function(event, element) {
+    if (!event.detail || !event.detail.xhr) {
+        return;
+    }
+
+    const responseText = (event.detail.xhr.responseText || '').trim();
+    const feedbackId = element.getAttribute('data-feedback-id');
+    const feedbackEl = feedbackId ? document.getElementById(feedbackId) : null;
+
+    if (responseText.length > 0) {
+        element.classList.add('field-invalid');
+        element.classList.remove('field-valid');
+        if (feedbackEl) {
+            feedbackEl.classList.add('text-danger');
+            feedbackEl.classList.remove('text-success');
+            feedbackEl.style.display = 'block';
+        }
+    } else {
+        element.classList.remove('field-invalid');
+        element.classList.add('field-valid');
+        if (feedbackEl) {
+            feedbackEl.classList.remove('text-danger');
+            feedbackEl.classList.add('text-success');
+            feedbackEl.style.display = 'none';
+        }
+    }
+
+    if (window.Alpine && Alpine.store('trainer')) {
+        const trainerStore = Alpine.store('trainer');
+        if (typeof trainerStore.markFormDirty === 'function') {
+            trainerStore.markFormDirty();
+        } else {
+            trainerStore.formDirty = true;
+            trainerStore._skipNextClean = true;
+        }
+    }
+};
+</script>

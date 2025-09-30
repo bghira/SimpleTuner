@@ -1,0 +1,3892 @@
+<!-- templates/trainer_htmx.html - Enhanced trainer page with HTMX + Alpine.js -->
+{% extends "base_htmx.html" %}
+
+{% block title %}SimpleTuner Training Studio{% endblock %}
+
+{% block extra_css %}
+<!-- Load design tokens first -->
+<link href="/static/css/tokens.css" rel="stylesheet">
+<!-- Load existing trainer CSS for consistency -->
+<link href="/static/css/trainer.css" rel="stylesheet">
+<link href="/static/css/dataloader-builder.css" rel="stylesheet">
+<link href="/static/css/trainer-core.css" rel="stylesheet">
+<link href="/static/css/tab-navigation.css" rel="stylesheet">
+<!-- HTMX loading states -->
+<link href="/static/css/htmx-loading-states.css" rel="stylesheet">
+{% endblock %}
+
+{% block body %}
+<script>
+// Initialize Alpine store early to prevent race conditions
+document.addEventListener('alpine:init', () => {
+    Alpine.store('trainer', {
+        formDirty: false,
+        showConfigSaveDialog: false,
+        createConfigBackupOption: false,
+        preserveDefaultsOption: false,
+        saveConfig: () => {
+            console.warn('Trainer component not fully initialized yet');
+            window.showToast('Please wait for the page to fully load', 'warning');
+        },
+        cancelSaveConfig: () => {},
+        confirmSaveConfig: () => {}
+    });
+});
+
+function trainerComponent() {
+    return {
+        init() {
+            const handler = (event) => {
+                const payload = (event && event.detail && (event.detail.resolved_defaults || event.detail.defaults)) || null;
+                if (!payload) {
+                    return;
+                }
+                this.defaults = { ...payload };
+                if (typeof window.applyTheme === 'function' && this.defaults.theme) {
+                    window.applyTheme(this.defaults.theme);
+                }
+                this.applyEventPreferences();
+            };
+            this._defaultsUpdateHandler = handler;
+            window.addEventListener('webui-defaults-updated', handler);
+            window.addEventListener('beforeunload', () => {
+                if (this._defaultsUpdateHandler) {
+                    window.removeEventListener('webui-defaults-updated', this._defaultsUpdateHandler);
+                }
+            });
+        },
+         // Tab management
+         activeTab: window.location.hash.slice(1) || localStorage.getItem('activeTab') || 'basic',
+
+        switchTab(tabName, updateHash = true) {
+            this.activeTab = tabName;
+            localStorage.setItem('activeTab', tabName);
+
+            // Update URL if needed
+            if (updateHash && window.location.hash.slice(1) !== tabName) {
+                history.replaceState(null, '', '#' + tabName);
+            }
+        },
+        activateTab(tabName, updateHash = true) {
+            const tabButton = document.querySelector(`.tab-btn[data-tab="${tabName}"]`);
+            if (tabButton) {
+                tabButton.click();
+                this.switchTab(tabName, updateHash);
+            }
+        },
+        async updateConfigSelectors() {
+             // Update all config selector instances with current active config
+             const configSelectors = document.querySelectorAll('[x-data="configSelectorComponent()"]');
+             const updatePromises = [];
+             for (const selector of configSelectors) {
+                 const component = selector.__x?.$data;
+                 if (!component) {
+                     continue;
+                 }
+                 component.activeConfig = this.activeEnvironment;
+                 if (typeof component.loadConfigs === 'function') {
+                     updatePromises.push(
+                         Promise.resolve(component.loadConfigs()).catch((error) => {
+                             console.error('Failed to refresh config selector:', error);
+                         })
+                     );
+                 }
+             }
+             if (updatePromises.length) {
+                 await Promise.allSettled(updatePromises);
+             }
+         },
+
+         // Form and training state
+         formData: {},
+         validationErrors: {},
+         isTraining: false,
+        trainingProgress: {},
+        connectionStatus: 'connected',
+       defaults: {},
+        mergeEnvironmentDefaults: (() => {
+            try {
+                const stored = localStorage.getItem('simpletuner.mergeEnvironmentConfig');
+                if (stored === 'true' || stored === 'false') {
+                    return stored === 'true';
+                }
+            } catch (err) {
+                console.debug('Unable to read mergeEnvironmentConfig preference', err);
+            }
+            return false;
+        })(),
+        activeModelFamily: null,
+        activeModelType: null,
+        activeModelFlavour: null,
+        activeLoraType: null,
+        modelDetails: null,
+        modelContext: {
+            requiresConditioningDataset: false,
+            requiresConditioningLatents: false,
+            requiresConditioningValidationInputs: false,
+            requiresValidationEditCaptions: false,
+            supportsConditioningGenerators: false,
+            hasControlnetPipeline: false,
+            modelFlavour: null,
+            controlnetEnabled: false,
+            controlEnabled: false,
+            conditioningDatasetType: 'conditioning',
+        },
+        activeEnvironmentConfig: null,
+        activeEnvironmentMetadata: null,
+        _modelDetailsCache: {},
+         overlayVisible: false,
+         overlaySaving: false,
+         overlayError: '',
+         onboardingSteps: [],
+         activeOnboardingStep: null,
+         onboardingForm: { value: '' },
+
+        // Form dirty tracking
+        formDirty: false,
+        _skipNextClean: false,
+        originalFormData: {},
+        formValueStore: {},
+
+         // Config save dialog state
+         showConfigSaveDialog: false,
+         createConfigBackupOption: false,
+         preserveDefaultsOption: false,
+         configSaveDialogResolve: null,
+         // Environment config management
+         environments: [],
+         activeEnvironment: null,
+         environmentsLoading: false,
+         async loadEnvironmentConfigs() {
+             this.environmentsLoading = true;
+             try {
+                 const response = await fetch('/api/configs/');
+                 if (!response.ok) {
+                     console.error('Failed to load environment configs');
+                     window.showToast('Failed to load environment configurations', 'error');
+                     return;
+                 }
+                 const data = await response.json();
+                 this.environments = data.configs || [];
+                 this.activeEnvironment = data.active || null;
+                 await this.fetchActiveEnvironmentConfig();
+             } catch (error) {
+                 console.error('Error loading configs:', error);
+                 window.showToast('Error loading environment configurations', 'error');
+             } finally {
+                 this.environmentsLoading = false;
+             }
+         },
+         async switchEnvironment(configName) {
+             try {
+                 const response = await fetch(`/api/configs/${configName}/activate`, {
+                     method: 'POST'
+                 });
+                 if (!response.ok) {
+                     throw new Error('Failed to activate configuration');
+                 }
+                 const previousEnvironment = this.activeEnvironment;
+                 this.activeEnvironment = configName;
+
+                 // Update the config selector component
+                 // Need to find all config selector instances (might be multiple after tab reloads)
+                const configSelectors = document.querySelectorAll('[x-data="configSelectorComponent()"]');
+                for (const selector of configSelectors) {
+                    if (selector.__x) {
+                        selector.__x.$data.activeConfig = configName;
+                        await selector.__x.$data.loadConfigs();
+                         await selector.__x.$data.validateActiveConfig();
+                     }
+                }
+
+                // Reset stored form state so tabs reload with fresh values
+                this.formValueStore = {};
+                this.originalFormData = {};
+                this.formDirty = false;
+                this._skipNextClean = false;
+                delete this._preservingFormState;
+
+                // Broadcast environment change event for other components
+                window.dispatchEvent(new CustomEvent('environment-changed', {
+                    detail: {
+                        environment: configName,
+                        previousEnvironment: previousEnvironment
+                     }
+                 }));
+
+                await this.fetchActiveEnvironmentConfig();
+                await this.loadDatasetsAfterEnvironmentChange();
+
+                 window.showToast(`Switched to ${configName} configuration`, 'success');
+                 // Refresh current tab content instead of reloading
+                 await this.refreshAfterEnvironmentSwitch();
+             } catch (error) {
+                 console.error('Error switching config:', error);
+                 window.showToast('Failed to switch configuration', 'error');
+             }
+         },
+        async refreshAfterEnvironmentSwitch() {
+            // Store the current active tab to ensure it doesn't reset
+            const currentTab = this.activeTab;
+
+            // Refresh current tab content
+            if (this.activeTab === 'datasets') {
+                await this.loadDatasetsAfterEnvironmentChange();
+            } else if (this.activeTab !== 'environments') {
+                // For other tabs (except environments), reload the tab content to show new config values
+                const tabContainer = document.getElementById('tab-content');
+                if (tabContainer) {
+                    tabContainer.innerHTML = `
+                        <div class="text-center py-5">
+                            <i class="fas fa-spinner fa-spin fa-2x"></i>
+                            <p class="mt-3">Loading configuration...</p>
+                        </div>`;
+                    try {
+                        await new Promise((resolve, reject) => {
+                            const targetId = 'tab-content';
+
+                            const cleanup = () => {
+                                document.body.removeEventListener('htmx:afterSwap', handleSwap);
+                                document.body.removeEventListener('htmx:responseError', handleError);
+                                document.body.removeEventListener('htmx:sendError', handleError);
+                            };
+
+                            const handleSwap = (evt) => {
+                                if (evt.detail && evt.detail.target && evt.detail.target.id === targetId) {
+                                    cleanup();
+                                    resolve();
+                                }
+                            };
+
+                            const handleError = (evt) => {
+                                if (evt.detail && evt.detail.target && evt.detail.target.id === targetId) {
+                                    cleanup();
+                                    reject(new Error('HTMX request failed'));
+                                }
+                            };
+
+                            document.body.addEventListener('htmx:afterSwap', handleSwap);
+                            document.body.addEventListener('htmx:responseError', handleError);
+                            document.body.addEventListener('htmx:sendError', handleError);
+
+                            const request = htmx.ajax('GET', `/web/trainer/tabs/${currentTab}`, {
+                                target: `#${targetId}`,
+                                swap: 'innerHTML'
+                            });
+
+                            if (!request) {
+                                cleanup();
+                                resolve();
+                            }
+                        });
+                    } catch (reloadError) {
+                        console.error('Failed to reload tab after environment switch:', reloadError);
+                        window.showToast('Failed to refresh tab after switching configuration', 'error');
+                    }
+                }
+            }
+            // For environments tab, no refresh needed as it already shows the active config
+        },
+        async fetchActiveEnvironmentConfig() {
+            if (!this.activeEnvironment) {
+                this.activeEnvironmentConfig = null;
+                this.activeEnvironmentMetadata = null;
+                await this.updateModelContextFromConfig(null, null);
+                return null;
+            }
+
+            try {
+                const response = await fetch(`/api/configs/${this.activeEnvironment}`);
+                if (!response.ok) {
+                    throw new Error(`Failed to load configuration for ${this.activeEnvironment}`);
+                }
+
+                const payload = await response.json();
+                const config = payload?.config || {};
+                const metadata = payload?.metadata || null;
+                this.activeEnvironmentConfig = config;
+                this.activeEnvironmentMetadata = metadata;
+                this.seedFormValueStoreFromConfig(config);
+                await this.updateModelContextFromConfig(config, metadata);
+                return payload;
+            } catch (error) {
+                console.error('Error loading active environment config:', error);
+                this.activeEnvironmentConfig = null;
+                this.activeEnvironmentMetadata = null;
+                this.seedFormValueStoreFromConfig(null);
+                await this.updateModelContextFromConfig(null, null);
+                return null;
+            }
+        },
+        async updateModelContextFromConfig(config, metadata) {
+            const info = this.extractModelInfo(config, metadata);
+            this.activeModelFamily = info.modelFamily;
+            this.activeModelType = info.modelType;
+            this.activeModelFlavour = info.modelFlavour;
+            this.activeLoraType = info.loraType;
+
+            if (!info.modelFamily) {
+                this.modelDetails = null;
+                this.modelContext = this.defaultModelContext();
+                return;
+            }
+
+            if (!this._modelDetailsCache[info.modelFamily]) {
+                try {
+                    const response = await fetch(`/api/models/${info.modelFamily}`);
+                    if (!response.ok) {
+                        throw new Error(`Failed to fetch model metadata for ${info.modelFamily}`);
+                    }
+                    this._modelDetailsCache[info.modelFamily] = await response.json();
+                } catch (error) {
+                    console.error('Error loading model metadata:', error);
+                    this._modelDetailsCache[info.modelFamily] = null;
+                }
+            }
+
+            this.modelDetails = this._modelDetailsCache[info.modelFamily];
+            const context = this.computeModelContext(info, config, this.modelDetails);
+
+            const requirementPayload = this.buildModelRequirementPayload(info, config, metadata);
+            if (requirementPayload) {
+                const requirementOverrides = await this.evaluateModelRequirements(requirementPayload);
+                if (requirementOverrides) {
+                    if (Object.prototype.hasOwnProperty.call(requirementOverrides, 'requires_conditioning_dataset')) {
+                        context.requiresConditioningDataset = Boolean(requirementOverrides.requires_conditioning_dataset);
+                    }
+                    if (Object.prototype.hasOwnProperty.call(requirementOverrides, 'requires_conditioning_latents')) {
+                        context.requiresConditioningLatents = Boolean(requirementOverrides.requires_conditioning_latents);
+                    }
+                    if (Object.prototype.hasOwnProperty.call(requirementOverrides, 'requires_conditioning_validation_inputs')) {
+                        context.requiresConditioningValidationInputs = Boolean(
+                            requirementOverrides.requires_conditioning_validation_inputs,
+                        );
+                    }
+                    if (Object.prototype.hasOwnProperty.call(requirementOverrides, 'requires_validation_edit_captions')) {
+                        context.requiresValidationEditCaptions = Boolean(
+                            requirementOverrides.requires_validation_edit_captions,
+                        );
+                    }
+                    if (requirementOverrides.conditioning_dataset_type) {
+                        context.conditioningDatasetType = requirementOverrides.conditioning_dataset_type;
+                    }
+                }
+            }
+
+            context.supportsConditioningGenerators = Boolean(
+                context.supportsConditioningGenerators
+                || context.controlnetEnabled
+                || context.controlEnabled
+                || context.requiresConditioningDataset,
+            );
+
+            this.modelContext = { ...this.defaultModelContext(), ...context };
+        },
+        defaultModelContext() {
+            return {
+                requiresConditioningDataset: false,
+                requiresConditioningLatents: false,
+                requiresConditioningValidationInputs: false,
+                requiresValidationEditCaptions: false,
+                conditioningDatasetType: 'conditioning',
+                supportsConditioningGenerators: false,
+                hasControlnetPipeline: false,
+                modelFlavour: null,
+                controlnetEnabled: false,
+                controlEnabled: false,
+            };
+        },
+        extractModelInfo(config, metadata) {
+            const normalized = this.buildNormalizedConfig(config);
+            const modelFamily = this.firstNonEmpty(
+                normalized.model_family,
+                normalized.modelfamily,
+                normalized.model,
+                metadata?.model_family,
+                metadata?.modelfamily,
+            );
+            const modelType = this.firstNonEmpty(
+                normalized.model_type,
+                metadata?.model_type,
+            );
+            const modelFlavour = this.firstNonEmpty(
+                normalized.model_flavour,
+                normalized.modelflavour,
+                metadata?.model_flavour,
+            );
+            const loraType = this.firstNonEmpty(
+                normalized.lora_type,
+                metadata?.lora_type,
+            );
+            const controlnet = this.normalizeBoolean(normalized.controlnet);
+            const control = this.normalizeBoolean(normalized.control);
+
+            return {
+                modelFamily: modelFamily || null,
+                modelType: modelType || null,
+                modelFlavour: modelFlavour || null,
+                loraType: loraType || null,
+                controlnet,
+                control,
+            };
+        },
+        buildNormalizedConfig(rawConfig) {
+            const normalized = {};
+            if (!rawConfig || typeof rawConfig !== 'object') {
+                return normalized;
+            }
+
+            const addKeyVariants = (key, value) => {
+                if (!key) {
+                    return;
+                }
+                const variants = new Set();
+                variants.add(key);
+                const trimmed = key.startsWith('--') ? key.slice(2) : key;
+                variants.add(trimmed);
+                variants.add(trimmed.toLowerCase());
+                const snake = trimmed
+                    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+                    .replace(/[-\s]+/g, '_')
+                    .toLowerCase();
+                variants.add(snake);
+                variants.add(snake.replace(/__/g, '_'));
+                variants.add(snake.replace(/_/g, ''));
+
+                variants.forEach((variant) => {
+                    if (variant) {
+                        normalized[variant] = value;
+                    }
+                });
+            };
+
+            Object.entries(rawConfig).forEach(([key, value]) => {
+                addKeyVariants(key, value);
+            });
+
+            return normalized;
+        },
+        computeModelContext(info, config, details) {
+            const normalized = this.buildNormalizedConfig(config);
+            const controlnetEnabled = this.normalizeBoolean(info.controlnet || normalized.controlnet);
+            const controlEnabled = this.normalizeBoolean(info.control || normalized.control);
+            const modelFamily = info.modelFamily || '';
+            const modelFlavour = info.modelFlavour || '';
+            const fluxKontext = modelFamily === 'flux' && modelFlavour === 'kontext';
+
+            const requiresDataset = Boolean(controlnetEnabled || controlEnabled || fluxKontext);
+            const requiresLatents = Boolean(controlnetEnabled || controlEnabled || fluxKontext);
+            const requiresValidationInputs = Boolean(controlnetEnabled || fluxKontext);
+            const requiresValidationEditCaptions = Boolean(controlnetEnabled || fluxKontext);
+            const conditioningDatasetType = fluxKontext ? 'image' : 'conditioning';
+            const hasControlnetPipeline = Boolean(details?.capabilities?.has_controlnet_pipeline);
+            const supportsConditioningGenerators = Boolean(
+                hasControlnetPipeline || controlnetEnabled || controlEnabled || fluxKontext,
+            );
+
+            return {
+                requiresConditioningDataset: requiresDataset,
+                requiresConditioningLatents: requiresLatents,
+                requiresConditioningValidationInputs: requiresValidationInputs,
+                requiresValidationEditCaptions,
+                conditioningDatasetType,
+                supportsConditioningGenerators,
+                hasControlnetPipeline,
+                modelFlavour: modelFlavour || null,
+                controlnetEnabled,
+                controlEnabled,
+            };
+        },
+        cloneConfigForPayload(source) {
+            if (!source || typeof source !== 'object') {
+                return {};
+            }
+            try {
+                return JSON.parse(JSON.stringify(source));
+            } catch (error) {
+                console.warn('Falling back to shallow clone for model requirement payload', error);
+                return { ...source };
+            }
+        },
+        buildModelRequirementPayload(info, config, metadata) {
+            if (!info || !info.modelFamily) {
+                return null;
+            }
+
+            const payloadConfig = this.cloneConfigForPayload(config);
+            if (info.modelFamily && payloadConfig.model_family === undefined) {
+                payloadConfig.model_family = info.modelFamily;
+            }
+            if (info.modelFlavour && payloadConfig.model_flavour === undefined) {
+                payloadConfig.model_flavour = info.modelFlavour;
+            }
+            if (info.modelType && payloadConfig.model_type === undefined) {
+                payloadConfig.model_type = info.modelType;
+            }
+            if (info.controlnet !== undefined && payloadConfig.controlnet === undefined) {
+                payloadConfig.controlnet = info.controlnet;
+            }
+            if (info.control !== undefined && payloadConfig.control === undefined) {
+                payloadConfig.control = info.control;
+            }
+
+            const payload = {
+                model_family: info.modelFamily,
+                config: payloadConfig,
+            };
+
+            if (metadata && typeof metadata === 'object' && Object.keys(metadata).length > 0) {
+                payload.metadata = metadata;
+            }
+
+            return payload;
+        },
+        async evaluateModelRequirements(payload) {
+            if (!payload || !payload.model_family) {
+                return null;
+            }
+
+            try {
+                const response = await fetch('/api/models/requirements', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(payload),
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Failed with status ${response.status}`);
+                }
+
+                return await response.json();
+            } catch (error) {
+                console.error('Failed to evaluate model requirements:', error);
+                return null;
+            }
+        },
+        normalizeBoolean(value) {
+            if (value === null || value === undefined) {
+                return false;
+            }
+            if (typeof value === 'boolean') {
+                return value;
+            }
+            if (typeof value === 'number') {
+                return value !== 0;
+            }
+            if (typeof value === 'string') {
+                const trimmed = value.trim().toLowerCase();
+                if (!trimmed) {
+                    return false;
+                }
+                if (['true', '1', 'yes', 'on'].includes(trimmed)) {
+                    return true;
+                }
+                if (['false', '0', 'no', 'off'].includes(trimmed)) {
+                    return false;
+                }
+            }
+            return Boolean(value);
+        },
+        firstNonEmpty(...values) {
+            for (const value of values) {
+                if (value === null || value === undefined) {
+                    continue;
+                }
+                if (typeof value === 'string') {
+                    const trimmed = value.trim();
+                    if (trimmed) {
+                        return trimmed;
+                    }
+                } else if (value) {
+                    return value;
+                }
+            }
+            return null;
+        },
+        normalizeDatasets(datasets) {
+            if (!Array.isArray(datasets)) {
+                return [];
+            }
+            return datasets.map((dataset, index) => this.normalizeDataset(dataset, index));
+        },
+        normalizeDataset(dataset, index = 0) {
+            if (!dataset || typeof dataset !== 'object') {
+                return dataset;
+            }
+
+            if (!dataset.id || typeof dataset.id !== 'string') {
+                dataset.id = dataset.id ? String(dataset.id) : `dataset-${Date.now()}-${index}`;
+            }
+
+            dataset.type = dataset.type || 'local';
+            if (!dataset.dataset_type || typeof dataset.dataset_type !== 'string' || !dataset.dataset_type.trim()) {
+                dataset.dataset_type = 'image';
+            }
+
+            if (dataset.dataset_type === 'image' || dataset.dataset_type === 'video') {
+                dataset.conditioning_data = this.normalizeConditioningData(dataset.conditioning_data);
+                dataset.conditioning = this.normalizeConditioningGenerators(dataset.conditioning, dataset.id);
+            } else {
+                dataset.conditioning_data = this.normalizeConditioningData(dataset.conditioning_data);
+                dataset.conditioning = Array.isArray(dataset.conditioning)
+                    ? dataset.conditioning.map((entry, entryIndex) => this.normalizeConditioningEntry(entry, dataset.id, entryIndex))
+                    : [];
+            }
+
+            if (dataset.dataset_type === 'video') {
+                dataset.video = this.normalizeVideoOptions(dataset.video);
+            } else if (dataset.video && typeof dataset.video === 'object') {
+                dataset.video = this.normalizeVideoOptions(dataset.video);
+            }
+
+            if (dataset.dataset_type === 'conditioning') {
+                dataset.conditioning_type = dataset.conditioning_type || 'controlnet';
+                dataset.default = this.normalizeBoolean(dataset.default);
+            }
+
+            if (dataset.dataset_type === 'text_embeds' || dataset.dataset_type === 'image_embeds') {
+                dataset.cache_dir = dataset.cache_dir || dataset.instance_data_dir || '';
+            } else {
+                dataset.instance_data_dir = dataset.instance_data_dir || '';
+                if (dataset.resolution === undefined || dataset.resolution === null) {
+                    dataset.resolution = 1024;
+                }
+            }
+
+            const allowedResolutionTypes = ['pixel', 'pixel_area'];
+            if (!allowedResolutionTypes.includes(dataset.resolution_type)) {
+                dataset.resolution_type = 'pixel';
+            }
+
+            if (!dataset.parquet || typeof dataset.parquet !== 'object' || Array.isArray(dataset.parquet)) {
+                dataset.parquet = {};
+            }
+
+            if (dataset.type === 'csv' && (!dataset.caption_strategy || dataset.caption_strategy === 'textfile')) {
+                dataset.caption_strategy = 'csv';
+            }
+            if (dataset.type === 'huggingface') {
+                if (!dataset.caption_strategy || dataset.caption_strategy === 'textfile') {
+                    dataset.caption_strategy = 'huggingface';
+                }
+                if (!dataset.metadata_backend || dataset.metadata_backend === '' || dataset.metadata_backend === 'discovery') {
+                    dataset.metadata_backend = 'huggingface';
+                }
+            }
+
+            const repeats = this._coerceInt(dataset.repeats);
+            dataset.repeats = Number.isFinite(repeats) && repeats >= 0 ? repeats : 0;
+
+            const probability = this._coerceFloat(dataset.probability);
+            dataset.probability = Number.isFinite(probability)
+                ? Math.max(0, Math.min(1, probability))
+                : 1;
+
+            const minAspect = this._coerceFloat(dataset.minimum_aspect_ratio);
+            dataset.minimum_aspect_ratio = Number.isFinite(minAspect) && minAspect > 0 ? minAspect : null;
+
+            const maxAspect = this._coerceFloat(dataset.maximum_aspect_ratio);
+            dataset.maximum_aspect_ratio = Number.isFinite(maxAspect) && maxAspect > 0 ? maxAspect : null;
+
+            const buckets = this.parseAspectBucketText(
+                typeof dataset._cropAspectBucketsText === 'string' && dataset._cropAspectBucketsText.trim() !== ''
+                    ? dataset._cropAspectBucketsText
+                    : dataset.crop_aspect_buckets,
+            );
+            dataset.crop_aspect_buckets = buckets;
+            dataset._cropAspectBucketsText = buckets.length ? buckets.join(', ') : '';
+
+            if (Array.isArray(dataset.skip_file_discovery)) {
+                dataset.skip_file_discovery = dataset.skip_file_discovery.join(' ');
+            } else if (typeof dataset.skip_file_discovery !== 'string') {
+                dataset.skip_file_discovery = '';
+            }
+            dataset.skip_file_discovery = this.normalizeSkipList(dataset.skip_file_discovery);
+
+            if (dataset.is_regularisation_data === undefined && dataset.is_regularization_data !== undefined) {
+                dataset.is_regularisation_data = dataset.is_regularization_data;
+            }
+
+            dataset.hash_filenames = this.normalizeBoolean(dataset.hash_filenames);
+            dataset.preserve_data_backend_cache = this.normalizeBoolean(dataset.preserve_data_backend_cache);
+            dataset.is_regularisation_data = this.normalizeBoolean(dataset.is_regularisation_data);
+            dataset.is_regularization_data = dataset.is_regularisation_data;
+            dataset.prepend_instance_prompt = this.normalizeBoolean(dataset.prepend_instance_prompt);
+            dataset.only_instance_prompt = this.normalizeBoolean(dataset.only_instance_prompt);
+            dataset.disabled = this.normalizeBoolean(dataset.disabled);
+
+            dataset.instance_prompt = this._coerceString(dataset.instance_prompt);
+            dataset.cache_dir_vae = this._coerceString(dataset.cache_dir_vae);
+            dataset.caption_filter_list = this._coerceString(dataset.caption_filter_list);
+            if (dataset.dataset_type === 'text_embeds') {
+                dataset._selectedCaptionFilter = dataset.caption_filter_list ? '__custom__' : '';
+            } else {
+                dataset.caption_filter_list = '';
+                dataset._selectedCaptionFilter = '';
+            }
+
+            dataset.text_embeds = this._coerceString(dataset.text_embeds);
+            dataset.image_embeds = this._coerceString(dataset.image_embeds);
+            if (!['image', 'video'].includes(dataset.dataset_type)) {
+                dataset.text_embeds = '';
+                dataset.image_embeds = '';
+            }
+
+            dataset.aws_bucket_name = this._coerceString(dataset.aws_bucket_name);
+            dataset.aws_data_prefix = this._coerceString(dataset.aws_data_prefix);
+            dataset.aws_region_name = this._coerceString(dataset.aws_region_name);
+            dataset.aws_endpoint_url = this._coerceString(dataset.aws_endpoint_url);
+            dataset.aws_access_key_id = this._coerceString(dataset.aws_access_key_id);
+            dataset.aws_secret_access_key = this._coerceString(dataset.aws_secret_access_key);
+            dataset._awsAccessVisible = false;
+            dataset._awsSecretVisible = false;
+            if (dataset.type !== 'aws') {
+                dataset.aws_access_key_id = '';
+                dataset.aws_secret_access_key = '';
+                dataset.aws_endpoint_url = '';
+                dataset.aws_region_name = '';
+                dataset.aws_data_prefix = '';
+            }
+
+            dataset.csv_file = this._coerceString(dataset.csv_file);
+            dataset.csv_caption_column = this._coerceString(dataset.csv_caption_column);
+            dataset.csv_cache_dir = this._coerceString(dataset.csv_cache_dir);
+
+            dataset.dataset_name = this._coerceString(dataset.dataset_name);
+            dataset.dataset_config = this._coerceString(dataset.dataset_config);
+            dataset.split = this._coerceString(dataset.split);
+            dataset.revision = this._coerceString(dataset.revision);
+            dataset.image_column = this._coerceString(dataset.image_column);
+            dataset.caption_column = this._coerceString(dataset.caption_column);
+            dataset.streaming = this.normalizeBoolean(dataset.streaming);
+            dataset.auth_token = this._coerceString(dataset.auth_token);
+
+            if (dataset.dataset_type === 'text_embeds' || dataset.dataset_type === 'image_embeds') {
+                const writeBatch = this._coerceInt(dataset.write_batch_size);
+                dataset.write_batch_size = Number.isFinite(writeBatch) && writeBatch > 0 ? writeBatch : 128;
+            } else {
+                delete dataset.write_batch_size;
+            }
+
+            dataset._showAdvanced = Boolean(dataset._showAdvanced);
+
+            if (dataset._connectionStatus === undefined) {
+                dataset._connectionStatus = null;
+            }
+            if (dataset._connectionMessage === undefined) {
+                dataset._connectionMessage = '';
+            }
+            if (dataset._connectionDetails === undefined) {
+                dataset._connectionDetails = null;
+            }
+            if (dataset._connectionTesting === undefined) {
+                dataset._connectionTesting = false;
+            }
+
+            return dataset;
+        },
+        normalizeVideoOptions(value) {
+            const result = {};
+            if (value && typeof value === 'object') {
+                const numFrames = this._coerceInt(value.num_frames);
+                const minFrames = this._coerceInt(value.min_frames);
+                const maxFrames = this._coerceInt(value.max_frames);
+                if (Number.isFinite(numFrames) && numFrames > 0) {
+                    result.num_frames = numFrames;
+                }
+                if (Number.isFinite(minFrames) && minFrames > 0) {
+                    result.min_frames = minFrames;
+                }
+                if (Number.isFinite(maxFrames) && maxFrames > 0) {
+                    result.max_frames = maxFrames;
+                }
+                if (typeof value.is_i2v === 'boolean') {
+                    result.is_i2v = value.is_i2v;
+                } else if (typeof value.is_i2v === 'string' && value.is_i2v.trim() !== '') {
+                    result.is_i2v = value.is_i2v.trim().toLowerCase() === 'true';
+                }
+            }
+            return result;
+        },
+        _coerceInt(value) {
+            if (value === null || value === undefined || value === '') {
+                return NaN;
+            }
+            if (typeof value === 'number') {
+                return Number.isFinite(value) ? value : NaN;
+            }
+            const next = Number.parseInt(String(value), 10);
+            return Number.isFinite(next) ? next : NaN;
+        },
+        _coerceFloat(value) {
+            if (value === null || value === undefined || value === '') {
+                return NaN;
+            }
+            if (typeof value === 'number') {
+                return Number.isFinite(value) ? value : NaN;
+            }
+            const next = Number.parseFloat(String(value));
+            return Number.isFinite(next) ? next : NaN;
+        },
+        _coerceString(value) {
+            if (value === null || value === undefined) {
+                return '';
+            }
+            return String(value).trim();
+        },
+        isKnownConditioningGenerator(type) {
+            if (!type) {
+                return false;
+            }
+            return this.knownConditioningGenerators.includes(type);
+        },
+        parseAspectBucketText(text) {
+            if (Array.isArray(text)) {
+                const asNumbers = text
+                    .map((value) => this._coerceFloat(value))
+                    .filter((value) => Number.isFinite(value) && value > 0);
+                const deduped = [];
+                const seen = new Set();
+                asNumbers.forEach((value) => {
+                    const key = value.toFixed(4);
+                    if (!seen.has(key)) {
+                        seen.add(key);
+                        deduped.push(value);
+                    }
+                });
+                return deduped;
+            }
+            if (typeof text !== 'string') {
+                return [];
+            }
+            const seen = new Set();
+            const buckets = [];
+            text
+                .split(/[,\s]+/)
+                .map((entry) => this._coerceFloat(entry))
+                .forEach((value) => {
+                    if (!Number.isFinite(value) || value <= 0) {
+                        return;
+                    }
+                    const key = value.toFixed(4);
+                    if (!seen.has(key)) {
+                        seen.add(key);
+                        buckets.push(value);
+                    }
+                });
+            return buckets;
+        },
+        normalizeSkipList(value) {
+            if (Array.isArray(value)) {
+                return value
+                    .map((entry) => this._coerceString(entry))
+                    .filter((entry) => entry !== '')
+                    .join(' ');
+            }
+            if (typeof value !== 'string') {
+                return '';
+            }
+            const parts = value
+                .split(/[,\s]+/)
+                .map((entry) => entry.trim())
+                .filter((entry) => entry.length > 0);
+            return parts.join(' ');
+        },
+        normalizeConditioningData(value) {
+            if (Array.isArray(value)) {
+                return value
+                    .map((item) => (typeof item === 'string' ? item.trim() : String(item)))
+                    .filter((item) => item !== '')
+                    .filter((item, idx, arr) => arr.indexOf(item) === idx);
+            }
+
+            if (typeof value === 'string') {
+                const trimmed = value.trim();
+                return trimmed ? [trimmed] : [];
+            }
+
+            if (value && typeof value === 'object') {
+                try {
+                    return Object.values(value)
+                        .map((item) => (typeof item === 'string' ? item.trim() : String(item)))
+                        .filter((item) => item !== '');
+                } catch (error) {
+                    console.warn('Unable to normalize conditioning_data value', error);
+                }
+            }
+
+            return [];
+        },
+        normalizeConditioningGenerators(value, datasetId) {
+            let generators = [];
+            if (Array.isArray(value)) {
+                generators = value;
+            } else if (typeof value === 'string') {
+                try {
+                    const parsed = JSON.parse(value);
+                    if (Array.isArray(parsed)) {
+                        generators = parsed;
+                    }
+                } catch (error) {
+                    console.warn('Failed to parse conditioning JSON string:', error);
+                }
+            }
+
+            return generators.map((entry, index) => this.normalizeConditioningEntry(entry, datasetId, index));
+        },
+        normalizeConditioningEntry(entry, datasetId, index) {
+            const normalized = (entry && typeof entry === 'object') ? { ...entry } : {};
+            const rawType = typeof normalized.type === 'string' ? normalized.type.trim() : '';
+            normalized.type = rawType;
+            if (this.isKnownConditioningGenerator(rawType)) {
+                normalized._selectedType = rawType;
+                normalized._customType = '';
+            } else if (rawType) {
+                normalized._selectedType = '__custom__';
+                normalized._customType = rawType;
+            } else {
+                normalized._selectedType = '';
+                normalized._customType = '';
+            }
+            normalized.id = typeof normalized.id === 'string' && normalized.id.trim()
+                ? normalized.id.trim()
+                : `${datasetId || 'dataset'}-conditioning-${index}`;
+
+            // Normalize params
+            if (normalized.params && typeof normalized.params === 'string') {
+                try {
+                    normalized.params = JSON.parse(normalized.params);
+                    normalized._paramsParseError = null;
+                } catch (error) {
+                    console.warn('Failed to parse conditioning params:', error);
+                    normalized._paramsParseError = 'Invalid JSON';
+                    normalized.params = {};
+                }
+            }
+
+            if (!normalized.params || typeof normalized.params !== 'object' || Array.isArray(normalized.params)) {
+                normalized.params = {};
+            }
+
+            normalized._paramsText = JSON.stringify(normalized.params, null, 2);
+            normalized._paramsParseError = null;
+
+            // Normalize captions
+            const captions = normalized.captions;
+            if (captions === false) {
+                normalized._captionsMode = 'none';
+                normalized._captionsValue = '';
+            } else if (Array.isArray(captions)) {
+                normalized._captionsMode = 'list';
+                normalized._captionsValue = captions.map((value) => (value || '').toString()).join('\n');
+            } else if (typeof captions === 'string') {
+                const trimmed = captions.trim();
+                if (trimmed) {
+                    normalized._captionsMode = 'single';
+                    normalized._captionsValue = trimmed;
+                } else {
+                    normalized._captionsMode = 'inherit';
+                    normalized._captionsValue = '';
+                    delete normalized.captions;
+                }
+            } else {
+                normalized._captionsMode = 'inherit';
+                normalized._captionsValue = '';
+                if (captions !== undefined) {
+                    delete normalized.captions;
+                }
+            }
+
+            if (!normalized._uiKey) {
+                normalized._uiKey = `${datasetId || 'dataset'}-${index}-${Math.random().toString(36).slice(2, 8)}`;
+            }
+
+            return normalized;
+        },
+        safeParseJSON(text) {
+            if (typeof text !== 'string') {
+                return null;
+            }
+            try {
+                return JSON.parse(text);
+            } catch (error) {
+                return null;
+            }
+        },
+        prepareDatasetsForSave(datasets = null) {
+            const source = Array.isArray(datasets) ? datasets : this.datasets;
+            if (!Array.isArray(source)) {
+                return [];
+            }
+
+            const sanitizeCaptions = (entry) => {
+                const mode = entry._captionsMode || 'inherit';
+                const value = entry._captionsValue || '';
+                if (mode === 'none') {
+                    return false;
+                }
+                if (mode === 'single') {
+                    const trimmed = value.trim();
+                    return trimmed ? trimmed : undefined;
+                }
+                if (mode === 'list') {
+                    const items = value
+                        .split(/\r?\n/)
+                        .map((line) => line.trim())
+                        .filter((line) => line !== '');
+                    return items.length ? items : undefined;
+                }
+                if (entry.captions === false) {
+                    return false;
+                }
+                if (Array.isArray(entry.captions)) {
+                    return entry.captions;
+                }
+                if (typeof entry.captions === 'string' && entry.captions.trim()) {
+                    return entry.captions.trim();
+                }
+                return undefined;
+            };
+
+            const sanitizeConditioningEntry = (entry) => {
+                if (!entry || typeof entry !== 'object') {
+                    return {};
+                }
+                const cleaned = {};
+                Object.entries(entry).forEach(([key, value]) => {
+                    if (key.startsWith('_')) {
+                        return;
+                    }
+                    cleaned[key] = this.sanitizeValueForSave(value);
+                });
+
+                const parsedParams = this.safeParseJSON(entry._paramsText);
+                if (parsedParams !== null) {
+                    cleaned.params = parsedParams;
+                } else if (entry.params && typeof entry.params === 'object' && !Array.isArray(entry.params)) {
+                    cleaned.params = entry.params;
+                } else {
+                    cleaned.params = {};
+                }
+
+                const captions = sanitizeCaptions(entry);
+                if (captions === undefined) {
+                    delete cleaned.captions;
+                } else {
+                    cleaned.captions = captions;
+                }
+
+                return cleaned;
+            };
+
+            const conditioningIds = new Set(
+                source
+                    .filter((dataset) => dataset && dataset.dataset_type === 'conditioning')
+                    .map((dataset) => (dataset.id ? String(dataset.id).trim() : ''))
+                    .filter((id) => id !== '')
+            );
+
+            const textEmbedIds = new Set(
+                source
+                    .filter((dataset) => dataset && dataset.dataset_type === 'text_embeds')
+                    .map((dataset) => (dataset.id ? String(dataset.id).trim() : ''))
+                    .filter((id) => id !== '')
+            );
+
+            const imageEmbedIds = new Set(
+                source
+                    .filter((dataset) => dataset && dataset.dataset_type === 'image_embeds')
+                    .map((dataset) => (dataset.id ? String(dataset.id).trim() : ''))
+                    .filter((id) => id !== '')
+            );
+
+            const validationErrors = {};
+
+            const sanitizeVideoOptions = (options) => {
+                if (!options || typeof options !== 'object') {
+                    return undefined;
+                }
+                const cleaned = {};
+                const numFrames = this._coerceInt(options.num_frames);
+                const minFrames = this._coerceInt(options.min_frames);
+                const maxFrames = this._coerceInt(options.max_frames);
+                if (Number.isFinite(numFrames) && numFrames > 0) {
+                    cleaned.num_frames = numFrames;
+                }
+                if (Number.isFinite(minFrames) && minFrames > 0) {
+                    cleaned.min_frames = minFrames;
+                }
+                if (Number.isFinite(maxFrames) && maxFrames > 0) {
+                    cleaned.max_frames = maxFrames;
+                }
+                if (typeof options.is_i2v === 'boolean') {
+                    cleaned.is_i2v = options.is_i2v;
+                } else if (typeof options.is_i2v === 'string' && options.is_i2v.trim() !== '') {
+                    cleaned.is_i2v = options.is_i2v.trim().toLowerCase() === 'true';
+                }
+                return Object.keys(cleaned).length ? cleaned : undefined;
+            };
+
+            const sanitizeDataset = (dataset) => {
+                const datasetId = dataset?.id ? String(dataset.id) : 'dataset';
+                const cleaned = {};
+                Object.entries(dataset).forEach(([key, value]) => {
+                    if (key.startsWith('_')) {
+                        return;
+                    }
+                    if (key === 'conditioning') {
+                        cleaned.conditioning = Array.isArray(value)
+                            ? value.map((entry) => sanitizeConditioningEntry(entry))
+                            : [];
+                        return;
+                    }
+                    if (key === 'conditioning_data') {
+                        const normalized = this.normalizeConditioningData(value);
+                        cleaned.conditioning_data = normalized;
+                        return;
+                    }
+                    cleaned[key] = this.sanitizeValueForSave(value);
+                });
+
+                if (!cleaned.type) {
+                    cleaned.type = 'local';
+                }
+
+                if (!cleaned.dataset_type || typeof cleaned.dataset_type !== 'string' || !cleaned.dataset_type.trim()) {
+                    cleaned.dataset_type = 'image';
+                }
+
+                if (cleaned.dataset_type === 'conditioning') {
+                    cleaned.default = this.normalizeBoolean(cleaned.default);
+                    if (!Array.isArray(cleaned.conditioning_data)) {
+                        cleaned.conditioning_data = [];
+                    }
+                } else {
+                    const links = Array.isArray(cleaned.conditioning_data) ? cleaned.conditioning_data : [];
+                    cleaned.conditioning_data = links;
+                    const invalid = links.filter((id) => !conditioningIds.has(id));
+                    if (invalid.length) {
+                        validationErrors[`${datasetId}.conditioning_data`] = `Unknown conditioning dataset(s): ${invalid.join(', ')}`;
+                    }
+                }
+
+                if (cleaned.dataset_type === 'video') {
+                    const videoOptions = sanitizeVideoOptions(dataset.video);
+                    if (videoOptions) {
+                        cleaned.video = videoOptions;
+                    }
+                }
+
+                if (cleaned.type !== 'local') {
+                    delete cleaned.instance_data_dir;
+                }
+
+                const allowedResolutionTypes = ['pixel', 'pixel_area'];
+                if (!allowedResolutionTypes.includes(cleaned.resolution_type)) {
+                    cleaned.resolution_type = 'pixel';
+                }
+
+                const repeatsValue = this._coerceInt(dataset.repeats);
+                if (Number.isFinite(repeatsValue) && repeatsValue >= 0) {
+                    cleaned.repeats = repeatsValue;
+                } else {
+                    delete cleaned.repeats;
+                }
+
+                const probabilityValue = this._coerceFloat(dataset.probability);
+                if (Number.isFinite(probabilityValue)) {
+                    cleaned.probability = Math.max(0, Math.min(1, probabilityValue));
+                } else {
+                    delete cleaned.probability;
+                }
+
+                if (cleaned.dataset_type === 'text_embeds' || cleaned.dataset_type === 'image_embeds') {
+                    delete cleaned.minimum_aspect_ratio;
+                    delete cleaned.maximum_aspect_ratio;
+                    delete cleaned.crop_aspect_buckets;
+                } else {
+                    const minAspectValue = this._coerceFloat(dataset.minimum_aspect_ratio);
+                    if (Number.isFinite(minAspectValue) && minAspectValue > 0) {
+                        cleaned.minimum_aspect_ratio = minAspectValue;
+                    } else {
+                        delete cleaned.minimum_aspect_ratio;
+                    }
+
+                    const maxAspectValue = this._coerceFloat(dataset.maximum_aspect_ratio);
+                    if (Number.isFinite(maxAspectValue) && maxAspectValue > 0) {
+                        cleaned.maximum_aspect_ratio = maxAspectValue;
+                    } else {
+                        delete cleaned.maximum_aspect_ratio;
+                    }
+
+                    const bucketSource = typeof dataset._cropAspectBucketsText === 'string' && dataset._cropAspectBucketsText.trim() !== ''
+                        ? dataset._cropAspectBucketsText
+                        : dataset.crop_aspect_buckets;
+                    const bucketValues = this.parseAspectBucketText(bucketSource);
+                    if (bucketValues.length) {
+                        cleaned.crop_aspect_buckets = bucketValues;
+                    } else {
+                        delete cleaned.crop_aspect_buckets;
+                    }
+                }
+
+                const skipList = this.normalizeSkipList(dataset.skip_file_discovery);
+                if (skipList) {
+                    cleaned.skip_file_discovery = skipList;
+                } else {
+                    delete cleaned.skip_file_discovery;
+                }
+
+                cleaned.hash_filenames = this.normalizeBoolean(dataset.hash_filenames);
+                cleaned.preserve_data_backend_cache = this.normalizeBoolean(dataset.preserve_data_backend_cache);
+                cleaned.disabled = this.normalizeBoolean(dataset.disabled);
+
+                const regularisation = this.normalizeBoolean(dataset.is_regularisation_data);
+                if (regularisation) {
+                    cleaned.is_regularisation_data = true;
+                    cleaned.is_regularization_data = true; // ASSUMPTION: retain US spelling alias for compatibility
+                } else {
+                    delete cleaned.is_regularisation_data;
+                    delete cleaned.is_regularization_data;
+                }
+
+                if (this.normalizeBoolean(dataset.prepend_instance_prompt)) {
+                    cleaned.prepend_instance_prompt = true;
+                } else {
+                    delete cleaned.prepend_instance_prompt;
+                }
+
+                if (this.normalizeBoolean(dataset.only_instance_prompt)) {
+                    cleaned.only_instance_prompt = true;
+                } else {
+                    delete cleaned.only_instance_prompt;
+                }
+
+                const instancePrompt = this._coerceString(dataset.instance_prompt);
+                if (instancePrompt) {
+                    cleaned.instance_prompt = instancePrompt;
+                } else {
+                    delete cleaned.instance_prompt;
+                }
+
+                const cacheDirVae = this._coerceString(dataset.cache_dir_vae);
+                if (cacheDirVae) {
+                    cleaned.cache_dir_vae = cacheDirVae;
+                } else {
+                    delete cleaned.cache_dir_vae;
+                }
+
+                if (cleaned.dataset_type === 'text_embeds' || cleaned.dataset_type === 'image_embeds') {
+                    const writeBatchSize = this._coerceInt(dataset.write_batch_size);
+                    if (Number.isFinite(writeBatchSize) && writeBatchSize > 0) {
+                        cleaned.write_batch_size = writeBatchSize;
+                    } else {
+                        delete cleaned.write_batch_size;
+                    }
+                    const filterList = this._coerceString(dataset.caption_filter_list);
+                    if (filterList) {
+                        const resolvedFilter = typeof this.resolveCaptionFilterValue === 'function'
+                            ? this.resolveCaptionFilterValue(filterList)
+                            : filterList;
+                        cleaned.caption_filter_list = resolvedFilter;
+                    } else {
+                        delete cleaned.caption_filter_list;
+                    }
+                } else {
+                    delete cleaned.write_batch_size;
+                    delete cleaned.caption_filter_list;
+                }
+
+                if (['image', 'video'].includes(cleaned.dataset_type)) {
+                    const textEmbedRef = this._coerceString(dataset.text_embeds);
+                    if (textEmbedRef) {
+                        if (textEmbedIds.has(textEmbedRef)) {
+                            cleaned.text_embeds = textEmbedRef;
+                        } else {
+                            delete cleaned.text_embeds;
+                            validationErrors[`${datasetId}.text_embeds`] = `Unknown text embed dataset: ${textEmbedRef}`;
+                        }
+                    } else {
+                        delete cleaned.text_embeds;
+                    }
+                    const imageEmbedRef = this._coerceString(dataset.image_embeds);
+                    if (imageEmbedRef) {
+                        if (imageEmbedIds.has(imageEmbedRef)) {
+                            cleaned.image_embeds = imageEmbedRef;
+                        } else {
+                            delete cleaned.image_embeds;
+                            validationErrors[`${datasetId}.image_embeds`] = `Unknown image embed dataset: ${imageEmbedRef}`;
+                        }
+                    } else {
+                        delete cleaned.image_embeds;
+                    }
+                } else {
+                    delete cleaned.text_embeds;
+                    delete cleaned.image_embeds;
+                }
+
+                if (cleaned.type === 'aws') {
+                    const bucket = this._coerceString(dataset.aws_bucket_name);
+                    if (bucket) {
+                        cleaned.aws_bucket_name = bucket;
+                    } else {
+                        delete cleaned.aws_bucket_name;
+                    }
+                    const dataPrefix = this._coerceString(dataset.aws_data_prefix);
+                    if (dataPrefix) {
+                        cleaned.aws_data_prefix = dataPrefix;
+                    } else {
+                        delete cleaned.aws_data_prefix;
+                    }
+                    const region = this._coerceString(dataset.aws_region_name);
+                    if (region) {
+                        cleaned.aws_region_name = region;
+                    } else {
+                        delete cleaned.aws_region_name;
+                    }
+                    const endpoint = this._coerceString(dataset.aws_endpoint_url);
+                    if (endpoint) {
+                        cleaned.aws_endpoint_url = endpoint;
+                    } else {
+                        delete cleaned.aws_endpoint_url;
+                    }
+                    const accessKey = this._coerceString(dataset.aws_access_key_id);
+                    if (accessKey) {
+                        cleaned.aws_access_key_id = accessKey;
+                    } else {
+                        delete cleaned.aws_access_key_id;
+                    }
+                    const secretKey = this._coerceString(dataset.aws_secret_access_key);
+                    if (secretKey) {
+                        cleaned.aws_secret_access_key = secretKey;
+                    } else {
+                        delete cleaned.aws_secret_access_key;
+                    }
+                } else {
+                    delete cleaned.aws_bucket_name;
+                    delete cleaned.aws_data_prefix;
+                    delete cleaned.aws_region_name;
+                    delete cleaned.aws_endpoint_url;
+                    delete cleaned.aws_access_key_id;
+                    delete cleaned.aws_secret_access_key;
+                }
+
+                if (dataset.parquet && typeof dataset.parquet === 'object' && !Array.isArray(dataset.parquet)) {
+                    const parquet = {};
+                    const assignString = (key) => {
+                        const value = this._coerceString(dataset.parquet[key]);
+                        if (value) {
+                            parquet[key] = value;
+                        }
+                    };
+                    assignString('path');
+                    assignString('filename_column');
+                    assignString('caption_column');
+                    assignString('fallback_caption_column');
+                    assignString('width_column');
+                    assignString('height_column');
+                    if (dataset.parquet.identifier_includes_extension !== undefined) {
+                        parquet.identifier_includes_extension = this.normalizeBoolean(dataset.parquet.identifier_includes_extension);
+                    }
+                    if (Object.keys(parquet).length) {
+                        cleaned.parquet = parquet;
+                    } else {
+                        delete cleaned.parquet;
+                    }
+                } else {
+                    delete cleaned.parquet;
+                }
+
+                if (cleaned.type === 'aws') {
+                    const assignAws = (key) => {
+                        const value = this._coerceString(dataset[key]);
+                        if (value) {
+                            cleaned[key] = value;
+                        } else {
+                            delete cleaned[key];
+                        }
+                    };
+                    assignAws('aws_bucket_name');
+                    assignAws('aws_data_prefix');
+                    assignAws('aws_region_name');
+                    assignAws('aws_endpoint_url');
+                    assignAws('aws_access_key_id');
+                    assignAws('aws_secret_access_key');
+                } else {
+                    delete cleaned.aws_bucket_name;
+                    delete cleaned.aws_data_prefix;
+                    delete cleaned.aws_region_name;
+                    delete cleaned.aws_endpoint_url;
+                    delete cleaned.aws_access_key_id;
+                    delete cleaned.aws_secret_access_key;
+                }
+
+                if (cleaned.type === 'csv') {
+                    const csvFile = this._coerceString(dataset.csv_file);
+                    if (csvFile) {
+                        cleaned.csv_file = csvFile;
+                    } else {
+                        delete cleaned.csv_file;
+                    }
+                    const csvCaption = this._coerceString(dataset.csv_caption_column);
+                    if (csvCaption) {
+                        cleaned.csv_caption_column = csvCaption;
+                    } else {
+                        delete cleaned.csv_caption_column;
+                    }
+                    const csvCache = this._coerceString(dataset.csv_cache_dir);
+                    if (csvCache) {
+                        cleaned.csv_cache_dir = csvCache;
+                    } else {
+                        delete cleaned.csv_cache_dir;
+                    }
+                } else {
+                    delete cleaned.csv_file;
+                    delete cleaned.csv_caption_column;
+                    delete cleaned.csv_cache_dir;
+                }
+
+                if (cleaned.type === 'huggingface') {
+                    const assignHf = (key) => {
+                        const value = this._coerceString(dataset[key]);
+                        if (value) {
+                            cleaned[key] = value;
+                        } else {
+                            delete cleaned[key];
+                        }
+                    };
+                    assignHf('dataset_name');
+                    assignHf('dataset_config');
+                    assignHf('split');
+                    assignHf('revision');
+                    assignHf('image_column');
+                    assignHf('caption_column');
+
+                    if (this.normalizeBoolean(dataset.streaming)) {
+                        cleaned.streaming = true;
+                    } else {
+                        delete cleaned.streaming;
+                    }
+
+                    const authToken = this._coerceString(dataset.auth_token);
+                    if (authToken) {
+                        cleaned.auth_token = authToken;
+                    } else {
+                        delete cleaned.auth_token;
+                    }
+                } else {
+                    delete cleaned.dataset_name;
+                    delete cleaned.dataset_config;
+                    delete cleaned.split;
+                    delete cleaned.revision;
+                    delete cleaned.image_column;
+                    delete cleaned.caption_column;
+                    delete cleaned.streaming;
+                    delete cleaned.auth_token;
+                }
+
+                return cleaned;
+            };
+
+            const sanitized = source.map((dataset) => sanitizeDataset(dataset));
+            this.datasetValidationErrors = validationErrors;
+            return sanitized;
+        },
+        sanitizeValueForSave(value) {
+            if (Array.isArray(value)) {
+                return value.map((item) => this.sanitizeValueForSave(item));
+            }
+            if (!value || typeof value !== 'object') {
+                return value;
+            }
+
+            const cleaned = {};
+            Object.entries(value).forEach(([key, entryValue]) => {
+                if (key.startsWith('_')) {
+                    return;
+                }
+                cleaned[key] = this.sanitizeValueForSave(entryValue);
+            });
+            return cleaned;
+        },
+        refreshDatasetsJson() {
+            const sanitized = this.prepareDatasetsForSave();
+            this.dataLoaderJson = JSON.stringify(sanitized, null, 2);
+        },
+        markDatasetsDirty() {
+            this.hasUnsavedChanges = true;
+            this.refreshDatasetsJson();
+        },
+        async loadCaptionFilters(force = false) {
+            if (!force && Array.isArray(this.captionFilters) && this.captionFilters.length > 0) {
+                return this.captionFilters;
+            }
+            if (this.captionFiltersLoading && this._captionFiltersPromise) {
+                return this._captionFiltersPromise;
+            }
+            this.captionFiltersLoading = true;
+            this._captionFiltersPromise = (async () => {
+                try {
+                    const response = await fetch('/api/caption-filters');
+                    if (!response.ok) {
+                        throw new Error('Failed to load caption filters');
+                    }
+                    const data = await response.json();
+                    this.captionFilters = (data.filters || []).map((filter) => ({
+                        name: filter.name,
+                        label: filter.label || filter.name,
+                        description: filter.description || '',
+                        entries: filter.entries || [],
+                        path: filter.path || filter.relative_path || '',
+                        created_at: filter.created_at || null,
+                        updated_at: filter.updated_at || null
+                    }));
+                    window.dispatchEvent(new CustomEvent('caption-filters-updated', {
+                        detail: { filters: this.captionFilters }
+                    }));
+                } catch (error) {
+                    console.error('Failed to load caption filters:', error);
+                    if (force) {
+                        window.showToast('Failed to load caption filters', 'error');
+                    }
+                    this.captionFilters = [];
+                } finally {
+                    this.captionFiltersLoading = false;
+                }
+                return this.captionFilters;
+            })();
+            try {
+                return await this._captionFiltersPromise;
+            } finally {
+                this._captionFiltersPromise = null;
+            }
+        },
+        resolveCaptionFilterValue(value) {
+            if (!value) {
+                return value;
+            }
+            const filters = Array.isArray(this.captionFilters) ? this.captionFilters : [];
+            for (const filter of filters) {
+                if (!filter) {
+                    continue;
+                }
+                const canonical = filter.path || filter.name;
+                if (!canonical) {
+                    continue;
+                }
+                if (value === canonical || value === filter.name) {
+                    return canonical;
+                }
+            }
+            return value;
+        },
+        getConditioningDatasetIds(excludeId = null) {
+            if (!Array.isArray(this.datasets)) {
+                return [];
+            }
+            return this.datasets
+                .filter((dataset) => dataset && dataset.dataset_type === 'conditioning')
+                .map((dataset) => dataset.id)
+                .filter((id) => id && id !== excludeId);
+        },
+        addConditioningGenerator(dataset) {
+            if (!dataset) {
+                return;
+            }
+            if (!Array.isArray(dataset.conditioning)) {
+                dataset.conditioning = [];
+            }
+            const entry = this.normalizeConditioningEntry({ type: '', params: {} }, dataset.id, dataset.conditioning.length);
+            dataset.conditioning.push(entry);
+            this.markDatasetsDirty();
+            window.showToast('Added conditioning generator (unsaved)', 'info');
+        },
+        removeConditioningGenerator(dataset, entryKey) {
+            if (!dataset || !Array.isArray(dataset.conditioning)) {
+                return;
+            }
+            const previousLength = dataset.conditioning.length;
+            dataset.conditioning = dataset.conditioning.filter((entry) => {
+                if (!entry) {
+                    return false;
+                }
+                const key = entry._uiKey || entry.id;
+                return key !== entryKey;
+            });
+            if (dataset.conditioning.length !== previousLength) {
+                this.markDatasetsDirty();
+                window.showToast('Removed conditioning generator (unsaved)', 'info');
+            }
+        },
+        updateConditioningParams(entry, text) {
+            if (!entry) {
+                return;
+            }
+            entry._paramsText = text;
+            const parsed = this.safeParseJSON(text);
+            if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                entry.params = parsed;
+                entry._paramsParseError = null;
+            } else {
+                entry._paramsParseError = 'Invalid JSON';
+            }
+            this.markDatasetsDirty();
+        },
+        setConditioningCaptionsMode(entry, mode) {
+            if (!entry) {
+                return;
+            }
+            entry._captionsMode = mode;
+            if (mode === 'none') {
+                entry._captionsValue = '';
+                entry.captions = false;
+            } else if (mode === 'single') {
+                if (!entry._captionsValue) {
+                    entry._captionsValue = '';
+                }
+                entry.captions = entry._captionsValue.trim() || undefined;
+            } else if (mode === 'list') {
+                if (!entry._captionsValue) {
+                    entry._captionsValue = '';
+                }
+                const items = entry._captionsValue
+                    .split(/\r?\n/)
+                    .map((line) => line.trim())
+                    .filter((line) => line !== '');
+                entry.captions = items.length ? items : undefined;
+            } else {
+                entry._captionsValue = '';
+                delete entry.captions;
+            }
+            this.markDatasetsDirty();
+        },
+        updateConditioningCaptionsValue(entry, value) {
+            if (!entry) {
+                return;
+            }
+            entry._captionsValue = value;
+            this.setConditioningCaptionsMode(entry, entry._captionsMode || 'inherit');
+        },
+        async loadDatasetsAfterEnvironmentChange() {
+             try {
+                 if (!this.activeEnvironmentConfig) {
+                     await this.fetchActiveEnvironmentConfig();
+                 }
+
+                 const normalized = this.buildNormalizedConfig(this.activeEnvironmentConfig);
+                 const backendPath = this.firstNonEmpty(
+                     normalized.data_backend_config,
+                     normalized.dataloader_config,
+                     normalized.multidatabackend,
+                 );
+
+                 if (backendPath) {
+                     await this.loadDatasetsFromConfig(backendPath);
+                 } else {
+                     await this.loadDatasets();
+                 }
+             } catch (error) {
+                 console.error('Error loading datasets after environment change:', error);
+                 await this.loadDatasets();
+             }
+        },
+         // Dataset management
+        datasets: [],
+        knownConditioningGenerators: [
+            'canny', 'edges', 'hed', 'lineart', 'lineart_coarse', 'scribble',
+            'depth', 'depth_midas', 'depth_leres', 'normal_map', 'random_masks',
+            'binary_mask', 'inpainting', 'jpeg_artifacts', 'superresolution',
+            'content_shuffle', 'tile', 'rembg'
+        ],
+        captionFilters: [],
+        captionFiltersLoading: false,
+        _captionFiltersPromise: null,
+         datasetBlueprints: [],
+         datasetsLoading: false,
+         _datasetsReloadInFlight: null,
+         dataLoaderMode: 'builder', // 'builder' or 'json'
+         dataLoaderJson: '',
+         hasUnsavedChanges: false,
+         // Save dialog state
+         showSaveDialog: false,
+         createBackupOption: false,
+         saveDialogResolve: null,
+         // Validation errors
+         datasetValidationErrors: {},
+         eventDockMinHeight: 160,
+         eventDockMaxRatio: 0.75,
+         eventDockCollapsedHeight: 56,
+         eventDockHeight: (() => {
+             const stored = parseInt(localStorage.getItem('eventDockHeight'), 10);
+             if (Number.isFinite(stored) && stored >= 160) {
+                 return stored;
+             }
+             return 280;
+         })(),
+         eventDockCollapsed: (() => {
+             const stored = localStorage.getItem('eventDockCollapsed');
+             return stored === 'true';
+         })(),
+         eventDockIsResizing: false,
+         toggleEventDock() {
+             this.eventDockCollapsed = !this.eventDockCollapsed;
+             localStorage.setItem('eventDockCollapsed', this.eventDockCollapsed);
+             if (!this.eventDockCollapsed) {
+                 this.ensureEventDockWithinBounds();
+             }
+         },
+         ensureEventDockWithinBounds() {
+             const maxHeight = Math.max(this.eventDockMinHeight, Math.floor(window.innerHeight * this.eventDockMaxRatio));
+             if (this.eventDockHeight < this.eventDockMinHeight) {
+                 this.eventDockHeight = this.eventDockMinHeight;
+                 localStorage.setItem('eventDockHeight', this.eventDockHeight);
+             } else if (this.eventDockHeight > maxHeight) {
+                 this.eventDockHeight = maxHeight;
+                 localStorage.setItem('eventDockHeight', this.eventDockHeight);
+             }
+         },
+         setEventDockHeight(height) {
+             const maxHeight = Math.max(this.eventDockMinHeight, Math.floor(window.innerHeight * this.eventDockMaxRatio));
+             const clamped = Math.max(this.eventDockMinHeight, Math.min(height, maxHeight));
+             this.eventDockHeight = Math.round(clamped);
+             localStorage.setItem('eventDockHeight', this.eventDockHeight);
+         },
+         startEventDockResize(event) {
+             if (this.eventDockCollapsed) return;
+             event.preventDefault();
+             this.eventDockIsResizing = true;
+             const startY = event.clientY;
+             const startHeight = this.eventDockHeight;
+             const onMove = (moveEvt) => {
+                 const delta = startY - moveEvt.clientY;
+                 this.setEventDockHeight(startHeight + delta);
+             };
+             const onUp = () => {
+                 this.eventDockIsResizing = false;
+                 window.removeEventListener('pointermove', onMove);
+                 window.removeEventListener('pointerup', onUp);
+             };
+             window.addEventListener('pointermove', onMove);
+             window.addEventListener('pointerup', onUp);
+         },
+         get eventDockStyle() {
+             return this.eventDockCollapsed
+                 ? `height: ${this.eventDockCollapsedHeight}px;`
+                 : `height: ${this.eventDockHeight}px;`;
+         },
+        get eventDockPaddingStyle() {
+            return this.eventDockCollapsed
+                ? 'padding-bottom: 4rem;'
+                : `padding-bottom: calc(${this.eventDockHeight}px + 3rem);`;
+        },
+        async loadDatasets() {
+             this.datasetsLoading = true;
+             try {
+                 // Load dataset plan
+                 const planResponse = await fetch('/api/datasets/plan');
+                if (planResponse.ok) {
+                    const planData = await planResponse.json();
+                    const datasetList = Array.isArray(planData.datasets) ? planData.datasets : [];
+                    this.datasets = this.normalizeDatasets(datasetList);
+                    const sanitized = this.prepareDatasetsForSave(this.datasets);
+                    this.dataLoaderJson = JSON.stringify(sanitized, null, 2);
+                    this.hasUnsavedChanges = false;
+                    this.datasetValidationErrors = {};
+                }
+
+                 // Load blueprints for presets
+                 const blueprintResponse = await fetch('/api/datasets/blueprints');
+                 if (blueprintResponse.ok) {
+                     const blueprintData = await blueprintResponse.json();
+                     this.datasetBlueprints = blueprintData.blueprints || [];
+                 }
+            } catch (error) {
+                console.error('Error loading datasets:', error);
+                window.showToast('Failed to load dataset configuration', 'error');
+                this.datasets = [];
+                this.dataLoaderJson = JSON.stringify([], null, 2);
+                this.hasUnsavedChanges = false;
+            } finally {
+                this.datasetsLoading = false;
+            }
+        },
+         async loadDatasetsFromConfig(dataBackendConfigPath) {
+             this.datasetsLoading = true;
+             try {
+                 // Construct the URL to fetch the dataset configuration file
+                 // The path might be relative or absolute, so we need to handle it properly
+                 let fetchUrl;
+                if (dataBackendConfigPath.startsWith('http://') || dataBackendConfigPath.startsWith('https://')) {
+                    // Full URL
+                    fetchUrl = dataBackendConfigPath;
+                } else {
+                    // Local filesystem path (absolute or relative) should always be resolved via backend API
+                    fetchUrl = `/api/configs/data-backend-file?path=${encodeURIComponent(dataBackendConfigPath)}`;
+                }
+
+                 const response = await fetch(fetchUrl);
+                 if (response.ok) {
+                     const datasets = await response.json();
+
+                     // Validate that we got an array
+                     if (Array.isArray(datasets)) {
+                        this.datasets = this.normalizeDatasets(datasets);
+                        const sanitized = this.prepareDatasetsForSave(this.datasets);
+                        this.dataLoaderJson = JSON.stringify(sanitized, null, 2);
+
+                        // Update the trainer store reference
+                        if (Alpine.store('trainer')) {
+                            Alpine.store('trainer').datasets = this.datasets;
+                            Alpine.store('trainer').dataLoaderJson = this.dataLoaderJson;
+                        }
+
+                        this.hasUnsavedChanges = false;
+                        this.datasetValidationErrors = {};
+                        window.showToast('Dataset configuration loaded from environment', 'success');
+                     } else {
+                         throw new Error('Invalid dataset configuration format - expected an array');
+                     }
+                 } else {
+                     throw new Error(`Failed to load dataset configuration from ${dataBackendConfigPath}`);
+                 }
+             } catch (error) {
+                console.error('Error loading dataset configuration:', error);
+                window.showToast(`Failed to load dataset configuration: ${error.message}`, 'error');
+                // Clear datasets on error
+               this.datasets = [];
+               this.dataLoaderJson = JSON.stringify([], null, 2);
+                this.hasUnsavedChanges = false;
+            } finally {
+               this.datasetsLoading = false;
+            }
+        },
+        async loadDatasetsAfterEnvironmentChange() {
+            if (!this._datasetsReloadInFlight) {
+                this.datasetsLoading = true;
+                this.datasets = [];
+                this.dataLoaderJson = JSON.stringify([], null, 2);
+                this.hasUnsavedChanges = false;
+            }
+
+            if (this._datasetsReloadInFlight) {
+                return this._datasetsReloadInFlight;
+            }
+
+            this._datasetsReloadInFlight = (async () => {
+                try {
+                    if (!this.activeEnvironmentConfig) {
+                        await this.fetchActiveEnvironmentConfig();
+                    }
+
+                    const normalized = this.buildNormalizedConfig(this.activeEnvironmentConfig);
+                    const backendPath = this.firstNonEmpty(
+                        normalized.data_backend_config,
+                        normalized.dataloader_config,
+                        normalized.multidatabackend,
+                    );
+
+                    if (backendPath) {
+                        await this.loadDatasetsFromConfig(backendPath);
+                    } else {
+                        await this.loadDatasets();
+                    }
+                } catch (error) {
+                    console.error('Error loading datasets after environment change:', error);
+                    await this.loadDatasets();
+                }
+            })();
+
+            try {
+                await this._datasetsReloadInFlight;
+            } finally {
+                this._datasetsReloadInFlight = null;
+             }
+         },
+        async addDataset(type) {
+            try {
+                const dataset = {
+                    id: `dataset-${Date.now()}`,
+                    type: 'local',
+                    dataset_type: type,
+                    repeats: 0,
+                    probability: 1,
+                    minimum_aspect_ratio: null,
+                    maximum_aspect_ratio: null,
+                    crop_aspect_buckets: [],
+                    _cropAspectBucketsText: '',
+                    skip_file_discovery: '',
+                    hash_filenames: false,
+                    preserve_data_backend_cache: false,
+                    is_regularisation_data: false,
+                    prepend_instance_prompt: false,
+                    only_instance_prompt: false,
+                    instance_prompt: '',
+                    cache_dir_vae: '',
+                    caption_filter_list: '',
+                    _selectedCaptionFilter: '',
+                    text_embeds: '',
+                    image_embeds: '',
+                    parquet: {},
+                    aws_bucket_name: '',
+                    aws_data_prefix: '',
+                    aws_region_name: '',
+                    aws_endpoint_url: '',
+                    aws_access_key_id: '',
+                    aws_secret_access_key: '',
+                    _awsAccessVisible: false,
+                    _awsSecretVisible: false,
+                    csv_file: '',
+                    csv_caption_column: '',
+                    csv_cache_dir: '',
+                    dataset_name: '',
+                    dataset_config: '',
+                    split: '',
+                    revision: '',
+                    image_column: '',
+                    caption_column: '',
+                    streaming: false,
+                    auth_token: '',
+                    disabled: false,
+                    _showAdvanced: false,
+                    _connectionStatus: null,
+                    _connectionMessage: '',
+                    _connectionDetails: null,
+                    _connectionTesting: false
+                };
+
+                // Use cache_dir for embeds, instance_data_dir and resolution for others
+                if (type === 'text_embeds' || type === 'image_embeds') {
+                    dataset.cache_dir = '';
+                    dataset.write_batch_size = 128;
+                } else {
+                    dataset.instance_data_dir = '';
+                    dataset.resolution = 1024;
+                    dataset.resolution_type = 'pixel';
+                }
+
+                const normalized = this.normalizeDataset(dataset, this.datasets.length);
+                this.datasets.push(normalized);
+                this.hasUnsavedChanges = true;
+                this.refreshDatasetsJson();
+                window.showToast(`Added ${type} dataset (unsaved)`, 'info');
+            } catch (error) {
+                console.error('Error adding dataset:', error);
+                window.showToast('Failed to add dataset', 'error');
+            }
+        },
+        async duplicateDataset(datasetId) {
+            try {
+                const index = this.datasets.findIndex(d => d.id === datasetId);
+                 if (index === -1) {
+                     window.showToast('Dataset not found', 'error');
+                     return;
+                 }
+
+                const clone = JSON.parse(JSON.stringify(this.datasets[index]));
+                delete clone._uiKey;
+                clone._showAdvanced = false;
+                if (Array.isArray(clone.conditioning)) {
+                    clone.conditioning.forEach((entry) => {
+                        if (entry && typeof entry === 'object') {
+                            delete entry._uiKey;
+                        }
+                    });
+                }
+                const baseId = clone.id || `dataset-${Date.now()}`;
+                let candidate = `${baseId}-copy`;
+                let suffix = 1;
+                while (this.datasets.some(d => d.id === candidate)) {
+                    candidate = `${baseId}-copy-${suffix++}`;
+                }
+                clone.id = candidate;
+
+                const normalizedClone = this.normalizeDataset(clone, index + 1);
+                normalizedClone._connectionStatus = null;
+                normalizedClone._connectionMessage = '';
+                normalizedClone._connectionDetails = null;
+                normalizedClone._connectionTesting = false;
+                this.datasets.splice(index + 1, 0, normalizedClone);
+                this.hasUnsavedChanges = true;
+                this.refreshDatasetsJson();
+                window.showToast('Dataset duplicated (unsaved)', 'info');
+            } catch (error) {
+                console.error('Error duplicating dataset:', error);
+                window.showToast('Failed to duplicate dataset', 'error');
+            }
+        },
+        async removeDataset(datasetId) {
+            if (!confirm('Are you sure you want to remove this dataset?')) {
+                return; // User cancelled
+            }
+
+            try {
+                this.datasets = this.datasets.filter(d => d.id !== datasetId);
+                this.hasUnsavedChanges = true;
+                this.refreshDatasetsJson();
+                window.showToast('Dataset removed (unsaved)', 'info');
+            } catch (error) {
+                console.error('Error removing dataset:', error);
+                window.showToast('Failed to remove dataset', 'error');
+            }
+        },
+        async saveDatasets({ showToast = true, createBackup = false, skipConfirmation = false } = {}) {
+            // Show confirmation dialog unless skipped
+            if (!skipConfirmation) {
+                // Show the save dialog and wait for user response
+                this.showSaveDialog = true;
+                 this.createBackupOption = false; // Reset checkbox state
+
+                 // Return a promise that will be resolved by the dialog buttons
+                 return new Promise((resolve) => {
+                     this.saveDialogResolve = resolve;
+                 });
+             }
+
+            // Perform the actual save
+            try {
+                const payloadDatasets = this.prepareDatasetsForSave();
+                this.datasetValidationErrors = {};
+                const response = await fetch('/api/datasets/plan', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        datasets: payloadDatasets,
+                        createBackup: createBackup
+                    })
+                });
+
+                if (response.ok) {
+                    this.hasUnsavedChanges = false;
+                    this.datasetValidationErrors = {}; // Clear validation errors
+                    const result = await response.json();
+                    if (showToast) {
+                        let message = 'Dataset configuration saved';
+                        if (result.backupPath) {
+                            message += ` (backup: ${result.backupPath})`;
+                        }
+                        window.showToast(message, 'success');
+                    }
+                    this.refreshDatasetsJson();
+                } else {
+                    const error = await response.json();
+
+                     // Handle validation errors specifically
+                     if (response.status === 422 && error.detail?.validations) {
+                         const validationErrors = {};
+                         let errorMessages = [];
+
+                         error.detail.validations.forEach(v => {
+                             if (v.field) {
+                                 // Store field-specific errors
+                                 validationErrors[v.field] = v.message;
+                                 // Extract dataset ID from field name (e.g., "dataset-123.dataset_type")
+                                 const parts = v.field.split('.');
+                                 if (parts.length > 1) {
+                                     errorMessages.push(`${parts[0]}: ${v.message}`);
+                                 } else {
+                                     errorMessages.push(v.message);
+                                 }
+                             }
+                         });
+
+                         this.datasetValidationErrors = validationErrors;
+
+                         // Show informative error message
+                         const errorCount = errorMessages.length;
+                         if (errorCount > 0) {
+                             window.showToast(`Validation failed (${errorCount} error${errorCount > 1 ? 's' : ''}): ${errorMessages.join(', ')}`, 'error');
+                         } else {
+                             window.showToast('Validation failed. Please check required fields.', 'error');
+                         }
+                     } else {
+                         window.showToast(error.detail?.message || 'Failed to save datasets', 'error');
+                     }
+                 }
+            } catch (error) {
+                console.error('Error saving datasets:', error);
+                window.showToast('Failed to save dataset configuration', 'error');
+            }
+        },
+        async saveJsonDatasets() {
+            try {
+                // Parse JSON to validate it
+                const parsedDatasets = JSON.parse(this.dataLoaderJson);
+
+                // Update datasets array
+                this.datasets = this.normalizeDatasets(parsedDatasets);
+                this.hasUnsavedChanges = true;
+                this.refreshDatasetsJson();
+
+                // Call regular save with confirmation
+                await this.saveDatasets({ showToast: true, skipConfirmation: true });
+            } catch (e) {
+                window.showToast('Invalid JSON format. Please fix the JSON and try again.', 'error');
+            }
+        },
+        switchDataLoaderMode(mode) {
+            this.dataLoaderMode = mode;
+            if (mode === 'json') {
+                this.refreshDatasetsJson();
+            } else if (mode === 'builder') {
+                try {
+                    const parsedDatasets = JSON.parse(this.dataLoaderJson);
+                    this.datasets = this.normalizeDatasets(parsedDatasets);
+                    // Mark as having unsaved changes when successfully importing from JSON
+                    this.hasUnsavedChanges = true;
+                    this.refreshDatasetsJson();
+                } catch (e) {
+                    window.showToast('Invalid JSON format', 'error');
+                }
+            }
+        },
+         async initializeWebUIState() {
+             try {
+                 const response = await fetch('/api/webui/state');
+                 if (!response.ok) {
+                     console.warn('Failed to load WebUI state');
+                     return;
+                 }
+                const data = await response.json();
+                const onboarding = data.onboarding || {};
+                const defaultsPayload = data.resolved_defaults || data.defaults || {};
+                this.defaults = defaultsPayload;
+                this.onboardingSteps = onboarding.steps || [];
+                this.overlayVisible = Boolean(onboarding.overlay_required);
+                this.setActiveOnboardingStep();
+                if (typeof window.applyTheme === 'function' && this.defaults.theme) {
+                    window.applyTheme(this.defaults.theme);
+                }
+                this.applyEventPreferences();
+                window.dispatchEvent(new CustomEvent('webui-defaults-updated', {
+                    detail: {
+                        defaults: data.defaults || {},
+                        resolved_defaults: defaultsPayload,
+                        source: 'initial-load'
+                    }
+                }));
+            } catch (error) {
+                console.error('Failed to load WebUI state', error);
+            }
+        },
+         setActiveOnboardingStep() {
+             const nextStep = this.onboardingSteps.find(step => !step.is_complete && step.required);
+             if (nextStep) {
+                 this.activeOnboardingStep = nextStep;
+                 const fallback = nextStep.applies_to_default ? this.defaults[nextStep.applies_to_default] : '';
+                 this.onboardingForm.value = nextStep.value || fallback || '';
+                 this.overlayVisible = true;
+                 this.overlayError = '';
+                 this.$nextTick(() => {
+                     if (this.$refs.onboardingInput) {
+                         this.$refs.onboardingInput.focus();
+                         this.$refs.onboardingInput.select();
+                     }
+                 });
+             } else {
+                 this.activeOnboardingStep = null;
+                 this.overlayVisible = false;
+             }
+         },
+         async submitOnboardingStep() {
+             if (!this.activeOnboardingStep) {
+                 return;
+             }
+             const completedStep = this.activeOnboardingStep;
+             const currentInputValue = this.onboardingForm.value;
+             this.overlaySaving = true;
+             this.overlayError = '';
+             try {
+                 const response = await fetch(`/api/webui/onboarding/steps/${this.activeOnboardingStep.id}`, {
+                     method: 'POST',
+                     headers: { 'Content-Type': 'application/json' },
+                     body: JSON.stringify({ value: this.onboardingForm.value })
+                 });
+                 if (!response.ok) {
+                     let detail = 'Failed to save preferences.';
+                     try {
+                         const errorPayload = await response.json();
+                         detail = errorPayload.detail || detail;
+                     } catch (_) {}
+                     this.overlayError = detail;
+                     return;
+                 }
+                const data = await response.json();
+                const onboarding = data.onboarding || {};
+                const defaultsPayload = data.resolved_defaults || data.defaults || {};
+                this.defaults = defaultsPayload;
+                this.onboardingSteps = onboarding.steps || [];
+                this.overlayVisible = Boolean(onboarding.overlay_required);
+                const completedState = this.onboardingSteps.find(step => completedStep && step.id === completedStep.id);
+                const normalizedValue = (completedState && completedState.value) || currentInputValue;
+                if (completedStep && completedStep.applies_to_default === 'output_dir' && normalizedValue) {
+                     const directField = document.querySelector('#output_dir');
+                     const argField = Array.from(document.querySelectorAll('input')).find(input => input.name === '--output_dir');
+                     const targetField = directField || argField;
+                     if (targetField) {
+                         targetField.value = normalizedValue;
+                         targetField.dispatchEvent(new Event('input', { bubbles: true }));
+                     }
+                }
+                if (window.showToast) {
+                    window.showToast('Saved web UI defaults.', 'success');
+                }
+                if (data) {
+                    window.dispatchEvent(new CustomEvent('webui-defaults-updated', {
+                        detail: {
+                            defaults: data.defaults || {},
+                            resolved_defaults: defaultsPayload,
+                            source: 'onboarding-step'
+                        }
+                    }));
+                }
+                this.setActiveOnboardingStep();
+            } catch (error) {
+                console.error('Failed to save onboarding step', error);
+                this.overlayError = 'Something went wrong. Please try again.';
+            } finally {
+                 this.overlaySaving = false;
+             }
+         },
+         async resetOnboarding() {
+             if (!confirm('Are you sure you want to reset the onboarding process? This will clear all your settings.')) {
+                 return;
+             }
+             this.overlaySaving = true;
+             this.overlayError = '';
+             try {
+                 const response = await fetch('/api/webui/onboarding/reset', {
+                     method: 'POST',
+                     headers: {
+                         'Content-Type': 'application/json'
+                     }
+                 });
+                 if (!response.ok) {
+                     throw new Error(`HTTP error! status: ${response.status}`);
+                 }
+                const data = await response.json();
+                const defaultsPayload = data.resolved_defaults || data.defaults || {};
+                // Update state with fresh data
+                this.defaults = defaultsPayload;
+                 this.onboardingSteps = data.onboarding.steps || [];
+                 this.overlayVisible = Boolean(data.onboarding.overlay_required);
+                 this.onboardingForm = { value: '' };
+                 this.setActiveOnboardingStep();
+
+                if (window.showToast) {
+                    window.showToast('Onboarding reset successfully. Please enter your settings again.', 'success');
+                }
+                window.dispatchEvent(new CustomEvent('webui-defaults-updated', {
+                    detail: {
+                        defaults: data.defaults || {},
+                        resolved_defaults: defaultsPayload,
+                        source: 'onboarding-reset'
+                    }
+                }));
+            } catch (error) {
+                console.error('Failed to reset onboarding', error);
+                this.overlayError = 'Failed to reset onboarding. Please try again.';
+            } finally {
+                this.overlaySaving = false;
+             }
+         },
+         async loadPreset(presetName) {
+            try {
+                const presets = {
+                    'simple-local': [
+                        {
+                            id: "training-images",
+                            type: "local",
+                            dataset_type: "image",
+                            instance_data_dir: "/path/to/images",
+                            resolution: 1024,
+                            resolution_type: "pixel_area",
+                            caption_strategy: "textfile",
+                            metadata_backend: "discovery",
+                            cache_dir_vae: "cache/vae",
+                            crop: true,
+                            crop_style: "random",
+                            crop_aspect: "square",
+                            repeats: 0
+                        },
+                        {
+                            id: "text-embeds",
+                            type: "local",
+                            dataset_type: "text_embeds",
+                            default: true,
+                            cache_dir: "cache/text",
+                            write_batch_size: 128
+                        }
+                    ],
+                    'aws-with-local-cache': [
+                        {
+                            id: "aws-images",
+                            type: "aws",
+                            dataset_type: "image",
+                            aws_bucket_name: "my-training-bucket",
+                            aws_data_prefix: "training-data/",
+                            aws_endpoint_url: "",
+                            aws_region_name: "us-east-1",
+                            cache_dir_vae: "/local/cache/vae",
+                            resolution: 1024,
+                            resolution_type: "pixel_area",
+                            caption_strategy: "textfile",
+                            image_embeds: "local-image-embeds",
+                            text_embeds: "local-text-embeds"
+                        },
+                        {
+                            id: "local-image-embeds",
+                            type: "local",
+                            dataset_type: "image_embeds"
+                        },
+                        {
+                            id: "local-text-embeds",
+                            type: "local",
+                            dataset_type: "text_embeds",
+                            default: true,
+                            cache_dir: "/local/cache/text"
+                        }
+                    ],
+                    'video-training': [
+                        {
+                            id: "video-dataset",
+                            type: "local",
+                            dataset_type: "video",
+                            instance_data_dir: "/path/to/videos",
+                            resolution: 480,
+                            resolution_type: "pixel_area",
+                            caption_strategy: "textfile",
+                            cache_dir_vae: "cache/vae/video",
+                            crop: false,
+                            video: {
+                                num_frames: 125,
+                                min_frames: 125,
+                                is_i2v: true
+                            }
+                        },
+                        {
+                            id: "text-embeds",
+                            type: "local",
+                            dataset_type: "text_embeds",
+                            default: true,
+                            cache_dir: "cache/text/video"
+                        }
+                    ],
+                    'controlnet-training': [
+                        {
+                            id: "training-images",
+                            type: "local",
+                            dataset_type: "image",
+                            instance_data_dir: "/path/to/images",
+                            resolution: 1024,
+                            resolution_type: "pixel_area",
+                            caption_strategy: "textfile",
+                            cache_dir_vae: "cache/vae",
+                            conditioning_data: "canny-conditioning",
+                            conditioning: [
+                                {
+                                    type: "canny",
+                                    params: {
+                                        low_threshold: 100,
+                                        high_threshold: 200
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            id: "canny-conditioning",
+                            type: "local",
+                            dataset_type: "conditioning",
+                            conditioning_type: "controlnet"
+                        },
+                        {
+                            id: "text-embeds",
+                            type: "local",
+                            dataset_type: "text_embeds",
+                            default: true,
+                            cache_dir: "cache/text"
+                        }
+                    ]
+                };
+
+                if (presets[presetName]) {
+                    // Check if current datasets exist before loading preset
+                    if (this.datasets && this.datasets.length > 0) {
+                        if (!confirm('Are you sure? Your current dataloader config will be unlinked.')) {
+                            return; // User cancelled, don't load preset
+                        }
+                    }
+
+                    this.datasets = this.normalizeDatasets(JSON.parse(JSON.stringify(presets[presetName])));
+                    this.refreshDatasetsJson();
+                    this.hasUnsavedChanges = true;
+                    window.showToast(`Loaded ${presetName} preset (unsaved)`, 'info');
+                }
+            } catch (error) {
+                console.error('Error loading preset:', error);
+                window.showToast('Failed to load preset', 'error');
+            }
+        },
+        confirmSaveDatasets() {
+            // Hide dialog and proceed with save
+            this.showSaveDialog = false;
+            const resolve = this.saveDialogResolve;
+            this.saveDialogResolve = null;
+
+            // Call save with the selected options
+            this.saveDatasets({
+                showToast: true,
+                createBackup: this.createBackupOption,
+                skipConfirmation: true
+            }).then(() => {
+                if (resolve) resolve();
+            });
+        },
+        cancelSaveDatasets() {
+            // Hide dialog and resolve the promise
+            this.showSaveDialog = false;
+            const resolve = this.saveDialogResolve;
+            this.saveDialogResolve = null;
+            if (resolve) resolve();
+        },
+        hasFieldError(datasetId, fieldName) {
+            // Check if a specific field has a validation error
+            const fieldKey = `${datasetId}.${fieldName}`;
+            return this.datasetValidationErrors.hasOwnProperty(fieldKey);
+        },
+        getFieldError(datasetId, fieldName) {
+            // Get the error message for a specific field
+            const fieldKey = `${datasetId}.${fieldName}`;
+            return this.datasetValidationErrors[fieldKey] || '';
+        },
+        getDatasetTypeIcon(type) {
+            // Return emoji icon for dataset type
+            const icons = {
+                'image': '🖼️',
+                'video': '🎬',
+                'conditioning': '🎨',
+                'text_embeds': '💾',
+                'image_embeds': '💾'
+            };
+            return icons[type] || '📁';
+        },
+
+        // Form change tracking methods
+        markFormDirty() {
+            this.formDirty = true;
+            this._skipNextClean = true;
+        },
+
+        markFormClean() {
+            this.formDirty = false;
+            this._skipNextClean = false;
+            // Capture current values for cross-tab persistence
+            this.captureFormValues();
+            // Store current form data as original
+            const formElement = document.getElementById('trainer-form');
+            if (formElement) {
+                const formData = new FormData(formElement);
+                this.originalFormData = {};
+                for (const [key, value] of formData.entries()) {
+                    this.originalFormData[key] = value;
+                }
+            }
+        },
+
+        // Check if form has changed
+        checkFormDirty() {
+            const formElement = document.getElementById('trainer-form');
+            if (!formElement) return;
+
+            const formData = new FormData(formElement);
+            let isDirty = false;
+
+            // Check for changes
+            for (const [key, value] of formData.entries()) {
+                if (this.originalFormData[key] !== value) {
+                    isDirty = true;
+                    break;
+                }
+            }
+
+            // Check for removed fields
+            for (const key in this.originalFormData) {
+                if (!formData.has(key)) {
+                    isDirty = true;
+                    break;
+                }
+            }
+
+            this.formDirty = isDirty;
+        },
+
+        cssEscape(name) {
+            if (window.CSS && window.CSS.escape) {
+                return window.CSS.escape(name);
+            }
+            return name.replace(/[^a-zA-Z0-9_-]/g, (char) => `\\${char}`);
+        },
+
+        captureFormValues() {
+            const form = document.getElementById('trainer-form');
+            if (!form) return;
+            const values = {};
+            const elements = form.querySelectorAll('input[name], select[name], textarea[name]');
+            const processed = new Set();
+            elements.forEach((el) => {
+                const name = el.name;
+                if (!name || processed.has(name)) {
+                    return;
+                }
+                processed.add(name);
+                values[name] = this.getFieldDescriptor(form, name);
+            });
+            this.formValueStore = values;
+        },
+
+        getFieldDescriptor(form, name) {
+            const selector = `[name="${this.cssEscape(name)}"]`;
+            const nodes = form.querySelectorAll(selector);
+            if (!nodes.length) {
+                return { kind: 'single', value: '' };
+            }
+
+            const checkboxNodes = Array.from(nodes).filter((node) => (node.type || '').toLowerCase() === 'checkbox');
+            if (checkboxNodes.length) {
+                const checked = checkboxNodes
+                    .filter((node) => node.checked)
+                    .map((node) => node.value || 'on');
+                return { kind: 'checkbox', value: checked, multi: checkboxNodes.length > 1 };
+            }
+
+            const first = nodes[0];
+            const tag = first.tagName;
+            const type = (first.type || '').toLowerCase();
+
+            if (type === 'radio') {
+                const checked = Array.from(nodes).find((node) => node.checked);
+                return { kind: 'radio', value: checked ? checked.value : null };
+            }
+
+            if (tag === 'SELECT' && first.multiple) {
+                const selected = Array.from(first.selectedOptions).map((opt) => opt.value);
+                return { kind: 'multiple', value: selected };
+            }
+
+            return { kind: 'single', value: first.value };
+        },
+
+        updateStoredValue(field) {
+            if (!field || !field.name) {
+                return;
+            }
+            const form = document.getElementById('trainer-form');
+            if (!form) return;
+            this.formValueStore = {
+                ...this.formValueStore,
+                [field.name]: this.getFieldDescriptor(form, field.name),
+            };
+        },
+
+        applyStoredValues() {
+            const form = document.getElementById('trainer-form');
+            if (!form || !this.formValueStore) return;
+
+            Object.entries(this.formValueStore).forEach(([name, entry]) => {
+                if (!entry) return;
+                const selector = `[name="${this.cssEscape(name)}"]`;
+                const nodes = form.querySelectorAll(selector);
+                if (!nodes.length) return;
+
+                if (entry.kind === 'checkbox') {
+                    const values = Array.isArray(entry.value) ? entry.value : [];
+                    nodes.forEach((node) => {
+                        const val = node.value || 'on';
+                        node.checked = values.includes(val);
+                    });
+                } else if (entry.kind === 'radio') {
+                    nodes.forEach((node) => {
+                        node.checked = entry.value !== null && node.value === entry.value;
+                    });
+                } else if (entry.kind === 'multiple') {
+                    nodes.forEach((node) => {
+                        if (node.tagName === 'SELECT') {
+                            const set = new Set(Array.isArray(entry.value) ? entry.value : []);
+                            Array.from(node.options).forEach((opt) => {
+                                opt.selected = set.has(opt.value);
+                            });
+                        }
+                    });
+                } else {
+                    nodes.forEach((node) => {
+                        node.value = entry.value ?? '';
+                    });
+                }
+            });
+        },
+
+        handleFieldInput(event) {
+            if (event && event.target && event.target.name) {
+                this.updateStoredValue(event.target);
+            }
+            this.checkFormDirty();
+        },
+
+        applyEventPreferences() {
+            const eventList = document.getElementById('event-list');
+            if (!eventList) {
+                return;
+            }
+
+            const defaults = this.defaults || {};
+            let interval = parseInt(defaults.event_polling_interval || 5, 10);
+            if (!Number.isFinite(interval) || interval < 1) {
+                interval = 5;
+            }
+
+            const enabled = defaults.event_stream_enabled !== false;
+            const triggers = ['load'];
+            if (enabled) {
+                triggers.push(`every ${interval}s`);
+            }
+            triggers.push('refresh');
+
+            eventList.setAttribute('hx-trigger', triggers.join(', '));
+            if (window.htmx && typeof window.htmx.process === 'function') {
+                window.htmx.process(eventList);
+            }
+        },
+
+        ensureCompleteFormData(formData) {
+            if (!this.formValueStore) return;
+            Object.entries(this.formValueStore).forEach(([name, entry]) => {
+                if (!entry) return;
+                const hasExisting = formData.has(name);
+
+                if (entry.kind === 'checkbox') {
+                    const values = Array.isArray(entry.value) ? entry.value : [];
+                    formData.delete(name);
+                    if (entry.multi) {
+                        if (values.length === 0) {
+                            formData.append(name, 'false');
+                        } else {
+                            values.forEach((val) => {
+                                formData.append(name, val != null ? String(val) : 'true');
+                            });
+                        }
+                    } else {
+                        formData.append(name, values.length > 0 ? String(values[0]) : 'false');
+                    }
+                    return;
+                }
+
+                if (entry.kind === 'multiple') {
+                    if (hasExisting) {
+                        return;
+                    }
+                    const values = Array.isArray(entry.value) ? entry.value : [];
+                    values.forEach((val) => {
+                        formData.append(name, val != null ? String(val) : '');
+                    });
+                    return;
+                }
+
+                if (entry.kind === 'radio') {
+                    if (!hasExisting && entry.value !== null && entry.value !== undefined) {
+                        formData.append(name, String(entry.value));
+                    }
+                    return;
+                }
+
+                if (!hasExisting) {
+                    formData.append(name, entry.value != null ? String(entry.value) : '');
+                }
+            });
+        },
+
+        normalizeCheckboxFormData(formData) {
+            const formElement = document.getElementById('trainer-form');
+            if (!formElement) {
+                return;
+            }
+
+            const groups = new Map();
+            formElement.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
+                if (!checkbox.name) {
+                    return;
+                }
+                if (!groups.has(checkbox.name)) {
+                    groups.set(checkbox.name, []);
+                }
+                groups.get(checkbox.name).push(checkbox);
+            });
+
+            groups.forEach((checkboxes, name) => {
+                formData.delete(name);
+                const checked = checkboxes.filter((node) => node.checked);
+
+                if (checkboxes.length > 1) {
+                    if (checked.length === 0) {
+                        formData.append(name, 'false');
+                    } else {
+                        checked.forEach((node) => {
+                            formData.append(name, node.value || 'true');
+                        });
+                    }
+                    return;
+                }
+
+                const single = checkboxes[0];
+                formData.append(name, single.checked ? (single.value || 'true') : 'false');
+            });
+        },
+
+        appendConfigValuesToFormData(formData, config) {
+            if (!config || typeof config !== 'object') {
+                return;
+            }
+
+            const metadataMap = window.dependencyManager?.fieldMetadata;
+            const appendValue = (name, descriptor) => {
+                if (!descriptor || formData.has(name)) {
+                    return;
+                }
+
+                switch (descriptor.kind) {
+                    case 'checkbox':
+                        if (descriptor.multi) {
+                            (descriptor.value || []).forEach((val) => formData.append(name, val));
+                        } else {
+                            const value = descriptor.value && descriptor.value.length ? descriptor.value[0] : 'false';
+                            formData.append(name, value);
+                        }
+                        break;
+                    case 'multiple':
+                        (descriptor.value || []).forEach((val) => formData.append(name, val));
+                        break;
+                    case 'radio':
+                        if (descriptor.value !== null && descriptor.value !== undefined) {
+                            formData.append(name, String(descriptor.value));
+                        }
+                        break;
+                    default:
+                        if (descriptor.value !== undefined && descriptor.value !== null) {
+                            formData.append(name, String(descriptor.value));
+                        }
+                        break;
+                }
+            };
+
+            const buildDescriptor = (name, value) => {
+                if (value === undefined || value === null) {
+                    return null;
+                }
+
+                const metadata = metadataMap?.get?.(name);
+                const fieldType = metadata?.field_type || metadata?.fieldType;
+
+                if (Array.isArray(value)) {
+                    const primitives = value.every((item) => item === null || ['string', 'number', 'boolean'].includes(typeof item));
+                    if (!primitives) {
+                        return null;
+                    }
+                    return {
+                        kind: 'multiple',
+                        value: value.map((item) => (item === null || item === undefined ? '' : String(item))),
+                    };
+                }
+
+                if (typeof value === 'boolean') {
+                    if (fieldType === 'checkbox') {
+                        return {
+                            kind: 'checkbox',
+                            value: value ? ['true'] : [],
+                            multi: false,
+                        };
+                    }
+                    return { kind: 'single', value: value ? 'true' : 'false' };
+                }
+
+                if (typeof value === 'number') {
+                    return { kind: 'single', value: String(value) };
+                }
+
+                if (typeof value === 'string') {
+                    return { kind: 'single', value };
+                }
+
+                return null;
+            };
+
+            Object.entries(config).forEach(([key, value]) => {
+                if (!key || key.startsWith('_')) {
+                    return;
+                }
+
+                const descriptor = buildDescriptor(key, value);
+                appendValue(key, descriptor);
+            });
+        },
+
+        seedFormValueStoreFromConfig(config) {
+            if (!config || typeof config !== 'object') {
+                return;
+            }
+
+            const metadataMap = window.dependencyManager?.fieldMetadata;
+            const buildDescriptor = (name, value) => {
+                if (value === undefined || value === null) {
+                    return { kind: 'single', value: '' };
+                }
+
+                const metadata = metadataMap?.get?.(name);
+                const fieldType = metadata?.field_type || metadata?.fieldType;
+
+                if (Array.isArray(value)) {
+                    const primitives = value.every((item) => item === null || ['string', 'number', 'boolean'].includes(typeof item));
+                    if (!primitives) {
+                        return null;
+                    }
+                    return {
+                        kind: 'multiple',
+                        value: value.map((item) => (item === null || item === undefined ? '' : String(item))),
+                    };
+                }
+
+                if (typeof value === 'boolean') {
+                    const descriptor = {
+                        kind: 'single',
+                        value: value ? 'true' : 'false',
+                    };
+
+                    if (fieldType === 'checkbox') {
+                        descriptor.kind = 'checkbox';
+                        descriptor.value = value ? ['true'] : [];
+                        descriptor.multi = false;
+                    }
+
+                    return descriptor;
+                }
+
+                if (typeof value === 'number') {
+                    return { kind: 'single', value: String(value) };
+                }
+
+                if (typeof value === 'string') {
+                    return { kind: 'single', value };
+                }
+
+                return null;
+            };
+
+            const baseStore = {};
+            Object.entries(config).forEach(([key, value]) => {
+                if (!key || key.startsWith('_')) {
+                    return;
+                }
+
+                const descriptor = buildDescriptor(key, value);
+                if (descriptor) {
+                    baseStore[key] = descriptor;
+                }
+            });
+
+            this.formValueStore = {
+                ...baseStore,
+                ...this.formValueStore,
+            };
+        },
+
+        // Save config with options dialog
+        async saveConfig() {
+            // Show the save dialog
+            this.showConfigSaveDialog = true;
+            this.createConfigBackupOption = false;
+            this.preserveDefaultsOption = false;
+
+            // Return a promise that will be resolved by the dialog buttons
+            return new Promise((resolve) => {
+                this.configSaveDialogResolve = resolve;
+            });
+        },
+
+        // Handle save dialog confirmation
+        confirmSaveConfig() {
+            this.showConfigSaveDialog = false;
+            const resolve = this.configSaveDialogResolve;
+            this.configSaveDialogResolve = null;
+
+            // Call the actual save
+            this.doSaveConfig({
+                createBackup: this.createConfigBackupOption,
+                preserveDefaults: this.preserveDefaultsOption
+            }).then(() => {
+                if (resolve) resolve();
+            });
+        },
+
+        // Cancel save dialog
+        cancelSaveConfig() {
+            this.showConfigSaveDialog = false;
+            const resolve = this.configSaveDialogResolve;
+            this.configSaveDialogResolve = null;
+            if (resolve) resolve();
+        },
+
+        // Perform the actual save
+        async doSaveConfig(options = {}) {
+            const formElement = document.getElementById('trainer-form');
+            if (!formElement) return;
+
+            try {
+                const formData = new FormData(formElement);
+
+                // Normalize checkboxes to single true/false entries
+                this.normalizeCheckboxFormData(formData);
+
+                // Ensure values from other tabs are included
+                this.ensureCompleteFormData(formData);
+
+                // Add save options
+                if (options.preserveDefaults) {
+                    formData.append('preserve_defaults', 'true');
+                }
+                if (options.createBackup) {
+                    formData.append('create_backup', 'true');
+                }
+
+                // Ensure values from the active config are present
+                this.appendConfigValuesToFormData(formData, this.activeEnvironmentConfig);
+
+                // Final checkbox normalization after all merges
+                this.normalizeCheckboxFormData(formData);
+
+                const response = await fetch('/api/training/config', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (response.ok) {
+                    this.markFormClean();
+                    window.showToast('Configuration saved', 'success');
+                } else {
+                    const error = await response.json();
+                    window.showToast(error.detail || 'Failed to save configuration', 'error');
+                }
+            } catch (error) {
+                console.error('Error saving config:', error);
+                window.showToast('Failed to save configuration', 'error');
+            }
+        }
+    }
+}
+</script>
+
+<div class="dashboard-wrapper"
+     x-data="trainerComponent()"
+     x-init="(() => {
+         // Store reference to Alpine component for external access
+         Alpine.store('trainer', $data);
+
+         // Load initial tab content
+         $nextTick(() => {
+             const updateHash = !!window.location.hash;
+             $data.activateTab($data.activeTab, updateHash);
+         });
+
+         // Listen for browser back/forward navigation
+         window.addEventListener('hashchange', () => {
+             const tab = window.location.hash.slice(1) || 'basic';
+             if (tab !== $data.activeTab) {
+                 $data.activateTab(tab, false);
+             }
+         });
+
+         // Listen for SSE events
+         document.addEventListener('htmx:sseMessage', (event) => {
+             const data = JSON.parse(event.detail.data);
+             if (data.type === 'training_progress') {
+                 $data.trainingProgress = data.progress;
+                 $data.isTraining = true;
+             } else if (data.type === 'training_complete') {
+                 $data.isTraining = false;
+             }
+         });
+
+         // Initialize other components
+         $nextTick(async () => {
+             await $data.initializeWebUIState();
+             await $data.loadEnvironmentConfigs();
+
+             // Set up form change tracking
+             const form = document.getElementById('trainer-form');
+            if (form) {
+                // Mark form as clean initially
+                $data.markFormClean();
+
+                // Add change listeners to all form inputs
+                const handleFormChange = (event) => {
+                    $data.handleFieldInput(event);
+                };
+
+                form.addEventListener('input', handleFormChange);
+                form.addEventListener('change', handleFormChange);
+
+                // Listen for HTMX after swap events to reapply listeners
+                document.body.addEventListener('htmx:afterSwap', (evt) => {
+                    if (evt.detail.target.id !== 'tab-content') {
+                        return;
+                    }
+
+                    setTimeout(() => {
+                        if ($data._preservingFormState) {
+                            $data.applyStoredValues();
+                            $data.checkFormDirty();
+                        } else if (!$data._skipNextClean) {
+                            $data.markFormClean();
+                        }
+
+                        delete $data._preservingFormState;
+                        $data._skipNextClean = false;
+                    }, 100);
+                });
+             }
+
+            await $data.loadDatasetsAfterEnvironmentChange();
+
+             $data.ensureEventDockWithinBounds();
+         });
+
+         window.addEventListener('resize', () => {
+             $data.ensureEventDockWithinBounds();
+         });
+     })()">
+
+    <div class="onboarding-overlay"
+         x-show="overlayVisible"
+         x-transition.opacity.duration.150ms>
+        <div class="onboarding-modal">
+            <h2 x-text="activeOnboardingStep ? activeOnboardingStep.title : 'Welcome to SimpleTuner'"></h2>
+            <p class="onboarding-prompt" x-text="activeOnboardingStep ? activeOnboardingStep.prompt : ''"></p>
+            <form @submit.prevent="submitOnboardingStep">
+                <div class="mb-3" x-show="activeOnboardingStep">
+                    <label class="form-label" x-text="activeOnboardingStep ? activeOnboardingStep.title : ''"></label>
+                    <input type="text"
+                           class="form-control"
+                           x-model="onboardingForm.value"
+                           :placeholder="(activeOnboardingStep && activeOnboardingStep.applies_to_default && defaults[activeOnboardingStep.applies_to_default]) || '/path/to/output'"
+                           x-ref="onboardingInput">
+                    <div class="form-text" x-show="activeOnboardingStep && activeOnboardingStep.input_type === 'directory'">
+                        Example: /home/you/simpletuner-output
+                    </div>
+                </div>
+                <template x-if="overlayError">
+                    <div class="alert alert-danger py-2 px-3" x-text="overlayError"></div>
+                </template>
+                <div class="onboarding-actions">
+                    <button type="submit" class="btn btn-primary" :disabled="overlaySaving">
+                        <span x-show="!overlaySaving">Save and continue</span>
+                        <span x-show="overlaySaving">Saving...</span>
+                    </button>
+                    <button type="button"
+                            class="btn btn-outline-secondary"
+                            @click="resetOnboarding"
+                            :disabled="overlaySaving"
+                            title="Start onboarding from the beginning">
+                        Reset
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Mobile sidebar toggle -->
+    <button class="sidebar-toggle" @click="$refs.sidebar.classList.toggle('active')">
+        <i class="fas fa-bars"></i>
+    </button>
+
+    <!-- Sidebar -->
+    <aside class="sidebar" x-ref="sidebar">
+        <div class="sidebar-header">
+            <h1>🐈 SimpleTuner</h1>
+        </div>
+
+        <nav class="sidebar-nav">
+            <div class="nav-section">
+                <div class="nav-section-title">Configuration</div>
+
+                <button type="button"
+                        class="tab-btn"
+                        data-tab="basic"
+                        :class="{ 'active': activeTab === 'basic' }"
+                        hx-get="/web/trainer/tabs/basic"
+                        hx-target="#tab-content"
+                        hx-swap="innerHTML"
+                        @click="switchTab('basic')">
+                    <i class="fas fa-cog"></i> Basic Config
+                </button>
+
+                <button type="button"
+                        class="tab-btn"
+                        data-tab="model"
+                        :class="{ 'active': activeTab === 'model' }"
+                        hx-get="/web/trainer/tabs/model"
+                        hx-target="#tab-content"
+                        hx-swap="innerHTML"
+                        @click="switchTab('model')">
+                    <i class="fas fa-brain"></i> Model Settings
+                </button>
+
+                <button type="button"
+                        class="tab-btn"
+                        data-tab="training"
+                        :class="{ 'active': activeTab === 'training' }"
+                        hx-get="/web/trainer/tabs/training"
+                        hx-target="#tab-content"
+                        hx-swap="innerHTML"
+                        @click="switchTab('training')">
+                    <i class="fas fa-graduation-cap"></i> Training
+                </button>
+
+                <button type="button"
+                        class="tab-btn"
+                        data-tab="advanced"
+                        :class="{ 'active': activeTab === 'advanced' }"
+                        hx-get="/web/trainer/tabs/advanced"
+                        hx-target="#tab-content"
+                        hx-swap="innerHTML"
+                        @click="switchTab('advanced')">
+                    <i class="fas fa-sliders-h"></i> Advanced
+                </button>
+
+                <button type="button"
+                        class="tab-btn"
+                        data-tab="datasets"
+                        :class="{ 'active': activeTab === 'datasets' }"
+                        hx-get="/web/trainer/tabs/datasets"
+                        hx-target="#tab-content"
+                        hx-swap="innerHTML"
+                        @click="switchTab('datasets')">
+                    <i class="fas fa-database"></i> Datasets
+                </button>
+
+                <button type="button"
+                        class="tab-btn"
+                        data-tab="validation"
+                        :class="{ 'active': activeTab === 'validation' }"
+                        hx-get="/web/trainer/tabs/validation"
+                        hx-target="#tab-content"
+                        hx-swap="innerHTML"
+                        @click="switchTab('validation')">
+                    <i class="fas fa-check-circle"></i> Validation
+                </button>
+
+                <button type="button"
+                        class="tab-btn"
+                        data-tab="environments"
+                        :class="{ 'active': activeTab === 'environments' }"
+                        hx-get="/web/trainer/tabs/environments"
+                        hx-target="#tab-content"
+                        hx-swap="innerHTML"
+                        @click="switchTab('environments')">
+                    <i class="fas fa-folder-open"></i> Environments
+                </button>
+
+                <button type="button"
+                        class="tab-btn"
+                        data-tab="ui_settings"
+                        :class="{ 'active': activeTab === 'ui_settings' }"
+                        hx-get="/web/trainer/tabs/ui_settings"
+                        hx-target="#tab-content"
+                        hx-swap="innerHTML"
+                        @click="switchTab('ui_settings')">
+                    <i class="fas fa-sliders-h"></i> UI Settings
+                </button>
+            </div>
+        </nav>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content" :style="eventDockPaddingStyle">
+        <!-- Top Bar -->
+        <div class="topbar">
+
+            <!-- Configuration Selector -->
+            <script>
+            function configSelectorComponent() {
+                return {
+                     open: false,
+                     activeConfig: Alpine.store('trainer')?.activeEnvironment || '',
+                     configs: [],
+                     hasChanges: false,
+                     loading: false,
+                     validationState: null,
+
+                     async loadConfigs() {
+                         this.loading = true;
+                         try {
+                             const response = await fetch('/api/configs/');
+                             if (!response.ok) {
+                                 throw new Error(`HTTP error! status: ${response.status}`);
+                             }
+                             const data = await response.json();
+                             this.configs = data.configs || [];
+                             this.activeConfig = data.active || (data.configs && data.configs.length > 0 ? data.configs[0].name : '');
+                          } catch (error) {
+                             console.error('Failed to load configs:', error);
+                             window.showToast('Failed to load configurations', 'error');
+                             // Ensure configs is always an array
+                             this.configs = [];
+                             this.activeConfig = '';
+                         } finally {
+                             this.loading = false;
+                         }
+                     },
+
+                     // switchConfig is no longer needed - using $root.switchEnvironment instead
+
+                     async validateActiveConfig() {
+                         if (!this.activeConfig) {
+                             this.validationState = null;
+                             return;
+                         }
+
+                         try {
+                             const response = await fetch(`/api/configs/${this.activeConfig}/validate`, {
+                                 method: 'POST'
+                             });
+
+                             if (response.ok) {
+                                 const validation = await response.json();
+
+                                 // Store validation state for UI display
+                                 this.validationState = validation;
+
+                                 if (!validation.is_valid) {
+                                     window.showToast('Configuration has validation errors', 'error');
+                                 } else if (validation.warnings && validation.warnings.length > 0) {
+                                     window.showToast('Configuration has warnings', 'warning');
+                                 }
+                             }
+                         } catch (error) {
+                             console.error('Failed to validate config:', error);
+                         }
+                     },
+
+                     async saveConfig() {
+                         const formData = new FormData(document.getElementById('trainer-form'));
+                         const config = {};
+                         let configsDir = null;
+                         let outputDir = null;
+
+                         for (const [key, value] of formData.entries()) {
+                             if (key.startsWith('--')) {
+                                 config[key] = value;
+                             } else if (key === 'configs_dir') {
+                                 configsDir = value;
+                             }
+                         }
+
+                         // Extract output_dir from config if present
+                         if (config['--output_dir']) {
+                             outputDir = config['--output_dir'];
+                         }
+
+                         try {
+                             // Save the training config
+                             const response = await fetch(`/api/configs/${this.activeConfig}`, {
+                                 method: 'PUT',
+                                 headers: {
+                                     'Content-Type': 'application/json',
+                                 },
+                                 body: JSON.stringify({
+                                     name: this.activeConfig,
+                                     config: config
+                                 })
+                             });
+
+                             if (!response.ok) {
+                                 throw new Error('Failed to save configuration');
+                             }
+
+                             // Update configs_dir in WebUI defaults if it was changed
+                             if (configsDir !== null && configsDir !== this.defaults.configs_dir) {
+                                 const defaultsResponse = await fetch('/api/webui/defaults/update', {
+                                     method: 'POST',
+                                     headers: {
+                                         'Content-Type': 'application/json',
+                                     },
+                                     body: JSON.stringify({
+                                         configs_dir: configsDir
+                                     })
+                                 });
+
+                                if (defaultsResponse.ok) {
+                                    const data = await defaultsResponse.json();
+                                    const defaultsPayload = data.resolved_defaults || data.defaults || {};
+                                    this.defaults = defaultsPayload;
+                                    window.dispatchEvent(new CustomEvent('webui-defaults-updated', {
+                                        detail: {
+                                            defaults: data.defaults || {},
+                                            resolved_defaults: defaultsPayload,
+                                            source: 'config-save'
+                                        }
+                                    }));
+                                }
+                             }
+
+                             // Update output_dir in WebUI defaults if it was changed
+                             if (outputDir !== null && outputDir !== this.defaults.output_dir) {
+                                 const defaultsResponse = await fetch('/api/webui/defaults/update', {
+                                     method: 'POST',
+                                     headers: {
+                                         'Content-Type': 'application/json',
+                                     },
+                                     body: JSON.stringify({
+                                         output_dir: outputDir
+                                     })
+                                 });
+
+                                if (defaultsResponse.ok) {
+                                    const data = await defaultsResponse.json();
+                                    const defaultsPayload = data.resolved_defaults || data.defaults || {};
+                                    this.defaults = defaultsPayload;
+                                    window.dispatchEvent(new CustomEvent('webui-defaults-updated', {
+                                        detail: {
+                                            defaults: data.defaults || {},
+                                            resolved_defaults: defaultsPayload,
+                                            source: 'config-save'
+                                        }
+                                    }));
+                                }
+                             }
+
+                             this.hasChanges = false;
+                             window.showToast('Configuration saved', 'success');
+                         } catch (error) {
+                             console.error('Failed to save config:', error);
+                             window.showToast('Failed to save configuration', 'error');
+                         }
+                     },
+
+                     async saveAsNew() {
+                         const name = prompt('Enter name for new configuration:');
+                         if (!name) return;
+
+                         const formData = new FormData(document.getElementById('trainer-form'));
+                         const config = {};
+
+                         for (const [key, value] of formData.entries()) {
+                             if (key.startsWith('--')) {
+                                 config[key] = value;
+                             }
+                         }
+
+                         try {
+                             const response = await fetch('/api/configs/', {
+                                 method: 'POST',
+                                 headers: {
+                                     'Content-Type': 'application/json',
+                                 },
+                                 body: JSON.stringify({
+                                     name: name,
+                                     config: config
+                                 })
+                             });
+
+                             if (response.ok) {
+                                 await this.loadConfigs();
+                                 // Use the main component's switchEnvironment method
+                                await Alpine.store('trainer').switchEnvironment(name);
+                                 window.showToast(`Created new configuration: ${name}`, 'success');
+                             }
+                         } catch (error) {
+                             console.error('Failed to create config:', error);
+                             window.showToast('Failed to create configuration', 'error');
+                         }
+                     }
+                 }
+            }
+            </script>
+            <div class="config-selector"
+                 x-data="configSelectorComponent()"
+                 x-init="(() => {
+                    loadConfigs();
+                    $watch('$store.trainer.activeEnvironment', (value) => { activeConfig = value; loadConfigs(); });
+
+                    // Listen for environment changes from other components
+                    const handleEnvironmentChange = (event) => {
+                        activeConfig = event.detail.environment;
+                        loadConfigs();
+                        validateActiveConfig();
+                    };
+
+                    window.addEventListener('environment-changed', handleEnvironmentChange);
+
+                    const handleConfigsUpdated = () => {
+                        loadConfigs();
+                    };
+
+                    window.addEventListener('configs-updated', handleConfigsUpdated);
+
+                    // Cleanup on destroy
+                    $el.addEventListener('x-destroy', () => {
+                        window.removeEventListener('environment-changed', handleEnvironmentChange);
+                        window.removeEventListener('configs-updated', handleConfigsUpdated);
+                    });
+                 })()"
+                 @click.away="open = false"
+                 style="position: relative;">
+
+                <button @click="open = !open"
+                        class="btn btn-sm d-flex align-items-center gap-2"
+                        :class="{
+                            'btn-outline-danger': validationState && !validationState.is_valid,
+                            'btn-outline-warning': validationState && validationState.is_valid && validationState.warnings && validationState.warnings.length > 0,
+                            'btn-outline-success': validationState && validationState.is_valid && (!validationState.warnings || validationState.warnings.length === 0),
+                            'btn-outline-secondary': !validationState
+                        }"
+                        :disabled="loading">
+                    <i class="fas fa-cog" x-show="!loading"></i>
+                    <span class="spinner-border spinner-border-sm" x-show="loading"></span>
+                    <span x-text="activeConfig || 'No Config Selected'"></span>
+
+                    <!-- Validation state indicators -->
+                    <span x-show="validationState && !validationState.is_valid"
+                          class="badge bg-danger ms-1"
+                          title="Configuration has errors">
+                        <i class="fas fa-exclamation-circle"></i>
+                    </span>
+                    <span x-show="validationState && validationState.is_valid && validationState.warnings && validationState.warnings.length > 0"
+                          class="badge bg-warning text-dark ms-1"
+                          title="Configuration has warnings">
+                        <i class="fas fa-exclamation-triangle"></i>
+                    </span>
+                    <span x-show="validationState && validationState.is_valid && (!validationState.warnings || validationState.warnings.length === 0)"
+                          class="badge bg-success ms-1"
+                          title="Configuration is valid">
+                        <i class="fas fa-check-circle"></i>
+                    </span>
+
+                    <span x-show="hasChanges" class="badge bg-warning ms-2">Modified</span>
+                    <i class="fas fa-chevron-down ms-2"></i>
+                </button>
+
+                <div x-show="open"
+                     x-transition
+                     class="dropdown-menu show config-selector__menu"
+                     style="position: absolute; top: calc(100% + 0.5rem); right: 0; min-width: 240px; transform: translateX(calc(50% - var(--spacing-xl)));">
+
+                    <div class="dropdown-header">Configurations</div>
+
+                    <!-- Validation feedback -->
+                    <div x-show="validationState && (!validationState.is_valid || (validationState.warnings && validationState.warnings.length > 0))"
+                         class="px-3 py-2 border-bottom">
+                        <div x-show="validationState && validationState.errors && validationState.errors.length > 0" class="mb-2">
+                            <small class="text-danger fw-bold">Errors:</small>
+                            <template x-for="error in (validationState && validationState.errors ? validationState.errors : [])" :key="error">
+                                <small class="text-danger d-block" x-text="`• ${error}`"></small>
+                            </template>
+                        </div>
+                        <div x-show="validationState && validationState.warnings && validationState.warnings.length > 0">
+                            <small class="text-warning fw-bold">Warnings:</small>
+                            <template x-for="warning in (validationState && validationState.warnings ? validationState.warnings : [])" :key="warning">
+                                <small class="text-warning d-block" x-text="`• ${warning}`"></small>
+                            </template>
+                        </div>
+                    </div>
+
+                    <template x-for="config in (configs || [])" :key="config.name || $id('config')">
+                        <a @click.prevent="Alpine.store('trainer').switchEnvironment(config.name); open = false;"
+                           class="dropdown-item"
+                           :class="{'active': config.name === activeConfig}"
+                           href="javascript:void(0)">
+                            <span x-text="config.name"></span>
+                        </a>
+                    </template>
+
+                    <div class="dropdown-divider"></div>
+
+                    <a @click.prevent="Alpine.store('trainer').saveConfig()"
+                       class="dropdown-item"
+                       href="#">
+                        <i class="fas fa-save me-2"></i> Save
+                    </a>
+
+                    <a @click="saveAsNew()"
+                       class="dropdown-item"
+                       href="#">
+                        <i class="fas fa-plus me-2"></i> Save As...
+                    </a>
+
+                    <div class="dropdown-divider"></div>
+
+                    <a href="#environments"
+                       @click="open = false; $nextTick(() => window.location.hash = 'environments')"
+                       class="dropdown-item">
+                        <i class="fas fa-folder-open me-2"></i> Manage Configs
+                    </a>
+                </div>
+            </div>
+
+            <div class="topbar-right">
+                <div class="header-actions">
+                    <button type="button"
+                            class="trainer-action-btn btn btn-outline-secondary"
+                            :class="formDirty ? 'is-active' : ''"
+                            :disabled="!formDirty"
+                            @click="saveConfig()">
+                        <i class="fas fa-save"></i>
+                        <span class="btn-text">Save</span>
+                    </button>
+
+                    {% with placement='header' %}
+                        {% include 'components/action_buttons_htmx.html' %}
+                    {% endwith %}
+                </div>
+                <div class="training-status-pill" x-show="isTraining" x-transition>
+                    <i class="fas fa-cog fa-spin"></i>
+                    <span>Training</span>
+                    <span class="badge bg-info text-dark" x-text="`${trainingProgress.percent || 0}%`"></span>
+                    <span class="text-muted"
+                          x-text="`Step ${trainingProgress.step || 0}`"></span>
+                </div>
+                <div id="connectionStatus" class="connection-status-inline">
+                    <i class="fas fa-circle text-success"></i> Connected
+                </div>
+            </div>
+        </div>
+
+        <!-- Content Wrapper -->
+        <div class="content-wrapper">
+            <!-- Validation Results -->
+            <div id="validation-results"></div>
+            <div id="training-status" class="mt-3"></div>
+
+            {% with placement='panel' %}
+                {% include 'components/action_buttons_htmx.html' %}
+            {% endwith %}
+
+            <!-- Training Form -->
+            <form id="trainer-form">
+                <!-- Tab Content -->
+                <div id="tab-content" class="tab-content-wrapper">
+                    <!-- Default basic config content will be loaded via HTMX -->
+                    <div class="text-center py-5">
+                        <i class="fas fa-spinner fa-spin fa-2x"></i>
+                        <p class="mt-3">Loading configuration...</p>
+                    </div>
+                </div>
+            </form>
+
+            <!-- Training Progress -->
+            <div x-show="isTraining"
+                 x-transition
+                 class="training-progress-section">
+                <div class="config-card">
+                    <h5 class="card-title">
+                        <i class="fas fa-chart-line"></i> Training Progress
+                    </h5>
+                    <div class="progress mb-3">
+                        <div class="progress-bar"
+                             :style="`width: ${trainingProgress.percent || 0}%`"
+                             x-text="`${trainingProgress.percent || 0}%`"></div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-3">
+                            <strong>Epoch:</strong>
+                            <span x-text="trainingProgress.epoch || 0"></span>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Step:</strong>
+                            <span x-text="trainingProgress.step || 0"></span>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Loss:</strong>
+                            <span x-text="trainingProgress.loss || 'N/A'"></span>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>LR:</strong>
+                            <span x-text="trainingProgress.learning_rate || 'N/A'"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- Save Dataset Dialog -->
+    <div class="save-dataset-overlay"
+         x-show="showSaveDialog"
+         x-transition.opacity.duration.150ms
+         @click.self="cancelSaveDatasets()">
+        <div class="save-dataset-modal">
+            <h3 class="mb-4">Save Dataset Configuration</h3>
+
+            <p class="mb-4">Are you sure you want to save the dataset configuration?</p>
+
+            <div class="form-check mb-4">
+                <input type="checkbox"
+                       id="createBackupCheck"
+                       x-model="createBackupOption"
+                       class="form-check-input">
+                <label class="form-check-label" for="createBackupCheck">
+                    Create backup before saving
+                </label>
+                <div class="text-muted small mt-2" x-show="createBackupOption">
+                    Backup will be saved as:<br>
+                    <code x-text="'multidatabackend.json.backup-' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5)"></code>
+                </div>
+            </div>
+
+            <div class="d-flex justify-content-end gap-2">
+                <button type="button"
+                        class="btn btn-secondary"
+                        @click="cancelSaveDatasets()">
+                    No, Cancel
+                </button>
+                <button type="button"
+                        class="btn btn-primary"
+                        @click="confirmSaveDatasets()">
+                    Yes, Save
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Save Config Dialog -->
+    <div class="save-dataset-overlay"
+         x-show="showConfigSaveDialog"
+         x-transition.opacity.duration.150ms
+         @click.self="cancelSaveConfig()">
+        <div class="save-dataset-modal">
+            <h3 class="mb-4">Save Training Configuration</h3>
+
+            <p class="mb-4">Choose save options for your training configuration:</p>
+
+            <div class="form-check mb-3">
+                <input type="checkbox"
+                       id="createConfigBackupCheck"
+                       x-model="createConfigBackupOption"
+                       class="form-check-input">
+                <label class="form-check-label" for="createConfigBackupCheck">
+                    Create backup before saving
+                </label>
+                <div class="text-muted small mt-2" x-show="createConfigBackupOption">
+                    Backup will be saved as:<br>
+                    <code x-text="'config.json.backup-' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5)"></code>
+                </div>
+            </div>
+
+            <div class="form-check mb-4">
+                <input type="checkbox"
+                       id="preserveDefaultsCheck"
+                       x-model="preserveDefaultsOption"
+                       class="form-check-input">
+                <label class="form-check-label" for="preserveDefaultsCheck">
+                    Preserve defaults (only save changed values)
+                </label>
+                <div class="text-muted small mt-2" x-show="preserveDefaultsOption">
+                    Values matching their defaults will not be saved, resulting in a cleaner config file.
+                </div>
+            </div>
+
+            <div class="d-flex justify-content-end gap-2">
+                <button type="button"
+                        class="btn btn-secondary"
+                        @click="cancelSaveConfig()">
+                    Cancel
+                </button>
+                <button type="button"
+                        class="btn btn-primary"
+                        @click="confirmSaveConfig()">
+                    Save Configuration
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Training Events Dock -->
+    <div class="event-dock-shell">
+        <div class="event-dock"
+             :class="{
+                 'collapsed': eventDockCollapsed,
+                 'resizing': eventDockIsResizing
+             }"
+             :style="eventDockStyle">
+            <div class="event-dock-toolbar">
+                <div class="event-dock-title">
+                    <i class="fas fa-terminal"></i>
+                    <span>Training Events</span>
+                    <span class="badge ms-2"
+                          :class="{
+                              'bg-success': connectionStatus === 'connected',
+                              'bg-danger': connectionStatus === 'disconnected',
+                              'bg-warning text-dark': connectionStatus === 'reconnecting',
+                              'bg-secondary': !['connected', 'disconnected', 'reconnecting'].includes(connectionStatus)
+                          }"
+                          x-text="connectionStatus"></span>
+                </div>
+                <div class="event-dock-actions">
+                    <button type="button" class="btn btn-sm btn-outline-light"
+                            title="Refresh"
+                            @click="htmx.trigger('#event-list', 'refresh')">
+                        <i class="fas fa-rotate-right"></i>
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-light"
+                            title="Toggle events panel"
+                            @click="toggleEventDock()">
+                        <i :class="eventDockCollapsed ? 'fas fa-chevron-up' : 'fas fa-chevron-down'"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="event-dock-resize-handle"
+                 x-show="!eventDockCollapsed"
+                 @pointerdown="startEventDockResize($event)">
+                <span></span>
+            </div>
+            <div class="event-dock-body"
+                 x-show="!eventDockCollapsed"
+                 x-transition.opacity.duration.150ms>
+                {% set events_enabled = webui_defaults.event_stream_enabled if webui_defaults is defined and webui_defaults.event_stream_enabled is not none else True %}
+                {% set polling_interval = webui_defaults.event_polling_interval if webui_defaults is defined and webui_defaults.event_polling_interval else 5 %}
+                <div id="event-list"
+                     class="event-list"
+                     hx-get="/api/events/recent"
+                     hx-trigger="load{% if events_enabled %}, every {{ polling_interval }}s{% endif %}, refresh"
+                     hx-swap="innerHTML">
+                    <div class="text-muted">Loading events...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<!-- Load dataloader builder scripts -->
+<script src="/static/js/server-config.js"></script>
+<script src="/static/js/dataloader-builder.js"></script>
+<script src="/static/js/dataloader-htmx-init.js"></script>
+<script src="/static/js/event-handler.js"></script>
+<script src="/static/js/services/dependency-manager.js"></script>
+
+<script>
+// Enhanced HTMX configuration for trainer
+document.addEventListener('DOMContentLoaded', function() {
+    // Custom HTMX event handlers
+    document.body.addEventListener('htmx:beforeRequest', function(evt) {
+        // Show loading states
+        const target = evt.detail.target;
+        if (target) {
+            target.style.opacity = '0.7';
+        }
+    });
+
+    document.body.addEventListener('htmx:afterRequest', function(evt) {
+        // Hide loading states
+        const target = evt.detail.target;
+        if (target) {
+            target.style.opacity = '1';
+        }
+
+        // Note: Configuration save feedback is handled inline by the server response
+        // which shows a temporary success message that auto-hides after 3 seconds
+
+        // The dataloader-htmx-init.js handles dataset builder initialization
+    });
+
+    // Configure HTMX to include CSRF token in all requests
+    if (window.htmx) {
+        htmx.config.includeIndicatorStyles = false; // We use our own CSS
+        document.body.addEventListener('htmx:configRequest', (event) => {
+            // Add CSRF token to all requests
+            const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+            const csrfToken = csrfMeta ? csrfMeta.content : null;
+            if (csrfToken) {
+                event.detail.headers['X-CSRF-Token'] = csrfToken;
+            }
+        });
+
+        // Global error handling for HTMX requests
+        document.body.addEventListener('htmx:responseError', (event) => {
+            console.error('HTMX error:', event.detail);
+            const status = event.detail.xhr?.status;
+            let message = 'An error occurred. Please try again.';
+
+            if (status === 403) {
+                message = 'Security error. Please refresh the page.';
+            } else if (status === 404) {
+                message = 'The requested resource was not found.';
+            } else if (status >= 500) {
+                message = 'Server error. Please try again later.';
+            } else if (status === 0) {
+                message = 'Network error. Please check your connection.';
+            }
+
+            window.showToast(message, 'error');
+
+            // Re-enable any disabled buttons
+            const trigger = event.detail.elt;
+            if (trigger && trigger.disabled) {
+                trigger.disabled = false;
+            }
+        });
+
+        // Handle timeout errors
+        document.body.addEventListener('htmx:timeout', (event) => {
+            window.showToast('Request timed out. Please try again.', 'error');
+            const trigger = event.detail.elt;
+            if (trigger && trigger.disabled) {
+                trigger.disabled = false;
+            }
+        });
+    }
+});
+
+// Global functions for toast notifications (already defined in base_htmx.html)
+window.showToast = window.showToast || function(message, type) {
+    // Fallback toast notification (silent)
+};
+</script>
+
+<script src="/static/js/modules/tab-navigation.js" defer></script>
+
+<!-- Module loader for browser compatibility -->
+<script src="/static/js/module-loader.js"></script>
+
+<!-- Load modular JavaScript with fallback support -->
+<script>
+// Load trainer based on browser support
+if (window.shouldUseModules && window.shouldUseModules()) {
+    // Modern browsers: load trainer.js (IIFE that creates TrainerUI)
+    var script = document.createElement('script');
+    script.src = '/static/js/trainer.js';
+    script.onload = function() {
+        if (window.TrainerUI) {
+            window.trainer = new TrainerUI();
+        }
+    };
+    document.head.appendChild(script);
+} else {
+    // Older browsers: use compatibility version
+    window.loadModule('/static/js/trainer-main-compat.js').then(function(module) {
+        window.trainer = new module.TrainerMain();
+        window.trainer.initialize();
+    }).catch(function(error) {
+        console.error('Failed to load trainer module:', error);
+        // Fallback to basic functionality
+        console.warn('Using basic trainer functionality');
+    });
+}
+</script>
+
+<!-- Include SSE component for real-time training updates -->
+{% include 'components/training_events_sse.html' %}
+
+{% endblock %}

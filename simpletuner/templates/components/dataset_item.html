@@ -1,0 +1,489 @@
+<!-- Dataset Item Template -->
+<template id="dataset-item-template">
+    <div class="dataset-item" data-index="">
+        <div class="dataset-header">
+            <div class="dataset-title">
+                <i class="dataset-icon fas fa-database"></i>
+                <input type="text" class="dataset-id-input" placeholder="Dataset ID" value="">
+                <span class="dataset-type-badge"></span>
+            </div>
+            <div class="dataset-actions">
+                <button class="btn-icon btn-collapse" title="Collapse/Expand">
+                    <i class="fas fa-chevron-down"></i>
+                </button>
+                <button class="btn-icon btn-duplicate" title="Duplicate">
+                    <i class="fas fa-copy"></i>
+                </button>
+                <button class="btn-icon btn-remove" title="Remove">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </div>
+        </div>
+        
+        <div class="dataset-content">
+            <!-- Basic Configuration -->
+            <div class="config-section">
+                <h6 class="section-title">Basic Configuration</h6>
+                <div class="config-grid">
+                    <div class="form-group">
+                        <label>Dataset Type</label>
+                        <select class="form-control" data-field="dataset_type">
+                            <option value="image">Image</option>
+                            <option value="video">Video</option>
+                            <option value="text_embeds">Text Embeds</option>
+                            <option value="image_embeds">Image Embeds</option>
+                            <option value="conditioning">Conditioning</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Storage Type</label>
+                        <select class="form-control" data-field="type">
+                            <option value="local">Local</option>
+                            <option value="aws">AWS S3</option>
+                            <option value="csv">CSV</option>
+                            <option value="huggingface">Hugging Face</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group dataset-disabled">
+                        <label>
+                            <input type="checkbox" data-field="disabled">
+                            Disabled
+                        </label>
+                    </div>
+                    
+                    <div class="form-group text-embeds-default" style="display:none;">
+                        <label>
+                            <input type="checkbox" data-field="default">
+                            Default Text Embeds Dataset
+                        </label>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Storage Configuration -->
+            <div class="config-section storage-config">
+                <!-- Local Storage -->
+                <div class="storage-local" style="display:none;">
+                    <h6 class="section-title">Local Storage</h6>
+                    <div class="form-group">
+                        <label>Data Directory</label>
+                        <input type="text" class="form-control" data-field="instance_data_dir" 
+                               placeholder="/path/to/data">
+                    </div>
+                </div>
+                
+                <!-- AWS Storage -->
+                <div class="storage-aws" style="display:none;">
+                    <h6 class="section-title">AWS S3 Configuration</h6>
+                    <div class="config-grid">
+                        <div class="form-group">
+                            <label>Bucket Name</label>
+                            <input type="text" class="form-control" data-field="aws_bucket_name">
+                        </div>
+                        <div class="form-group">
+                            <label>Data Prefix</label>
+                            <input type="text" class="form-control" data-field="aws_data_prefix">
+                        </div>
+                        <div class="form-group">
+                            <label>Region</label>
+                            <input type="text" class="form-control" data-field="aws_region_name">
+                        </div>
+                        <div class="form-group">
+                            <label>Endpoint URL</label>
+                            <input type="text" class="form-control" data-field="aws_endpoint_url">
+                        </div>
+                        <div class="form-group">
+                            <label>Access Key ID</label>
+                            <input type="text" class="form-control" data-field="aws_access_key_id">
+                        </div>
+                        <div class="form-group">
+                            <label>Secret Access Key</label>
+                            <input type="password" class="form-control" data-field="aws_secret_access_key">
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- CSV Storage -->
+                <div class="storage-csv" style="display:none;">
+                    <h6 class="section-title">CSV Configuration</h6>
+                    <div class="config-grid">
+                        <div class="form-group">
+                            <label>CSV File Path</label>
+                            <input type="text" class="form-control" data-field="csv_file">
+                        </div>
+                        <div class="form-group">
+                            <label>Caption Column</label>
+                            <input type="text" class="form-control" data-field="csv_caption_column">
+                        </div>
+                        <div class="form-group">
+                            <label>Cache Directory</label>
+                            <input type="text" class="form-control" data-field="csv_cache_dir">
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Hugging Face Storage -->
+                <div class="storage-huggingface" style="display:none;">
+                    <h6 class="section-title">Hugging Face Configuration</h6>
+                    <div class="config-grid">
+                        <div class="form-group">
+                            <label>Dataset Name</label>
+                            <input type="text" class="form-control" data-field="dataset_name" 
+                                   placeholder="username/dataset-name">
+                        </div>
+                        <div class="form-group">
+                            <label>Image Column</label>
+                            <input type="text" class="form-control" data-field="image_column">
+                        </div>
+                        <div class="form-group">
+                            <label>Caption Column</label>
+                            <input type="text" class="form-control" data-field="caption_column">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Image/Video Specific Configuration -->
+            <div class="config-section media-config" style="display:none;">
+                <h6 class="section-title">Media Processing</h6>
+                
+                <!-- Resolution Settings -->
+                <div class="subsection">
+                    <h6 class="subsection-title">Resolution</h6>
+                    <div class="config-grid">
+                        <div class="form-group">
+                            <label>Resolution</label>
+                            <input type="number" class="form-control" data-field="resolution" 
+                                   placeholder="1024" step="any">
+                        </div>
+                        <div class="form-group">
+                            <label>Resolution Type</label>
+                            <select class="form-control" data-field="resolution_type">
+                                <option value="pixel">Pixel (Edge)</option>
+                                <option value="pixel_area">Pixel Area</option>
+                                <option value="area">Area (Megapixels)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Minimum Image Size</label>
+                            <input type="number" class="form-control" data-field="minimum_image_size" 
+                                   step="any">
+                        </div>
+                        <div class="form-group">
+                            <label>Maximum Image Size</label>
+                            <input type="number" class="form-control" data-field="maximum_image_size" 
+                                   step="any">
+                        </div>
+                        <div class="form-group">
+                            <label>Target Downsample Size</label>
+                            <input type="number" class="form-control" data-field="target_downsample_size" 
+                                   step="any">
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Aspect Ratio Settings -->
+                <div class="subsection">
+                    <h6 class="subsection-title">Aspect Ratio</h6>
+                    <div class="config-grid">
+                        <div class="form-group">
+                            <label>Minimum Aspect Ratio</label>
+                            <input type="number" class="form-control" data-field="minimum_aspect_ratio" 
+                                   placeholder="0.5" step="0.01">
+                        </div>
+                        <div class="form-group">
+                            <label>Maximum Aspect Ratio</label>
+                            <input type="number" class="form-control" data-field="maximum_aspect_ratio" 
+                                   placeholder="3.0" step="0.01">
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Crop Settings -->
+                <div class="subsection">
+                    <h6 class="subsection-title">Cropping</h6>
+                    <div class="config-grid">
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" data-field="crop">
+                                Enable Cropping
+                            </label>
+                        </div>
+                        <div class="form-group crop-dependent">
+                            <label>Crop Style</label>
+                            <select class="form-control" data-field="crop_style">
+                                <option value="random">Random</option>
+                                <option value="center">Center</option>
+                                <option value="corner">Corner</option>
+                                <option value="face">Face</option>
+                            </select>
+                        </div>
+                        <div class="form-group crop-dependent">
+                            <label>Crop Aspect</label>
+                            <select class="form-control" data-field="crop_aspect">
+                                <option value="square">Square</option>
+                                <option value="preserve">Preserve</option>
+                                <option value="closest">Closest</option>
+                                <option value="random">Random</option>
+                            </select>
+                        </div>
+                        <div class="form-group crop-dependent">
+                            <label>Crop Aspect Buckets</label>
+                            <input type="text" class="form-control" data-field="crop_aspect_buckets" 
+                                   placeholder="0.33, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75">
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Caption Settings -->
+                <div class="subsection">
+                    <h6 class="subsection-title">Captions</h6>
+                    <div class="config-grid">
+                        <div class="form-group">
+                            <label>Caption Strategy</label>
+                            <select class="form-control" data-field="caption_strategy">
+                                <option value="textfile">Text File</option>
+                                <option value="instanceprompt">Instance Prompt</option>
+                                <option value="filename">Filename</option>
+                                <option value="parquet">Parquet</option>
+                                <option value="csv">CSV</option>
+                                <option value="huggingface">Hugging Face</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Instance Prompt</label>
+                            <input type="text" class="form-control" data-field="instance_prompt">
+                        </div>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" data-field="prepend_instance_prompt">
+                                Prepend Instance Prompt
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" data-field="only_instance_prompt">
+                                Only Instance Prompt
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Parquet Configuration -->
+                <div class="subsection parquet-config" style="display:none;">
+                    <h6 class="subsection-title">Parquet Configuration</h6>
+                    <div class="config-grid">
+                        <div class="form-group">
+                            <label>Parquet Path</label>
+                            <input type="text" class="form-control" data-field="parquet.path">
+                        </div>
+                        <div class="form-group">
+                            <label>Filename Column</label>
+                            <input type="text" class="form-control" data-field="parquet.filename_column">
+                        </div>
+                        <div class="form-group">
+                            <label>Caption Column</label>
+                            <input type="text" class="form-control" data-field="parquet.caption_column">
+                        </div>
+                        <div class="form-group">
+                            <label>Fallback Caption Column</label>
+                            <input type="text" class="form-control" data-field="parquet.fallback_caption_column">
+                        </div>
+                        <div class="form-group">
+                            <label>Width Column</label>
+                            <input type="text" class="form-control" data-field="parquet.width_column">
+                        </div>
+                        <div class="form-group">
+                            <label>Height Column</label>
+                            <input type="text" class="form-control" data-field="parquet.height_column">
+                        </div>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" data-field="parquet.identifier_includes_extension">
+                                Identifier Includes Extension
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Video Specific -->
+                <div class="subsection video-config" style="display:none;">
+                    <h6 class="subsection-title">Video Configuration</h6>
+                    <div class="config-grid">
+                        <div class="form-group">
+                            <label>Number of Frames</label>
+                            <input type="number" class="form-control" data-field="video.num_frames" 
+                                   placeholder="125">
+                        </div>
+                        <div class="form-group">
+                            <label>Minimum Frames</label>
+                            <input type="number" class="form-control" data-field="video.min_frames" 
+                                   placeholder="125">
+                        </div>
+                        <div class="form-group">
+                            <label>Maximum Frames</label>
+                            <input type="number" class="form-control" data-field="video.max_frames">
+                        </div>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" data-field="video.is_i2v">
+                                Enable I2V Training
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Cache Configuration -->
+            <div class="config-section cache-config">
+                <h6 class="section-title">Cache Configuration</h6>
+                <div class="config-grid">
+                    <div class="form-group cache-dir-vae">
+                        <label>VAE Cache Directory</label>
+                        <input type="text" class="form-control" data-field="cache_dir_vae">
+                    </div>
+                    <div class="form-group cache-dir">
+                        <label>Cache Directory</label>
+                        <input type="text" class="form-control" data-field="cache_dir">
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" data-field="vae_cache_clear_each_epoch">
+                            Clear VAE Cache Each Epoch
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" data-field="hash_filenames">
+                            Hash Filenames
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label>Write Batch Size</label>
+                        <input type="number" class="form-control" data-field="write_batch_size" 
+                               placeholder="128">
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Advanced Settings -->
+            <div class="config-section advanced-config">
+                <h6 class="section-title">Advanced Settings</h6>
+                <div class="config-grid">
+                    <div class="form-group">
+                        <label>Repeats</label>
+                        <input type="number" class="form-control" data-field="repeats" 
+                               placeholder="0" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label>Probability</label>
+                        <input type="number" class="form-control" data-field="probability" 
+                               placeholder="1.0" min="0" max="1" step="0.1">
+                    </div>
+                    <div class="form-group">
+                        <label>Metadata Backend</label>
+                        <select class="form-control" data-field="metadata_backend">
+                            <option value="discovery">Discovery</option>
+                            <option value="parquet">Parquet</option>
+                            <option value="huggingface">Hugging Face</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" data-field="is_regularisation_data">
+                            Regularisation Data
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label>Skip File Discovery</label>
+                        <input type="text" class="form-control" data-field="skip_file_discovery" 
+                               placeholder="vae metadata aspect text">
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" data-field="preserve_data_backend_cache">
+                            Preserve Backend Cache
+                        </label>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Embed References -->
+            <div class="config-section embed-references" style="display:none;">
+                <h6 class="section-title">Embed Dataset References</h6>
+                <div class="config-grid">
+                    <div class="form-group">
+                        <label>Text Embeds Dataset ID</label>
+                        <input type="text" class="form-control" data-field="text_embeds" 
+                               placeholder="text-embeds-id">
+                    </div>
+                    <div class="form-group">
+                        <label>Image Embeds Dataset ID</label>
+                        <input type="text" class="form-control" data-field="image_embeds" 
+                               placeholder="image-embeds-id">
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Conditioning Configuration -->
+            <div class="config-section conditioning-config" style="display:none;">
+                <h6 class="section-title">Conditioning Configuration</h6>
+                <div class="config-grid">
+                    <div class="form-group">
+                        <label>Conditioning Type</label>
+                        <select class="form-control" data-field="conditioning_type">
+                            <option value="">None</option>
+                            <option value="controlnet">ControlNet</option>
+                            <option value="mask">Mask</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Conditioning Data IDs</label>
+                        <input type="text" class="form-control" data-field="conditioning_data" 
+                               placeholder="conditioning-dataset-id">
+                    </div>
+                </div>
+                
+                <!-- Conditioning Generation -->
+                <div class="conditioning-generation">
+                    <h6 class="subsection-title">Conditioning Generation</h6>
+                    <button class="btn btn-sm btn-secondary add-conditioning-btn">
+                        <i class="fas fa-plus"></i> Add Conditioning
+                    </button>
+                    <div class="conditioning-list"></div>
+                </div>
+            </div>
+            
+            <!-- Text Embed Filter (for text_embeds only) -->
+            <div class="config-section text-embed-filter" style="display:none;">
+                <h6 class="section-title">Caption Filtering</h6>
+                <div class="form-group">
+                    <label>Caption Filter List</label>
+                    <textarea class="form-control" data-field="caption_filter_list" 
+                              rows="3" placeholder="Enter filter strings or regex patterns"></textarea>
+                </div>
+            </div>
+        </div>
+    </div>
+</template>
+
+<!-- Conditioning Item Template -->
+<template id="conditioning-item-template">
+    <div class="conditioning-item" data-cond-index="">
+        <div class="conditioning-header">
+            <select class="form-control conditioning-type">
+                <option value="superresolution">Super Resolution</option>
+                <option value="jpeg_artifacts">JPEG Artifacts</option>
+                <option value="depth_midas">Depth (Midas)</option>
+                <option value="random_masks">Random Masks</option>
+                <option value="canny">Canny Edges</option>
+            </select>
+            <button class="btn-icon btn-remove-conditioning">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div class="conditioning-params"></div>
+    </div>
+</template>

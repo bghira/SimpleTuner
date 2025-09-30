@@ -1,0 +1,20 @@
+<div class="tab-content active" id="basic-tab">
+    <div class="config-card">
+        <h5 class="card-title">
+            <i class="fas fa-play-circle"></i> Basic Configuration
+        </h5>
+        <div class="row">
+            <div class="col-md-6 mb-3">
+                {{ render_field('job_id', 'Job ID', 'text', 'foobar123') }}
+            </div>
+            <div class="col-md-6 mb-3">
+                {{ render_field('--resume_from_checkpoint', 'Resume From Checkpoint', 'text', 'latest') }}
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-md-12 mb-3">
+                {{ render_field('--data_backend_config', 'Data Backend Config', 'text', 'config/multidatabackend.json') }}
+            </div>
+        </div>
+    </div>
+</div>

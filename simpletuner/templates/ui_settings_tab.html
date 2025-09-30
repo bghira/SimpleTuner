@@ -1,0 +1,351 @@
+<!-- templates/ui_settings_tab.html - WebUI preferences tab -->
+{% set ui_context = ui_settings | default({}) %}
+{% set defaults = ui_context.defaults | default({}) %}
+<script>
+if (!window.uiSettingsTabComponent) {
+    window.uiSettingsTabComponent = function(initialData) {
+        const initial = initialData || {};
+        return {
+            defaults: initial.defaults || {},
+            themeOptions: initial.themes || [],
+            eventIntervals: initial.event_interval_options || [5, 10, 15, 30, 60],
+            settings: {},
+            original: {},
+            saving: false,
+            successMessage: '',
+            errorMessage: '',
+            init() {
+                this.resetFromDefaults();
+            },
+            normalizeDefaults(source) {
+                const data = source || {};
+                return {
+                    theme: (data.theme || 'dark').toLowerCase(),
+                    event_polling_interval: Number(data.event_polling_interval) || 5,
+                    event_stream_enabled: data.event_stream_enabled !== false,
+                    output_dir: (data.output_dir && data.output_dir !== 'Not configured') ? data.output_dir : '',
+                    configs_dir: data.configs_dir || ''
+                };
+            },
+            clone(value) {
+                return JSON.parse(JSON.stringify(value));
+            },
+            resetFromDefaults() {
+                const normalized = this.normalizeDefaults(this.defaults);
+                this.settings = this.clone(normalized);
+                this.original = this.clone(normalized);
+                this.successMessage = '';
+                this.errorMessage = '';
+            },
+            syncDefaults(detail) {
+                const payload = detail && (detail.resolved_defaults || detail.defaults);
+                if (!payload) {
+                    return;
+                }
+                this.defaults = payload;
+                const normalized = this.normalizeDefaults(payload);
+                this.settings = this.clone(normalized);
+                this.original = this.clone(normalized);
+                this.successMessage = '';
+                this.errorMessage = '';
+            },
+            markDirty() {
+                this.successMessage = '';
+                this.errorMessage = '';
+            },
+            get hasChanges() {
+                return JSON.stringify(this.settings) !== JSON.stringify(this.original);
+            },
+            selectTheme(theme) {
+                this.settings.theme = theme;
+                this.markDirty();
+                if (typeof window.applyTheme === 'function') {
+                    window.applyTheme(theme);
+                }
+            },
+            toggleEventStream() {
+                this.settings.event_stream_enabled = !this.settings.event_stream_enabled;
+                this.markDirty();
+            },
+            updateInterval(value) {
+                const parsed = Number(value);
+                this.settings.event_polling_interval = Number.isFinite(parsed) && parsed > 0 ? parsed : 5;
+                this.markDirty();
+            },
+            updateOutputDir(value) {
+                this.settings.output_dir = value;
+                this.markDirty();
+            },
+            async saveSettings() {
+                if (this.saving || !this.hasChanges) {
+                    return;
+                }
+                this.saving = true;
+                this.errorMessage = '';
+                this.successMessage = '';
+
+                const payload = {
+                    theme: this.settings.theme,
+                    event_polling_interval: this.settings.event_polling_interval,
+                    event_stream_enabled: this.settings.event_stream_enabled,
+                };
+
+                if (typeof this.settings.output_dir === 'string' && this.settings.output_dir.trim()) {
+                    payload.output_dir = this.settings.output_dir.trim();
+                }
+
+                try {
+                    const response = await fetch('/api/webui/defaults/update', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                    });
+
+                    if (!response.ok) {
+                        let message = 'Failed to save preferences';
+                        try {
+                            const detail = await response.json();
+                            if (detail && detail.detail) {
+                                message = detail.detail;
+                            }
+                        } catch (_) {}
+                        throw new Error(message);
+                    }
+
+                    const data = await response.json();
+                    if (data) {
+                        const defaultsPayload = data.resolved_defaults || data.defaults || {};
+                        this.defaults = defaultsPayload;
+                        const normalized = this.normalizeDefaults(defaultsPayload);
+                        this.settings = this.clone(normalized);
+                        this.original = this.clone(normalized);
+                        this.successMessage = 'Preferences saved.';
+                        if (typeof window.applyTheme === 'function') {
+                            window.applyTheme(this.settings.theme);
+                        }
+                        window.dispatchEvent(new CustomEvent('webui-defaults-updated', {
+                            detail: {
+                                defaults: data.defaults || {},
+                                resolved_defaults: defaultsPayload,
+                                source: 'ui-settings'
+                            }
+                        }));
+                        if (window.showToast) {
+                            window.showToast('UI preferences updated.', 'success');
+                        }
+                    }
+                } catch (error) {
+                    console.error('Failed to save UI preferences', error);
+                    this.errorMessage = error.message || 'Failed to save preferences.';
+                    if (window.showToast) {
+                        window.showToast(this.errorMessage, 'error');
+                    }
+                } finally {
+                    this.saving = false;
+                }
+            },
+            discardChanges() {
+                this.resetFromDefaults();
+            },
+        };
+    };
+}
+</script>
+
+<div class="tab-fragment"
+     id="ui-settings-tab-content"
+     data-tab-name="ui_settings"
+     x-data='uiSettingsTabComponent({{ ui_context | tojson | safe }})'
+     x-on:webui-defaults-updated.window="syncDefaults($event.detail)">
+    <div class="card">
+        <div class="card-header">
+            <h5 class="mb-1"><i class="fas fa-sliders-h me-2"></i>WebUI Preferences</h5>
+            <p class="text-muted mb-0">Adjust the appearance and behaviour of the training studio interface.</p>
+        </div>
+        <div class="card-body">
+            <div class="row g-4">
+                <div class="col-xl-6">
+                    <div class="preference-card">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <div>
+                                <h6 class="mb-1">Theme</h6>
+                                <p class="text-muted small mb-0">Switch between available UI themes. Changes apply instantly.</p>
+                            </div>
+                            <span class="badge bg-secondary" x-text="settings.theme.toUpperCase()"></span>
+                        </div>
+                        <div class="row g-3">
+                            <template x-for="option in themeOptions" :key="option.value">
+                                <div class="col-sm-6">
+                                    <button type="button"
+                                            class="theme-tile"
+                                            :class="{ 'active': settings.theme === option.value }"
+                                            @click="selectTheme(option.value)">
+                                        <div class="theme-tile-body">
+                                            <div class="theme-title">
+                                                <i class="fas fa-circle me-2"
+                                                   :class="settings.theme === option.value ? 'text-success' : 'text-muted'"></i>
+                                                <span x-text="option.label"></span>
+                                            </div>
+                                            <p class="text-muted small mb-0" x-text="option.description || ''"></p>
+                                        </div>
+                                    </button>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-xl-6">
+                    <div class="preference-card">
+                        <h6 class="mb-3">Event Stream</h6>
+                        <div class="form-switch form-switch-lg mb-3">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="ui-event-stream-toggle"
+                                   :checked="settings.event_stream_enabled"
+                                   @change="toggleEventStream()">
+                            <label class="form-check-label" for="ui-event-stream-toggle">
+                                Enable real-time event polling
+                            </label>
+                        </div>
+                        <label class="form-label" for="ui-event-interval">Update interval</label>
+                        <select id="ui-event-interval"
+                                class="form-select"
+                                x-model.number="settings.event_polling_interval"
+                                @change="updateInterval($event.target.value)">
+                            <template x-for="interval in eventIntervals" :key="interval">
+                                <option :value="interval" x-text="interval + ' seconds'"></option>
+                            </template>
+                        </select>
+                        <p class="text-muted small mt-2">
+                            When disabled, event updates only refresh when triggered manually. Longer intervals reduce background activity.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="col-12">
+                    <div class="preference-card">
+                        <h6 class="mb-3">WebUI Paths</h6>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label" for="ui-output-dir">Output directory</label>
+                                <div class="input-group">
+                                    <span class="input-group-text"><i class="fas fa-folder"></i></span>
+                                    <input type="text"
+                                           id="ui-output-dir"
+                                           class="form-control"
+                                           placeholder="/path/to/output"
+                                           x-model="settings.output_dir"
+                                           @input="updateOutputDir($event.target.value)">
+                                </div>
+                                <p class="text-muted small mt-2">
+                                    Used as the base path when the project configuration references relative output locations.
+                                </p>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Configuration library</label>
+                                <div class="input-group">
+                                    <span class="input-group-text"><i class="fas fa-archive"></i></span>
+                                    <input type="text"
+                                           class="form-control"
+                                           :value="settings.configs_dir || 'Not configured'"
+                                           readonly>
+                                </div>
+                                <p class="text-muted small mt-2 mb-0">
+                                    Managed via onboarding. Update it from the walkthrough or the environments panel if needed.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="card-footer d-flex justify-content-between align-items-center">
+            <div>
+                <span class="text-success small" x-show="successMessage" x-text="successMessage"></span>
+                <span class="text-danger small" x-show="errorMessage" x-text="errorMessage"></span>
+            </div>
+            <div class="d-flex gap-2">
+                <button type="button"
+                        class="btn btn-outline-secondary btn-sm"
+                        :disabled="saving || !hasChanges"
+                        @click="discardChanges()">
+                    <i class="fas fa-undo me-1"></i>Discard Changes
+                </button>
+                <button type="button"
+                        class="btn btn-primary btn-sm"
+                        :disabled="saving || !hasChanges"
+                        @click="saveSettings()">
+                    <i class="fas fa-save me-1" :class="{ 'fa-spin': saving }"></i>
+                    <span x-text="saving ? 'Saving…' : 'Save Preferences'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.preference-card {
+    padding: 1.25rem;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 0.75rem;
+    background-color: rgba(15, 23, 42, 0.35);
+    backdrop-filter: blur(6px);
+    min-height: 100%;
+}
+
+.theme-tile {
+    width: 100%;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.75rem;
+    padding: 0;
+    background: rgba(15, 23, 42, 0.3);
+    color: #e2e8f0;
+    transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.theme-tile:hover {
+    transform: translateY(-2px);
+    border-color: rgba(129, 140, 248, 0.6);
+    box-shadow: 0 8px 20px rgba(79, 70, 229, 0.25);
+}
+
+.theme-tile.active {
+    border-color: rgba(129, 140, 248, 0.95);
+    box-shadow: 0 12px 28px rgba(99, 102, 241, 0.35);
+}
+
+.theme-tile-body {
+    padding: 1rem 1.1rem;
+    text-align: left;
+}
+
+.theme-title {
+    font-weight: 600;
+    font-size: 0.95rem;
+    margin-bottom: 0.35rem;
+}
+
+.form-switch.form-switch-lg .form-check-input {
+    height: 1.5rem;
+    width: 3rem;
+}
+
+.form-switch.form-switch-lg .form-check-label {
+    margin-left: 0.5rem;
+    font-weight: 500;
+}
+
+#ui-settings-tab-content input.form-control,
+#ui-settings-tab-content select.form-select {
+    background-color: rgba(15, 23, 42, 0.6);
+    border-color: rgba(148, 163, 184, 0.25);
+    color: #e2e8f0;
+}
+
+#ui-settings-tab-content input.form-control:focus,
+#ui-settings-tab-content select.form-select:focus {
+    border-color: rgba(129, 140, 248, 0.7);
+    box-shadow: 0 0 0 0.25rem rgba(129, 140, 248, 0.15);
+}
+</style>

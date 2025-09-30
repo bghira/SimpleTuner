@@ -1,0 +1,197 @@
+<!-- HTMX-enabled action buttons component -->
+{% set placement = placement|default('header') %}
+{% set is_header = (placement == 'header') %}
+{% set wrapper_classes = 'action-buttons' %}
+{% if is_header %}
+    {% set wrapper_classes = wrapper_classes ~ ' action-buttons--compact d-flex align-items-center gap-2' %}
+    {% set btn_size = 'btn-sm ' %}
+{% else %}
+    {% set wrapper_classes = wrapper_classes ~ ' text-center mb-4' %}
+    {% set btn_size = '' %}
+{% endif %}
+
+<div class="{{ wrapper_classes }}" id="action-buttons" data-placement="{{ placement }}">
+    <!-- Action Buttons -->
+    <div class="btn-group" role="group">
+        <!-- Validate Button -->
+        <button type="button"
+                class="trainer-action-btn btn {{ btn_size }}btn-primary me-2"
+                id="validateBtn"
+                title="Validate configuration"
+                hx-post="/api/training/validate"
+                hx-include="#trainer-form"
+                hx-target="#validation-results"
+                hx-swap="innerHTML"
+                hx-indicator="#validate-spinner"
+                hx-on::before-request="this.disabled = true; if(event.detail.parameters){var v=event.detail.parameters.job_id; if(v === null || v === undefined || v === ''){delete event.detail.parameters.job_id;}}"
+                hx-on::after-request="this.disabled = false">
+            <i class="fas fa-check-circle"></i>
+            {% if is_header %}
+                <span class="btn-text">Validate</span>
+            {% else %}
+                <span class="btn-text">Validate Config</span>
+            {% endif %}
+            <span id="validate-spinner" class="htmx-indicator">
+                <span class="spinner-border spinner-border-sm ms-2" role="status">
+                    <span class="visually-hidden">Validating...</span>
+                </span>
+            </span>
+        </button>
+
+        <!-- Start Training Button -->
+        <button type="button"
+                class="trainer-action-btn btn {{ btn_size }}btn-success me-2"
+                id="runBtn"
+                title="Start training"
+                hx-post="/api/training/start"
+                hx-include="#trainer-form"
+                hx-target="#training-status"
+                hx-swap="innerHTML"
+                hx-indicator="#run-spinner"
+                hx-on::before-request="this.disabled = true; document.getElementById('cancelBtn').disabled = false"
+                hx-on::after-request="if(event.detail.successful) { this.disabled = true; window.initSSE?.(); }">
+            <i class="fas fa-play"></i>
+            {% if is_header %}
+                <span class="btn-text">Run</span>
+            {% else %}
+                <span class="btn-text">Start Training</span>
+            {% endif %}
+            <span id="run-spinner" class="htmx-indicator">
+                <span class="spinner-border spinner-border-sm ms-2" role="status">
+                    <span class="visually-hidden">Starting...</span>
+                </span>
+            </span>
+        </button>
+
+        <!-- Cancel Training Button -->
+        <button type="button"
+                class="trainer-action-btn btn {{ btn_size }}btn-danger"
+                id="cancelBtn"
+                title="Cancel training"
+                disabled
+                hx-post="/api/training/cancel"
+                hx-target="#training-status"
+                hx-swap="innerHTML"
+                hx-indicator="#cancel-spinner"
+                hx-confirm="Are you sure you want to cancel the training?"
+                hx-on::before-request='this.disabled = true; var params = event.detail.parameters || (event.detail.parameters = {}); var field = document.getElementById("job_id") || document.querySelector("[name=\"job_id\"]"); if (field && field.value) { params.job_id = field.value.trim(); } else { delete params.job_id; }'
+                hx-on::after-request="if(event.detail.successful) { this.disabled = true; document.getElementById('runBtn').disabled = false; window.closeSSE?.(); }">
+            <i class="fas fa-stop"></i>
+            {% if is_header %}
+                <span class="btn-text">Stop</span>
+            {% else %}
+                <span class="btn-text">Cancel Training</span>
+            {% endif %}
+            <span id="cancel-spinner" class="htmx-indicator">
+                <span class="spinner-border spinner-border-sm ms-2" role="status">
+                    <span class="visually-hidden">Cancelling...</span>
+                </span>
+            </span>
+        </button>
+    </div>
+</div>
+
+<style>
+/* Hide HTMX indicators by default */
+.htmx-indicator {
+    display: none;
+}
+
+/* Show indicators during requests */
+.htmx-request .htmx-indicator {
+    display: inline-block;
+}
+
+/* Button states */
+.action-buttons button:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+}
+
+/* Smooth transitions */
+.action-buttons button {
+    transition: all 0.2s ease;
+}
+
+/* Loading state for buttons */
+.htmx-request {
+    position: relative;
+    overflow: hidden;
+}
+
+/* Success/Error feedback animations */
+@keyframes successPulse {
+    0% { box-shadow: 0 0 0 0 rgba(25, 135, 84, 0.7); }
+    70% { box-shadow: 0 0 0 10px rgba(25, 135, 84, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(25, 135, 84, 0); }
+}
+
+@keyframes errorPulse {
+    0% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7); }
+    70% { box-shadow: 0 0 0 10px rgba(220, 53, 69, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); }
+}
+
+.success-pulse {
+    animation: successPulse 1s;
+}
+
+.error-pulse {
+    animation: errorPulse 1s;
+}
+
+.action-buttons--compact .btn {
+    padding: var(--spacing-xs-sm) var(--spacing-sm);
+}
+</style>
+
+<script>
+if (!window.__trainerActionHTMXBound) {
+    window.__trainerActionHTMXBound = true;
+
+    // Enhanced HTMX event handlers
+    document.body.addEventListener('htmx:afterRequest', function(evt) {
+        const button = evt.detail.elt;
+
+        // Add visual feedback based on response
+        if (evt.detail.successful) {
+            button.classList.add('success-pulse');
+            setTimeout(() => button.classList.remove('success-pulse'), 1000);
+
+            // Show success toast if available
+            if (!window.trainerMain && window.showToast) {
+                const actionMap = {
+                    'validateBtn': 'Configuration validated successfully!',
+                    'runBtn': 'Training started successfully!',
+                    'cancelBtn': 'Training cancelled successfully!'
+                };
+                const message = actionMap[button.id];
+                if (message) {
+                    window.showToast(message, 'success');
+                    window.__trainerActionToastFallback = true;
+                }
+            }
+        } else {
+            button.classList.add('error-pulse');
+            setTimeout(() => button.classList.remove('error-pulse'), 1000);
+
+            // Show error toast
+            if (!window.trainerMain && window.showToast) {
+                window.showToast('Operation failed. Please check the details.', 'error');
+                window.__trainerActionToastFallback = true;
+            }
+        }
+    });
+}
+
+// Initialize SSE connection management functions
+window.initSSE = function() {
+    // This will be implemented when we add SSE support
+    console.log('SSE initialization would happen here');
+};
+
+window.closeSSE = function() {
+    // This will be implemented when we add SSE support
+    console.log('SSE cleanup would happen here');
+};
+</script>
