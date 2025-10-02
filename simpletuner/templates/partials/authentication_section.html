@@ -1,0 +1,117 @@
+<!-- Authentication Section for Publishing Tab -->
+<div class="row g-3">
+    <!-- Status Display -->
+    <div class="col-md-6">
+        <label class="form-label">HuggingFace Status</label>
+        <div x-data="publishingAuth.init()"
+             x-init="checkAuthStatus()">
+            <div x-show="loading.auth" class="text-muted small">
+                <i class="fas fa-spinner fa-spin me-1"></i>Checking...
+            </div>
+            <div x-show="!loading.auth && authStatus?.valid" x-cloak class="text-success small">
+                <i class="fas fa-check-circle me-1"></i>
+                Connected as <strong x-text="authStatus?.username"></strong>
+            </div>
+            <div x-show="!loading.auth && authStatus && !authStatus.valid" x-cloak class="text-warning small">
+                <i class="fas fa-exclamation-triangle me-1"></i>
+                Not connected
+            </div>
+        </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="col-md-6">
+        <label class="form-label">Actions</label>
+        <div x-data="publishingAuth.init()"
+             x-init="checkAuthStatus()"
+             class="d-flex gap-2">
+            <button type="button"
+                    x-show="!loading.auth && authStatus && !authStatus.valid"
+                    class="btn btn-sm btn-primary"
+                    @click="showLoginModal = true">
+                <i class="fas fa-sign-in-alt me-1"></i>Login
+            </button>
+            <button type="button"
+                    x-show="!loading.auth && authStatus?.valid"
+                    class="btn btn-sm btn-outline-danger"
+                    :disabled="loggingOut"
+                    @click="async () => {
+                        if(!confirm('Logout?')) return;
+                        await logout();
+                    }">
+                <i class="fas fa-sign-out-alt me-1"></i>Logout
+            </button>
+            <button type="button"
+                    class="btn btn-sm btn-outline-secondary"
+                    @click="checkAuthStatus()">
+                <i class="fas fa-sync-alt"></i>
+            </button>
+            <a href="https://huggingface.co/settings/tokens"
+               target="_blank"
+               class="btn btn-sm btn-outline-secondary">
+                <i class="fas fa-external-link-alt"></i>
+            </a>
+
+            <!-- Login Modal -->
+            <div x-show="showLoginModal"
+                 x-cloak
+                 class="modal fade"
+                 :class="{ 'show d-block': showLoginModal }"
+                 tabindex="-1"
+                 style="background-color: rgba(0,0,0,0.5);"
+                 @click.self="showLoginModal = false"
+                 @keydown.escape.window="showLoginModal = false">
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">
+                                <i class="fas fa-sign-in-alt me-2"></i>Login to HuggingFace Hub
+                            </h5>
+                            <button type="button"
+                                    class="btn-close"
+                                    @click="showLoginModal = false"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="mb-3">
+                                <label for="hf-token-input" class="form-label">
+                                    HuggingFace Access Token <span class="text-danger">*</span>
+                                </label>
+                                <input type="password"
+                                       id="hf-token-input"
+                                       class="form-control font-monospace"
+                                       x-model="loginToken"
+                                       placeholder="hf_xxxxxxxxxxxxxxxxxxxxx"
+                                       @keydown.enter="if(loginToken.trim() && !savingToken) { loginWithToken(loginToken.trim()); }">
+                                <div class="form-text">
+                                    Saved securely to ~/.cache/huggingface/token
+                                </div>
+                            </div>
+                            <div class="alert alert-info small mb-0">
+                                <strong><i class="fas fa-info-circle me-1"></i>Get your token:</strong>
+                                <ol class="mb-0 mt-2 ps-3">
+                                    <li>Visit <a href="https://huggingface.co/settings/tokens" target="_blank">HuggingFace Settings</a></li>
+                                    <li>Create a token with "write" permissions</li>
+                                    <li>Paste it above</li>
+                                </ol>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button"
+                                    class="btn btn-secondary"
+                                    @click="showLoginModal = false">
+                                Cancel
+                            </button>
+                            <button type="button"
+                                    class="btn btn-primary"
+                                    :disabled="!loginToken.trim() || savingToken"
+                                    @click="loginWithToken(loginToken.trim())">
+                                <i class="fas fa-save me-1" :class="{ 'fa-spin': savingToken }"></i>
+                                <span x-text="savingToken ? 'Saving...' : 'Save Token'"></span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
