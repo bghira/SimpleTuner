@@ -33,6 +33,16 @@ class CustomSectionService:
             description="HuggingFace Hub authentication settings"
         )
 
+        # Publishing tab repository configuration section
+        self.register_custom_section(
+            tab="publishing",
+            section_id="repository",
+            title="Repository",
+            icon="fas fa-cog",
+            template="partials/publishing_repository_section.html",
+            description="Combine your namespace with the destination repository settings",
+        )
+
     def register_custom_section(
         self,
         tab: str,
