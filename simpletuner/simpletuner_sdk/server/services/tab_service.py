@@ -462,7 +462,7 @@ class TabService:
 
         project_advanced_order = [
             "seed",
-            "merge_environment_defaults",
+            "merge_environment_config",
         ]
 
         training_data_order = [
