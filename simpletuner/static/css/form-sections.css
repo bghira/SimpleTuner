@@ -69,7 +69,7 @@
 }
 
 #publishing-tab-content .form-section:first-child {
-    background-color: rgba(34, 197, 94, 0.05);
+    /* background-color: rgba(34, 197, 94, 0.05); */
     border-color: rgba(34, 197, 94, 0.2);
 }
 
