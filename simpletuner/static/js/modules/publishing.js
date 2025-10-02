@@ -123,6 +123,218 @@ document.addEventListener('alpine:init', () => {
             }
         }
     };
+
+    window.hfRepoSelector = {
+        init(fieldId, initialValue) {
+            const initial = typeof initialValue === 'string' ? initialValue : '';
+            return {
+                fieldId,
+                initialValue: initial,
+                namespaces: [],
+                selectedNamespace: '',
+                repoName: '',
+                fullRepo: initial,
+                loading: false,
+                checking: false,
+                error: '',
+                checkResult: null,
+
+                initialize() {
+                    this.parseInitial();
+                    this.syncHiddenField();
+                    this.updateFullRepo();
+                    this.loadNamespaces();
+                },
+
+                parseInitial() {
+                    if (!this.initialValue) {
+                        this.fullRepo = '';
+                        this.repoName = '';
+                        return;
+                    }
+
+                    const parts = this.initialValue.split('/');
+                    if (parts.length > 1) {
+                        this.selectedNamespace = parts.shift();
+                        this.repoName = parts.join('/');
+                    } else {
+                        this.repoName = this.initialValue;
+                    }
+                    this.fullRepo = this.initialValue;
+                },
+
+                async loadNamespaces(force = false) {
+                    if (this.loading) {
+                        return;
+                    }
+
+                    if (!force && this.namespaces.length > 0) {
+                        return;
+                    }
+
+                    this.loading = true;
+                    this.error = '';
+
+                    try {
+                        const response = await fetch('/api/publishing/namespaces');
+                        if (!response.ok) {
+                            const detail = await response.json().catch(() => ({}));
+                            throw new Error(detail.detail || 'Failed to load namespaces');
+                        }
+
+                        const data = await response.json();
+                        let list = Array.isArray(data.namespaces) ? data.namespaces.filter(Boolean) : [];
+
+                        if (this.selectedNamespace && !list.includes(this.selectedNamespace)) {
+                            list = [this.selectedNamespace, ...list];
+                        }
+
+                        this.namespaces = Array.from(new Set(list));
+
+                        if (!this.selectedNamespace && this.namespaces.length) {
+                            this.selectedNamespace = this.namespaces[0];
+                        }
+                    } catch (error) {
+                        console.error('[Publishing] namespace load failed:', error);
+                        this.error = error.message || 'Unable to load namespaces';
+                    } finally {
+                        this.loading = false;
+                        this.updateFullRepo();
+                    }
+                },
+
+                onRepoInput(event) {
+                    if (event && typeof event.target.value === 'string') {
+                        this.repoName = event.target.value;
+                    }
+                    this.updateFullRepo();
+                },
+
+                updateFullRepo() {
+                    let repo = (this.repoName || '').trim();
+
+                    if (repo.includes('/')) {
+                        const parts = repo.split('/').filter(Boolean);
+                        if (parts.length >= 2) {
+                            const typedNamespace = parts.shift();
+                            const typedRepo = parts.join('/');
+
+                            if (typedNamespace) {
+                                this.selectedNamespace = typedNamespace;
+                                if (!this.namespaces.includes(typedNamespace)) {
+                                    this.namespaces = [typedNamespace, ...this.namespaces];
+                                }
+                            }
+
+                            repo = typedRepo;
+                            this.repoName = typedRepo;
+                        }
+                    }
+
+                    const namespace = (this.selectedNamespace || '').trim();
+
+                    if (namespace && repo) {
+                        this.fullRepo = `${namespace}/${repo}`;
+                    } else {
+                        this.fullRepo = '';
+                    }
+
+                    this.clearStatus();
+                    this.syncHiddenField();
+                },
+
+                syncHiddenField() {
+                    if (!this.$refs || !this.$refs.hiddenField) {
+                        return;
+                    }
+
+                    const hidden = this.$refs.hiddenField;
+                    const previous = hidden.value;
+                    hidden.value = this.fullRepo;
+
+                    if (previous !== this.fullRepo) {
+                        hidden.dispatchEvent(new Event('input', { bubbles: true }));
+                        hidden.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+                },
+
+                clearStatus() {
+                    this.checkResult = null;
+                },
+
+                async checkAvailability() {
+                    if (!this.fullRepo || !this.fullRepo.includes('/')) {
+                        this.checkResult = { type: 'warning', message: 'Enter namespace/model before checking.' };
+                        return;
+                    }
+
+                    this.checking = true;
+                    this.checkResult = null;
+
+                    try {
+                        const response = await fetch('/api/publishing/repository/check', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ repo_id: this.fullRepo })
+                        });
+
+                        if (!response.ok) {
+                            const error = await response.json().catch(() => ({}));
+                            throw new Error(error.detail || 'Failed to check repository');
+                        }
+
+                        const result = await response.json();
+
+                        if (result.available) {
+                            this.checkResult = {
+                                type: 'success',
+                                message: result.message || 'Repository name is available.'
+                            };
+                        } else if (result.exists) {
+                            this.checkResult = {
+                                type: 'warning',
+                                message: result.message || 'Repository already exists.'
+                            };
+                        } else {
+                            this.checkResult = {
+                                type: 'info',
+                                message: result.message || 'Check completed.'
+                            };
+                        }
+                    } catch (error) {
+                        console.error('[Publishing] repository check failed:', error);
+                        this.checkResult = {
+                            type: 'error',
+                            message: error.message || 'Failed to check repository'
+                        };
+                    } finally {
+                        this.checking = false;
+                    }
+                },
+
+                get checkStatusMessage() {
+                    return this.checkResult ? this.checkResult.message : '';
+                },
+
+                get statusClass() {
+                    if (!this.checkResult) {
+                        return 'status-info';
+                    }
+
+                    switch (this.checkResult.type) {
+                        case 'success':
+                            return 'status-success';
+                        case 'warning':
+                            return 'status-warning';
+                        case 'error':
+                            return 'status-error';
+                        default:
+                            return 'status-info';
+                    }
+                }
+            };
+        }
+    };
 });
 
 // Initialize conditional fields for publishing tab
