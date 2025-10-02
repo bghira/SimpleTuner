@@ -14,11 +14,8 @@ from accelerate import InitProcessGroupKwargs
 from accelerate.utils import ProjectConfiguration
 
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
+from simpletuner.helpers.training.optimizer_param import is_optimizer_deprecated, is_optimizer_grad_fp32
 from simpletuner.simpletuner_sdk.server.services.field_registry.types import ConfigField, FieldType, ValidationRuleType
-from simpletuner.helpers.training.optimizer_param import (
-    is_optimizer_deprecated,
-    is_optimizer_grad_fp32,
-)
 
 logger = logging.getLogger("ArgsParser")
 from simpletuner.helpers.training.multi_process import should_log
@@ -177,6 +174,7 @@ def get_argument_parser():
     _populate_parser_from_field_registry(parser)
     _ARG_PARSER_CACHE = parser
     return parser
+
 
 def get_default_config():
     parser = get_argument_parser()
