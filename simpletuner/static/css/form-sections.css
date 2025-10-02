@@ -119,3 +119,66 @@
 .field-optional .form-control::placeholder {
     font-style: italic;
 }
+
+/* Subsection styling */
+.subsection-title {
+    color: #94a3b8;
+    font-size: 0.875rem;
+    font-weight: 500;
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.25rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+}
+
+.subsection-divider {
+    border-color: rgba(255, 255, 255, 0.05);
+    margin: 1rem 0;
+    opacity: 0.5;
+}
+
+/* Advanced section styles */
+.advanced-section {
+    display: flex;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.advanced-toggle {
+    transition: transform 0.2s ease;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #94a3b8;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+}
+
+.advanced-toggle:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #e2e8f0;
+}
+
+.advanced-toggle[aria-expanded="true"] i {
+    transform: rotate(90deg);
+}
+
+.advanced-section .badge {
+    font-size: 0.7em;
+    font-weight: 500;
+}
+
+.collapse {
+    transition: all 0.3s ease;
+}
+
+/* Add subtle border to advanced sections */
+.form-section:has(.advanced-section) {
+    border-left: 3px solid rgba(108, 117, 125, 0.3);
+    padding-left: 1rem;
+    margin-left: 0.5rem;
+}
+
+.form-section:has(.advanced-section):hover {
+    border-left-color: rgba(108, 117, 125, 0.6);
+}
