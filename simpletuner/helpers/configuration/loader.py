@@ -134,7 +134,7 @@ def load_config(args: dict = None, exit_on_error: bool = False):
                 is_numeric = True
             except (ValueError, TypeError):
                 is_numeric = False
-            if value is not None:
+            if value is not None and value != "":
                 if isinstance(value, str) and value.lower() in ["true", "false"]:
                     if value.lower() == "true":
                         list_arguments.append(f"{arg_name}")
