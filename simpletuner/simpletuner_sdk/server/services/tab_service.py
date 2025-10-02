@@ -269,10 +269,10 @@ class TabService:
         # Group fields into sections for basic tab
         sections = [
             {"id": "project", "title": "Project Settings", "icon": "fas fa-project-diagram"},
-            {"id": "project_advanced", "title": "Advanced Project Settings", "icon": "fas fa-cogs", "advanced": True},
+            {"id": "project_advanced", "title": "", "icon": "fas", "advanced": True},
             {"id": "training_data", "title": "Training Data", "icon": "fas fa-database"},
             {"id": "logging", "title": "Logging & Checkpoints", "icon": "fas fa-stream"},
-            {"id": "logging_advanced", "title": "Advanced Checkpoint Settings", "icon": "fas fa-cogs", "advanced": True},
+            {"id": "logging_advanced", "title": "", "icon": "fas", "advanced": True},
             {"id": "other", "title": "Other Settings", "icon": "fas fa-sliders-h"},
         ]
 
