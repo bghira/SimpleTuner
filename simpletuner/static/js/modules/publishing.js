@@ -331,6 +331,23 @@ document.addEventListener('alpine:init', () => {
                         default:
                             return 'status-info';
                     }
+                },
+
+                get statusAlertClass() {
+                    if (!this.checkResult) {
+                        return 'alert-info';
+                    }
+
+                    switch (this.checkResult.type) {
+                        case 'success':
+                            return 'alert-success';
+                        case 'warning':
+                            return 'alert-warning';
+                        case 'error':
+                            return 'alert-danger';
+                        default:
+                            return 'alert-info';
+                    }
                 }
             };
         }
