@@ -22,9 +22,9 @@ class TrainerPage(BasePage):
         "training": "#tab-content #training-tab-content",
         "advanced": "#tab-content #advanced-tab-content",
         "validation": "#tab-content #validation-tab-content",
-        "datasets": "#tab-content .datasets-tab",
-        "environments": "#tab-content .environments-tab",
-        "ui_settings": "#tab-content .ui-settings-tab",
+        "datasets": "#tab-content #datasets-tab-content",
+        "environments": "#tab-content #environments-tab-content",
+        "ui_settings": "#tab-content #ui-settings-tab-content",
     }
 
     # Locators
@@ -207,14 +207,14 @@ class TrainerPage(BasePage):
         if tab_name == "datasets":
             self.wait.until(
                 lambda driver: driver.execute_script(
-                    "const el = document.querySelector('#tab-content .datasets-tab');"
+                    "const el = document.querySelector('#tab-content #datasets-tab-content');"
                     "return !!(el && el.offsetParent !== null);"
                 )
             )
         elif tab_name == "environments":
             self.wait.until(
                 lambda driver: driver.execute_script(
-                    "const el = document.querySelector('#tab-content .environments-tab');"
+                    "const el = document.querySelector('#tab-content #environments-tab-content');"
                     "return !!(el && el.offsetParent !== null);"
                 )
             )
