@@ -193,6 +193,118 @@
     font-size: 0.95rem;
 }
 
+.hf-repo-selector {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-md);
+    padding: 1.25rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+}
+
+.hf-repo-selector__heading {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.hf-repo-selector__title {
+    font-weight: 600;
+    font-size: var(--typography-font-size-base);
+}
+
+.hf-repo-selector__subtitle {
+    font-size: var(--typography-font-size-sm);
+}
+
+.hf-repo-selector__description {
+    font-size: var(--typography-font-size-sm);
+}
+
+.hf-repo-selector__row {
+    margin-top: 0;
+}
+
+.hf-repo-selector__input-group {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.hf-repo-selector__input-group .form-select {
+    flex: 1 1 auto;
+}
+
+.btn-icon {
+    width: 2.5rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem;
+}
+
+.hf-repo-selector__result {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    padding-top: 1rem;
+}
+
+.hf-repo-selector__result-label {
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+}
+
+.hf-repo-selector__result-value {
+    font-family: var(--typography-font-family-mono);
+    font-size: 0.95rem;
+    background: rgba(96, 165, 250, 0.12);
+    border: 1px solid rgba(96, 165, 250, 0.35);
+    border-radius: var(--radius-sm);
+    padding: 0.35rem 0.75rem;
+    color: #93c5fd;
+}
+
+.hf-repo-selector__status {
+    font-size: 0.85rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: fit-content;
+    max-width: 100%;
+    white-space: normal;
+}
+
+.hf-repo-selector__status.status-success {
+    background: rgba(34, 197, 94, 0.12);
+    color: rgba(134, 239, 172, 0.95);
+    border-color: rgba(34, 197, 94, 0.3);
+}
+
+.hf-repo-selector__status.status-warning {
+    background: rgba(245, 158, 11, 0.12);
+    color: rgba(253, 224, 71, 0.95);
+    border-color: rgba(245, 158, 11, 0.35);
+}
+
+.hf-repo-selector__status.status-error {
+    background: rgba(239, 68, 68, 0.12);
+    color: rgba(248, 113, 113, 0.95);
+    border-color: rgba(239, 68, 68, 0.35);
+}
+
+.hf-repo-selector__status.status-info {
+    background: rgba(96, 165, 250, 0.12);
+    color: rgba(147, 197, 253, 0.95);
+    border-color: rgba(96, 165, 250, 0.3);
+}
+
 .license-display {
     padding: 1rem;
     border: 1px solid rgba(255, 255, 255, 0.12);
