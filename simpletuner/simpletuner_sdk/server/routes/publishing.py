@@ -7,10 +7,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from simpletuner.simpletuner_sdk.server.services.publishing_service import (
-    PUBLISHING_SERVICE,
-    PublishingServiceError,
-)
+from simpletuner.simpletuner_sdk.server.services.publishing_service import PUBLISHING_SERVICE, PublishingServiceError
 
 router = APIRouter(prefix="/api/publishing", tags=["publishing"])
 

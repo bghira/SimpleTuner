@@ -101,9 +101,7 @@ class PublishingService:
             try:
                 user_info = self.api.whoami(token=token)
             except Exception as e:
-                raise PublishingServiceError(
-                    f"Invalid token: {str(e)}", status.HTTP_400_BAD_REQUEST
-                ) from e
+                raise PublishingServiceError(f"Invalid token: {str(e)}", status.HTTP_400_BAD_REQUEST) from e
 
             # Save token to standard location
             token_path = Path.home() / ".cache" / "huggingface" / "token"
