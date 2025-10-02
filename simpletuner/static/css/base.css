@@ -68,7 +68,7 @@ button {
 
 /* Animation keyframes */
 @keyframes slideIn {
-    from { 
+    from {
         opacity: 0;
         transform: translateX(-20px);
     }
@@ -121,7 +121,7 @@ button {
     .container {
         padding: 0 0.5rem;
     }
-    
+
     input,
     select,
     textarea {

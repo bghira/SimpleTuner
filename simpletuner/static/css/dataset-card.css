@@ -1,21 +1,11 @@
-/* dataset-card.css - Dataset card styling aligned with trainer config cards */
+/* dataset-card.css - Dataset card styling aligned with unified theme */
 
-/* Main dataset card container */
+/* Main dataset card container - inherit from unified theme */
 .dataset-card {
-    background: var(--card-bg);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border: var(--layout-border-width) solid var(--glass-border);
-    border-radius: var(--radius-xl);
+    /* Background, border, border-radius, box-shadow now inherited from trainer-core.css */
     margin-bottom: var(--spacing-lg-xl);
     transition: all 0.3s ease;
-    box-shadow: var(--shadow-lg);
     overflow: hidden;
-}
-
-.dataset-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 15px 50px rgba(102, 126, 234, 0.15);
 }
 
 /* Card header */

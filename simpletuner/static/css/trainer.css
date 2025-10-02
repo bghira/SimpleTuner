@@ -477,19 +477,19 @@ body {
     .sidebar {
         transform: translateX(-280px);
     }
-    
+
     .sidebar.active {
         transform: translateX(0);
     }
-    
+
     .main-content {
         margin-left: 0;
     }
-    
+
     .sidebar-toggle {
         display: block;
     }
-    
+
     .form-grid-2,
     .form-grid-3 {
         grid-template-columns: 1fr;
@@ -500,16 +500,16 @@ body {
     .content-wrapper {
         padding: var(--spacing-lg);
     }
-    
+
     .config-card {
         padding: var(--spacing-xl);
     }
-    
+
     .action-buttons {
         flex-direction: column;
         padding: var(--spacing-lg);
     }
-    
+
     .btn {
         width: 100%;
     }

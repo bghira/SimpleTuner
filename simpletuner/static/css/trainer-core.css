@@ -28,6 +28,31 @@
     color: #e2e8f0;
 }
 
+/* Extend unified card styling to all custom card variants */
+.tab-fragment .card,
+.tab-fragment .checkpoint-card,
+.tab-fragment .dataset-card,
+.tab-fragment .config-card,
+.tab-fragment .publishing-toggle-card,
+.tab-fragment .preference-card {
+    background: rgba(18, 21, 30, 0.92) !important;
+    border: 1px solid rgba(148, 163, 184, 0.18) !important;
+    border-radius: var(--radius-xl) !important;
+    box-shadow: 0 16px 40px rgba(2, 6, 23, 0.35) !important;
+    color: #e2e8f0;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+
+/* Unified hover effect for all cards */
+.tab-fragment .card:hover,
+.tab-fragment .checkpoint-card:hover,
+.tab-fragment .dataset-card:hover,
+.tab-fragment .config-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 20px 50px rgba(102, 126, 234, 0.2) !important;
+}
+
 .tab-fragment .card-header,
 .tab-fragment .card-body,
 .tab-fragment .card-footer {

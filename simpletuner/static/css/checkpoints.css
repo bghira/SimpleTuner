@@ -1,0 +1,440 @@
+/* Checkpoints Tab Styles - Dark Theme Compatible */
+
+/* Main container */
+.checkpoints-tab {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: var(--spacing-xl);
+}
+
+/* Grid layout for checkpoint cards */
+.checkpoint-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: var(--spacing-lg);
+    margin-bottom: var(--spacing-xl);
+}
+
+/* Individual checkpoint card - inherit from unified theme */
+.checkpoint-card {
+    position: relative;
+    /* Background, border, border-radius, box-shadow now inherited from trainer-core.css */
+    padding: var(--spacing-lg);
+    transition: all 0.3s ease;
+    cursor: pointer;
+    overflow: hidden;
+}
+
+.checkpoint-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: transparent;
+    transition: background 0.3s ease;
+}
+
+.checkpoint-card:hover::before {
+    background: var(--primary-gradient);
+}
+
+/* Selected state */
+.checkpoint-card.selected {
+    border-color: var(--accent-purple);
+    background: rgba(102, 126, 234, 0.08);
+    box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
+}
+
+.checkpoint-card.selected::before {
+    background: var(--primary-gradient);
+}
+
+/* Checkpoint card header */
+.checkpoint-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--spacing-md);
+}
+
+.checkpoint-card-header h5 {
+    font-size: var(--typography-font-size-base);
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.checkpoint-card-header i {
+    font-size: 1rem;
+    color: var(--accent-purple);
+}
+
+/* Checkpoint status badges */
+.checkpoint-status {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    padding: var(--spacing-2xs) var(--spacing-sm);
+    border-radius: var(--radius-full);
+    font-size: var(--typography-font-size-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    transition: all 0.2s ease;
+}
+
+/* Valid checkpoint status */
+.checkpoint-status.valid {
+    background: var(--success-bg);
+    color: var(--success-text);
+    border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.checkpoint-status.valid i {
+    color: var(--success);
+}
+
+/* Invalid checkpoint status */
+.checkpoint-status.invalid {
+    background: var(--error-bg);
+    color: var(--error-text);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.checkpoint-status.invalid i {
+    color: var(--error);
+}
+
+/* In-progress checkpoint status */
+.checkpoint-status.in-progress {
+    background: rgba(59, 130, 246, 0.1);
+    color: var(--info-text);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.checkpoint-status.in-progress i {
+    color: var(--info);
+    animation: spin 1s linear infinite;
+}
+
+/* Checkpoint card body */
+.checkpoint-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.checkpoint-info {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: var(--typography-font-size-sm);
+}
+
+.checkpoint-info-label {
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.checkpoint-info-value {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.checkpoint-path {
+    font-family: var(--typography-font-family-mono);
+    font-size: var(--typography-font-size-xs);
+    color: var(--text-muted);
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-xs);
+    padding: var(--spacing-xs) var(--spacing-sm);
+    margin-top: var(--spacing-sm);
+    word-break: break-all;
+}
+
+/* Checkpoint card footer */
+.checkpoint-card-footer {
+    margin-top: var(--spacing-md);
+    padding-top: var(--spacing-md);
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    display: flex;
+    gap: var(--spacing-xs);
+}
+
+.checkpoint-card-footer .btn {
+    flex: 1;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    font-size: var(--typography-font-size-xs);
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    transition: all 0.2s ease;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-xs);
+}
+
+.checkpoint-card-footer .btn-load {
+    background: var(--primary-gradient);
+    color: white;
+}
+
+.checkpoint-card-footer .btn-load:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+.checkpoint-card-footer .btn-delete {
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--error-text);
+    border-color: rgba(239, 68, 68, 0.3);
+}
+
+.checkpoint-card-footer .btn-delete:hover {
+    background: rgba(239, 68, 68, 0.2);
+    border-color: rgba(239, 68, 68, 0.5);
+}
+
+/* Cleanup preview panel */
+.cleanup-preview {
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-lg);
+    margin-bottom: var(--spacing-xl);
+}
+
+.cleanup-preview-header {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-md);
+}
+
+.cleanup-preview-header i {
+    font-size: 1.25rem;
+    color: var(--warning);
+}
+
+.cleanup-preview-header h5 {
+    font-size: var(--typography-font-size-lg);
+    font-weight: 600;
+    color: var(--warning-text);
+    margin: 0;
+}
+
+.cleanup-preview-body {
+    font-size: var(--typography-font-size-sm);
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-md);
+}
+
+.cleanup-preview-list {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-sm);
+    padding: var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.cleanup-preview-item {
+    font-family: var(--typography-font-family-mono);
+    font-size: var(--typography-font-size-xs);
+    color: var(--text-muted);
+    padding: var(--spacing-xs) 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.cleanup-preview-item:last-child {
+    border-bottom: none;
+}
+
+.cleanup-preview-footer {
+    display: flex;
+    gap: var(--spacing-sm);
+}
+
+.cleanup-preview-footer .btn {
+    padding: var(--spacing-sm) var(--spacing-lg);
+    font-size: var(--typography-font-size-sm);
+    font-weight: 500;
+    border-radius: var(--radius-sm-md);
+    border: 1px solid transparent;
+    transition: all 0.2s ease;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+}
+
+.cleanup-preview-footer .btn-confirm {
+    background: var(--error-bg);
+    color: var(--error-text);
+    border-color: rgba(239, 68, 68, 0.3);
+}
+
+.cleanup-preview-footer .btn-confirm:hover {
+    background: rgba(239, 68, 68, 0.2);
+    border-color: rgba(239, 68, 68, 0.5);
+}
+
+.cleanup-preview-footer .btn-cancel {
+    background: rgba(148, 163, 184, 0.1);
+    color: var(--text-secondary);
+    border: 1px solid rgba(148, 163, 184, 0.3);
+}
+
+.cleanup-preview-footer .btn-cancel:hover {
+    background: rgba(148, 163, 184, 0.2);
+    border-color: rgba(148, 163, 184, 0.5);
+}
+
+/* Checkpoint controls */
+.checkpoint-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-lg);
+    padding: var(--spacing-md) var(--spacing-lg);
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: var(--radius-md);
+}
+
+.checkpoint-controls-info {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-lg);
+}
+
+.checkpoint-count {
+    font-size: var(--typography-font-size-sm);
+    color: var(--text-secondary);
+}
+
+.checkpoint-count strong {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.checkpoint-controls-actions {
+    display: flex;
+    gap: var(--spacing-sm);
+}
+
+.checkpoint-controls-actions .btn {
+    padding: var(--spacing-sm) var(--spacing-md);
+    font-size: var(--typography-font-size-sm);
+    font-weight: 500;
+    border-radius: var(--radius-sm-md);
+    border: 1px solid transparent;
+    transition: all 0.2s ease;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+}
+
+.checkpoint-controls-actions .btn-refresh {
+    background: rgba(59, 130, 246, 0.1);
+    color: var(--info-text);
+    border-color: rgba(59, 130, 246, 0.3);
+}
+
+.checkpoint-controls-actions .btn-refresh:hover {
+    background: rgba(59, 130, 246, 0.2);
+    border-color: rgba(59, 130, 246, 0.5);
+}
+
+.checkpoint-controls-actions .btn-cleanup {
+    background: rgba(245, 158, 11, 0.1);
+    color: var(--warning-text);
+    border-color: rgba(245, 158, 11, 0.3);
+}
+
+.checkpoint-controls-actions .btn-cleanup:hover {
+    background: rgba(245, 158, 11, 0.2);
+    border-color: rgba(245, 158, 11, 0.5);
+}
+
+/* Empty state */
+.checkpoint-empty {
+    text-align: center;
+    padding: var(--spacing-3xl) var(--spacing-xl);
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: var(--radius-xl);
+}
+
+.checkpoint-empty i {
+    font-size: 3rem;
+    color: var(--text-muted);
+    margin-bottom: var(--spacing-lg);
+    opacity: 0.5;
+}
+
+.checkpoint-empty h5 {
+    font-size: var(--typography-font-size-xl);
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-sm);
+}
+
+.checkpoint-empty p {
+    font-size: var(--typography-font-size-sm);
+    color: var(--text-muted);
+    margin: 0;
+}
+
+/* Loading spinner animation */
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .checkpoints-tab {
+        padding: var(--spacing-lg);
+    }
+
+    .checkpoint-grid {
+        grid-template-columns: 1fr;
+        gap: var(--spacing-md);
+    }
+
+    .checkpoint-controls {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .checkpoint-controls-info,
+    .checkpoint-controls-actions {
+        width: 100%;
+        flex-direction: column;
+    }
+
+    .checkpoint-controls-actions .btn {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .cleanup-preview-footer {
+        flex-direction: column;
+    }
+
+    .cleanup-preview-footer .btn {
+        width: 100%;
+        justify-content: center;
+    }
+}
