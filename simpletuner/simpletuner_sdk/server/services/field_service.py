@@ -442,7 +442,7 @@ class FieldService:
             "name": field.arg_name,
             "label": field.ui_label,
             "type": field.field_type.value.lower(),
-            "value": "" if field.field_type == FieldType.TEXT and field_value is None else field_value,
+            "value": "" if field.field_type in (FieldType.TEXT, FieldType.TEXTAREA) and field_value is None else field_value,
             "description": field.help_text,
         }
 
