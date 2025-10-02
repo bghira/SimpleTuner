@@ -17,6 +17,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from ..services.webui_state import WebUIStateStore
+from .custom_section_service import CUSTOM_SECTION_SERVICE
 from .dataset_service import build_data_backend_choices
 
 logger = logging.getLogger(__name__)
@@ -123,7 +124,7 @@ class TabService:
                 id="publishing",
                 title="Publishing",
                 icon="fas fa-cloud-upload-alt",
-                template="publishing_tab.html",
+                template="form_tab.html",
                 description="Configure HuggingFace Hub publishing",
                 extra_context_handler=self._publishing_tab_context,
             ),
@@ -224,7 +225,7 @@ class TabService:
             for section in sections:
                 section_id = section["id"]
                 section_fields = grouped_fields.get(section_id, [])
-                if section_fields or section.get("empty_message"):
+                if section_fields or section.get("empty_message") or section.get("template"):
                     filtered_sections.append(section)
             context["sections"] = filtered_sections
             context["grouped_fields"] = grouped_fields
@@ -268,8 +269,10 @@ class TabService:
         # Group fields into sections for basic tab
         sections = [
             {"id": "project", "title": "Project Settings", "icon": "fas fa-project-diagram"},
+            {"id": "project_advanced", "title": "Advanced Project Settings", "icon": "fas fa-cogs", "advanced": True},
             {"id": "training_data", "title": "Training Data", "icon": "fas fa-database"},
             {"id": "logging", "title": "Logging & Checkpoints", "icon": "fas fa-stream"},
+            {"id": "logging_advanced", "title": "Advanced Checkpoint Settings", "icon": "fas fa-cogs", "advanced": True},
             {"id": "other", "title": "Other Settings", "icon": "fas fa-sliders-h"},
         ]
 
@@ -369,11 +372,25 @@ class TabService:
     def _publishing_tab_context(
         self, context: Dict[str, Any], fields: List[Dict[str, Any]], config_values: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Provide context data for publishing tab."""
-        context["publishing_enabled"] = config_values.get("push_to_hub", False)
-        context["hub_model_id"] = config_values.get("hub_model_id", "")
-        context["private_repo"] = config_values.get("private", False)
-        context["model_family"] = config_values.get("model_family", "flux")
+        """Customize context for publishing tab using standard form template."""
+        # Group fields and assign section_id to each field
+        grouped_fields = self._group_publishing_fields(fields)
+        for section_id, section_fields in grouped_fields.items():
+            for field in section_fields:
+                field["section_id"] = section_id
+
+        # Get field-based sections from context (what came from field registry)
+        field_sections = context.get("sections", [])
+        
+        # Merge with custom sections using the custom section service
+        all_sections = CUSTOM_SECTION_SERVICE.merge_custom_sections_with_field_sections(
+            tab="publishing",
+            field_sections=field_sections
+        )
+
+        # Update context with merged sections and grouped fields
+        context["sections"] = all_sections
+        context["grouped_fields"] = grouped_fields
 
         return context
 
@@ -427,7 +444,14 @@ class TabService:
 
     def _group_basic_fields(self, fields: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
         """Group basic tab fields into sections."""
-        grouped = {"project": [], "training_data": [], "logging": [], "other": []}
+        grouped = {
+            "project": [],
+            "project_advanced": [],
+            "training_data": [],
+            "logging": [],
+            "logging_advanced": [],
+            "other": [],
+        }
 
         project_order = [
             "tracker_project_name",
@@ -435,6 +459,11 @@ class TabService:
             "configs_dir",
             "resume_from_checkpoint",
             "output_dir",
+        ]
+
+        project_advanced_order = [
+            "seed",
+            "merge_environment_defaults",
         ]
 
         training_data_order = [
@@ -451,15 +480,36 @@ class TabService:
             "tracker_image_layout",
         ]
 
+        logging_advanced_order = [
+            "checkpointing_rolling_steps",
+            "checkpointing_use_tempdir",
+            "checkpoints_rolling_total_limit",
+        ]
+
+        # Fields to remove from Other Settings (move to publishing)
+        publishing_fields = {
+            "push_to_hub",
+            "push_checkpoints_to_hub",
+            "hub_model_id",
+            "model_card_safe_for_work",
+        }
+
         for field in fields:
             field_id = field.get("id", "")
 
             if field_id in project_order:
                 grouped["project"].append(field)
+            elif field_id in project_advanced_order:
+                grouped["project_advanced"].append(field)
             elif field_id in training_data_order:
                 grouped["training_data"].append(field)
             elif field_id in logging_order:
                 grouped["logging"].append(field)
+            elif field_id in logging_advanced_order:
+                grouped["logging_advanced"].append(field)
+            elif field_id in publishing_fields:
+                # Skip these fields - they'll be handled in publishing tab
+                continue
             else:
                 grouped["other"].append(field)
 
@@ -469,8 +519,55 @@ class TabService:
             return sorted(items, key=lambda item: order_map.get(item.get("id", ""), len(order_map)))
 
         grouped["project"] = _sort_group(grouped["project"], project_order)
+        grouped["project_advanced"] = _sort_group(grouped["project_advanced"], project_advanced_order)
         grouped["training_data"] = _sort_group(grouped["training_data"], training_data_order)
         grouped["logging"] = _sort_group(grouped["logging"], logging_order)
+        grouped["logging_advanced"] = _sort_group(grouped["logging_advanced"], logging_advanced_order)
+
+        # Remove empty groups
+        return {k: v for k, v in grouped.items() if v}
+
+    def _group_publishing_fields(self, fields: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+        """Group publishing tab fields into sections."""
+        grouped = {
+            "publishing_controls": [],
+            "repository": [],
+            "model_card": [],
+        }
+
+        publishing_controls_order = [
+            "push_to_hub",
+            "push_checkpoints_to_hub",
+        ]
+
+        repository_order = [
+            "hub_model_id",
+            "model_card_private",
+        ]
+
+        model_card_order = [
+            "model_card_safe_for_work",
+            "model_card_note",
+        ]
+
+        for field in fields:
+            field_id = field.get("id", "")
+
+            if field_id in publishing_controls_order:
+                grouped["publishing_controls"].append(field)
+            elif field_id in repository_order:
+                grouped["repository"].append(field)
+            elif field_id in model_card_order:
+                grouped["model_card"].append(field)
+
+        # Enforce ordering within groups
+        def _sort_group(items, order):
+            order_map = {value: idx for idx, value in enumerate(order)}
+            return sorted(items, key=lambda item: order_map.get(item.get("id", ""), len(order_map)))
+
+        grouped["publishing_controls"] = _sort_group(grouped["publishing_controls"], publishing_controls_order)
+        grouped["repository"] = _sort_group(grouped["repository"], repository_order)
+        grouped["model_card"] = _sort_group(grouped["model_card"], model_card_order)
 
         # Remove empty groups
         return {k: v for k, v in grouped.items() if v}

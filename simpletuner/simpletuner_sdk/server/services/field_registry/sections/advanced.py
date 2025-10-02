@@ -549,13 +549,10 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             name="lr_end",
             arg_name="--lr_end",
             ui_label="Learning Rate End",
-            field_type=FieldType.NUMBER,
+            field_type=FieldType.TEXT,
             tab="training",
             section="learning_rate",
-            default_value=4e-7,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Learning rate end must be non-negative")
-            ],
+            default_value="4e-7",
             help_text="A polynomial learning rate will end up at this value after the specified number of warmup steps",
             tooltip="A sine or cosine wave will use this value as its lower bound for the learning rate.",
             importance=ImportanceLevel.ADVANCED,

@@ -2,7 +2,19 @@
 
 from typing import TYPE_CHECKING, Callable, Iterable
 
-from . import advanced, data, logging_fields, lora, loss, memory, model, optimizer, training, validation
+from . import (
+    advanced,
+    data,
+    logging_fields,
+    lora,
+    loss,
+    memory,
+    model,
+    optimizer,
+    publishing,
+    training,
+    validation,
+)
 
 if TYPE_CHECKING:
     from ..registry import FieldRegistry
@@ -18,6 +30,7 @@ _REGISTRARS: Iterable[Callable[["FieldRegistry"], None]] = (
     loss.register_loss_fields,
     optimizer.register_optimizer_fields,
     memory.register_memory_fields,
+    publishing.register_publishing_fields,
     logging_fields.register_logging_fields,
 )
 

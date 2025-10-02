@@ -204,98 +204,6 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
         )
     )
 
-    # Hub Model ID
-    registry._add_field(
-        ConfigField(
-            name="hub_model_id",
-            arg_name="--hub_model_id",
-            ui_label="Hugging Face Hub Model ID",
-            field_type=FieldType.TEXT,
-            tab="basic",
-            section="project",
-            default_value=None,
-            placeholder="username/model-name",
-            help_text="Model identifier for Hugging Face Hub",
-            tooltip="When pushing to Hub, this determines the model URL. If not set, derived from output_dir.",
-            importance=ImportanceLevel.ADVANCED,
-            order=6,
-        )
-    )
-
-    # Push to Hub
-    registry._add_field(
-        ConfigField(
-            name="push_to_hub",
-            arg_name="--push_to_hub",
-            ui_label="Push to Hugging Face Hub",
-            field_type=FieldType.CHECKBOX,
-            tab="basic",
-            section="project",
-            default_value=False,
-            help_text="Automatically upload model to Hugging Face Hub",
-            tooltip="Requires HF token. Model will be uploaded when training completes or at checkpoints.",
-            importance=ImportanceLevel.ADVANCED,
-            order=7,
-        )
-    )
-
-    # Push Checkpoints to Hub
-    registry._add_field(
-        ConfigField(
-            name="push_checkpoints_to_hub",
-            arg_name="--push_checkpoints_to_hub",
-            ui_label="Push Checkpoints to Hub",
-            field_type=FieldType.CHECKBOX,
-            tab="basic",
-            section="project",
-            default_value=False,
-            dependencies=[FieldDependency(field="push_to_hub", operator="equals", value=True, action="show")],
-            help_text="Upload intermediate checkpoints to Hub",
-            tooltip="Uploads each checkpoint instead of just the final model. May use significant storage.",
-            importance=ImportanceLevel.ADVANCED,
-            order=8,
-        )
-    )
-
-    # Model Card Note
-    registry._add_field(
-        ConfigField(
-            name="model_card_note",
-            arg_name="--model_card_note",
-            ui_label="Model Card Note",
-            field_type=FieldType.SELECT,
-            tab="basic",
-            section="project",
-            default_value=None,
-            choices=[
-                {"value": "", "label": "None"},
-                {"value": "private", "label": "Private"},
-                {"value": "duplicate", "label": "Duplicate"},
-            ],
-            help_text="Note for model card on Hub",
-            tooltip="Special notes for model card. 'Private' = not publicly visible. 'Duplicate' = copy of existing model.",
-            importance=ImportanceLevel.ADVANCED,
-            order=9,
-        )
-    )
-
-    # Model Card Safe for Work
-    registry._add_field(
-        ConfigField(
-            name="model_card_safe_for_work",
-            arg_name="--model_card_safe_for_work",
-            ui_label="Safe for Work",
-            field_type=FieldType.CHECKBOX,
-            tab="basic",
-            section="project",
-            default_value=False,
-            help_text="Mark the uploaded model as safe for work on Hugging Face Hub",
-            tooltip="Check if the model should be flagged as safe for work. Leave unchecked to include the default safety warning.",
-            importance=ImportanceLevel.ADVANCED,
-            order=10,
-        )
-    )
-
     # Enable Watermark
     registry._add_field(
         ConfigField(
@@ -319,16 +227,12 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             name="framerate",
             arg_name="--framerate",
             ui_label="Video Framerate",
-            field_type=FieldType.NUMBER,
+            field_type=FieldType.TEXT,
             tab="advanced",
             section="model_specific",
             default_value=None,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1"),
-                ValidationRule(ValidationRuleType.MAX, value=120, message="Must be <= 120"),
-            ],
             help_text="Framerate for video model training",
-            tooltip="Frames per second for video generation models. Higher = smoother but more compute.",
+            tooltip="Frames per second for video generation models. Enter an integer value or leave blank for default.",
             importance=ImportanceLevel.ADVANCED,
             order=12,
         )
@@ -340,13 +244,12 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             name="seed_for_each_device",
             arg_name="--seed_for_each_device",
             ui_label="Seed Per Device",
-            field_type=FieldType.NUMBER,
+            field_type=FieldType.CHECKBOX,
             tab="advanced",
             section="hardware_config",
             default_value=True,
-            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
-            help_text="Additional seed offset per GPU device",
-            tooltip="When using multiple GPUs, adds this value to seed per device for more variation.",
+            help_text="Use a unique deterministic seed per GPU instead of sharing one seed across devices.",
+            tooltip="Disable only when you intentionally want identical seeds on every device (may cause oversampling).",
             importance=ImportanceLevel.ADVANCED,
             order=13,
         )
@@ -469,12 +372,17 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             name="ema_validation",
             arg_name="--ema_validation",
             ui_label="EMA Validation",
-            field_type=FieldType.CHECKBOX,
+            field_type=FieldType.SELECT,
             tab="advanced",
             section="model_specific",
             default_value="comparison",
-            help_text="Use EMA weights for validation instead of main weights",
-            tooltip="When enabled, validation uses the EMA copy of the model for more stable results.",
+            choices=[
+                {"value": "none", "label": "Disable EMA Validation"},
+                {"value": "ema_only", "label": "EMA Only"},
+                {"value": "comparison", "label": "Compare EMA & Base"},
+            ],
+            help_text="Control how EMA weights are used during validation runs.",
+            tooltip="Choose whether to validate with base weights, EMA weights, or compare both side-by-side.",
             importance=ImportanceLevel.ADVANCED,
             order=20,
         )
