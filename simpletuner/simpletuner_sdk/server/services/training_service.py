@@ -208,10 +208,6 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
     for ui_key in ("configs_dir", "--configs_dir", "__active_tab__", "--__active_tab__"):
         complete_config.pop(ui_key, None)
 
-    prediction_key = "--prediction_type"
-    if prediction_key in complete_config and complete_config[prediction_key] in (None, ""):
-        complete_config.pop(prediction_key, None)
-
     # Ensure WebUI jobs always use the raw callback webhook configuration
     complete_config["--webhook_config"] = copy.deepcopy(DEFAULT_WEBHOOK_CONFIG)
     config_dict["--webhook_config"] = copy.deepcopy(DEFAULT_WEBHOOK_CONFIG)
