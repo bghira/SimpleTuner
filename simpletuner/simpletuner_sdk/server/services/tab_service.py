@@ -32,6 +32,8 @@ class TabType(str, Enum):
     DATASETS = "datasets"
     ENVIRONMENTS = "environments"
     VALIDATION = "validation"
+    PUBLISHING = "publishing"
+    CHECKPOINTS = "checkpoints"
     UI_SETTINGS = "ui_settings"
 
 
@@ -64,7 +66,7 @@ class TabService:
         return {
             TabType.BASIC: TabConfig(
                 id="basic-config",
-                title="Basic Configuration",
+                title="Basic",
                 icon="fas fa-cog",
                 template="form_tab.html",
                 description="Essential settings to get started",
@@ -72,7 +74,7 @@ class TabService:
             ),
             TabType.MODEL: TabConfig(
                 id="model-config",
-                title="Model Configuration",
+                title="Model",
                 icon="fas fa-brain",
                 template="form_tab.html",
                 description="Model architecture and settings",
@@ -80,14 +82,14 @@ class TabService:
             ),
             TabType.TRAINING: TabConfig(
                 id="training-config",
-                title="Training Configuration",
+                title="Training",
                 icon="fas fa-graduation-cap",
                 template="form_tab.html",
                 description="Training parameters and optimization",
             ),
             TabType.ADVANCED: TabConfig(
                 id="advanced-config",
-                title="Advanced Configuration",
+                title="Advanced",
                 icon="fas fa-tools",
                 template="form_tab.html",
                 description="Advanced training options",
@@ -95,7 +97,7 @@ class TabService:
             ),
             TabType.DATASETS: TabConfig(
                 id="datasets-config",
-                title="Dataset Configuration",
+                title="Dataset",
                 icon="fas fa-database",
                 template="datasets_tab.html",
                 description="Dataset loading and preprocessing",
@@ -103,7 +105,7 @@ class TabService:
             ),
             TabType.ENVIRONMENTS: TabConfig(
                 id="environments-config",
-                title="Environment Configuration",
+                title="Environment",
                 icon="fas fa-server",
                 template="environments_tab.html",
                 description="Environment and compute settings",
@@ -116,6 +118,22 @@ class TabService:
                 template="form_tab.html",
                 description="Configure visual validation jobs and output targets",
                 extra_context_handler=self._validation_tab_context,
+            ),
+            TabType.PUBLISHING: TabConfig(
+                id="publishing",
+                title="Publishing",
+                icon="fas fa-cloud-upload-alt",
+                template="publishing_tab.html",
+                description="Configure HuggingFace Hub publishing",
+                extra_context_handler=self._publishing_tab_context,
+            ),
+            TabType.CHECKPOINTS: TabConfig(
+                id="checkpoints",
+                title="Checkpoints",
+                icon="fas fa-save",
+                template="checkpoints_tab.html",
+                description="Browse and manage training checkpoints",
+                extra_context_handler=self._checkpoints_tab_context,
             ),
             TabType.UI_SETTINGS: TabConfig(
                 id="ui-settings",
@@ -346,6 +364,25 @@ class TabService:
         # Group fields under sections to reuse form_tab rendering
         context["grouped_fields"] = self._group_fields_by_section(fields, sections)
 
+        return context
+
+    def _publishing_tab_context(
+        self, context: Dict[str, Any], fields: List[Dict[str, Any]], config_values: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Provide context data for publishing tab."""
+        context["publishing_enabled"] = config_values.get("push_to_hub", False)
+        context["hub_model_id"] = config_values.get("hub_model_id", "")
+        context["private_repo"] = config_values.get("private", False)
+        context["model_family"] = config_values.get("model_family", "flux")
+
+        return context
+
+    def _checkpoints_tab_context(
+        self, context: Dict[str, Any], fields: List[Dict[str, Any]], config_values: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Provide context data for checkpoints tab."""
+        context["checkpoints_total_limit"] = config_values.get("checkpoints_total_limit", 10)
+        context["output_dir"] = config_values.get("output_dir", "output")
         return context
 
     def _ui_settings_tab_context(
