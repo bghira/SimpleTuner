@@ -1,9 +1,9 @@
 {% macro render_field(name, label, type='text', value='', placeholder='', extra_classes='') %}
 <label for="{{ name }}" class="form-label">{{ label }}</label>
-<input type="{{ type }}" 
-       class="form-control {{ extra_classes }}" 
-       id="{{ name }}" 
-       name="{{ name }}" 
+<input type="{{ type }}"
+       class="form-control {{ extra_classes }}"
+       id="{{ name }}"
+       name="{{ name }}"
        value="{{ value }}"
        {% if placeholder %}placeholder="{{ placeholder }}"{% endif %}>
 {% endmacro %}
@@ -21,9 +21,9 @@
 
 {% macro render_checkbox(name, label, checked=False, extra_classes='') %}
 <div class="form-check {{ extra_classes }}">
-    <input type="checkbox" 
-           class="form-check-input" 
-           id="{{ name }}" 
+    <input type="checkbox"
+           class="form-check-input"
+           id="{{ name }}"
            name="{{ name }}"
            {% if checked %}checked{% endif %}>
     <label class="form-check-label" for="{{ name }}">

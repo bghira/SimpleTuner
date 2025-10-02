@@ -818,7 +818,7 @@ function dataloaderSectionComponent() {
             }
         });
      })()">
-    
+
     <!-- Loading State -->
     <div x-show="!storeReady" class="text-center py-5">
         <div class="spinner-border text-primary" role="status">
@@ -844,7 +844,7 @@ function dataloaderSectionComponent() {
                 <i class="fas fa-code"></i> JSON Mode
             </button>
         </div>
-    
+
     <!-- Builder Mode -->
     <template x-if="dataLoaderMode === 'builder'">
     <div>
@@ -872,7 +872,7 @@ function dataloaderSectionComponent() {
                 </button>
             </div>
         </div>
-        
+
         <!-- Loading Indicator -->
         <div x-show="datasetsLoading" class="text-center py-4">
             <div class="spinner-border text-primary" role="status">
@@ -1933,7 +1933,7 @@ function dataloaderSectionComponent() {
                 <p>No datasets configured. Add a dataset to get started.</p>
             </div>
         </div>
-        
+
         <!-- Add Dataset Buttons -->
         <div class="add-dataset-container">
             <button type="button" class="add-dataset-btn" @click="addDataset('image')">

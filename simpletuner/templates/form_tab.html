@@ -1,5 +1,7 @@
 <!-- Generic Form Tab Template for HTMX -->
 <!-- Used by Basic, Model, Training, and Advanced tabs -->
+<link rel="stylesheet" href="/static/css/form-sections.css">
+
 <div class="tab-fragment"
      id="{{ tab_name }}-tab-content"
      data-tab-name="{{ tab_name }}"
@@ -100,99 +102,6 @@
         </div>
     </div>
 </div>
-
-<style>
-/* Form section styling */
-.tab-fragment {
-    animation: fadeIn 0.3s ease-in-out;
-}
-
-.form-section {
-    padding: 1rem;
-    background-color: rgba(255, 255, 255, 0.02);
-    border-radius: 0.375rem;
-    border: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-.empty-section-message {
-    display: inline-flex;
-    align-items: center;
-    padding: 0.75rem 1rem;
-    border-radius: 0.375rem;
-    background-color: rgba(30, 41, 59, 0.6);
-    border: 1px solid rgba(148, 163, 184, 0.35);
-    color: #cbd5f5;
-    font-size: 0.875rem;
-    backdrop-filter: blur(6px);
-}
-
-.section-title {
-    color: #e2e8f0;
-    font-weight: 600;
-    margin-bottom: 1rem;
-    padding-bottom: 0.5rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-/* Field-specific overrides based on tab */
-#basic-tab-content .form-section:first-child {
-    background-color: rgba(102, 126, 234, 0.05);
-    border-color: rgba(102, 126, 234, 0.2);
-}
-
-#model-tab-content .form-section:first-child {
-    background-color: rgba(139, 92, 246, 0.05);
-    border-color: rgba(139, 92, 246, 0.2);
-}
-
-#training-tab-content .form-section:first-child {
-    background-color: rgba(236, 72, 153, 0.05);
-    border-color: rgba(236, 72, 153, 0.2);
-}
-
-#advanced-tab-content .form-section:first-child {
-    background-color: rgba(245, 158, 11, 0.05);
-    border-color: rgba(245, 158, 11, 0.2);
-}
-
-/* Auto-save indicator */
-.htmx-request .htmx-indicator {
-    opacity: 1;
-    transition: opacity 0.3s ease-in;
-}
-
-/* Field hover effects */
-.form-control:hover:not(:focus) {
-    border-color: rgba(255, 255, 255, 0.1);
-}
-
-/* Conditional field styling */
-.conditional-field {
-    opacity: 0.7;
-    transition: opacity 0.3s ease;
-}
-
-.conditional-field.active {
-    opacity: 1;
-}
-
-/* Validation feedback inline */
-.field-valid {
-    border-color: #22c55e !important;
-}
-
-.field-invalid {
-    border-color: #ef4444 !important;
-}
-
-.field-optional .form-control {
-    opacity: 0.85;
-}
-
-.field-optional .form-control::placeholder {
-    font-style: italic;
-}
-</style>
 
 <script>
 // Tab-specific initialization

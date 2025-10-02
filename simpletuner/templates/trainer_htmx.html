@@ -2972,6 +2972,9 @@ function trainerComponent() {
                 if (response.ok) {
                     this.markFormClean();
                     window.showToast('Configuration saved', 'success');
+
+                    // Dispatch event for other components (e.g., publishing tab)
+                    window.dispatchEvent(new CustomEvent('config-saved'));
                 } else {
                     const error = await response.json();
                     window.showToast(error.detail || 'Failed to save configuration', 'error');
@@ -3021,12 +3024,18 @@ function trainerComponent() {
              await $data.initializeWebUIState();
              await $data.loadEnvironmentConfigs();
 
+             // Ensure active environment config is loaded and form is populated
+             if ($data.activeEnvironment) {
+                 await $data.fetchActiveEnvironmentConfig();
+                 // Wait for DOM to be ready before applying values
+                 await $nextTick();
+                 $data.applyStoredValues();
+                 $data.markFormClean();
+             }
+
              // Set up form change tracking
              const form = document.getElementById('trainer-form');
             if (form) {
-                // Mark form as clean initially
-                $data.markFormClean();
-
                 // Add change listeners to all form inputs
                 const handleFormChange = (event) => {
                     $data.handleFieldInput(event);
@@ -3118,93 +3127,18 @@ function trainerComponent() {
             <div class="nav-section">
                 <div class="nav-section-title">Configuration</div>
 
+                {% for tab in tabs %}
                 <button type="button"
                         class="tab-btn"
-                        data-tab="basic"
-                        :class="{ 'active': activeTab === 'basic' }"
-                        hx-get="/web/trainer/tabs/basic"
+                        data-tab="{{ tab.name }}"
+                        :class="{ 'active': activeTab === '{{ tab.name }}' }"
+                        hx-get="/web/trainer/tabs/{{ tab.name }}"
                         hx-target="#tab-content"
                         hx-swap="innerHTML"
-                        @click="switchTab('basic')">
-                    <i class="fas fa-cog"></i> Basic Config
+                        @click="switchTab('{{ tab.name }}')">
+                    <i class="{{ tab.icon }}"></i> {{ tab.title }}
                 </button>
-
-                <button type="button"
-                        class="tab-btn"
-                        data-tab="model"
-                        :class="{ 'active': activeTab === 'model' }"
-                        hx-get="/web/trainer/tabs/model"
-                        hx-target="#tab-content"
-                        hx-swap="innerHTML"
-                        @click="switchTab('model')">
-                    <i class="fas fa-brain"></i> Model Settings
-                </button>
-
-                <button type="button"
-                        class="tab-btn"
-                        data-tab="training"
-                        :class="{ 'active': activeTab === 'training' }"
-                        hx-get="/web/trainer/tabs/training"
-                        hx-target="#tab-content"
-                        hx-swap="innerHTML"
-                        @click="switchTab('training')">
-                    <i class="fas fa-graduation-cap"></i> Training
-                </button>
-
-                <button type="button"
-                        class="tab-btn"
-                        data-tab="advanced"
-                        :class="{ 'active': activeTab === 'advanced' }"
-                        hx-get="/web/trainer/tabs/advanced"
-                        hx-target="#tab-content"
-                        hx-swap="innerHTML"
-                        @click="switchTab('advanced')">
-                    <i class="fas fa-sliders-h"></i> Advanced
-                </button>
-
-                <button type="button"
-                        class="tab-btn"
-                        data-tab="datasets"
-                        :class="{ 'active': activeTab === 'datasets' }"
-                        hx-get="/web/trainer/tabs/datasets"
-                        hx-target="#tab-content"
-                        hx-swap="innerHTML"
-                        @click="switchTab('datasets')">
-                    <i class="fas fa-database"></i> Datasets
-                </button>
-
-                <button type="button"
-                        class="tab-btn"
-                        data-tab="validation"
-                        :class="{ 'active': activeTab === 'validation' }"
-                        hx-get="/web/trainer/tabs/validation"
-                        hx-target="#tab-content"
-                        hx-swap="innerHTML"
-                        @click="switchTab('validation')">
-                    <i class="fas fa-check-circle"></i> Validation
-                </button>
-
-                <button type="button"
-                        class="tab-btn"
-                        data-tab="environments"
-                        :class="{ 'active': activeTab === 'environments' }"
-                        hx-get="/web/trainer/tabs/environments"
-                        hx-target="#tab-content"
-                        hx-swap="innerHTML"
-                        @click="switchTab('environments')">
-                    <i class="fas fa-folder-open"></i> Environments
-                </button>
-
-                <button type="button"
-                        class="tab-btn"
-                        data-tab="ui_settings"
-                        :class="{ 'active': activeTab === 'ui_settings' }"
-                        hx-get="/web/trainer/tabs/ui_settings"
-                        hx-target="#tab-content"
-                        hx-swap="innerHTML"
-                        @click="switchTab('ui_settings')">
-                    <i class="fas fa-sliders-h"></i> UI Settings
-                </button>
+                {% endfor %}
             </div>
         </nav>
     </aside>
@@ -3235,6 +3169,8 @@ function trainerComponent() {
                              const data = await response.json();
                              this.configs = data.configs || [];
                              this.activeConfig = data.active || (data.configs && data.configs.length > 0 ? data.configs[0].name : '');
+                             // Validate the active config after loading
+                             await this.validateActiveConfig();
                           } catch (error) {
                              console.error('Failed to load configs:', error);
                              window.showToast('Failed to load configurations', 'error');
@@ -3856,6 +3792,10 @@ window.showToast = window.showToast || function(message, type) {
 </script>
 
 <script src="/static/js/modules/tab-navigation.js" defer></script>
+
+<!-- Load tab-specific modules early so they're available when tabs load -->
+<script src="/static/js/modules/publishing.js"></script>
+<script src="/static/js/modules/checkpoints.js"></script>
 
 <!-- Module loader for browser compatibility -->
 <script src="/static/js/module-loader.js"></script>

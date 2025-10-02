@@ -7,8 +7,51 @@
             <div class="col-md-6 mb-3">
                 {{ render_field('job_id', 'Job ID', 'text', 'foobar123') }}
             </div>
-            <div class="col-md-6 mb-3">
-                {{ render_field('--resume_from_checkpoint', 'Resume From Checkpoint', 'text', 'latest') }}
+            <div class="col-md-6 mb-3"
+                 x-data="{
+                     checkpoints: [],
+                     loading: false,
+                     async loadCheckpoints() {
+                         this.loading = true;
+                         try {
+                             const env = Alpine.store('trainer')?.activeEnvironment || 'default';
+                             const resp = await fetch(`/api/checkpoints/for-resume?environment=${env}`);
+                             if (resp.ok) {
+                                 const data = await resp.json();
+                                 this.checkpoints = data.checkpoints || [];
+                             }
+                         } catch (error) {
+                             console.error('Failed to load checkpoints:', error);
+                         } finally {
+                             this.loading = false;
+                         }
+                     }
+                 }"
+                 x-init="loadCheckpoints()"
+                 @environment-changed.window="loadCheckpoints()">
+
+                <label class="form-label" for="resume_from_checkpoint">
+                    Resume From Checkpoint
+                    <span class="text-muted small ms-2" x-show="loading">
+                        <i class="fas fa-spinner fa-spin"></i> Loading...
+                    </span>
+                </label>
+
+                <select name="--resume_from_checkpoint"
+                        id="resume_from_checkpoint"
+                        class="form-select"
+                        x-bind:disabled="loading">
+                    <option value="latest">latest (auto-detect most recent)</option>
+                    <option value="">none (start from scratch)</option>
+                    <template x-for="cp in checkpoints" :key="cp.name">
+                        <option :value="cp.name"
+                                x-text="`${cp.name} (step ${cp.step})`"></option>
+                    </template>
+                </select>
+
+                <small class="form-text text-muted">
+                    Select a checkpoint to resume training from, or "latest" to automatically use the most recent checkpoint
+                </small>
             </div>
         </div>
         <div class="row">

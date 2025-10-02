@@ -44,7 +44,7 @@ function environmentsTabComponent() {
          ],
          loraTypes: [
              { value: 'standard', label: 'Standard', disabled: false },
-             { value: 'lycoris', label: 'LyCORIS (coming soon)', disabled: true },
+             { value: 'lycoris', label: 'LyCORIS', disabled: false },
          ],
          examples: [],
          examplesMap: {},
@@ -57,6 +57,37 @@ function environmentsTabComponent() {
             environment: '',
             path: '',
             loading: false
+        },
+        lycorisEditor: {
+            open: false,
+            loading: false,
+            selectedEnvironment: null
+        },
+        lycorisConfig: {
+            algo: 'lora',
+            multiplier: 1.0,
+            linear_dim: 64,
+            linear_alpha: 32,
+            factor: null,
+            block_size: null,
+            apply_preset: {
+                target_module: ['Attention'],
+                module_algo_map: {}
+            }
+        },
+        targetModules: {
+            attention: true,
+            feedforward: false
+        },
+        algorithmDefaults: {
+            lora: { linear_dim: 64, linear_alpha: 32 },
+            loha: { linear_dim: 32, linear_alpha: 16 },
+            lokr: { linear_dim: 10000, linear_alpha: 1, factor: 12 },
+            full: { linear_dim: 1024, linear_alpha: 512 },
+            ia3: { linear_dim: null, linear_alpha: null },
+            dylora: { linear_dim: 128, linear_alpha: 64, block_size: 1 },
+            'diag-oft': { linear_dim: 64 },
+            boft: { linear_dim: 64 }
         },
 
         hasDataloader(config) {
@@ -875,35 +906,210 @@ function environmentsTabComponent() {
                  console.error('Failed to import config:', error);
                  window.showToast('Failed to import configuration', 'error');
              }
+         },
+
+         openLycorisEditor(config) {
+             if (!config) return;
+             this.lycorisEditor.selectedEnvironment = config.name;
+             this.lycorisEditor.open = true;
+             this.loadLycorisConfig(config.name);
+         },
+
+         closeLycorisEditor() {
+             this.lycorisEditor.open = false;
+             this.lycorisEditor.loading = false;
+             this.lycorisEditor.selectedEnvironment = null;
+         },
+
+         async loadLycorisConfig(envId) {
+             if (!envId) return;
+             this.lycorisEditor.loading = true;
+             try {
+                 const response = await fetch(`/api/configs/environments/${encodeURIComponent(envId)}/lycoris`);
+                 if (response.ok) {
+                     const data = await response.json();
+                     if (data.config) {
+                         this.lycorisConfig = {
+                             algo: data.config.algo || 'lora',
+                             multiplier: data.config.multiplier || 1.0,
+                             linear_dim: data.config.linear_dim || 64,
+                             linear_alpha: data.config.linear_alpha || 32,
+                             factor: data.config.factor || null,
+                             block_size: data.config.block_size || null,
+                             apply_preset: data.config.apply_preset || {
+                                 target_module: ['Attention'],
+                                 module_algo_map: {}
+                             }
+                         };
+                         const targetModules = data.config.apply_preset?.target_module || ['Attention'];
+                         this.targetModules = {
+                             attention: targetModules.includes('Attention'),
+                             feedforward: targetModules.includes('FeedForward')
+                         };
+                     }
+                 } else {
+                     this.lycorisConfig = {
+                         algo: 'lora',
+                         multiplier: 1.0,
+                         linear_dim: 64,
+                         linear_alpha: 32,
+                         factor: null,
+                         block_size: null,
+                         apply_preset: {
+                             target_module: ['Attention'],
+                             module_algo_map: {}
+                         }
+                     };
+                     this.targetModules = {
+                         attention: true,
+                         feedforward: false
+                     };
+                 }
+             } catch (error) {
+                 console.error('Failed to load LyCORIS config:', error);
+                 window.showToast('Failed to load LyCORIS configuration', 'error');
+             } finally {
+                 this.lycorisEditor.loading = false;
+             }
+         },
+
+         updateAlgorithmDefaults() {
+             const algo = this.lycorisConfig.algo;
+             const defaults = this.algorithmDefaults[algo];
+             if (defaults) {
+                 if (defaults.linear_dim !== undefined) {
+                     this.lycorisConfig.linear_dim = defaults.linear_dim;
+                 }
+                 if (defaults.linear_alpha !== undefined) {
+                     this.lycorisConfig.linear_alpha = defaults.linear_alpha;
+                 }
+                 if (algo === 'lokr') {
+                     this.lycorisConfig.factor = defaults.factor || 12;
+                 } else {
+                     this.lycorisConfig.factor = null;
+                 }
+                 if (algo === 'dylora') {
+                     this.lycorisConfig.block_size = defaults.block_size || 1;
+                 } else {
+                     this.lycorisConfig.block_size = null;
+                 }
+             }
+         },
+
+         validateLycorisConfig() {
+             if (!this.lycorisConfig.algo) {
+                 window.showToast('Algorithm is required', 'warning');
+                 return false;
+             }
+             if (this.lycorisConfig.multiplier === null || this.lycorisConfig.multiplier === undefined) {
+                 window.showToast('Multiplier is required', 'warning');
+                 return false;
+             }
+             const requiresDim = ['lora', 'loha', 'lokr', 'full', 'dylora', 'diag-oft', 'boft'].includes(this.lycorisConfig.algo);
+             if (requiresDim && (this.lycorisConfig.linear_dim === null || this.lycorisConfig.linear_dim === undefined)) {
+                 window.showToast('Linear dimension is required for this algorithm', 'warning');
+                 return false;
+             }
+             return true;
+         },
+
+         buildTargetModulesConfig() {
+             const targetModules = [];
+             if (this.targetModules.attention) {
+                 targetModules.push('Attention');
+             }
+             if (this.targetModules.feedforward) {
+                 targetModules.push('FeedForward');
+             }
+             this.lycorisConfig.apply_preset.target_module = targetModules;
+         },
+
+         async saveLycorisConfig() {
+             if (!this.validateLycorisConfig()) {
+                 return;
+             }
+             if (!this.lycorisEditor.selectedEnvironment) {
+                 window.showToast('No environment selected', 'warning');
+                 return;
+             }
+             this.buildTargetModulesConfig();
+             this.lycorisEditor.loading = true;
+             try {
+                 const payload = {
+                     algo: this.lycorisConfig.algo,
+                     multiplier: this.lycorisConfig.multiplier,
+                     linear_dim: this.lycorisConfig.linear_dim,
+                     linear_alpha: this.lycorisConfig.linear_alpha,
+                     factor: this.lycorisConfig.factor,
+                     block_size: this.lycorisConfig.block_size,
+                     apply_preset: this.lycorisConfig.apply_preset
+                 };
+                 const response = await fetch(`/api/configs/environments/${encodeURIComponent(this.lycorisEditor.selectedEnvironment)}/lycoris`, {
+                     method: 'PUT',
+                     headers: {
+                         'Content-Type': 'application/json'
+                     },
+                     body: JSON.stringify(payload)
+                 });
+                 if (response.ok) {
+                     window.showToast('LyCORIS configuration saved', 'success');
+                     this.closeLycorisEditor();
+                     await this.loadConfigs();
+                 } else {
+                     const error = await response.json().catch(() => ({}));
+                     window.showToast(error.detail || 'Failed to save LyCORIS configuration', 'error');
+                 }
+             } catch (error) {
+                 console.error('Failed to save LyCORIS config:', error);
+                 window.showToast('Failed to save LyCORIS configuration', 'error');
+             } finally {
+                 this.lycorisEditor.loading = false;
+             }
+         },
+
+         getLycorisConfigJSON() {
+             this.buildTargetModulesConfig();
+             return JSON.stringify(this.lycorisConfig, null, 2);
          }
     }
 }
 </script>
 
-<div class="environments-tab"
+<div class="tab-fragment"
+     id="environments-tab-content"
+     data-tab-name="environments"
      x-data="environmentsTabComponent()"
      x-init="loadConfigs(); loadTemplates()">
 
-    <div class="d-flex flex-wrap align-items-center justify-content-between mb-3 gap-2">
-        <div class="btn-group" role="group">
-            <button type="button" class="btn"
-                    :class="activePanel === 'configs' ? 'btn-primary' : 'btn-outline-secondary'"
-                    @click="switchPanel('configs')">
-                <i class="fas fa-folder"></i> Configurations
-            </button>
-            <button type="button" class="btn"
-                    :class="activePanel === 'filters' ? 'btn-primary' : 'btn-outline-secondary'"
-                    @click="switchPanel('filters')">
-                <i class="fas fa-filter"></i> Caption Filters
-            </button>
-        </div>
-        <div x-show="activePanel === 'filters'" class="ms-auto">
-            <button type="button" class="btn btn-sm btn-success" @click="openFilterEditor()">
-                <i class="fas fa-plus"></i> New Filter
-            </button>
-        </div>
-    </div>
+    <!-- Main Card -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-1"><i class="fas fa-folder-open me-2"></i>Configuration Environments</h5>
+            <p class="text-muted mb-3">Manage training configurations and caption filters</p>
 
+            <!-- Panel Switcher -->
+            <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+                <div class="btn-group" role="group">
+                    <button type="button" class="btn btn-sm"
+                            :class="activePanel === 'configs' ? 'btn-primary' : 'btn-outline-secondary'"
+                            @click="switchPanel('configs')">
+                        <i class="fas fa-folder"></i> Configurations
+                    </button>
+                    <button type="button" class="btn btn-sm"
+                            :class="activePanel === 'filters' ? 'btn-primary' : 'btn-outline-secondary'"
+                            @click="switchPanel('filters')">
+                        <i class="fas fa-filter"></i> Caption Filters
+                    </button>
+                </div>
+                <div x-show="activePanel === 'filters'">
+                    <button type="button" class="btn btn-sm btn-success" @click="openFilterEditor()">
+                        <i class="fas fa-plus"></i> New Filter
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="card-body">
     <div x-show="activePanel === 'configs'">
     <!-- Config Type Tabs -->
     <div class="btn-group mb-3" role="group">
@@ -1084,6 +1290,13 @@ function environmentsTabComponent() {
                                     <i class="fas fa-database"></i>
                                 </button>
                                 <button type="button"
+                                        class="btn btn-outline-primary"
+                                        x-show="configType === 'model' && config.lora_type === 'lycoris'"
+                                        @click="openLycorisEditor(config)"
+                                        title="Edit LyCORIS Config">
+                                    <i class="fas fa-brain"></i>
+                                </button>
+                                <button type="button"
                                         class="btn btn-outline-secondary"
                                         @click="renameConfig(config.name)"
                                         title="Rename">
@@ -1183,6 +1396,13 @@ function environmentsTabComponent() {
                                             @click="openCreateDataloaderModal(config.name)"
                                             title="Create Dataloader">
                                         <i class="fas fa-database"></i>
+                                    </button>
+                                    <button type="button"
+                                            class="btn btn-outline-primary"
+                                            x-show="configType === 'model' && config.lora_type === 'lycoris'"
+                                            @click="openLycorisEditor(config)"
+                                            title="Edit LyCORIS Config">
+                                        <i class="fas fa-brain"></i>
                                     </button>
                                     <button type="button"
                                             class="btn btn-outline-secondary"
@@ -1288,6 +1508,8 @@ function environmentsTabComponent() {
                 </div>
             </template>
         </div>
+        </div><!-- /card-body -->
+    </div><!-- /card -->
 
         <!-- Caption Filter Editor Modal -->
         <div x-cloak x-show="filterEditor.open" class="modal-backdrop" @keydown.escape.window="closeFilterEditor()" x-transition.opacity>
@@ -1519,22 +1741,162 @@ function environmentsTabComponent() {
             </form>
         </div>
     </div>
+
+    <!-- LyCORIS Editor Modal -->
+    <div x-cloak x-show="lycorisEditor.open" class="modal-backdrop" @keydown.escape.window="closeLycorisEditor()" x-transition.opacity>
+        <div class="modal-dialog modal-lg" @click.stop>
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-brain"></i>
+                    LyCORIS Configuration Editor
+                    <span x-show="lycorisEditor.selectedEnvironment" class="text-muted small ms-2">
+                        (<span x-text="lycorisEditor.selectedEnvironment"></span>)
+                    </span>
+                </h5>
+                <button type="button" class="btn-close" aria-label="Close" @click="closeLycorisEditor()"></button>
+            </div>
+            <form @submit.prevent="saveLycorisConfig()">
+                <div class="modal-body">
+                    <div x-show="lycorisEditor.loading" class="text-center py-4">
+                        <i class="fas fa-spinner fa-spin fa-2x text-primary"></i>
+                        <p class="mt-2 text-muted">Loading configuration...</p>
+                    </div>
+
+                    <div x-show="!lycorisEditor.loading">
+                        <!-- Algorithm Selection -->
+                        <div class="mb-4">
+                            <label class="form-label fw-bold">Algorithm</label>
+                            <select class="form-select" x-model="lycorisConfig.algo" @change="updateAlgorithmDefaults()">
+                                <option value="lora">LoRA - Low-Rank Adaptation</option>
+                                <option value="loha">LoHa - Low-Rank Hadamard Product</option>
+                                <option value="lokr">LoKr - Low-Rank Kronecker Product</option>
+                                <option value="full">Full - Full Fine-tuning</option>
+                                <option value="ia3">IA3 - Infused Adapter by Inhibiting and Amplifying Inner Activations</option>
+                                <option value="dylora">DyLoRA - Dynamic Low-Rank Adaptation</option>
+                                <option value="diag-oft">Diag-OFT - Diagonal Orthogonal Finetuning</option>
+                                <option value="boft">BOFT - Butterfly Orthogonal Finetuning</option>
+                            </select>
+                            <small class="form-text text-muted">Choose the LyCORIS algorithm variant</small>
+                        </div>
+
+                        <!-- Core Parameters -->
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h6 class="mb-0">Core Parameters</h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="row g-3">
+                                    <div class="col-md-4">
+                                        <label class="form-label">Multiplier</label>
+                                        <input type="number" class="form-control" x-model.number="lycorisConfig.multiplier"
+                                               step="0.1" min="0" required>
+                                        <small class="form-text text-muted">Weight scaling factor</small>
+                                    </div>
+                                    <div class="col-md-4" x-show="lycorisConfig.algo !== 'ia3'">
+                                        <label class="form-label">Linear Dimension</label>
+                                        <input type="number" class="form-control" x-model.number="lycorisConfig.linear_dim"
+                                               min="1" :required="lycorisConfig.algo !== 'ia3'">
+                                        <small class="form-text text-muted">Rank/dimension size</small>
+                                    </div>
+                                    <div class="col-md-4" x-show="['lora', 'loha', 'lokr', 'dylora'].includes(lycorisConfig.algo)">
+                                        <label class="form-label">Linear Alpha</label>
+                                        <input type="number" class="form-control" x-model.number="lycorisConfig.linear_alpha"
+                                               min="0">
+                                        <small class="form-text text-muted">Scaling alpha value</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Algorithm-Specific Parameters -->
+                        <div class="card mb-4" x-show="lycorisConfig.algo === 'lokr' || lycorisConfig.algo === 'dylora'">
+                            <div class="card-header">
+                                <h6 class="mb-0">Algorithm-Specific Parameters</h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="row g-3">
+                                    <div class="col-md-6" x-show="lycorisConfig.algo === 'lokr'">
+                                        <label class="form-label">Factor</label>
+                                        <input type="number" class="form-control" x-model.number="lycorisConfig.factor"
+                                               min="1">
+                                        <small class="form-text text-muted">Kronecker product factorization factor</small>
+                                    </div>
+                                    <div class="col-md-6" x-show="lycorisConfig.algo === 'dylora'">
+                                        <label class="form-label">Block Size</label>
+                                        <input type="number" class="form-control" x-model.number="lycorisConfig.block_size"
+                                               min="1">
+                                        <small class="form-text text-muted">Dynamic block size for DyLoRA</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Advanced Settings -->
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h6 class="mb-0">
+                                    <i class="fas fa-cog"></i> Advanced Settings
+                                </h6>
+                            </div>
+                            <div class="card-body">
+                                <label class="form-label fw-bold">Target Modules</label>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="targetAttention"
+                                           x-model="targetModules.attention">
+                                    <label class="form-check-label" for="targetAttention">
+                                        Attention Modules
+                                    </label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="targetFeedForward"
+                                           x-model="targetModules.feedforward">
+                                    <label class="form-check-label" for="targetFeedForward">
+                                        FeedForward Modules
+                                    </label>
+                                </div>
+                                <div class="alert alert-warning mt-3 small" x-show="targetModules.feedforward">
+                                    <i class="fas fa-exclamation-triangle"></i>
+                                    <strong>Warning:</strong> Applying LyCORIS to FeedForward modules may cause NaN losses on SDXL models.
+                                    Use with caution and monitor training closely.
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- JSON Preview -->
+                        <div class="card mb-3">
+                            <div class="card-header">
+                                <h6 class="mb-0">
+                                    <i class="fas fa-code"></i> Configuration Preview
+                                </h6>
+                            </div>
+                            <div class="card-body">
+                                <textarea class="form-control font-monospace small" rows="8" readonly
+                                          :value="getLycorisConfigJSON()"
+                                          style="background-color: rgba(0,0,0,0.2);"></textarea>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" @click="closeLycorisEditor()">
+                        <i class="fas fa-times"></i> Cancel
+                    </button>
+                    <button type="submit" class="btn btn-primary" :disabled="lycorisEditor.loading">
+                        <span x-show="!lycorisEditor.loading"><i class="fas fa-save"></i> Save Configuration</span>
+                        <span x-show="lycorisEditor.loading"><i class="fas fa-spinner fa-spin"></i> Saving...</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
 </div>
 
 <style>
-.environments-tab {
-    padding: 1rem;
-}
+/* Environments tab inherits card styling from trainer-core.css */
 
 .config-card {
-    background: rgba(23, 25, 35, 0.9);
-    border: 1px solid rgba(255,255,255,0.1);
+    /* Background and border now inherited from unified theme */
     transition: all 0.3s ease;
-}
-
-.config-card:hover {
-    transform: translateY(-2px);
-    border-color: rgba(255,255,255,0.2);
 }
 
 .config-card.selected {

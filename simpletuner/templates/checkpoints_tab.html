@@ -1,0 +1,284 @@
+<!-- templates/checkpoints_tab.html - Training Checkpoints Management -->
+<link rel="stylesheet" href="/static/css/checkpoints.css">
+<script src="/static/js/modules/checkpoints.js"></script>
+<script>
+if (!window.checkpointsManager) {
+    console.error('Checkpoints module not loaded. Please check /static/js/modules/checkpoints.js');
+}
+</script>
+
+<div class="tab-fragment"
+     id="checkpoints-tab-content"
+     data-tab-name="checkpoints"
+     x-data="checkpointsManager()"
+     x-init="init()">
+
+    <!-- Checkpoint List Section -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h5 class="mb-1"><i class="fas fa-save me-2"></i>Training Checkpoints</h5>
+                    <p class="text-muted mb-0">Browse and manage saved model checkpoints from training runs.</p>
+                </div>
+                <div class="d-flex gap-2 align-items-center">
+                    <select class="form-select form-select-sm"
+                            x-model="sortBy"
+                            @change="sortCheckpoints()"
+                            style="width: auto;">
+                        <option value="step-desc">Step (Newest First)</option>
+                        <option value="step-asc">Step (Oldest First)</option>
+                        <option value="date-desc">Date (Newest First)</option>
+                        <option value="date-asc">Date (Oldest First)</option>
+                        <option value="size-desc">Size (Largest First)</option>
+                        <option value="size-asc">Size (Smallest First)</option>
+                    </select>
+                    <button type="button"
+                            class="btn btn-sm btn-outline-primary"
+                            @click="loadCheckpoints()"
+                            :disabled="loading.checkpoints">
+                        <i class="fas fa-sync-alt me-1" :class="{ 'fa-spin': loading.checkpoints }"></i>
+                        Refresh
+                    </button>
+                </div>
+            </div>
+        </div>
+        <div class="card-body">
+            <!-- Loading state -->
+            <div x-show="loading.checkpoints && checkpoints.length === 0" class="text-center py-5">
+                <div class="spinner-border spinner-border-sm text-primary mb-2" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="text-muted mb-0">Loading checkpoints...</p>
+            </div>
+
+            <!-- Empty state -->
+            <div x-show="!loading.checkpoints && checkpoints.length === 0" class="empty-state text-center py-5">
+                <i class="fas fa-box-open fa-3x text-muted mb-3"></i>
+                <h6 class="text-muted">No Checkpoints Found</h6>
+                <p class="text-muted small mb-0">Checkpoints will appear here after training runs complete.</p>
+            </div>
+
+            <!-- Checkpoint Grid -->
+            <div x-show="checkpoints.length > 0" x-cloak class="checkpoint-grid">
+                <template x-for="checkpoint in checkpoints" :key="checkpoint.id">
+                    <div class="checkpoint-card"
+                         :class="{ 'selected': selectedCheckpoint?.id === checkpoint.id }"
+                         @click="selectCheckpoint(checkpoint.id)">
+                        <div class="checkpoint-header">
+                            <div class="checkpoint-title">
+                                <i class="fas fa-cube me-2"></i>
+                                <span x-text="`Step ${checkpoint.step}`"></span>
+                            </div>
+                            <div class="checkpoint-status">
+                                <span x-show="checkpoint.validation_status === 'valid'"
+                                      class="badge bg-success">
+                                    <i class="fas fa-check-circle"></i> Valid
+                                </span>
+                                <span x-show="checkpoint.validation_status === 'invalid'"
+                                      class="badge bg-danger">
+                                    <i class="fas fa-times-circle"></i> Invalid
+                                </span>
+                                <span x-show="checkpoint.validation_status === 'pending'"
+                                      class="badge bg-secondary">
+                                    <i class="fas fa-question-circle"></i> Not Validated
+                                </span>
+                            </div>
+                        </div>
+                        <div class="checkpoint-meta">
+                            <div class="meta-item">
+                                <i class="fas fa-calendar-alt"></i>
+                                <span x-text="formatDate(checkpoint.created_at)"></span>
+                            </div>
+                            <div class="meta-item">
+                                <i class="fas fa-hdd"></i>
+                                <span x-text="formatSize(checkpoint.size)"></span>
+                            </div>
+                        </div>
+                        <div class="checkpoint-path" x-show="checkpoint.path">
+                            <code x-text="checkpoint.path"></code>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </div>
+
+    <!-- Selected Checkpoint Details -->
+    <div x-show="selectedCheckpoint" x-cloak class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-1"><i class="fas fa-info-circle me-2"></i>Checkpoint Details</h5>
+            <p class="text-muted mb-0">Detailed information about the selected checkpoint.</p>
+        </div>
+        <div class="card-body">
+            <template x-if="selectedCheckpoint">
+                <div class="row g-4">
+                    <!-- Basic Info -->
+                    <div class="col-md-6">
+                        <div class="detail-card">
+                            <h6 class="mb-3">Basic Information</h6>
+                            <div class="detail-row">
+                                <span class="detail-label">Step Number:</span>
+                                <span class="detail-value" x-text="selectedCheckpoint.step"></span>
+                            </div>
+                            <div class="detail-row">
+                                <span class="detail-label">Created:</span>
+                                <span class="detail-value" x-text="formatDateTime(selectedCheckpoint.created_at)"></span>
+                            </div>
+                            <div class="detail-row">
+                                <span class="detail-label">Size:</span>
+                                <span class="detail-value" x-text="formatSize(selectedCheckpoint.size)"></span>
+                            </div>
+                            <div class="detail-row">
+                                <span class="detail-label">Validation Status:</span>
+                                <span class="detail-value">
+                                    <span x-show="selectedCheckpoint.validation_status === 'valid'"
+                                          class="badge bg-success">Valid</span>
+                                    <span x-show="selectedCheckpoint.validation_status === 'invalid'"
+                                          class="badge bg-danger">Invalid</span>
+                                    <span x-show="selectedCheckpoint.validation_status === 'pending'"
+                                          class="badge bg-secondary">Not Validated</span>
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- File Information -->
+                    <div class="col-md-6">
+                        <div class="detail-card">
+                            <h6 class="mb-3">File Information</h6>
+                            <div class="detail-row">
+                                <span class="detail-label">Path:</span>
+                                <span class="detail-value">
+                                    <code x-text="selectedCheckpoint.path"></code>
+                                </span>
+                            </div>
+                            <div class="detail-row" x-show="selectedCheckpoint.files && selectedCheckpoint.files.length > 0">
+                                <span class="detail-label">Files:</span>
+                                <span class="detail-value">
+                                    <ul class="file-list mb-0">
+                                        <template x-for="file in selectedCheckpoint.files" :key="file">
+                                            <li x-text="file"></li>
+                                        </template>
+                                    </ul>
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Actions -->
+                    <div class="col-12">
+                        <div class="detail-card">
+                            <h6 class="mb-3">Actions</h6>
+                            <div class="d-flex gap-2">
+                                <button type="button"
+                                        class="btn btn-primary btn-sm"
+                                        @click="validateCheckpoint(selectedCheckpoint.id)"
+                                        :disabled="loading.validation || selectedCheckpoint.validation_status === 'valid'">
+                                    <i class="fas fa-check-circle me-1" :class="{ 'fa-spin': loading.validation }"></i>
+                                    <span x-text="loading.validation ? 'Validating...' : 'Validate Checkpoint'"></span>
+                                </button>
+                                <button type="button"
+                                        class="btn btn-outline-danger btn-sm"
+                                        @click="deleteCheckpoint(selectedCheckpoint.id)"
+                                        :disabled="loading.delete">
+                                    <i class="fas fa-trash me-1"></i>
+                                    Delete Checkpoint
+                                </button>
+                            </div>
+                            <div x-show="validationResult" class="alert mt-3 mb-0" :class="{
+                                'alert-success': validationResult?.valid,
+                                'alert-danger': validationResult && !validationResult.valid
+                            }">
+                                <strong x-text="validationResult?.valid ? 'Valid' : 'Invalid'"></strong>
+                                <p class="mb-0 small" x-text="validationResult?.message"></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- Cleanup Configuration -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-1"><i class="fas fa-broom me-2"></i>Checkpoint Cleanup</h5>
+            <p class="text-muted mb-0">Manage checkpoint retention and cleanup old checkpoints.</p>
+        </div>
+        <div class="card-body">
+            <div class="row g-4">
+                <!-- Retention Configuration -->
+                <div class="col-md-6">
+                    <div class="cleanup-card">
+                        <h6 class="mb-3">Retention Settings</h6>
+                        <div class="mb-3">
+                            <label class="form-label" for="retention-limit">
+                                Keep Most Recent Checkpoints
+                            </label>
+                            <input type="number"
+                                   id="retention-limit"
+                                   class="form-control"
+                                   min="1"
+                                   max="100"
+                                   x-model.number="retentionLimit"
+                                   @change="markRetentionDirty()">
+                            <div class="form-text">
+                                Number of most recent checkpoints to keep. Older checkpoints will be marked for cleanup.
+                            </div>
+                        </div>
+                        <button type="button"
+                                class="btn btn-primary btn-sm"
+                                @click="saveRetentionConfig()"
+                                :disabled="loading.saveRetention || !retentionDirty">
+                            <i class="fas fa-save me-1" :class="{ 'fa-spin': loading.saveRetention }"></i>
+                            <span x-text="loading.saveRetention ? 'Saving...' : 'Save Settings'"></span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Cleanup Preview -->
+                <div class="col-md-6">
+                    <div class="cleanup-card">
+                        <h6 class="mb-3">Cleanup Preview</h6>
+                        <div x-show="!cleanupPreview" class="text-muted small">
+                            Click "Preview Cleanup" to see which checkpoints will be removed.
+                        </div>
+                        <div x-show="cleanupPreview" x-cloak>
+                            <div class="cleanup-summary mb-3">
+                                <div class="summary-item">
+                                    <span class="summary-label">Checkpoints to Keep:</span>
+                                    <span class="summary-value text-success" x-text="cleanupPreview?.to_keep || 0"></span>
+                                </div>
+                                <div class="summary-item">
+                                    <span class="summary-label">Checkpoints to Remove:</span>
+                                    <span class="summary-value text-danger" x-text="cleanupPreview?.to_remove || 0"></span>
+                                </div>
+                                <div class="summary-item">
+                                    <span class="summary-label">Space to Reclaim:</span>
+                                    <span class="summary-value" x-text="formatSize(cleanupPreview?.space_to_reclaim || 0)"></span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="d-flex gap-2">
+                            <button type="button"
+                                    class="btn btn-outline-secondary btn-sm"
+                                    @click="previewCleanup()"
+                                    :disabled="loading.preview">
+                                <i class="fas fa-eye me-1" :class="{ 'fa-spin': loading.preview }"></i>
+                                Preview Cleanup
+                            </button>
+                            <button type="button"
+                                    class="btn btn-danger btn-sm"
+                                    @click="executeCleanup()"
+                                    :disabled="loading.cleanup || !cleanupPreview || cleanupPreview.to_remove === 0">
+                                <i class="fas fa-trash me-1" :class="{ 'fa-spin': loading.cleanup }"></i>
+                                Execute Cleanup
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

@@ -1,11 +1,14 @@
 <!-- templates/datasets_tab.html - Datasets configuration tab content -->
-<div class="datasets-tab">
-    <!-- Include the dataloader builder section -->
-    {% include 'trainer_dataloader_section.html' %}
+<div class="tab-fragment" id="datasets-tab-content" data-tab-name="datasets">
+    <!-- Main Card -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-1"><i class="fas fa-database me-2"></i>Dataset Configuration</h5>
+            <p class="text-muted mb-0">Configure datasets and data loaders for training</p>
+        </div>
+        <div class="card-body">
+            <!-- Include the dataloader builder section -->
+            {% include 'trainer_dataloader_section.html' %}
+        </div>
+    </div>
 </div>
-
-<style>
-.datasets-tab {
-    padding: 1rem;
-}
-</style>

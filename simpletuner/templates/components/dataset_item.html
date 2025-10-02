@@ -19,7 +19,7 @@
                 </button>
             </div>
         </div>
-        
+
         <div class="dataset-content">
             <!-- Basic Configuration -->
             <div class="config-section">
@@ -35,7 +35,7 @@
                             <option value="conditioning">Conditioning</option>
                         </select>
                     </div>
-                    
+
                     <div class="form-group">
                         <label>Storage Type</label>
                         <select class="form-control" data-field="type">
@@ -45,14 +45,14 @@
                             <option value="huggingface">Hugging Face</option>
                         </select>
                     </div>
-                    
+
                     <div class="form-group dataset-disabled">
                         <label>
                             <input type="checkbox" data-field="disabled">
                             Disabled
                         </label>
                     </div>
-                    
+
                     <div class="form-group text-embeds-default" style="display:none;">
                         <label>
                             <input type="checkbox" data-field="default">
@@ -61,7 +61,7 @@
                     </div>
                 </div>
             </div>
-            
+
             <!-- Storage Configuration -->
             <div class="config-section storage-config">
                 <!-- Local Storage -->
@@ -69,11 +69,11 @@
                     <h6 class="section-title">Local Storage</h6>
                     <div class="form-group">
                         <label>Data Directory</label>
-                        <input type="text" class="form-control" data-field="instance_data_dir" 
+                        <input type="text" class="form-control" data-field="instance_data_dir"
                                placeholder="/path/to/data">
                     </div>
                 </div>
-                
+
                 <!-- AWS Storage -->
                 <div class="storage-aws" style="display:none;">
                     <h6 class="section-title">AWS S3 Configuration</h6>
@@ -104,7 +104,7 @@
                         </div>
                     </div>
                 </div>
-                
+
                 <!-- CSV Storage -->
                 <div class="storage-csv" style="display:none;">
                     <h6 class="section-title">CSV Configuration</h6>
@@ -123,14 +123,14 @@
                         </div>
                     </div>
                 </div>
-                
+
                 <!-- Hugging Face Storage -->
                 <div class="storage-huggingface" style="display:none;">
                     <h6 class="section-title">Hugging Face Configuration</h6>
                     <div class="config-grid">
                         <div class="form-group">
                             <label>Dataset Name</label>
-                            <input type="text" class="form-control" data-field="dataset_name" 
+                            <input type="text" class="form-control" data-field="dataset_name"
                                    placeholder="username/dataset-name">
                         </div>
                         <div class="form-group">
@@ -144,18 +144,18 @@
                     </div>
                 </div>
             </div>
-            
+
             <!-- Image/Video Specific Configuration -->
             <div class="config-section media-config" style="display:none;">
                 <h6 class="section-title">Media Processing</h6>
-                
+
                 <!-- Resolution Settings -->
                 <div class="subsection">
                     <h6 class="subsection-title">Resolution</h6>
                     <div class="config-grid">
                         <div class="form-group">
                             <label>Resolution</label>
-                            <input type="number" class="form-control" data-field="resolution" 
+                            <input type="number" class="form-control" data-field="resolution"
                                    placeholder="1024" step="any">
                         </div>
                         <div class="form-group">
@@ -168,39 +168,39 @@
                         </div>
                         <div class="form-group">
                             <label>Minimum Image Size</label>
-                            <input type="number" class="form-control" data-field="minimum_image_size" 
+                            <input type="number" class="form-control" data-field="minimum_image_size"
                                    step="any">
                         </div>
                         <div class="form-group">
                             <label>Maximum Image Size</label>
-                            <input type="number" class="form-control" data-field="maximum_image_size" 
+                            <input type="number" class="form-control" data-field="maximum_image_size"
                                    step="any">
                         </div>
                         <div class="form-group">
                             <label>Target Downsample Size</label>
-                            <input type="number" class="form-control" data-field="target_downsample_size" 
+                            <input type="number" class="form-control" data-field="target_downsample_size"
                                    step="any">
                         </div>
                     </div>
                 </div>
-                
+
                 <!-- Aspect Ratio Settings -->
                 <div class="subsection">
                     <h6 class="subsection-title">Aspect Ratio</h6>
                     <div class="config-grid">
                         <div class="form-group">
                             <label>Minimum Aspect Ratio</label>
-                            <input type="number" class="form-control" data-field="minimum_aspect_ratio" 
+                            <input type="number" class="form-control" data-field="minimum_aspect_ratio"
                                    placeholder="0.5" step="0.01">
                         </div>
                         <div class="form-group">
                             <label>Maximum Aspect Ratio</label>
-                            <input type="number" class="form-control" data-field="maximum_aspect_ratio" 
+                            <input type="number" class="form-control" data-field="maximum_aspect_ratio"
                                    placeholder="3.0" step="0.01">
                         </div>
                     </div>
                 </div>
-                
+
                 <!-- Crop Settings -->
                 <div class="subsection">
                     <h6 class="subsection-title">Cropping</h6>
@@ -231,12 +231,12 @@
                         </div>
                         <div class="form-group crop-dependent">
                             <label>Crop Aspect Buckets</label>
-                            <input type="text" class="form-control" data-field="crop_aspect_buckets" 
+                            <input type="text" class="form-control" data-field="crop_aspect_buckets"
                                    placeholder="0.33, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75">
                         </div>
                     </div>
                 </div>
-                
+
                 <!-- Caption Settings -->
                 <div class="subsection">
                     <h6 class="subsection-title">Captions</h6>
@@ -270,7 +270,7 @@
                         </div>
                     </div>
                 </div>
-                
+
                 <!-- Parquet Configuration -->
                 <div class="subsection parquet-config" style="display:none;">
                     <h6 class="subsection-title">Parquet Configuration</h6>
@@ -307,19 +307,19 @@
                         </div>
                     </div>
                 </div>
-                
+
                 <!-- Video Specific -->
                 <div class="subsection video-config" style="display:none;">
                     <h6 class="subsection-title">Video Configuration</h6>
                     <div class="config-grid">
                         <div class="form-group">
                             <label>Number of Frames</label>
-                            <input type="number" class="form-control" data-field="video.num_frames" 
+                            <input type="number" class="form-control" data-field="video.num_frames"
                                    placeholder="125">
                         </div>
                         <div class="form-group">
                             <label>Minimum Frames</label>
-                            <input type="number" class="form-control" data-field="video.min_frames" 
+                            <input type="number" class="form-control" data-field="video.min_frames"
                                    placeholder="125">
                         </div>
                         <div class="form-group">
@@ -335,7 +335,7 @@
                     </div>
                 </div>
             </div>
-            
+
             <!-- Cache Configuration -->
             <div class="config-section cache-config">
                 <h6 class="section-title">Cache Configuration</h6>
@@ -362,24 +362,24 @@
                     </div>
                     <div class="form-group">
                         <label>Write Batch Size</label>
-                        <input type="number" class="form-control" data-field="write_batch_size" 
+                        <input type="number" class="form-control" data-field="write_batch_size"
                                placeholder="128">
                     </div>
                 </div>
             </div>
-            
+
             <!-- Advanced Settings -->
             <div class="config-section advanced-config">
                 <h6 class="section-title">Advanced Settings</h6>
                 <div class="config-grid">
                     <div class="form-group">
                         <label>Repeats</label>
-                        <input type="number" class="form-control" data-field="repeats" 
+                        <input type="number" class="form-control" data-field="repeats"
                                placeholder="0" min="0">
                     </div>
                     <div class="form-group">
                         <label>Probability</label>
-                        <input type="number" class="form-control" data-field="probability" 
+                        <input type="number" class="form-control" data-field="probability"
                                placeholder="1.0" min="0" max="1" step="0.1">
                     </div>
                     <div class="form-group">
@@ -398,7 +398,7 @@
                     </div>
                     <div class="form-group">
                         <label>Skip File Discovery</label>
-                        <input type="text" class="form-control" data-field="skip_file_discovery" 
+                        <input type="text" class="form-control" data-field="skip_file_discovery"
                                placeholder="vae metadata aspect text">
                     </div>
                     <div class="form-group">
@@ -409,24 +409,24 @@
                     </div>
                 </div>
             </div>
-            
+
             <!-- Embed References -->
             <div class="config-section embed-references" style="display:none;">
                 <h6 class="section-title">Embed Dataset References</h6>
                 <div class="config-grid">
                     <div class="form-group">
                         <label>Text Embeds Dataset ID</label>
-                        <input type="text" class="form-control" data-field="text_embeds" 
+                        <input type="text" class="form-control" data-field="text_embeds"
                                placeholder="text-embeds-id">
                     </div>
                     <div class="form-group">
                         <label>Image Embeds Dataset ID</label>
-                        <input type="text" class="form-control" data-field="image_embeds" 
+                        <input type="text" class="form-control" data-field="image_embeds"
                                placeholder="image-embeds-id">
                     </div>
                 </div>
             </div>
-            
+
             <!-- Conditioning Configuration -->
             <div class="config-section conditioning-config" style="display:none;">
                 <h6 class="section-title">Conditioning Configuration</h6>
@@ -441,11 +441,11 @@
                     </div>
                     <div class="form-group">
                         <label>Conditioning Data IDs</label>
-                        <input type="text" class="form-control" data-field="conditioning_data" 
+                        <input type="text" class="form-control" data-field="conditioning_data"
                                placeholder="conditioning-dataset-id">
                     </div>
                 </div>
-                
+
                 <!-- Conditioning Generation -->
                 <div class="conditioning-generation">
                     <h6 class="subsection-title">Conditioning Generation</h6>
@@ -455,13 +455,13 @@
                     <div class="conditioning-list"></div>
                 </div>
             </div>
-            
+
             <!-- Text Embed Filter (for text_embeds only) -->
             <div class="config-section text-embed-filter" style="display:none;">
                 <h6 class="section-title">Caption Filtering</h6>
                 <div class="form-group">
                     <label>Caption Filter List</label>
-                    <textarea class="form-control" data-field="caption_filter_list" 
+                    <textarea class="form-control" data-field="caption_filter_list"
                               rows="3" placeholder="Enter filter strings or regex patterns"></textarea>
                 </div>
             </div>
