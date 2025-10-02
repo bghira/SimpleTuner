@@ -170,3 +170,9 @@ async def environments_tab_redirect(request: Request):
 async def validation_tab_redirect(request: Request):
     """Redirect old validation tab URL to new unified handler."""
     return await render_tab(request, "validation")
+
+
+@router.get("/trainer/tabs/publishing", response_class=HTMLResponse)
+async def publishing_tab_redirect(request: Request):
+    """Redirect old publishing tab URL to new unified handler."""
+    return await render_tab(request, "publishing")
