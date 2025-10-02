@@ -381,11 +381,10 @@ class TabService:
 
         # Get field-based sections from context (what came from field registry)
         field_sections = context.get("sections", [])
-        
+
         # Merge with custom sections using the custom section service
         all_sections = CUSTOM_SECTION_SERVICE.merge_custom_sections_with_field_sections(
-            tab="publishing",
-            field_sections=field_sections
+            tab="publishing", field_sections=field_sections
         )
 
         # Update context with merged sections and grouped fields

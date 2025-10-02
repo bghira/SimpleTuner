@@ -98,9 +98,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
     # Optimizer
     optimizer_choices = list(_optimizer_choices_map.keys())
     if not optimizer_choices:
-        raise RuntimeError(
-            "optimizer_choices from optimizer_param is empty; expected at least one optimizer option"
-        )
+        raise RuntimeError("optimizer_choices from optimizer_param is empty; expected at least one optimizer option")
     registry._add_field(
         ConfigField(
             name="optimizer",

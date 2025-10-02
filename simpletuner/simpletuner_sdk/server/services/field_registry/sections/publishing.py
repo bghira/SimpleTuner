@@ -1,13 +1,7 @@
 import logging
-
 from typing import TYPE_CHECKING
 
-from ..types import (
-    ConfigField,
-    FieldDependency,
-    FieldType,
-    ImportanceLevel,
-)
+from ..types import ConfigField, FieldDependency, FieldType, ImportanceLevel
 
 if TYPE_CHECKING:
     from ..registry import FieldRegistry
