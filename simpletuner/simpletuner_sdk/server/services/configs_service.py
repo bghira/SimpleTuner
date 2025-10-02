@@ -686,14 +686,194 @@ class ConfigsService:
         }
 
     # ------------------------------------------------------------------
+    # Lycoris configuration management
+    # ------------------------------------------------------------------
+
+    def get_lycoris_config(self, environment_id: str) -> Optional[Dict]:
+        """Load Lycoris configuration from file.
+
+        Reads the lycoris_config path from environment config,
+        then loads and returns the JSON file.
+        Returns None if not configured or file doesn't exist.
+
+        Args:
+            environment_id: The environment name/ID
+
+        Returns:
+            The Lycoris configuration dict, or None if not found
+        """
+        store = self._get_store("model")
+        try:
+            config, _ = store.load_config(environment_id)
+        except FileNotFoundError:
+            return None
+
+        # Check for lycoris_config path in environment config
+        lycoris_path_str = config.get("lycoris_config") or config.get("--lycoris_config")
+        if not lycoris_path_str:
+            return None
+
+        # Resolve the lycoris config path
+        lycoris_path = resolve_config_path(lycoris_path_str, config_dir=store.config_dir, check_cwd_first=True)
+        if not lycoris_path or not lycoris_path.exists():
+            return None
+
+        # Load and return the lycoris config
+        try:
+            with lycoris_path.open("r", encoding="utf-8") as handle:
+                return json.load(handle)
+        except (json.JSONDecodeError, OSError):
+            return None
+
+    def save_lycoris_config(self, environment_id: str, lycoris_config: Dict) -> Dict:
+        """Save Lycoris configuration to file.
+
+        Gets the lycoris_config path from environment (or creates one),
+        writes the config JSON, returns success status.
+
+        Args:
+            environment_id: The environment name/ID
+            lycoris_config: The Lycoris configuration to save
+
+        Returns:
+            Dict with success status and path information
+
+        Raises:
+            ConfigServiceError: If environment not found or save fails
+        """
+        store = self._get_store("model")
+        try:
+            config, metadata = store.load_config(environment_id)
+        except FileNotFoundError as exc:
+            raise ConfigServiceError(
+                f"Environment '{environment_id}' not found",
+                status.HTTP_404_NOT_FOUND,
+            ) from exc
+
+        config = dict(config)
+
+        # Get or create lycoris_config path
+        lycoris_path_str = config.get("lycoris_config") or config.get("--lycoris_config")
+        if not lycoris_path_str:
+            # Create default path: config/{env_id}/lycoris_config.json
+            env_dir = Path(store.config_dir) / environment_id
+            lycoris_path = env_dir / "lycoris_config.json"
+            lycoris_rel = self._format_relative_to_configs(lycoris_path, Path(store.config_dir))
+            config["lycoris_config"] = lycoris_rel
+            store.save_config(environment_id, config, metadata, overwrite=True)
+        else:
+            lycoris_path = resolve_config_path(lycoris_path_str, config_dir=store.config_dir, check_cwd_first=True)
+            if not lycoris_path:
+                # If path doesn't resolve, treat it as relative to config dir
+                lycoris_path = Path(store.config_dir) / lycoris_path_str
+            lycoris_rel = lycoris_path_str
+
+        # Ensure parent directory exists
+        lycoris_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write the lycoris config
+        try:
+            with lycoris_path.open("w", encoding="utf-8") as handle:
+                json.dump(lycoris_config, handle, indent=2, sort_keys=True)
+                handle.write("\n")
+        except OSError as exc:
+            raise ConfigServiceError(
+                f"Failed to write Lycoris config: {exc}",
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+            ) from exc
+
+        return {
+            "success": True,
+            "path": lycoris_rel,
+            "absolute_path": str(lycoris_path),
+        }
+
+    def validate_lycoris_config(self, lycoris_config: Dict) -> Dict:
+        """Validate Lycoris configuration structure.
+
+        Args:
+            lycoris_config: The Lycoris configuration to validate
+
+        Returns:
+            Dict with validation results: {
+                "valid": bool,
+                "errors": list[str],
+                "warnings": list[str]
+            }
+        """
+        errors = []
+        warnings = []
+
+        # Check required field: algo
+        if "algo" not in lycoris_config:
+            errors.append("Missing required field: 'algo'")
+        else:
+            algo = lycoris_config.get("algo")
+            valid_algos = ["lora", "loha", "lokr", "locon", "oft", "boft", "glora", "full"]
+            if algo not in valid_algos:
+                warnings.append(f"Unknown algo '{algo}'. Known algorithms: {', '.join(valid_algos)}")
+
+        # Check multiplier
+        multiplier = lycoris_config.get("multiplier")
+        if multiplier is not None:
+            if not isinstance(multiplier, (int, float)):
+                errors.append("Field 'multiplier' must be a number")
+            elif multiplier <= 0:
+                errors.append("Field 'multiplier' must be greater than 0")
+
+        # Check linear_dim and linear_alpha for most algos (except full)
+        algo = lycoris_config.get("algo")
+        if algo and algo != "full":
+            linear_dim = lycoris_config.get("linear_dim")
+            if linear_dim is not None and not isinstance(linear_dim, int):
+                errors.append("Field 'linear_dim' must be an integer")
+            elif linear_dim is not None and linear_dim <= 0:
+                errors.append("Field 'linear_dim' must be positive")
+
+            linear_alpha = lycoris_config.get("linear_alpha")
+            if linear_alpha is not None and not isinstance(linear_alpha, (int, float)):
+                errors.append("Field 'linear_alpha' must be a number")
+            elif linear_alpha is not None and linear_alpha <= 0:
+                errors.append("Field 'linear_alpha' must be positive")
+
+        # Check factor for lokr algo
+        if algo == "lokr":
+            factor = lycoris_config.get("factor")
+            if factor is not None:
+                if not isinstance(factor, int):
+                    errors.append("Field 'factor' must be an integer for lokr algorithm")
+                elif factor <= 0:
+                    errors.append("Field 'factor' must be positive")
+
+        # Validate apply_preset structure if present
+        apply_preset = lycoris_config.get("apply_preset")
+        if apply_preset is not None:
+            if not isinstance(apply_preset, dict):
+                errors.append("Field 'apply_preset' must be a dictionary")
+            else:
+                target_module = apply_preset.get("target_module")
+                if target_module is not None and not isinstance(target_module, list):
+                    errors.append("Field 'apply_preset.target_module' must be a list")
+
+                module_algo_map = apply_preset.get("module_algo_map")
+                if module_algo_map is not None and not isinstance(module_algo_map, dict):
+                    errors.append("Field 'apply_preset.module_algo_map' must be a dictionary")
+
+        return {
+            "valid": len(errors) == 0,
+            "errors": errors,
+            "warnings": warnings,
+        }
+
+    # ------------------------------------------------------------------
     # Shared helpers for config normalization
     # ------------------------------------------------------------------
     @staticmethod
-    def convert_value_by_type(value: Any, field_type: FieldType) -> Any:
+    def convert_value_by_type(value: Any, field_type: FieldType, default_value: Any = None) -> Any:
         """Convert a raw value into the appropriate Python type."""
 
         if value is None:
-            return None
+            return default_value
 
         if field_type == FieldType.NUMBER:
             if isinstance(value, (int, float)):
@@ -701,14 +881,24 @@ class ConfigsService:
             if isinstance(value, str):
                 cleaned = value.strip()
                 if not cleaned:
-                    return value
+                    return default_value if default_value is not None else None
                 try:
                     if "." in cleaned or "e" in cleaned.lower():
                         return float(cleaned)
                     return int(cleaned)
                 except ValueError:
-                    return value
-            return value
+                    # Return default value if conversion fails
+                    return default_value if default_value is not None else None
+            # If it's some other type, try to convert to int/float
+            try:
+                if isinstance(value, bool):
+                    return int(value)
+                return int(value)
+            except (ValueError, TypeError):
+                try:
+                    return float(value)
+                except (ValueError, TypeError):
+                    return default_value if default_value is not None else None
 
         if field_type == FieldType.CHECKBOX:
             if isinstance(value, (list, tuple, set)):
@@ -723,6 +913,8 @@ class ConfigsService:
             if isinstance(value, (int, float)):
                 return value != 0
             if isinstance(value, str):
+                if not value.strip():
+                    return default_value if default_value is not None else False
                 return value.strip().lower() in {"true", "1", "yes", "on"}
             return bool(value)
 
@@ -732,6 +924,11 @@ class ConfigsService:
             if isinstance(value, (list, tuple, set)):
                 return list(value)
             return value
+
+        # For TEXT, SELECT, TEXTAREA, etc.
+        if isinstance(value, str):
+            cleaned = value.strip()
+            return cleaned if cleaned else (default_value if default_value is not None else "")
 
         return value
 
@@ -797,7 +994,7 @@ class ConfigsService:
             elif config_key in always_include_fields:
                 if value in (None, ""):
                     value = ""
-            elif value in (None, ""):
+            elif value in (None, "") or (isinstance(value, (list, tuple)) and not value):
                 continue
 
             if config_key in directory_fields and value:
@@ -807,14 +1004,27 @@ class ConfigsService:
                 continue
 
             field_type = field_types.get(config_key, FieldType.TEXT)
+
+            # Get field for default value
+            lookup_name = config_key[2:] if config_key.startswith("--") else config_key
+            field = lazy_field_registry.get_field(lookup_name)
+            default_value = field.default_value if field else None
+
             if isinstance(value, list):
                 if field_type == FieldType.CHECKBOX or field_type == FieldType.MULTI_SELECT:
-                    converted_value = ConfigsService.convert_value_by_type(value, field_type)
+                    converted_value = ConfigsService.convert_value_by_type(value, field_type, default_value)
                     config_dict[config_key] = converted_value
                     continue
-                value = value[-1] if value else ""
+                # Filter out empty strings from list before taking last element
+                non_empty = [v for v in value if v not in (None, "")]
+                value = non_empty[-1] if non_empty else ""
 
-            converted_value = ConfigsService.convert_value_by_type(value, field_type)
+            converted_value = ConfigsService.convert_value_by_type(value, field_type, default_value)
+
+            # Skip if the final converted value is empty (unless it's a field that must always be included)
+            if config_key not in always_include_fields and config_key not in numeric_fields:
+                if converted_value in (None, ""):
+                    continue
 
             if isinstance(converted_value, str) and converted_value and converted_value.lower().endswith(".json"):
                 if config_key in json_path_fields:
@@ -843,7 +1053,7 @@ class ConfigsService:
                 coerced[key] = value
                 continue
 
-            coerced[key] = ConfigsService.convert_value_by_type(value, field.field_type)
+            coerced[key] = ConfigsService.convert_value_by_type(value, field.field_type, field.default_value)
 
         return coerced
 
