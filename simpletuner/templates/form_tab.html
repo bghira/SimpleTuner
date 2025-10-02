@@ -51,25 +51,23 @@
                         {% endif %}
 
                         {% set section_fields = fields | selectattr('section_id', 'equalto', section.id) | list %}
-                        {% if section_fields %}
+                        {% if section.get('template') %}
+                            <!-- Custom template for this section -->
+                            <div class="row {% if section.get('advanced') %}collapse{% endif %}"
+                                 {% if section.get('advanced') %}id="advanced-content-{{ section.id }}"{% endif %}>
+                                {% include section.template %}
+                            </div>
+                        {% elif section_fields %}
                             <div class="row {% if section.get('advanced') %}collapse{% endif %}"
                                  {% if section.get('advanced') %}id="advanced-content-{{ section.id }}"{% endif %}>
                                 {% for field in section_fields %}
                                     {% include 'partials/form_field_htmx.html' %}
                                 {% endfor %}
                             </div>
-                        {% else %}
-                            {% if section.get('template') %}
-                                <!-- Custom template for this section -->
-                                <div class="row {% if section.get('advanced') %}collapse{% endif %}"
-                                     {% if section.get('advanced') %}id="advanced-content-{{ section.id }}"{% endif %}>
-                                    {% include section.template %}
-                                </div>
-                            {% elif section.empty_message %}
-                                <div class="empty-section-message mt-3 mb-0" role="status">
-                                    <i class="fas fa-info-circle me-2"></i>{{ section.empty_message }}
-                                </div>
-                            {% endif %}
+                        {% elif section.empty_message %}
+                            <div class="empty-section-message mt-3 mb-0" role="status">
+                                <i class="fas fa-info-circle me-2"></i>{{ section.empty_message }}
+                            </div>
                         {% endif %}
                     </div>
                     {% endfor %}
