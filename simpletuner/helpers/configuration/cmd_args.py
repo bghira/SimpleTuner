@@ -1554,6 +1554,14 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--model_card_private",
+        action="store_true",
+        default=False,
+        help=(
+            "When creating your Hugging Face repository, it can be set as private. By default, the model will be public."
+        ),
+    )
+    parser.add_argument(
         "--logging_dir",
         type=str,
         default="logs",
