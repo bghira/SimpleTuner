@@ -58,10 +58,38 @@
                                 {% include section.template %}
                             </div>
                         {% elif section_fields %}
+                            <!-- Group fields by subsection -->
+                            {% set subsections = {} %}
+                            {% for field in section_fields %}
+                                {% set subsection_name = field.get('subsection', 'general') %}
+                                {% if subsection_name not in subsections %}
+                                    {% set _ = subsections.update({subsection_name: []}) %}
+                                {% endif %}
+                                {% set _ = subsections[subsection_name].append(field) %}
+                            {% endfor %}
+
                             <div class="row {% if section.get('advanced') %}collapse{% endif %}"
                                  {% if section.get('advanced') %}id="advanced-content-{{ section.id }}"{% endif %}>
-                                {% for field in section_fields %}
-                                    {% include 'partials/form_field_htmx.html' %}
+                                {% for subsection_name, subsection_fields in subsections.items() %}
+                                    {% if subsections|length > 1 and subsection_name != 'general' %}
+                                        <!-- Subsection header -->
+                                        <div class="col-12">
+                                            <h6 class="subsection-title">
+                                                {{ subsection_name | title | replace('_', ' ') }}
+                                            </h6>
+                                        </div>
+                                    {% endif %}
+
+                                    <!-- Render fields in this subsection -->
+                                    {% for field in subsection_fields %}
+                                        {% include 'partials/form_field_htmx.html' %}
+                                    {% endfor %}
+
+                                    {% if not loop.last and subsections|length > 1 %}
+                                        <div class="col-12 mb-3">
+                                            <hr class="subsection-divider">
+                                        </div>
+                                    {% endif %}
                                 {% endfor %}
                             </div>
                         {% elif section.empty_message %}
