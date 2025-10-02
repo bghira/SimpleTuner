@@ -1,16 +1,7 @@
 import logging
-
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
-from ..types import (
-    ConfigField,
-    FieldDependency,
-    FieldType,
-    ImportanceLevel,
-    ValidationRule,
-    ValidationRuleType,
-)
-
+from ..types import ConfigField, FieldDependency, FieldType, ImportanceLevel, ValidationRule, ValidationRuleType
 
 if TYPE_CHECKING:
     from ..registry import FieldRegistry
@@ -428,9 +419,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             tab="training",
             section="ema_config",
             default_value=None,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=1, message="Must update at least every step")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must update at least every step")],
             dependencies=[FieldDependency(field="use_ema", operator="equals", value=True, action="show")],
             help_text="Update EMA weights every N optimizer steps",
             tooltip="Higher values = faster training but less smooth EMA. Default: 10",
@@ -479,4 +468,3 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             order=5,
         )
     )
-

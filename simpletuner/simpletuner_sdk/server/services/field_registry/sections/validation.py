@@ -1,16 +1,7 @@
 import logging
-
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
-from ..types import (
-    ConfigField,
-    FieldDependency,
-    FieldType,
-    ImportanceLevel,
-    ValidationRule,
-    ValidationRuleType,
-)
-
+from ..types import ConfigField, FieldDependency, FieldType, ImportanceLevel, ValidationRule, ValidationRuleType
 
 if TYPE_CHECKING:
     from ..registry import FieldRegistry
@@ -31,9 +22,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tab="validation",
             section="validation_schedule",
             default_value=100,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=1, message="Validation steps must be positive")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Validation steps must be positive")],
             help_text="Run validation every N training steps",
             tooltip="How often to generate validation images during training. Lower = more frequent validation.",
             importance=ImportanceLevel.IMPORTANT,
@@ -126,9 +115,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tab="validation",
             section="evaluation",
             default_value=None,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")],
             help_text="Run evaluation every N training steps",
             tooltip="How often to run evaluation metrics during training. Lower = more frequent evaluation.",
             importance=ImportanceLevel.ADVANCED,
@@ -146,9 +133,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tab="validation",
             section="evaluation",
             default_value=28,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")],
             help_text="Number of timesteps for evaluation",
             tooltip="Lower values speed up evaluation at the cost of quality. Typical range: 20-30.",
             importance=ImportanceLevel.ADVANCED,
@@ -544,10 +529,10 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tab="validation",
             section="validation_options",
             default_value=0.01,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
+            dependencies=[
+                FieldDependency(field="validation_guidance_skip_layers", operator="equals", value=True, action="show")
             ],
-            dependencies=[FieldDependency(field="validation_guidance_skip_layers", operator="equals", value=True, action="show")],
             help_text="Starting layer index to skip guidance",
             tooltip="Skip guidance computation from this layer onwards.",
             importance=ImportanceLevel.EXPERIMENTAL,
@@ -565,10 +550,10 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tab="validation",
             section="validation_options",
             default_value=0.2,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
+            dependencies=[
+                FieldDependency(field="validation_guidance_skip_layers", operator="equals", value=True, action="show")
             ],
-            dependencies=[FieldDependency(field="validation_guidance_skip_layers", operator="equals", value=True, action="show")],
             help_text="Ending layer index to skip guidance",
             tooltip="Skip guidance computation up to this layer.",
             importance=ImportanceLevel.EXPERIMENTAL,
@@ -603,9 +588,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tab="validation",
             section="validation_options",
             default_value=1.0,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative")],
             help_text="Strength multiplier for LyCORIS validation",
             tooltip="Adjust the strength of LyCORIS effects during validation.",
             importance=ImportanceLevel.ADVANCED,
@@ -648,9 +631,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tab="validation",
             section="validation_options",
             default_value=None,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")],
             help_text="Number of frames for video validation",
             tooltip="For video models, number of frames to generate during validation.",
             importance=ImportanceLevel.ADVANCED,
@@ -668,9 +649,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tab="validation",
             section="validation_options",
             default_value=1024,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=128, message="Must be at least 128")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=128, message="Must be at least 128")],
             help_text="Override resolution for validation images",
             tooltip="If set, uses this resolution instead of training resolution for validation.",
             importance=ImportanceLevel.ADVANCED,
@@ -721,4 +700,3 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             order=19,
         )
     )
-

@@ -1,16 +1,7 @@
 import logging
-
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
-from ..types import (
-    ConfigField,
-    FieldDependency,
-    FieldType,
-    ImportanceLevel,
-    ValidationRule,
-    ValidationRuleType,
-)
-
+from ..types import ConfigField, FieldDependency, FieldType, ImportanceLevel, ValidationRule, ValidationRuleType
 
 if TYPE_CHECKING:
     from ..registry import FieldRegistry
@@ -77,9 +68,7 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             section="data_config",
             default_value=None,
             choices=[],
-            validation_rules=[
-                ValidationRule(ValidationRuleType.REQUIRED, message="Select a data backend configuration")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.REQUIRED, message="Select a data backend configuration")],
             help_text="Select a saved dataset configuration (managed in Datasets & Environments tabs)",
             tooltip="Pick which dataset plan to use. Create or edit datasets in the Datasets tab; manage saved plans from Environments.",
             importance=ImportanceLevel.ESSENTIAL,
@@ -269,9 +258,7 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             tab="model",
             section="vae_config",
             default_value=4,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=1, message="VAE batch size must be at least 1")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="VAE batch size must be at least 1")],
             help_text="Batch size for VAE encoding during caching",
             tooltip="Higher values speed up VAE caching but use more VRAM. Reduce if getting OOM during cache creation.",
             importance=ImportanceLevel.ADVANCED,
@@ -321,4 +308,3 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             order=2,
         )
     )
-

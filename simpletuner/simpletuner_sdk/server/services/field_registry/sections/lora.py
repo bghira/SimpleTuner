@@ -1,16 +1,7 @@
 import logging
-
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
-from ..types import (
-    ConfigField,
-    FieldDependency,
-    FieldType,
-    ImportanceLevel,
-    ValidationRule,
-    ValidationRuleType,
-)
-
+from ..types import ConfigField, FieldDependency, FieldType, ImportanceLevel, ValidationRule, ValidationRuleType
 
 if TYPE_CHECKING:
     from ..registry import FieldRegistry
@@ -54,9 +45,7 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
             tab="model",
             section="lora_config",
             subsection="basic",
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0.1, message="LoRA alpha should be positive")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.1, message="LoRA alpha should be positive")],
             dependencies=[FieldDependency(field="model_type", value="lora")],
             help_text="Scaling factor for LoRA updates",
             tooltip="Usually set equal to rank. Controls the magnitude of LoRA's effect.",
@@ -171,12 +160,10 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
             section="lora_config",
             subsection="basic",
             default_value=0,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0, message="Ramp up steps must be non-negative")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Ramp up steps must be non-negative")],
             dependencies=[
                 FieldDependency(field="model_type", value="lora"),
-                FieldDependency(field="peft_lora_mode", value="singlora")
+                FieldDependency(field="peft_lora_mode", value="singlora"),
             ],
             help_text="Number of ramp-up steps for SingLoRA",
             tooltip="For diffusion models, ramp-up steps may be harmful to training. Default: 0",
@@ -217,7 +204,7 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
             default_value="config/lycoris_config.json",
             dependencies=[
                 FieldDependency(field="model_type", value="lora"),
-                FieldDependency(field="lora_type", value="lycoris")
+                FieldDependency(field="lora_type", value="lycoris"),
             ],
             help_text="Path to LyCORIS configuration JSON file",
             tooltip="Configuration file for LyCORIS training parameters and network architecture.",
@@ -237,12 +224,10 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
             section="lora_config",
             subsection="basic",
             default_value=None,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be positive")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be positive")],
             dependencies=[
                 FieldDependency(field="model_type", value="lora"),
-                FieldDependency(field="lora_type", value="lycoris")
+                FieldDependency(field="lora_type", value="lycoris"),
             ],
             help_text="Perturbed normal initialization for LyCORIS LoKr layers",
             tooltip="Good values: 1e-4 to 1e-2. Enables perturbed normal initialization for better training.",
@@ -307,4 +292,3 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
             order=20,
         )
     )
-

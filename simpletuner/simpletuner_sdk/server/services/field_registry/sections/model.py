@@ -1,22 +1,13 @@
 import logging
-
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 try:
     from simpletuner.helpers.models.all import model_families
 except ImportError as exc:  # pragma: no cover - defensive fallback
-    logging.getLogger(__name__).error('Failed to import model_families: %s', exc)
+    logging.getLogger(__name__).error("Failed to import model_families: %s", exc)
     model_families = {}
 
-from ..types import (
-    ConfigField,
-    FieldDependency,
-    FieldType,
-    ImportanceLevel,
-    ValidationRule,
-    ValidationRuleType,
-)
-
+from ..types import ConfigField, FieldDependency, FieldType, ImportanceLevel, ValidationRule, ValidationRuleType
 
 if TYPE_CHECKING:
     from ..registry import FieldRegistry
@@ -227,9 +218,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.ESSENTIAL,
             order=10,
             dependencies=[
-                FieldDependency(
-                    field="model_family", operator="equals", value="sd15", action="set_value", target_value=512
-                ),
+                FieldDependency(field="model_family", operator="equals", value="sd15", action="set_value", target_value=512),
                 FieldDependency(
                     field="model_family",
                     operator="in",
@@ -351,9 +340,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             tab="advanced",
             section="memory_performance",
             default_value=None,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=1, message="Interval must be at least 1")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Interval must be at least 1")],
             help_text="Clear the cache from VRAM every X steps to prevent memory leaks",
             tooltip="Higher values may cause memory leaks but train faster. Lower values are safer but may slow training.",
             importance=ImportanceLevel.EXPERIMENTAL,
@@ -451,9 +438,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             section="memory_optimization",
             default_value=None,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Interval must be at least 1")],
-            dependencies=[
-                FieldDependency(field="gradient_checkpointing", operator="equals", value=True, action="enable")
-            ],
+            dependencies=[FieldDependency(field="gradient_checkpointing", operator="equals", value=True, action="enable")],
             help_text="Checkpoint every N transformer blocks",
             tooltip="Higher values save more memory but increase computation time. Only supported for SDXL and Flux models.",
             importance=ImportanceLevel.ADVANCED,
@@ -801,4 +786,3 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             order=33,
         )
     )
-

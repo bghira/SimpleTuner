@@ -1,16 +1,7 @@
 import logging
-
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
-from ..types import (
-    ConfigField,
-    FieldDependency,
-    FieldType,
-    ImportanceLevel,
-    ValidationRule,
-    ValidationRuleType,
-)
-
+from ..types import ConfigField, FieldDependency, FieldType, ImportanceLevel, ValidationRule, ValidationRuleType
 
 if TYPE_CHECKING:
     from ..registry import FieldRegistry
@@ -48,9 +39,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="advanced",
             section="flow_matching",
             default_value=1.0,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="Scale factor for sigmoid timestep sampling for flow-matching models.",
             tooltip="Adjusts the sigmoid curve for timestep sampling. Higher values may affect training dynamics.",
             importance=ImportanceLevel.ADVANCED,
@@ -115,9 +104,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="advanced",
             section="flow_matching",
             default_value=2.0,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="Alpha value for beta schedule (default: 2.0)",
             tooltip="Controls the shape of the beta distribution curve.",
             importance=ImportanceLevel.ADVANCED,
@@ -134,9 +121,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="advanced",
             section="flow_matching",
             default_value=2.0,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="Beta value for beta schedule (default: 2.0)",
             tooltip="Controls the shape of the beta distribution curve.",
             importance=ImportanceLevel.ADVANCED,
@@ -153,9 +138,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="advanced",
             section="flow_matching",
             default_value=3,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="Shift the noise schedule for flow-matching models",
             tooltip="Affects contrast/brightness learning. Higher values focus on composition, lower on fine details.",
             importance=ImportanceLevel.ADVANCED,
@@ -189,10 +172,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="advanced",
             section="flux_guidance",
             default_value="constant",
-            choices=[
-                {"value": "constant", "label": "Constant"},
-                {"value": "random-range", "label": "Random Range"}
-            ],
+            choices=[{"value": "constant", "label": "Constant"}, {"value": "random-range", "label": "Random Range"}],
             help_text="Guidance mode for Flux training",
             tooltip="Constant uses same guidance for all samples. Random Range varies guidance per sample.",
             importance=ImportanceLevel.ADVANCED,
@@ -245,9 +225,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="advanced",
             section="flux_guidance",
             default_value=1.0,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="Guidance value for constant mode",
             tooltip="1.0 preserves CFG distillation. Higher values require CFG at inference.",
             importance=ImportanceLevel.ADVANCED,
@@ -264,9 +242,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="advanced",
             section="flux_guidance",
             default_value=0.0,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="Minimum guidance value for random-range mode",
             tooltip="Lower bound of guidance range when using random-range mode.",
             importance=ImportanceLevel.ADVANCED,
@@ -283,9 +259,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="advanced",
             section="flux_guidance",
             default_value=4.0,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="Maximum guidance value for random-range mode",
             tooltip="Upper bound of guidance range when using random-range mode.",
             importance=ImportanceLevel.ADVANCED,
@@ -303,10 +277,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="advanced",
             section="text_encoder",
             default_value="unmodified",
-            choices=[
-                {"value": "zero", "label": "Zero"},
-                {"value": "unmodified", "label": "Unmodified"}
-            ],
+            choices=[{"value": "zero", "label": "Zero"}, {"value": "unmodified", "label": "Unmodified"}],
             help_text="Padding behavior for T5 text encoder",
             tooltip="Zero pads with zeros. Unmodified leaves original padding. Affects model behavior.",
             importance=ImportanceLevel.ADVANCED,
@@ -323,10 +294,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="advanced",
             section="text_encoder",
             default_value="empty_string",
-            choices=[
-                {"value": "empty_string", "label": "Empty String"},
-                {"value": "zero", "label": "Zero"}
-            ],
+            choices=[{"value": "empty_string", "label": "Empty String"}, {"value": "zero", "label": "Zero"}],
             help_text="How SD3 handles unconditional prompts",
             tooltip="Affects how SD3 processes prompts without conditioning. Empty string is default.",
             importance=ImportanceLevel.ADVANCED,
@@ -343,10 +311,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="advanced",
             section="text_encoder",
             default_value=None,
-            choices=[
-                {"value": "empty_string", "label": "Empty String"},
-                {"value": "zero", "label": "Zero"}
-            ],
+            choices=[{"value": "empty_string", "label": "Empty String"}, {"value": "zero", "label": "Zero"}],
             help_text="How SD3 T5 handles unconditional prompts",
             tooltip="Overrides CLIP behavior for T5. If not set, follows CLIP setting.",
             importance=ImportanceLevel.ADVANCED,
@@ -570,9 +535,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="advanced",
             section="noise_settings",
             default_value=0,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="Only apply input perturbation over the first N steps with linear decay",
             tooltip="This should prevent artifacts from showing up in longer training runs. This should prevent artifacts from showing up in longer training runs.",
             importance=ImportanceLevel.ADVANCED,
@@ -678,9 +641,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="training",
             section="text_encoder_training",
             default_value=2,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="When using 'before' strategy, we will freeze layers earlier than this",
             tooltip="When freezing the text encoder, we can use the 'before', 'between', or 'after' strategy. The 'before' strategy will freeze layers earlier than this.",
             importance=ImportanceLevel.ADVANCED,
@@ -698,9 +659,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="training",
             section="text_encoder_training",
             default_value=7,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="When using 'after' strategy, we will freeze layers later than this",
             tooltip="When freezing the text encoder, we can use the 'before', 'between', or 'after' strategy. The 'after' strategy will freeze all layers from 17 up.",
             importance=ImportanceLevel.ADVANCED,
@@ -795,9 +754,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="training",
             section="text_encoder_training",
             default_value=25,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="When training the text encoder, we want to limit how long it trains for to avoid catastrophic loss",
             tooltip="When training the text encoder, we want to limit how long it trains for to avoid catastrophic loss.",
             importance=ImportanceLevel.ADVANCED,
@@ -849,9 +806,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="data",
             section="caption_processing",
             default_value=7.0,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative")],
             help_text="Since currently we do not calculate aesthetic scores for data, we will statically set it to one value. This is only used by the SDXL Refiner",
             tooltip="Since currently we do not calculate aesthetic scores for data, we will statically set it to one value. This is only used by the SDXL Refiner.",
             importance=ImportanceLevel.ADVANCED,
@@ -1149,9 +1104,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="data",
             section="data_config",
             default_value=32,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")],
             help_text="When resizing and cropping images, we do it in parallel using processes or threads. This defines how many images will be read into the queue before they are processed",
             tooltip="When resizing and cropping images, we do it in parallel using processes or threads. This defines how many images will be read into the queue before they are processed.",
             importance=ImportanceLevel.ADVANCED,
@@ -1169,9 +1122,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="data",
             section="data_config",
             default_value=128,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")],
             help_text="When using certain storage backends, it is better to batch smaller writes rather than continuous dispatching. In SimpleTuner, write batching is currently applied during VAE caching, when many small objects are written. This mostly applies to S3, but some shared server filesystems may benefit as well. Default: 64",
             tooltip="When using certain storage backends, it is better to batch smaller writes rather than continuous dispatching. In SimpleTuner, write batching is currently applied during VAE caching, when many small objects are written. This mostly applies to S3, but some shared server filesystems may benefit as well. Default: 64.",
             importance=ImportanceLevel.ADVANCED,
@@ -1189,9 +1140,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="data",
             section="data_config",
             default_value=25,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")],
             help_text="Used by the VAE cache to prefetch image data. This is the number of images to read ahead",
             tooltip="Used by the VAE cache to prefetch image data. This is the number of images to read ahead.",
             importance=ImportanceLevel.ADVANCED,
@@ -1226,9 +1175,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="data",
             section="data_config",
             default_value=32,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")],
             help_text="How many active threads or processes to run during VAE caching",
             tooltip="How many active threads or processes to run during VAE caching.",
             importance=ImportanceLevel.ADVANCED,
@@ -1246,9 +1193,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="data",
             section="data_config",
             default_value=128,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")],
             help_text="When using AWS backends, the maximum number of connections to keep open to the S3 bucket at a single time",
             tooltip="When using AWS backends, the maximum number of connections to keep open to the S3 bucket at a single time. This should be greater or equal to the max_workers and aspect bucket worker count values.",
             importance=ImportanceLevel.ADVANCED,
@@ -1266,9 +1211,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="data",
             section="data_config",
             default_value=8,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")],
             help_text="The number of threads to use for PyTorch operations. This is not the same as the number of workers",
             tooltip="The number of threads to use for PyTorch operations. This is not the same as the number of workers. Default: 8.",
             importance=ImportanceLevel.ADVANCED,
@@ -1303,9 +1246,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="data",
             section="data_config",
             default_value=1024,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")],
             help_text="Set the number of prefetched batches",
             tooltip="Set the number of prefetched batches.",
             importance=ImportanceLevel.ADVANCED,
@@ -1323,9 +1264,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="data",
             section="data_config",
             default_value=12,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")],
             help_text="The number of workers to use for aspect bucketing. This is a CPU-bound task, so the number of workers should be set to the number of CPU threads available. If you use an I/O bound backend, an even higher value may make sense. Default: 12",
             tooltip="The number of workers to use for aspect bucketing. This is a CPU-bound task, so the number of workers should be set to the number of CPU threads available. If you use an I/O bound backend, an even higher value may make sense. Default: 12.",
             importance=ImportanceLevel.ADVANCED,
@@ -1368,9 +1307,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="data",
             section="image_processing",
             default_value=None,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=128, message="Must be at least 128")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=128, message="Must be at least 128")],
             help_text="The minimum resolution for both sides of input images",
             tooltip="If --delete_unwanted_images is set, images smaller than this will be DELETED. The default value is None, which means no minimum resolution is enforced. If this option is not provided, it is possible that images will be destructively upsampled, harming model performance.",
             importance=ImportanceLevel.ADVANCED,
@@ -1422,9 +1359,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="data",
             section="data_config",
             default_value=3600,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=60, message="Must be at least 60")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=60, message="Must be at least 60")],
             help_text="When generating the aspect bucket indicies, we want to save it every X seconds",
             tooltip="When generating the aspect bucket indicies, we want to save it every X seconds. The default is to save it every 1 hour, such that progress is not lost on clusters where runtime is limited to 6-hour increments (e.g. the JUWELS Supercomputer). The minimum value is 60 seconds.",
             importance=ImportanceLevel.ADVANCED,
@@ -1684,9 +1619,11 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             default_value=0,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative"),
-                ValidationRule(ValidationRuleType.MAX, value=1000, message="Must be <= 1000")
+                ValidationRule(ValidationRuleType.MAX, value=1000, message="Must be <= 1000"),
             ],
-            dependencies=[FieldDependency(field="timestep_bias_strategy", operator="not_equals", value="none", action="show")],
+            dependencies=[
+                FieldDependency(field="timestep_bias_strategy", operator="not_equals", value="none", action="show")
+            ],
             help_text="Beginning of timestep bias range",
             tooltip="Start of timestep range to bias towards. Only used with timestep bias strategies.",
             importance=ImportanceLevel.ADVANCED,
@@ -1706,9 +1643,11 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             default_value=1000,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative"),
-                ValidationRule(ValidationRuleType.MAX, value=1000, message="Must be <= 1000")
+                ValidationRule(ValidationRuleType.MAX, value=1000, message="Must be <= 1000"),
             ],
-            dependencies=[FieldDependency(field="timestep_bias_strategy", operator="not_equals", value="none", action="show")],
+            dependencies=[
+                FieldDependency(field="timestep_bias_strategy", operator="not_equals", value="none", action="show")
+            ],
             help_text="End of timestep bias range",
             tooltip="End of timestep range to bias towards. Only used with timestep bias strategies.",
             importance=ImportanceLevel.ADVANCED,
@@ -1726,10 +1665,10 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="advanced",
             section="timestep_bias",
             default_value=1.0,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative")
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative")],
+            dependencies=[
+                FieldDependency(field="timestep_bias_strategy", operator="not_equals", value="none", action="show")
             ],
-            dependencies=[FieldDependency(field="timestep_bias_strategy", operator="not_equals", value="none", action="show")],
             help_text="Multiplier for timestep bias probability",
             tooltip="Strength of timestep bias. Higher values = stronger bias to selected timesteps.",
             importance=ImportanceLevel.ADVANCED,
@@ -1749,9 +1688,11 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             default_value=0.1,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be between 0 and 1"),
-                ValidationRule(ValidationRuleType.MAX, value=1.0, message="Must be between 0 and 1")
+                ValidationRule(ValidationRuleType.MAX, value=1.0, message="Must be between 0 and 1"),
             ],
-            dependencies=[FieldDependency(field="timestep_bias_strategy", operator="not_equals", value="none", action="show")],
+            dependencies=[
+                FieldDependency(field="timestep_bias_strategy", operator="not_equals", value="none", action="show")
+            ],
             help_text="Portion of training steps to apply timestep bias",
             tooltip="Fraction of training where timestep bias is applied. 0.0 = entire training, 1.0 = only at end.",
             importance=ImportanceLevel.ADVANCED,
@@ -1802,4 +1743,3 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             order=9,
         )
     )
-

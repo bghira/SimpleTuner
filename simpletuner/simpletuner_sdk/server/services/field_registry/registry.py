@@ -5,14 +5,7 @@ import math
 from typing import Any, Dict, List, Optional
 
 from .sections import register_all_sections
-from .types import (
-    ConfigField,
-    FieldDependency,
-    FieldType,
-    ImportanceLevel,
-    ValidationRule,
-    ValidationRuleType,
-)
+from .types import ConfigField, FieldDependency, FieldType, ImportanceLevel, ValidationRule, ValidationRuleType
 
 logger = logging.getLogger(__name__)
 

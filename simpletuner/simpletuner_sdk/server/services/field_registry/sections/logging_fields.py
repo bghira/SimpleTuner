@@ -1,16 +1,7 @@
 import logging
-
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
-from ..types import (
-    ConfigField,
-    FieldDependency,
-    FieldType,
-    ImportanceLevel,
-    ValidationRule,
-    ValidationRuleType,
-)
-
+from ..types import ConfigField, FieldDependency, FieldType, ImportanceLevel, ValidationRule, ValidationRuleType
 
 if TYPE_CHECKING:
     from ..registry import FieldRegistry
@@ -73,9 +64,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             tab="basic",
             section="checkpointing",
             default_value=0,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")],
             help_text="Rolling checkpoint window size for continuous checkpointing",
             tooltip="When set, maintains a rolling window of recent checkpoints instead of individual files. Higher values keep more history.",
             importance=ImportanceLevel.ADVANCED,
@@ -110,9 +99,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             tab="basic",
             section="checkpointing",
             default_value=1,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")],
             help_text="Maximum number of rolling checkpoints to keep",
             tooltip="When using rolling checkpoints, limit the number of checkpoints in the rolling window.",
             importance=ImportanceLevel.ADVANCED,
@@ -213,9 +200,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             tooltip="Local directory where training metrics are saved. Used by TensorBoard.",
             importance=ImportanceLevel.ADVANCED,
             order=5,
-            dependencies=[
-                FieldDependency(field="report_to", operator="in", values=["tensorboard", "all"], action="show")
-            ],
+            dependencies=[FieldDependency(field="report_to", operator="in", values=["tensorboard", "all"], action="show")],
         )
     )
 
@@ -340,7 +325,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             default_value=None,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1"),
-                ValidationRule(ValidationRuleType.MAX, value=120, message="Must be <= 120")
+                ValidationRule(ValidationRuleType.MAX, value=120, message="Must be <= 120"),
             ],
             help_text="Framerate for video model training",
             tooltip="Frames per second for video generation models. Higher = smoother but more compute.",
@@ -359,9 +344,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             tab="advanced",
             section="hardware_config",
             default_value=True,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="Additional seed offset per GPU device",
             tooltip="When using multiple GPUs, adds this value to seed per device for more variation.",
             importance=ImportanceLevel.ADVANCED,
@@ -379,9 +362,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             tab="advanced",
             section="loss_functions",
             default_value=0.1,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative")],
             help_text="Weight factor for SNR-based loss scaling",
             tooltip="Alternative to snr_gamma. Controls how much SNR affects loss weighting.",
             importance=ImportanceLevel.ADVANCED,
@@ -434,9 +415,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             tab="advanced",
             section="monitoring",
             default_value=None,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=30, message="Must be at least 30 seconds")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=30, message="Must be at least 30 seconds")],
             help_text="Interval for webhook reports (seconds)",
             tooltip="How often to send status updates via webhook. Minimum: 30 seconds.",
             importance=ImportanceLevel.ADVANCED,
@@ -514,9 +493,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             tab="advanced",
             section="hardware_config",
             default_value=-1,
-            validation_rules=[
-                ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")
-            ],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="Local rank for distributed training",
             tooltip="For multi-GPU training, specifies the rank of this process. Usually set automatically.",
             importance=ImportanceLevel.ADVANCED,
@@ -775,4 +752,3 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             order=34,
         )
     )
-
