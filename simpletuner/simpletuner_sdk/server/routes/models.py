@@ -7,22 +7,11 @@ from typing import Any, Dict, Iterable
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse
 
-from simpletuner.helpers.configuration.cmd_args import get_model_flavour_choices as _get_model_flavour_choices
+from simpletuner.helpers.models.all import get_model_flavour_choices
 from simpletuner.simpletuner_sdk.server.services.models_service import MODELS_SERVICE, ModelRegistry, ModelServiceError
 
 _MODEL_FAMILY_SENTINEL = ModelRegistry.model_families()
 model_families = _MODEL_FAMILY_SENTINEL
-
-
-def get_model_flavour_choices(model_family: str) -> Iterable[str]:
-    if _get_model_flavour_choices:
-        try:
-            return _get_model_flavour_choices(model_family) or []
-        except Exception:  # pragma: no cover - defensive
-            return []
-    result = MODELS_SERVICE.get_model_flavours(model_family)
-    return result.get("flavours", [])
-
 
 router = APIRouter()
 
