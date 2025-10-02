@@ -928,6 +928,9 @@ class ConfigsService:
         # For TEXT, SELECT, TEXTAREA, etc.
         if isinstance(value, str):
             cleaned = value.strip()
+            # Handle the case where None comes through as "None" string
+            if cleaned.lower() == "none":
+                return default_value if default_value is not None else ""
             return cleaned if cleaned else (default_value if default_value is not None else "")
 
         return value
