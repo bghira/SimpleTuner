@@ -68,6 +68,12 @@ class EnvironmentDataloaderRequest(BaseModel):
     path: Optional[str] = None
 
 
+class LycorisConfigRequest(BaseModel):
+    """Request model for Lycoris configuration operations."""
+
+    config: Dict[str, Any]
+
+
 def _call_service(func, *args, **kwargs):
     """Execute a service call and translate domain errors to HTTP errors."""
     try:
@@ -219,3 +225,32 @@ async def validate_config(name: str, config_type: str = "model") -> Dict[str, An
 async def validate_config_data(config: Dict[str, Any], config_type: str = "model") -> Dict[str, Any]:
     """Validate configuration data without saving."""
     return _call_service(CONFIGS_SERVICE.validate_config_data, config, config_type)
+
+
+@router.get("/environments/{environment_id}/lycoris")
+async def get_lycoris_config(environment_id: str) -> Dict[str, Any]:
+    """Get Lycoris configuration for an environment."""
+    lycoris_config = _call_service(CONFIGS_SERVICE.get_lycoris_config, environment_id)
+    if lycoris_config is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No Lycoris configuration found for environment '{environment_id}'",
+        )
+    return {"environment_id": environment_id, "config": lycoris_config}
+
+
+@router.put("/environments/{environment_id}/lycoris")
+async def save_lycoris_config(environment_id: str, request: LycorisConfigRequest) -> Dict[str, Any]:
+    """Save Lycoris configuration for an environment."""
+    result = _call_service(CONFIGS_SERVICE.save_lycoris_config, environment_id, request.config)
+    return {
+        "message": f"Lycoris configuration saved for environment '{environment_id}'",
+        "environment_id": environment_id,
+        **result,
+    }
+
+
+@router.post("/lycoris/validate")
+async def validate_lycoris_config(request: LycorisConfigRequest) -> Dict[str, Any]:
+    """Validate Lycoris configuration without saving."""
+    return _call_service(CONFIGS_SERVICE.validate_lycoris_config, request.config)
