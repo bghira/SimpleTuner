@@ -192,8 +192,6 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     parser = get_argument_parser()
     args = None
     try:
-        for key_val in input_args:
-            print_on_main_thread(f"{key_val}")
         args = parser.parse_args(input_args)
     except Exception:  # pragma: no cover - parser handles errors consistently
         logger.error(f"Could not parse input: {input_args}")
@@ -269,10 +267,6 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         elif args.seed == -1:
             # more random seed if value is -1, it will be very different on each startup.
             args.seed = int(random.randint(0, 2**30))
-
-    # default to using the same revision for the non-ema model if not specified
-    if args.non_ema_revision is None:
-        args.non_ema_revision = args.revision
 
     if args.cache_dir is None or args.cache_dir == "":
         args.cache_dir = os.path.join(args.output_dir, "cache")

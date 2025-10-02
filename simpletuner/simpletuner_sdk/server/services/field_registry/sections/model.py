@@ -735,25 +735,6 @@ def register_model_fields(registry: "FieldRegistry") -> None:
         )
     )
 
-    # Non-EMA Revision
-    registry._add_field(
-        ConfigField(
-            name="non_ema_revision",
-            arg_name="--non_ema_revision",
-            ui_label="Non-EMA Model Revision",
-            field_type=FieldType.TEXT,
-            tab="model",
-            section="model_config",
-            subsection="paths",
-            default_value=None,
-            placeholder="main",
-            help_text="Git revision for non-EMA model version",
-            tooltip="Specific version for the non-EMA model when using EMA training.",
-            importance=ImportanceLevel.ADVANCED,
-            order=31,
-        )
-    )
-
     # Base Model Default Dtype
     registry._add_field(
         ConfigField(
