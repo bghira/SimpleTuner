@@ -198,6 +198,12 @@ class DependencyManager {
 
         state.visible = visible;
 
+        // Hidden fields are used for proxy values in custom UIs; nothing to toggle visibly
+        if (state.element.type === 'hidden') {
+            state.element.disabled = !visible;
+            return;
+        }
+
         // Find the field container (usually the parent element with mb-3 class)
         let container = state.element.closest('.mb-3') ||
                        state.element.closest('.field-wrapper') ||
