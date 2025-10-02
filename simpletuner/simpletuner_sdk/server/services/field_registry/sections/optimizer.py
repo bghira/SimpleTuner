@@ -128,7 +128,7 @@ def register_optimizer_fields(registry: "FieldRegistry") -> None:
             tab="training",
             section="optimizer_config",
             subsection="optimizer_params",
-            default_value="none",
+            default_value=None,
             choices=[
                 {"value": "none", "label": "None"},
             ],

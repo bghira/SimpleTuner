@@ -40,7 +40,7 @@ class CustomSectionService:
             title="Repository",
             icon="fas fa-cog",
             template="partials/publishing_repository_section.html",
-            description="Combine your namespace with the destination repository settings",
+            description=None,
         )
 
     def register_custom_section(

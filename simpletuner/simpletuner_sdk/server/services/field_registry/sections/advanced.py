@@ -695,7 +695,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.SELECT,
             tab="training",
             section="text_encoder_training",
-            default_value="none",
+            default_value=None,
             choices=[
                 {"value": "none", "label": "None"},
                 {"value": "bitfit", "label": "BitFit"},
@@ -1590,7 +1590,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.SELECT,
             tab="advanced",
             section="timestep_bias",
-            default_value="none",
+            default_value=None,
             choices=[
                 {"value": "earlier", "label": "Bias Earlier"},
                 {"value": "later", "label": "Bias Later"},
