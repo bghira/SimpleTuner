@@ -776,7 +776,7 @@
         if (document.getElementById('builderModeBtn')?.classList.contains('active')) {
             window.dataloaderBuilder?.syncToJSON();
         }
-        
+
         const formData = new FormData(this.form);
         const payload = {
             trainer_config: {},
@@ -844,14 +844,14 @@
     async apiCall(endpoint, data) {
         const response = await fetch(`${this.apiBaseUrl}${endpoint}`, {
             method: 'POST',
-            headers: { 
+            headers: {
                 'Content-Type': 'application/json',
                 'Accept': 'application/json'
             },
             credentials: 'include', // Include credentials for CORS
             body: JSON.stringify(data),
         });
-        
+
         const contentType = response.headers.get('content-type');
         if (contentType && contentType.includes('application/json')) {
             return await response.json();
@@ -879,21 +879,21 @@
     showStatus(message, type = 'info') {
         const statusContainer = document.getElementById('statusContainer');
         if (!statusContainer) return;
-        
+
         const statusId = 'status-' + Date.now();
-        
-        const alertClass = type === 'error' ? 'alert-danger' : 
+
+        const alertClass = type === 'error' ? 'alert-danger' :
                          type === 'success' ? 'alert-success' : 'alert-info';
-        
+
         const statusHTML = `
             <div id="${statusId}" class="alert ${alertClass} alert-dismissible fade show" role="alert">
                 ${message}
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
             </div>
         `;
-        
+
         statusContainer.insertAdjacentHTML('beforeend', statusHTML);
-        
+
         // Auto-dismiss after 5 seconds
         setTimeout(() => {
             const alertEl = document.getElementById(statusId);
@@ -967,7 +967,7 @@
                     // Invalid JSON, don't format
                 }
             });
-            
+
             // Add tab key support for JSON editors
             editor.addEventListener('keydown', function(e) {
                 if (e.key === 'Tab') {

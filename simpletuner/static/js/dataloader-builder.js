@@ -28,7 +28,7 @@
     initialize() {
         this.container = document.getElementById('datasetList');
         this.jsonEditor = document.getElementById('dataloader_config');
-        
+
         if (!this.container || !this.jsonEditor) {
             console.error('Required elements not found');
             return;
@@ -37,13 +37,13 @@
         this.loadFromJSON();
         this.bindEvents();
         this.render();
-        
+
         // If no datasets loaded, initialize with default
         if (this.datasets.length === 0) {
             this.loadDefaultDataset();
         }
     }
-    
+
     loadDefaultDataset() {
         this.datasets = [{
             id: "my-dataset",
@@ -186,7 +186,7 @@
         document.getElementById('jsonModeBtn')?.addEventListener('click', () => this.setMode('json'));
         document.getElementById('formatJsonBtn')?.addEventListener('click', () => this.formatJSON());
         document.getElementById('importJsonBtn')?.addEventListener('click', () => this.importFromJSON());
-        
+
         // Add dataset buttons
         document.querySelectorAll('.add-dataset-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -194,7 +194,7 @@
                 this.addDataset(type);
             });
         });
-        
+
         // Preset buttons
         document.querySelectorAll('.preset-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -209,7 +209,7 @@
         const jsonMode = document.getElementById('jsonMode');
         const builderBtn = document.getElementById('builderModeBtn');
         const jsonBtn = document.getElementById('jsonModeBtn');
-        
+
         if (mode === 'builder') {
             builderMode.style.display = 'block';
             jsonMode.style.display = 'none';
@@ -239,10 +239,10 @@
     normalizeDatasets() {
         this.datasets.forEach(dataset => {
             // Convert string numbers to actual numbers
-            const numericFields = ['repeats', 'resolution', 'minimum_image_size', 'maximum_image_size', 
-                                 'target_downsample_size', 'probability', 'minimum_aspect_ratio', 
+            const numericFields = ['repeats', 'resolution', 'minimum_image_size', 'maximum_image_size',
+                                 'target_downsample_size', 'probability', 'minimum_aspect_ratio',
                                  'maximum_aspect_ratio', 'write_batch_size'];
-            
+
             numericFields.forEach(field => {
                 if (typeof dataset[field] === 'string') {
                     dataset[field] = parseFloat(dataset[field]);
@@ -250,11 +250,11 @@
             });
 
             // Convert boolean strings
-            const booleanFields = ['crop', 'disabled', 'default', 'prepend_instance_prompt', 
-                                 'only_instance_prompt', 'vae_cache_clear_each_epoch', 
-                                 'hash_filenames', 'preserve_data_backend_cache', 
+            const booleanFields = ['crop', 'disabled', 'default', 'prepend_instance_prompt',
+                                 'only_instance_prompt', 'vae_cache_clear_each_epoch',
+                                 'hash_filenames', 'preserve_data_backend_cache',
                                  'is_regularisation_data'];
-            
+
             booleanFields.forEach(field => {
                 if (typeof dataset[field] === 'string') {
                     dataset[field] = dataset[field] === 'true';
@@ -293,7 +293,7 @@
         this.setMode('builder');
         this.showToast('Configuration imported successfully!', 'success');
     }
-    
+
     showToast(message, type = 'info') {
         // Use existing toast system if available, otherwise console log
         if (window.showToast) {
@@ -310,7 +310,7 @@
         this.datasets.push(newDataset);
         this.render();
         this.syncToJSON();
-        
+
         // Scroll to new dataset
         setTimeout(() => {
             const newItem = this.container.lastElementChild;
@@ -385,7 +385,7 @@
                 hash_filenames: true
             }
         };
-        
+
         return defaults[type] || defaults.image;
     }
 
@@ -418,15 +418,15 @@
         } else {
             this.datasets[index][field] = value;
         }
-        
+
         // Update dependencies
         this.updateFieldDependencies(index, field, value);
-        
+
         // Update type badge if needed
         if (field === 'dataset_type') {
             this.updateTypeBadge(index);
         }
-        
+
         this.syncToJSON();
     }
 
@@ -441,7 +441,7 @@
         deps[value].show.forEach(selector => {
             item.querySelectorAll(selector).forEach(el => el.style.display = 'block');
         });
-        
+
         deps[value].hide.forEach(selector => {
             item.querySelectorAll(selector).forEach(el => el.style.display = 'none');
         });
@@ -456,14 +456,14 @@
         const item = this.container.children[index];
         const badge = item.querySelector('.dataset-type-badge');
         const dataset = this.datasets[index];
-        
+
         badge.className = `dataset-type-badge type-${dataset.dataset_type}`;
         badge.textContent = dataset.dataset_type.replace('_', ' ');
     }
 
     render() {
         if (!this.container) return;
-        
+
         this.container.innerHTML = '';
         this.datasets.forEach((dataset, index) => {
             const element = this.createDatasetElement(dataset, index);
@@ -477,22 +477,22 @@
             console.error('Dataset item template not found');
             return document.createElement('div');
         }
-        
+
         const clone = template.content.cloneNode(true);
         const item = clone.querySelector('.dataset-item');
-        
+
         // Set index
         item.setAttribute('data-index', index);
-        
+
         // Populate basic fields
         this.populateFields(item, dataset, index);
-        
+
         // Bind events
         this.bindDatasetEvents(item, index);
-        
+
         // Apply dependencies
         this.applyAllDependencies(item, dataset);
-        
+
         return clone;
     }
 
@@ -500,11 +500,11 @@
         // ID and type badge
         const idInput = item.querySelector('.dataset-id-input');
         idInput.value = dataset.id || '';
-        
+
         const badge = item.querySelector('.dataset-type-badge');
         badge.className = `dataset-type-badge type-${dataset.dataset_type || 'image'}`;
         badge.textContent = (dataset.dataset_type || 'image').replace('_', ' ');
-        
+
         // Icon
         const icon = item.querySelector('.dataset-icon');
         const iconMap = {
@@ -515,12 +515,12 @@
             conditioning: 'fa-adjust'
         };
         icon.className = `dataset-icon fas ${iconMap[dataset.dataset_type] || 'fa-database'}`;
-        
+
         // Populate all fields
         item.querySelectorAll('[data-field]').forEach(input => {
             const field = input.getAttribute('data-field');
             const value = this.getNestedValue(dataset, field);
-            
+
             if (input.type === 'checkbox') {
                 input.checked = value === true;
             } else if (input.tagName === 'SELECT') {
@@ -531,7 +531,7 @@
                 input.value = value !== undefined ? value : '';
             }
         });
-        
+
         // Populate conditioning if present
         if (dataset.conditioning && Array.isArray(dataset.conditioning)) {
             this.populateConditioning(item, dataset.conditioning, index);
@@ -548,7 +548,7 @@
         idInput.addEventListener('change', (e) => {
             this.updateDataset(index, 'id', e.target.value);
         });
-        
+
         // Collapse/expand
         const collapseBtn = item.querySelector('.btn-collapse');
         collapseBtn.addEventListener('click', () => {
@@ -557,22 +557,22 @@
             icon.classList.toggle('fa-chevron-down');
             icon.classList.toggle('fa-chevron-up');
         });
-        
+
         // Duplicate
         const duplicateBtn = item.querySelector('.btn-duplicate');
         duplicateBtn.addEventListener('click', () => this.duplicateDataset(index));
-        
+
         // Remove
         const removeBtn = item.querySelector('.btn-remove');
         removeBtn.addEventListener('click', () => this.removeDataset(index));
-        
+
         // All other fields
         item.querySelectorAll('[data-field]').forEach(input => {
             const field = input.getAttribute('data-field');
-            
+
             input.addEventListener('change', (e) => {
                 let value = e.target.value;
-                
+
                 // Convert types
                 if (input.type === 'checkbox') {
                     value = e.target.checked;
@@ -581,11 +581,11 @@
                 } else if (field === 'crop_aspect_buckets') {
                     value = value.split(',').map(v => parseFloat(v.trim())).filter(v => !isNaN(v));
                 }
-                
+
                 this.updateDataset(index, field, value);
             });
         });
-        
+
         // Add conditioning button
         const addCondBtn = item.querySelector('.add-conditioning-btn');
         if (addCondBtn) {
@@ -598,17 +598,17 @@
         if (dataset.dataset_type) {
             this.applyDependency(item, 'dataset_type', dataset.dataset_type);
         }
-        
+
         // Apply storage type dependencies
         if (dataset.type) {
             this.applyDependency(item, 'type', dataset.type);
         }
-        
+
         // Apply caption strategy dependencies
         if (dataset.caption_strategy) {
             this.applyDependency(item, 'caption_strategy', dataset.caption_strategy);
         }
-        
+
         // Apply crop dependencies
         item.setAttribute('data-crop', dataset.crop || false);
     }
@@ -616,11 +616,11 @@
     applyDependency(item, field, value) {
         const deps = this.fieldDependencies[field];
         if (!deps || !deps[value]) return;
-        
+
         deps[value].show.forEach(selector => {
             item.querySelectorAll(selector).forEach(el => el.style.display = 'block');
         });
-        
+
         deps[value].hide.forEach(selector => {
             item.querySelectorAll(selector).forEach(el => el.style.display = 'none');
         });
@@ -631,12 +631,12 @@
         if (!this.datasets[datasetIndex].conditioning) {
             this.datasets[datasetIndex].conditioning = [];
         }
-        
+
         const newCond = {
             type: 'superresolution',
             params: this.getDefaultConditioningParams('superresolution')
         };
-        
+
         this.datasets[datasetIndex].conditioning.push(newCond);
         this.render();
         this.syncToJSON();
@@ -645,21 +645,21 @@
     getDefaultConditioningParams(type) {
         const generator = this.conditioningGenerators[type];
         if (!generator) return {};
-        
+
         const params = {};
         Object.entries(generator.params).forEach(([key, config]) => {
             params[key] = config.default;
         });
-        
+
         return params;
     }
 
     populateConditioning(item, conditioningList, datasetIndex) {
         const container = item.querySelector('.conditioning-list');
         if (!container) return;
-        
+
         container.innerHTML = '';
-        
+
         conditioningList.forEach((cond, condIndex) => {
             const condItem = this.createConditioningItem(cond, datasetIndex, condIndex);
             container.appendChild(condItem);
@@ -669,20 +669,20 @@
     createConditioningItem(cond, datasetIndex, condIndex) {
         const template = document.getElementById('conditioning-item-template');
         if (!template) return document.createElement('div');
-        
+
         const clone = template.content.cloneNode(true);
         const item = clone.querySelector('.conditioning-item');
-        
+
         item.setAttribute('data-cond-index', condIndex);
-        
+
         // Set type
         const typeSelect = item.querySelector('.conditioning-type');
         typeSelect.value = cond.type;
-        
+
         // Create params
         const paramsContainer = item.querySelector('.conditioning-params');
         this.createConditioningParams(paramsContainer, cond.type, cond.params || {}, datasetIndex, condIndex);
-        
+
         // Bind events
         typeSelect.addEventListener('change', (e) => {
             this.datasets[datasetIndex].conditioning[condIndex].type = e.target.value;
@@ -690,30 +690,30 @@
             this.render();
             this.syncToJSON();
         });
-        
+
         item.querySelector('.btn-remove-conditioning').addEventListener('click', () => {
             this.datasets[datasetIndex].conditioning.splice(condIndex, 1);
             this.render();
             this.syncToJSON();
         });
-        
+
         return clone;
     }
 
     createConditioningParams(container, type, params, datasetIndex, condIndex) {
         const generator = this.conditioningGenerators[type];
         if (!generator) return;
-        
+
         Object.entries(generator.params).forEach(([key, config]) => {
             const group = document.createElement('div');
             group.className = 'form-group';
-            
+
             const label = document.createElement('label');
             label.textContent = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
             group.appendChild(label);
-            
+
             let input;
-            
+
             if (config.type === 'select') {
                 input = document.createElement('select');
                 input.className = 'form-control';
@@ -735,18 +735,18 @@
                 if (config.max !== undefined) input.max = config.max;
                 if (config.step !== undefined) input.step = config.step;
             }
-            
+
             input.value = params[key] !== undefined ? params[key] : config.default;
-            
+
             input.addEventListener('change', (e) => {
                 let value = e.target.value;
                 if (input.type === 'checkbox') value = e.target.checked;
                 else if (input.type === 'number') value = parseFloat(value);
-                
+
                 this.datasets[datasetIndex].conditioning[condIndex].params[key] = value;
                 this.syncToJSON();
             });
-            
+
             group.appendChild(input);
             container.appendChild(group);
         });
