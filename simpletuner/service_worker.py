@@ -13,9 +13,11 @@ from pydantic import BaseModel
 
 from simpletuner.simpletuner_sdk.configuration import Configuration
 
-# Import the WebInterface class
-from simpletuner.simpletuner_sdk.interface import WebInterface
+# Import route modules
+from simpletuner.simpletuner_sdk.server.routes.checkpoints import router as checkpoints_router
 from simpletuner.simpletuner_sdk.server.routes.datasets import router as dataset_router
+from simpletuner.simpletuner_sdk.server.routes.publishing import router as publishing_router
+from simpletuner.simpletuner_sdk.server.routes.web import router as web_router
 from simpletuner.simpletuner_sdk.training_host import TrainingHost
 
 
@@ -56,9 +58,8 @@ app.add_middleware(
 if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Initialize and include web interface
-web_interface = WebInterface()
-app.include_router(web_interface.router)
+# Include web interface router (uses TabService with all tabs)
+app.include_router(web_router)
 
 # Store active training jobs
 active_jobs: Dict[str, Dict[str, Any]] = {}
@@ -88,6 +89,12 @@ app.include_router(training_host.router)
 
 # Dataset blueprint + plan API
 app.include_router(dataset_router)
+
+# Publishing API for HuggingFace Hub operations
+app.include_router(publishing_router)
+
+# Checkpoints API for checkpoint management operations
+app.include_router(checkpoints_router)
 
 
 # Health check endpoint

@@ -178,10 +178,12 @@ def _add_trainer_routes(app: FastAPI):
 
     # Add API routes
     from .routes.caption_filters import router as caption_filters_router
+    from .routes.checkpoints import router as checkpoints_router
     from .routes.configs import router as configs_router
     from .routes.datasets import router as datasets_router
     from .routes.fields import router as fields_router
     from .routes.models import router as models_router
+    from .routes.publishing import router as publishing_router
     from .routes.training import router as training_router
     from .routes.validation import router as validation_router
     from .routes.web import router as web_router
@@ -191,12 +193,14 @@ def _add_trainer_routes(app: FastAPI):
         models_router,
         datasets_router,
         caption_filters_router,
+        checkpoints_router,
         configs_router,
         validation_router,
         training_router,
         web_router,
         webui_state_router,
         fields_router,
+        publishing_router,
     ):
         _include_router_if_present(router)
 
