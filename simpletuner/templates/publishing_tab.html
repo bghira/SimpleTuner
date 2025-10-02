@@ -4,9 +4,7 @@
 
 <div class="tab-fragment"
      id="publishing-tab-content"
-     data-tab-name="publishing"
-     x-data="publishingManager()"
-     x-init="init()">
+     data-tab-name="publishing">
 
     <div class="card">
         <div class="card-header">
@@ -18,14 +16,10 @@
         </div>
 
         <div class="card-body">
-            <!-- Hidden form fields for global form integration -->
-            <input type="hidden" name="--push_to_hub" :value="config.push_to_hub ? 'true' : 'false'">
-            <input type="hidden" name="--push_checkpoints_to_hub" :value="config.push_to_hub && config.push_checkpoints_to_hub ? 'true' : 'false'">
-            <input type="hidden" name="--hub_model_id" :value="config.push_to_hub && config.namespace && config.model_name ? `${config.namespace}/${config.model_name}` : ''">
-            <input type="hidden" name="--private_hub" :value="config.private ? 'true' : 'false'">
-            <input type="hidden" name="--model_card_safe_for_work" :value="config.safe_for_work ? 'true' : 'false'">
+            <!-- Validation Results Area -->
+            <div id="validation-results-publishing" class="mb-3"></div>
 
-            <!-- Authentication Section -->
+            <!-- Authentication Section (outside form fields) -->
             <div class="form-section mb-4">
                 <h6 class="section-title">
                     <i class="fas fa-key"></i>
@@ -36,23 +30,28 @@
                     <!-- Status Display -->
                     <div class="col-md-6">
                         <label class="form-label">HuggingFace Status</label>
-                        <div x-show="loading.auth" class="text-muted small">
-                            <i class="fas fa-spinner fa-spin me-1"></i>Checking...
-                        </div>
-                        <div x-show="!loading.auth && authStatus?.valid" x-cloak class="text-success small">
-                            <i class="fas fa-check-circle me-1"></i>
-                            Connected as <strong x-text="authStatus?.username"></strong>
-                        </div>
-                        <div x-show="!loading.auth && authStatus && !authStatus.valid" x-cloak class="text-warning small">
-                            <i class="fas fa-exclamation-triangle me-1"></i>
-                            Not connected
+                        <div x-data="publishingAuth.init()"
+                             x-init="checkAuthStatus()">
+                            <div x-show="loading.auth" class="text-muted small">
+                                <i class="fas fa-spinner fa-spin me-1"></i>Checking...
+                            </div>
+                            <div x-show="!loading.auth && authStatus?.valid" x-cloak class="text-success small">
+                                <i class="fas fa-check-circle me-1"></i>
+                                Connected as <strong x-text="authStatus?.username"></strong>
+                            </div>
+                            <div x-show="!loading.auth && authStatus && !authStatus.valid" x-cloak class="text-warning small">
+                                <i class="fas fa-exclamation-triangle me-1"></i>
+                                Not connected
+                            </div>
                         </div>
                     </div>
 
                     <!-- Actions -->
                     <div class="col-md-6">
                         <label class="form-label">Actions</label>
-                        <div class="d-flex gap-2">
+                        <div x-data="publishingAuth.init()"
+                             x-init="checkAuthStatus()"
+                             class="d-flex gap-2">
                             <button type="button"
                                     x-show="!loading.auth && authStatus && !authStatus.valid"
                                     class="btn btn-sm btn-primary"
@@ -79,243 +78,132 @@
                                class="btn btn-sm btn-outline-secondary">
                                 <i class="fas fa-external-link-alt"></i>
                             </a>
-                        </div>
-                    </div>
-                </div>
 
-                <!-- Login Modal -->
-                <div x-show="showLoginModal"
-                     x-cloak
-                     class="modal fade"
-                     :class="{ 'show d-block': showLoginModal }"
-                     tabindex="-1"
-                     style="background-color: rgba(0,0,0,0.5);"
-                     @click.self="showLoginModal = false"
-                     @keydown.escape.window="showLoginModal = false">
-                    <div class="modal-dialog modal-dialog-centered">
-                        <div class="modal-content">
-                            <div class="modal-header">
-                                <h5 class="modal-title">
-                                    <i class="fas fa-sign-in-alt me-2"></i>Login to HuggingFace Hub
-                                </h5>
-                                <button type="button"
-                                        class="btn-close"
-                                        @click="showLoginModal = false"></button>
-                            </div>
-                            <div class="modal-body">
-                                <div class="mb-3">
-                                    <label for="hf-token-input" class="form-label">
-                                        HuggingFace Access Token <span class="text-danger">*</span>
-                                    </label>
-                                    <input type="password"
-                                           id="hf-token-input"
-                                           class="form-control font-monospace"
-                                           x-model="loginToken"
-                                           placeholder="hf_xxxxxxxxxxxxxxxxxxxxx"
-                                           @keydown.enter="if(loginToken.trim() && !savingToken) { loginWithToken(loginToken.trim()); }">
-                                    <div class="form-text">
-                                        Saved securely to ~/.cache/huggingface/token
+                            <!-- Login Modal -->
+                            <div x-show="showLoginModal"
+                                 x-cloak
+                                 class="modal fade"
+                                 :class="{ 'show d-block': showLoginModal }"
+                                 tabindex="-1"
+                                 style="background-color: rgba(0,0,0,0.5);"
+                                 @click.self="showLoginModal = false"
+                                 @keydown.escape.window="showLoginModal = false">
+                                <div class="modal-dialog modal-dialog-centered">
+                                    <div class="modal-content">
+                                        <div class="modal-header">
+                                            <h5 class="modal-title">
+                                                <i class="fas fa-sign-in-alt me-2"></i>Login to HuggingFace Hub
+                                            </h5>
+                                            <button type="button"
+                                                    class="btn-close"
+                                                    @click="showLoginModal = false"></button>
+                                        </div>
+                                        <div class="modal-body">
+                                            <div class="mb-3">
+                                                <label for="hf-token-input" class="form-label">
+                                                    HuggingFace Access Token <span class="text-danger">*</span>
+                                                </label>
+                                                <input type="password"
+                                                       id="hf-token-input"
+                                                       class="form-control font-monospace"
+                                                       x-model="loginToken"
+                                                       placeholder="hf_xxxxxxxxxxxxxxxxxxxxx"
+                                                       @keydown.enter="if(loginToken.trim() && !savingToken) { loginWithToken(loginToken.trim()); }">
+                                                <div class="form-text">
+                                                    Saved securely to ~/.cache/huggingface/token
+                                                </div>
+                                            </div>
+                                            <div class="alert alert-info small mb-0">
+                                                <strong><i class="fas fa-info-circle me-1"></i>Get your token:</strong>
+                                                <ol class="mb-0 mt-2 ps-3">
+                                                    <li>Visit <a href="https://huggingface.co/settings/tokens" target="_blank">HuggingFace Settings</a></li>
+                                                    <li>Create a token with "write" permissions</li>
+                                                    <li>Paste it above</li>
+                                                </ol>
+                                            </div>
+                                        </div>
+                                        <div class="modal-footer">
+                                            <button type="button"
+                                                    class="btn btn-secondary"
+                                                    @click="showLoginModal = false">
+                                                Cancel
+                                            </button>
+                                            <button type="button"
+                                                    class="btn btn-primary"
+                                                    :disabled="!loginToken.trim() || savingToken"
+                                                    @click="loginWithToken(loginToken.trim())">
+                                                <i class="fas fa-save me-1" :class="{ 'fa-spin': savingToken }"></i>
+                                                <span x-text="savingToken ? 'Saving...' : 'Save Token'"></span>
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
-                                <div class="alert alert-info small mb-0">
-                                    <strong><i class="fas fa-info-circle me-1"></i>Get your token:</strong>
-                                    <ol class="mb-0 mt-2 ps-3">
-                                        <li>Visit <a href="https://huggingface.co/settings/tokens" target="_blank">HuggingFace Settings</a></li>
-                                        <li>Create a token with "write" permissions</li>
-                                        <li>Paste it above</li>
-                                    </ol>
-                                </div>
-                            </div>
-                            <div class="modal-footer">
-                                <button type="button"
-                                        class="btn btn-secondary"
-                                        @click="showLoginModal = false">
-                                    Cancel
-                                </button>
-                                <button type="button"
-                                        class="btn btn-primary"
-                                        :disabled="!loginToken.trim() || savingToken"
-                                        @click="loginWithToken(loginToken.trim())">
-                                    <i class="fas fa-save me-1" :class="{ 'fa-spin': savingToken }"></i>
-                                    <span x-text="savingToken ? 'Saving...' : 'Save Token'"></span>
-                                </button>
                             </div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Publishing Toggle Section -->
-            <div class="form-section mb-4">
-                <h6 class="section-title">
-                    <i class="fas fa-toggle-on"></i>
-                    Publishing
-                </h6>
+            <!-- Form Fields Container -->
+            <div class="tab-fields" data-tab-form="publishing">
+                <input type="hidden" name="__active_tab__" value="publishing">
 
-                <div class="row g-3">
-                    <div class="col-md-6">
-                        <label class="form-label">Enable Publishing</label>
-                        <div class="form-switch form-switch-lg">
-                            <input class="form-check-input"
-                                   type="checkbox"
-                                   id="push-to-hub-toggle"
-                                   x-model="config.push_to_hub"
-                                   @change="markDirty && markDirty()">
-                        </div>
-                        <div class="form-text">
-                            Push final trained model to HuggingFace Hub
-                        </div>
-                    </div>
+                <!-- Publishing Controls Section -->
+                <div class="form-section mb-4">
+                    <h6 class="section-title">
+                        <i class="fas fa-toggle-on"></i>
+                        Publishing
+                    </h6>
 
-                    <div class="col-md-6" x-show="config.push_to_hub" x-cloak>
-                        <label class="form-label">Push Intermediate Checkpoints</label>
-                        <div class="form-switch form-switch-lg">
-                            <input class="form-check-input"
-                                   type="checkbox"
-                                   id="push-checkpoints-toggle"
-                                   x-model="config.push_checkpoints_to_hub"
-                                   @change="markDirty && markDirty()">
+                    <div class="row">
+                        <!-- Push to Hub Checkbox -->
+                        <div class="col-md-6">
+                            {% include 'partials/form_field_htmx.html' with context %}
                         </div>
-                        <div class="form-text">
-                            Also push checkpoint saves during training
+                        
+                        <!-- Push Checkpoints Checkbox (dependent on push_to_hub) -->
+                        <div class="col-md-6 conditional-field" data-conditional-on="push_to_hub">
+                            {% include 'partials/form_field_htmx.html' with context %}
                         </div>
                     </div>
                 </div>
-            </div>
 
-            <!-- Repository Configuration Section -->
-            <div class="form-section mb-4" x-show="config.push_to_hub" x-cloak>
-                <h6 class="section-title">
-                    <i class="fas fa-cog"></i>
-                    Repository
-                </h6>
+                <!-- Repository Section (dependent on push_to_hub) -->
+                <div class="form-section mb-4 conditional-field" data-conditional-on="push_to_hub">
+                    <h6 class="section-title">
+                        <i class="fas fa-cog"></i>
+                        Repository
+                    </h6>
 
-                <div class="row g-3">
-                    <!-- Namespace Selector -->
-                    <div class="col-md-6">
-                        <label class="form-label" for="hub-namespace">
-                            Namespace <span class="text-danger">*</span>
-                        </label>
-                        <select id="hub-namespace"
-                                class="form-select"
-                                x-model="config.namespace"
-                                @change="(markDirty && markDirty()); checkRepository()"
-                                :disabled="loading.namespaces">
-                            <option value="">Select namespace...</option>
-                            <template x-for="ns in namespaces" :key="ns">
-                                <option :value="ns" x-text="ns"></option>
-                            </template>
-                        </select>
-                        <div class="form-text">
-                            Account or organization
+                    <div class="row">
+                        <!-- Hub Model ID -->
+                        <div class="col-12">
+                            {% include 'partials/form_field_htmx.html' with context %}
                         </div>
-                    </div>
-
-                    <!-- Model Name Input -->
-                    <div class="col-md-6">
-                        <label class="form-label" for="hub-model-name">
-                            Model Name <span class="text-danger">*</span>
-                        </label>
-                        <input type="text"
-                               id="hub-model-name"
-                               class="form-control"
-                               placeholder="my-awesome-model"
-                               x-model="config.model_name"
-                               @input="(markDirty && markDirty()); debounceRepositoryCheck()"
-                               :disabled="!config.namespace">
-                        <div class="form-text">
-                            Lowercase with hyphens/underscores
-                        </div>
-                    </div>
-
-                    <!-- Repository ID Preview -->
-                    <div class="col-12" x-show="config.namespace && config.model_name">
-                        <label class="form-label">Repository ID</label>
-                        <div class="repository-preview">
-                            <i class="fab fa-readme me-2"></i>
-                            <code x-text="`${config.namespace}/${config.model_name}`"></code>
-                            <span class="repo-status-badge ms-2" x-show="repoCheck.status === 'checking'">
-                                <i class="fas fa-spinner fa-spin"></i>
-                            </span>
-                            <span class="repo-status-badge exists ms-2" x-show="repoCheck.status === 'exists'">
-                                <i class="fas fa-check-circle"></i>
-                                <span>exists</span>
-                            </span>
-                            <span class="repo-status-badge available ms-2" x-show="repoCheck.status === 'available'">
-                                <i class="fas fa-plus-circle"></i>
-                                <span>will be created</span>
-                            </span>
-                        </div>
-                    </div>
-
-                    <!-- Visibility Options -->
-                    <div class="col-md-6">
-                        <label class="form-label d-block mb-2">Visibility</label>
-                        <div class="visibility-options">
-                            <div class="form-check">
-                                <input class="form-check-input"
-                                       type="radio"
-                                       name="visibility"
-                                       id="visibility-public"
-                                       :checked="!config.private"
-                                       @change="config.private = false; markDirty && markDirty()">
-                                <label class="form-check-label" for="visibility-public">
-                                    <i class="fas fa-globe me-2"></i>Public
-                                </label>
-                            </div>
-                            <div class="form-check">
-                                <input class="form-check-input"
-                                       type="radio"
-                                       name="visibility"
-                                       id="visibility-private"
-                                       :checked="config.private"
-                                       @change="config.private = true; markDirty && markDirty()">
-                                <label class="form-check-label" for="visibility-private">
-                                    <i class="fas fa-lock me-2"></i>Private
-                                </label>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Safe for Work Option -->
-                    <div class="col-md-6">
-                        <label class="form-label d-block mb-2">Content Rating</label>
-                        <div class="form-check">
-                            <input class="form-check-input"
-                                   type="checkbox"
-                                   id="safe-for-work-checkbox"
-                                   x-model="config.safe_for_work"
-                                   @change="markDirty && markDirty()">
-                            <label class="form-check-label" for="safe-for-work-checkbox">
-                                Safe for Work
-                            </label>
-                        </div>
-                        <div class="form-text">
-                            Remove NSFW warning from model card
+                        
+                        <!-- Model Card Private -->
+                        <div class="col-md-6">
+                            {% include 'partials/form_field_htmx.html' with context %}
                         </div>
                     </div>
                 </div>
-            </div>
 
-            <!-- License Information Section -->
-            <div class="form-section mb-4" x-show="config.push_to_hub && license.text" x-cloak>
-                <h6 class="section-title">
-                    <i class="fas fa-file-contract"></i>
-                    License
-                </h6>
+                <!-- Model Card Section (dependent on push_to_hub) -->
+                <div class="form-section mb-4 conditional-field" data-conditional-on="push_to_hub">
+                    <h6 class="section-title">
+                        <i class="fas fa-sticky-note"></i>
+                        Model Card
+                    </h6>
 
-                <div class="row g-3">
-                    <div class="col-12">
-                        <label class="form-label" x-text="license.name"></label>
-                        <p class="text-muted small mb-2" x-text="license.text"></p>
-                        <a x-show="license.url"
-                           :href="license.url"
-                           target="_blank"
-                           class="btn btn-sm btn-outline-secondary">
-                            <i class="fas fa-external-link-alt me-1"></i>View License
-                        </a>
-                        <div class="form-text" x-show="license.source">
-                            From <span x-text="license.source"></span>
+                    <div class="row">
+                        <!-- Safe for Work -->
+                        <div class="col-md-6">
+                            {% include 'partials/form_field_htmx.html' with context %}
+                        </div>
+                        
+                        <!-- Model Card Note -->
+                        <div class="col-12">
+                            {% include 'partials/form_field_htmx.html' with context %}
                         </div>
                     </div>
                 </div>
@@ -334,15 +222,18 @@
                     Model card will be auto-generated from training configuration.
                 </div>
                 <div>
-                    <span class="text-success small me-3" x-show="saveStatus === 'success'" x-cloak>
-                        <i class="fas fa-check-circle me-1"></i>Saved
-                    </span>
-                    <span class="text-danger small me-3" x-show="saveStatus === 'error'" x-cloak>
-                        <i class="fas fa-exclamation-circle me-1"></i>
-                        <span x-text="errorMessage"></span>
-                    </span>
+                    <button type="button"
+                            class="btn btn-sm btn-outline-secondary"
+                            hx-get="/api/config/reset/publishing"
+                            hx-confirm="Are you sure you want to reset publishing configuration to defaults?"
+                            hx-target="#publishing-tab-content"
+                            hx-swap="outerHTML">
+                        <i class="fas fa-undo"></i> Reset to Defaults
+                    </button>
                 </div>
             </div>
         </div>
     </div>
 </div>
+
+<!-- Authentication functionality is handled by publishing.js module -->
