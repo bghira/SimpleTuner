@@ -31,9 +31,20 @@
                 {% if sections %}
                     {% for section in sections %}
                     <div class="form-section mb-4" id="section-{{ section.id }}">
-                        <h6 class="section-title">
+                        <h6 class="section-title {% if section.get('advanced') %}advanced-section{% endif %}">
+                            {% if section.get('advanced') %}
+                            <button type="button" class="btn btn-sm btn-outline-secondary advanced-toggle me-2"
+                                    data-bs-toggle="collapse"
+                                    data-bs-target="#advanced-content-{{ section.id }}"
+                                    aria-expanded="false">
+                                <i class="fas fa-chevron-right"></i>
+                            </button>
+                            {% endif %}
                             {% if section.icon %}<i class="{{ section.icon }}"></i>{% endif %}
                             {{ section.title }}
+                            {% if section.get('advanced') %}
+                            <span class="badge bg-secondary ms-2">Advanced</span>
+                            {% endif %}
                         </h6>
                         {% if section.description %}
                         <p class="text-muted small">{{ section.description }}</p>
@@ -41,13 +52,20 @@
 
                         {% set section_fields = fields | selectattr('section_id', 'equalto', section.id) | list %}
                         {% if section_fields %}
-                            <div class="row">
+                            <div class="row {% if section.get('advanced') %}collapse{% endif %}"
+                                 {% if section.get('advanced') %}id="advanced-content-{{ section.id }}"{% endif %}>
                                 {% for field in section_fields %}
                                     {% include 'partials/form_field_htmx.html' %}
                                 {% endfor %}
                             </div>
                         {% else %}
-                            {% if section.empty_message %}
+                            {% if section.get('template') %}
+                                <!-- Custom template for this section -->
+                                <div class="row {% if section.get('advanced') %}collapse{% endif %}"
+                                     {% if section.get('advanced') %}id="advanced-content-{{ section.id }}"{% endif %}>
+                                    {% include section.template %}
+                                </div>
+                            {% elif section.empty_message %}
                                 <div class="empty-section-message mt-3 mb-0" role="status">
                                     <i class="fas fa-info-circle me-2"></i>{{ section.empty_message }}
                                 </div>
@@ -173,3 +191,40 @@ document.body.addEventListener('htmx:afterRequest', function(evt) {
     }
 });
 </script>
+
+<style>
+/* Advanced section styles */
+.advanced-section {
+    display: flex;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.advanced-toggle {
+    transition: transform 0.2s ease;
+}
+
+.advanced-toggle[aria-expanded="true"] i {
+    transform: rotate(90deg);
+}
+
+.advanced-section .badge {
+    font-size: 0.7em;
+    font-weight: 500;
+}
+
+.collapse {
+    transition: all 0.3s ease;
+}
+
+/* Add subtle border to advanced sections */
+.form-section:has(.advanced-section) {
+    border-left: 3px solid rgba(108, 117, 125, 0.3);
+    padding-left: 1rem;
+    margin-left: 0.5rem;
+}
+
+.form-section:has(.advanced-section):hover {
+    border-left-color: rgba(108, 117, 125, 0.6);
+}
+</style>
