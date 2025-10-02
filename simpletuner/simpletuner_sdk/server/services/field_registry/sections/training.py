@@ -1,6 +1,8 @@
 import logging
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
+from simpletuner.helpers.training.optimizer_param import optimizer_choices as _optimizer_choices_map
+
 from ..types import ConfigField, FieldDependency, FieldType, ImportanceLevel, ValidationRule, ValidationRuleType
 
 if TYPE_CHECKING:
@@ -21,7 +23,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.NUMBER,
             tab="training",
             section="training_schedule",
-            default_value=1024,
+            default_value=1,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=0, message="Epochs must be non-negative"),
                 ValidationRule(ValidationRuleType.MAX, value=1000, message="Consider if you really need >1000 epochs"),
@@ -94,32 +96,11 @@ def register_training_fields(registry: "FieldRegistry") -> None:
     )
 
     # Optimizer
-    optimizer_choices = [
-        "adamw_bf16",
-        "ao-adamw8bit",
-        "ao-adamw4bit",
-        "ao-adamwfp8",
-        "optimi-adamw",
-        "optimi-lion",
-        "optimi-stableadamw",
-        "prodigy",
-        "soap",
-        "dadaptation",
-        "dadaptsgd",
-        "dadaptadam",
-        "dadaptlion",
-        "adafactor",
-        "adamw8bit",
-        "adamw",
-        "adam8bit",
-        "adam",
-        "lion8bit",
-        "lion",
-        "rmsprop",
-        "sgd",
-        "StableAdamWUnfused",
-        "deepspeed-adamw",
-    ]
+    optimizer_choices = list(_optimizer_choices_map.keys())
+    if not optimizer_choices:
+        raise RuntimeError(
+            "optimizer_choices from optimizer_param is empty; expected at least one optimizer option"
+        )
     registry._add_field(
         ConfigField(
             name="optimizer",
@@ -193,7 +174,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.NUMBER,
             tab="model",
             section="memory_optimization",
-            default_value=1024,
+            default_value=1,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")],
             help_text="Number of steps to accumulate gradients before updating",
             tooltip="Simulates larger batch sizes without using more VRAM. Effective batch = batch_size * accumulation_steps",
@@ -211,7 +192,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.NUMBER,
             tab="training",
             section="learning_rate",
-            default_value=0,
+            default_value=500,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="Number of steps to gradually increase LR from 0",
             tooltip="Helps training stability at start. Typically 5-10% of total steps",
@@ -229,7 +210,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.NUMBER,
             tab="basic",
             section="checkpointing",
-            default_value=None,
+            default_value=5,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative (0 = unlimited)")
             ],
@@ -249,7 +230,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.CHECKBOX,
             tab="training",
             section="memory_optimization",
-            default_value=False,
+            default_value=True,
             help_text="Trade compute for memory by recomputing activations",
             tooltip="Reduces VRAM usage significantly but increases training time by ~20%",
             importance=ImportanceLevel.ADVANCED,
@@ -301,7 +282,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.NUMBER,
             tab="training",
             section="learning_rate",
-            default_value=1024,
+            default_value=1,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must have at least 1 cycle")],
             dependencies=[
                 FieldDependency(field="lr_scheduler", operator="equals", value="cosine_with_restarts", action="show")
@@ -322,7 +303,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.NUMBER,
             tab="training",
             section="learning_rate",
-            default_value=1.0,
+            default_value=0.8,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.1, message="Power should be positive")],
             dependencies=[FieldDependency(field="lr_scheduler", operator="equals", value="polynomial", action="show")],
             help_text="Power for polynomial decay scheduler",

@@ -21,7 +21,7 @@ def register_memory_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.NUMBER,
             tab="training",
             section="training_schedule",
-            default_value=1024,
+            default_value=1,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")],
             help_text="Number of steps to accumulate gradients",
             tooltip="Simulates larger batch sizes. Effective batch = batch_size * accumulation_steps * num_gpus",

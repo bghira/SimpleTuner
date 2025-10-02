@@ -264,7 +264,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.NUMBER,
             tab="advanced",
             section="loss_functions",
-            default_value=0.1,
+            default_value=1.0,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative")],
             help_text="Weight factor for SNR-based loss scaling",
             tooltip="Alternative to snr_gamma. Controls how much SNR affects loss weighting.",
@@ -338,11 +338,11 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             default_value=None,
             choices=[
                 {"value": None, "label": "None"},
-                {"value": "lora", "label": "LoRA"},
-                {"value": "full", "label": "Full"},
+                {"value": "lcm", "label": "LCM"},
+                {"value": "dcm", "label": "DCM"},
             ],
             help_text="Method for model distillation",
-            tooltip="Distillation method to use when converting models. LoRA = lightweight, Full = complete.",
+            tooltip="Select the distillation approach to use when converting models (LCM or DCM).",
             importance=ImportanceLevel.ADVANCED,
             order=18,
         )
@@ -419,13 +419,13 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             tab="advanced",
             section="model_specific",
             model_specific=["ltx"],
-            default_value="video",
+            default_value="i2v",
             choices=[
-                {"value": "video", "label": "Video"},
-                {"value": "image", "label": "Image"},
+                {"value": "t2v", "label": "Text-to-Video"},
+                {"value": "i2v", "label": "Image-to-Video"},
             ],
             help_text="Training mode for LTX models",
-            tooltip="Video mode for video generation, Image mode for image generation.",
+            tooltip="Choose whether datasets default to text-to-video (t2v) or image-to-video (i2v) processing.",
             importance=ImportanceLevel.ADVANCED,
             order=22,
         )
@@ -461,7 +461,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             tab="advanced",
             section="model_specific",
             model_specific=["ltx"],
-            default_value=0.1,
+            default_value=0.05,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be between 0 and 1"),
                 ValidationRule(ValidationRuleType.MAX, value=1.0, message="Must be between 0 and 1"),
@@ -641,22 +641,5 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             tooltip="Special instruction format for Sana model training with complex human prompts.",
             importance=ImportanceLevel.ADVANCED,
             order=33,
-        )
-    )
-
-    # Help Field (for CLI help display)
-    registry._add_field(
-        ConfigField(
-            name="help",
-            arg_name="--help",
-            ui_label="Show Help",
-            field_type=FieldType.CHECKBOX,
-            tab="advanced",
-            section="system",
-            default_value="==SUPPRESS==",
-            help_text="Display help information and exit",
-            tooltip="When enabled, shows the help message for all available command line options and exits.",
-            importance=ImportanceLevel.ADVANCED,
-            order=34,
         )
     )

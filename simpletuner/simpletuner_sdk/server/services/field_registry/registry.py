@@ -9,14 +9,6 @@ from .types import ConfigField, FieldDependency, FieldType, ImportanceLevel, Val
 
 logger = logging.getLogger(__name__)
 
-try:
-    from ..arg_parser_integration import arg_parser_integration
-
-    logger.debug("Successfully imported arg_parser_integration")
-except ImportError as exc:  # pragma: no cover - defensive fallback
-    logger.error("Failed to import arg_parser_integration: %s", exc)
-    arg_parser_integration = None
-
 
 class FieldRegistry:
     """Central registry for all configuration fields."""
@@ -35,17 +27,6 @@ class FieldRegistry:
 
     def _add_field(self, field: ConfigField):
         """Add a field to the registry and update dependency maps."""
-        # Auto-populate help text from cmd_args.py if not provided
-        if field.arg_name and arg_parser_integration:
-            arg_help = arg_parser_integration.get_argument_help(field.arg_name)
-            if arg_help:
-                # Store cmd_args help separately for detailed tooltip
-                field.cmd_args_help = arg_parser_integration.format_help_for_ui(arg_help)
-
-                # Use cmd_args help as primary help text if not set
-                if not field.help_text:
-                    field.help_text = arg_help
-
         if field.field_type == FieldType.NUMBER and field.step is None:
             auto_step = self._compute_default_step(field.default_value)
             if auto_step is not None:

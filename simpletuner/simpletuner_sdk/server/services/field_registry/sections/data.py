@@ -201,14 +201,13 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.SELECT,
             tab="data",
             section="data_config",
-            default_value="all",
+            default_value="recreate",
             choices=[
-                {"value": "all", "label": "Scan All"},
-                {"value": "missing", "label": "Missing Only"},
-                {"value": "none", "label": "No Scan"},
+                {"value": "recreate", "label": "Recreate"},
+                {"value": "sync", "label": "Sync"},
             ],
             help_text="How to scan VAE cache for missing files",
-            tooltip="'all': Scan entire cache. 'missing': Only check for missing files. 'none': Skip scanning.",
+            tooltip="'recreate': rebuild inconsistent cache entries. 'sync': adjust bucket metadata to match existing latents.",
             importance=ImportanceLevel.ADVANCED,
             order=8,
         )

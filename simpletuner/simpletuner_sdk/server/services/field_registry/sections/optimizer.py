@@ -128,13 +128,12 @@ def register_optimizer_fields(registry: "FieldRegistry") -> None:
             tab="training",
             section="optimizer_config",
             subsection="optimizer_params",
-            default_value="offload",
+            default_value="none",
             choices=[
-                {"value": "offload", "label": "Offload"},
-                {"value": "offload_and_return", "label": "Offload and Return"},
+                {"value": "none", "label": "None"},
             ],
             help_text="Method for CPU offloading optimizer states",
-            tooltip="'offload': Keep on CPU. 'offload_and_return': Move back to GPU after step.",
+            tooltip="Currently only the placeholder 'none' option is supported.",
             importance=ImportanceLevel.ADVANCED,
             order=5,
         )
@@ -152,12 +151,11 @@ def register_optimizer_fields(registry: "FieldRegistry") -> None:
             subsection="optimizer_params",
             default_value=None,
             choices=[
+                {"value": "unmodified", "label": "Unmodified"},
                 {"value": "fp32", "label": "FP32"},
-                {"value": "fp16", "label": "FP16"},
-                {"value": "bf16", "label": "BF16"},
             ],
             help_text="Precision for gradient computation",
-            tooltip="Lower precision saves memory but may affect training stability. FP32 is most stable.",
+            tooltip="'unmodified' keeps the framework default. FP32 uses higher precision for gradient accumulation.",
             importance=ImportanceLevel.ADVANCED,
             order=6,
         )

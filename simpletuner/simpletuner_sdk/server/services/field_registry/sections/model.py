@@ -7,6 +7,11 @@ except ImportError as exc:  # pragma: no cover - defensive fallback
     logging.getLogger(__name__).error("Failed to import model_families: %s", exc)
     model_families = {}
 
+try:
+    from simpletuner.helpers.training import quantised_precision_levels
+except ImportError:  # pragma: no cover - defensive fallback
+    quantised_precision_levels = ["no_change"]
+
 from ..types import ConfigField, FieldDependency, FieldType, ImportanceLevel, ValidationRule, ValidationRuleType
 
 if TYPE_CHECKING:
@@ -21,6 +26,24 @@ def register_model_fields(registry: "FieldRegistry") -> None:
     logger.debug("_add_model_config_fields called")
     # Model Family
     model_family_list = list(model_families.keys())
+
+    def _quant_label(value: str) -> str:
+        if value == "no_change":
+            return "No Change"
+        if "-" in value:
+            prefix, suffix = value.split("-", 1)
+            prefix_label = prefix.upper()
+            suffix_key = suffix.replace("_", " ")
+            if suffix == "quanto":
+                return f"{prefix_label} (Quanto)"
+            if suffix == "bnb":
+                return f"{prefix_label} (BitsAndBytes)"
+            if suffix == "torchao":
+                return f"{prefix_label} (TorchAO)"
+            return f"{prefix_label} ({suffix_key.title()})"
+        return value.replace("_", " ").title()
+
+    quant_choice_defs = [{"value": opt, "label": _quant_label(opt)} for opt in quantised_precision_levels]
     registry._add_field(
         ConfigField(
             name="model_family",
@@ -108,7 +131,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             tab="basic",
             section="essential_settings",
             subsection="paths",
-            default_value="./output",
+            default_value="simpletuner-results",
             validation_rules=[ValidationRule(ValidationRuleType.REQUIRED, message="Output directory is required")],
             help_text="Directory where model checkpoints and logs will be saved",
             tooltip="All training outputs including checkpoints, logs, and samples will be saved here",
@@ -302,6 +325,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             section="vae_config",
             default_value="bf16",
             choices=[
+                {"value": "default", "label": "Model Default"},
                 {"value": "fp32", "label": "FP32"},
                 {"value": "fp16", "label": "FP16"},
                 {"value": "bf16", "label": "BF16"},
@@ -359,6 +383,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             section="image_processing",
             subsection="aspect_buckets",
             default_value=None,
+            choices=[{"value": i, "label": str(i)} for i in range(1, 10)],
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=1, message="Rounding must be at least 1"),
                 ValidationRule(ValidationRuleType.MAX, value=9, message="Rounding must be at most 9"),
@@ -380,14 +405,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             tab="model",
             section="quantization",
             default_value="no_change",
-            choices=[
-                {"value": "no_change", "label": "No Change"},
-                {"value": "int8-quanto", "label": "INT8 (Quanto)"},
-                {"value": "int4-quanto", "label": "INT4 (Quanto)"},
-                {"value": "int2-quanto", "label": "INT2 (Quanto)"},
-                {"value": "fp8-quanto", "label": "FP8 (Quanto)"},
-                {"value": "nf4-bnb", "label": "NF4 (BitsAndBytes)"},
-            ],
+            choices=quant_choice_defs,
             help_text="Precision for loading the base model. Lower precision saves memory.",
             tooltip="Quantization reduces memory usage but may impact quality. INT8/INT4 are commonly used.",
             importance=ImportanceLevel.ADVANCED,
@@ -395,18 +413,6 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             dependencies=[FieldDependency(field="model_type", operator="equals", value="lora", action="enable")],
         )
     )
-
-    text_encoder_precision_choices = [
-        {"value": "no_change", "label": "No Change"},
-        {"value": "int8-quanto", "label": "INT8 (Quanto)"},
-        {"value": "int4-quanto", "label": "INT4 (Quanto)"},
-        {"value": "int2-quanto", "label": "INT2 (Quanto)"},
-        {"value": "int8-torchao", "label": "INT8 (TorchAO)"},
-        {"value": "nf4-bnb", "label": "NF4 (BitsAndBytes)"},
-        {"value": "fp8-quanto", "label": "FP8 (Quanto)"},
-        {"value": "fp8uz-quanto", "label": "FP8UZ (Quanto)"},
-        {"value": "fp8-torchao", "label": "FP8 (TorchAO)"},
-    ]
 
     for idx in range(1, 5):
         ui_label = "Text Encoder Precision" if idx == 1 else f"Text Encoder {idx} Precision"
@@ -419,7 +425,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
                 tab="model",
                 section="quantization",
                 default_value="no_change",
-                choices=text_encoder_precision_choices,
+                choices=quant_choice_defs,
                 help_text="Precision for text encoders. Lower precision saves memory.",
                 tooltip="Text encoder quantization has minimal impact on quality",
                 importance=ImportanceLevel.ADVANCED,
@@ -472,7 +478,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.SELECT,
             tab="model",
             section="quantization",
-            default_value="cpu",
+            default_value="accelerator",
             choices=[
                 {"value": "cpu", "label": "CPU (Slower but safer)"},
                 {"value": "accelerator", "label": "GPU/Accelerator (Faster)"},
