@@ -611,23 +611,6 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         )
     )
 
-    # Freeze Encoder
-    registry._add_field(
-        ConfigField(
-            name="freeze_encoder",
-            arg_name="--freeze_encoder",
-            ui_label="Freeze Text Encoder",
-            field_type=FieldType.CHECKBOX,
-            tab="training",
-            section="text_encoder_training",
-            default_value=True,
-            help_text="Whether or not to freeze the text encoder. The default is true.",
-            tooltip="When training LoRA adapters, it's recommended to freeze the text encoder to save memory.",
-            importance=ImportanceLevel.ADVANCED,
-            order=31,
-        )
-    )
-
     # Freeze Encoder Before
     registry._add_field(
         ConfigField(
@@ -636,13 +619,15 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             ui_label="Freeze Encoder Before Layer",
             field_type=FieldType.NUMBER,
             tab="training",
-            section="text_encoder_training",
+            section="text_encoder",
+            subsection="advanced",
             default_value=12,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="When using 'before' strategy, we will freeze layers earlier than this",
             tooltip="When freezing the text encoder, we can use the 'before', 'between', or 'after' strategy. The 'before' strategy will freeze layers earlier than this.",
             importance=ImportanceLevel.ADVANCED,
             order=32,
+            dependencies=[FieldDependency(field="train_text_encoder", operator="equals", value=True, action="show")],
         )
     )
 
@@ -654,13 +639,15 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             ui_label="Freeze Encoder After Layer",
             field_type=FieldType.NUMBER,
             tab="training",
-            section="text_encoder_training",
+            section="text_encoder",
+            subsection="advanced",
             default_value=17,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="When using 'after' strategy, we will freeze layers later than this",
             tooltip="When freezing the text encoder, we can use the 'before', 'between', or 'after' strategy. The 'after' strategy will freeze all layers from 17 up.",
             importance=ImportanceLevel.ADVANCED,
             order=33,
+            dependencies=[FieldDependency(field="train_text_encoder", operator="equals", value=True, action="show")],
         )
     )
 
@@ -672,7 +659,8 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             ui_label="Freeze Encoder Strategy",
             field_type=FieldType.SELECT,
             tab="training",
-            section="text_encoder_training",
+            section="text_encoder",
+            subsection="advanced",
             default_value="after",
             choices=[
                 {"value": "before", "label": "Before"},
@@ -683,6 +671,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tooltip="The 'before' strategy will freeze layers earlier than this. The 'between' strategy will freeze layers between those two values, leaving the outer layers unfrozen. The 'after' strategy will freeze all layers from 17 up. This can be helpful when fine-tuning Stable Diffusion 2.1 on a new style.",
             importance=ImportanceLevel.ADVANCED,
             order=34,
+            dependencies=[FieldDependency(field="train_text_encoder", operator="equals", value=True, action="show")],
         )
     )
 
@@ -694,7 +683,8 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             ui_label="Layer Freeze Strategy",
             field_type=FieldType.SELECT,
             tab="training",
-            section="text_encoder_training",
+            section="text_encoder",
+            subsection="advanced",
             default_value=None,
             choices=[
                 {"value": "none", "label": "None"},
@@ -704,6 +694,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tooltip="The 'bitfit' strategy will freeze all weights, and leave bias in a trainable state. The 'none' strategy will leave all parameters in a trainable state. Freezing the weights can improve convergence for finetuning. Using bitfit only moderately reduces VRAM consumption, but substantially reduces the count of trainable parameters.",
             importance=ImportanceLevel.ADVANCED,
             order=35,
+            dependencies=[FieldDependency(field="train_text_encoder", operator="equals", value=True, action="show")],
         )
     )
 
@@ -715,12 +706,14 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             ui_label="Fully Unload Text Encoder",
             field_type=FieldType.CHECKBOX,
             tab="training",
-            section="text_encoder_training",
+            section="text_encoder",
+            subsection="advanced",
             default_value=False,
             help_text="If set, will fully unload the text_encoder from memory when not in use",
             tooltip="This currently has the side effect of crashing validations, but it is useful for initiating VAE caching on GPUs that would otherwise be too small.",
             importance=ImportanceLevel.ADVANCED,
             order=36,
+            dependencies=[FieldDependency(field="train_text_encoder", operator="equals", value=True, action="show")],
         )
     )
 
@@ -732,12 +725,14 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             ui_label="Save Text Encoder",
             field_type=FieldType.CHECKBOX,
             tab="training",
-            section="text_encoder_training",
+            section="text_encoder",
+            subsection="advanced",
             default_value=False,
             help_text="If set, will save the text encoder after training",
             tooltip="This is useful if you're using --push_to_hub so that the final pipeline contains all necessary components to run.",
             importance=ImportanceLevel.ADVANCED,
             order=37,
+            dependencies=[FieldDependency(field="train_text_encoder", operator="equals", value=True, action="show")],
         )
     )
 
@@ -749,13 +744,15 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             ui_label="Text Encoder Training Limit",
             field_type=FieldType.NUMBER,
             tab="training",
-            section="text_encoder_training",
-            default_value=25,
+            section="text_encoder",
+            subsection="advanced",
+            default_value=100,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="When training the text encoder, we want to limit how long it trains for to avoid catastrophic loss",
             tooltip="When training the text encoder, we want to limit how long it trains for to avoid catastrophic loss.",
             importance=ImportanceLevel.ADVANCED,
             order=38,
+            dependencies=[FieldDependency(field="train_text_encoder", operator="equals", value=True, action="show")],
         )
     )
 
