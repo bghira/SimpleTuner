@@ -269,10 +269,10 @@ class TabService:
         # Group fields into sections for basic tab
         sections = [
             {"id": "project", "title": "Project Settings", "icon": "fas fa-project-diagram"},
-            {"id": "project_advanced", "title": "", "icon": "fas", "advanced": True},
+            {"id": "project_advanced", "title": "Advanced Project Settings", "icon": "fas fa-cogs", "advanced": True},
             {"id": "training_data", "title": "Training Data", "icon": "fas fa-database"},
             {"id": "logging", "title": "Logging & Checkpoints", "icon": "fas fa-stream"},
-            {"id": "logging_advanced", "title": "", "icon": "fas", "advanced": True},
+            {"id": "logging_advanced", "title": "Advanced Logging Settings", "icon": "fas fa-tools", "advanced": True},
             {"id": "other", "title": "Other Settings", "icon": "fas fa-sliders-h"},
         ]
 
@@ -281,6 +281,13 @@ class TabService:
         for section_id, section_fields in grouped_fields.items():
             for field in section_fields:
                 field["section_id"] = section_id
+                # Set parent_section relationships for advanced sections
+                if section_id == "project_advanced":
+                    field["subsection"] = "advanced_project"
+                    field["parent_section"] = "project"
+                elif section_id == "logging_advanced":
+                    field["subsection"] = "advanced_logging"
+                    field["parent_section"] = "logging"
 
         sections_with_fields = [section for section in sections if grouped_fields.get(section["id"])]
 
@@ -297,14 +304,70 @@ class TabService:
         model_type_value = str(config_values.get("model_type") or "full")
         is_lora_type = model_type_value == "lora"
 
-        # Handle model_family label formatting
+        # Group fields into sections for model tab
+        sections = [
+            {"id": "model_config", "title": "Model Configuration", "icon": "fas fa-brain"},
+            {
+                "id": "model_config_advanced_paths",
+                "title": "Advanced Model Paths",
+                "icon": "fas fa-folder-open",
+                "advanced": True,
+            },
+            {"id": "architecture", "title": "Architecture", "icon": "fas fa-cogs"},
+            {"id": "architecture_controlnet", "title": "ControlNet", "icon": "fas fa-network-wired", "advanced": True},
+            {"id": "architecture_advanced", "title": "Advanced Architecture", "icon": "fas fa-tools", "advanced": True},
+            {"id": "lora_config", "title": "LoRA Configuration", "icon": "fas fa-layer-group"},
+            {
+                "id": "lora_config_model_specific",
+                "title": "Model-Specific LoRA Settings",
+                "icon": "fas fa-cube",
+                "advanced": True,
+            },
+            {"id": "lora_config_advanced", "title": "Advanced LoRA Settings", "icon": "fas fa-sliders-h", "advanced": True},
+            {"id": "vae_config", "title": "VAE Configuration", "icon": "fas fa-image"},
+            {"id": "quantization", "title": "Quantization", "icon": "fas fa-microchip"},
+            {"id": "memory_optimization", "title": "Memory Optimization", "icon": "fas fa-memory"},
+        ]
+
+        # Group fields and assign section_id to each field
+        grouped_fields = self._group_model_fields(fields)
+        for section_id, section_fields in grouped_fields.items():
+            for field in section_fields:
+                # Keep advanced sections as separate sections for collapse functionality
+                # but mark them as subsections for proper nesting
+                if section_id == "model_config_advanced_paths":
+                    field["section_id"] = "model_config_advanced_paths"
+                    field["subsection"] = "advanced_paths"
+                    field["parent_section"] = "model_config"
+                elif section_id == "architecture_controlnet":
+                    field["section_id"] = "architecture_controlnet"
+                    field["subsection"] = "controlnet"
+                    field["parent_section"] = "architecture"
+                elif section_id == "architecture_advanced":
+                    field["section_id"] = "architecture_advanced"
+                    field["subsection"] = "advanced"
+                    field["parent_section"] = "architecture"
+                elif section_id == "lora_config_model_specific":
+                    field["section_id"] = "lora_config_model_specific"
+                    field["subsection"] = "model_specific"
+                    field["parent_section"] = "lora_config"
+                elif section_id == "lora_config_advanced":
+                    field["section_id"] = "lora_config_advanced"
+                    field["subsection"] = "advanced"
+                    field["parent_section"] = "lora_config"
+                else:
+                    field["section_id"] = section_id
+
+        # Handle model_family label formatting and field-specific logic
         for field_dict in fields:
-            if field_dict["id"] == "model_family" and "options" in field_dict:
+            field_id = field_dict.get("id", "")
+
+            if field_id == "model_family" and "options" in field_dict:
                 field_dict["options"] = [
                     {"value": opt["value"], "label": self._get_model_family_label(opt["value"])}
                     for opt in field_dict["options"]
                 ]
-            elif field_dict["id"] == "lora_alpha":
+            elif field_id == "lora_alpha":
                 if not is_lora_type:
                     field_dict["disabled"] = True
                 elif danger_mode_enabled:
@@ -312,11 +375,11 @@ class TabService:
                 else:
                     field_dict["value"] = config_values.get("lora_rank", "16")
                     field_dict["disabled"] = True
-            elif field_dict["id"] == "prediction_type":
+            elif field_id == "prediction_type":
                 field_dict["disabled"] = not danger_mode_enabled
                 extra_classes = field_dict.get("extra_classes", "")
                 field_dict["extra_classes"] = f"{extra_classes} danger-mode-target".strip()
-            elif field_dict["id"] in {"base_model_precision", "text_encoder_1_precision", "quantize_via"}:
+            elif field_id in {"base_model_precision", "text_encoder_1_precision", "quantize_via"}:
                 if is_lora_type:
                     field_dict.pop("disabled", None)
                     continue
@@ -326,15 +389,10 @@ class TabService:
                 flag = "field-disabled"
                 field_dict["extra_classes"] = f"{extra_classes} {flag}".strip()
 
-        desired_order = {
-            "model_family": 0,
-            "model_flavour": 1,
-            "pretrained_model_name_or_path": 2,
-            "model_type": 3,
-            "base_model_precision": 4,
-            "gradient_accumulation_steps": 5,
-        }
-        fields.sort(key=lambda item: desired_order.get(item.get("id", ""), len(desired_order)))
+        sections_with_fields = [section for section in sections if grouped_fields.get(section["id"])]
+
+        context["sections"] = sections_with_fields
+        context["grouped_fields"] = grouped_fields
 
         return context
 
@@ -476,10 +534,10 @@ class TabService:
             "checkpoints_total_limit",
             "report_to",
             "logging_dir",
-            "tracker_image_layout",
         ]
 
         logging_advanced_order = [
+            "tracker_image_layout",
             "checkpointing_rolling_steps",
             "checkpointing_use_tempdir",
             "checkpoints_rolling_total_limit",
@@ -567,6 +625,193 @@ class TabService:
         grouped["publishing_controls"] = _sort_group(grouped["publishing_controls"], publishing_controls_order)
         grouped["repository"] = _sort_group(grouped["repository"], repository_order)
         grouped["model_card"] = _sort_group(grouped["model_card"], model_card_order)
+
+        # Remove empty groups
+        return {k: v for k, v in grouped.items() if v}
+
+    def _group_model_fields(self, fields: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+        """Group model tab fields into sections."""
+        grouped = {
+            "model_config": [],
+            "model_config_advanced_paths": [],
+            "architecture": [],
+            "architecture_controlnet": [],
+            "architecture_advanced": [],
+            "lora_config": [],
+            "lora_config_model_specific": [],
+            "lora_config_advanced": [],
+            "vae_config": [],
+            "quantization": [],
+            "memory_optimization": [],
+        }
+
+        # Model Configuration (basic)
+        model_config_order = [
+            "model_type",
+            "model_family",
+            "model_flavour",
+        ]
+
+        # Advanced Model Paths
+        model_config_advanced_paths_order = [
+            "pretrained_model_name_or_path",
+            "pretrained_transformer_model_name_or_path",
+            "pretrained_transformer_subfolder",
+            "pretrained_unet_model_name_or_path",
+            "pretrained_unet_subfolder",
+            "pretrained_vae_model_name_or_path",
+            "pretrained_t5_model_name_or_path",
+            "controlnet_model_name_or_path",
+            "revision",
+            "variant",
+        ]
+
+        # Architecture (basic)
+        architecture_order = [
+            "fused_qkv_projections",
+            "control",
+        ]
+
+        # ControlNet
+        architecture_controlnet_order = [
+            "controlnet",
+            "controlnet_custom_config",
+        ]
+
+        # Advanced Architecture
+        architecture_advanced_order = [
+            "prediction_type",
+            "tread_config",
+        ]
+
+        # LoRA Configuration (basic)
+        lora_config_order = [
+            "lora_rank",
+            "lora_alpha",
+            "lora_type",
+            "lora_dropout",
+            "lora_init_type",
+            "peft_lora_mode",
+            "singlora_ramp_up_steps",
+            "init_lora",
+            "lycoris_config",
+            "init_lokr_norm",
+        ]
+
+        # Model-specific LoRA Settings
+        lora_model_specific_order = [
+            "flux_lora_target",
+        ]
+
+        # Advanced LoRA Settings
+        lora_config_advanced_order = [
+            "use_dora",
+        ]
+
+        # VAE Configuration
+        vae_config_order = [
+            "vae_dtype",
+            "vae_cache_ondemand",
+        ]
+
+        # Quantization
+        quantization_order = [
+            "base_model_precision",
+            "base_model_default_dtype",
+            "text_encoder_1_precision",
+            "text_encoder_2_precision",
+            "text_encoder_3_precision",
+            "text_encoder_4_precision",
+            "quantize_via",
+        ]
+
+        # Memory Optimization
+        memory_optimization_order = [
+            "gradient_checkpointing_interval",
+            "offload_during_startup",
+            "unet_attention_slice",
+        ]
+
+        for field in fields:
+            field_id = field.get("id", "")
+            section = field.get("section", "")
+            subsection = field.get("subsection", "")
+
+            # Determine section based on field metadata
+            if section == "model_config" and subsection == "architecture":
+                if field_id in model_config_order:
+                    grouped["model_config"].append(field)
+            elif section == "model_config" and subsection == "advanced_paths":
+                if field_id in model_config_advanced_paths_order:
+                    grouped["model_config_advanced_paths"].append(field)
+            elif section == "architecture" and subsection in ("", None):
+                if field_id in architecture_order:
+                    grouped["architecture"].append(field)
+            elif section == "architecture" and subsection == "controlnet":
+                if field_id in architecture_controlnet_order:
+                    grouped["architecture_controlnet"].append(field)
+            elif section == "architecture" and subsection == "advanced":
+                if field_id in architecture_advanced_order:
+                    grouped["architecture_advanced"].append(field)
+            elif section == "lora_config" and subsection in ("", None):
+                if field_id in lora_config_order:
+                    grouped["lora_config"].append(field)
+            elif section == "lora_config" and subsection == "model_specific":
+                if field_id in lora_model_specific_order:
+                    grouped["lora_config_model_specific"].append(field)
+            elif section == "lora_config" and subsection == "advanced":
+                if field_id in lora_config_advanced_order:
+                    grouped["lora_config_advanced"].append(field)
+            elif section == "vae_config":
+                if field_id in vae_config_order:
+                    grouped["vae_config"].append(field)
+            elif section == "quantization":
+                if field_id in quantization_order:
+                    grouped["quantization"].append(field)
+            elif section == "memory_optimization":
+                if field_id in memory_optimization_order:
+                    grouped["memory_optimization"].append(field)
+            else:
+                # Fallback: try to match by field ID patterns
+                if field_id in model_config_order:
+                    grouped["model_config"].append(field)
+                elif field_id in model_config_advanced_paths_order:
+                    grouped["model_config_advanced_paths"].append(field)
+                elif field_id in architecture_order:
+                    grouped["architecture"].append(field)
+                elif field_id in architecture_controlnet_order:
+                    grouped["architecture_controlnet"].append(field)
+                elif field_id in architecture_advanced_order:
+                    grouped["architecture_advanced"].append(field)
+                elif field_id in lora_config_order:
+                    grouped["lora_config"].append(field)
+                elif field_id in lora_config_advanced_order:
+                    grouped["lora_config_advanced"].append(field)
+                elif field_id in vae_config_order:
+                    grouped["vae_config"].append(field)
+                elif field_id in quantization_order:
+                    grouped["quantization"].append(field)
+                elif field_id in memory_optimization_order:
+                    grouped["memory_optimization"].append(field)
+
+        # Enforce ordering within groups
+        def _sort_group(items, order):
+            order_map = {value: idx for idx, value in enumerate(order)}
+            return sorted(items, key=lambda item: order_map.get(item.get("id", ""), len(order_map)))
+
+        grouped["model_config"] = _sort_group(grouped["model_config"], model_config_order)
+        grouped["model_config_advanced_paths"] = _sort_group(
+            grouped["model_config_advanced_paths"], model_config_advanced_paths_order
+        )
+        grouped["architecture"] = _sort_group(grouped["architecture"], architecture_order)
+        grouped["architecture_controlnet"] = _sort_group(grouped["architecture_controlnet"], architecture_controlnet_order)
+        grouped["architecture_advanced"] = _sort_group(grouped["architecture_advanced"], architecture_advanced_order)
+        grouped["lora_config"] = _sort_group(grouped["lora_config"], lora_config_order)
+        grouped["lora_config_model_specific"] = _sort_group(grouped["lora_config_model_specific"], lora_model_specific_order)
+        grouped["lora_config_advanced"] = _sort_group(grouped["lora_config_advanced"], lora_config_advanced_order)
+        grouped["vae_config"] = _sort_group(grouped["vae_config"], vae_config_order)
+        grouped["quantization"] = _sort_group(grouped["quantization"], quantization_order)
+        grouped["memory_optimization"] = _sort_group(grouped["memory_optimization"], memory_optimization_order)
 
         # Remove empty groups
         return {k: v for k, v in grouped.items() if v}

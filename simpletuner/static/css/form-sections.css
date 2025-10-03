@@ -126,16 +126,64 @@
     font-size: 0.875rem;
     font-weight: 500;
     margin-bottom: 0.75rem;
+    margin-top: 1.5rem;
     padding-bottom: 0.25rem;
     border-bottom: 1px solid rgba(255, 255, 255, 0.05);
     text-transform: uppercase;
     letter-spacing: 0.025em;
+    display: flex;
+    align-items: center;
+}
+
+.subsection-title:first-child {
+    margin-top: 0;
+}
+
+.subsection-title::before {
+    content: '';
+    display: inline-block;
+    width: 3px;
+    height: 1em;
+    background-color: rgba(139, 92, 246, 0.5);
+    margin-right: 0.5rem;
+    border-radius: 1px;
 }
 
 .subsection-divider {
     border-color: rgba(255, 255, 255, 0.05);
     margin: 1rem 0;
     opacity: 0.5;
+}
+
+/* Subsection container styling */
+.form-section .row > .col-12:has(.subsection-title) {
+    position: relative;
+}
+
+.form-section .row > .col-12:has(.subsection-title) + .col-md-6,
+.form-section .row > .col-12:has(.subsection-title) + .col-md-4,
+.form-section .row > .col-12:has(.subsection-title) + .col-md-3 {
+    margin-top: 0.5rem;
+}
+
+/* Indent fields within subsections */
+.form-section .row > .col-md-6:has(~ .col-12:has(.subsection-title)),
+.form-section .row > .col-md-4:has(~ .col-12:has(.subsection-title)),
+.form-section .row > .col-md-3:has(~ .col-12:has(.subsection-title)) {
+    position: relative;
+}
+
+.form-section .row > .col-md-6:has(~ .col-12:has(.subsection-title))::before,
+.form-section .row > .col-md-4:has(~ .col-12:has(.subsection-title))::before,
+.form-section .row > .col-md-3:has(~ .col-12:has(.subsection-title))::before {
+    content: '';
+    position: absolute;
+    left: -1rem;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background-color: rgba(139, 92, 246, 0.2);
+    border-radius: 1px;
 }
 
 /* Advanced section styles */

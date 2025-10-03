@@ -30,74 +30,122 @@
                 <!-- Render sections if available -->
                 {% if sections %}
                     {% for section in sections %}
-                    <div class="form-section mb-4" id="section-{{ section.id }}">
-                        <h6 class="section-title {% if section.get('advanced') %}advanced-section{% endif %}">
-                            {% if section.get('advanced') %}
-                            <button type="button" class="btn btn-sm btn-outline-secondary advanced-toggle me-2"
-                                    data-bs-toggle="collapse"
-                                    data-bs-target="#advanced-content-{{ section.id }}"
-                                    aria-expanded="false">
-                                <i class="fas fa-chevron-right"></i>
-                            </button>
-                            {% endif %}
-                            {% if section.icon %}<i class="{{ section.icon }}"></i>{% endif %}
-                            {{ section.title }}
-                            {% if section.get('advanced') %}
-                            <span class="badge bg-secondary ms-2">Advanced</span>
-                            {% endif %}
-                        </h6>
-                        {% if section.description %}
-                        <p class="text-muted small">{{ section.description }}</p>
-                        {% endif %}
+                    {% set section_fields = fields | selectattr('section_id', 'equalto', section.id) | list %}
+                    {% set has_parent = section_fields[0].get('parent_section') if section_fields else false %}
 
-                        {% set section_fields = fields | selectattr('section_id', 'equalto', section.id) | list %}
-                        {% if section.get('template') %}
-                            <!-- Custom template for this section -->
-                            <div class="row {% if section.get('advanced') %}collapse{% endif %}"
-                                 {% if section.get('advanced') %}id="advanced-content-{{ section.id }}"{% endif %}>
-                                {% include section.template %}
-                            </div>
-                        {% elif section_fields %}
-                            <!-- Group fields by subsection -->
-                            {% set subsections = {} %}
-                            {% for field in section_fields %}
-                                {% set subsection_name = field.get('subsection', 'general') %}
-                                {% if subsection_name not in subsections %}
-                                    {% set _ = subsections.update({subsection_name: []}) %}
+                    {% if not has_parent %}
+                        <!-- Main section -->
+                        <div class="form-section mb-4" id="section-{{ section.id }}">
+                            <h6 class="section-title {% if section.get('advanced') %}advanced-section{% endif %}">
+                                {% if section.get('advanced') %}
+                                <button type="button" class="btn btn-sm btn-outline-secondary advanced-toggle me-2"
+                                        data-bs-toggle="collapse"
+                                        data-bs-target="#advanced-content-{{ section.id }}"
+                                        aria-expanded="false">
+                                    <i class="fas fa-chevron-right"></i>
+                                </button>
                                 {% endif %}
-                                {% set _ = subsections[subsection_name].append(field) %}
-                            {% endfor %}
+                                {% if section.icon %}<i class="{{ section.icon }}"></i>{% endif %}
+                                {{ section.title }}
+                                {% if section.get('advanced') %}
+                                <span class="badge bg-secondary ms-2">Advanced</span>
+                                {% endif %}
+                            </h6>
+                            {% if section.description %}
+                            <p class="text-muted small">{{ section.description }}</p>
+                            {% endif %}
 
-                            <div class="row {% if section.get('advanced') %}collapse{% endif %}"
-                                 {% if section.get('advanced') %}id="advanced-content-{{ section.id }}"{% endif %}>
-                                {% for subsection_name, subsection_fields in subsections.items() %}
-                                    {% if subsections|length > 1 and subsection_name != 'general' %}
-                                        <!-- Subsection header -->
-                                        <div class="col-12">
-                                            <h6 class="subsection-title">
-                                                {{ subsection_name | title | replace('_', ' ') }}
-                                            </h6>
-                                        </div>
+                            {% if section.get('template') %}
+                                <!-- Custom template for this section -->
+                                <div class="row {% if section.get('advanced') %}collapse{% endif %}"
+                                     {% if section.get('advanced') %}id="advanced-content-{{ section.id }}"{% endif %}>
+                                    {% include section.template %}
+                                </div>
+                            {% elif section_fields %}
+                                <!-- Group fields by subsection -->
+                                {% set subsections = {} %}
+                                {% for field in section_fields %}
+                                    {% set subsection_name = field.get('subsection', 'general') %}
+                                    {% if subsection_name not in subsections %}
+                                        {% set _ = subsections.update({subsection_name: []}) %}
                                     {% endif %}
-
-                                    <!-- Render fields in this subsection -->
-                                    {% for field in subsection_fields %}
-                                        {% include 'partials/form_field_htmx.html' %}
-                                    {% endfor %}
-
-                                    {% if not loop.last and subsections|length > 1 %}
-                                        <div class="col-12 mb-3">
-                                            <hr class="subsection-divider">
-                                        </div>
-                                    {% endif %}
+                                    {% set _ = subsections[subsection_name].append(field) %}
                                 {% endfor %}
-                            </div>
-                        {% elif section.empty_message %}
-                            <div class="empty-section-message mt-3 mb-0" role="status">
-                                <i class="fas fa-info-circle me-2"></i>{{ section.empty_message }}
-                            </div>
-                        {% endif %}
-                    </div>
+
+                                <div class="row {% if section.get('advanced') %}collapse{% endif %}"
+                                     {% if section.get('advanced') %}id="advanced-content-{{ section.id }}"{% endif %}>
+                                    {% for subsection_name, subsection_fields in subsections.items() %}
+                                        {% if subsections|length > 1 and subsection_name != 'general' %}
+                                            <!-- Subsection header -->
+                                            <div class="col-12">
+                                                <h6 class="subsection-title">
+                                                    {{ subsection_name | title | replace('_', ' ') }}
+                                                </h6>
+                                            </div>
+                                        {% endif %}
+
+                                        <!-- Render fields in this subsection -->
+                                        {% for field in subsection_fields %}
+                                            {% include 'partials/form_field_htmx.html' %}
+                                        {% endfor %}
+
+                                        {% if not loop.last and subsections|length > 1 %}
+                                            <div class="col-12 mb-3">
+                                                <hr class="subsection-divider">
+                                            </div>
+                                        {% endif %}
+                                    {% endfor %}
+                                </div>
+                            {% elif section.empty_message %}
+                                <div class="empty-section-message mt-3 mb-0" role="status">
+                                    <i class="fas fa-info-circle me-2"></i>{{ section.empty_message }}
+                                </div>
+                            {% endif %}
+
+                            <!-- Render nested advanced subsections at the bottom of this parent section -->
+                            {% for subsection in sections %}
+                            {% set subsection_fields = fields | selectattr('section_id', 'equalto', subsection.id) | list %}
+                            {% set subsection_parent = subsection_fields[0].get('parent_section') if subsection_fields else false %}
+
+                            {% if subsection_parent == section.id %}
+                                <!-- Nested advanced subsection -->
+                                <div class="mt-4 pt-3 border-top border-secondary-subtle">
+                                    <h6 class="subsection-title advanced-section">
+                                        <button type="button" class="btn btn-sm btn-outline-secondary advanced-toggle me-2"
+                                                data-bs-toggle="collapse"
+                                                data-bs-target="#advanced-content-{{ subsection.id }}"
+                                                aria-expanded="false">
+                                            <i class="fas fa-chevron-right"></i>
+                                        </button>
+                                        {% if subsection.icon %}<i class="{{ subsection.icon }}"></i>{% endif %}
+                                        {{ subsection.title }}
+                                        <span class="badge bg-secondary ms-2">Advanced</span>
+                                    </h6>
+                                    {% if subsection.description %}
+                                    <p class="text-muted small">{{ subsection.description }}</p>
+                                    {% endif %}
+
+                                    {% if subsection.get('template') %}
+                                        <!-- Custom template for this subsection -->
+                                        <div class="row collapse" id="advanced-content-{{ subsection.id }}">
+                                            {% include subsection.template %}
+                                        </div>
+                                    {% elif subsection_fields %}
+                                        <div class="row collapse" id="advanced-content-{{ subsection.id }}">
+                                            {% for field in subsection_fields %}
+                                                {% include 'partials/form_field_htmx.html' %}
+                                            {% endfor %}
+                                        </div>
+                                    {% elif subsection.empty_message %}
+                                        <div class="empty-section-message mt-3 mb-0" role="status">
+                                            <i class="fas fa-info-circle me-2"></i>{{ subsection.empty_message }}
+                                        </div>
+                                    {% endif %}
+                                </div>
+                            {% endif %}
+                            {% endfor %}
+                        </div>
+                    {% endif %}
                     {% endfor %}
 
                     <!-- Fields without sections -->
