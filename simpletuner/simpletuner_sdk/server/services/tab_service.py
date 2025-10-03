@@ -309,13 +309,12 @@ class TabService:
             {"id": "model_config", "title": "Model Configuration", "icon": "fas fa-brain"},
             {
                 "id": "model_config_advanced_paths",
-                "title": "Advanced Model Paths",
-                "icon": "fas fa-folder-open",
+                "title": "",
+                "icon": "fas",
                 "advanced": True,
             },
             {"id": "architecture", "title": "Architecture", "icon": "fas fa-cogs"},
-            {"id": "architecture_controlnet", "title": "ControlNet", "icon": "fas fa-network-wired", "advanced": True},
-            {"id": "architecture_advanced", "title": "Advanced Architecture", "icon": "fas fa-tools", "advanced": True},
+            {"id": "architecture_advanced", "title": "", "icon": "fas", "advanced": True},
             {"id": "lora_config", "title": "LoRA Configuration", "icon": "fas fa-layer-group"},
             {
                 "id": "lora_config_model_specific",
@@ -323,7 +322,7 @@ class TabService:
                 "icon": "fas fa-cube",
                 "advanced": True,
             },
-            {"id": "lora_config_advanced", "title": "Advanced LoRA Settings", "icon": "fas fa-sliders-h", "advanced": True},
+            {"id": "lora_config_advanced", "title": "", "icon": "fas", "advanced": True},
             {"id": "vae_config", "title": "VAE Configuration", "icon": "fas fa-image"},
             {"id": "quantization", "title": "Quantization", "icon": "fas fa-microchip"},
             {"id": "memory_optimization", "title": "Memory Optimization", "icon": "fas fa-memory"},
@@ -635,7 +634,6 @@ class TabService:
             "model_config": [],
             "model_config_advanced_paths": [],
             "architecture": [],
-            "architecture_controlnet": [],
             "architecture_advanced": [],
             "lora_config": [],
             "lora_config_model_specific": [],
@@ -672,14 +670,10 @@ class TabService:
             "control",
         ]
 
-        # ControlNet
-        architecture_controlnet_order = [
-            "controlnet",
-            "controlnet_custom_config",
-        ]
-
         # Advanced Architecture
         architecture_advanced_order = [
+            "controlnet",
+            "controlnet_custom_config",
             "prediction_type",
             "tread_config",
         ]
@@ -687,13 +681,9 @@ class TabService:
         # LoRA Configuration (basic)
         lora_config_order = [
             "lora_rank",
-            "lora_alpha",
             "lora_type",
-            "lora_dropout",
-            "lora_init_type",
             "peft_lora_mode",
             "singlora_ramp_up_steps",
-            "init_lora",
             "lycoris_config",
             "init_lokr_norm",
         ]
@@ -705,6 +695,10 @@ class TabService:
 
         # Advanced LoRA Settings
         lora_config_advanced_order = [
+            "lora_alpha",
+            "lora_dropout",
+            "lora_init_type",
+            "init_lora",
             "use_dora",
         ]
 
@@ -747,9 +741,6 @@ class TabService:
             elif section == "architecture" and subsection in ("", None):
                 if field_id in architecture_order:
                     grouped["architecture"].append(field)
-            elif section == "architecture" and subsection == "controlnet":
-                if field_id in architecture_controlnet_order:
-                    grouped["architecture_controlnet"].append(field)
             elif section == "architecture" and subsection == "advanced":
                 if field_id in architecture_advanced_order:
                     grouped["architecture_advanced"].append(field)
@@ -779,8 +770,6 @@ class TabService:
                     grouped["model_config_advanced_paths"].append(field)
                 elif field_id in architecture_order:
                     grouped["architecture"].append(field)
-                elif field_id in architecture_controlnet_order:
-                    grouped["architecture_controlnet"].append(field)
                 elif field_id in architecture_advanced_order:
                     grouped["architecture_advanced"].append(field)
                 elif field_id in lora_config_order:
@@ -804,7 +793,6 @@ class TabService:
             grouped["model_config_advanced_paths"], model_config_advanced_paths_order
         )
         grouped["architecture"] = _sort_group(grouped["architecture"], architecture_order)
-        grouped["architecture_controlnet"] = _sort_group(grouped["architecture_controlnet"], architecture_controlnet_order)
         grouped["architecture_advanced"] = _sort_group(grouped["architecture_advanced"], architecture_advanced_order)
         grouped["lora_config"] = _sort_group(grouped["lora_config"], lora_config_order)
         grouped["lora_config_model_specific"] = _sort_group(grouped["lora_config_model_specific"], lora_model_specific_order)

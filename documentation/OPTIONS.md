@@ -461,7 +461,6 @@ usage: train.py [-h] --model_family
                 [--pretrained_unet_subfolder PRETRAINED_UNET_SUBFOLDER]
                 [--pretrained_t5_model_name_or_path PRETRAINED_T5_MODEL_NAME_OR_PATH]
                 [--revision REVISION] [--variant VARIANT]
-                [--non_ema_revision NON_EMA_REVISION]
                 [--base_model_default_dtype {bf16,fp32}]
                 [--unet_attention_slice [UNET_ATTENTION_SLICE]]
                 [--num_train_epochs NUM_TRAIN_EPOCHS]
@@ -767,8 +766,6 @@ options:
                         Path to pretrained T5 model
   --revision REVISION   Git branch/tag/commit for model version
   --variant VARIANT     Model variant (e.g., fp16, bf16)
-  --non_ema_revision NON_EMA_REVISION
-                        Git revision for non-EMA model version
   --base_model_default_dtype {bf16,fp32}
                         Default precision for quantized base model weights
   --unet_attention_slice [UNET_ATTENTION_SLICE]

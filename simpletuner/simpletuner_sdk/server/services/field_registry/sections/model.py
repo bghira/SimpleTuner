@@ -94,7 +94,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.CHECKBOX,
             tab="model",
             section="architecture",
-            subsection="controlnet",
+            subsection="advanced",
             default_value=False,
             help_text="Train ControlNet (full or LoRA) branches alongside the primary network.",
             tooltip="When enabled, ControlNet datasets and conditioning tools become available in the Dataset Builder.",
@@ -506,9 +506,11 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             section="architecture",
             default_value=False,
             platform_specific=["cuda"],
+            dependencies=[FieldDependency(field="model_family", operator="equals", value="flux")],
             help_text="Enables Flash Attention 3 when supported; otherwise falls back to PyTorch SDPA.",
             tooltip="Improves attention efficiency on modern NVIDIA GPUs. Uses native SDPA when Flash Attention 3 is unavailable.",
             importance=ImportanceLevel.EXPERIMENTAL,
+            model_specific=["flux"],
             order=19,
         )
     )
@@ -523,8 +525,9 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             tab="model",
             section="architecture",
             default_value=False,
+            disabled=True,
             help_text="Enable channel-wise control style training",
-            tooltip="When enabled, requires conditioning input images alongside training data for control-style training.",
+            tooltip="When enabled, requires conditioning input images alongside training data for control-style training. Currently disabled for all architectures.",
             importance=ImportanceLevel.ADVANCED,
             order=20,
         )
@@ -539,7 +542,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.TEXT,
             tab="model",
             section="architecture",
-            subsection="controlnet",
+            subsection="advanced",
             default_value=None,
             placeholder='{"num_layers": 12, "num_single_layers": 6}',
             help_text="Custom configuration for ControlNet models",
@@ -580,9 +583,11 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             subsection="advanced",
             default_value=None,
             placeholder="path/to/tread_config.json",
+            dependencies=[FieldDependency(field="model_family", operator="in", values=["auraflow", "cosmos2image", "flux", "hidream", "wan", "pixart", "sana", "sd3"])],
             help_text="Configuration for TREAD training method",
-            tooltip="JSON config for TREAD method that can speed up training. Currently only works for FLUX models.",
+            tooltip="JSON config for TREAD method that can speed up training. Works with supported model architectures.",
             importance=ImportanceLevel.EXPERIMENTAL,
+            model_specific=["auraflow", "cosmos2image", "flux", "hidream", "wan", "pixart", "sana", "sd3"],
             order=23,
         )
     )
@@ -771,9 +776,11 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             tab="model",
             section="memory_optimization",
             default_value=False,
-            help_text="Enable attention slicing for SDXL UNet",
-            tooltip="Experimental feature for memory savings. May impact training quality.",
+            dependencies=[FieldDependency(field="model_family", operator="in", values=["sd15", "sd20", "sdxl", "deepfloyd"])],
+            help_text="Enable attention slicing for UNet-based models",
+            tooltip="Experimental feature for memory savings. May impact training quality. Only available for UNet-based architectures.",
             importance=ImportanceLevel.EXPERIMENTAL,
+            model_specific=["sd15", "sd20", "sdxl", "deepfloyd"],
             order=33,
         )
     )

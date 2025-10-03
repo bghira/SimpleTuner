@@ -44,12 +44,12 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.NUMBER,
             tab="model",
             section="lora_config",
-            subsection="basic",
+            subsection="advanced",
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.1, message="LoRA alpha should be positive")],
             dependencies=[FieldDependency(field="model_type", value="lora")],
             help_text="Scaling factor for LoRA updates",
             tooltip="Usually set equal to rank. Controls the magnitude of LoRA's effect.",
-            importance=ImportanceLevel.IMPORTANT,
+            importance=ImportanceLevel.ADVANCED,
             order=2,
         )
     )
@@ -86,7 +86,7 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.NUMBER,
             tab="model",
             section="lora_config",
-            subsection="basic",
+            subsection="advanced",
             default_value=0.1,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=0.0, message="LoRA dropout must be non-negative"),
@@ -109,7 +109,7 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.SELECT,
             tab="model",
             section="lora_config",
-            subsection="basic",
+            subsection="advanced",
             default_value="default",
             choices=[
                 {"value": "default", "label": "Default (Microsoft)"},
@@ -181,7 +181,7 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.TEXT,
             tab="model",
             section="lora_config",
-            subsection="basic",
+            subsection="advanced",
             placeholder="path/to/existing_lora.safetensors",
             dependencies=[FieldDependency(field="model_type", value="lora")],
             help_text="Specify an existing LoRA or LyCORIS safetensors file to initialize the adapter",
@@ -232,6 +232,7 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
             help_text="Perturbed normal initialization for LyCORIS LoKr layers",
             tooltip="Good values: 1e-4 to 1e-2. Enables perturbed normal initialization for better training.",
             importance=ImportanceLevel.ADVANCED,
+            placeholder="1e-3",
             order=10,
         )
     )

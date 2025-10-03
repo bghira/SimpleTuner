@@ -101,3 +101,4 @@ class ConfigField:
     custom_component: Optional[str] = None
     checkbox_label: Optional[str] = None
     webui_onboarding: bool = False
+    disabled: bool = False
