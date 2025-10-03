@@ -87,6 +87,7 @@ class TabService:
                 icon="fas fa-graduation-cap",
                 template="form_tab.html",
                 description="Training parameters and optimization",
+                extra_context_handler=self._training_tab_context,
             ),
             TabType.ADVANCED: TabConfig(
                 id="advanced-config",
@@ -387,6 +388,217 @@ class TabService:
                 extra_classes = field_dict.get("extra_classes", "")
                 flag = "field-disabled"
                 field_dict["extra_classes"] = f"{extra_classes} {flag}".strip()
+
+        sections_with_fields = [section for section in sections if grouped_fields.get(section["id"])]
+
+        context["sections"] = sections_with_fields
+        context["grouped_fields"] = grouped_fields
+
+        return context
+
+    def _group_training_fields(self, fields: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+        """Group training tab fields into sections."""
+        grouped = {
+            "training_schedule": [],
+            "learning_rate": [],
+            "optimizer_settings": [],
+            "optimizer_config_advanced": [],
+            "text_encoder": [],
+            "text_encoder_advanced": [],
+            "memory_optimization": [],
+            "ema_config": [],
+            "loss_functions": [],
+        }
+
+        # Training Schedule
+        training_schedule_order = [
+            "num_train_epochs",
+            "max_train_steps",
+            "ignore_final_epochs",
+        ]
+
+        # Learning Rate
+        learning_rate_order = [
+            "learning_rate",
+            "lr_scheduler",
+            "lr_warmup_steps",
+            "lr_num_cycles",
+            "lr_power",
+            "lr_end",
+            "lr_scale",
+            "lr_scale_sqrt",
+        ]
+
+        # Optimizer Configuration (basic)
+        optimizer_config_order = [
+            "optimizer",
+            "max_grad_norm",
+            "adam_weight_decay",
+            "adam_epsilon",
+            "prodigy_steps",
+            "optimizer_offload_gradients",
+            "fuse_optimizer",
+            "optimizer_release_gradients",
+        ]
+
+        # Advanced Optimizer Configuration
+        optimizer_config_advanced_order = [
+            "grad_clip_method",
+            "adam_beta1",
+            "adam_beta2",
+            "optimizer_beta1",
+            "optimizer_beta2",
+            "optimizer_cpu_offload_method",
+            "gradient_precision",
+            "optimizer_config",
+        ]
+
+        # Text Encoder (basic)
+        text_encoder_order = [
+            "train_text_encoder",
+            "text_encoder_lr",
+        ]
+
+        # Advanced Text Encoder
+        text_encoder_advanced_order = [
+            "freeze_encoder_before",
+            "freeze_encoder_after",
+            "freeze_encoder_strategy",
+            "layer_freeze_strategy",
+            "fully_unload_text_encoder",
+            "save_text_encoder",
+            "text_encoder_limit",
+        ]
+
+        # Memory Optimization
+        memory_optimization_order = [
+            "gradient_checkpointing",
+        ]
+
+        # EMA Configuration
+        ema_config_order = [
+            "use_ema",
+            "ema_device",
+            "ema_cpu_only",
+            "ema_update_interval",
+            "ema_foreach_disable",
+            "ema_decay",
+        ]
+
+        # Loss Functions
+        loss_functions_order = [
+            "use_soft_min_snr",
+        ]
+
+        for field in fields:
+            field_id = field.get("id", "")
+            section = field.get("section", "")
+            subsection = field.get("subsection", "")
+
+
+
+            # Determine section based on field metadata
+            if section == "training_schedule":
+                if field_id in training_schedule_order:
+                    grouped["training_schedule"].append(field)
+            elif section == "learning_rate":
+                if field_id in learning_rate_order:
+                    grouped["learning_rate"].append(field)
+            elif section == "optimizer_config" and subsection in ("", None):
+                if field_id in optimizer_config_order:
+                    grouped["optimizer_settings"].append(field)
+            # Note: adam_weight_decay and adam_epsilon are now in subsection="advanced"
+            # but they should still go to optimizer_settings (not advanced) for basic grouping
+            elif section == "optimizer_config" and subsection == "advanced" and field_id in ["adam_weight_decay", "adam_epsilon"]:
+                grouped["optimizer_settings"].append(field)
+            elif section == "optimizer_config" and subsection == "advanced":
+                if field_id in optimizer_config_advanced_order:
+                    grouped["optimizer_config_advanced"].append(field)
+            elif section == "text_encoder" and subsection in ("", None):
+                if field_id in text_encoder_order:
+                    grouped["text_encoder"].append(field)
+            elif section == "text_encoder" and subsection == "advanced":
+                if field_id in text_encoder_advanced_order:
+                    grouped["text_encoder_advanced"].append(field)
+            elif section == "memory_optimization":
+                if field_id in memory_optimization_order:
+                    grouped["memory_optimization"].append(field)
+            elif section == "ema_config":
+                if field_id in ema_config_order:
+                    grouped["ema_config"].append(field)
+            elif section == "loss_functions":
+                if field_id in loss_functions_order:
+                    grouped["loss_functions"].append(field)
+            else:
+                # Fallback: try to match by field ID patterns
+                # Prioritize optimizer fields over learning rate to avoid misassignment
+                if field_id in training_schedule_order:
+                    grouped["training_schedule"].append(field)
+                elif field_id in optimizer_config_order:
+                    grouped["optimizer_settings"].append(field)
+                elif field_id in optimizer_config_advanced_order:
+                    grouped["optimizer_config_advanced"].append(field)
+                elif field_id in learning_rate_order:
+                    grouped["learning_rate"].append(field)
+                elif field_id in text_encoder_order:
+                    grouped["text_encoder"].append(field)
+                elif field_id in text_encoder_advanced_order:
+                    grouped["text_encoder_advanced"].append(field)
+                elif field_id in memory_optimization_order:
+                    grouped["memory_optimization"].append(field)
+                elif field_id in ema_config_order:
+                    grouped["ema_config"].append(field)
+                elif field_id in loss_functions_order:
+                    grouped["loss_functions"].append(field)
+
+        # Enforce ordering within groups
+        def _sort_group(items, order):
+            order_map = {value: idx for idx, value in enumerate(order)}
+            return sorted(items, key=lambda item: order_map.get(item.get("id", ""), len(order_map)))
+
+        grouped["training_schedule"] = _sort_group(grouped["training_schedule"], training_schedule_order)
+        grouped["learning_rate"] = _sort_group(grouped["learning_rate"], learning_rate_order)
+        grouped["optimizer_settings"] = _sort_group(grouped["optimizer_settings"], optimizer_config_order)
+        grouped["optimizer_config_advanced"] = _sort_group(grouped["optimizer_config_advanced"], optimizer_config_advanced_order)
+        grouped["text_encoder"] = _sort_group(grouped["text_encoder"], text_encoder_order)
+        grouped["text_encoder_advanced"] = _sort_group(grouped["text_encoder_advanced"], text_encoder_advanced_order)
+        grouped["memory_optimization"] = _sort_group(grouped["memory_optimization"], memory_optimization_order)
+        grouped["ema_config"] = _sort_group(grouped["ema_config"], ema_config_order)
+        grouped["loss_functions"] = _sort_group(grouped["loss_functions"], loss_functions_order)
+
+        # Remove empty groups
+        return {k: v for k, v in grouped.items() if v}
+
+    def _training_tab_context(
+        self, context: Dict[str, Any], fields: List[Dict[str, Any]], config_values: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Customize context for training tab with advanced subsections."""
+        # Group fields into sections for training tab
+        sections = [
+            {"id": "training_schedule", "title": "Training Schedule", "icon": "fas fa-calendar-alt"},
+            {"id": "learning_rate", "title": "Learning Rate", "icon": "fas fa-chart-line"},
+            {"id": "optimizer_settings", "title": "Optimizer Configuration", "icon": "fas fa-cogs"},
+            {"id": "optimizer_config_advanced", "title": "", "icon": "fas", "advanced": True},
+            {"id": "text_encoder", "title": "TEXT ENCODER", "icon": "fas fa-font"},
+            {"id": "text_encoder_advanced", "title": "", "icon": "fas", "advanced": True},
+            {"id": "memory_optimization", "title": "Memory Optimization", "icon": "fas fa-memory"},
+            {"id": "ema_config", "title": "EMA Configuration", "icon": "fas fa-wave-square"},
+            {"id": "loss_functions", "title": "Loss Functions", "icon": "fas fa-calculator"},
+        ]
+
+        # Group fields and assign section_id to each field
+        grouped_fields = self._group_training_fields(fields)
+        for section_id, section_fields in grouped_fields.items():
+            for field in section_fields:
+                field["section_id"] = section_id
+                # Set parent_section relationships for advanced sections only
+                if section_id == "optimizer_config_advanced":
+                    field["subsection"] = "advanced"
+                    field["parent_section"] = "optimizer_settings"
+                elif section_id == "text_encoder_advanced":
+                    field["subsection"] = "advanced"
+                    field["parent_section"] = "text_encoder"
+                # Basic optimizer fields should NOT have subsection properties
 
         sections_with_fields = [section for section in sections if grouped_fields.get(section["id"])]
 
