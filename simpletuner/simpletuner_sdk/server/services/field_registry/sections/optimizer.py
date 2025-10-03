@@ -37,7 +37,7 @@ def register_optimizer_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.NUMBER,
             tab="training",
             section="optimizer_config",
-            subsection="adam_params",
+            subsection="advanced",
             default_value=0.9,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=0, message="Beta1 must be between 0 and 1"),
@@ -60,7 +60,7 @@ def register_optimizer_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.NUMBER,
             tab="training",
             section="optimizer_config",
-            subsection="adam_params",
+            subsection="advanced",
             default_value=0.999,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=0, message="Beta2 must be between 0 and 1"),
@@ -83,7 +83,7 @@ def register_optimizer_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.NUMBER,
             tab="training",
             section="optimizer_config",
-            subsection="optimizer_params",
+            subsection="advanced",
             default_value=None,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=0, message="Beta1 must be between 0 and 1"),
@@ -105,7 +105,7 @@ def register_optimizer_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.NUMBER,
             tab="training",
             section="optimizer_config",
-            subsection="optimizer_params",
+            subsection="advanced",
             default_value=None,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=0, message="Beta2 must be between 0 and 1"),
@@ -127,7 +127,7 @@ def register_optimizer_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.SELECT,
             tab="training",
             section="optimizer_config",
-            subsection="optimizer_params",
+            subsection="advanced",
             default_value=None,
             choices=[
                 {"value": "none", "label": "None"},
@@ -148,7 +148,7 @@ def register_optimizer_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.SELECT,
             tab="training",
             section="optimizer_config",
-            subsection="optimizer_params",
+            subsection="advanced",
             default_value=None,
             choices=[
                 {"value": "unmodified", "label": "Unmodified"},
@@ -170,7 +170,7 @@ def register_optimizer_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.NUMBER,
             tab="training",
             section="optimizer_config",
-            subsection="adam_params",
+            subsection="advanced",
             default_value=1e-2,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative")],
             dependencies=[FieldDependency(field="optimizer", values=adam_like_optimizers)],
@@ -190,7 +190,7 @@ def register_optimizer_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.NUMBER,
             tab="training",
             section="optimizer_config",
-            subsection="adam_params",
+            subsection="advanced",
             default_value=1e-8,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be positive")],
             dependencies=[FieldDependency(field="optimizer", values=adam_like_optimizers)],
@@ -238,6 +238,24 @@ def register_optimizer_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # Optimizer Extra Settings
+    registry._add_field(
+        ConfigField(
+            name="optimizer_config",
+            arg_name="--optimizer_config",
+            ui_label="Optimizer Extra Settings",
+            field_type=FieldType.TEXT,
+            tab="training",
+            section="optimizer_config",
+            subsection="advanced",
+            placeholder="beta1=0.9,beta2=0.95,weight_decay=0.01",
+            help_text="Comma-separated key=value pairs forwarded to the selected optimizer",
+            tooltip="Example: beta1=0.9,beta2=0.95,weight_decay=0.01. Leave blank to use optimizer defaults.",
+            importance=ImportanceLevel.ADVANCED,
+            order=7,
+        )
+    )
+
     # Gradient Clip Method
     registry._add_field(
         ConfigField(
@@ -247,6 +265,7 @@ def register_optimizer_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.SELECT,
             tab="training",
             section="optimizer_config",
+            subsection="advanced",
             default_value="value",
             choices=[{"value": "value", "label": "Clip Individual Values"}, {"value": "norm", "label": "Clip By Norm"}],
             help_text="Strategy for applying max_grad_norm during clipping.",
