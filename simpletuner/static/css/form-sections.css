@@ -220,13 +220,13 @@
     transition: all 0.3s ease;
 }
 
-/* Add subtle border to advanced sections */
-.form-section:has(.advanced-section) {
+/* Add subtle border to advanced sections only */
+.form-section.advanced-section {
     border-left: 3px solid rgba(108, 117, 125, 0.3);
     padding-left: 1rem;
     margin-left: 0.5rem;
 }
 
-.form-section:has(.advanced-section):hover {
+.form-section.advanced-section:hover {
     border-left-color: rgba(108, 117, 125, 0.6);
 }
