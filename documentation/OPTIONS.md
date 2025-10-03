@@ -573,7 +573,6 @@ usage: train.py [-h] --model_family
                 [--lr_end LR_END] [--lr_scale [LR_SCALE]]
                 [--lr_scale_sqrt [LR_SCALE_SQRT]]
                 [--ignore_final_epochs [IGNORE_FINAL_EPOCHS]]
-                [--freeze_encoder [FREEZE_ENCODER]]
                 [--freeze_encoder_before FREEZE_ENCODER_BEFORE]
                 [--freeze_encoder_after FREEZE_ENCODER_AFTER]
                 [--freeze_encoder_strategy {before,between,after}]
@@ -1028,9 +1027,6 @@ options:
   --ignore_final_epochs [IGNORE_FINAL_EPOCHS]
                         When provided, the max epoch counter will not
                         determine the end of the training run
-  --freeze_encoder [FREEZE_ENCODER]
-                        Whether or not to freeze the text encoder. The default
-                        is true.
   --freeze_encoder_before FREEZE_ENCODER_BEFORE
                         When using 'before' strategy, we will freeze layers
                         earlier than this
