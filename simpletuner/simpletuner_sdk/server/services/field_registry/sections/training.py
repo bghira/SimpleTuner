@@ -119,21 +119,6 @@ def register_training_fields(registry: "FieldRegistry") -> None:
         )
     )
 
-    registry._add_field(
-        ConfigField(
-            name="optimizer_config",
-            arg_name="--optimizer_config",
-            ui_label="Optimizer Extra Settings",
-            field_type=FieldType.TEXT,
-            tab="training",
-            section="optimizer_config",
-            placeholder="beta1=0.9,beta2=0.95,weight_decay=0.01",
-            help_text="Comma-separated key=value pairs forwarded to the selected optimizer",
-            tooltip="Example: beta1=0.9,beta2=0.95,weight_decay=0.01. Leave blank to use optimizer defaults.",
-            importance=ImportanceLevel.ADVANCED,
-            order=6,
-        )
-    )
 
     # LR Scheduler
     lr_scheduler_choices = [
@@ -244,7 +229,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             ui_label="Train Text Encoder",
             field_type=FieldType.CHECKBOX,
             tab="training",
-            section="text_encoder_training",
+            section="text_encoder",
             default_value=False,
             help_text="Also train the text encoder (CLIP) model",
             tooltip="Can improve concept learning but uses more VRAM. Not recommended for LoRA",
@@ -261,7 +246,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             ui_label="Text Encoder Learning Rate",
             field_type=FieldType.NUMBER,
             tab="training",
-            section="text_encoder_training",
+            section="text_encoder",
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be positive")],
             help_text="Separate learning rate for text encoder",
             tooltip="Usually lower than main LR. If not set, uses main learning rate",
