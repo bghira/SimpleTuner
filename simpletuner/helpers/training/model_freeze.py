@@ -109,7 +109,7 @@ def freeze_entire_component(component):
 def freeze_text_encoder(args, component):
     from transformers import T5EncoderModel
 
-    if not args.train_text_encoder or not args.freeze_encoder or type(component) is T5EncoderModel:
+    if not args.train_text_encoder or type(component) is T5EncoderModel:
         if args.train_text_encoder:
             logger.info("Not freezing text encoder. Live dangerously and prosper!")
         return component
