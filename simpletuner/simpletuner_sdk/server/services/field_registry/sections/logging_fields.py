@@ -21,7 +21,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.SELECT,
             tab="basic",
             section="logging",
-            default_value="wandb",
+            default_value="none",
             choices=[
                 {"value": "tensorboard", "label": "TensorBoard"},
                 {"value": "wandb", "label": "Weights & Biases"},
