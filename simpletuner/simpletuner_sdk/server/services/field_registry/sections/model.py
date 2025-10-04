@@ -603,7 +603,13 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             subsection="advanced",
             default_value=None,
             placeholder="path/to/tread_config.json",
-            dependencies=[FieldDependency(field="model_family", operator="in", values=["auraflow", "cosmos2image", "flux", "hidream", "wan", "pixart", "sana", "sd3"])],
+            dependencies=[
+                FieldDependency(
+                    field="model_family",
+                    operator="in",
+                    values=["auraflow", "cosmos2image", "flux", "hidream", "wan", "pixart", "sana", "sd3"],
+                )
+            ],
             help_text="Configuration for TREAD training method",
             tooltip="JSON config for TREAD method that can speed up training. Works with supported model architectures.",
             importance=ImportanceLevel.EXPERIMENTAL,
@@ -796,7 +802,9 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             tab="model",
             section="memory_optimization",
             default_value=False,
-            dependencies=[FieldDependency(field="model_family", operator="in", values=["sd15", "sd20", "sdxl", "deepfloyd"])],
+            dependencies=[
+                FieldDependency(field="model_family", operator="in", values=["sd15", "sd20", "sdxl", "deepfloyd"])
+            ],
             help_text="Enable attention slicing for UNet-based models",
             tooltip="Experimental feature for memory savings. May impact training quality. Only available for UNet-based architectures.",
             importance=ImportanceLevel.EXPERIMENTAL,

@@ -50,7 +50,7 @@ function searchComponent() {
             this.tabObserver = new MutationObserver((mutations) => {
                 // Prevent infinite loop - don't process if we're already applying highlighting
                 if (this.isApplyingHighlighting) return;
-                
+
                 mutations.forEach((mutation) => {
                     if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
                         const target = mutation.target;
@@ -59,7 +59,7 @@ function searchComponent() {
                             if (this.tabChangeTimeout) {
                                 clearTimeout(this.tabChangeTimeout);
                             }
-                            
+
                             // Tab changed, apply search highlighting if we have results
                             this.tabChangeTimeout = setTimeout(() => {
                                 this.applySearchHighlighting();
@@ -101,15 +101,15 @@ function searchComponent() {
             // Clear all highlights and filtering
             this.clearAllHighlights();
             this.clearFiltering();
-            
+
             // Reset search results and UI state
             this.results = { tabs: [], fields: [] };
             this.showResults = false;
             this.highlightedIndex = -1;
-            
+
             // Clear any active highlights tracking
             this.activeHighlights = [];
-            
+
             console.log('Search state reset completed');
         },
 
@@ -121,24 +121,24 @@ function searchComponent() {
             try {
                 console.log('🔍 SEARCHING FOR:', this.query);
                 const response = await fetch(`/web/trainer/search?q=${encodeURIComponent(this.query)}&limit=10`);
-                
+
                 if (!response.ok) {
                     throw new Error('Search failed');
                 }
 
                 const data = await response.json();
                 this.results = data.results || { tabs: [], fields: [] };
-                
+
                 console.log('📋 RAW SEARCH RESULTS:', data);
                 console.log('📋 PROCESSED RESULTS:', this.results);
                 console.log('📊 TABS FOUND:', this.results.tabs.length, this.results.tabs);
                 console.log('📊 FIELDS FOUND:', this.results.fields.length, this.results.fields);
-                
+
                 // Log all field details for debugging
                 this.results.fields.forEach((field, index) => {
                     console.log(`  📝 FIELD ${index + 1}: ${field.name} (${field.title}) in ${field.context?.tab}`);
                 });
-                
+
                 this.showResults = true;
                 this.highlightedIndex = -1;
 
@@ -160,19 +160,19 @@ function searchComponent() {
 
         clearSearch() {
             console.log('🧹 CLEARING SEARCH - removing all highlights and tab styling');
-            
+
             this.query = '';
             this.results = { tabs: [], fields: [] };
             this.showResults = false;
             this.highlightedIndex = -1;
-            
+
             // Clear all highlights and reset state
             this.clearAllHighlights();
             this.clearFiltering();
-            
+
             // Clear tab highlighting
             this.clearTabHighlighting();
-            
+
             // Focus the input with error handling
             try {
                 const searchInput = this.$el.querySelector('.search-input');
@@ -182,7 +182,7 @@ function searchComponent() {
             } catch (error) {
                 console.warn('Could not focus search input:', error);
             }
-            
+
             console.log('✅ SEARCH CLEARED - all highlights and tab styling removed');
         },
 
@@ -202,8 +202,8 @@ function searchComponent() {
             const totalResults = this.results.tabs.length + this.results.fields.length;
             if (totalResults === 0) return;
 
-            this.highlightedIndex = this.highlightedIndex <= 0 
-                ? totalResults - 1 
+            this.highlightedIndex = this.highlightedIndex <= 0
+                ? totalResults - 1
                 : this.highlightedIndex - 1;
             this.scrollToHighlighted();
         },
@@ -222,7 +222,7 @@ function searchComponent() {
             if (!this.showResults || this.highlightedIndex === -1) return;
 
             const totalTabs = this.results.tabs.length;
-            
+
             if (this.highlightedIndex < totalTabs) {
                 // Select tab
                 const tab = this.results.tabs[this.highlightedIndex];
@@ -241,7 +241,7 @@ function searchComponent() {
             if (tabButton) {
                 tabButton.click();
             }
-            
+
             // Hide search results after selection
             this.showResults = false;
             this.highlightedIndex = -1;
@@ -253,32 +253,32 @@ function searchComponent() {
             console.log('  - Tab:', fieldResult.context.tab);
             console.log('  - Field Name:', fieldResult.name);
             console.log('  - Title:', fieldResult.title);
-            
+
             this.primarySelectedField = {
                 tabName: fieldResult.context.tab,
                 fieldName: fieldResult.name,
                 title: fieldResult.title
             };
-            
+
             console.log('✅ STORED PRIMARY FIELD:', this.primarySelectedField);
-            
+
             // First switch to the correct tab
             this.selectTab(fieldResult.context.tab);
-            
+
             // Then focus and highlight the specific field after a short delay
             setTimeout(() => {
                 console.log('🔍 LOOKING FOR FIELD ELEMENTS WITH NAME:', fieldResult.name);
                 const fieldElements = this.findFieldElements(fieldResult.name);
                 console.log('  - Found', fieldElements.length, 'elements');
-                
+
                 if (fieldElements.length > 0) {
                     // Set flag to indicate primary highlight was set by search result click
                     this.hasPrimaryHighlight = true;
-                    
+
                     // Scroll to and highlight the field
                     this.scrollToElement(fieldElements[0]);
                     this.highlightPrimaryField(fieldElements[0]);
-                    
+
                     // Focus the field
                     try {
                         this.focusField(fieldElements[0]);
@@ -289,7 +289,7 @@ function searchComponent() {
                     console.warn('❌ NO FIELD ELEMENTS FOUND FOR:', fieldResult.name);
                 }
             }, 200);
-            
+
             // Hide search results after selection
             this.showResults = false;
             this.highlightedIndex = -1;
@@ -299,34 +299,34 @@ function searchComponent() {
         applySearchHighlighting() {
             // Prevent infinite loop - don't process if we're already applying highlighting
             if (this.isApplyingHighlighting || !this.hasResults) return;
-            
+
             // Set flag to prevent re-entrant calls
             this.isApplyingHighlighting = true;
-            
+
             try {
                 // Temporarily disconnect observer to prevent infinite loop
                 if (this.tabObserver) {
                     this.tabObserver.disconnect();
                 }
-                
+
                 // Get current active tab
                 const activeTab = document.querySelector('.tab-btn.active');
                 if (!activeTab) return;
-                
+
                 const tabName = activeTab.getAttribute('data-tab');
                 if (!tabName) return;
-                
+
                 // Check if we have persistent primary field for this tab
-                const hasPersistentPrimary = this.primarySelectedField && 
+                const hasPersistentPrimary = this.primarySelectedField &&
                                        this.primarySelectedField.tabName === tabName;
-                
+
                 // Check if we have primary highlights to preserve
                 const hasPrimaryHighlights = document.querySelectorAll('.search-highlighted-field-primary').length > 0;
-                
+
                 if (hasPersistentPrimary || hasPrimaryHighlights) {
                     // Preserve primary highlights, only clear secondary ones
                     this.clearSecondaryHighlights();
-                    
+
                     // Try to restore persistent primary highlight
                     if (hasPersistentPrimary) {
                         this.restorePrimaryHighlight();
@@ -335,13 +335,13 @@ function searchComponent() {
                     // No primary highlights, clear everything
                     this.clearAllHighlights();
                 }
-                
+
                 // Highlight tabs based on search results
                 this.highlightTabs(this.results.tabs.concat(this.results.fields));
-                
+
                 // Highlight matching fields on current tab
                 this.highlightMatchingFields(tabName);
-                
+
             } finally {
                 // Clear flag and reconnect observer
                 this.isApplyingHighlighting = false;
@@ -361,25 +361,25 @@ function searchComponent() {
 
         highlightTabs(results) {
             const allTabs = document.querySelectorAll('.tab-btn');
-            
+
             allTabs.forEach(tab => {
                 const tabName = tab.getAttribute('data-tab');
                 const isActiveTab = tab.classList.contains('active');
-                
+
                 // Check if tab has direct tab results OR field results (case-insensitive)
-                const hasTabResults = results.some(result => 
+                const hasTabResults = results.some(result =>
                     result.type === 'tab' && result.name && result.name.toLowerCase() === tabName.toLowerCase()
                 );
-                const hasFieldResults = results.some(result => 
-                    result.type === 'field' && result.context && result.context.tab && 
+                const hasFieldResults = results.some(result =>
+                    result.type === 'field' && result.context && result.context.tab &&
                     result.context.tab.toLowerCase() === tabName.toLowerCase()
                 );
-                
+
                 const hasResults = hasTabResults || hasFieldResults;
-                
+
                 // Remove all previous states
                 tab.classList.remove('search-highlighted-tab', 'search-dimmed-tab', 'search-highlighted-active-tab');
-                
+
                 if (hasResults) {
                     if (isActiveTab) {
                         // Active tab with results gets special highlighting
@@ -399,44 +399,44 @@ function searchComponent() {
             const strategies = [
                 // Strategy 1: Direct name match
                 () => document.querySelectorAll(`[name="${fieldName}"]`),
-                
+
                 // Strategy 2: ID match
                 () => document.querySelectorAll(`#${fieldName}`),
-                
+
                 // Strategy 3: Label text match
                 () => this.findFieldsByLabel(fieldName),
-                
+
                 // Strategy 4: Data attribute match
                 () => document.querySelectorAll(`[data-field-name="${fieldName}"]`),
-                
+
                 // Strategy 5: Partial name match
                 () => document.querySelectorAll(`[name*="${fieldName}"]`),
-                
+
                 // Strategy 6: Try with -- prefix for command line arguments
                 () => document.querySelectorAll(`[name="--${fieldName}"]`),
                 () => document.querySelectorAll(`[data-field-name="--${fieldName}"]`)
             ];
-            
+
             for (const strategy of strategies) {
                 const elements = strategy();
                 if (elements.length > 0) {
                     return Array.from(elements);
                 }
             }
-            
+
             return [];
         },
 
         findFieldsByLabel(fieldName) {
             const labels = document.querySelectorAll('label');
             const matchingFields = [];
-            
+
             for (const label of labels) {
                 const labelText = label.textContent.toLowerCase();
                 const fieldNameLower = fieldName.toLowerCase();
-                
+
                 if (labelText.includes(fieldNameLower) || fieldNameLower.includes(labelText)) {
-                    const field = label.querySelector('input, select, textarea') || 
+                    const field = label.querySelector('input, select, textarea') ||
                                  label.parentElement.querySelector('input, select, textarea') ||
                                  label.nextElementSibling;
                     if (field) {
@@ -444,20 +444,20 @@ function searchComponent() {
                     }
                 }
             }
-            
+
             return matchingFields;
         },
 
         highlightField(element) {
             // Add field-specific highlighting (secondary highlight)
             element.classList.add('search-highlighted-field-secondary');
-            
+
             // Also highlight the parent section for context
             const section = element.closest('.form-section, .field-group, .config-section');
             if (section) {
                 section.classList.add('search-highlighted-section-secondary');
             }
-            
+
             // Store reference for manual removal
             if (!this.activeHighlights) {
                 this.activeHighlights = [];
@@ -468,13 +468,13 @@ function searchComponent() {
         highlightPrimaryField(element) {
             // Add primary field-specific highlighting (stronger highlight)
             element.classList.add('search-highlighted-field-primary');
-            
+
             // Also highlight the parent section for context
             const section = element.closest('.form-section, .field-group, .config-section');
             if (section) {
                 section.classList.add('search-highlighted-section-primary');
             }
-            
+
             // Store reference for manual removal
             if (!this.activeHighlights) {
                 this.activeHighlights = [];
@@ -492,7 +492,7 @@ function searchComponent() {
         focusField(element) {
             if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA' || element.tagName === 'SELECT') {
                 element.focus();
-                
+
                 // For text-based inputs, move cursor to end (only if selection is supported)
                 const textInputTypes = ['text', 'email', 'password', 'search', 'tel', 'url'];
                 if (textInputTypes.includes(element.type) || element.tagName === 'TEXTAREA') {
@@ -512,46 +512,46 @@ function searchComponent() {
             fieldHighlights.forEach(element => {
                 element.classList.remove('search-highlighted-field');
             });
-            
+
             // Remove section highlights
             const sectionHighlights = document.querySelectorAll('.search-highlighted-section');
             sectionHighlights.forEach(element => {
                 element.classList.remove('search-highlighted-section');
             });
-            
+
             // Remove old search highlights
             const oldHighlights = document.querySelectorAll('.search-highlighted');
             oldHighlights.forEach(element => {
                 element.classList.remove('search-highlighted');
             });
-            
+
             // Remove secondary and primary highlights
             const secondaryHighlights = document.querySelectorAll('.search-highlighted-field-secondary');
             secondaryHighlights.forEach(element => {
                 element.classList.remove('search-highlighted-field-secondary');
             });
-            
+
             const primaryHighlights = document.querySelectorAll('.search-highlighted-field-primary');
             primaryHighlights.forEach(element => {
                 element.classList.remove('search-highlighted-field-primary');
             });
-            
+
             const secondarySectionHighlights = document.querySelectorAll('.search-highlighted-section-secondary');
             secondarySectionHighlights.forEach(element => {
                 element.classList.remove('search-highlighted-section-secondary');
             });
-            
+
             const primarySectionHighlights = document.querySelectorAll('.search-highlighted-section-primary');
             primarySectionHighlights.forEach(element => {
                 element.classList.remove('search-highlighted-section-primary');
             });
-            
+
             // Clear active highlights tracking
             this.activeHighlights = [];
-            
+
             // Reset primary highlight flag when clearing all highlights
             this.hasPrimaryHighlight = false;
-            
+
             // Clear persistent primary field storage
             this.primarySelectedField = null;
         },
@@ -562,12 +562,12 @@ function searchComponent() {
             secondaryHighlights.forEach(element => {
                 element.classList.remove('search-highlighted-field-secondary');
             });
-            
+
             const secondarySectionHighlights = document.querySelectorAll('.search-highlighted-section-secondary');
             secondarySectionHighlights.forEach(element => {
                 element.classList.remove('search-highlighted-section-secondary');
             });
-            
+
             // Clear active highlights tracking for secondary highlights only
             if (this.activeHighlights) {
                 this.activeHighlights = this.activeHighlights.filter(highlight => highlight.type !== 'secondary');
@@ -580,18 +580,18 @@ function searchComponent() {
             highlightedTabs.forEach(tab => {
                 tab.classList.remove('search-highlighted-tab', 'search-highlighted-active-tab', 'search-dimmed-tab');
             });
-            
+
             console.log('🧹 TAB HIGHLIGHTING CLEARED - navigation tabs restored to normal styling');
         },
 
         restorePrimaryHighlight() {
             if (!this.primarySelectedField) return;
-            
+
             console.log('Restoring primary highlight for:', this.primarySelectedField.fieldName);
-            
+
             // Find the field using existing field finding strategies
             const fieldElements = this.findFieldElements(this.primarySelectedField.fieldName);
-            
+
             if (fieldElements.length > 0) {
                 // Re-apply primary highlight
                 this.highlightPrimaryField(fieldElements[0]);
@@ -606,26 +606,26 @@ function searchComponent() {
 
         async highlightMatchingFields(tabName) {
             // Get all field results for the current tab (case-insensitive comparison)
-            const matchingFields = this.results.fields.filter(field => 
+            const matchingFields = this.results.fields.filter(field =>
                 field.context && field.context.tab && field.context.tab.toLowerCase() === tabName.toLowerCase()
             );
-            
+
             if (matchingFields.length === 0) {
                 console.log('No matching fields found for tab:', tabName);
                 return;
             }
-            
+
             console.log(`🎯 HIGHLIGHTING ${matchingFields.length} MATCHING FIELDS IN TAB:`, tabName);
             console.log('📋 MATCHING FIELD DETAILS:', matchingFields);
-            
+
             // Highlight ALL matching fields with secondary highlighting first
             let highlightedCount = 0;
             for (const fieldResult of matchingFields) {
                 console.log(`🔍 PROCESSING FIELD: ${fieldResult.name} (${fieldResult.title})`);
                 const fieldElements = this.findFieldElements(fieldResult.name);
-                
+
                 console.log(`  📍 FOUND ${fieldElements.length} ELEMENTS FOR FIELD ${fieldResult.name}:`, fieldElements);
-                
+
                 if (fieldElements.length > 0) {
                     fieldElements.forEach(element => {
                         console.log(`  ✨ HIGHLIGHTING ELEMENT (SECONDARY):`, element);
@@ -638,17 +638,17 @@ function searchComponent() {
                     console.warn(`  ❌ NO ELEMENTS FOUND FOR FIELD: ${fieldResult.name}`);
                 }
             }
-            
+
             console.log(`📊 HIGHLIGHTED ${highlightedCount} FIELDS OUT OF ${matchingFields.length} MATCHING FIELDS`);
-            
+
             // If we have a primary selected field, re-apply primary highlighting
             if (this.primarySelectedField && this.primarySelectedField.tabName === tabName) {
                 console.log(`🎯 RE-APPLYING PRIMARY HIGHLIGHT TO: ${this.primarySelectedField.fieldName}`);
-                
+
                 const primaryFieldElements = this.findFieldElements(this.primarySelectedField.fieldName);
                 if (primaryFieldElements.length > 0) {
                     console.log(`📍 FOUND ${primaryFieldElements.length} PRIMARY FIELD ELEMENTS`);
-                    
+
                     // Remove secondary highlight from primary field elements first
                     primaryFieldElements.forEach(element => {
                         console.log(`  🗑 REMOVING SECONDARY HIGHLIGHT FROM:`, element);
@@ -658,13 +658,13 @@ function searchComponent() {
                             section.classList.remove('search-highlighted-section-secondary');
                         }
                     });
-                    
+
                     // Apply primary highlighting
                     primaryFieldElements.forEach(element => {
                         console.log(`  ⭐ APPLYING PRIMARY HIGHLIGHT TO:`, element);
                         this.highlightPrimaryField(element);
                     });
-                    
+
                     console.log('✅ SUCCESSFULLY RE-APPLIED PRIMARY HIGHLIGHT');
                 } else {
                     console.warn(`❌ COULD NOT FIND PRIMARY FIELD ELEMENTS FOR: ${this.primarySelectedField.fieldName}`);
@@ -672,12 +672,12 @@ function searchComponent() {
             } else {
                 console.log(`ℹ️ NO PRIMARY FIELD STORED FOR TAB: ${tabName}`);
             }
-            
+
             // Count total highlighted elements
             const secondaryElements = document.querySelectorAll('.search-highlighted-field-secondary');
             const primaryElements = document.querySelectorAll('.search-highlighted-field-primary');
             console.log(`🎨 TOTAL HIGHLIGHTED ELEMENTS: ${secondaryElements.length} secondary + ${primaryElements.length} primary = ${secondaryElements.length + primaryElements.length}`);
-            
+
             // Scroll to primary field if it exists, otherwise first secondary field
             const primaryField = document.querySelector('.search-highlighted-field-primary');
             const firstField = primaryField || document.querySelector('.search-highlighted-field-secondary');

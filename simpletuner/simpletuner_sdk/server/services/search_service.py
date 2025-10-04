@@ -110,9 +110,7 @@ class SearchService:
             try:
                 tab_fields = self.field_registry.get_fields_for_tab(tab_name)
                 for field in tab_fields:
-                    field_score = self._calculate_field_match_score(
-                        normalized_query, field, tab_name
-                    )
+                    field_score = self._calculate_field_match_score(normalized_query, field, tab_name)
 
                     if field_score > 0.15:  # Minimum threshold for field matches
                         field_result = SearchResult(
@@ -120,9 +118,7 @@ class SearchService:
                             name=field.name,
                             title=getattr(field, "ui_label", field.name),
                             score=field_score,
-                            matched_content=self._get_field_matched_content(
-                                normalized_query, field
-                            ),
+                            matched_content=self._get_field_matched_content(normalized_query, field),
                             context={
                                 "tab": tab_name,
                                 "tab_title": tab_title,
@@ -212,17 +208,13 @@ class SearchService:
         # Boost score for fields in tabs that also match
         tab_config = self.tab_service.get_tab_config(tab_name)
         if tab_config:
-            tab_score = self._calculate_match_score(
-                query, [tab_config.title, tab_config.description or ""], [0.7, 0.3]
-            )
+            tab_score = self._calculate_match_score(query, [tab_config.title, tab_config.description or ""], [0.7, 0.3])
             if tab_score > 0.2:
                 base_score *= 1.05
 
         return min(base_score, 1.0)
 
-    def _calculate_match_score(
-        self, query: str, texts: List[str], weights: Optional[List[float]] = None
-    ) -> float:
+    def _calculate_match_score(self, query: str, texts: List[str], weights: Optional[List[float]] = None) -> float:
         """Calculate match score for query against multiple text strings.
 
         Args:
@@ -293,7 +285,7 @@ class SearchService:
                 # Check for fuzzy word match with dynamic threshold based on query length
                 for text_word in text_words:
                     similarity = SequenceMatcher(None, query_word, text_word).ratio()
-                    
+
                     # Use higher threshold for short queries to reduce false positives
                     if len(query_word) <= 3:
                         threshold = 0.9  # 90% similarity for 3 or fewer characters
@@ -301,7 +293,7 @@ class SearchService:
                         threshold = 0.8  # 80% similarity for 4-5 characters
                     else:
                         threshold = 0.7  # 70% similarity for longer words
-                    
+
                     if similarity > threshold:
                         matches += 0.3  # Reduced from 0.5 to 0.3
                         break

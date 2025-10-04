@@ -276,7 +276,6 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
         )
     )
 
-
     # Webhook Config
     registry._add_field(
         ConfigField(

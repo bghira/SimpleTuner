@@ -119,7 +119,6 @@ def register_training_fields(registry: "FieldRegistry") -> None:
         )
     )
 
-
     # LR Scheduler
     lr_scheduler_choices = [
         "linear",

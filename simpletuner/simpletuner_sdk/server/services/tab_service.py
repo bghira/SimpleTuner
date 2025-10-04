@@ -523,8 +523,6 @@ class TabService:
             section = field.get("section", "")
             subsection = field.get("subsection", "")
 
-
-
             # Determine section based on field metadata
             if section == "training_schedule":
                 if subsection == "advanced" and field_id in training_schedule_advanced_order:
@@ -541,7 +539,11 @@ class TabService:
                     grouped["optimizer_settings"].append(field)
             # Note: adam_weight_decay and adam_epsilon are now in subsection="advanced"
             # but they should still go to optimizer_settings (not advanced) for basic grouping
-            elif section == "optimizer_config" and subsection == "advanced" and field_id in ["adam_weight_decay", "adam_epsilon"]:
+            elif (
+                section == "optimizer_config"
+                and subsection == "advanced"
+                and field_id in ["adam_weight_decay", "adam_epsilon"]
+            ):
                 grouped["optimizer_settings"].append(field)
             elif section == "optimizer_config" and subsection == "advanced":
                 if field_id in optimizer_config_advanced_order:
@@ -601,18 +603,28 @@ class TabService:
             return sorted(items, key=lambda item: order_map.get(item.get("id", ""), len(order_map)))
 
         grouped["training_schedule"] = _sort_group(grouped["training_schedule"], training_schedule_order)
-        grouped["training_schedule_advanced"] = _sort_group(grouped.get("training_schedule_advanced", []), training_schedule_advanced_order)
+        grouped["training_schedule_advanced"] = _sort_group(
+            grouped.get("training_schedule_advanced", []), training_schedule_advanced_order
+        )
         grouped["learning_rate"] = _sort_group(grouped["learning_rate"], learning_rate_order)
-        grouped["learning_rate_advanced"] = _sort_group(grouped.get("learning_rate_advanced", []), learning_rate_advanced_order)
+        grouped["learning_rate_advanced"] = _sort_group(
+            grouped.get("learning_rate_advanced", []), learning_rate_advanced_order
+        )
         grouped["optimizer_settings"] = _sort_group(grouped["optimizer_settings"], optimizer_config_order)
-        grouped["optimizer_config_advanced"] = _sort_group(grouped["optimizer_config_advanced"], optimizer_config_advanced_order)
+        grouped["optimizer_config_advanced"] = _sort_group(
+            grouped["optimizer_config_advanced"], optimizer_config_advanced_order
+        )
         grouped["text_encoder"] = _sort_group(grouped["text_encoder"], text_encoder_order)
         grouped["text_encoder_advanced"] = _sort_group(grouped["text_encoder_advanced"], text_encoder_advanced_order)
         grouped["memory_optimization"] = _sort_group(grouped["memory_optimization"], memory_optimization_order)
-        grouped["memory_optimization_advanced"] = _sort_group(grouped.get("memory_optimization_advanced", []), memory_optimization_advanced_order)
+        grouped["memory_optimization_advanced"] = _sort_group(
+            grouped.get("memory_optimization_advanced", []), memory_optimization_advanced_order
+        )
         grouped["ema_config"] = _sort_group(grouped["ema_config"], ema_config_order)
         grouped["loss_functions"] = _sort_group(grouped["loss_functions"], loss_functions_order)
-        grouped["loss_functions_advanced"] = _sort_group(grouped.get("loss_functions_advanced", []), loss_functions_advanced_order)
+        grouped["loss_functions_advanced"] = _sort_group(
+            grouped.get("loss_functions_advanced", []), loss_functions_advanced_order
+        )
 
         # Remove empty groups
         return {k: v for k, v in grouped.items() if v}
@@ -1031,7 +1043,7 @@ class TabService:
                 if field_id in quantization_order:
                     grouped["quantization"].append(field)
             elif section == "memory_optimization":
-                if subsection == "advanced" and field_id in memory_optimization_advanced_order:
+                if subsection == "advanced" and field_id in memory_optimization_order:
                     grouped["memory_optimization_advanced"].append(field)
                 elif field_id in memory_optimization_order:
                     grouped["memory_optimization"].append(field)
