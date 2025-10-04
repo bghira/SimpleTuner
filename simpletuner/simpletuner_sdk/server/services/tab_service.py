@@ -29,7 +29,6 @@ class TabType(str, Enum):
     BASIC = "basic"
     MODEL = "model"
     TRAINING = "training"
-    ADVANCED = "advanced"
     DATASETS = "datasets"
     ENVIRONMENTS = "environments"
     VALIDATION = "validation"
@@ -88,14 +87,6 @@ class TabService:
                 template="form_tab.html",
                 description="Training parameters and optimization",
                 extra_context_handler=self._training_tab_context,
-            ),
-            TabType.ADVANCED: TabConfig(
-                id="advanced-config",
-                title="Advanced",
-                icon="fas fa-tools",
-                template="form_tab.html",
-                description="Advanced training options",
-                extra_context_handler=self._advanced_tab_context,
             ),
             TabType.DATASETS: TabConfig(
                 id="datasets-config",
@@ -400,14 +391,18 @@ class TabService:
         """Group training tab fields into sections."""
         grouped = {
             "training_schedule": [],
+            "training_schedule_advanced": [],
             "learning_rate": [],
+            "learning_rate_advanced": [],
             "optimizer_settings": [],
             "optimizer_config_advanced": [],
             "text_encoder": [],
             "text_encoder_advanced": [],
             "memory_optimization": [],
+            "memory_optimization_advanced": [],
             "ema_config": [],
             "loss_functions": [],
+            "loss_functions_advanced": [],
         }
 
         # Training Schedule
@@ -415,6 +410,15 @@ class TabService:
             "num_train_epochs",
             "max_train_steps",
             "ignore_final_epochs",
+        ]
+
+        training_schedule_advanced_order = [
+            "training_scheduler_timestep_spacing",
+            "timestep_bias_strategy",
+            "timestep_bias_begin",
+            "timestep_bias_end",
+            "timestep_bias_multiplier",
+            "timestep_bias_portion",
         ]
 
         # Learning Rate
@@ -425,6 +429,11 @@ class TabService:
             "lr_num_cycles",
             "lr_power",
             "lr_end",
+            "lr_scale",
+            "lr_scale_sqrt",
+        ]
+
+        learning_rate_advanced_order = [
             "lr_scale",
             "lr_scale_sqrt",
         ]
@@ -475,6 +484,13 @@ class TabService:
             "gradient_checkpointing",
         ]
 
+        memory_optimization_advanced_order = [
+            "mixed_precision",
+            "disable_tf32",
+            "set_grads_to_none",
+            "offload_param_path",
+        ]
+
         # EMA Configuration
         ema_config_order = [
             "use_ema",
@@ -490,6 +506,18 @@ class TabService:
             "use_soft_min_snr",
         ]
 
+        loss_functions_advanced_order = [
+            "flow_sigmoid_scale",
+            "flow_use_uniform_schedule",
+            "flow_use_beta_schedule",
+            "flow_beta_schedule_alpha",
+            "flow_beta_schedule_beta",
+            "flow_schedule_shift",
+            "flow_schedule_auto_shift",
+            "soft_min_snr_sigma_data",
+            "snr_weight",
+        ]
+
         for field in fields:
             field_id = field.get("id", "")
             section = field.get("section", "")
@@ -499,10 +527,14 @@ class TabService:
 
             # Determine section based on field metadata
             if section == "training_schedule":
-                if field_id in training_schedule_order:
+                if subsection == "advanced" and field_id in training_schedule_advanced_order:
+                    grouped["training_schedule_advanced"].append(field)
+                elif field_id in training_schedule_order:
                     grouped["training_schedule"].append(field)
             elif section == "learning_rate":
-                if field_id in learning_rate_order:
+                if subsection == "advanced" and field_id in learning_rate_advanced_order:
+                    grouped["learning_rate_advanced"].append(field)
+                elif field_id in learning_rate_order:
                     grouped["learning_rate"].append(field)
             elif section == "optimizer_config" and subsection in ("", None):
                 if field_id in optimizer_config_order:
@@ -521,13 +553,17 @@ class TabService:
                 if field_id in text_encoder_advanced_order:
                     grouped["text_encoder_advanced"].append(field)
             elif section == "memory_optimization":
-                if field_id in memory_optimization_order:
+                if subsection == "advanced" and field_id in memory_optimization_advanced_order:
+                    grouped["memory_optimization_advanced"].append(field)
+                elif field_id in memory_optimization_order:
                     grouped["memory_optimization"].append(field)
             elif section == "ema_config":
                 if field_id in ema_config_order:
                     grouped["ema_config"].append(field)
             elif section == "loss_functions":
-                if field_id in loss_functions_order:
+                if subsection == "advanced" and field_id in loss_functions_advanced_order:
+                    grouped["loss_functions_advanced"].append(field)
+                elif field_id in loss_functions_order:
                     grouped["loss_functions"].append(field)
             else:
                 # Fallback: try to match by field ID patterns
@@ -546,10 +582,18 @@ class TabService:
                     grouped["text_encoder_advanced"].append(field)
                 elif field_id in memory_optimization_order:
                     grouped["memory_optimization"].append(field)
+                elif field_id in memory_optimization_advanced_order:
+                    grouped["memory_optimization_advanced"].append(field)
                 elif field_id in ema_config_order:
                     grouped["ema_config"].append(field)
                 elif field_id in loss_functions_order:
                     grouped["loss_functions"].append(field)
+                elif field_id in loss_functions_advanced_order:
+                    grouped["loss_functions_advanced"].append(field)
+                elif field_id in training_schedule_advanced_order:
+                    grouped["training_schedule_advanced"].append(field)
+                elif field_id in learning_rate_advanced_order:
+                    grouped["learning_rate_advanced"].append(field)
 
         # Enforce ordering within groups
         def _sort_group(items, order):
@@ -557,14 +601,18 @@ class TabService:
             return sorted(items, key=lambda item: order_map.get(item.get("id", ""), len(order_map)))
 
         grouped["training_schedule"] = _sort_group(grouped["training_schedule"], training_schedule_order)
+        grouped["training_schedule_advanced"] = _sort_group(grouped.get("training_schedule_advanced", []), training_schedule_advanced_order)
         grouped["learning_rate"] = _sort_group(grouped["learning_rate"], learning_rate_order)
+        grouped["learning_rate_advanced"] = _sort_group(grouped.get("learning_rate_advanced", []), learning_rate_advanced_order)
         grouped["optimizer_settings"] = _sort_group(grouped["optimizer_settings"], optimizer_config_order)
         grouped["optimizer_config_advanced"] = _sort_group(grouped["optimizer_config_advanced"], optimizer_config_advanced_order)
         grouped["text_encoder"] = _sort_group(grouped["text_encoder"], text_encoder_order)
         grouped["text_encoder_advanced"] = _sort_group(grouped["text_encoder_advanced"], text_encoder_advanced_order)
         grouped["memory_optimization"] = _sort_group(grouped["memory_optimization"], memory_optimization_order)
+        grouped["memory_optimization_advanced"] = _sort_group(grouped.get("memory_optimization_advanced", []), memory_optimization_advanced_order)
         grouped["ema_config"] = _sort_group(grouped["ema_config"], ema_config_order)
         grouped["loss_functions"] = _sort_group(grouped["loss_functions"], loss_functions_order)
+        grouped["loss_functions_advanced"] = _sort_group(grouped.get("loss_functions_advanced", []), loss_functions_advanced_order)
 
         # Remove empty groups
         return {k: v for k, v in grouped.items() if v}
@@ -576,14 +624,18 @@ class TabService:
         # Group fields into sections for training tab
         sections = [
             {"id": "training_schedule", "title": "Training Schedule", "icon": "fas fa-calendar-alt"},
+            {"id": "training_schedule_advanced", "title": "", "icon": "fas", "advanced": True},
             {"id": "learning_rate", "title": "Learning Rate", "icon": "fas fa-chart-line"},
+            {"id": "learning_rate_advanced", "title": "", "icon": "fas", "advanced": True},
             {"id": "optimizer_settings", "title": "Optimizer Configuration", "icon": "fas fa-cogs"},
             {"id": "optimizer_config_advanced", "title": "", "icon": "fas", "advanced": True},
             {"id": "text_encoder", "title": "TEXT ENCODER", "icon": "fas fa-font"},
             {"id": "text_encoder_advanced", "title": "", "icon": "fas", "advanced": True},
             {"id": "memory_optimization", "title": "Memory Optimization", "icon": "fas fa-memory"},
+            {"id": "memory_optimization_advanced", "title": "", "icon": "fas", "advanced": True},
             {"id": "ema_config", "title": "EMA Configuration", "icon": "fas fa-wave-square"},
             {"id": "loss_functions", "title": "Loss Functions", "icon": "fas fa-calculator"},
+            {"id": "loss_functions_advanced", "title": "", "icon": "fas", "advanced": True},
         ]
 
         # Group fields and assign section_id to each field
@@ -598,6 +650,18 @@ class TabService:
                 elif section_id == "text_encoder_advanced":
                     field["subsection"] = "advanced"
                     field["parent_section"] = "text_encoder"
+                elif section_id == "training_schedule_advanced":
+                    field["subsection"] = "advanced"
+                    field["parent_section"] = "training_schedule"
+                elif section_id == "learning_rate_advanced":
+                    field["subsection"] = "advanced"
+                    field["parent_section"] = "learning_rate"
+                elif section_id == "memory_optimization_advanced":
+                    field["subsection"] = "advanced"
+                    field["parent_section"] = "memory_optimization"
+                elif section_id == "loss_functions_advanced":
+                    field["subsection"] = "advanced"
+                    field["parent_section"] = "loss_functions"
                 # Basic optimizer fields should NOT have subsection properties
 
         sections_with_fields = [section for section in sections if grouped_fields.get(section["id"])]
@@ -605,16 +669,6 @@ class TabService:
         context["sections"] = sections_with_fields
         context["grouped_fields"] = grouped_fields
 
-        return context
-
-    def _advanced_tab_context(
-        self, context: Dict[str, Any], fields: List[Dict[str, Any]], config_values: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Customize context for advanced tab."""
-        # Add a warning about advanced settings
-        context["warning_message"] = (
-            "These are advanced settings. Modifying them incorrectly may impact training performance or stability."
-        )
         return context
 
     def _validation_tab_context(
@@ -730,7 +784,10 @@ class TabService:
         ]
 
         project_advanced_order = [
+            "i_know_what_i_am_doing",
             "seed",
+            "seed_for_each_device",
+            "local_rank",
             "merge_environment_config",
         ]
 
@@ -749,6 +806,8 @@ class TabService:
 
         logging_advanced_order = [
             "tracker_image_layout",
+            "webhook_config",
+            "webhook_reporting_interval",
             "checkpointing_rolling_steps",
             "checkpointing_use_tempdir",
             "checkpoints_rolling_total_limit",
@@ -972,7 +1031,9 @@ class TabService:
                 if field_id in quantization_order:
                     grouped["quantization"].append(field)
             elif section == "memory_optimization":
-                if field_id in memory_optimization_order:
+                if subsection == "advanced" and field_id in memory_optimization_advanced_order:
+                    grouped["memory_optimization_advanced"].append(field)
+                elif field_id in memory_optimization_order:
                     grouped["memory_optimization"].append(field)
             else:
                 # Fallback: try to match by field ID patterns

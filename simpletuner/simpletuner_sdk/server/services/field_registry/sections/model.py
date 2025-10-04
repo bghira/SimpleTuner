@@ -208,7 +208,8 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             ui_label="Training Seed",
             field_type=FieldType.NUMBER,
             tab="basic",
-            section="hardware_config",
+            section="project",
+            subsection="advanced",
             default_value=None,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=0, message="Seed must be non-negative"),
@@ -362,14 +363,15 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             arg_name="--accelerator_cache_clear_interval",
             ui_label="Accelerator Cache Clear Interval",
             field_type=FieldType.NUMBER,
-            tab="advanced",
-            section="memory_performance",
+            tab="training",
+            section="memory_optimization",
+            subsection="memory_optimization",
             default_value=None,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Interval must be at least 1")],
             help_text="Clear the cache from VRAM every X steps to prevent memory leaks",
             tooltip="Higher values may cause memory leaks but train faster. Lower values are safer but may slow training.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=20,
+            order=14,
         )
     )
 
@@ -515,6 +517,24 @@ def register_model_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="rescale_betas_zero_snr",
+            arg_name="--rescale_betas_zero_snr",
+            ui_label="Rescale Betas Zero SNR",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="architecture",
+            subsection="advanced",
+            default_value=False,
+            model_specific=["sd15", "sd20", "sdxl", "deepfloyd"],
+            help_text="Rescale betas for zero terminal SNR.",
+            tooltip="Helps align schedulers for SDXL/Flux-style models with zero terminal SNR assumptions.",
+            importance=ImportanceLevel.IMPORTANT,
+            order=21,
+        )
+    )
+
     # Control
     registry._add_field(
         ConfigField(
@@ -547,7 +567,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             placeholder='{"num_layers": 12, "num_single_layers": 6}',
             help_text="Custom configuration for ControlNet models",
             tooltip="JSON config with keys like num_layers for specific ControlNet models (e.g., HiDream).",
-            importance=ImportanceLevel.ADVANCED,
+            importance=ImportanceLevel.IMPORTANT,
             order=21,
         )
     )
