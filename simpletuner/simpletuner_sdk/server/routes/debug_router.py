@@ -266,7 +266,7 @@ Validation Rules:
         try:
             # Get fields from all tabs
             all_select_fields = []
-            for tab in ["basic", "model", "training", "advanced", "validation"]:
+            for tab in ["basic", "model", "training", "validation"]:
                 fields = field_registry.get_fields_for_tab(tab)
                 for field in fields:
                     if hasattr(field, "field_type") and field.field_type.value.upper() == "SELECT":
@@ -323,7 +323,7 @@ Validation Rules:
             logger.debug(f"Converted {len(converted_fields)} fields successfully")
 
             # Also check all tabs
-            all_tabs = ["basic", "model", "training", "advanced", "validation"]
+            all_tabs = ["basic", "model", "training", "validation"]
             tab_counts = {}
             for tab in all_tabs:
                 tab_fields = field_registry.get_fields_for_tab(tab)
