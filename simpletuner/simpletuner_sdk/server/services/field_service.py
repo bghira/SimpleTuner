@@ -262,6 +262,11 @@ class FieldService:
         filtered_fields: List[Any] = []
 
         for field in fields:
+            model_specific = getattr(field, "model_specific", None)
+            if model_specific:
+                selected_family = self._get_config_value(combined_config, "model_family")
+                if not selected_family or selected_family not in model_specific:
+                    continue
             name = field.name
 
             if name in self._WEBUI_ONLY_FIELDS:
@@ -445,6 +450,13 @@ class FieldService:
             "value": "" if field.field_type in (FieldType.TEXT, FieldType.TEXTAREA) and field_value is None else field_value,
             "description": field.help_text,
         }
+        # Include location metadata for downstream grouping
+        if hasattr(field, "tab") and field.tab:
+            field_dict["tab"] = field.tab
+        if hasattr(field, "section") and field.section:
+            field_dict["section_id"] = field.section
+        if hasattr(field, "subsection") and field.subsection:
+            field_dict["subsection"] = field.subsection
 
         custom_component = getattr(field, "custom_component", None)
         if custom_component:
@@ -490,10 +502,6 @@ class FieldService:
             field_dict["tooltip"] = field.cmd_args_help
         elif getattr(field, "tooltip", None):
             field_dict["tooltip"] = field.tooltip
-
-        # Add section ID
-        if hasattr(field, "section") and field.section:
-            field_dict["section_id"] = field.section
 
         # Handle conditional display
         if hasattr(field, "conditional_on"):

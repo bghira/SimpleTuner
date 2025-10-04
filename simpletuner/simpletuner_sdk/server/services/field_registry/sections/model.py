@@ -27,6 +27,12 @@ def register_model_fields(registry: "FieldRegistry") -> None:
     # Model Family
     model_family_list = list(model_families.keys())
 
+    def _family_label(key: str) -> str:
+        model_cls = model_families.get(key)
+        if model_cls is None:
+            return key.replace("_", " ").title()
+        return getattr(model_cls, "NAME", key.replace("_", " ").title())
+
     def _quant_label(value: str) -> str:
         if value == "no_change":
             return "No Change"
@@ -53,7 +59,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             tab="model",
             section="model_config",
             subsection="architecture",
-            choices=[{"value": f, "label": f.upper()} for f in model_family_list],
+            choices=[{"value": f, "label": _family_label(f)} for f in model_family_list],
             validation_rules=[
                 ValidationRule(ValidationRuleType.REQUIRED, message="Model family is required"),
                 ValidationRule(ValidationRuleType.CHOICES, value=model_family_list),

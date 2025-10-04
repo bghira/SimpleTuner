@@ -349,16 +349,11 @@ class TabService:
                 else:
                     field["section_id"] = section_id
 
-        # Handle model_family label formatting and field-specific logic
+        # Handle field-specific UI tweaks that depend on runtime context
         for field_dict in fields:
             field_id = field_dict.get("id", "")
 
-            if field_id == "model_family" and "options" in field_dict:
-                field_dict["options"] = [
-                    {"value": opt["value"], "label": self._get_model_family_label(opt["value"])}
-                    for opt in field_dict["options"]
-                ]
-            elif field_id == "lora_alpha":
+            if field_id == "lora_alpha":
                 if not is_lora_type:
                     field_dict["disabled"] = True
                 elif danger_mode_enabled:
@@ -1088,29 +1083,6 @@ class TabService:
 
         # Remove empty groups
         return {k: v for k, v in grouped.items() if v}
-
-    def _get_model_family_label(self, model_key: str) -> str:
-        """Generate a human-readable label for a model family key."""
-        labels = {
-            "sd1x": "Stable Diffusion 1.x",
-            "sd2x": "Stable Diffusion 2.x",
-            "sd3": "Stable Diffusion 3",
-            "deepfloyd": "DeepFloyd IF",
-            "sana": "Sana",
-            "sdxl": "Stable Diffusion XL",
-            "kolors": "Kolors",
-            "flux": "Flux",
-            "wan": "Wan",
-            "ltxvideo": "LTX Video",
-            "pixart_sigma": "PixArt-Σ",
-            "omnigen": "OmniGen",
-            "hidream": "HiDream",
-            "auraflow": "AuraFlow",
-            "lumina2": "Lumina 2",
-            "cosmos2image": "Cosmos2Image",
-            "qwen_image": "Qwen Image",
-        }
-        return labels.get(model_key, model_key.upper())
 
     def get_all_tabs(self) -> List[Dict[str, str]]:
         """Get information about all available tabs.
