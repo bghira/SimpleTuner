@@ -200,17 +200,14 @@ async def get_tab_render_data(
         webui_defaults=webui_defaults,
     )
 
-    formatted_fields = _field_service.convert_fields(
-        tab_fields,
-        FieldFormat.TEMPLATE,
-        config_values,
-        options={"raw_config": config_data},
+    template_fields, sections = _field_service.build_template_tab(
+        tab_name=tab_name,
+        config_values=config_values,
+        raw_config=config_data,
     )
 
-    sections = field_registry.get_sections_for_tab(tab_name)
-
     return TabRenderData(
-        fields=formatted_fields,
+        fields=template_fields,
         config_values=config_values,
         sections=sections or None,
         raw_config=config_data,
