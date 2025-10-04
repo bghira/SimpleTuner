@@ -211,7 +211,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             arg_name="--enable_watermark",
             ui_label="Enable Watermark",
             field_type=FieldType.CHECKBOX,
-            tab="advanced",
+            tab="model",
             section="model_specific",
             default_value=False,
             help_text="Add invisible watermark to generated images",
@@ -228,7 +228,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             arg_name="--framerate",
             ui_label="Video Framerate",
             field_type=FieldType.TEXT,
-            tab="advanced",
+            tab="model",
             section="model_specific",
             default_value=None,
             help_text="Framerate for video model training",
@@ -245,13 +245,14 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             arg_name="--seed_for_each_device",
             ui_label="Seed Per Device",
             field_type=FieldType.CHECKBOX,
-            tab="advanced",
-            section="hardware_config",
+            tab="basic",
+            section="project",
+            subsection="advanced",
             default_value=True,
             help_text="Use a unique deterministic seed per GPU instead of sharing one seed across devices.",
             tooltip="Disable only when you intentionally want identical seeds on every device (may cause oversampling).",
             importance=ImportanceLevel.ADVANCED,
-            order=13,
+            order=10,
         )
     )
 
@@ -262,33 +263,19 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             arg_name="--snr_weight",
             ui_label="SNR Weight",
             field_type=FieldType.NUMBER,
-            tab="advanced",
+            tab="training",
             section="loss_functions",
+            subsection="advanced",
             default_value=1.0,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative")],
+            dependencies=[FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True)],
             help_text="Weight factor for SNR-based loss scaling",
             tooltip="Alternative to snr_gamma. Controls how much SNR affects loss weighting.",
             importance=ImportanceLevel.ADVANCED,
-            order=14,
+            order=28,
         )
     )
 
-    # Rescale Betas Zero SNR
-    registry._add_field(
-        ConfigField(
-            name="rescale_betas_zero_snr",
-            arg_name="--rescale_betas_zero_snr",
-            ui_label="Rescale Betas Zero SNR",
-            field_type=FieldType.CHECKBOX,
-            tab="advanced",
-            section="loss_functions",
-            default_value=False,
-            help_text="Rescale betas for zero terminal SNR",
-            tooltip="Experimental feature for improved noise scheduling. May affect training dynamics.",
-            importance=ImportanceLevel.EXPERIMENTAL,
-            order=15,
-        )
-    )
 
     # Webhook Config
     registry._add_field(
@@ -297,14 +284,15 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             arg_name="--webhook_config",
             ui_label="Webhook Configuration",
             field_type=FieldType.TEXT,
-            tab="advanced",
-            section="monitoring",
+            tab="basic",
+            section="logging",
+            subsection="monitoring",
             default_value=None,
             placeholder="path/to/webhook_config.json",
             help_text="Path to webhook configuration file",
             tooltip="JSON config for external monitoring webhooks. See docs for format.",
             importance=ImportanceLevel.ADVANCED,
-            order=16,
+            order=6,
         )
     )
 
@@ -315,14 +303,15 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             arg_name="--webhook_reporting_interval",
             ui_label="Webhook Reporting Interval",
             field_type=FieldType.NUMBER,
-            tab="advanced",
-            section="monitoring",
+            tab="basic",
+            section="logging",
+            subsection="monitoring",
             default_value=None,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=30, message="Must be at least 30 seconds")],
             help_text="Interval for webhook reports (seconds)",
             tooltip="How often to send status updates via webhook. Minimum: 30 seconds.",
             importance=ImportanceLevel.ADVANCED,
-            order=17,
+            order=7,
         )
     )
 
@@ -333,8 +322,8 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             arg_name="--distillation_method",
             ui_label="Distillation Method",
             field_type=FieldType.SELECT,
-            tab="advanced",
-            section="model_specific",
+            tab="model",
+            section="distillation",
             default_value=None,
             choices=[
                 {"value": None, "label": "None"},
@@ -344,7 +333,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             help_text="Method for model distillation",
             tooltip="Select the distillation approach to use when converting models (LCM or DCM).",
             importance=ImportanceLevel.ADVANCED,
-            order=18,
+            order=1,
         )
     )
 
@@ -355,14 +344,14 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             arg_name="--distillation_config",
             ui_label="Distillation Configuration",
             field_type=FieldType.TEXT,
-            tab="advanced",
-            section="model_specific",
+            tab="model",
+            section="distillation",
             default_value=None,
             placeholder="path/to/distillation_config.json",
             help_text="Path to distillation configuration file",
             tooltip="JSON config for distillation parameters and settings.",
             importance=ImportanceLevel.ADVANCED,
-            order=19,
+            order=2,
         )
     )
 
@@ -373,7 +362,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             arg_name="--ema_validation",
             ui_label="EMA Validation",
             field_type=FieldType.SELECT,
-            tab="advanced",
+            tab="model",
             section="model_specific",
             default_value="comparison",
             choices=[
@@ -398,14 +387,15 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             arg_name="--local_rank",
             ui_label="Local Rank",
             field_type=FieldType.NUMBER,
-            tab="advanced",
-            section="hardware_config",
+            tab="basic",
+            section="project",
+            subsection="advanced",
             default_value=-1,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="Local rank for distributed training",
             tooltip="For multi-GPU training, specifies the rank of this process. Usually set automatically.",
             importance=ImportanceLevel.ADVANCED,
-            order=21,
+            order=11,
         )
     )
 
@@ -416,7 +406,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             arg_name="--ltx_train_mode",
             ui_label="LTX Train Mode",
             field_type=FieldType.SELECT,
-            tab="advanced",
+            tab="model",
             section="model_specific",
             model_specific=["ltx"],
             default_value="i2v",
@@ -437,7 +427,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             arg_name="--ltx_i2v_prob",
             ui_label="LTX Image-to-Video Probability",
             field_type=FieldType.NUMBER,
-            tab="advanced",
+            tab="model",
             section="model_specific",
             model_specific=["ltx"],
             default_value=0.1,
@@ -458,7 +448,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             arg_name="--ltx_partial_noise_fraction",
             ui_label="LTX Partial Noise Fraction",
             field_type=FieldType.NUMBER,
-            tab="advanced",
+            tab="model",
             section="model_specific",
             model_specific=["ltx"],
             default_value=0.05,
@@ -479,7 +469,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             arg_name="--ltx_protect_first_frame",
             ui_label="LTX Protect First Frame",
             field_type=FieldType.CHECKBOX,
-            tab="advanced",
+            tab="model",
             section="model_specific",
             model_specific=["ltx"],
             default_value=False,
@@ -497,14 +487,15 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             arg_name="--offload_param_path",
             ui_label="Offload Parameter Path",
             field_type=FieldType.TEXT,
-            tab="advanced",
+            tab="training",
             section="memory_optimization",
+            subsection="advanced",
             default_value=None,
             placeholder="path/to/offload_params",
-            help_text="Path to offloaded parameter files",
-            tooltip="Directory where offloaded model parameters are stored for CPU offloading.",
+            help_text="Path to offloaded parameter files (DeepSpeed ZeRO only)",
+            tooltip="Only used when DeepSpeed ZeRO offloading is enabled; ignored otherwise.",
             importance=ImportanceLevel.ADVANCED,
-            order=26,
+            order=13,
         )
     )
 
@@ -515,13 +506,13 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             arg_name="--offset_noise",
             ui_label="Offset Noise",
             field_type=FieldType.CHECKBOX,
-            tab="advanced",
+            tab="training",
             section="noise_settings",
             default_value=False,
             help_text="Enable offset-noise training",
             tooltip="Applies the offset noise technique described by Cross Labs (requires --noise_offset for magnitude)",
             importance=ImportanceLevel.ADVANCED,
-            order=27,
+            order=5,
         )
     )
 
@@ -532,13 +523,13 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             arg_name="--quantize_activations",
             ui_label="Quantize Activations",
             field_type=FieldType.CHECKBOX,
-            tab="advanced",
+            tab="model",
             section="quantization",
             default_value=False,
             help_text="Quantize model activations during training",
             tooltip="Experimental feature that quantizes activations to save memory. May affect training quality.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=28,
+            order=33,
         )
     )
 
@@ -549,7 +540,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             arg_name="--refiner_training",
             ui_label="Refiner Training",
             field_type=FieldType.CHECKBOX,
-            tab="advanced",
+            tab="model",
             section="model_specific",
             default_value=False,
             help_text="Enable refiner model training mode",
@@ -565,7 +556,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             arg_name="--refiner_training_invert_schedule",
             ui_label="Invert Refiner Schedule",
             field_type=FieldType.CHECKBOX,
-            tab="advanced",
+            tab="model",
             section="model_specific",
             default_value=False,
             dependencies=[FieldDependency(field="refiner_training", operator="equals", value=True, action="show")],
@@ -582,7 +573,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             arg_name="--refiner_training_strength",
             ui_label="Refiner Training Strength",
             field_type=FieldType.NUMBER,
-            tab="advanced",
+            tab="model",
             section="model_specific",
             default_value=0.2,
             validation_rules=[
@@ -604,7 +595,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             arg_name="--sdxl_refiner_uses_full_range",
             ui_label="SDXL Refiner Full Range",
             field_type=FieldType.CHECKBOX,
-            tab="advanced",
+            tab="model",
             section="model_specific",
             default_value=False,
             help_text="Use full timestep range for SDXL refiner",
@@ -621,7 +612,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             arg_name="--sana_complex_human_instruction",
             ui_label="Sana Complex Human Instruction",
             field_type=FieldType.TEXT,
-            tab="advanced",
+            tab="model",
             section="model_specific",
             model_specific=["sana"],
             default_value=[
