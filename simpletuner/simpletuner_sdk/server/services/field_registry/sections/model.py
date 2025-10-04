@@ -373,9 +373,9 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             section="memory_optimization",
             subsection="memory_optimization",
             default_value=None,
-            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Interval must be at least 1")],
-            help_text="Clear the cache from VRAM every X steps to prevent memory leaks",
-            tooltip="Higher values may cause memory leaks but train faster. Lower values are safer but may slow training.",
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Interval must be at least 0")],
+            help_text="Clear the cache from VRAM every X steps to prevent memory leaks (0 or blank disables)",
+            tooltip="Higher values may cause memory leaks but train faster. Set 0/leave blank to disable periodic cache clears.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=14,
         )
