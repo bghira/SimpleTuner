@@ -59,6 +59,8 @@ function trainerComponent() {
          activeTab: window.location.hash.slice(1) || localStorage.getItem('activeTab') || 'basic',
 
         switchTab(tabName, updateHash = true) {
+            console.log('Alpine store switchTab called with:', tabName);
+            
             this.activeTab = tabName;
             localStorage.setItem('activeTab', tabName);
 
@@ -66,6 +68,17 @@ function trainerComponent() {
             if (updateHash && window.location.hash.slice(1) !== tabName) {
                 history.replaceState(null, '', '#' + tabName);
             }
+            
+            // Ensure tab button gets active class
+            this.$nextTick(() => {
+                const allTabButtons = document.querySelectorAll('.tab-btn');
+                allTabButtons.forEach(button => {
+                    button.classList.remove('active');
+                    if (button.getAttribute('data-tab') === tabName) {
+                        button.classList.add('active');
+                    }
+                });
+            });
         },
         activateTab(tabName, updateHash = true) {
             const tabButton = document.querySelector(`.tab-btn[data-tab="${tabName}"]`);
@@ -3126,6 +3139,78 @@ function trainerComponent() {
         <nav class="sidebar-nav">
             <div class="nav-section">
                 <div class="nav-section-title">Configuration</div>
+                
+                <!-- Search Box -->
+                <div class="sidebar-search" x-data="searchComponent()">
+                    <div class="search-input-wrapper">
+                        <i class="fas fa-search search-icon"></i>
+                        <input 
+                            type="text" 
+                            class="search-input" 
+                            placeholder="Search tabs and fields..."
+                            x-model="query"
+                            @input="handleSearch"
+                            @keydown.escape="clearSearch"
+                            @keydown.down="highlightNext"
+                            @keydown.up="highlightPrevious"
+                            @keydown.enter="selectHighlighted"
+                        >
+                        <button 
+                            class="search-clear" 
+                            x-show="query"
+                            @click="clearSearch"
+                            type="button"
+                        >
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    
+                    <!-- Search Results Dropdown -->
+                    <div class="search-results" x-show="showResults && (results.tabs.length > 0 || results.fields.length > 0)" x-transition>
+                        <div class="search-section" x-show="results.tabs.length > 0">
+                            <div class="search-section-title">Tabs</div>
+                            <template x-for="(result, index) in results.tabs" :key="`tab-${index}`">
+                                <div 
+                                    class="search-result-item"
+                                    :class="{ 'highlighted': highlightedIndex === index }"
+                                    @click="selectTab(result.name)"
+                                    @mouseenter="highlightedIndex = index"
+                                >
+                                    <i class="search-result-icon" :class="result.context.icon || 'fas fa-folder'"></i>
+                                    <div class="search-result-content">
+                                        <div class="search-result-title" x-text="result.title"></div>
+                                        <div class="search-result-description" x-text="result.context.description" x-show="result.context.description"></div>
+                                    </div>
+                                    <div class="search-result-score" x-text="Math.round(result.score * 100) + '%'"></div>
+                                </div>
+                            </template>
+                        </div>
+                        
+                        <div class="search-section" x-show="results.fields.length > 0">
+                            <div class="search-section-title">Fields</div>
+                            <template x-for="(result, index) in results.fields" :key="`field-${index}`">
+                                <div 
+                                    class="search-result-item"
+                                    :class="{ 'highlighted': highlightedIndex === (results.tabs.length + index) }"
+                                    @click="selectField(result)"
+                                    @mouseenter="highlightedIndex = results.tabs.length + index"
+                                >
+                                    <i class="search-result-icon fas fa-cog"></i>
+                                    <div class="search-result-content">
+                                        <div class="search-result-title" x-text="result.title"></div>
+                                        <div class="search-result-path" x-text="`${result.context.tab_title} → ${result.context.section || 'Settings'}`"></div>
+                                        <div class="search-result-description" x-text="result.context.description" x-show="result.context.description"></div>
+                                    </div>
+                                    <div class="search-result-score" x-text="Math.round(result.score * 100) + '%'"></div>
+                                </div>
+                            </template>
+                        </div>
+                        
+                        <div class="search-no-results" x-show="results.tabs.length === 0 && results.fields.length === 0 && query.length >= 2">
+                            No results found for "<span x-text="query"></span>"
+                        </div>
+                    </div>
+                </div>
 
                 {% for tab in tabs %}
                 <button type="button"
@@ -3792,6 +3877,9 @@ window.showToast = window.showToast || function(message, type) {
 </script>
 
 <script src="/static/js/modules/tab-navigation.js" defer></script>
+
+<!-- Load search module for sidebar search functionality -->
+<script src="/static/js/modules/search.js"></script>
 
 <!-- Load tab-specific modules early so they're available when tabs load -->
 <script src="/static/js/modules/publishing.js"></script>
