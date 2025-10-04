@@ -158,10 +158,11 @@ class WebUIRoutesTestCase(_WebUIBaseTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("Training", response.text)
 
-    def test_trainer_tabs_advanced(self) -> None:
+    def test_trainer_tabs_advanced_redirect(self) -> None:
         response = self.client.get("/web/trainer/tabs/advanced")
         self.assertEqual(response.status_code, 200)
-        self.assertIn("Advanced", response.text)
+        # Advanced tab now redirects to Basic settings
+        self.assertIn("Basic", response.text)
 
     def test_trainer_tabs_datasets(self) -> None:
         response = self.client.get("/web/trainer/tabs/datasets")
