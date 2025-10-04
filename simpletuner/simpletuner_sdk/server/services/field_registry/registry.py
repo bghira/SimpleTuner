@@ -9,6 +9,8 @@ from .types import ConfigField, FieldDependency, FieldType, ImportanceLevel, Val
 
 logger = logging.getLogger(__name__)
 
+SECTION_ORDER_OVERRIDES: Dict[str, Dict[str, int]] = {}
+
 
 class FieldRegistry:
     """Central registry for all configuration fields."""
@@ -82,8 +84,17 @@ class FieldRegistry:
             platform = context.get("platform", "cuda")
             fields = [f for f in fields if not f.platform_specific or platform in f.platform_specific]
 
-        # Sort by section, subsection, and order
-        fields.sort(key=lambda f: (f.section, f.subsection or "", f.order))
+        # Sort by section priority, subsection, and order
+        section_overrides = SECTION_ORDER_OVERRIDES.get(tab, {})
+        default_priority = len(section_overrides)
+        fields.sort(
+            key=lambda f: (
+                section_overrides.get(f.section, default_priority),
+                f.section,
+                f.subsection or "",
+                f.order,
+            )
+        )
         return fields
 
     def get_fields_by_section(self, tab: str, section: str, context: Optional[Dict[str, Any]] = None) -> List[ConfigField]:
@@ -174,7 +185,7 @@ class FieldRegistry:
     def get_sections_for_tab(self, tab: str) -> List[Dict[str, Any]]:
         """Get unique sections for a tab with metadata."""
         sections = {}
-        fields = [f for f in self._fields.values() if f.tab == tab]
+        fields = self.get_fields_for_tab(tab)
 
         for cfg_field in fields:
             if cfg_field.section not in sections:
