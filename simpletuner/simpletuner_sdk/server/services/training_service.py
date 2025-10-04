@@ -117,6 +117,10 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
     else:
         form_dict = dict(form_data)
 
+    raw_interval_input = form_dict.get("accelerator_cache_clear_interval")
+    if raw_interval_input is None:
+        raw_interval_input = form_dict.get("--accelerator_cache_clear_interval")
+
     def _coerce_single(value: Any) -> Any:
         if isinstance(value, (list, tuple)):
             return value[-1] if value else None
@@ -179,6 +183,10 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
 
     logger.debug("Prepared config_dict: %s", config_dict)
 
+    interval_cleared = False
+    if raw_interval_input is not None:
+        interval_cleared = str(raw_interval_input).strip() == ""
+
     store = get_config_store()
     active_config = store.get_active_config() or "default"
 
@@ -202,8 +210,18 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         logger.debug("Skipping merge of active environment defaults at user request")
         base_config = dict(all_defaults)
 
+    if interval_cleared or config_dict.get("--accelerator_cache_clear_interval") is None:
+        config_dict.pop("--accelerator_cache_clear_interval", None)
+        existing_config_cli.pop("--accelerator_cache_clear_interval", None)
+        existing_config_cli.pop("accelerator_cache_clear_interval", None)
+        base_config.pop("--accelerator_cache_clear_interval", None)
+        base_config.pop("accelerator_cache_clear_interval", None)
     complete_config = {**base_config, **config_dict}
+
     complete_config = ConfigsService.coerce_config_values_by_field(complete_config)
+
+    if interval_cleared or complete_config.get("--accelerator_cache_clear_interval") is None:
+        complete_config.pop("--accelerator_cache_clear_interval", None)
 
     for ui_key in ("configs_dir", "--configs_dir", "__active_tab__", "--__active_tab__"):
         complete_config.pop(ui_key, None)
@@ -214,6 +232,8 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
 
     save_config: Dict[str, Any] = {}
     for key, value in complete_config.items():
+        if value is None:
+            continue
         clean_key = key[2:] if key.startswith("--") else key
         if save_options.get("preserve_defaults", False):
             default_value = all_defaults.get(key)

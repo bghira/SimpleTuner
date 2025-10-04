@@ -7,9 +7,10 @@ applying transformations, and managing field metadata.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ..services.field_registry_wrapper import lazy_field_registry
 from .dataset_service import normalize_dataset_config_value
@@ -26,6 +27,25 @@ except Exception:  # pragma: no cover - degraded mode if helpers unavailable
     PredictionTypes = None
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SectionLayout:
+    """Declarative description of how fields map to UI sections."""
+
+    id: str
+    title: str
+    icon: str = ""
+    description: Optional[str] = None
+    advanced: bool = False
+    parent: Optional[str] = None
+    match_section: Optional[str] = None
+    match_subsections: Optional[Tuple[Optional[str], ...]] = None
+    subsection_override: Optional[str] = None
+    template: Optional[str] = None
+    empty_message: Optional[str] = None
+    order: int = 0
+    include_if_empty: bool = False
 
 
 class FieldFormat(str, Enum):
@@ -46,9 +66,391 @@ class FieldService:
     }
 
     _TEXT_ENCODER_PRECISION_FIELDS = {f"text_encoder_{idx}_precision" for idx in range(1, 5)}
-    _NOISE_OFFSET_FIELDS = {"noise_offset", "noise_offset_probability"}
+    _NOISE_OFFSET_FIELDS = {"offset_noise", "noise_offset", "noise_offset_probability"}
+    _FLOW_SCHEDULE_FIELDS = {
+        "flow_sigmoid_scale",
+        "flow_use_uniform_schedule",
+        "flow_use_beta_schedule",
+        "flow_beta_schedule_alpha",
+        "flow_beta_schedule_beta",
+        "flow_schedule_shift",
+        "flow_schedule_auto_shift",
+    }
+    _SOFT_MIN_SNR_FIELDS = {
+        "use_soft_min_snr",
+        "soft_min_snr_sigma_data",
+    }
+    _SNR_GAMMA_FIELDS = {"snr_gamma"}
 
     _WEBUI_ONLY_FIELDS = {"configs_dir"}
+
+    _TAB_SECTION_LAYOUTS: Dict[str, Tuple[SectionLayout, ...]] = {
+        "basic": (
+            SectionLayout(
+                id="project",
+                title="Project Settings",
+                icon="fas fa-project-diagram",
+                match_section="project",
+                match_subsections=(None,),
+                subsection_override="",
+                order=10,
+            ),
+            SectionLayout(
+                id="project_advanced",
+                title="",
+                icon="",
+                advanced=True,
+                parent="project",
+                match_section="project",
+                match_subsections=("advanced",),
+                subsection_override="advanced_project",
+                order=11,
+            ),
+            SectionLayout(
+                id="essential_settings",
+                title="Essential Paths",
+                icon="fas fa-folder-open",
+                match_section="essential_settings",
+                match_subsections=(None, "paths"),
+                subsection_override="",
+                order=20,
+            ),
+            SectionLayout(
+                id="data_config",
+                title="Dataset Binding",
+                icon="fas fa-link",
+                match_section="data_config",
+                match_subsections=None,
+                subsection_override="",
+                order=30,
+            ),
+            SectionLayout(
+                id="training_essentials",
+                title="Training Essentials",
+                icon="fas fa-bolt",
+                match_section="training_essentials",
+                match_subsections=None,
+                subsection_override="",
+                order=40,
+            ),
+            SectionLayout(
+                id="training_data",
+                title="Training Data",
+                icon="fas fa-database",
+                match_section="training_data",
+                match_subsections=None,
+                subsection_override="",
+                order=50,
+            ),
+            SectionLayout(
+                id="training_config",
+                title="Training Configuration",
+                icon="fas fa-sliders-h",
+                match_section="training_config",
+                match_subsections=None,
+                subsection_override="",
+                order=60,
+            ),
+            SectionLayout(
+                id="logging",
+                title="Logging",
+                icon="fas fa-stream",
+                match_section="logging",
+                match_subsections=(None,),
+                subsection_override="",
+                order=70,
+            ),
+            SectionLayout(
+                id="logging_monitoring",
+                title="Webhook & Monitoring",
+                icon="fas fa-satellite-dish",
+                advanced=True,
+                parent="logging",
+                match_section="logging",
+                match_subsections=("monitoring",),
+                subsection_override="monitoring",
+                order=71,
+            ),
+            SectionLayout(
+                id="checkpointing",
+                title="Checkpointing",
+                icon="fas fa-save",
+                match_section="checkpointing",
+                match_subsections=None,
+                subsection_override="",
+                order=80,
+            ),
+        ),
+        "model": (
+            SectionLayout(
+                id="model_config",
+                title="Model Configuration",
+                icon="fas fa-brain",
+                match_section="model_config",
+                match_subsections=(None, "architecture"),
+                subsection_override="",
+                order=10,
+            ),
+            SectionLayout(
+                id="model_config_advanced_paths",
+                title="",
+                icon="",
+                advanced=True,
+                parent="model_config",
+                match_section="model_config",
+                match_subsections=("advanced_paths",),
+                subsection_override="advanced_paths",
+                order=11,
+            ),
+            SectionLayout(
+                id="architecture",
+                title="Architecture",
+                icon="fas fa-cogs",
+                match_section="architecture",
+                match_subsections=(None,),
+                subsection_override="",
+                order=20,
+            ),
+            SectionLayout(
+                id="architecture_advanced",
+                title="",
+                icon="",
+                advanced=True,
+                parent="architecture",
+                match_section="architecture",
+                match_subsections=("advanced",),
+                subsection_override="advanced",
+                order=21,
+            ),
+            SectionLayout(
+                id="lora_config",
+                title="LoRA Configuration",
+                icon="fas fa-layer-group",
+                match_section="lora_config",
+                match_subsections=(None, "basic"),
+                subsection_override="",
+                order=30,
+            ),
+            SectionLayout(
+                id="lora_config_model_specific",
+                title="Model-Specific LoRA",
+                icon="fas fa-cube",
+                advanced=True,
+                parent="lora_config",
+                match_section="lora_config",
+                match_subsections=("model_specific",),
+                subsection_override="model_specific",
+                order=31,
+            ),
+            SectionLayout(
+                id="lora_config_advanced",
+                title="",
+                icon="",
+                advanced=True,
+                parent="lora_config",
+                match_section="lora_config",
+                match_subsections=("advanced",),
+                subsection_override="advanced",
+                order=32,
+            ),
+            SectionLayout(
+                id="vae_config",
+                title="VAE Configuration",
+                icon="fas fa-image",
+                match_section="vae_config",
+                match_subsections=None,
+                subsection_override="",
+                order=40,
+            ),
+            SectionLayout(
+                id="quantization",
+                title="Quantization",
+                icon="fas fa-microchip",
+                match_section="quantization",
+                match_subsections=None,
+                subsection_override="",
+                order=50,
+            ),
+            SectionLayout(
+                id="memory_optimization",
+                title="Memory Optimisation",
+                icon="fas fa-memory",
+                match_section="memory_optimization",
+                match_subsections=(None, "memory_optimization"),
+                subsection_override="",
+                order=60,
+            ),
+            SectionLayout(
+                id="memory_optimization_advanced",
+                title="",
+                icon="",
+                advanced=True,
+                parent="memory_optimization",
+                match_section="memory_optimization",
+                match_subsections=("advanced",),
+                subsection_override="advanced",
+                order=61,
+            ),
+            SectionLayout(
+                id="ema_config",
+                title="EMA Configuration",
+                icon="fas fa-wave-square",
+                match_section="ema_config",
+                match_subsections=None,
+                subsection_override="",
+                order=70,
+            ),
+            SectionLayout(
+                id="distillation",
+                title="Distillation",
+                icon="fas fa-copy",
+                match_section="distillation",
+                match_subsections=None,
+                subsection_override="",
+                order=80,
+            ),
+            SectionLayout(
+                id="model_specific",
+                title="Model-Specific Settings",
+                icon="fas fa-cube",
+                match_section="model_specific",
+                match_subsections=None,
+                subsection_override="",
+                order=90,
+            ),
+        ),
+        "training": (
+            SectionLayout(
+                id="training_schedule",
+                title="Training Schedule",
+                icon="fas fa-calendar-alt",
+                match_section="training_schedule",
+                match_subsections=(None,),
+                subsection_override="",
+                order=10,
+            ),
+            SectionLayout(
+                id="training_schedule_advanced",
+                title="",
+                icon="",
+                advanced=True,
+                parent="training_schedule",
+                match_section="training_schedule",
+                match_subsections=("advanced",),
+                subsection_override="advanced",
+                order=11,
+            ),
+            SectionLayout(
+                id="learning_rate",
+                title="Learning Rate",
+                icon="fas fa-chart-line",
+                match_section="learning_rate",
+                match_subsections=(None,),
+                subsection_override="",
+                order=20,
+            ),
+            SectionLayout(
+                id="learning_rate_advanced",
+                title="",
+                icon="",
+                advanced=True,
+                parent="learning_rate",
+                match_section="learning_rate",
+                match_subsections=("advanced",),
+                subsection_override="advanced",
+                order=21,
+            ),
+            SectionLayout(
+                id="optimizer_config",
+                title="Optimizer Configuration",
+                icon="fas fa-cogs",
+                match_section="optimizer_config",
+                match_subsections=(None,),
+                subsection_override="",
+                order=30,
+            ),
+            SectionLayout(
+                id="optimizer_config_advanced",
+                title="",
+                icon="",
+                advanced=True,
+                parent="optimizer_config",
+                match_section="optimizer_config",
+                match_subsections=("advanced",),
+                subsection_override="advanced",
+                order=31,
+            ),
+            SectionLayout(
+                id="text_encoder",
+                title="Text Encoder",
+                icon="fas fa-font",
+                match_section="text_encoder",
+                match_subsections=(None,),
+                subsection_override="",
+                order=70,
+            ),
+            SectionLayout(
+                id="text_encoder_advanced",
+                title="",
+                icon="",
+                advanced=True,
+                parent="text_encoder",
+                match_section="text_encoder",
+                match_subsections=("advanced",),
+                subsection_override="advanced",
+                order=71,
+            ),
+            SectionLayout(
+                id="memory_optimization",
+                title="Memory Optimisation",
+                icon="fas fa-memory",
+                match_section="memory_optimization",
+                match_subsections=(None, "memory_optimization"),
+                subsection_override="",
+                order=60,
+            ),
+            SectionLayout(
+                id="memory_optimization_advanced",
+                title="",
+                icon="",
+                advanced=True,
+                parent="memory_optimization",
+                match_section="memory_optimization",
+                match_subsections=("advanced",),
+                subsection_override="advanced",
+                order=61,
+            ),
+            SectionLayout(
+                id="noise_settings",
+                title="Noise Settings",
+                icon="fas fa-broadcast-tower",
+                match_section="noise_settings",
+                match_subsections=None,
+                subsection_override="",
+                order=50,
+            ),
+            SectionLayout(
+                id="loss_functions",
+                title="Loss Functions",
+                icon="fas fa-calculator",
+                match_section="loss_functions",
+                match_subsections=(None,),
+                subsection_override="",
+                order=40,
+            ),
+            SectionLayout(
+                id="loss_functions_advanced",
+                title="",
+                icon="",
+                advanced=True,
+                parent="loss_functions",
+                match_section="loss_functions",
+                match_subsections=("advanced",),
+                subsection_override="advanced",
+                order=41,
+            ),
+        ),
+    }
 
     def __init__(self):
         """Initialize field service."""
@@ -287,6 +689,21 @@ class FieldService:
                 if not self._config_has_field(raw_config_data, name):
                     continue
 
+            if name in self._FLOW_SCHEDULE_FIELDS:
+                prediction_type = self._resolve_prediction_type(combined_config)
+                if prediction_type != "flow_matching" and not self._config_has_field(raw_config_data, name):
+                    continue
+
+            if name in self._SOFT_MIN_SNR_FIELDS:
+                prediction_type = self._resolve_prediction_type(combined_config)
+                if prediction_type not in {"v_prediction", "epsilon"}:
+                    continue
+
+            if name in self._SNR_GAMMA_FIELDS:
+                prediction_type = self._resolve_prediction_type(combined_config)
+                if prediction_type not in {"v_prediction", "epsilon"}:
+                    continue
+
             if name in {"hidream_use_load_balancing_loss", "hidream_load_balancing_loss_weight"}:
                 model_family = self._get_config_value(combined_config, "model_family")
                 if model_family != "hidream":
@@ -442,21 +859,30 @@ class FieldService:
         resolved_value = config_values.get(f"{field.name}__resolved")
         additional_hint = config_values.get(f"{field.name}__hint")
 
+        initial_value = field_value
+        if field_value is None and field.field_type in {FieldType.TEXT, FieldType.TEXTAREA, FieldType.NUMBER}:
+            initial_value = ""
+
         field_dict = {
             "id": field.name,
             "name": field.arg_name,
             "label": field.ui_label,
             "type": field.field_type.value.lower(),
-            "value": "" if field.field_type in (FieldType.TEXT, FieldType.TEXTAREA) and field_value is None else field_value,
+            "value": initial_value,
             "description": field.help_text,
+            "order": getattr(field, "order", 0),
         }
         # Include location metadata for downstream grouping
         if hasattr(field, "tab") and field.tab:
             field_dict["tab"] = field.tab
         if hasattr(field, "section") and field.section:
             field_dict["section_id"] = field.section
+            field_dict["_raw_section"] = field.section
         if hasattr(field, "subsection") and field.subsection:
             field_dict["subsection"] = field.subsection
+            field_dict["_raw_subsection"] = field.subsection
+        else:
+            field_dict["_raw_subsection"] = None
 
         custom_component = getattr(field, "custom_component", None)
         if custom_component:
@@ -509,7 +935,7 @@ class FieldService:
             extra_classes.append("conditional-field")
 
         # Add min/max for number fields
-        if field.field_type.value == "NUMBER":
+        if field.field_type.value.upper() == "NUMBER":
             if hasattr(field, "min_value") and field.min_value is not None:
                 field_dict["min"] = field.min_value
             if hasattr(field, "max_value") and field.max_value is not None:
@@ -562,7 +988,7 @@ class FieldService:
                 field_dict["options"] = normalized_options
 
         # Add placeholder
-        if field_type_upper in ["TEXT", "TEXTAREA"]:
+        if field_type_upper in ["TEXT", "TEXTAREA", "NUMBER"]:
             if hasattr(field, "placeholder") and field.placeholder:
                 field_dict["placeholder"] = field.placeholder
 
@@ -593,6 +1019,182 @@ class FieldService:
         field_dict["extra_classes"] = " ".join(extra_classes)
 
         return field_dict
+
+    def build_template_tab(
+        self,
+        tab_name: str,
+        config_values: Dict[str, Any],
+        raw_config: Optional[Dict[str, Any]] = None,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Return template-ready fields and sections for a tab."""
+
+        tab_fields = self.field_registry.get_fields_for_tab(tab_name)
+        conversion_options = dict(options or {})
+        conversion_options.setdefault("raw_config", raw_config or {})
+
+        template_fields = self.convert_fields(
+            tab_fields,
+            FieldFormat.TEMPLATE,
+            config_values,
+            conversion_options,
+        )
+
+        arranged_fields, sections = self._apply_template_layout(tab_name, template_fields)
+        self._apply_tab_specific_overrides(
+            tab_name,
+            arranged_fields,
+            config_values,
+            raw_config=conversion_options.get("raw_config") or {},
+        )
+        return arranged_fields, sections
+
+    def _apply_template_layout(
+        self, tab_name: str, fields: List[Dict[str, Any]]
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Map fields into declarative sections for template rendering."""
+
+        layout = self._TAB_SECTION_LAYOUTS.get(tab_name, ())
+        layout_map = {entry.id: entry for entry in layout}
+        used_layout_ids: Set[str] = set()
+        fallback_sections: Dict[str, Dict[str, Any]] = {}
+
+        for field in fields:
+            raw_section = field.pop("_raw_section", None)
+            raw_subsection = field.pop("_raw_subsection", None)
+
+            matched_entry: Optional[SectionLayout] = None
+            for entry in layout:
+                target_section = entry.match_section or entry.id
+                if target_section != raw_section:
+                    continue
+                if entry.match_subsections is None or raw_subsection in entry.match_subsections:
+                    matched_entry = entry
+                    break
+
+            if matched_entry:
+                field["section_id"] = matched_entry.id
+                if matched_entry.parent:
+                    field["parent_section"] = matched_entry.parent
+                if matched_entry.subsection_override is not None:
+                    if matched_entry.subsection_override == "":
+                        field.pop("subsection", None)
+                    else:
+                        field["subsection"] = matched_entry.subsection_override
+                field["_section_order"] = matched_entry.order
+                used_layout_ids.add(matched_entry.id)
+                continue
+
+            fallback_id_parts = [raw_section or "uncategorized"]
+            if raw_subsection not in (None, "", "general"):
+                fallback_id_parts.append(raw_subsection)
+            fallback_id = "__".join(fallback_id_parts)
+
+            field["section_id"] = fallback_id
+            field["_section_order"] = 10_000
+
+            if raw_subsection not in (None, ""):
+                field["subsection"] = raw_subsection
+
+            if fallback_id not in fallback_sections:
+                fallback_sections[fallback_id] = {
+                    "id": fallback_id,
+                    "title": fallback_id.replace("__", " ").replace("_", " ").title(),
+                    "icon": "fas fa-sliders-h",
+                    "description": None,
+                    "advanced": False,
+                    "template": None,
+                    "empty_message": None,
+                    "order": 50_000,
+                }
+
+        # Build ordered sections list
+        sections: List[Dict[str, Any]] = []
+
+        for entry in layout:
+            if entry.id not in used_layout_ids and not entry.include_if_empty:
+                continue
+            sections.append(
+                {
+                    "id": entry.id,
+                    "title": entry.title,
+                    "icon": entry.icon,
+                    "description": entry.description,
+                    "advanced": entry.advanced,
+                    "template": entry.template,
+                    "empty_message": entry.empty_message,
+                    "order": entry.order,
+                }
+            )
+
+        if fallback_sections:
+            sections.extend(fallback_sections.values())
+
+        sections.sort(key=lambda item: item.get("order", 0))
+
+        # Attach ids for quick lookup when pruning empty sections later
+        section_ids = {section["id"] for section in sections}
+
+        # Sort fields to keep section ordering consistent
+        fields.sort(key=lambda item: (item.get("_section_order", 0), item.get("order", 0), item.get("label", "")))
+
+        for field in fields:
+            field.pop("_section_order", None)
+
+        # Remove empty sections without templates
+        populated_section_ids = {field.get("section_id") for field in fields}
+        filtered_sections: List[Dict[str, Any]] = []
+        for section in sections:
+            layout_entry = layout_map.get(section["id"])
+            include_when_empty = layout_entry.include_if_empty if layout_entry else False
+            if section["id"] in populated_section_ids or include_when_empty:
+                filtered_sections.append({key: value for key, value in section.items() if key != "order"})
+
+        return fields, filtered_sections
+
+    def _apply_tab_specific_overrides(
+        self,
+        tab_name: str,
+        fields: List[Dict[str, Any]],
+        config_values: Dict[str, Any],
+        raw_config: Dict[str, Any],
+    ) -> None:
+        """Adjust template fields with tab-specific runtime rules."""
+
+        if tab_name != "model":
+            return
+
+        model_type = str(config_values.get("model_type") or "full")
+        is_lora_type = model_type == "lora"
+        combined_config = dict(raw_config)
+        combined_config.update(config_values)
+        danger_mode_enabled = self._is_danger_mode_enabled(combined_config)
+        lora_rank_value = config_values.get("lora_rank", "16")
+
+        for field in fields:
+            field_id = field.get("id")
+            if field_id == "lora_alpha":
+                if not is_lora_type:
+                    field["disabled"] = True
+                elif danger_mode_enabled:
+                    field.pop("disabled", None)
+                else:
+                    field["value"] = lora_rank_value
+                    field["disabled"] = True
+            elif field_id == "prediction_type":
+                field["disabled"] = not danger_mode_enabled
+                extra_classes = field.get("extra_classes", "")
+                flag = "danger-mode-target"
+                field["extra_classes"] = f"{extra_classes} {flag}".strip()
+            elif field_id in {"base_model_precision", "text_encoder_1_precision", "quantize_via"}:
+                if is_lora_type:
+                    field.pop("disabled", None)
+                    continue
+
+                field["disabled"] = True
+                extra_classes = field.get("extra_classes", "")
+                flag = "field-disabled"
+                field["extra_classes"] = f"{extra_classes} {flag}".strip()
 
     def _get_default_model_path(self, config_values: Dict[str, Any]) -> Optional[str]:
         """Resolve the default model path for the selected family/flavour."""
@@ -684,19 +1286,56 @@ class FieldService:
         for field_name, override_value in overrides.items():
             field = self.field_registry.get_field(field_name)
             if field:
-                # Apply type conversion based on field type
+                field_type = (field.field_type.value or "").lower()
+
                 try:
-                    if field.field_type.value == "NUMBER":
-                        override_value = float(override_value) if "." in str(override_value) else int(override_value)
-                    elif field.field_type.value == "BOOLEAN":
-                        override_value = str(override_value).lower() in ("true", "1", "yes", "on")
-                    elif field.field_type.value == "MULTI_SELECT" and isinstance(override_value, str):
-                        override_value = [v.strip() for v in override_value.split(",")]
+                    if field_type == "number":
+                        if override_value is None:
+                            converted_value = None
+                        elif isinstance(override_value, (int, float)):
+                            converted_value = override_value
+                        elif isinstance(override_value, str):
+                            stripped = override_value.strip()
+                            if not stripped or stripped.lower() == "none":
+                                converted_value = None
+                            else:
+                                if any(ch in stripped.lower() for ch in [".", "e"]):
+                                    converted_value = float(stripped)
+                                    if converted_value.is_integer():
+                                        converted_value = int(converted_value)
+                                else:
+                                    converted_value = int(stripped)
+                        else:
+                            converted_value = None
+
+                        override_value = converted_value
+
+                    elif field_type == "checkbox":
+                        if isinstance(override_value, str):
+                            override_value = override_value.strip().lower() in {"true", "1", "yes", "on"}
+                        else:
+                            override_value = bool(override_value)
+
+                    elif field_type == "multi_select" and isinstance(override_value, str):
+                        override_value = [v.strip() for v in override_value.split(",") if v.strip()]
+
                 except (ValueError, TypeError):
-                    logger.warning(f"Failed to convert {field_name} value: {override_value}")
+                    logger.warning(f"Failed to convert %s value: %s", field_name, override_value)
                     continue
 
-            merged[field_name] = override_value
+            arg_name = getattr(field, "arg_name", None)
+            legacy_key = f"--{field_name}" if not (field_name or "").startswith("--") else field_name
+
+            if override_value is None:
+                merged.pop(field_name, None)
+                if arg_name:
+                    merged.pop(arg_name, None)
+                merged.pop(legacy_key, None)
+            else:
+                merged[field_name] = override_value
+                if arg_name:
+                    merged[arg_name] = override_value
+                merged[legacy_key] = override_value
 
         return merged
 
