@@ -87,17 +87,9 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             section="loss_functions",
             order=4,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="SNR gamma must be non-negative")],
-            help_text="SNR weighting gamma value (0 = disabled)",
-            tooltip="Rebalances loss across timesteps. Recommended value: 5.0. Helps prevent overtraining on easy timesteps.",
+            help_text="SNR weighting gamma value (0 = disabled). Try 5 when using epsilon/V-prediction models.",
+            tooltip="Rebalances loss across timesteps. Recommended value: 5.0 for epsilon and V-Prediction models to curb overemphasis on easy timesteps.",
             importance=ImportanceLevel.ADVANCED,
-            dependencies=[
-                FieldDependency(
-                    field="model_family",
-                    operator="in",
-                    values=["sd1x", "sdxl", "kolors", "deepfloyd", "pixart_sigma"],
-                    action="show",
-                )
-            ],
         )
     )
 

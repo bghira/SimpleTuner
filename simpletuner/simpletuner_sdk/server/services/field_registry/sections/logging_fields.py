@@ -269,8 +269,8 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             default_value=1.0,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative")],
             dependencies=[FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True)],
-            help_text="Weight factor for SNR-based loss scaling",
-            tooltip="Alternative to snr_gamma. Controls how much SNR affects loss weighting.",
+            help_text="Multiplier λ applied to the SNR-weighted loss term (1.0 keeps default strength)",
+            tooltip="Scales the SNR-weighted loss by λ: values >1 amplify the penalty, values <1 dampen it.",
             importance=ImportanceLevel.ADVANCED,
             order=28,
         )
