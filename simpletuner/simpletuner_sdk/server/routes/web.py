@@ -153,7 +153,7 @@ async def training_tab_redirect(request: Request):
 @router.get("/trainer/tabs/advanced", response_class=HTMLResponse)
 async def advanced_tab_redirect(request: Request):
     """Redirect old advanced tab URL to new unified handler."""
-    return await render_tab(request, "advanced")
+    return await render_tab(request, "basic")
 
 
 @router.get("/trainer/tabs/datasets", response_class=HTMLResponse)
