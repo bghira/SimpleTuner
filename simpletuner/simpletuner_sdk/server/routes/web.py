@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from ..dependencies.common import TabRenderData, get_config_store, get_tab_render_data
+from ..services.search_service import SearchService
 from ..services.tab_service import TabService
 from ..services.webui_state import WebUIStateStore
 from ..utils.paths import get_template_directory
@@ -36,6 +37,7 @@ templates = Jinja2Templates(directory=str(candidate))
 
 # Initialize services
 tab_service = TabService(templates)
+search_service = SearchService(tab_service)
 
 
 @router.get("/trainer", response_class=HTMLResponse)
@@ -176,3 +178,14 @@ async def validation_tab_redirect(request: Request):
 async def publishing_tab_redirect(request: Request):
     """Redirect old publishing tab URL to new unified handler."""
     return await render_tab(request, "publishing")
+
+
+@router.get("/trainer/search")
+async def search_tabs_and_fields(request: Request, q: str = "", limit: int = 20):
+    """Search across tabs and fields with fuzzy matching."""
+    try:
+        results = search_service.search_tabs_and_fields(q, limit)
+        return results
+    except Exception as e:
+        logger.error(f"Search error: {e}", exc_info=True)
+        return {"query": q, "results": {"tabs": [], "fields": []}, "total_matches": 0, "error": str(e)}
