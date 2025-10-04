@@ -977,6 +977,10 @@ class ConfigsService:
             "--train_batch_size",
         }
 
+        nullable_numeric_fields = {
+            "--accelerator_cache_clear_interval",
+        }
+
         always_include_fields = {"--model_flavour", "--optimizer_config"}
 
         for key, value in form_data.items():
@@ -994,6 +998,10 @@ class ConfigsService:
             if config_key in numeric_fields:
                 if value in (None, ""):
                     value = "0"
+            elif config_key in nullable_numeric_fields:
+                if value in (None, ""):
+                    config_dict[config_key] = None
+                    continue
             elif config_key in always_include_fields:
                 if value in (None, ""):
                     value = ""
