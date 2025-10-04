@@ -19,8 +19,9 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--i_know_what_i_am_doing",
             ui_label="I Know What I'm Doing",
             field_type=FieldType.CHECKBOX,
-            tab="advanced",
-            section="safety_overrides",
+            tab="basic",
+            section="project",
+            subsection="advanced",
             default_value=False,
             help_text="Unlock experimental overrides and bypass built-in safety limits.",
             tooltip="Only enable if you understand the implications. Required for editing prediction type and other safeguards.",
@@ -36,14 +37,15 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--flow_sigmoid_scale",
             ui_label="Flow Sigmoid Scale",
             field_type=FieldType.NUMBER,
-            tab="advanced",
-            section="flow_matching",
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
             default_value=1.0,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="Scale factor for sigmoid timestep sampling for flow-matching models.",
             tooltip="Adjusts the sigmoid curve for timestep sampling. Higher values may affect training dynamics.",
             importance=ImportanceLevel.ADVANCED,
-            order=1,
+            order=20,
         )
     )
 
@@ -53,13 +55,13 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--flux_fast_schedule",
             ui_label="Flow Fast Schedule",
             field_type=FieldType.CHECKBOX,
-            tab="advanced",
-            section="flow_matching",
+            tab="model",
+            section="model_specific",
             default_value=False,
             help_text="Use experimental fast schedule for Flux.1S training",
             tooltip="Experimental feature that may improve training speed for Flux.1S models.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=2,
+            order=11,
         )
     )
 
@@ -69,13 +71,14 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--flow_use_uniform_schedule",
             ui_label="Use Uniform Schedule",
             field_type=FieldType.CHECKBOX,
-            tab="advanced",
-            section="flow_matching",
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
             default_value=False,
             help_text="Use uniform schedule instead of sigmoid for flow-matching",
             tooltip="May cause bias toward dark images. Use with caution.",
             importance=ImportanceLevel.ADVANCED,
-            order=3,
+            order=21,
         )
     )
 
@@ -85,13 +88,14 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--flow_use_beta_schedule",
             ui_label="Use Beta Schedule",
             field_type=FieldType.CHECKBOX,
-            tab="advanced",
-            section="flow_matching",
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
             default_value=False,
             help_text="Use beta schedule instead of sigmoid for flow-matching",
             tooltip="Alternative to sigmoid scheduling. May affect training dynamics.",
             importance=ImportanceLevel.ADVANCED,
-            order=4,
+            order=22,
         )
     )
 
@@ -101,14 +105,15 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--flow_beta_schedule_alpha",
             ui_label="Beta Schedule Alpha",
             field_type=FieldType.NUMBER,
-            tab="advanced",
-            section="flow_matching",
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
             default_value=2.0,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="Alpha value for beta schedule (default: 2.0)",
             tooltip="Controls the shape of the beta distribution curve.",
             importance=ImportanceLevel.ADVANCED,
-            order=5,
+            order=23,
         )
     )
 
@@ -118,14 +123,15 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--flow_beta_schedule_beta",
             ui_label="Beta Schedule Beta",
             field_type=FieldType.NUMBER,
-            tab="advanced",
-            section="flow_matching",
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
             default_value=2.0,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="Beta value for beta schedule (default: 2.0)",
             tooltip="Controls the shape of the beta distribution curve.",
             importance=ImportanceLevel.ADVANCED,
-            order=6,
+            order=24,
         )
     )
 
@@ -135,14 +141,15 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--flow_schedule_shift",
             ui_label="Schedule Shift",
             field_type=FieldType.NUMBER,
-            tab="advanced",
-            section="flow_matching",
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
             default_value=3,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="Shift the noise schedule for flow-matching models",
             tooltip="Affects contrast/brightness learning. Higher values focus on composition, lower on fine details.",
             importance=ImportanceLevel.ADVANCED,
-            order=7,
+            order=25,
         )
     )
 
@@ -152,13 +159,14 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--flow_schedule_auto_shift",
             ui_label="Auto Shift Schedule",
             field_type=FieldType.CHECKBOX,
-            tab="advanced",
-            section="flow_matching",
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
             default_value=False,
             help_text="Auto-adjust schedule shift based on image resolution",
             tooltip="Automatically calculates optimal shift for different resolutions. May require learning rate adjustment.",
             importance=ImportanceLevel.ADVANCED,
-            order=8,
+            order=26,
         )
     )
 
@@ -169,14 +177,14 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--flux_guidance_mode",
             ui_label="Flux Guidance Mode",
             field_type=FieldType.SELECT,
-            tab="advanced",
-            section="flux_guidance",
+            tab="model",
+            section="model_specific",
             default_value="constant",
             choices=[{"value": "constant", "label": "Constant"}, {"value": "random-range", "label": "Random Range"}],
             help_text="Guidance mode for Flux training",
             tooltip="Constant uses same guidance for all samples. Random Range varies guidance per sample.",
             importance=ImportanceLevel.ADVANCED,
-            order=9,
+            order=40,
         )
     )
 
@@ -187,7 +195,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--flux_attention_masked_training",
             ui_label="Attention Masked Training",
             field_type=FieldType.CHECKBOX,
-            tab="advanced",
+            tab="model",
             section="model_specific",
             default_value=False,
             model_specific=["flux"],
@@ -205,7 +213,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--flux_fast_schedule",
             ui_label="Fast Training Schedule",
             field_type=FieldType.CHECKBOX,
-            tab="advanced",
+            tab="model",
             section="model_specific",
             default_value=False,
             model_specific=["flux"],
@@ -222,14 +230,14 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--flux_guidance_value",
             ui_label="Flux Guidance Value",
             field_type=FieldType.NUMBER,
-            tab="advanced",
-            section="flux_guidance",
+            tab="model",
+            section="model_specific",
             default_value=1.0,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="Guidance value for constant mode",
             tooltip="1.0 preserves CFG distillation. Higher values require CFG at inference.",
             importance=ImportanceLevel.ADVANCED,
-            order=10,
+            order=41,
         )
     )
 
@@ -239,14 +247,14 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--flux_guidance_min",
             ui_label="Flux Guidance Min",
             field_type=FieldType.NUMBER,
-            tab="advanced",
-            section="flux_guidance",
+            tab="model",
+            section="model_specific",
             default_value=0.0,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="Minimum guidance value for random-range mode",
             tooltip="Lower bound of guidance range when using random-range mode.",
             importance=ImportanceLevel.ADVANCED,
-            order=11,
+            order=42,
         )
     )
 
@@ -256,14 +264,14 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--flux_guidance_max",
             ui_label="Flux Guidance Max",
             field_type=FieldType.NUMBER,
-            tab="advanced",
-            section="flux_guidance",
+            tab="model",
+            section="model_specific",
             default_value=4.0,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="Maximum guidance value for random-range mode",
             tooltip="Upper bound of guidance range when using random-range mode.",
             importance=ImportanceLevel.ADVANCED,
-            order=12,
+            order=43,
         )
     )
 
@@ -274,14 +282,16 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--t5_padding",
             ui_label="T5 Padding",
             field_type=FieldType.SELECT,
-            tab="advanced",
+            tab="training",
             section="text_encoder",
+            subsection="advanced",
             default_value="unmodified",
             choices=[{"value": "zero", "label": "Zero"}, {"value": "unmodified", "label": "Unmodified"}],
+            dependencies=[FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True)],
             help_text="Padding behavior for T5 text encoder",
             tooltip="Zero pads with zeros. Unmodified leaves original padding. Affects model behavior.",
             importance=ImportanceLevel.ADVANCED,
-            order=13,
+            order=10,
         )
     )
 
@@ -291,14 +301,16 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--sd3_clip_uncond_behaviour",
             ui_label="SD3 CLIP Unconditional Behavior",
             field_type=FieldType.SELECT,
-            tab="advanced",
+            tab="training",
             section="text_encoder",
+            subsection="advanced",
             default_value="empty_string",
             choices=[{"value": "empty_string", "label": "Empty String"}, {"value": "zero", "label": "Zero"}],
+            dependencies=[FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True)],
             help_text="How SD3 handles unconditional prompts",
             tooltip="Affects how SD3 processes prompts without conditioning. Empty string is default.",
             importance=ImportanceLevel.ADVANCED,
-            order=14,
+            order=11,
         )
     )
 
@@ -308,14 +320,16 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--sd3_t5_uncond_behaviour",
             ui_label="SD3 T5 Unconditional Behavior",
             field_type=FieldType.SELECT,
-            tab="advanced",
+            tab="training",
             section="text_encoder",
+            subsection="advanced",
             default_value=None,
             choices=[{"value": "empty_string", "label": "Empty String"}, {"value": "zero", "label": "Zero"}],
+            dependencies=[FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True)],
             help_text="How SD3 T5 handles unconditional prompts",
             tooltip="Overrides CLIP behavior for T5. If not set, follows CLIP setting.",
             importance=ImportanceLevel.ADVANCED,
-            order=15,
+            order=12,
         )
     )
 
@@ -326,13 +340,15 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--soft_min_snr_sigma_data",
             ui_label="Soft Min SNR Sigma Data",
             field_type=FieldType.NUMBER,
-            tab="advanced",
+            tab="training",
             section="loss_functions",
+            subsection="advanced",
             default_value=None,
+            dependencies=[FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True)],
             help_text="Sigma data for soft min SNR weighting",
             tooltip="Required when using soft min SNR. Affects loss calculation.",
             importance=ImportanceLevel.ADVANCED,
-            order=16,
+            order=27,
         )
     )
 
@@ -343,9 +359,9 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--mixed_precision",
             ui_label="Mixed Precision",
             field_type=FieldType.SELECT,
-            tab="advanced",
-            section="memory_performance",
-            subsection="precision",
+            tab="training",
+            section="memory_optimization",
+            subsection="advanced",
             default_value="bf16",
             choices=[
                 {"value": "no", "label": "No (FP32)"},
@@ -356,26 +372,8 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             help_text="Precision for training computations",
             tooltip="BF16 is recommended for stability. FP16 saves memory but less stable. FP8 is experimental.",
             importance=ImportanceLevel.IMPORTANT,
-            order=17,
+            order=10,
             dependencies=[FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True)],
-        )
-    )
-
-    # Gradient Checkpointing
-    registry._add_field(
-        ConfigField(
-            name="gradient_checkpointing",
-            arg_name="--gradient_checkpointing",
-            ui_label="Gradient Checkpointing",
-            field_type=FieldType.CHECKBOX,
-            tab="advanced",
-            section="memory_performance",
-            subsection="memory_optimization",
-            default_value=False,
-            help_text="Trade compute for memory during training",
-            tooltip="Reduces VRAM usage by recomputing activations. Slows training by ~20% but can enable larger batch sizes.",
-            importance=ImportanceLevel.ADVANCED,
-            order=18,
         )
     )
 
@@ -394,15 +392,15 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--attention_mechanism",
             ui_label="Attention Implementation",
             field_type=FieldType.SELECT,
-            tab="advanced",
-            section="memory_performance",
-            subsection="attention",
+            tab="model",
+            section="memory_optimization",
+            subsection="advanced",
             default_value="diffusers",
             choices=[{"value": a, "label": a} for a in attention_mechanisms],
             help_text="Attention computation backend",
             tooltip="Xformers saves memory. SageAttention is faster but experimental. Diffusers is default.",
             importance=ImportanceLevel.ADVANCED,
-            order=19,
+            order=10,
         )
     )
 
@@ -413,9 +411,9 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--sageattention_usage",
             ui_label="SageAttention Usage",
             field_type=FieldType.SELECT,
-            tab="advanced",
-            section="memory_performance",
-            subsection="attention",
+            tab="model",
+            section="memory_optimization",
+            subsection="advanced",
             default_value="inference",
             choices=[
                 {"value": "training", "label": "Training"},
@@ -425,7 +423,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             help_text="When to use SageAttention",
             tooltip="SageAttention breaks gradient tracking. Use only for inference unless you understand the implications.",
             importance=ImportanceLevel.ADVANCED,
-            order=20,
+            order=11,
         )
     )
 
@@ -436,15 +434,15 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--disable_tf32",
             ui_label="Disable TF32",
             field_type=FieldType.CHECKBOX,
-            tab="advanced",
-            section="memory_performance",
-            subsection="precision",
+            tab="training",
+            section="memory_optimization",
+            subsection="advanced",
             default_value=False,
             platform_specific=["cuda"],
             help_text="Disable TF32 precision on Ampere GPUs",
             tooltip="TF32 is enabled by default on RTX 3000/4000 series. Disabling may reduce performance but increase precision.",
             importance=ImportanceLevel.ADVANCED,
-            order=21,
+            order=11,
         )
     )
 
@@ -455,14 +453,14 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--set_grads_to_none",
             ui_label="Set Gradients to None",
             field_type=FieldType.CHECKBOX,
-            tab="advanced",
-            section="memory_performance",
-            subsection="memory_optimization",
+            tab="training",
+            section="memory_optimization",
+            subsection="advanced",
             default_value=False,
             help_text="Set gradients to None instead of zero",
             tooltip="Can save memory and improve performance. May cause issues with some optimizers.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=22,
+            order=12,
         )
     )
 
@@ -473,13 +471,13 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--noise_offset",
             ui_label="Noise Offset",
             field_type=FieldType.CHECKBOX,
-            tab="advanced",
+            tab="training",
             section="noise_settings",
             default_value=0.1,
             help_text="Fine-tuning against a modified noise",
             tooltip="See: https://www.crosslabs.org//blog/diffusion-with-offset-noise for more information.",
             importance=ImportanceLevel.ADVANCED,
-            order=23,
+            order=1,
         )
     )
 
@@ -490,7 +488,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--noise_offset_probability",
             ui_label="Noise Offset Probability",
             field_type=FieldType.NUMBER,
-            tab="advanced",
+            tab="training",
             section="noise_settings",
             default_value=0.25,
             validation_rules=[
@@ -500,7 +498,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             help_text="Probability of applying noise offset",
             tooltip="Apply noise offset this fraction of the time. Default: 25%",
             importance=ImportanceLevel.ADVANCED,
-            order=24,
+            order=2,
         )
     )
 
@@ -511,7 +509,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--input_perturbation",
             ui_label="Input Perturbation",
             field_type=FieldType.NUMBER,
-            tab="advanced",
+            tab="training",
             section="noise_settings",
             default_value=0.0,
             validation_rules=[
@@ -521,7 +519,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             help_text="Add additional noise only to the inputs fed to the model during training",
             tooltip="Add additional noise only to the inputs fed to the model during training. This will make the training converge faster. A value of 0.1 is suggested if you want to enable this. Input perturbation seems to also work with flow-matching (e.g., SD3 and Flux).",
             importance=ImportanceLevel.ADVANCED,
-            order=25,
+            order=3,
         )
     )
 
@@ -532,14 +530,14 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--input_perturbation_steps",
             ui_label="Input Perturbation Steps",
             field_type=FieldType.NUMBER,
-            tab="advanced",
+            tab="training",
             section="noise_settings",
             default_value=0,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="Only apply input perturbation over the first N steps with linear decay",
             tooltip="This should prevent artifacts from showing up in longer training runs. This should prevent artifacts from showing up in longer training runs.",
             importance=ImportanceLevel.ADVANCED,
-            order=26,
+            order=4,
         )
     )
 
@@ -569,6 +567,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.CHECKBOX,
             tab="training",
             section="learning_rate",
+            subsection="advanced",
             default_value=False,
             help_text="Scale the learning rate by the number of GPUs, gradient accumulation steps, and batch size",
             tooltip="When using multiple GPUs, gradient accumulation steps, and batch size, the learning rate may need to be scaled. This option will automatically scale the learning rate.",
@@ -586,6 +585,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.CHECKBOX,
             tab="training",
             section="learning_rate",
+            subsection="advanced",
             default_value=False,
             help_text="If using --lr-scale, use the square root of (number of GPUs * gradient accumulation steps * batch size)",
             tooltip="If using --lr-scale, use the square root of (number of GPUs * gradient accumulation steps * batch size).",
@@ -1436,9 +1436,9 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--mixed_precision",
             ui_label="Mixed Precision",
             field_type=FieldType.SELECT,
-            tab="advanced",
-            section="memory_performance",
-            subsection="precision",
+            tab="training",
+            section="memory_optimization",
+            subsection="advanced",
             default_value="bf16",
             choices=[
                 {"value": "no", "label": "No (FP32)"},
@@ -1449,26 +1449,8 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             help_text="Precision for training computations",
             tooltip="BF16 is recommended for stability. FP16 saves memory but less stable. FP8 is experimental.",
             importance=ImportanceLevel.IMPORTANT,
-            order=1,
+            order=10,
             dependencies=[FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True)],
-        )
-    )
-
-    # Gradient Checkpointing
-    registry._add_field(
-        ConfigField(
-            name="gradient_checkpointing",
-            arg_name="--gradient_checkpointing",
-            ui_label="Gradient Checkpointing",
-            field_type=FieldType.CHECKBOX,
-            tab="advanced",
-            section="memory_performance",
-            subsection="memory_optimization",
-            default_value=False,
-            help_text="Trade compute for memory during training",
-            tooltip="Reduces VRAM usage by recomputing activations. Slows training by ~20% but can enable larger batch sizes.",
-            importance=ImportanceLevel.ADVANCED,
-            order=1,
         )
     )
 
@@ -1487,15 +1469,15 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--attention_mechanism",
             ui_label="Attention Implementation",
             field_type=FieldType.SELECT,
-            tab="advanced",
-            section="memory_performance",
-            subsection="attention",
+            tab="model",
+            section="memory_optimization",
+            subsection="advanced",
             default_value="diffusers",
             choices=[{"value": a, "label": a} for a in attention_mechanisms],
             help_text="Attention computation backend",
             tooltip="Xformers saves memory. SageAttention is faster but experimental. Diffusers is default.",
             importance=ImportanceLevel.ADVANCED,
-            order=1,
+            order=10,
         )
     )
 
@@ -1506,15 +1488,15 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--disable_tf32",
             ui_label="Disable TF32",
             field_type=FieldType.CHECKBOX,
-            tab="advanced",
-            section="memory_performance",
-            subsection="precision",
+            tab="training",
+            section="memory_optimization",
+            subsection="advanced",
             default_value=False,
             platform_specific=["cuda"],
             help_text="Disable TF32 precision on Ampere GPUs",
             tooltip="TF32 is enabled by default on RTX 3000/4000 series. Disabling may reduce performance but increase precision.",
             importance=ImportanceLevel.ADVANCED,
-            order=3,
+            order=11,
         )
     )
 
@@ -1525,14 +1507,14 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--set_grads_to_none",
             ui_label="Set Gradients to None",
             field_type=FieldType.CHECKBOX,
-            tab="advanced",
-            section="memory_performance",
-            subsection="memory_optimization",
+            tab="training",
+            section="memory_optimization",
+            subsection="advanced",
             default_value=False,
             help_text="Set gradients to None instead of zero",
             tooltip="Can save memory and improve performance. May cause issues with some optimizers.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=2,
+            order=12,
         )
     )
 
@@ -1543,7 +1525,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--noise_offset",
             ui_label="Noise Offset",
             field_type=FieldType.NUMBER,
-            tab="advanced",
+            tab="training",
             section="noise_settings",
             default_value=0.1,
             validation_rules=[
@@ -1564,7 +1546,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--noise_offset_probability",
             ui_label="Noise Offset Probability",
             field_type=FieldType.NUMBER,
-            tab="advanced",
+            tab="training",
             section="noise_settings",
             default_value=0.25,
             validation_rules=[
@@ -1585,8 +1567,9 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--timestep_bias_strategy",
             ui_label="Timestep Bias Strategy",
             field_type=FieldType.SELECT,
-            tab="advanced",
-            section="timestep_bias",
+            tab="training",
+            section="training_schedule",
+            subsection="advanced",
             default_value=None,
             choices=[
                 {"value": "earlier", "label": "Bias Earlier"},
@@ -1597,7 +1580,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             help_text="Strategy for biasing timestep sampling",
             tooltip="'earlier'/'later' emphasise different regions of the schedule, 'range' targets a custom window, 'none' disables the bias.",
             importance=ImportanceLevel.ADVANCED,
-            order=3,
+            order=41,
         )
     )
 
@@ -1608,8 +1591,9 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--timestep_bias_begin",
             ui_label="Timestep Bias Begin",
             field_type=FieldType.NUMBER,
-            tab="advanced",
-            section="timestep_bias",
+            tab="training",
+            section="training_schedule",
+            subsection="advanced",
             default_value=0,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative"),
@@ -1621,7 +1605,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             help_text="Beginning of timestep bias range",
             tooltip="Start of timestep range to bias towards. Only used with timestep bias strategies.",
             importance=ImportanceLevel.ADVANCED,
-            order=4,
+            order=42,
         )
     )
 
@@ -1632,8 +1616,9 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--timestep_bias_end",
             ui_label="Timestep Bias End",
             field_type=FieldType.NUMBER,
-            tab="advanced",
-            section="timestep_bias",
+            tab="training",
+            section="training_schedule",
+            subsection="advanced",
             default_value=1000,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative"),
@@ -1645,7 +1630,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             help_text="End of timestep bias range",
             tooltip="End of timestep range to bias towards. Only used with timestep bias strategies.",
             importance=ImportanceLevel.ADVANCED,
-            order=5,
+            order=43,
         )
     )
 
@@ -1656,8 +1641,9 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--timestep_bias_multiplier",
             ui_label="Timestep Bias Multiplier",
             field_type=FieldType.NUMBER,
-            tab="advanced",
-            section="timestep_bias",
+            tab="training",
+            section="training_schedule",
+            subsection="advanced",
             default_value=1.0,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative")],
             dependencies=[
@@ -1666,7 +1652,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             help_text="Multiplier for timestep bias probability",
             tooltip="Strength of timestep bias. Higher values = stronger bias to selected timesteps.",
             importance=ImportanceLevel.ADVANCED,
-            order=6,
+            order=44,
         )
     )
 
@@ -1677,8 +1663,9 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--timestep_bias_portion",
             ui_label="Timestep Bias Portion",
             field_type=FieldType.NUMBER,
-            tab="advanced",
-            section="timestep_bias",
+            tab="training",
+            section="training_schedule",
+            subsection="advanced",
             default_value=0.25,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be between 0 and 1"),
@@ -1690,7 +1677,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             help_text="Portion of training steps to apply timestep bias",
             tooltip="Fraction of training where timestep bias is applied. 0.0 = entire training, 1.0 = only at end.",
             importance=ImportanceLevel.ADVANCED,
-            order=7,
+            order=45,
         )
     )
 
@@ -1701,8 +1688,9 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--training_scheduler_timestep_spacing",
             ui_label="Training Scheduler Timestep Spacing",
             field_type=FieldType.SELECT,
-            tab="advanced",
-            section="scheduler",
+            tab="training",
+            section="training_schedule",
+            subsection="advanced",
             default_value="trailing",
             choices=[
                 {"value": "leading", "label": "Leading"},
@@ -1712,7 +1700,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             help_text="Timestep spacing for training scheduler",
             tooltip="How timesteps are spaced during training. 'trailing' is most common for diffusion models.",
             importance=ImportanceLevel.ADVANCED,
-            order=8,
+            order=40,
         )
     )
 
@@ -1723,8 +1711,9 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--inference_scheduler_timestep_spacing",
             ui_label="Inference Scheduler Timestep Spacing",
             field_type=FieldType.SELECT,
-            tab="advanced",
-            section="scheduler",
+            tab="validation",
+            section="validation_schedule",
+            subsection="advanced",
             default_value="trailing",
             choices=[
                 {"value": "leading", "label": "Leading"},
@@ -1734,6 +1723,6 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             help_text="Timestep spacing for inference scheduler",
             tooltip="How timesteps are spaced during validation/inference. Should match training for consistency.",
             importance=ImportanceLevel.ADVANCED,
-            order=9,
+            order=21,
         )
     )
