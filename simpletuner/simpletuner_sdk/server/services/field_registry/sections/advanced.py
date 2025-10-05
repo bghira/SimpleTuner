@@ -817,7 +817,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.NUMBER,
             tab="data",
             section="caption_processing",
-            default_value=None,
+            default_value=0.1,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be between 0 and 1"),
                 ValidationRule(ValidationRuleType.MAX, value=1.0, message="Must be between 0 and 1"),
