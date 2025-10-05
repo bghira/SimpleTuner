@@ -40,6 +40,7 @@ class SectionLayout:
     advanced: bool = False
     parent: Optional[str] = None
     match_section: Optional[str] = None
+    match_sections: Optional[Tuple[str, ...]] = None
     match_subsections: Optional[Tuple[Optional[str], ...]] = None
     subsection_override: Optional[str] = None
     template: Optional[str] = None
@@ -90,8 +91,8 @@ class FieldService:
                 id="project",
                 title="Project Settings",
                 icon="fas fa-project-diagram",
-                match_section="project",
-                match_subsections=(None,),
+                match_sections=("project", "essential_settings"),
+                match_subsections=(None, "paths"),
                 subsection_override="",
                 order=10,
             ),
@@ -107,78 +108,62 @@ class FieldService:
                 order=11,
             ),
             SectionLayout(
-                id="essential_settings",
-                title="Essential Paths",
-                icon="fas fa-folder-open",
-                match_section="essential_settings",
-                match_subsections=(None, "paths"),
-                subsection_override="",
-                order=20,
-            ),
-            SectionLayout(
-                id="data_config",
-                title="Dataset Binding",
-                icon="fas fa-link",
-                match_section="data_config",
-                match_subsections=None,
-                subsection_override="",
-                order=30,
-            ),
-            SectionLayout(
-                id="training_essentials",
-                title="Training Essentials",
-                icon="fas fa-bolt",
-                match_section="training_essentials",
-                match_subsections=None,
-                subsection_override="",
-                order=40,
-            ),
-            SectionLayout(
                 id="training_data",
                 title="Training Data",
                 icon="fas fa-database",
-                match_section="training_data",
+                match_sections=("training_data", "training_essentials", "data_config"),
                 match_subsections=None,
                 subsection_override="",
-                order=50,
-            ),
-            SectionLayout(
-                id="training_config",
-                title="Training Configuration",
-                icon="fas fa-sliders-h",
-                match_section="training_config",
-                match_subsections=None,
-                subsection_override="",
-                order=60,
+                order=20,
             ),
             SectionLayout(
                 id="logging",
                 title="Logging",
                 icon="fas fa-stream",
-                match_section="logging",
+                match_sections=("logging",),
                 match_subsections=(None,),
                 subsection_override="",
-                order=70,
+                order=30,
             ),
             SectionLayout(
-                id="logging_monitoring",
-                title="Webhook & Monitoring",
-                icon="fas fa-satellite-dish",
+                id="logging_advanced",
+                title="",
+                icon="",
                 advanced=True,
                 parent="logging",
                 match_section="logging",
                 match_subsections=("monitoring",),
-                subsection_override="monitoring",
-                order=71,
+                subsection_override="advanced_logging",
+                order=31,
             ),
             SectionLayout(
                 id="checkpointing",
                 title="Checkpointing",
                 icon="fas fa-save",
+                match_sections=("checkpointing", "training_config"),
+                match_subsections=(None,),
+                subsection_override="",
+                order=32,
+            ),
+            SectionLayout(
+                id="checkpointing_advanced",
+                title="",
+                icon="",
+                advanced=True,
+                parent="checkpointing",
                 match_section="checkpointing",
+                match_subsections=("advanced",),
+                subsection_override="advanced_checkpointing",
+                order=33,
+            ),
+            SectionLayout(
+                id="other",
+                title="Other Settings",
+                icon="fas fa-sliders-h",
+                match_section="other",
                 match_subsections=None,
                 subsection_override="",
-                order=80,
+                order=40,
             ),
         ),
         "model": (
@@ -227,20 +212,9 @@ class FieldService:
                 title="LoRA Configuration",
                 icon="fas fa-layer-group",
                 match_section="lora_config",
-                match_subsections=(None, "basic"),
+                match_subsections=(None, "basic", "model_specific"),
                 subsection_override="",
                 order=30,
-            ),
-            SectionLayout(
-                id="lora_config_model_specific",
-                title="Model-Specific LoRA",
-                icon="fas fa-cube",
-                advanced=True,
-                parent="lora_config",
-                match_section="lora_config",
-                match_subsections=("model_specific",),
-                subsection_override="model_specific",
-                order=31,
             ),
             SectionLayout(
                 id="lora_config_advanced",
@@ -865,13 +839,15 @@ class FieldService:
 
         field_dict = {
             "id": field.name,
-            "name": field.arg_name,
+            "name": field.name,
             "label": field.ui_label,
             "type": field.field_type.value.lower(),
             "value": initial_value,
             "description": field.help_text,
             "order": getattr(field, "order", 0),
         }
+        # Preserve CLI arg name for downstream consumers that still need it
+        field_dict["arg_name"] = getattr(field, "arg_name", field.name)
         # Include location metadata for downstream grouping
         if hasattr(field, "tab") and field.tab:
             field_dict["tab"] = field.tab
@@ -1065,8 +1041,14 @@ class FieldService:
 
             matched_entry: Optional[SectionLayout] = None
             for entry in layout:
-                target_section = entry.match_section or entry.id
-                if target_section != raw_section:
+                targets = set()
+                if entry.match_sections:
+                    targets.update(entry.match_sections)
+                if entry.match_section:
+                    targets.add(entry.match_section)
+                if not targets:
+                    targets.add(entry.id)
+                if raw_section not in targets:
                     continue
                 if entry.match_subsections is None or raw_subsection in entry.match_subsections:
                     matched_entry = entry
