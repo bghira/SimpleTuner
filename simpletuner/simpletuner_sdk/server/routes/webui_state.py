@@ -191,6 +191,7 @@ class DefaultsUpdate(BaseModel):
     theme: Optional[str] = None
     event_polling_interval: Optional[int] = None
     event_stream_enabled: Optional[bool] = None
+    auto_preserve_defaults: Optional[bool] = None
 
 
 @router.post("/defaults/update")
@@ -221,6 +222,8 @@ async def update_defaults(payload: DefaultsUpdate) -> Dict[str, object]:
             defaults.event_polling_interval = max(1, interval)
         if payload.event_stream_enabled is not None:
             defaults.event_stream_enabled = bool(payload.event_stream_enabled)
+        if payload.auto_preserve_defaults is not None:
+            defaults.auto_preserve_defaults = bool(payload.auto_preserve_defaults)
 
         # Save updated defaults
         store.save_defaults(defaults)

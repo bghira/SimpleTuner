@@ -471,6 +471,15 @@
             targetValue = initialValue;
         } else if (normalizedFlavours.length === 1) {
             targetValue = normalizedFlavours[0].value;
+        } else {
+            const details = await this.fetchModelDetails(modelFamily);
+            const defaultFlavour = details?.default_flavour
+                || details?.attributes?.default_model_flavour
+                || '';
+
+            if (defaultFlavour && normalizedFlavours.some((flavour) => flavour.value === defaultFlavour)) {
+                targetValue = defaultFlavour;
+            }
         }
 
         if (targetValue) {

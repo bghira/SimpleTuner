@@ -40,6 +40,7 @@ class WebUIDefaults:
     theme: str = "dark"
     event_polling_interval: int = 5
     event_stream_enabled: bool = True
+    auto_preserve_defaults: bool = True
 
 
 @dataclass
@@ -143,6 +144,15 @@ class WebUIStateStore:
             defaults.event_stream_enabled = True
         else:
             defaults.event_stream_enabled = bool(stream_value)
+
+        # Normalise auto preserve defaults toggle
+        auto_preserve_value = payload.get("auto_preserve_defaults", defaults.auto_preserve_defaults)
+        if isinstance(auto_preserve_value, str):
+            defaults.auto_preserve_defaults = auto_preserve_value.strip().lower() not in {"0", "false", "no", "off"}
+        elif auto_preserve_value is None:
+            defaults.auto_preserve_defaults = True
+        else:
+            defaults.auto_preserve_defaults = bool(auto_preserve_value)
 
         return defaults
 

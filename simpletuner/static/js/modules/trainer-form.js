@@ -98,10 +98,30 @@ export class TrainerForm {
                     flavourSelect.appendChild(option);
                 });
 
-                // Auto-select if only one option
+                let targetValue = '';
+
                 if (data.flavours.length === 1) {
-                    flavourSelect.value = data.flavours[0];
-                    this.updateModelPath(data.flavours[0]);
+                    targetValue = data.flavours[0];
+                } else if (flavourSelect.value && data.flavours.includes(flavourSelect.value)) {
+                    targetValue = flavourSelect.value;
+                } else {
+                    try {
+                        const detailsResponse = await fetch(`/api/models/${modelFamily}`);
+                        if (detailsResponse.ok) {
+                            const details = await detailsResponse.json();
+                            const defaultFlavour = details?.default_flavour || details?.attributes?.default_model_flavour;
+                            if (defaultFlavour && data.flavours.includes(defaultFlavour)) {
+                                targetValue = defaultFlavour;
+                            }
+                        }
+                    } catch (detailError) {
+                        console.error('Failed to load model details:', detailError);
+                    }
+                }
+
+                if (targetValue) {
+                    flavourSelect.value = targetValue;
+                    this.updateModelPath(targetValue);
                 }
             }
         } catch (error) {

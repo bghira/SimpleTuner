@@ -42,6 +42,7 @@ function trainerComponent() {
                     return;
                 }
                 this.defaults = { ...payload };
+                this.preserveDefaultsOption = this.defaults.auto_preserve_defaults !== false;
                 if (typeof window.applyTheme === 'function' && this.defaults.theme) {
                     window.applyTheme(this.defaults.theme);
                 }
@@ -2167,6 +2168,7 @@ function trainerComponent() {
                 const onboarding = data.onboarding || {};
                 const defaultsPayload = data.resolved_defaults || data.defaults || {};
                 this.defaults = defaultsPayload;
+                this.preserveDefaultsOption = this.defaults.auto_preserve_defaults !== false;
                 this.onboardingSteps = onboarding.steps || [];
                 this.overlayVisible = Boolean(onboarding.overlay_required);
                 this.setActiveOnboardingStep();
@@ -2231,6 +2233,7 @@ function trainerComponent() {
                 const onboarding = data.onboarding || {};
                 const defaultsPayload = data.resolved_defaults || data.defaults || {};
                 this.defaults = defaultsPayload;
+                this.preserveDefaultsOption = this.defaults.auto_preserve_defaults !== false;
                 this.onboardingSteps = onboarding.steps || [];
                 this.overlayVisible = Boolean(onboarding.overlay_required);
                 const completedState = this.onboardingSteps.find(step => completedStep && step.id === completedStep.id);
@@ -2284,7 +2287,8 @@ function trainerComponent() {
                 const defaultsPayload = data.resolved_defaults || data.defaults || {};
                 // Update state with fresh data
                 this.defaults = defaultsPayload;
-                 this.onboardingSteps = data.onboarding.steps || [];
+                this.preserveDefaultsOption = this.defaults.auto_preserve_defaults !== false;
+                this.onboardingSteps = data.onboarding.steps || [];
                  this.overlayVisible = Boolean(data.onboarding.overlay_required);
                  this.onboardingForm = { value: '' };
                  this.setActiveOnboardingStep();
@@ -2915,10 +2919,16 @@ function trainerComponent() {
 
         // Save config with options dialog
         async saveConfig() {
+            const autoPreserve = !this.defaults || this.defaults.auto_preserve_defaults !== false;
+            if (autoPreserve) {
+                await this.doSaveConfig({ preserveDefaults: true });
+                return;
+            }
+
             // Show the save dialog
             this.showConfigSaveDialog = true;
             this.createConfigBackupOption = false;
-            this.preserveDefaultsOption = false;
+            this.preserveDefaultsOption = this.defaults && this.defaults.auto_preserve_defaults !== false;
 
             // Return a promise that will be resolved by the dialog buttons
             return new Promise((resolve) => {
@@ -3349,6 +3359,7 @@ function trainerComponent() {
                                     const data = await defaultsResponse.json();
                                     const defaultsPayload = data.resolved_defaults || data.defaults || {};
                                     this.defaults = defaultsPayload;
+                                    this.preserveDefaultsOption = this.defaults.auto_preserve_defaults !== false;
                                     window.dispatchEvent(new CustomEvent('webui-defaults-updated', {
                                         detail: {
                                             defaults: data.defaults || {},
@@ -3375,6 +3386,7 @@ function trainerComponent() {
                                     const data = await defaultsResponse.json();
                                     const defaultsPayload = data.resolved_defaults || data.defaults || {};
                                     this.defaults = defaultsPayload;
+                                    this.preserveDefaultsOption = this.defaults.auto_preserve_defaults !== false;
                                     window.dispatchEvent(new CustomEvent('webui-defaults-updated', {
                                         detail: {
                                             defaults: data.defaults || {},
