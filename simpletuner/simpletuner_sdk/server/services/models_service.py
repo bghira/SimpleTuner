@@ -118,11 +118,21 @@ class ModelsService:
             ),
         }
 
+        default_flavour = getattr(model_cls, "DEFAULT_MODEL_FLAVOUR", None)
+        if default_flavour is None:
+            hf_paths = getattr(model_cls, "HUGGINGFACE_PATHS", None)
+            if isinstance(hf_paths, dict) and hf_paths:
+                try:
+                    default_flavour = next(iter(hf_paths.keys()))
+                except StopIteration:  # pragma: no cover - defensive
+                    default_flavour = None
+
         details = {
             "family": model_family,
             "class": self._class_path(model_cls),
             "display_name": display_name or model_family,
             "flavours": flavours,
+            "default_flavour": default_flavour,
             "attributes": attributes,
             "pipelines": {
                 "types": pipeline_types,

@@ -18,15 +18,9 @@ from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
 from simpletuner.simpletuner_sdk.server.services.configs_service import ConfigsService
 from simpletuner.simpletuner_sdk.server.services.field_registry_wrapper import lazy_field_registry
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIDefaults, WebUIStateStore
+from .webhook_defaults import DEFAULT_CALLBACK_URL, DEFAULT_WEBHOOK_CONFIG
 
 logger = logging.getLogger(__name__)
-
-
-DEFAULT_CALLBACK_URL = os.environ.get("SIMPLETUNER_WEBHOOK_CALLBACK_URL", "http://localhost:8001/callback")
-DEFAULT_WEBHOOK_CONFIG = {
-    "webhook_type": "raw",
-    "callback_url": DEFAULT_CALLBACK_URL,
-}
 
 
 @dataclass
@@ -179,6 +173,8 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         resolved_configs_dir = normalized_configs_dir or resolved_configs_dir
 
     form_dict.pop("__active_tab__", None)
+
+    save_options["preserve_defaults"] = getattr(webui_defaults, "auto_preserve_defaults", True)
 
     if "preserve_defaults" in form_dict:
         save_options["preserve_defaults"] = _coerce_single(form_dict.pop("preserve_defaults")) == "true"

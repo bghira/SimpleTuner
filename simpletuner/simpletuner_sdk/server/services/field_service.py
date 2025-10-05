@@ -6,25 +6,23 @@ applying transformations, and managing field metadata.
 
 from __future__ import annotations
 
+import json
 import logging
+from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from simpletuner.helpers.models.common import PredictionTypes, VideoModelFoundation
+from simpletuner.helpers.models.registry import ModelRegistry
+
 from ..services.field_registry_wrapper import lazy_field_registry
+from ..utils.paths import resolve_config_path
+from .dataset_plan import DatasetPlanStore
 from .dataset_service import normalize_dataset_config_value
 from .field_registry import FieldType
-
-try:  # pragma: no cover - optional import for UI hints
-    from simpletuner.helpers.models.registry import ModelRegistry
-except Exception:  # pragma: no cover - fall back when models unavailable
-    ModelRegistry = None
-
-try:  # pragma: no cover - optional import for prediction type introspection
-    from simpletuner.helpers.models.common import PredictionTypes
-except Exception:  # pragma: no cover - degraded mode if helpers unavailable
-    PredictionTypes = None
+from .webhook_defaults import DEFAULT_WEBHOOK_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +81,39 @@ class FieldService:
     }
     _SNR_GAMMA_FIELDS = {"snr_gamma"}
 
-    _WEBUI_ONLY_FIELDS = {"configs_dir"}
+    _WEBUI_ONLY_FIELDS = {"configs_dir", "num_validation_images"}
+    # Fields that the WebUI manages internally so users cannot override them
+    _WEBUI_FORCED_VALUES = {
+        "webhook_config": DEFAULT_WEBHOOK_CONFIG,
+    }
+    _WEBUI_FIELD_HINTS = {
+        "webhook_config": "Managed by the WebUI so training callbacks can reach the server. Use the CLI to supply custom webhooks.",
+    }
+    _VIDEO_ONLY_FIELDS = {
+        "framerate",
+        "validation_num_video_frames",
+    }
+    _EVALUATION_FIELDS = {
+        "evaluation_type",
+        "eval_dataset_id",
+        "num_eval_images",
+        "eval_steps_interval",
+        "eval_timesteps",
+        "eval_dataset_pooling",
+        "pretrained_evaluation_model_name_or_path",
+    }
+    _EVALUATION_DEPENDENT_FIELDS = {
+        "eval_dataset_id",
+        "num_eval_images",
+        "eval_steps_interval",
+        "eval_timesteps",
+        "eval_dataset_pooling",
+        "pretrained_evaluation_model_name_or_path",
+    }
+    _EVAL_DATASET_REQUIRED_HINT = (
+        "Configure at least one evaluation dataset on the Datasets tab to enable these settings."
+    )
+    _EVAL_TYPE_REQUIRED_HINT = "Select an evaluation type to adjust these settings."
 
     _TAB_SECTION_LAYOUTS: Dict[str, Tuple[SectionLayout, ...]] = {
         "basic": (
@@ -424,6 +454,97 @@ class FieldService:
                 order=41,
             ),
         ),
+        "validation": (
+            SectionLayout(
+                id="validation_schedule",
+                title="Validation Schedule",
+                icon="fas fa-calendar-check",
+                match_section="validation_schedule",
+                match_subsections=(None,),
+                subsection_override="",
+                order=10,
+            ),
+            SectionLayout(
+                id="validation_schedule_advanced",
+                title="",
+                icon="",
+                advanced=True,
+                parent="validation_schedule",
+                match_section="validation_schedule",
+                match_subsections=("advanced",),
+                subsection_override="advanced",
+                order=11,
+            ),
+            SectionLayout(
+                id="prompt_management",
+                title="Prompt Management",
+                icon="fas fa-comment-dots",
+                match_section="prompt_management",
+                match_subsections=(None,),
+                subsection_override="",
+                order=20,
+            ),
+            SectionLayout(
+                id="validation_guidance",
+                title="Validation Guidance",
+                icon="fas fa-sliders-h",
+                match_section="validation_guidance",
+                match_subsections=(None,),
+                subsection_override="",
+                order=30,
+            ),
+            SectionLayout(
+                id="validation_guidance_advanced",
+                title="",
+                icon="",
+                advanced=True,
+                parent="validation_guidance",
+                match_section="validation_guidance",
+                match_subsections=("advanced",),
+                subsection_override="advanced",
+                order=31,
+            ),
+            SectionLayout(
+                id="validation_options",
+                title="Validation Options",
+                icon="fas fa-wrench",
+                match_section="validation_options",
+                match_subsections=(None,),
+                subsection_override="",
+                order=40,
+            ),
+            SectionLayout(
+                id="validation_options_advanced",
+                title="",
+                icon="",
+                advanced=True,
+                parent="validation_options",
+                match_section="validation_options",
+                match_subsections=("advanced",),
+                subsection_override="advanced",
+                order=41,
+            ),
+            SectionLayout(
+                id="evaluation",
+                title="Evaluation Metrics",
+                icon="fas fa-chart-area",
+                match_section="evaluation",
+                match_subsections=(None,),
+                subsection_override="",
+                order=50,
+            ),
+            SectionLayout(
+                id="evaluation_advanced",
+                title="",
+                icon="",
+                advanced=True,
+                parent="evaluation",
+                match_section="evaluation",
+                match_subsections=("advanced",),
+                subsection_override="advanced",
+                order=51,
+            ),
+        ),
     }
 
     def __init__(self):
@@ -478,6 +599,122 @@ class FieldService:
         return raw_config
 
     @staticmethod
+    def _resolve_dataset_config_path(value: Any, configs_dir: Optional[str]) -> Optional[Path]:
+        if not value:
+            return None
+
+        try:
+            resolved = resolve_config_path(value, config_dir=configs_dir, check_cwd_first=True)
+        except Exception:
+            resolved = None
+
+        if resolved:
+            return resolved
+
+        try:
+            candidate = Path(str(value)).expanduser()
+            if candidate.exists():
+                return candidate.resolve()
+        except Exception:
+            return None
+        return None
+
+    @staticmethod
+    def _normalise_evaluation_type(value: Any) -> str:
+        if value is None:
+            return ""
+        try:
+            return str(value).strip().lower()
+        except Exception:
+            return ""
+
+    def _collect_eval_dataset_options(
+        self,
+        config_data: Dict[str, Any],
+        webui_defaults: Dict[str, Any],
+    ) -> List[Dict[str, str]]:
+        configs_dir = webui_defaults.get("configs_dir") if isinstance(webui_defaults, dict) else None
+        candidate_paths: List[Path] = []
+        seen_paths: Set[Path] = set()
+
+        def _maybe_add_path(path: Optional[Path]) -> None:
+            if not path:
+                return
+            try:
+                candidate = path.expanduser().resolve(strict=False)
+            except Exception:
+                candidate = path
+            if candidate in seen_paths or not candidate.exists():
+                return
+            seen_paths.add(candidate)
+            candidate_paths.append(candidate)
+
+        for key in ("--data_backend_config", "data_backend_config"):
+            candidate_value = config_data.get(key)
+            resolved = self._resolve_dataset_config_path(candidate_value, configs_dir)
+            if resolved:
+                _maybe_add_path(resolved)
+
+        if configs_dir:
+            try:
+                default_candidate = Path(str(configs_dir)).expanduser() / "multidatabackend.json"
+                _maybe_add_path(default_candidate)
+            except Exception:
+                pass
+
+        try:
+            store_path = DatasetPlanStore().path
+            _maybe_add_path(store_path)
+        except Exception:
+            pass
+
+        options: Dict[str, Dict[str, str]] = {}
+
+        for path in candidate_paths:
+            try:
+                with path.open("r", encoding="utf-8") as handle:
+                    data = json.load(handle)
+            except Exception:
+                continue
+
+            if not isinstance(data, list):
+                continue
+
+            for entry in data:
+                if not isinstance(entry, dict):
+                    continue
+
+                dataset_type = str(entry.get("dataset_type", "")).strip().lower()
+                if dataset_type != "eval":
+                    continue
+
+                if entry.get("disabled") or entry.get("disable"):
+                    continue
+
+                dataset_id = entry.get("id")
+                if not isinstance(dataset_id, str) or not dataset_id.strip():
+                    continue
+
+                dataset_id = dataset_id.strip()
+                label_candidates = [
+                    entry.get("name"),
+                    entry.get("label"),
+                ]
+                metadata = entry.get("_metadata")
+                if isinstance(metadata, dict):
+                    label_candidates.append(metadata.get("name"))
+
+                label = next(
+                    (str(candidate).strip() for candidate in label_candidates if isinstance(candidate, str) and candidate.strip()),
+                    dataset_id,
+                )
+
+                if dataset_id not in options:
+                    options[dataset_id] = {"value": dataset_id, "label": label}
+
+        return sorted(options.values(), key=lambda item: item["label"].lower())
+
+    @staticmethod
     def _config_has_field(raw_config: Dict[str, Any], field_name: str) -> bool:
         """Check if a raw config explicitly sets a given field."""
 
@@ -512,9 +749,6 @@ class FieldService:
         return False
 
     def _get_model_class(self, config_values: Dict[str, Any]):
-        if ModelRegistry is None:
-            return None
-
         model_family = config_values.get("model_family") or config_values.get("--model_family")
         if not model_family:
             return None
@@ -552,6 +786,18 @@ class FieldService:
 
         prediction_type = prediction_type.lower()
         return prediction_type in {"epsilon", "v_prediction"}
+
+    def _is_video_model(self, config_values: Dict[str, Any]) -> bool:
+        """Check whether the selected model inherits from the video foundation base."""
+
+        model_class = self._get_model_class(config_values)
+        if not model_class:
+            return False
+
+        try:
+            return issubclass(model_class, VideoModelFoundation)
+        except TypeError:
+            return False
 
     def _resolve_prediction_type(self, config_values: Dict[str, Any]) -> Optional[str]:
         """Resolve the effective prediction type from config or model defaults."""
@@ -634,6 +880,7 @@ class FieldService:
         text_encoder_config = self._get_text_encoder_configuration(combined_config)
         available_text_encoders = list(text_encoder_config.keys()) if text_encoder_config else []
         encoder_count = len(available_text_encoders)
+        is_video_model = self._is_video_model(combined_config)
 
         filtered_fields: List[Any] = []
 
@@ -647,6 +894,10 @@ class FieldService:
 
             if name in self._WEBUI_ONLY_FIELDS:
                 continue
+
+            if name in self._VIDEO_ONLY_FIELDS and not is_video_model:
+                if not self._config_has_field(raw_config_data, name):
+                    continue
 
             if name in self._TEXT_ENCODER_TRAINING_FIELDS and not supports_text_encoder:
                 continue
@@ -833,8 +1084,18 @@ class FieldService:
         resolved_value = config_values.get(f"{field.name}__resolved")
         additional_hint = config_values.get(f"{field.name}__hint")
 
+        if field.name == "eval_dataset_id":
+            if isinstance(field_value, (list, tuple)):
+                field_value = next((item for item in field_value if isinstance(item, str) and item.strip()), None)
+
+        eval_dataset_options = config_values.get("__eval_dataset_options__") or []
+        has_eval_datasets = self._coerce_bool(config_values.get("__has_eval_datasets__")) or bool(eval_dataset_options)
+        evaluation_type_active = self._coerce_bool(config_values.get("__evaluation_type_active__"))
+
         initial_value = field_value
         if field_value is None and field.field_type in {FieldType.TEXT, FieldType.TEXTAREA, FieldType.NUMBER}:
+            initial_value = ""
+        if field_value is None and field.field_type == FieldType.SELECT:
             initial_value = ""
 
         field_dict = {
@@ -925,32 +1186,62 @@ class FieldService:
         if field_type_upper in ["SELECT", "MULTI_SELECT"]:
             choices = getattr(field, "choices", None) or []
 
-            if getattr(field, "dynamic_choices", False) and field.name == "data_backend_config":
-                try:
-                    from .dataset_service import build_data_backend_choices  # lazy import
+            if getattr(field, "dynamic_choices", False):
+                if field.name == "data_backend_config":
+                    try:
+                        from .dataset_service import build_data_backend_choices  # lazy import
 
-                    dataset_choices = build_data_backend_choices()
-                except Exception as exc:  # pragma: no cover - defensive guard
-                    logger.warning("Failed to build dataset choices for %s: %s", field.name, exc)
-                    dataset_choices = []
+                        dataset_choices = build_data_backend_choices()
+                    except Exception as exc:  # pragma: no cover - defensive guard
+                        logger.warning("Failed to build dataset choices for %s: %s", field.name, exc)
+                        dataset_choices = []
 
-                field_dict["custom_component"] = "dataset_config_select"
-                field_dict["options"] = dataset_choices
+                    field_dict["custom_component"] = "dataset_config_select"
+                    field_dict["options"] = dataset_choices
 
-                selected_option = next(
-                    (opt for opt in dataset_choices if opt.get("value") == field_value),
-                    None,
-                )
+                    selected_option = next(
+                        (opt for opt in dataset_choices if opt.get("value") == field_value),
+                        None,
+                    )
 
-                field_dict["selected_environment"] = (
-                    selected_option.get("environment") if selected_option else "Select dataset"
-                )
-                field_dict["selected_path"] = selected_option.get("path") if selected_option else ""
-                field_dict["button_label"] = (
-                    f"{field_dict['selected_environment']} | {field_dict['selected_path']}"
-                    if selected_option
-                    else "Select dataset configuration"
-                )
+                    field_dict["selected_environment"] = (
+                        selected_option.get("environment") if selected_option else "Select dataset"
+                    )
+                    field_dict["selected_path"] = selected_option.get("path") if selected_option else ""
+                    field_dict["button_label"] = (
+                        f"{field_dict['selected_environment']} | {field_dict['selected_path']}"
+                        if selected_option
+                        else "Select dataset configuration"
+                    )
+                elif field.name == "eval_dataset_id":
+                    normalized_options: List[Dict[str, str]] = []
+                    seen_values: Set[str] = set()
+
+                    for option in eval_dataset_options:
+                        if not isinstance(option, dict):
+                            continue
+                        value = option.get("value")
+                        label = option.get("label")
+                        if not isinstance(value, str):
+                            continue
+                        value = value.strip()
+                        if not value or value in seen_values:
+                            continue
+                        if not isinstance(label, str) or not label.strip():
+                            label = value
+                        normalized_options.append({"value": value, "label": label.strip()})
+                        seen_values.add(value)
+
+                    current_value = ""
+                    if isinstance(field_value, str):
+                        current_value = field_value.strip()
+                    elif field_value is not None:
+                        current_value = str(field_value).strip()
+
+                    if current_value and current_value not in seen_values:
+                        normalized_options.append({"value": current_value, "label": current_value})
+
+                    field_dict["options"] = normalized_options
             elif choices:
                 normalized_options = []
                 for choice in choices:
@@ -973,6 +1264,41 @@ class FieldService:
             field_dict["required"] = field.required
         if hasattr(field, "disabled"):
             field_dict["disabled"] = field.disabled
+
+        if field.name in self._EVALUATION_FIELDS:
+            disable_reason: Optional[str] = None
+
+            if not has_eval_datasets:
+                disable_reason = self._EVAL_DATASET_REQUIRED_HINT
+            elif field.name in self._EVALUATION_DEPENDENT_FIELDS and not evaluation_type_active:
+                disable_reason = self._EVAL_TYPE_REQUIRED_HINT
+
+            if disable_reason:
+                field_dict["disabled"] = True
+                if "field-disabled" not in extra_classes:
+                    extra_classes.append("field-disabled")
+
+                existing_description = (field_dict.get("description") or "").strip()
+                if disable_reason not in existing_description:
+                    field_dict["description"] = (
+                        f"{existing_description} {disable_reason}".strip()
+                        if existing_description
+                        else disable_reason
+                    )
+
+        if field.name in self._WEBUI_FORCED_VALUES:
+            field_dict["disabled"] = True
+            extra_classes.append("field-disabled")
+
+            hint = self._WEBUI_FIELD_HINTS.get(field.name)
+            if hint:
+                existing_description = (field_dict.get("description") or "").strip()
+                field_dict["description"] = (
+                    f"{existing_description} {hint}".strip()
+                    if existing_description
+                    else hint
+                )
+                field_dict.setdefault("tooltip", hint)
 
         if field.name == "data_backend_config":
             field_dict["col_class"] = "col-md-6"
@@ -1204,6 +1530,31 @@ class FieldService:
 
         return huggingface_paths.get(flavour)
 
+    @staticmethod
+    def _resolve_model_default_flavour(model_family: Optional[str]) -> Optional[str]:
+        """Return the default flavour for a model family when available."""
+
+        if not model_family:
+            return None
+
+        try:
+            model_class = ModelRegistry.get(model_family)
+        except Exception:
+            return None
+
+        default_flavour = getattr(model_class, "DEFAULT_MODEL_FLAVOUR", None)
+        if default_flavour:
+            return default_flavour
+
+        huggingface_paths = getattr(model_class, "HUGGINGFACE_PATHS", None)
+        if isinstance(huggingface_paths, dict) and huggingface_paths:
+            try:
+                return next(iter(huggingface_paths.keys()))
+            except StopIteration:  # pragma: no cover - defensive guard
+                return None
+
+        return None
+
     def _convert_to_api_format(self, field: Any, config_values: Dict[str, Any], options: Dict[str, Any]) -> Dict[str, Any]:
         """Convert field to API response format."""
         field_value = config_values.get(field.name, field.default_value)
@@ -1346,6 +1697,12 @@ class FieldService:
             16,
         )
 
+        selected_model_family = (
+            config_data.get("model_family")
+            or config_data.get("--model_family")
+            or webui_defaults.get("model_family")
+        )
+
         for field in tab_fields:
             # Special handling for output_dir in basic tab
             if field.name == "output_dir" and tab_name == "basic":
@@ -1389,11 +1746,40 @@ class FieldService:
                 if value is None:
                     value = field.default_value
 
+                if field.name == "model_family" and value:
+                    selected_model_family = value
+
+                if field.name == "model_flavour" and value in (None, "", "default"):
+                    default_flavour = self._resolve_model_default_flavour(selected_model_family)
+                    if default_flavour:
+                        config_values[f"{field.name}__resolved"] = default_flavour
+                        config_values[f"{field.name}__hint"] = (
+                            f"Using default flavour '{default_flavour}' for {selected_model_family or 'the selected family'}."
+                        )
+
                 if field.name == "lora_rank":
                     lora_rank_value = self._coerce_int(value, lora_rank_value)
 
                 if isinstance(value, str) and value and value.lower().endswith(".json"):
                     value = self._normalize_json_field_value(value, webui_defaults.get("configs_dir"))
+
+                if field.name in self._WEBUI_FORCED_VALUES:
+                    forced_value = deepcopy(self._WEBUI_FORCED_VALUES[field.name])
+                    value = forced_value
+
+                    display_value = json.dumps(forced_value, sort_keys=True)
+                    config_values[f"{field.name}__display"] = display_value
+
+                    hint = self._WEBUI_FIELD_HINTS.get(field.name)
+                    if hint:
+                        config_values[f"{field.name}__hint"] = hint
+
+                if field.name == "eval_dataset_id":
+                    if isinstance(value, (list, tuple)):
+                        value = next((item for item in value if isinstance(item, str) and item.strip()), None)
+                    if isinstance(value, str):
+                        trimmed = value.strip()
+                        value = trimmed or None
 
                 if field.name == "i_know_what_i_am_doing":
                     value = self._coerce_bool(value)
@@ -1415,6 +1801,21 @@ class FieldService:
         if tab_name == "basic":
             config_values["configs_dir"] = webui_defaults.get("configs_dir", "")
             config_values["job_id"] = config_data.get("job_id", "")
+
+        if tab_name == "validation":
+            eval_dataset_options = self._collect_eval_dataset_options(config_data, webui_defaults)
+            config_values["__eval_dataset_options__"] = eval_dataset_options
+            config_values["__has_eval_datasets__"] = bool(eval_dataset_options)
+
+            evaluation_type_value = (
+                config_values.get("evaluation_type")
+                or config_values.get("--evaluation_type")
+                or config_data.get("--evaluation_type")
+            )
+            evaluation_type_normalized = self._normalise_evaluation_type(evaluation_type_value)
+            config_values["__evaluation_type_active__"] = bool(eval_dataset_options) and (
+                evaluation_type_normalized not in {"", "none"}
+            )
 
         return config_values
 
