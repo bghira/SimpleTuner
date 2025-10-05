@@ -185,6 +185,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tooltip="Constant uses same guidance for all samples. Random Range varies guidance per sample.",
             importance=ImportanceLevel.ADVANCED,
             order=40,
+            dependencies=[FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True, action="show")],
         )
     )
 
@@ -238,6 +239,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tooltip="1.0 preserves CFG distillation. Higher values require CFG at inference.",
             importance=ImportanceLevel.ADVANCED,
             order=41,
+            dependencies=[FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True, action="show")],
         )
     )
 
@@ -255,6 +257,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tooltip="Lower bound of guidance range when using random-range mode.",
             importance=ImportanceLevel.ADVANCED,
             order=42,
+            dependencies=[FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True, action="show")],
         )
     )
 
@@ -272,6 +275,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tooltip="Upper bound of guidance range when using random-range mode.",
             importance=ImportanceLevel.ADVANCED,
             order=43,
+            dependencies=[FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True, action="show")],
         )
     )
 
