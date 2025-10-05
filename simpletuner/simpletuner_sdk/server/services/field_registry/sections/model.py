@@ -391,7 +391,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             tab="data",
             section="image_processing",
             subsection="aspect_buckets",
-            default_value=None,
+            default_value=2,
             choices=[{"value": i, "label": str(i)} for i in range(1, 10)],
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=1, message="Rounding must be at least 1"),
@@ -454,8 +454,8 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             default_value=None,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Interval must be at least 1")],
             dependencies=[FieldDependency(field="gradient_checkpointing", operator="equals", value=True, action="enable")],
-            help_text="Checkpoint every N transformer blocks",
-            tooltip="Higher values save more memory but increase computation time. Only supported for SDXL and Flux models.",
+            help_text="Checkpoint every N transformer blocks (leave blank to disable)",
+            tooltip="Higher values save more memory but increase compute. Clear this field to turn off partial checkpointing (only supported for SDXL/Flux).",
             importance=ImportanceLevel.ADVANCED,
             order=16,
         )
@@ -513,7 +513,6 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             tab="model",
             section="architecture",
             default_value=False,
-            platform_specific=["cuda"],
             dependencies=[FieldDependency(field="model_family", operator="equals", value="flux")],
             help_text="Enables Flash Attention 3 when supported; otherwise falls back to PyTorch SDPA.",
             tooltip="Improves attention efficiency on modern NVIDIA GPUs. Uses native SDPA when Flash Attention 3 is unavailable.",
