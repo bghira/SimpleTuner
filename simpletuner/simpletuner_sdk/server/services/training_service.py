@@ -89,6 +89,8 @@ def get_all_field_defaults() -> Dict[str, Any]:
 
     defaults: Dict[str, Any] = {}
     for registry_field in lazy_field_registry.get_all_fields():
+        if getattr(registry_field, "model_specific", None):
+            continue
         defaults[registry_field.arg_name] = ConfigsService.convert_value_by_type(
             registry_field.default_value,
             registry_field.field_type,
@@ -120,6 +122,18 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
     raw_interval_input = form_dict.get("accelerator_cache_clear_interval")
     if raw_interval_input is None:
         raw_interval_input = form_dict.get("--accelerator_cache_clear_interval")
+
+    disabled_fields_raw = form_dict.pop("__disabled_fields__", None)
+    disabled_arg_names = set()
+    if disabled_fields_raw:
+        if isinstance(disabled_fields_raw, (list, tuple)):
+            raw_items = disabled_fields_raw
+        else:
+            raw_items = str(disabled_fields_raw).split(",")
+        for item in raw_items:
+            stripped = str(item).strip()
+            if stripped:
+                disabled_arg_names.add(stripped if stripped.startswith("--") else f"--{stripped}")
 
     def _coerce_single(value: Any) -> Any:
         if isinstance(value, (list, tuple)):
@@ -210,6 +224,41 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         logger.debug("Skipping merge of active environment defaults at user request")
         base_config = dict(all_defaults)
 
+    selected_family = (
+        config_dict.get("--model_family")
+        or config_dict.get("model_family")
+        or existing_config_cli.get("--model_family")
+        or existing_config_cli.get("model_family")
+        or base_config.get("--model_family")
+        or base_config.get("model_family")
+    )
+
+    if selected_family:
+        selected_family = str(selected_family)
+        for field in lazy_field_registry.get_all_fields():
+            model_specific = getattr(field, "model_specific", None)
+            if not model_specific or selected_family in model_specific:
+                continue
+
+            for key in filter(None, {field.arg_name, field.name}):
+                alias = key.lstrip("-")
+                base_config.pop(key, None)
+                base_config.pop(alias, None)
+                existing_config_cli.pop(key, None)
+                existing_config_cli.pop(alias, None)
+                config_dict.pop(key, None)
+                config_dict.pop(alias, None)
+
+    if disabled_arg_names:
+        for arg_name in list(disabled_arg_names):
+            alias = arg_name.lstrip("-")
+            base_config.pop(arg_name, None)
+            base_config.pop(alias, None)
+            existing_config_cli.pop(arg_name, None)
+            existing_config_cli.pop(alias, None)
+            config_dict.pop(arg_name, None)
+            config_dict.pop(alias, None)
+
     if interval_cleared or config_dict.get("--accelerator_cache_clear_interval") is None:
         config_dict.pop("--accelerator_cache_clear_interval", None)
         existing_config_cli.pop("--accelerator_cache_clear_interval", None)
@@ -222,6 +271,12 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
 
     if interval_cleared or complete_config.get("--accelerator_cache_clear_interval") is None:
         complete_config.pop("--accelerator_cache_clear_interval", None)
+
+    if disabled_arg_names:
+        for arg_name in disabled_arg_names:
+            alias = arg_name.lstrip("-")
+            complete_config.pop(arg_name, None)
+            complete_config.pop(alias, None)
 
     for ui_key in ("configs_dir", "--configs_dir", "__active_tab__", "--__active_tab__"):
         complete_config.pop(ui_key, None)

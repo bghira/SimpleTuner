@@ -26,6 +26,14 @@
             <!-- Form Fields Container -->
             <div class="tab-fields" data-tab-form="{{ tab_name }}">
                 <input type="hidden" name="__active_tab__" value="{{ tab_name }}">
+                {% set disabled_args = fields
+                    | selectattr('disabled')
+                    | map(attribute='arg_name')
+                    | reject('equalto', None)
+                    | list %}
+                {% if disabled_args %}
+                <input type="hidden" name="__disabled_fields__" value="{{ disabled_args|unique|join(',') }}">
+                {% endif %}
 
                 <!-- Render sections if available -->
                 {% if sections %}
