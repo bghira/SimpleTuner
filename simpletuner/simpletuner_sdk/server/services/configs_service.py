@@ -995,6 +995,11 @@ class ConfigsService:
             if isinstance(value, (list, tuple)):
                 value = list(value)
 
+            # Prefer explicit CLI keys over aliases. If we've already captured a value
+            # for the canonical "--" key, skip later alias entries to avoid overwriting
+            if config_key in config_dict and not key.startswith("--"):
+                continue
+
             if config_key in numeric_fields:
                 if value in (None, ""):
                     value = "0"
