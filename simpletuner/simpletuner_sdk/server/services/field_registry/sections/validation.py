@@ -43,6 +43,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="Disable if you want to reduce startup time; recommended to keep enabled for qualitative comparisons.",
             importance=ImportanceLevel.ADVANCED,
             order=2,
+            subsection="advanced",
         )
     )
 
@@ -81,6 +82,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="More images give better sense of model performance but take longer to generate",
             importance=ImportanceLevel.ADVANCED,
             order=3,
+            subsection="advanced",
         )
     )
 
@@ -101,7 +103,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             help_text="Number of images to generate for evaluation metrics",
             tooltip="More images give better evaluation metrics but take longer to generate",
             importance=ImportanceLevel.ADVANCED,
-            order=2,
+            order=3,
         )
     )
 
@@ -116,10 +118,10 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             section="evaluation",
             default_value=None,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")],
-            help_text="Run evaluation every N training steps",
-            tooltip="How often to run evaluation metrics during training. Lower = more frequent evaluation.",
+            help_text="Run evaluation every N training steps (leave blank to disable)",
+            tooltip="How often to run evaluation metrics during training. Clear this field to skip scheduled evaluation runs.",
             importance=ImportanceLevel.ADVANCED,
-            order=3,
+            order=4,
         )
     )
 
@@ -128,7 +130,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
         ConfigField(
             name="eval_timesteps",
             arg_name="--eval_timesteps",
-            ui_label="Evaluation Timesteps",
+            ui_label="Number of Evaluation Steps",
             field_type=FieldType.NUMBER,
             tab="validation",
             section="evaluation",
@@ -137,7 +139,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             help_text="Number of timesteps for evaluation",
             tooltip="Lower values speed up evaluation at the cost of quality. Typical range: 20-30.",
             importance=ImportanceLevel.ADVANCED,
-            order=4,
+            order=5,
         )
     )
 
@@ -151,10 +153,10 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tab="validation",
             section="evaluation",
             default_value=False,
-            help_text="Combine evaluation metrics from all datasets into a single chart",
-            tooltip="Enable to aggregate evaluation results instead of showing one chart per dataset",
+            help_text="Combine evaluation metrics from all evaluation datasets into a single chart",
             importance=ImportanceLevel.ADVANCED,
-            order=5,
+            subsection="advanced",
+            order=6,
         )
     )
 
@@ -167,7 +169,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.SELECT,
             tab="validation",
             section="evaluation",
-            default_value=None,
+            default_value="none",
             choices=[
                 {"value": "none", "label": "None"},
                 {"value": "clip", "label": "CLIP Score"},
@@ -175,7 +177,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             help_text="Type of evaluation metrics to compute",
             tooltip="Choose evaluation metric for validation runs. CLIP measures text-image alignment.",
             importance=ImportanceLevel.ADVANCED,
-            order=6,
+            order=1,
         )
     )
 
@@ -193,6 +195,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             help_text="Path to pretrained model for evaluation metrics",
             tooltip="HuggingFace model ID or local path for evaluation model (e.g., CLIP for CLIP score).",
             importance=ImportanceLevel.ADVANCED,
+            subsection="advanced",
             order=7,
         )
     )
@@ -233,6 +236,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="Lower values speed up validation at the cost of quality. Typical range: 20-30.",
             importance=ImportanceLevel.ADVANCED,
             order=4,
+            subsection="advanced",
         )
     )
 
@@ -250,6 +254,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="Useful for comparing before/after results",
             importance=ImportanceLevel.ADVANCED,
             order=5,
+            subsection="advanced",
         )
     )
 
@@ -267,6 +272,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="Alternative to validation prompts. Be mindful of privacy when sharing results.",
             importance=ImportanceLevel.ADVANCED,
             order=3,
+            subsection="advanced",
         )
     )
 
@@ -284,6 +290,8 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="Can significantly speed up validation but may error on some setups",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=4,
+            subsection="advanced",
+            dependencies=[FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True, action="show")],
         )
     )
 
@@ -302,6 +310,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="Use 1.0 for no CFG (distilled models). Higher values for real CFG sampling.",
             importance=ImportanceLevel.ADVANCED,
             order=2,
+            model_specific=["flux"],
         )
     )
 
@@ -320,6 +329,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="For Flux real CFG: skip CFG on these initial timesteps. Default: 2",
             importance=ImportanceLevel.ADVANCED,
             order=3,
+            model_specific=["flux"],
         )
     )
 
@@ -433,14 +443,15 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             name="eval_dataset_id",
             arg_name="--eval_dataset_id",
             ui_label="Evaluation Dataset ID",
-            field_type=FieldType.TEXT,
+            field_type=FieldType.SELECT,
             tab="validation",
             section="evaluation",
-            placeholder="dataset_name",
-            help_text="Specific dataset to use for evaluation metrics",
-            tooltip="If not set, uses all datasets. Useful for img2img validation.",
+            default_value=None,
+            help_text="Specific evaluation dataset to use (leave unselected to use all)",
+            tooltip="Choose an evaluation dataset configured on the Datasets tab. Leave blank to evaluate all datasets.",
             importance=ImportanceLevel.ADVANCED,
-            order=1,
+            order=2,
+            dynamic_choices=True,
         )
     )
 
@@ -459,6 +470,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="For img2img models like DeepFloyd Stage II",
             importance=ImportanceLevel.ADVANCED,
             order=8,
+            subsection="advanced",
         )
     )
 
@@ -480,6 +492,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="Reduces oversaturation from high CFG. 0.0 = disabled, 0.7 = recommended if needed",
             importance=ImportanceLevel.ADVANCED,
             order=4,
+            model_specific=["sdxl", "sd1x", "sd2x"],
         )
     )
 
@@ -515,6 +528,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="Provide a JSON array such as [7, 8, 9] to disable guidance on specific layers.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=10,
+            subsection="advanced",
         )
     )
 
@@ -533,6 +547,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="Skip guidance computation from this layer onwards.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=11,
+            subsection="advanced",
         )
     )
 
@@ -551,6 +566,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="Skip guidance computation up to this layer.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=12,
+            subsection="advanced",
         )
     )
 
@@ -569,6 +585,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="Increase this when skipping more layers to maintain output quality.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=13,
+            subsection="advanced",
         )
     )
 
@@ -587,6 +604,11 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="Adjust the strength of LyCORIS effects during validation.",
             importance=ImportanceLevel.ADVANCED,
             order=14,
+            subsection="advanced",
+            dependencies=[
+                FieldDependency(field="model_type", operator="equals", value="lora", action="show"),
+                FieldDependency(field="lora_type", operator="equals", value="lycoris", action="show"),
+            ],
         )
     )
 
@@ -669,6 +691,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="Use CPU-based or GPU-based RNG when deriving validation seeds.",
             importance=ImportanceLevel.ADVANCED,
             order=18,
+            subsection="advanced",
         )
     )
 
@@ -691,5 +714,6 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="Different compilation modes for torch.compile() during validation.",
             importance=ImportanceLevel.ADVANCED,
             order=19,
+            subsection="advanced",
         )
     )

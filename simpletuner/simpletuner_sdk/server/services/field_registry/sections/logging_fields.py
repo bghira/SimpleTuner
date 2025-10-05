@@ -222,6 +222,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             tooltip="Experimental feature for tracking model outputs. May affect image quality slightly.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=90,
+            subsection="advanced",
         )
     )
 
