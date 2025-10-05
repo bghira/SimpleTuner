@@ -63,6 +63,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.NUMBER,
             tab="basic",
             section="checkpointing",
+            subsection="advanced",
             default_value=0,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")],
             help_text="Rolling checkpoint window size for continuous checkpointing",
@@ -81,6 +82,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.CHECKBOX,
             tab="basic",
             section="checkpointing",
+            subsection="advanced",
             default_value=False,
             help_text="Use temporary directory for checkpoint files before final save",
             tooltip="Reduces I/O overhead during checkpointing by writing to temp dir first, then moving to final location.",
@@ -98,6 +100,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.NUMBER,
             tab="basic",
             section="checkpointing",
+            subsection="advanced",
             default_value=1,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")],
             help_text="Maximum number of rolling checkpoints to keep",
@@ -135,6 +138,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.CHECKBOX,
             tab="basic",
             section="project",
+            subsection="advanced",
             default_value=None,
             help_text="When enabled, values from the Default configuration fill in any unset training options.",
             tooltip="Disable this if you want to have a standalone configuration instead of inheriting the Default configuration.",
@@ -211,13 +215,13 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             arg_name="--enable_watermark",
             ui_label="Enable Watermark",
             field_type=FieldType.CHECKBOX,
-            tab="model",
-            section="model_specific",
+            tab="validation",
+            section="validation_options",
             default_value=False,
             help_text="Add invisible watermark to generated images",
             tooltip="Experimental feature for tracking model outputs. May affect image quality slightly.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=11,
+            order=90,
         )
     )
 
@@ -361,8 +365,8 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             arg_name="--ema_validation",
             ui_label="EMA Validation",
             field_type=FieldType.SELECT,
-            tab="model",
-            section="model_specific",
+            tab="validation",
+            section="validation_options",
             default_value="comparison",
             choices=[
                 {"value": "none", "label": "Disable EMA Validation"},
@@ -372,7 +376,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             help_text="Control how EMA weights are used during validation runs.",
             tooltip="Choose whether to validate with base weights, EMA weights, or compare both side-by-side.",
             importance=ImportanceLevel.ADVANCED,
-            order=20,
+            order=91,
         )
     )
 
@@ -600,6 +604,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             help_text="Use full timestep range for SDXL refiner",
             tooltip="When enabled, refiner uses full timestep range instead of just high timesteps.",
             importance=ImportanceLevel.ADVANCED,
+            dependencies=[FieldDependency(field="model_family", operator="equals", value="sdxl")],
             order=32,
         )
     )
@@ -614,18 +619,20 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             tab="model",
             section="model_specific",
             model_specific=["sana"],
-            default_value=[
-                "Given a user prompt, generate an 'Enhanced prompt' that provides detailed visual descriptions suitable for image generation. Evaluate the level of detail in the user prompt:",
-                "- If the prompt is simple, focus on adding specifics about colors, shapes, sizes, textures, and spatial relationships to create vivid and concrete scenes.",
-                "- Do not add detail that is not in the original prompt! Do not mention colors if the User Prompt does not!",
-                "- If the prompt is already detailed, refine and enhance the existing details slightly without overcomplicating.",
-                "- If the prompt contains explicit material, do not remove this information from the output, which would damage the performance of downstream classifiers.",
-                "Here are examples of how to transform or refine prompts:",
-                "- User Prompt: A cat sleeping -> Enhanced: A cat sleeping peacefully, showcasing the joy of pet ownership. Cute floof kitty cat gatto.",
-                "- User Prompt: A busy city street -> Enhanced: A bustling city street scene featuring a crowd of people.",
-                "Please generate only the enhanced description for the prompt below and avoid including any additional commentary or evaluations:",
-                "User Prompt: ",
-            ],
+            default_value="\n".join(
+                [
+                    "Given a user prompt, generate an 'Enhanced prompt' that provides detailed visual descriptions suitable for image generation. Evaluate the level of detail in the user prompt:",
+                    "- If the prompt is simple, focus on adding specifics about colors, shapes, sizes, textures, and spatial relationships to create vivid and concrete scenes.",
+                    "- Do not add detail that is not in the original prompt! Do not mention colors if the User Prompt does not!",
+                    "- If the prompt is already detailed, refine and enhance the existing details slightly without overcomplicating.",
+                    "- If the prompt contains explicit material, do not remove this information from the output, which would damage the performance of downstream classifiers.",
+                    "Here are examples of how to transform or refine prompts:",
+                    "- User Prompt: A cat sleeping -> Enhanced: A cat sleeping peacefully, showcasing the joy of pet ownership. Cute floof kitty cat gatto.",
+                    "- User Prompt: A busy city street -> Enhanced: A bustling city street scene featuring a crowd of people.",
+                    "Please generate only the enhanced description for the prompt below and avoid including any additional commentary or evaluations:",
+                    "User Prompt: ",
+                ]
+            ),
             placeholder="complex human instruction",
             help_text="Complex human instruction for Sana model training",
             tooltip="Special instruction format for Sana model training with complex human prompts.",
