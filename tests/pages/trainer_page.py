@@ -646,9 +646,9 @@ class BasicConfigTab(BasePage):
 
     # Form fields
     CONFIGS_DIR_INPUT = (By.CSS_SELECTOR, "input[name='configs_dir']")
-    MODEL_NAME_INPUT = (By.CSS_SELECTOR, "input[name='--tracker_run_name']")
-    OUTPUT_DIR_INPUT = (By.CSS_SELECTOR, "input[name='--output_dir']")
-    BASE_MODEL_INPUT = (By.CSS_SELECTOR, "input[name='--pretrained_model_name_or_path']")
+    MODEL_NAME_INPUT = (By.CSS_SELECTOR, "input[name='tracker_project_name']")
+    OUTPUT_DIR_INPUT = (By.CSS_SELECTOR, "input[name='output_dir']")
+    BASE_MODEL_INPUT = (By.CSS_SELECTOR, "input[name='pretrained_model_name_or_path']")
 
     # Save button (header action)
     SAVE_BUTTON = (By.CSS_SELECTOR, ".trainer-action-btn")
@@ -673,14 +673,25 @@ class BasicConfigTab(BasePage):
         try:
             self.send_keys(*self.MODEL_NAME_INPUT, name)
         except (TimeoutException, ElementNotInteractableException):
-            self._set_input_value("input[name='--tracker_run_name']", name)
+            self._set_input_value("input[name='tracker_project_name']", name)
+
+        # Trigger input event to mark form as dirty and capture values
         self.driver.execute_script(
-            "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
-            "if (!store) { return; }"
-            "store.formValueStore = store.formValueStore || {};"
-            "store.formValueStore['--tracker_run_name'] = { kind: 'single', value: arguments[0] };"
-            "if (typeof store.checkFormDirty === 'function') { store.checkFormDirty(); }",
-            name,
+            """
+            const input = document.querySelector('input[name="tracker_project_name"]');
+            if (input) {
+                // Trigger input event to mark form dirty
+                input.dispatchEvent(new Event('input', {bubbles: true}));
+                input.dispatchEvent(new Event('change', {bubbles: true}));
+
+                // Try to call captureFormValues directly
+                const store = Alpine.store('trainer');
+                if (store && typeof store.captureFormValues === 'function') {
+                    console.log('Manually capturing form values after setting model name');
+                    store.captureFormValues();
+                }
+            }
+            """,
         )
 
     def set_output_dir(self, path):
@@ -688,14 +699,17 @@ class BasicConfigTab(BasePage):
         try:
             self.send_keys(*self.OUTPUT_DIR_INPUT, path)
         except (TimeoutException, ElementNotInteractableException):
-            self._set_input_value("input[name='--output_dir']", path)
+            self._set_input_value("input[name='output_dir']", path)
+
+        # Trigger input event to mark form as dirty and capture values
         self.driver.execute_script(
-            "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
-            "if (!store) { return; }"
-            "store.formValueStore = store.formValueStore || {};"
-            "store.formValueStore['--output_dir'] = { kind: 'single', value: arguments[0] };"
-            "if (typeof store.checkFormDirty === 'function') { store.checkFormDirty(); }",
-            path,
+            """
+            const input = document.querySelector('input[name="output_dir"]');
+            if (input) {
+                input.dispatchEvent(new Event('input', {bubbles: true}));
+                input.dispatchEvent(new Event('change', {bubbles: true}));
+            }
+            """
         )
 
     def set_base_model(self, model):
@@ -761,40 +775,104 @@ class BasicConfigTab(BasePage):
 
     def get_model_name(self):
         """Get the current model name value."""
+        # Wait a moment for the DOM to be ready after tab switches
+        import time
+
+        time.sleep(0.5)
+
+        # First try to get the value directly from the DOM element
         try:
             element = self.find_element(*self.MODEL_NAME_INPUT)
-            return element.get_attribute("value")
+            value = element.get_attribute("value")
+            if value and value.strip():
+                return value
         except TimeoutException:
+            pass
+
+        # Fallback to JavaScript query of DOM element
+        try:
             value = (
                 self.driver.execute_script(
-                    "const el = document.querySelector(\"input[name='--tracker_run_name']\");" "return el ? el.value : null;"
+                    "const el = document.querySelector(\"input[name='job_id']\");" "return el ? el.value : null;"
                 )
                 or ""
             )
+            if value.strip():
+                return value
+        except Exception:
+            pass
 
-        if not value:
-            try:
-                value = (
-                    self.driver.execute_script(
-                        "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
-                        "if (store && store.formValueStore && store.formValueStore['--tracker_run_name']) {"
-                        "  const entry = store.formValueStore['--tracker_run_name'];"
-                        "  if (entry && entry.value != null) {"
-                        "    if (Array.isArray(entry.value)) { return entry.value.length ? String(entry.value[0]) : ''; }"
-                        "    return String(entry.value);"
-                        "  }"
-                        "}"
-                        "if (store && store.activeEnvironmentConfig && store.activeEnvironmentConfig['--tracker_run_name']) {"
-                        "  return String(store.activeEnvironmentConfig['--tracker_run_name']);"
-                        "}"
-                        "return '';"
-                    )
-                    or ""
+        # Final fallback to Alpine store
+        try:
+            value = (
+                self.driver.execute_script(
+                    "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                    "if (store && store.formValueStore && store.formValueStore['job_id']) {"
+                    "  const entry = store.formValueStore['job_id'];"
+                    "  if (entry && entry.value != null) {"
+                    "    if (Array.isArray(entry.value)) { return entry.value.length ? String(entry.value[0]) : ''; }"
+                    "    return String(entry.value);"
+                    "  }"
+                    "}"
+                    "if (store && store.activeEnvironmentConfig && store.activeEnvironmentConfig['job_id']) {"
+                    "  return String(store.activeEnvironmentConfig['job_id']);"
+                    "}"
+                    "return '';"
                 )
-            except Exception:
-                value = ""
+                or ""
+            )
+            return value
+        except Exception:
+            return ""
 
-        return value
+    def get_model_name_debug(self):
+        """Debug version of get_model_name that logs what it finds."""
+        debug_info = {}
+
+        # Check DOM element
+        try:
+            element = self.find_element(*self.MODEL_NAME_INPUT)
+            dom_value = element.get_attribute("value")
+            debug_info["dom_value"] = dom_value
+        except TimeoutException as e:
+            debug_info["dom_error"] = str(e)
+
+        # Check JavaScript query for both field names
+        try:
+            js_value = self.driver.execute_script(
+                "const el = document.querySelector(\"input[name='job_id']\");" "return el ? el.value : null;"
+            )
+            debug_info["js_value"] = js_value
+        except Exception as e:
+            debug_info["js_error"] = str(e)
+
+        try:
+            js_value_alt = self.driver.execute_script(
+                "const el = document.querySelector(\"input[name='--tracker_run_name']\");" "return el ? el.value : null;"
+            )
+            debug_info["js_value_alt"] = js_value_alt
+        except Exception as e:
+            debug_info["js_error_alt"] = str(e)
+
+        # Check Alpine store
+        try:
+            store_info = self.driver.execute_script(
+                "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                "return {"
+                "  store: !!store,"
+                "  activeConfig: store ? store.activeEnvironment : null,"
+                "  formValueStore: store ? store.formValueStore : null,"
+                "  hasCaptureFormValues: store ? typeof store.captureFormValues === 'function' : false,"
+                "  hasFormValueStore: store ? 'formValueStore' in store : false,"
+                "  storeKeys: store ? Object.keys(store).slice(0, 10) : []"
+                "};"
+            )
+            debug_info["store_info"] = store_info
+        except Exception as e:
+            debug_info["store_error"] = str(e)
+
+        print(f"DEBUG get_model_name: {debug_info}")
+        return debug_info
 
     def get_output_dir(self):
         """Get the current output directory value."""
