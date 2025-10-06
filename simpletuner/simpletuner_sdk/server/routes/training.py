@@ -5,6 +5,11 @@ from __future__ import annotations
 import asyncio
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+
+try:  # pragma: no cover - optional dependency
+    from websockets.exceptions import ConnectionClosed, ConnectionClosedOK
+except Exception:  # websockets may not be installed in all environments
+    ConnectionClosed = ConnectionClosedOK = RuntimeError
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
@@ -204,9 +209,10 @@ async def cancel_training(request: Request):
 @router.get("/status")
 async def get_training_status():
     """Get current training status."""
-    status = APIState.get_state("training_status", "idle")
-    config = APIState.get_state("training_config", {})
+    status = APIState.get_state("training_status") or "idle"
+    config = APIState.get_state("training_config") or {}
     job_id = APIState.get_state("current_job_id")
+    progress = APIState.get_state("training_progress") or None
 
     # Get detailed job status if available
     job_info = None
@@ -219,7 +225,13 @@ async def get_training_status():
             # Process keeper might not have this job
             pass
 
-    return {"status": status, "config": config, "job_id": job_id, "job_info": job_info}
+    return {
+        "status": status,
+        "config": config,
+        "job_id": job_id,
+        "job_info": job_info,
+        "progress": progress,
+    }
 
 
 @router.get("/events")
@@ -256,12 +268,18 @@ async def stream_training_events(websocket: WebSocket):
                     if events:
                         # Send each event
                         for event in events:
-                            await websocket.send_json({"job_id": job_id, "event": event})
+                            try:
+                                await websocket.send_json({"job_id": job_id, "event": event})
+                            except (WebSocketDisconnect, ConnectionClosed, ConnectionClosedOK, RuntimeError):
+                                return
 
                         last_index += len(events)
                 except Exception as e:
                     # Send error but continue streaming
-                    await websocket.send_json({"error": str(e), "job_id": job_id})
+                    try:
+                        await websocket.send_json({"error": str(e), "job_id": job_id})
+                    except (WebSocketDisconnect, ConnectionClosed, ConnectionClosedOK, RuntimeError):
+                        return
 
             # Wait a bit before checking for new events
             await asyncio.sleep(0.5)
@@ -269,13 +287,19 @@ async def stream_training_events(websocket: WebSocket):
     except WebSocketDisconnect:
         # Client disconnected
         pass
+    except (ConnectionClosed, ConnectionClosedOK):
+        # Underlying websocket library already closed
+        pass
     except Exception as e:
         # Send error and close
         try:
             await websocket.send_json({"error": str(e)})
-        except:
+        except (WebSocketDisconnect, ConnectionClosed, ConnectionClosedOK, RuntimeError):
             pass
-        await websocket.close()
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 @router.get("/checkpoints")
