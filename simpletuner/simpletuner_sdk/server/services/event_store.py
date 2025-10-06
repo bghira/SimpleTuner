@@ -53,12 +53,12 @@ class EventStore:
         Returns:
             List of events after the given index
         """
+        # Snapshot events while holding lock, filter without lock to reduce contention
         with self.lock:
-            result = []
-            for event in self.events:
-                if event.get("_index", -1) > since_index:
-                    result.append(event)
-            return result
+            snapshot = list(self.events)
+
+        # Filter without holding lock
+        return [event for event in snapshot if event.get("_index", -1) > since_index]
 
     def get_all_events(self) -> List[Dict[str, Any]]:
         """Get all stored events."""
