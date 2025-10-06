@@ -81,7 +81,7 @@ class FieldService:
     }
     _SNR_GAMMA_FIELDS = {"snr_gamma"}
 
-    _WEBUI_ONLY_FIELDS = {"configs_dir", "num_validation_images"}
+    _WEBUI_ONLY_FIELDS = {"configs_dir", "num_validation_images", "__active_tab__", "project_name"}
     # Fields that the WebUI manages internally so users cannot override them
     _WEBUI_FORCED_VALUES = {
         "webhook_config": DEFAULT_WEBHOOK_CONFIG,
@@ -110,9 +110,7 @@ class FieldService:
         "eval_dataset_pooling",
         "pretrained_evaluation_model_name_or_path",
     }
-    _EVAL_DATASET_REQUIRED_HINT = (
-        "Configure at least one evaluation dataset on the Datasets tab to enable these settings."
-    )
+    _EVAL_DATASET_REQUIRED_HINT = "Configure at least one evaluation dataset on the Datasets tab to enable these settings."
     _EVAL_TYPE_REQUIRED_HINT = "Select an evaluation type to adjust these settings."
 
     _TAB_SECTION_LAYOUTS: Dict[str, Tuple[SectionLayout, ...]] = {
@@ -705,7 +703,11 @@ class FieldService:
                     label_candidates.append(metadata.get("name"))
 
                 label = next(
-                    (str(candidate).strip() for candidate in label_candidates if isinstance(candidate, str) and candidate.strip()),
+                    (
+                        str(candidate).strip()
+                        for candidate in label_candidates
+                        if isinstance(candidate, str) and candidate.strip()
+                    ),
                     dataset_id,
                 )
 
@@ -1159,6 +1161,19 @@ class FieldService:
         # Extra CSS classes
         extra_classes = []
 
+        raw_config = options.get("raw_config") if isinstance(options, dict) else None
+
+        def _append_hint(message: str) -> None:
+            if not message:
+                return
+            existing_description = (field_dict.get("description") or "").strip()
+            if existing_description:
+                if message not in existing_description:
+                    field_dict["description"] = f"{existing_description} {message}".strip()
+            else:
+                field_dict["description"] = message
+            field_dict.setdefault("tooltip", message)
+
         # Add tooltip helpers
         if hasattr(field, "cmd_args_help") and field.cmd_args_help:
             field_dict["cmd_args_help"] = field.cmd_args_help
@@ -1197,12 +1212,35 @@ class FieldService:
                         dataset_choices = []
 
                     field_dict["custom_component"] = "dataset_config_select"
-                    field_dict["options"] = dataset_choices
 
                     selected_option = next(
                         (opt for opt in dataset_choices if opt.get("value") == field_value),
                         None,
                     )
+
+                    external_selection_note: Optional[str] = None
+                    if field_value and not selected_option:
+                        display_value = str(field_value)
+                        try:
+                            value_path = Path(str(field_value)).expanduser()
+                            display_value = value_path.as_posix()
+                        except Exception:
+                            pass
+
+                        external_choice = {
+                            "value": field_value,
+                            "environment": "External",
+                            "path": display_value,
+                            "label": f"External | {display_value}",
+                        }
+                        dataset_choices = [external_choice] + dataset_choices
+                        selected_option = external_choice
+                        external_selection_note = (
+                            "Selected dataset config is outside the configured config directories. "
+                            "This is supported, but it will not appear in the managed list."
+                        )
+
+                    field_dict["options"] = dataset_choices
 
                     field_dict["selected_environment"] = (
                         selected_option.get("environment") if selected_option else "Select dataset"
@@ -1213,6 +1251,16 @@ class FieldService:
                         if selected_option
                         else "Select dataset configuration"
                     )
+
+                    if external_selection_note:
+                        existing_description = (field_dict.get("description") or "").strip()
+                        field_dict["description"] = (
+                            f"{existing_description} {external_selection_note}".strip()
+                            if existing_description
+                            else external_selection_note
+                        )
+                        if "field-external-selection" not in extra_classes:
+                            extra_classes.append("field-external-selection")
                 elif field.name == "eval_dataset_id":
                     normalized_options: List[Dict[str, str]] = []
                     seen_values: Set[str] = set()
@@ -1281,9 +1329,7 @@ class FieldService:
                 existing_description = (field_dict.get("description") or "").strip()
                 if disable_reason not in existing_description:
                     field_dict["description"] = (
-                        f"{existing_description} {disable_reason}".strip()
-                        if existing_description
-                        else disable_reason
+                        f"{existing_description} {disable_reason}".strip() if existing_description else disable_reason
                     )
 
         if field.name in self._WEBUI_FORCED_VALUES:
@@ -1293,30 +1339,43 @@ class FieldService:
             hint = self._WEBUI_FIELD_HINTS.get(field.name)
             if hint:
                 existing_description = (field_dict.get("description") or "").strip()
-                field_dict["description"] = (
-                    f"{existing_description} {hint}".strip()
-                    if existing_description
-                    else hint
-                )
+                field_dict["description"] = f"{existing_description} {hint}".strip() if existing_description else hint
                 field_dict.setdefault("tooltip", hint)
 
         if field.name == "data_backend_config":
             field_dict["col_class"] = "col-md-6"
 
         if field.name == "pretrained_model_name_or_path":
-            default_path = self._get_default_model_path(config_values)
             if field_value is None or str(field_value).lower() == "none":
                 field_dict["value"] = ""
                 extra_classes.append("field-optional")
-            if default_path and default_path not in str(field_dict.get("placeholder", "")):
-                field_dict["placeholder"] = field_dict.get("placeholder") or default_path
-            if default_path:
-                hint = f"Defaults to {default_path} based on the selected model flavour."
-                if field_dict.get("description"):
-                    if default_path not in field_dict["description"]:
-                        field_dict["description"] = f"{field_dict['description']} {hint}"
-                else:
-                    field_dict["description"] = hint
+            _append_hint("Defaults to the selected model flavour at runtime.")
+
+        if field.name in {"controlnet_model_name_or_path", "controlnet_custom_config"}:
+            controlnet_flag = config_values.get("controlnet")
+            if controlnet_flag is None and isinstance(raw_config, dict):
+                controlnet_flag = raw_config.get("controlnet") or raw_config.get("--controlnet")
+            controlnet_enabled = self._coerce_bool(controlnet_flag)
+            if not controlnet_enabled:
+                field_dict["disabled"] = True
+                extra_classes.append("field-disabled")
+                _append_hint("Enable ControlNet training to configure this field.")
+
+        skip_guidance_fields = {
+            "validation_guidance_skip_layers",
+            "validation_guidance_skip_layers_start",
+            "validation_guidance_skip_layers_stop",
+            "validation_guidance_skip_scale",
+        }
+        if field.name in skip_guidance_fields:
+            model_family = config_values.get("model_family")
+            if not model_family and isinstance(raw_config, dict):
+                model_family = raw_config.get("model_family") or raw_config.get("--model_family")
+            allowed_families = {"auraflow", "sd3", "wan"}
+            if not model_family or model_family not in allowed_families:
+                field_dict["disabled"] = True
+                extra_classes.append("field-disabled")
+                _append_hint("Available when using Auraflow, SD3, or Wan model families.")
 
         field_dict["extra_classes"] = " ".join(extra_classes)
 
@@ -1698,9 +1757,7 @@ class FieldService:
         )
 
         selected_model_family = (
-            config_data.get("model_family")
-            or config_data.get("--model_family")
-            or webui_defaults.get("model_family")
+            config_data.get("model_family") or config_data.get("--model_family") or webui_defaults.get("model_family")
         )
 
         for field in tab_fields:
@@ -1799,7 +1856,10 @@ class FieldService:
 
         # Add webui-specific values for basic tab
         if tab_name == "basic":
-            config_values["configs_dir"] = webui_defaults.get("configs_dir", "")
+            configs_dir_value = (webui_defaults.get("configs_dir") if isinstance(webui_defaults, dict) else None) or ""
+            config_values["configs_dir"] = configs_dir_value
+            if configs_dir_value:
+                config_values["--configs_dir"] = configs_dir_value
             config_values["job_id"] = config_data.get("job_id", "")
 
         if tab_name == "validation":
