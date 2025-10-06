@@ -1,6 +1,29 @@
 <!-- templates/environments_tab.html - Configuration management tab -->
 <link rel="stylesheet" href="/static/css/form-sections.css">
 <script>
+const localSanitizeConfigName = (window.sanitizeConfigName
+    ? window.sanitizeConfigName
+    : (name) => {
+        if (typeof name !== 'string') {
+            return name;
+        }
+        const trimmed = name.trim();
+        return trimmed.toLowerCase().endsWith('.json') ? trimmed.slice(0, -5) : trimmed;
+    });
+
+const localSanitizeConfigEntry = (window.sanitizeConfigEntry
+    ? window.sanitizeConfigEntry
+    : (entry) => {
+        if (!entry || typeof entry !== 'object') {
+            return entry;
+        }
+        const clone = { ...entry };
+        if (clone.name) {
+            clone.name = localSanitizeConfigName(clone.name);
+        }
+        return clone;
+    });
+
 function environmentsTabComponent() {
     return {
          configs: [],
@@ -26,16 +49,16 @@ function environmentsTabComponent() {
          createEnvironmentModal: false,
          createEnvironmentLoading: false,
          newEnvironmentPathTouched: false,
-         newEnvironment: {
-             name: '',
-             model_family: '',
-             model_flavour: '',
-             model_type: 'lora',
-             lora_type: 'standard',
-             dataloader_path: '',
-             description: '',
-             example: ''
-         },
+        newEnvironment: {
+            name: '',
+            model_family: '',
+            model_flavour: null,
+            model_type: 'lora',
+            lora_type: 'standard',
+            dataloader_path: '',
+            description: '',
+            example: ''
+        },
          modelFamilies: [],
          modelFlavours: [],
          modelFlavourCache: {},
@@ -322,7 +345,7 @@ function environmentsTabComponent() {
             this.newEnvironment = {
                 name: '',
                 model_family: '',
-                model_flavour: '',
+                model_flavour: null,
                 model_type: 'lora',
                 lora_type: 'standard',
                 dataloader_path: '',
@@ -336,11 +359,26 @@ function environmentsTabComponent() {
             this.exampleLocked = false;
         },
 
+        normalizeConfigNameForType(name) {
+            if (name === undefined || name === null) {
+                return '';
+            }
+            // Always use the same normalization as the backend - strip .json extension
+            return localSanitizeConfigName(String(name).trim());
+        },
+
+        normalizeConfigEntry(entry) {
+            if (this.configType === 'model') {
+                return localSanitizeConfigEntry(entry);
+            }
+            return entry;
+        },
+
         updateNewEnvironmentName(value) {
-            const trimmed = value.trim();
-            this.newEnvironment.name = trimmed;
+            const sanitized = localSanitizeConfigName(value || '');
+            this.newEnvironment.name = sanitized;
             if (this.createNewDataloader && !this.newEnvironmentPathTouched) {
-                this.newEnvironment.dataloader_path = trimmed ? `${trimmed}/multidatabackend.json` : '';
+                this.newEnvironment.dataloader_path = sanitized ? `${sanitized}/multidatabackend.json` : '';
             }
         },
 
@@ -392,7 +430,7 @@ function environmentsTabComponent() {
                 this.newEnvironment.model_family = defaults.model_family;
                 await this.loadModelFlavours(defaults.model_family);
             }
-            this.newEnvironment.model_flavour = defaults.model_flavour || '';
+            this.newEnvironment.model_flavour = defaults.model_flavour ?? null;
 
             const modelType = defaults.model_type || 'lora';
             this.newEnvironment.model_type = modelType;
@@ -556,13 +594,15 @@ function environmentsTabComponent() {
         },
 
         async createEnvironmentSubmit() {
-            if (!this.newEnvironment.name || !this.newEnvironment.model_family) {
+            const sanitizedName = localSanitizeConfigName(this.newEnvironment.name || '');
+            if (!sanitizedName || !this.newEnvironment.model_family) {
                 window.showToast('Name and model family are required', 'warning');
                 return;
             }
+            this.newEnvironment.name = sanitizedName;
             this.createEnvironmentLoading = true;
             const payload = {
-                name: this.newEnvironment.name,
+                name: sanitizedName,
                 model_family: this.newEnvironment.model_family,
                 model_flavour: this.newEnvironment.model_flavour || null,
                 model_type: this.newEnvironment.model_type || 'lora',
@@ -694,15 +734,18 @@ function environmentsTabComponent() {
             }
         },
 
-         async loadConfigs() {
-             try {
-                 const response = await fetch(`/api/configs/?config_type=${this.configType}`);
-                 const data = await response.json();
-                 this.configs = data.configs || [];
-             } catch (error) {
-                 console.error('Failed to load configs:', error);
-             }
-         },
+        async loadConfigs() {
+            try {
+                const response = await fetch(`/api/configs/?config_type=${this.configType}`);
+                const data = await response.json();
+                const configs = Array.isArray(data.configs)
+                    ? data.configs.map((entry) => this.normalizeConfigEntry(entry))
+                    : [];
+                this.configs = configs;
+            } catch (error) {
+                console.error('Failed to load configs:', error);
+            }
+        },
 
          async loadTemplates() {
              try {
@@ -723,30 +766,33 @@ function environmentsTabComponent() {
              );
          },
 
-         toggleSelection(configName) {
-             const index = this.selectedConfigs.indexOf(configName);
-             if (index > -1) {
-                 this.selectedConfigs.splice(index, 1);
-             } else {
-                 this.selectedConfigs.push(configName);
-             }
-         },
+        toggleSelection(configName) {
+            const sanitized = this.normalizeConfigNameForType(configName);
+            const index = this.selectedConfigs.indexOf(sanitized);
+            if (index > -1) {
+                this.selectedConfigs.splice(index, 1);
+            } else {
+                this.selectedConfigs.push(sanitized);
+            }
+        },
 
-         isSelected(configName) {
-             return this.selectedConfigs.includes(configName);
-         },
+        isSelected(configName) {
+            const sanitized = this.normalizeConfigNameForType(configName);
+            return this.selectedConfigs.includes(sanitized);
+        },
 
-         async deleteConfig(name) {
-             if (!confirm('Are you sure you want to delete ' + name + '?')) {
-                 return;
-             }
+        async deleteConfig(name) {
+            const sanitized = this.normalizeConfigNameForType(name);
+            if (!confirm('Are you sure you want to delete ' + sanitized + '?')) {
+                return;
+            }
 
-             try {
-                 const response = await fetch('/api/configs/' + name + '?config_type=' + this.configType, {
-                     method: 'DELETE'
-                 });
+            try {
+                const response = await fetch('/api/configs/' + encodeURIComponent(sanitized) + '?config_type=' + this.configType, {
+                    method: 'DELETE'
+                });
 
-                 if (response.ok) {
+                if (response.ok) {
                      await this.loadConfigs();
                      window.showToast('Deleted configuration: ' + name, 'success');
                  } else {
@@ -781,117 +827,137 @@ function environmentsTabComponent() {
              this.selectedConfigs = [];
          },
 
-         async duplicateConfig(name) {
-             const newName = prompt('Enter name for duplicate of ' + name);
-             if (!newName) return;
+        async duplicateConfig(name) {
+            const sourceName = this.normalizeConfigNameForType(name);
+            let newName = prompt('Enter name for duplicate of ' + sourceName);
+            if (!newName) return;
+            const targetName = this.normalizeConfigNameForType(newName);
+            if (!targetName) {
+                window.showToast('Name is required', 'warning');
+                return;
+            }
 
-             try {
-                 const response = await fetch('/api/configs/' + name + '/copy?config_type=' + this.configType, {
-                     method: 'POST',
-                     headers: {
-                         'Content-Type': 'application/json',
-                     },
-                     body: JSON.stringify({
-                         target_name: newName
-                     })
-                 });
+            try {
+                const response = await fetch('/api/configs/' + encodeURIComponent(sourceName) + '/copy?config_type=' + this.configType, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        target_name: targetName
+                    })
+                });
 
-                 if (response.ok) {
-                     await this.loadConfigs();
-                     window.showToast('Created duplicate: ' + newName, 'success');
-                 }
-             } catch (error) {
-                 console.error('Failed to duplicate config:', error);
-                 window.showToast('Failed to duplicate configuration', 'error');
-             }
-         },
+                if (response.ok) {
+                    await this.loadConfigs();
+                    window.showToast('Created duplicate: ' + targetName, 'success');
+                }
+            } catch (error) {
+                console.error('Failed to duplicate config:', error);
+                window.showToast('Failed to duplicate configuration', 'error');
+            }
+        },
 
-         async renameConfig(name) {
-             const newName = prompt('Rename ' + name + ' to:');
-             if (!newName || newName === name) return;
+        async renameConfig(name) {
+            const sourceName = this.normalizeConfigNameForType(name);
+            let newName = prompt('Rename ' + sourceName + ' to:');
+            if (!newName) return;
+            const targetName = this.normalizeConfigNameForType(newName);
+            if (!targetName || targetName === sourceName) return;
 
-             try {
-                 const response = await fetch('/api/configs/' + name + '/rename?config_type=' + this.configType, {
-                     method: 'POST',
-                     headers: {
-                         'Content-Type': 'application/json',
-                     },
-                     body: JSON.stringify({
-                         new_name: newName
-                     })
-                 });
+            try {
+                const response = await fetch('/api/configs/' + encodeURIComponent(sourceName) + '/rename?config_type=' + this.configType, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        new_name: targetName
+                    })
+                });
 
-                 if (response.ok) {
-                     await this.loadConfigs();
-                     window.showToast('Renamed to: ' + newName, 'success');
-                 }
-             } catch (error) {
-                 console.error('Failed to rename config:', error);
-                 window.showToast('Failed to rename configuration', 'error');
-             }
-         },
+                if (response.ok) {
+                    await this.loadConfigs();
+                    window.showToast('Renamed to ' + targetName, 'success');
+                }
+            } catch (error) {
+                console.error('Failed to rename config:', error);
+                window.showToast('Failed to rename configuration', 'error');
+            }
+        },
 
-         async exportConfig(name) {
-             try {
-                 const response = await fetch('/api/configs/' + name + '/export?config_type=' + this.configType + '&include_metadata=false');
-                 const data = await response.json();
+        async exportConfig(name) {
+            const resolvedName = this.normalizeConfigNameForType(name);
+            try {
+                const response = await fetch('/api/configs/' + encodeURIComponent(resolvedName) + '/export?config_type=' + this.configType + '&include_metadata=false');
+                const data = await response.json();
 
-                 const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
-                 const url = URL.createObjectURL(blob);
-                 const a = document.createElement('a');
-                 a.href = url;
-                 a.download = name + '_config.json';
-                 a.click();
-                 URL.revokeObjectURL(url);
+                const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = resolvedName + '_config.json';
+                a.click();
+                URL.revokeObjectURL(url);
 
-                 window.showToast('Exported configuration: ' + name, 'success');
-             } catch (error) {
-                 console.error('Failed to export config:', error);
-                 window.showToast('Failed to export configuration', 'error');
-             }
-         },
+                window.showToast('Exported configuration: ' + resolvedName, 'success');
+            } catch (error) {
+                console.error('Failed to export config:', error);
+                window.showToast('Failed to export configuration', 'error');
+            }
+        },
 
-         async createFromTemplate(templateName) {
-             const configName = prompt('Enter name for new configuration from template: ' + templateName);
-             if (!configName) return;
+        async createFromTemplate(templateName) {
+            let configName = prompt('Enter name for new configuration from template: ' + templateName);
+            if (!configName) return;
+            const normalizedName = this.normalizeConfigNameForType(configName);
+            if (!normalizedName) {
+                window.showToast('Name is required', 'warning');
+                return;
+            }
 
-             try {
-                 const response = await fetch('/api/configs/from-template?config_type=' + this.configType, {
-                     method: 'POST',
-                     headers: {
-                         'Content-Type': 'application/json',
-                     },
-                     body: JSON.stringify({
-                         template_name: templateName,
-                         config_name: configName
-                     })
-                 });
+            try {
+                const response = await fetch('/api/configs/from-template?config_type=' + this.configType, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        template_name: templateName,
+                        config_name: normalizedName
+                    })
+                });
 
-                 if (response.ok) {
-                     await this.loadConfigs();
-                     window.showToast('Created configuration from template: ' + configName, 'success');
-                 }
-             } catch (error) {
-                 console.error('Failed to create from template:', error);
-                 window.showToast('Failed to create from template', 'error');
-             }
-         },
+                if (response.ok) {
+                    await this.loadConfigs();
+                    window.showToast('Created configuration from template: ' + normalizedName, 'success');
+                }
+            } catch (error) {
+                console.error('Failed to create from template:', error);
+                window.showToast('Failed to create from template', 'error');
+            }
+        },
 
-         async importConfig(event) {
-             const file = event.target.files[0];
-             if (!file) return;
+        async importConfig(event) {
+            const file = event.target.files[0];
+            if (!file) return;
 
-             try {
-                 const text = await file.text();
-                 const config = JSON.parse(text);
+            try {
+                const text = await file.text();
+                const config = JSON.parse(text);
 
-                 const name = prompt('Enter name for imported configuration: ' + file.name.replace('.json', ''));
-                 if (!name) return;
+                const promptName = prompt('Enter name for imported configuration: ' + file.name.replace('.json', ''));
+                if (!promptName) return;
+                const name = this.normalizeConfigNameForType(promptName);
+                if (!name) {
+                    window.showToast('Name is required', 'warning');
+                    return;
+                }
 
-                 const response = await fetch('/api/configs/import?config_type=' + this.configType, {
-                     method: 'POST',
-                     headers: {
-                         'Content-Type': 'application/json',
+                const response = await fetch('/api/configs/import?config_type=' + this.configType, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
                      },
                      body: JSON.stringify({
                          name: name,
@@ -899,36 +965,38 @@ function environmentsTabComponent() {
                      })
                  });
 
-                 if (response.ok) {
-                     await this.loadConfigs();
-                     window.showToast('Imported configuration: ' + name, 'success');
-                 }
+                if (response.ok) {
+                    await this.loadConfigs();
+                    window.showToast('Imported configuration: ' + name, 'success');
+                }
              } catch (error) {
                  console.error('Failed to import config:', error);
                  window.showToast('Failed to import configuration', 'error');
              }
          },
 
-         openLycorisEditor(config) {
-             if (!config) return;
-             this.lycorisEditor.selectedEnvironment = config.name;
-             this.lycorisEditor.open = true;
-             this.loadLycorisConfig(config.name);
-         },
+        openLycorisEditor(config) {
+            if (!config) return;
+            this.lycorisEditor.selectedEnvironment = this.normalizeConfigNameForType(config.name);
+            this.lycorisEditor.open = true;
+            this.loadLycorisConfig(this.lycorisEditor.selectedEnvironment);
+        },
 
-         closeLycorisEditor() {
-             this.lycorisEditor.open = false;
-             this.lycorisEditor.loading = false;
-             this.lycorisEditor.selectedEnvironment = null;
-         },
+        closeLycorisEditor() {
+            this.lycorisEditor.open = false;
+            this.lycorisEditor.loading = false;
+            this.lycorisEditor.selectedEnvironment = null;
+        },
 
-         async loadLycorisConfig(envId) {
-             if (!envId) return;
-             this.lycorisEditor.loading = true;
-             try {
-                 const response = await fetch(`/api/configs/environments/${encodeURIComponent(envId)}/lycoris`);
-                 if (response.ok) {
-                     const data = await response.json();
+        async loadLycorisConfig(envId) {
+            if (!envId) return;
+            const sanitizedId = this.normalizeConfigNameForType(envId);
+            this.lycorisEditor.selectedEnvironment = sanitizedId;
+            this.lycorisEditor.loading = true;
+            try {
+                const response = await fetch(`/api/configs/environments/${encodeURIComponent(sanitizedId)}/lycoris`);
+                if (response.ok) {
+                    const data = await response.json();
                      if (data.config) {
                          this.lycorisConfig = {
                              algo: data.config.algo || 'lora',
@@ -1025,27 +1093,29 @@ function environmentsTabComponent() {
              this.lycorisConfig.apply_preset.target_module = targetModules;
          },
 
-         async saveLycorisConfig() {
-             if (!this.validateLycorisConfig()) {
-                 return;
-             }
-             if (!this.lycorisEditor.selectedEnvironment) {
-                 window.showToast('No environment selected', 'warning');
-                 return;
-             }
-             this.buildTargetModulesConfig();
-             this.lycorisEditor.loading = true;
-             try {
-                 const payload = {
-                     algo: this.lycorisConfig.algo,
-                     multiplier: this.lycorisConfig.multiplier,
-                     linear_dim: this.lycorisConfig.linear_dim,
-                     linear_alpha: this.lycorisConfig.linear_alpha,
-                     factor: this.lycorisConfig.factor,
-                     block_size: this.lycorisConfig.block_size,
-                     apply_preset: this.lycorisConfig.apply_preset
-                 };
-                 const response = await fetch(`/api/configs/environments/${encodeURIComponent(this.lycorisEditor.selectedEnvironment)}/lycoris`, {
+        async saveLycorisConfig() {
+            if (!this.validateLycorisConfig()) {
+                return;
+            }
+            if (!this.lycorisEditor.selectedEnvironment) {
+                window.showToast('No environment selected', 'warning');
+                return;
+            }
+            this.buildTargetModulesConfig();
+            this.lycorisEditor.loading = true;
+            try {
+                const payload = {
+                    algo: this.lycorisConfig.algo,
+                    multiplier: this.lycorisConfig.multiplier,
+                    linear_dim: this.lycorisConfig.linear_dim,
+                    linear_alpha: this.lycorisConfig.linear_alpha,
+                    factor: this.lycorisConfig.factor,
+                    block_size: this.lycorisConfig.block_size,
+                    apply_preset: this.lycorisConfig.apply_preset
+                };
+                const environmentId = this.normalizeConfigNameForType(this.lycorisEditor.selectedEnvironment);
+                this.lycorisEditor.selectedEnvironment = environmentId;
+                const response = await fetch(`/api/configs/environments/${encodeURIComponent(environmentId)}/lycoris`, {
                      method: 'PUT',
                      headers: {
                          'Content-Type': 'application/json'
@@ -1612,7 +1682,7 @@ function environmentsTabComponent() {
                                 x-model="newEnvironment.model_family"
                                 required
                                 :disabled="exampleLocked"
-                                @change="loadModelFlavours($event.target.value); newEnvironment.model_flavour='';">
+                                @change="loadModelFlavours($event.target.value); newEnvironment.model_flavour=null;">
                             <option value="" disabled>Select a model family</option>
                             <template x-for="family in modelFamilies" :key="family">
                                 <option :value="family" x-text="family"></option>
