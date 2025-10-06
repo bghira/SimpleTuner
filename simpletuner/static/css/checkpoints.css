@@ -129,6 +129,35 @@
     gap: var(--spacing-sm);
 }
 
+.checkpoint-preview-image {
+    margin: var(--spacing-sm) 0;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.checkpoint-preview-image img {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.checkpoint-tags {
+    margin-top: var(--spacing-sm);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-xs);
+}
+
+.checkpoint-tag-badge {
+    font-size: var(--typography-font-size-xs);
+    font-weight: 600;
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
 .checkpoint-info {
     display: flex;
     align-items: center;
@@ -365,6 +394,67 @@
 .checkpoint-controls-actions .btn-cleanup:hover {
     background: rgba(245, 158, 11, 0.2);
     border-color: rgba(245, 158, 11, 0.5);
+}
+
+.checkpoint-gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: var(--spacing-md);
+}
+
+.checkpoint-gallery .gallery-item {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-sm);
+    padding: var(--spacing-sm);
+    text-align: center;
+}
+
+.checkpoint-gallery .gallery-item img {
+    width: 100%;
+    height: auto;
+    border-radius: var(--radius-xs);
+    margin-bottom: var(--spacing-xs);
+}
+
+.checkpoint-gallery .gallery-item figcaption {
+    font-size: var(--typography-font-size-xs);
+    color: var(--text-secondary);
+    word-break: break-word;
+}
+
+.gallery-caption-title {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.gallery-caption-prompt {
+    margin-top: var(--spacing-xs);
+    color: var(--text-secondary);
+}
+
+.gallery-caption-negative {
+    margin-top: var(--spacing-xxs, 4px);
+    color: var(--error-text);
+}
+
+.readme-content {
+    font-size: var(--typography-font-size-sm);
+    line-height: 1.6;
+    color: var(--text-primary);
+    word-break: break-word;
+}
+
+.readme-content img {
+    max-width: 100%;
+    border-radius: var(--radius-sm);
+    margin: var(--spacing-sm) 0;
+}
+
+.detail-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-xs);
 }
 
 /* Empty state */
