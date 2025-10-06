@@ -239,8 +239,44 @@ class HubManager:
         if checkpoint_path:
             logging.info(f"Checkpoint path: {checkpoint_path}")
             try:
+                # Extract step number from checkpoint path (e.g., "checkpoint-50" -> 50)
+                checkpoint_step = None
+                checkpoint_name = os.path.basename(str(checkpoint_path))
+                if "checkpoint-" in checkpoint_name:
+                    try:
+                        checkpoint_step = int(checkpoint_name.split("-")[1])
+                    except (IndexError, ValueError):
+                        logger.warning(f"Could not extract step number from checkpoint path: {checkpoint_path}")
+
+                # Filter validation images to only include those for this checkpoint step
+                filtered_images = {}
+                if validation_images and checkpoint_step is not None:
+                    validation_dir = os.path.join(self.config.output_dir, "validation_images")
+                    if os.path.exists(validation_dir):
+                        # Look for images with step_{checkpoint_step}_ in the filename
+                        for shortname, images in validation_images.items():
+                            filtered_images[shortname] = []
+                            # Get the actual image files for this step
+                            step_pattern = f"step_{checkpoint_step}_"
+                            for img_file in os.listdir(validation_dir):
+                                if step_pattern in img_file and shortname in img_file:
+                                    img_path = os.path.join(validation_dir, img_file)
+                                    try:
+                                        from PIL import Image
+
+                                        img = Image.open(img_path)
+                                        filtered_images[shortname].append(img)
+                                    except Exception as e:
+                                        logger.warning(f"Could not load validation image {img_path}: {e}")
+                            # Remove empty entries
+                            if not filtered_images[shortname]:
+                                del filtered_images[shortname]
+
+                # Use filtered images if we found any, otherwise use original validation images
+                images_to_upload = filtered_images if filtered_images else validation_images
+
                 self.upload_model(
-                    validation_images=validation_images,
+                    validation_images=images_to_upload,
                     override_path=checkpoint_path,
                     webhook_handler=webhook_handler,
                 )
