@@ -30,6 +30,17 @@
                  x-init="loadCheckpoints()"
                  @environment-changed.window="loadCheckpoints()">
 
+                {% set resume_value = 'latest' %}
+                {% if config is defined and config %}
+                    {% set resume_value = config.get('--resume_from_checkpoint', config.get('resume_from_checkpoint', resume_value)) %}
+                {% elif active_config is defined and active_config %}
+                    {% set resume_value = active_config.get('--resume_from_checkpoint', active_config.get('resume_from_checkpoint', resume_value)) %}
+                {% endif %}
+                {% if resume_value is none %}
+                    {% set resume_value = '' %}
+                {% endif %}
+                {% set resume_lower = (resume_value|string)|lower %}
+
                 <label class="form-label" for="resume_from_checkpoint">
                     Resume From Checkpoint
                     <span class="text-muted small ms-2" x-show="loading">
@@ -41,8 +52,8 @@
                         id="resume_from_checkpoint"
                         class="form-select"
                         x-bind:disabled="loading">
-                    <option value="latest">latest (auto-detect most recent)</option>
-                    <option value="">none (start from scratch)</option>
+                    <option value="latest" {% if resume_lower == 'latest' %}selected{% endif %}>Latest checkpoint (automatic)</option>
+                    <option value="" {% if resume_lower in ['', 'none'] %}selected{% endif %}>None (start from scratch)</option>
                     <template x-for="cp in checkpoints" :key="cp.name">
                         <option :value="cp.name"
                                 x-text="`${cp.name} (step ${cp.step})`"></option>
