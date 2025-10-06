@@ -125,11 +125,13 @@ def mapping_to_cli_args(
                 cli_args.append(_ensure_prefixed(key))
             continue
 
-        if isinstance(value, str) and value.lower() == "false":
-            continue
-        if isinstance(value, str) and value.lower() == "true":
-            cli_args.append(_ensure_prefixed(key))
-            continue
+        if isinstance(value, str):
+            value_lower = value.strip().lower()  # Do once
+            if value_lower == "false":
+                continue
+            if value_lower == "true":
+                cli_args.append(_ensure_prefixed(key))
+                continue
 
         if isinstance(value, Mapping):
             extras_dict[key] = value
@@ -137,13 +139,19 @@ def mapping_to_cli_args(
 
         if isinstance(value, Iterable) and not isinstance(value, (str, bytes)):
             for item in value:
-                cli_args.append(_format_key_value(key, item))
+                item_str = str(item).strip()
+                if item_str:
+                    cli_args.append(_format_key_value(key, item_str))
             continue
 
         if not isinstance(value, (str, bytes, int, float)):
             extras_dict[key] = value
             continue
 
-        cli_args.append(_format_key_value(key, value))
+        value_str = str(value).strip()
+        if not value_str:
+            continue
+
+        cli_args.append(_format_key_value(key, value_str))
 
     return cli_args
