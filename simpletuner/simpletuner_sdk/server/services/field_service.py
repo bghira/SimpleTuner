@@ -81,7 +81,7 @@ class FieldService:
     }
     _SNR_GAMMA_FIELDS = {"snr_gamma"}
 
-    _WEBUI_ONLY_FIELDS = {"configs_dir", "num_validation_images", "__active_tab__", "project_name"}
+    _WEBUI_ONLY_FIELDS = {"configs_dir", "num_validation_images", "__active_tab__", "project_name", "uploadMode"}
     # Fields that the WebUI manages internally so users cannot override them
     _WEBUI_FORCED_VALUES = {
         "webhook_config": DEFAULT_WEBHOOK_CONFIG,

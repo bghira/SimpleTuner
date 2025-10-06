@@ -339,12 +339,17 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
             complete_config.pop(arg_name, None)
             complete_config.pop(alias, None)
 
-    for ui_key in ("configs_dir", "--configs_dir", "__active_tab__", "--__active_tab__"):
-        complete_config.pop(ui_key, None)
+    # Remove WebUI-only fields from config
+    from simpletuner.simpletuner_sdk.server.services.field_service import FieldService
+
+    for ui_field in FieldService._WEBUI_ONLY_FIELDS:
+        complete_config.pop(ui_field, None)
+        complete_config.pop(f"--{ui_field}", None)
 
     # Ensure WebUI jobs always use the raw callback webhook configuration
     complete_config["--webhook_config"] = copy.deepcopy(DEFAULT_WEBHOOK_CONFIG)
     config_dict["--webhook_config"] = copy.deepcopy(DEFAULT_WEBHOOK_CONFIG)
+    config_dict["--webhook_reporting_interval"] = 1
 
     save_config: Dict[str, Any] = {}
     for key, value in complete_config.items():
