@@ -60,10 +60,48 @@ def normalize_dataset_config_value(
 def build_data_backend_choices() -> List[Dict[str, str]]:
     """Collect available dataset configuration candidates for selection widgets."""
 
-    entries: List[Dict[str, str]] = []
-    seen_values: Set[str] = set()
-
     config_roots: Set[Path] = set()
+    options: Dict[str, Dict[str, str]] = {}
+    option_priorities: Dict[str, int] = {}
+    workspace_config_root: Optional[Path] = None
+
+    try:
+        simpletuner_root = Path(get_simpletuner_root()).expanduser().resolve(strict=False)
+    except Exception:
+        simpletuner_root = None
+
+    project_config_root: Optional[Path] = None
+    if simpletuner_root is not None:
+        candidate_project_root = simpletuner_root.parent / "config"
+        try:
+            resolved_candidate = candidate_project_root.expanduser().resolve(strict=False)
+            if resolved_candidate.exists():
+                project_config_root = resolved_candidate
+        except Exception:
+            pass
+
+    try:
+        default_config_root = Path(get_config_directory()).expanduser().resolve(strict=False)
+    except Exception:
+        default_config_root = None
+
+    def _is_under(path: Path, root: Optional[Path]) -> bool:
+        if not root:
+            return False
+        try:
+            path.relative_to(root)
+            return True
+        except ValueError:
+            return False
+
+    def _compute_priority(resolved: Path) -> int:
+        if workspace_config_root and _is_under(resolved, workspace_config_root):
+            return 3
+        if project_config_root and _is_under(resolved, project_config_root):
+            return 2
+        if default_config_root and _is_under(resolved, default_config_root):
+            return 1
+        return 2
 
     def _add_config_root(raw_path: Optional[Path]) -> None:
         if not raw_path:
@@ -114,8 +152,6 @@ def build_data_backend_choices() -> List[Dict[str, str]]:
             return
         resolved = path.expanduser().resolve(strict=False)
         value = _format_dataset_path(resolved)
-        if value in seen_values:
-            return
 
         rel_path = _relative_to_config_roots(resolved)
         rel_path_path = Path(rel_path)
@@ -125,14 +161,18 @@ def build_data_backend_choices() -> List[Dict[str, str]]:
         if not env_name and parent_segment:
             environment = parent_segment.name
 
-        entries.append(
-            {
-                "value": value,
-                "environment": environment,
-                "path": rel_path,
-            }
-        )
-        seen_values.add(value)
+        display_key = f"{(environment or '').strip().lower()}|{rel_path.lower()}"
+        priority = _compute_priority(resolved)
+        existing_priority = option_priorities.get(display_key)
+        if existing_priority is not None and priority <= existing_priority:
+            return
+
+        options[display_key] = {
+            "value": value,
+            "environment": environment,
+            "path": rel_path,
+        }
+        option_priorities[display_key] = priority
 
     candidate_dirs: Set[Path] = set()
 
@@ -157,6 +197,10 @@ def build_data_backend_choices() -> List[Dict[str, str]]:
         defaults = WebUIStateStore().load_defaults()
         if defaults.configs_dir:
             base = Path(defaults.configs_dir).expanduser()
+            try:
+                workspace_config_root = base.resolve(strict=False)
+            except Exception:
+                workspace_config_root = base
             _add_candidate_dir(base)
             _add_candidate_dir(base / "dataloaders")
     except Exception:
@@ -222,11 +266,11 @@ def build_data_backend_choices() -> List[Dict[str, str]]:
         except Exception:
             continue
 
-    if not entries:
+    if not options:
         return []
 
+    entries = list(options.values())
     max_env_len = max(len(entry["environment"]) for entry in entries)
-    max_path_len = max(len(entry["path"]) for entry in entries)
 
     for entry in entries:
         entry["label"] = f"{entry['environment']:<{max_env_len}} | {entry['path']}"
