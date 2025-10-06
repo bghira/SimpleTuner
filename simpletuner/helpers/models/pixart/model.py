@@ -288,6 +288,8 @@ class PixartSigma(ImageModelFoundation):
         """
         We'll check the current model config to ensure we're loading a base or refiner model.
         """
+        if self.config.model_flavour is None:
+            return
         if "stage1" in self.config.model_flavour or "stage1" in self.config.pretrained_model_name_or_path:
             logger.info(f"{self.NAME} stage1 eDiffi model is detected, enabling special training configuration settings.")
             self.config.refiner_training = True
