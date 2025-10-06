@@ -112,6 +112,16 @@ function trainerComponent() {
         switchTab(tabName, updateHash = true) {
             console.log('Alpine store switchTab called with:', tabName);
 
+            // Save current form values before switching tabs
+            // Access the trainer component through the Alpine store
+            const trainerStore = window.Alpine && window.Alpine.store ? window.Alpine.store('trainer') : null;
+            if (trainerStore && typeof trainerStore.captureFormValues === 'function') {
+                console.log('Saving form values before tab switch');
+                trainerStore.captureFormValues();
+                // Set flag to restore form values after tab loads
+                trainerStore._preservingFormState = true;
+            }
+
             this.activeTab = tabName;
             localStorage.setItem('activeTab', tabName);
 
@@ -2612,7 +2622,10 @@ function trainerComponent() {
         captureFormValues() {
             const form = document.getElementById('trainer-form');
             if (!form) return;
-            const values = {};
+
+            // Start with existing values to preserve cross-tab data
+            const values = { ...this.formValueStore };
+
             const elements = form.querySelectorAll('input[name], select[name], textarea[name]');
             const processed = new Set();
             elements.forEach((el) => {
@@ -2621,6 +2634,7 @@ function trainerComponent() {
                     return;
                 }
                 processed.add(name);
+                // Update only the fields present in current form
                 values[name] = this.getFieldDescriptor(form, name);
             });
             this.formValueStore = values;
@@ -2672,13 +2686,21 @@ function trainerComponent() {
 
         applyStoredValues() {
             const form = document.getElementById('trainer-form');
-            if (!form || !this.formValueStore) return;
+            if (!form || !this.formValueStore) {
+                console.log('No form or formValueStore to apply');
+                return;
+            }
+
+            console.log('Applying stored values:', Object.keys(this.formValueStore).length, 'fields');
 
             Object.entries(this.formValueStore).forEach(([name, entry]) => {
                 if (!entry) return;
                 const selector = `[name="${this.cssEscape(name)}"]`;
                 const nodes = form.querySelectorAll(selector);
-                if (!nodes.length) return;
+                if (!nodes.length) {
+                    console.log(`Field ${name} not found in form`);
+                    return;
+                }
 
                 if (entry.kind === 'checkbox') {
                     const values = Array.isArray(entry.value) ? entry.value : [];
@@ -2701,7 +2723,11 @@ function trainerComponent() {
                     });
                 } else {
                     nodes.forEach((node) => {
+                        const oldValue = node.value;
                         node.value = entry.value ?? '';
+                        if (oldValue !== (entry.value ?? '')) {
+                            console.log(`Restored ${name}: "${oldValue}" -> "${entry.value ?? ''}"`);
+                        }
                     });
                 }
             });
@@ -3160,17 +3186,35 @@ function trainerComponent() {
                         return;
                     }
 
+                    // Use a longer delay and requestAnimationFrame to ensure DOM is fully updated
                     setTimeout(() => {
-                        if ($data._preservingFormState) {
-                            $data.applyStoredValues();
-                            $data.checkFormDirty();
-                        } else if (!$data._skipNextClean) {
-                            $data.markFormClean();
-                        }
+                        requestAnimationFrame(() => {
+                            if ($data._preservingFormState) {
+                                console.log('Applying stored form values after tab switch');
+                                $data.applyStoredValues();
+                                $data.checkFormDirty();
+                            } else if (!$data._skipNextClean) {
+                                $data.markFormClean();
+                            }
 
+                            delete $data._preservingFormState;
+                            $data._skipNextClean = false;
+                        });
+                    }, 150);
+                });
+
+                // Also listen for afterSettle event which fires after all animations complete
+                document.body.addEventListener('htmx:afterSettle', (evt) => {
+                    if (evt.detail.target.id !== 'tab-content') {
+                        return;
+                    }
+
+                    // Double-check if we still need to preserve form state
+                    if ($data._preservingFormState) {
+                        console.log('Applying stored values on afterSettle');
+                        $data.applyStoredValues();
                         delete $data._preservingFormState;
-                        $data._skipNextClean = false;
-                    }, 100);
+                    }
                 });
              }
 
@@ -3317,6 +3361,14 @@ function trainerComponent() {
                         hx-get="/web/trainer/tabs/{{ tab.name }}"
                         hx-target="#tab-content"
                         hx-swap="innerHTML"
+                        hx-on::before-request="
+                            const trainer = Alpine.store('trainer');
+                            if (trainer && typeof trainer.captureFormValues === 'function') {
+                                console.log('Saving form values before HTMX request');
+                                trainer.captureFormValues();
+                                trainer._preservingFormState = true;
+                            }
+                        "
                         @click="switchTab('{{ tab.name }}')">
                     <i class="{{ tab.icon }}"></i> {{ tab.title }}
                 </button>
