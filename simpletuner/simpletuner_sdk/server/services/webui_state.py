@@ -146,15 +146,43 @@ class WebUIStateStore:
             defaults.event_stream_enabled = bool(stream_value)
 
         # Normalise auto preserve defaults toggle
-        auto_preserve_value = payload.get("auto_preserve_defaults", defaults.auto_preserve_defaults)
-        if isinstance(auto_preserve_value, str):
-            defaults.auto_preserve_defaults = auto_preserve_value.strip().lower() not in {"0", "false", "no", "off"}
+        sentinel = object()
+        auto_preserve_value = payload.get("auto_preserve_defaults", sentinel)
+        if auto_preserve_value is sentinel:
+            defaults.auto_preserve_defaults = True
+        elif isinstance(auto_preserve_value, str):
+            normalized = auto_preserve_value.strip().lower()
+            defaults.auto_preserve_defaults = normalized not in {"0", "false", "no", "off"}
         elif auto_preserve_value is None:
             defaults.auto_preserve_defaults = True
         else:
             defaults.auto_preserve_defaults = bool(auto_preserve_value)
 
+        defaults.active_config = self._validate_active_config(defaults.active_config, defaults.configs_dir)
         return defaults
+
+    def _validate_active_config(self, active_config: Optional[str], configs_dir: Optional[str]) -> Optional[str]:
+        if not active_config:
+            return None
+
+        candidate = active_config.strip()
+        if not candidate:
+            return None
+
+        configs_path = Path(configs_dir).expanduser() if configs_dir else None
+
+        if configs_path and (configs_path / candidate / "config.json").exists():
+            return candidate
+
+        # Lazy import to avoid circular dependency
+        from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
+
+        config_store = ConfigStore(config_dir=configs_dir, config_type="model")
+        try:
+            config_store.load_config(candidate)
+            return candidate
+        except FileNotFoundError:
+            return None
 
     def save_defaults(self, defaults: WebUIDefaults) -> WebUIDefaults:
         self._write_json("defaults", asdict(defaults))
