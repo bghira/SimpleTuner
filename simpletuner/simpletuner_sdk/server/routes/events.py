@@ -6,6 +6,8 @@ Handles webhook callbacks and event broadcasting.
 import asyncio
 import json
 import logging
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -33,11 +35,76 @@ except ModuleNotFoundError:  # pragma: no cover - fallback to basic streaming
             super().__init__(_adapt(), media_type="text/event-stream", *args, **kwargs)
 
 
+from ..services.callback_presenter import CallbackPresenter
+from ..services.callback_service import CallbackService, get_default_callback_service
 from ..services.sse_manager import get_sse_manager
 
 logger = logging.getLogger("EventRoutes")
 
 router = APIRouter(prefix="")
+
+
+def _truncate_long_strings(
+    obj: Any,
+    *,
+    max_length: int = 256,
+    preview_length: int = 64,
+    suffix: str = "...[truncated]...",
+    _seen: set[int] | None = None,
+) -> Any:
+    """Return a copy of *obj* with overly long strings shortened for logging."""
+    if _seen is None:
+        _seen = set()
+
+    if isinstance(obj, str):
+        return obj if len(obj) <= max_length else f"{obj[:preview_length]}{suffix}"
+
+    if obj is None or isinstance(obj, (int, float, bool)):
+        return obj
+
+    obj_id = id(obj)
+    if obj_id in _seen:
+        return "<recursion>"
+    _seen.add(obj_id)
+
+    if isinstance(obj, Mapping):
+        return {
+            (
+                _truncate_long_strings(key, max_length=max_length, preview_length=preview_length, suffix=suffix, _seen=_seen)
+                if isinstance(key, str)
+                else key
+            ): _truncate_long_strings(
+                value, max_length=max_length, preview_length=preview_length, suffix=suffix, _seen=_seen
+            )
+            for key, value in obj.items()
+        }
+
+    if isinstance(obj, Sequence) and not isinstance(obj, (str, bytes, bytearray)):
+        items = [
+            _truncate_long_strings(item, max_length=max_length, preview_length=preview_length, suffix=suffix, _seen=_seen)
+            for item in obj
+        ]
+        return tuple(items) if isinstance(obj, tuple) else items
+
+    if isinstance(obj, set):
+        return [
+            _truncate_long_strings(item, max_length=max_length, preview_length=preview_length, suffix=suffix, _seen=_seen)
+            for item in obj
+        ]
+
+    if hasattr(obj, "__dict__") and isinstance(getattr(obj, "__dict__", None), dict):
+        return _truncate_long_strings(
+            vars(obj), max_length=max_length, preview_length=preview_length, suffix=suffix, _seen=_seen
+        )
+
+    return str(obj)
+
+
+def _get_callback_service(request: Request) -> CallbackService:
+    service = getattr(request.app.state, "callback_service", None)
+    if isinstance(service, CallbackService):
+        return service
+    return get_default_callback_service()
 
 
 @router.post("/callback")
@@ -47,23 +114,16 @@ async def handle_callback(request: Request):
     """
     data = await request.json()
 
-    # Get event store from app state (will be set in unified mode)
-    event_store = getattr(request.app.state, "event_store", None)
+    callback_service = _get_callback_service(request)
 
-    if not event_store:
-        # Fallback to module-level storage for standalone mode
-        from ..services.event_store import get_default_store
+    event = callback_service.handle_incoming(data)
 
-        event_store = get_default_store()
+    safe_raw = _truncate_long_strings(data)
+    logger.info("Received callback: %s", safe_raw)
 
-    # Store the event
-    if data.get("message_type") == "configure_webhook":
-        # New session starting, clear old events
-        event_store.clear()
+    if event:
+        logger.debug("Normalised callback: %s", _truncate_long_strings(event.to_payload()))
 
-    event_store.add_event(data)
-
-    logger.info(f"Received callback: {data.get('message_type', 'unknown')}")
     return {"message": "Callback received successfully"}
 
 
@@ -72,12 +132,7 @@ async def broadcast(request: Request, last_event_index: int = 0):
     """
     Endpoint for long polling, where the client requests events newer than the last received index.
     """
-    # Get event store
-    event_store = getattr(request.app.state, "event_store", None)
-    if not event_store:
-        from ..services.event_store import get_default_store
-
-        event_store = get_default_store()
+    callback_service = _get_callback_service(request)
 
     try:
         # Long polling with timeout
@@ -86,10 +141,11 @@ async def broadcast(request: Request, last_event_index: int = 0):
 
         while True:
             # Check for new events
-            events = event_store.get_events_since(last_event_index)
+            events = callback_service.stream_since(last_event_index)
             if events:
-                next_index = last_event_index + len(events)
-                return JSONResponse(content={"events": events, "next_index": next_index})
+                payloads = [event.to_payload() for event in events]
+                latest_index = max((event.index or last_event_index for event in events), default=last_event_index)
+                return JSONResponse(content={"events": payloads, "next_index": latest_index})
 
             # Check timeout
             if asyncio.get_event_loop().time() - start_time > timeout:
@@ -126,14 +182,8 @@ async def events_stream(request: Request):
 
     async def event_generator():
         """Generate SSE events with proper connection management."""
-        # Get event store
-        event_store = getattr(request.app.state, "event_store", None)
-        if not event_store:
-            from ..services.event_store import get_default_store
-
-            event_store = get_default_store()
-
-        last_index = 0
+        callback_service = _get_callback_service(request)
+        last_index = -1  # Start at -1 so stream_since(-1) includes index 0
 
         try:
             # Send initial connection event
@@ -149,36 +199,17 @@ async def events_stream(request: Request):
                 while connection.active:
                     try:
                         # Check for new events
-                        events = event_store.get_events_since(last_index)
+                        events = callback_service.stream_since(last_index)
 
                         for event in events:
-                            # Transform event data for frontend
-                            sse_event = {
-                                "type": event.get("message_type", "notification"),
-                                "data": event,
-                                "timestamp": event.get("timestamp"),
-                            }
-
-                            # Map specific event types
-                            if event.get("message_type") == "training_progress":
-                                sse_event["type"] = "training_progress"
-                                sse_event["progress"] = event.get("progress", {})
-                            elif event.get("message_type") == "validation_complete":
-                                sse_event["type"] = "validation_complete"
-                            elif event.get("message_type") == "error":
-                                sse_event["type"] = "error"
-                                sse_event["message"] = event.get("message", "Unknown error")
-                            else:
-                                sse_event["type"] = "notification"
-                                sse_event["message"] = event.get("message", str(event))
-                                sse_event["level"] = event.get("level", "info")
-
-                            # Send through SSE manager
+                            event_type, payload = CallbackPresenter.to_sse(event)
                             await sse_manager.send_to_connection(
-                                connection.connection_id, sse_event, event_type=sse_event["type"]
+                                connection.connection_id,
+                                payload,
+                                event_type=event_type,
                             )
-
-                        last_index += len(events)
+                            if event.index is not None:
+                                last_index = event.index
 
                         # Wait before checking for more events
                         await asyncio.sleep(1)
@@ -189,10 +220,11 @@ async def events_stream(request: Request):
                         logger.error(f"Error in event monitor: {e}")
                         await asyncio.sleep(5)  # Wait longer on error
 
-            # Start monitoring task
-            monitor_task = asyncio.create_task(monitor_events())
-
+            # Start monitoring task inside try block to ensure cleanup
+            monitor_task = None
             try:
+                monitor_task = asyncio.create_task(monitor_events())
+
                 # Use SSE manager's event generator
                 async for message in sse_manager.create_event_generator(connection):
                     if message.get("event"):
@@ -201,12 +233,13 @@ async def events_stream(request: Request):
                         yield {"data": json.dumps(message["data"])}
 
             finally:
-                # Clean up monitoring task
-                monitor_task.cancel()
-                try:
-                    await monitor_task
-                except asyncio.CancelledError:
-                    pass
+                # Clean up monitoring task - ensure it's cancelled even if creation failed
+                if monitor_task is not None:
+                    monitor_task.cancel()
+                    try:
+                        await monitor_task
+                    except asyncio.CancelledError:
+                        pass
 
         except Exception as e:
             logger.error(f"Error in SSE stream: {e}")
@@ -222,20 +255,9 @@ async def get_recent_events(request: Request):
     """Get recent training events for HTMX display."""
     from fastapi.responses import HTMLResponse
 
-    # Get events from event store
-    event_store = getattr(request.app.state, "event_store", None)
+    callback_service = _get_callback_service(request)
 
-    if not event_store:
-        from ..services.event_store import get_default_store
-
-        event_store = get_default_store()
-
-    try:
-        # Get last 10 events
-        events = event_store.get_events_since(max(0, event_store.get_event_count() - 10))
-    except Exception:
-        # Event store might be empty or unavailable
-        events = []
+    events = callback_service.get_recent(limit=10)
 
     if not events:
         return HTMLResponse(
@@ -247,31 +269,7 @@ async def get_recent_events(request: Request):
         )
 
     html = ""
-    for event in reversed(events):  # Show newest first
-        event_type = event.get("message_type", "info")
-        timestamp = event.get("timestamp", "")
-        message = event.get("message", str(event))
-
-        # Determine icon and color based on event type
-        if event_type in ["training_progress", "progress"]:
-            icon = "fas fa-chart-line text-info"
-        elif event_type in ["error", "training_error"]:
-            icon = "fas fa-exclamation-circle text-danger"
-        elif event_type in ["validation_complete", "checkpoint_saved"]:
-            icon = "fas fa-check-circle text-success"
-        else:
-            icon = "fas fa-info-circle text-muted"
-
-        html += f"""
-        <div class="event-item border-bottom py-2">
-            <div class="d-flex align-items-start">
-                <i class="{icon} me-2 mt-1"></i>
-                <div class="flex-grow-1">
-                    <div class="event-message">{message}</div>
-                    {f'<small class="text-muted">{timestamp}</small>' if timestamp else ''}
-                </div>
-            </div>
-        </div>
-        """
+    for event in events:
+        html += CallbackPresenter.to_htmx_tile(event)
 
     return HTMLResponse(html)
