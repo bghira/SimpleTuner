@@ -8,6 +8,7 @@ and continue training from the last checkpoint.
 import json
 import logging
 import os
+from pathlib import Path
 
 logger = logging.getLogger("SimpleTunerSDK")
 from simpletuner.helpers.training.multi_process import should_log
@@ -22,9 +23,41 @@ class APIState:
     state = {}
     state_file = "api_state.json"
     trainer = None
+    _state_file_initialised = False
+
+    @classmethod
+    def _ensure_state_file(cls) -> None:
+        if cls._state_file_initialised:
+            return
+
+        # Respect explicit overrides
+        if cls.state_file != "api_state.json":
+            cls.state_file = str(Path(cls.state_file).expanduser())
+            cls._state_file_initialised = True
+            return
+
+        try:
+            from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
+
+            store = WebUIStateStore()
+            defaults = store.load_defaults()
+            output_dir = defaults.output_dir
+            if not output_dir:
+                resolved_bundle = store.resolve_defaults(defaults)
+                output_dir = resolved_bundle["resolved"].get("output_dir")
+
+            if output_dir:
+                output_path = Path(output_dir).expanduser()
+                output_path.mkdir(parents=True, exist_ok=True)
+                cls.state_file = str(output_path / "api_state.json")
+        except Exception:
+            cls.state_file = str(Path(cls.state_file).expanduser().resolve())
+        finally:
+            cls._state_file_initialised = True
 
     @classmethod
     def load_state(cls):
+        cls._ensure_state_file()
         if os.path.exists(cls.state_file):
             with open(cls.state_file, "r") as f:
                 cls.state = json.load(f)
@@ -34,6 +67,7 @@ class APIState:
 
     @classmethod
     def save_state(cls):
+        cls._ensure_state_file()
         with open(cls.state_file, "w") as f:
             json.dump(cls.state, f)
             logger.info(f"Saved state to {cls.state_file}: {cls.state}")
