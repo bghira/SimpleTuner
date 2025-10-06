@@ -923,7 +923,7 @@ class Trainer:
             ]
         )
         self.config.num_update_steps_per_epoch = math.ceil(
-            self.config.total_num_batches / self.config.gradient_accumulation_steps
+            self.config.total_num_batches / max(self.config.gradient_accumulation_steps or 1, 1)
         )
         if getattr(self.config, "overrode_max_train_steps", False):
             self.config.max_train_steps = self.config.num_train_epochs * self.config.num_update_steps_per_epoch
@@ -1659,7 +1659,7 @@ class Trainer:
             "current_epoch": self.state["first_epoch"],
             "total_batch_size": self.config.total_batch_size,
             "micro_batch_size": self.config.train_batch_size,
-            "current_step": self.state["global_step"],
+            "global_step": self.state["global_step"],
             "remaining_num_steps": max(
                 0,
                 getattr(
@@ -2265,10 +2265,6 @@ class Trainer:
                     )
                     webhook_pending_msg = f"Step {self.state['global_step']} of {self.config.max_train_steps}: loss {round(loss.item(), 4)}, lr {self.lr}, epoch {epoch}/{self.config.num_train_epochs}, ema_decay_value {ema_decay_value}, train_loss {round(self.train_loss, 4)}"
 
-                    # Reset some values for the next go.
-                    training_luminance_values = []
-                    self.train_loss = 0.0
-
                     if (
                         self.config.webhook_reporting_interval is not None
                         and self.state["global_step"] % self.config.webhook_reporting_interval == 0
@@ -2276,12 +2272,12 @@ class Trainer:
                         current_state = self.state.copy()
                         current_state.pop("args")  # we don't need to send the config every time.
                         structured_data = {
-                            "state": current_state,
-                            "loss": round(self.train_loss, 4),
+                            "loss": self.train_loss,
                             "parent_loss": parent_loss,
-                            "learning_rate": self.lr,
+                            "learning_rate": float(self.lr),
                             "epoch": epoch,
                             "final_epoch": self.config.num_train_epochs,
+                            **current_state,
                         }
                         self._send_webhook_raw(structured_data=structured_data, message_type="train_status")
 
@@ -2290,6 +2286,18 @@ class Trainer:
                             message=f"Checkpoint: `{webhook_pending_msg}`",
                             message_level="info",
                         )
+                        # Also send structured progress update at checkpoint time
+                        current_state = self.state.copy()
+                        current_state.pop("args", None)
+                        structured_data = {
+                            "loss": self.train_loss,
+                            "parent_loss": parent_loss,
+                            "learning_rate": float(self.lr),
+                            "epoch": epoch,
+                            "final_epoch": self.config.num_train_epochs,
+                            **current_state,
+                        }
+                        self._send_webhook_raw(structured_data=structured_data, message_type="train_status")
                         if self.accelerator.is_main_process and self.config.checkpoints_total_limit is not None:
                             # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
                             self.checkpoint_state_cleanup(
@@ -2307,6 +2315,18 @@ class Trainer:
                             message=f"Checkpoint: `{webhook_pending_msg}`",
                             message_level="info",
                         )
+                        # Also send structured progress update at checkpoint time
+                        current_state = self.state.copy()
+                        current_state.pop("args", None)
+                        structured_data = {
+                            "loss": self.train_loss,
+                            "parent_loss": parent_loss,
+                            "learning_rate": float(self.lr),
+                            "epoch": epoch,
+                            "final_epoch": self.config.num_train_epochs,
+                            **current_state,
+                        }
+                        self._send_webhook_raw(structured_data=structured_data, message_type="train_status")
                         if self.accelerator.is_main_process and self.config.checkpoints_rolling_total_limit is not None:
                             # _before_ saving state, check if this save would set us over the `checkpoints_rolling_total_limit`
                             self.checkpoint_state_cleanup(
@@ -2347,6 +2367,10 @@ class Trainer:
                         wandb_logs,
                         step=self.state["global_step"],
                     )
+
+                    # Reset some values for the next go.
+                    training_luminance_values = []
+                    self.train_loss = 0.0
 
                 logs = {
                     "step_loss": loss.detach().item(),
