@@ -310,8 +310,8 @@ class CallbackService:
                 APIState.set_state("current_job_id", job_id)
             return
 
-        # Handle training_status messages - derive status from payload, don't hardcode
-        if message_type == "training_status":
+        # Handle train_status messages - derive status from payload, don't hardcode
+        if message_type == "train_status":
             # Try to get status from extras, default to 'running'
             status_from_payload = event.extras.get("status", "running") if event.extras else "running"
             APIState.set_state("training_status", status_from_payload)
@@ -319,7 +319,21 @@ class CallbackService:
             if job_id:
                 APIState.set_state("current_job_id", job_id)
 
-            progress_state = self._extract_progress_from_extras(event.extras)
+            # Extract progress from event.progress (which now contains the training data)
+            progress_state = None
+            if event.progress:
+                # Get progress data from the progress payload
+                progress_extra = event.progress.extra or {}
+                progress_state = {
+                    "percent": event.progress.percent or 0,
+                    "step": progress_extra.get("global_step") or 0,
+                    "total_steps": progress_extra.get("total_num_steps") or 0,
+                    "epoch": progress_extra.get("current_epoch") or progress_extra.get("epoch") or 0,
+                    "total_epochs": progress_extra.get("final_epoch") or 0,
+                    "loss": progress_extra.get("loss") or progress_extra.get("train_loss"),
+                    "learning_rate": progress_extra.get("learning_rate") or progress_extra.get("lr"),
+                }
+
             if progress_state:
                 previous_progress = APIState.get_state("training_progress") or {}
                 if job_changed:
