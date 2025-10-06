@@ -270,7 +270,10 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             tab="basic",
             section="training_config",
             default_value="latest",
-            choices=[{"value": "", "label": "None (Start fresh)"}, {"value": "latest", "label": "Latest checkpoint"}],
+            choices=[
+                {"value": "latest", "label": "Latest checkpoint (automatic)"},
+                {"value": "", "label": "None (start from scratch)"},
+            ],
             help_text="Select checkpoint to resume training from",
             tooltip="Checkpoints will be dynamically loaded based on output directory. Use 'latest' to auto-resume from the most recent checkpoint.",
             importance=ImportanceLevel.ADVANCED,
