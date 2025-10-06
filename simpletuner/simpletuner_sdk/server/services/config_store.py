@@ -943,6 +943,13 @@ class ConfigStore:
 
             data = prepared_config if isinstance(prepared_config, dict) else {}
 
+        # Filter out WebUI-only fields before saving
+        if isinstance(data, dict):
+            from simpletuner.simpletuner_sdk.server.services.field_service import FieldService
+
+            webui_only_fields = FieldService._WEBUI_ONLY_FIELDS
+            data = {k: v for k, v in data.items() if k not in webui_only_fields}
+
         # Create parent directory if it doesn't exist (for subdirectory configs)
         config_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -979,6 +986,13 @@ class ConfigStore:
 
         if config_path.exists() and not overwrite:
             raise FileExistsError(f"Configuration '{name}' already exists")
+
+        # Filter out WebUI-only fields before saving
+        if isinstance(config, dict):
+            from simpletuner.simpletuner_sdk.server.services.field_service import FieldService
+
+            webui_only_fields = FieldService._WEBUI_ONLY_FIELDS
+            config = {k: v for k, v in config.items() if k not in webui_only_fields}
 
         # Create parent directory if it doesn't exist (for subdirectory configs)
         config_path.parent.mkdir(parents=True, exist_ok=True)
