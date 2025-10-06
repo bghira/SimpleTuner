@@ -71,10 +71,12 @@ class CheckpointCleanupTestCase(unittest.TestCase):
         (checkpoint_path / "pytorch_lora_weights.safetensors").write_bytes(b"test")
 
         readme_content = (
+            "---\n"
+            "thumbnail: assets/image.png\n"
+            "---\n"
             "# Sample\n\n"
             "![Val](assets/image.png)\n"
             "Inline ./assets/image.png usage\n"
-            "Front matter url: ./assets/image.png\n"
         )
         (checkpoint_path / "README.md").write_text(readme_content, encoding="utf-8")
 
