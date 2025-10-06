@@ -56,6 +56,10 @@ class TrainerMain {
             window.dependencyManager.initializeFieldsInContainer(this.form.form);
         }
 
+        window.TrainerActionsInstance = this.actions;
+
+        await this.refreshStatus();
+
         this.initialized = true;
         console.log('TrainerMain initialized successfully');
     }
@@ -258,6 +262,79 @@ class TrainerMain {
 
     setFormData(data) {
         this.form.setFormData(data);
+    }
+
+    async refreshStatus() {
+        try {
+            const statusPayload = await this.actions.getTrainingStatus();
+            const status = (statusPayload.status || '').toLowerCase();
+            const jobId = statusPayload.job_id || null;
+            const isTraining = ['running', 'starting', 'initializing'].includes(status) || (jobId && !['completed', 'idle', 'cancelled', 'error', 'failed'].includes(status));
+
+            this.actions.updateButtonStates(isTraining);
+
+            const store = window.Alpine && typeof window.Alpine.store === 'function' ? window.Alpine.store('trainer') : null;
+
+            const normalizeProgress = (progress) => {
+                if (!progress) {
+                    return null;
+                }
+                const percentValue = Number(progress.percent || progress.percentage || 0);
+                const clampedPercent = Number.isFinite(percentValue) ? Math.max(0, Math.min(100, percentValue)) : 0;
+                return {
+                    percent: clampedPercent,
+                    step: progress.step || progress.current_step || 0,
+                    total_steps: progress.total_steps || progress.total || 0,
+                    epoch: progress.epoch || 0,
+                    loss: progress.loss ?? 'N/A',
+                    learning_rate: progress.learning_rate ?? progress.lr ?? 'N/A',
+                };
+            };
+
+            const normalizedProgress = normalizeProgress(statusPayload.progress);
+
+            if (store) {
+                store.isTraining = isTraining;
+                if (normalizedProgress) {
+                    store.trainingProgress = normalizedProgress;
+                }
+            }
+
+            const detail = {
+                status: status || (isTraining ? 'running' : 'idle'),
+                job_id: jobId,
+            };
+            if (normalizedProgress) {
+                detail.progress = normalizedProgress;
+            }
+
+            window.dispatchEvent(new CustomEvent('training-status', { detail }));
+            if (normalizedProgress) {
+                window.dispatchEvent(new CustomEvent('training-progress', { detail: normalizedProgress }));
+            }
+
+            if (document && document.body) {
+                document.body.dataset.trainingActive = isTraining ? 'true' : 'false';
+            }
+
+            if (isTraining && window.initSSE) {
+                window.initSSE();
+            }
+
+            const statusContainer = document.getElementById('training-status');
+            if (statusContainer && isTraining && !statusContainer.innerHTML.trim()) {
+                statusContainer.innerHTML = `
+                    <div class="alert alert-info">
+                        <h6 class="mb-1"><i class="fas fa-cog fa-spin"></i> Training In Progress</h6>
+                        <p class="mb-0"><small>Job ID: ${jobId || 'pending'}</small></p>
+                    </div>
+                `;
+            } else if (statusContainer && !isTraining) {
+                statusContainer.innerHTML = '';
+            }
+        } catch (error) {
+            console.warn('Unable to refresh training status', error);
+        }
     }
 }
 

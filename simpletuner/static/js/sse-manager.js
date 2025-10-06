@@ -19,7 +19,15 @@
         var lastHeartbeat = null;
         var connectionUrl = '/api/events';
         var listeners = {};
+        var CALLBACK_EVENT_TYPES = ['progress', 'validation', 'job', 'status', 'alert', 'checkpoint', 'debug'];
         var connectionState = 'disconnected'; // disconnected, connecting, connected
+
+        // Store listener references for cleanup
+        var heartbeatListener = null;
+        var trainingProgressListener = null;
+        var validationCompleteListener = null;
+        var connectionListener = null;
+        var callbackEventListeners = {};
 
         /**
          * Calculate retry delay with exponential backoff
@@ -62,6 +70,173 @@
             }
         }
 
+        function toNumber(value) {
+            if (value === null || value === undefined || value === '') {
+                return null;
+            }
+            var num = Number(value);
+            return Number.isFinite(num) ? num : null;
+        }
+
+        function severityToLevel(severity) {
+            switch (String(severity || '').toLowerCase()) {
+                case 'success':
+                    return 'success';
+                case 'warning':
+                    return 'warning';
+                case 'error':
+                case 'critical':
+                    return 'danger';
+                case 'debug':
+                    return 'secondary';
+                default:
+                    return 'info';
+            }
+        }
+
+        function transformProgressPayload(payload) {
+            var progress = payload.progress || {};
+            var extras = {};
+
+            if (progress.extra && typeof progress.extra === 'object') {
+                extras = Object.assign({}, progress.extra);
+            }
+
+            if (payload.extras && typeof payload.extras === 'object') {
+                extras = Object.assign({}, extras, payload.extras);
+            }
+
+            var state = extras.state || null;
+            if (!state && progress.extra && typeof progress.extra.state === 'object') {
+                state = progress.extra.state;
+            }
+
+            var currentStep = toNumber(progress.current);
+            if (currentStep === null && state && state.global_step !== undefined) {
+                currentStep = toNumber(state.global_step);
+            }
+            if (currentStep === null && extras.current_step !== undefined) {
+                currentStep = toNumber(extras.current_step);
+            }
+
+            var totalSteps = toNumber(progress.total);
+            if (totalSteps === null && (extras.total_steps !== undefined)) {
+                totalSteps = toNumber(extras.total_steps);
+            }
+            if (totalSteps === null && (extras.max_steps !== undefined)) {
+                totalSteps = toNumber(extras.max_steps);
+            }
+            if (totalSteps === null && state && state.max_steps !== undefined) {
+                totalSteps = toNumber(state.max_steps);
+            }
+
+            var epoch = toNumber(extras.epoch);
+            if (epoch === null && state && state.current_epoch !== undefined) {
+                epoch = toNumber(state.current_epoch);
+            }
+
+            var totalEpochs = toNumber(extras.final_epoch);
+            if (totalEpochs === null && extras.total_epochs !== undefined) {
+                totalEpochs = toNumber(extras.total_epochs);
+            }
+            if (totalEpochs === null && state && state.final_epoch !== undefined) {
+                totalEpochs = toNumber(state.final_epoch);
+            }
+
+            var percent = toNumber(progress.percent);
+            if (percent === null && currentStep !== null && totalSteps) {
+                percent = (currentStep / totalSteps) * 100;
+            }
+            if (!Number.isFinite(percent)) {
+                percent = 0;
+            }
+
+            var loss = extras.loss !== undefined ? toNumber(extras.loss) : null;
+            if (loss === null && extras.train_loss !== undefined) {
+                loss = toNumber(extras.train_loss);
+            }
+
+            var learningRate = extras.learning_rate !== undefined ? toNumber(extras.learning_rate) : null;
+            if (learningRate === null && extras.lr !== undefined) {
+                learningRate = toNumber(extras.lr);
+            }
+
+            return {
+                type: 'training_progress',
+                percentage: Number(percent || 0),
+                current_step: currentStep || 0,
+                total_steps: totalSteps || 0,
+                epoch: epoch || 0,
+                total_epochs: totalEpochs || 0,
+                loss: loss !== null ? loss : undefined,
+                lr: learningRate !== null ? learningRate : undefined,
+                label: progress.label || payload.headline || '',
+                raw: payload
+            };
+        }
+
+        function handleCallbackEvent(category, payload) {
+            notifyListeners('callback:' + category, payload);
+            notifyListeners('callback', { category: category, payload: payload });
+
+            switch (category) {
+                case 'progress': {
+                    var progressData = transformProgressPayload(payload);
+                    handleMessage(progressData);
+                    break;
+                }
+                case 'validation': {
+                    var validationMessage = payload.headline || payload.body || 'Validation complete';
+                    var validationData = {
+                        type: 'validation_complete',
+                        message: validationMessage,
+                        payload: payload
+                    };
+                    handleMessage(validationData);
+                    break;
+                }
+                case 'alert': {
+                    var alertMessage = payload.headline || payload.body || 'Alert received';
+                    var level = severityToLevel(payload.severity);
+                    var alertData = {
+                        type: level === 'danger' ? 'error' : 'notification',
+                        message: alertMessage,
+                        level: level,
+                        payload: payload
+                    };
+                    handleMessage(alertData);
+                    break;
+                }
+                case 'status':
+                case 'job':
+                case 'checkpoint': {
+                    var statusMessage = payload.headline || payload.body;
+                    if (statusMessage) {
+                        handleMessage({
+                            type: 'notification',
+                            message: statusMessage,
+                            level: severityToLevel(payload.severity),
+                            payload: payload
+                        });
+                    }
+                    break;
+                }
+                case 'debug':
+                default: {
+                    // Emit as generic notification for listeners
+                    if (payload.headline || payload.body) {
+                        handleMessage({
+                            type: 'notification',
+                            message: payload.headline || payload.body,
+                            level: severityToLevel(payload.severity),
+                            payload: payload
+                        });
+                    }
+                    break;
+                }
+            }
+        }
+
         /**
          * Setup heartbeat monitoring
          */
@@ -88,9 +263,30 @@
             clearInterval(heartbeatInterval);
 
             if (eventSource) {
+                // Remove all event listeners before closing
+                eventSource.removeEventListener('heartbeat', heartbeatListener);
+                eventSource.removeEventListener('training_progress', trainingProgressListener);
+                eventSource.removeEventListener('validation_complete', validationCompleteListener);
+                eventSource.removeEventListener('connection', connectionListener);
+
+                // Remove callback event listeners
+                CALLBACK_EVENT_TYPES.forEach(function(category) {
+                    var listener = callbackEventListeners[category];
+                    if (listener) {
+                        eventSource.removeEventListener('callback:' + category, listener);
+                    }
+                });
+
                 eventSource.close();
                 eventSource = null;
             }
+
+            // Clear stored listener references
+            heartbeatListener = null;
+            trainingProgressListener = null;
+            validationCompleteListener = null;
+            connectionListener = null;
+            callbackEventListeners = {};
         }
 
         /**
@@ -154,13 +350,14 @@
                     }
                 };
 
-                // Handle specific event types
-                eventSource.addEventListener('heartbeat', function(event) {
+                // Handle specific event types - store listener references for cleanup
+                heartbeatListener = function(event) {
                     lastHeartbeat = Date.now();
                     notifyListeners('heartbeat', { timestamp: lastHeartbeat });
-                });
+                };
+                eventSource.addEventListener('heartbeat', heartbeatListener);
 
-                eventSource.addEventListener('training_progress', function(event) {
+                trainingProgressListener = function(event) {
                     lastHeartbeat = Date.now();
                     try {
                         var data = JSON.parse(event.data);
@@ -168,9 +365,10 @@
                     } catch (error) {
                         console.error('Error parsing training progress:', error);
                     }
-                });
+                };
+                eventSource.addEventListener('training_progress', trainingProgressListener);
 
-                eventSource.addEventListener('validation_complete', function(event) {
+                validationCompleteListener = function(event) {
                     lastHeartbeat = Date.now();
                     try {
                         var data = JSON.parse(event.data);
@@ -178,6 +376,32 @@
                     } catch (error) {
                         console.error('Error parsing validation complete:', error);
                     }
+                };
+                eventSource.addEventListener('validation_complete', validationCompleteListener);
+
+                connectionListener = function(event) {
+                    lastHeartbeat = Date.now();
+                    try {
+                        var data = JSON.parse(event.data);
+                        handleMessage(data);
+                    } catch (error) {
+                        console.error('Error parsing connection event:', error);
+                    }
+                };
+                eventSource.addEventListener('connection', connectionListener);
+
+                CALLBACK_EVENT_TYPES.forEach(function(category) {
+                    var listener = function(event) {
+                        lastHeartbeat = Date.now();
+                        try {
+                            var data = JSON.parse(event.data);
+                            handleCallbackEvent(category, data);
+                        } catch (error) {
+                            console.error('Error parsing callback event:', error);
+                        }
+                    };
+                    callbackEventListeners[category] = listener;
+                    eventSource.addEventListener('callback:' + category, listener);
                 });
 
             } catch (error) {
@@ -206,16 +430,10 @@
                     break;
 
                 case 'error':
-                    if (window.showToast) {
-                        window.showToast(data.message || 'An error occurred', 'error');
-                    }
                     notifyListeners('error', data);
                     break;
 
                 case 'notification':
-                    if (window.showToast) {
-                        window.showToast(data.message, data.level || 'info');
-                    }
                     notifyListeners('notification', data);
                     break;
 
@@ -258,7 +476,8 @@
 
                 // Set up page unload handler
                 window.addEventListener('beforeunload', function() {
-                    cleanup();
+                    instance.disconnect();
+                    instance.clearAllListeners();
                 });
 
                 // Start connection
@@ -279,6 +498,32 @@
             disconnect: function() {
                 cleanup();
                 updateConnectionStatus('disconnected', 'Manually disconnected');
+            },
+
+            /**
+             * Remove all listeners for a specific event type
+             */
+            removeAllListeners: function(eventType) {
+                if (listeners[eventType]) {
+                    delete listeners[eventType];
+                }
+            },
+
+            /**
+             * Clear all registered listeners
+             */
+            clearAllListeners: function() {
+                listeners = {};
+            },
+
+            /**
+             * Destroy the SSE manager instance completely
+             */
+            destroy: function() {
+                cleanup();
+                this.clearAllListeners();
+                instance = null;
+                updateConnectionStatus('disconnected', 'Manager destroyed');
             },
 
             /**
@@ -318,7 +563,17 @@
              */
             resetRetries: function() {
                 retryCount = 0;
-            }
+            },
+
+            /**
+             * Expose progress normalizer for external consumers
+             */
+            normalizeProgressPayload: transformProgressPayload,
+
+            /**
+             * Expose severity mapping helper
+             */
+            mapSeverityToLevel: severityToLevel
         };
     })();
 

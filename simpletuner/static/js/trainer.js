@@ -787,6 +787,34 @@
         }
 
         const formData = new FormData(this.form);
+
+        const trainerStore = window.Alpine && typeof window.Alpine.store === 'function'
+            ? window.Alpine.store('trainer')
+            : null;
+
+        if (trainerStore) {
+            try {
+                if (typeof trainerStore.normalizeCheckboxFormData === 'function') {
+                    trainerStore.normalizeCheckboxFormData.call(trainerStore, formData);
+                }
+                if (typeof trainerStore.ensureCompleteFormData === 'function') {
+                    trainerStore.ensureCompleteFormData.call(trainerStore, formData);
+                }
+                if (typeof trainerStore.appendConfigValuesToFormData === 'function') {
+                    trainerStore.appendConfigValuesToFormData.call(
+                        trainerStore,
+                        formData,
+                        trainerStore.activeEnvironmentConfig || {},
+                    );
+                }
+                if (typeof trainerStore.normalizeCheckboxFormData === 'function') {
+                    trainerStore.normalizeCheckboxFormData.call(trainerStore, formData);
+                }
+            } catch (error) {
+                console.warn('Unable to merge full trainer form data from store:', error);
+            }
+        }
+
         const payload = {
             trainer_config: {},
             dataloader_config: [],

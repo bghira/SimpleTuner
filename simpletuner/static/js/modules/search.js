@@ -43,6 +43,11 @@ function searchComponent() {
             this.hasPrimaryHighlight = false; // Track if primary highlight was set by search result click
             this.primarySelectedField = null; // Store persistent primary field info
             this.setupTabChangeObserver();
+
+            // Cleanup on page unload to prevent memory leaks
+            window.addEventListener('beforeunload', () => {
+                this.cleanup();
+            });
         },
 
         setupTabChangeObserver() {
@@ -693,6 +698,34 @@ function searchComponent() {
 
         get hasResults() {
             return this.totalResults > 0;
+        },
+
+        /**
+         * Cleanup method to prevent memory leaks.
+         * Call this when the component is destroyed or page is unloaded.
+         */
+        cleanup() {
+            // Disconnect MutationObserver to prevent memory leak
+            if (this.tabObserver) {
+                this.tabObserver.disconnect();
+                this.tabObserver = null;
+            }
+
+            // Clear any pending timeouts to prevent memory leak
+            if (this.searchTimeout) {
+                clearTimeout(this.searchTimeout);
+                this.searchTimeout = null;
+            }
+
+            if (this.tabChangeTimeout) {
+                clearTimeout(this.tabChangeTimeout);
+                this.tabChangeTimeout = null;
+            }
+
+            // Clear search state
+            this.resetSearchState();
+
+            console.log('Search component cleaned up');
         }
     };
 }

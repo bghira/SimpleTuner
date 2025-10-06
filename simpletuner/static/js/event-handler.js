@@ -13,8 +13,14 @@ class EventHandler {
         this.abortController = null;
         this.fastReconnectThreshold = 5; // First 5 attempts are fast
         this.reconnectTimeout = null; // Store timeout for cancellation
+        this.pollTimeout = null; // Store poll timeout for cleanup
         this.isReconnecting = false; // Track reconnection state
         this.hasConnectedBefore = false; // Track if we've ever connected
+        this.isFetching = false; // Prevent concurrent fetch loops
+        this.healthCheckInterval = null;
+        this.healthCheckInFlight = false;
+        this.websocketReconnectTimeout = null;
+        this.isActive = false;
 
         // WebSocket support
         this.websocket = null;
@@ -60,6 +66,10 @@ class EventHandler {
     }
 
     async fetchBroadcastEvents() {
+        if (!this.isActive || this.isFetching) {
+            return;
+        }
+        this.isFetching = true;
         try {
             // Create new abort controller for this request
             this.abortController = new AbortController();
@@ -88,6 +98,10 @@ class EventHandler {
 
             const data = await response.json();
 
+            if (!this.isActive) {
+                return;
+            }
+
             // Reset reconnect attempts on successful connection
             if (!this.isConnected) {
                 this.isReconnecting = false; // Clear reconnecting state
@@ -110,7 +124,16 @@ class EventHandler {
             this.setConnectionStatus(true, null, false);
 
             // Continue fetching
-            setTimeout(() => this.fetchBroadcastEvents(), 1000); // Poll every second
+            if (this.pollTimeout) {
+                clearTimeout(this.pollTimeout);
+            }
+            this.pollTimeout = setTimeout(() => {
+                this.pollTimeout = null;
+                if (!this.isActive) {
+                    return;
+                }
+                this.fetchBroadcastEvents();
+            }, 1000); // Poll every second
         } catch (error) {
             if (error.name === 'AbortError') {
                 // Fetch aborted
@@ -118,6 +141,10 @@ class EventHandler {
             }
 
             console.error('Error fetching events:', error);
+
+            if (!this.isActive) {
+                return;
+            }
 
             // Handle disconnection
             this.handleConnectionStateChange(false);
@@ -156,8 +183,9 @@ class EventHandler {
 
                 // Schedule reconnection attempt
                 this.reconnectTimeout = setTimeout(() => {
+                    this.reconnectTimeout = null;
                     // Only proceed if still in reconnecting state
-                    if (this.isReconnecting) {
+                    if (this.isReconnecting && this.isActive) {
                         this.fetchBroadcastEvents();
                     }
                 }, delay);
@@ -165,10 +193,18 @@ class EventHandler {
                 console.error('Max reconnection attempts reached');
                 this.setConnectionStatus(false, 'Max reconnection attempts reached', false);
                 // Reset and try again after a longer delay
-                setTimeout(() => {
+                this.reconnectTimeout = setTimeout(() => {
+                    this.reconnectTimeout = null;
                     this.reconnectAttempts = 0;
-                    this.fetchBroadcastEvents();
+                    if (this.isActive) {
+                        this.fetchBroadcastEvents();
+                    }
                 }, 10000); // Try again after 10 seconds
+            }
+        } finally {
+            this.isFetching = false;
+            if (this.abortController) {
+                this.abortController = null;
             }
         }
     }
@@ -532,6 +568,11 @@ class EventHandler {
 
     async startFetching() {
         // Add initial connection message
+        this.isActive = true;
+        if (this.pollTimeout) {
+            clearTimeout(this.pollTimeout);
+            this.pollTimeout = null;
+        }
         this.updateEventList([{
             message_type: 'info',
             message: 'Connecting to callback server...',
@@ -549,45 +590,74 @@ class EventHandler {
     }
 
     cleanup() {
+        this.isActive = false;
+        this.isFetching = false;
         // Abort any pending requests
         if (this.abortController) {
             this.abortController.abort();
+            this.abortController = null;
         }
+        this.isReconnecting = false;
         // Clear reconnect timeout
         if (this.reconnectTimeout) {
             clearTimeout(this.reconnectTimeout);
+            this.reconnectTimeout = null;
+        }
+        if (this.pollTimeout) {
+            clearTimeout(this.pollTimeout);
+            this.pollTimeout = null;
         }
         // Clear health check interval
         if (this.healthCheckInterval) {
             clearInterval(this.healthCheckInterval);
+            this.healthCheckInterval = null;
         }
+        this.healthCheckInFlight = false;
         // Close WebSocket if open
         if (this.websocket) {
             this.websocket.close();
             this.websocket = null;
         }
+        if (this.websocketReconnectTimeout) {
+            clearTimeout(this.websocketReconnectTimeout);
+            this.websocketReconnectTimeout = null;
+        }
     }
 
     startHealthCheckPolling() {
-        // Poll health endpoint every 250ms during reconnection
+        // Poll health endpoint while reconnecting without flooding the server
         if (this.healthCheckInterval) {
             clearInterval(this.healthCheckInterval);
         }
 
         this.healthCheckInterval = setInterval(async () => {
-            if (!this.isReconnecting) {
+            if (!this.isReconnecting || !this.isActive) {
                 clearInterval(this.healthCheckInterval);
+                this.healthCheckInterval = null;
                 return;
             }
 
-            const isHealthy = await this.checkServerHealth();
+            if (this.healthCheckInFlight) {
+                return;
+            }
+
+            this.healthCheckInFlight = true;
+
+            let isHealthy = false;
+            try {
+                isHealthy = await this.checkServerHealth();
+            } finally {
+                this.healthCheckInFlight = false;
+            }
             if (isHealthy && this.isReconnecting) {
                 // Health check passed - server is back online
                 clearInterval(this.healthCheckInterval);
+                this.healthCheckInterval = null;
                 this.isReconnecting = false;
                 // Clear any pending reconnect timeout
                 if (this.reconnectTimeout) {
                     clearTimeout(this.reconnectTimeout);
+                    this.reconnectTimeout = null;
                 }
                 // Reset attempts and connect immediately
                 this.reconnectAttempts = 0;
@@ -600,7 +670,7 @@ class EventHandler {
                 // Resume broadcast polling
                 this.fetchBroadcastEvents();
             }
-        }, 250); // Check every 250ms for fast detection
+        }, 750); // Limit health checks while reconnecting
     }
 
     escapeHtml(text) {
@@ -610,7 +680,14 @@ class EventHandler {
     }
 
     connectWebSocket() {
+        if (!this.isActive) {
+            return;
+        }
         try {
+            if (this.pollTimeout) {
+                clearTimeout(this.pollTimeout);
+                this.pollTimeout = null;
+            }
             const wsUrl = window.ServerConfig.apiBaseUrl.replace('http', 'ws') + '/api/training/events/stream';
             this.websocket = new WebSocket(wsUrl);
 
@@ -644,11 +721,19 @@ class EventHandler {
             this.websocket.onclose = () => {
                 console.log('WebSocket disconnected');
                 this.websocket = null;
+                if (!this.isActive) {
+                    return;
+                }
+
                 this.handleConnectionStateChange(false);
 
                 // Try to reconnect after a delay
-                setTimeout(() => {
-                    if (this.useWebSocket && !this.websocket) {
+                if (this.websocketReconnectTimeout) {
+                    clearTimeout(this.websocketReconnectTimeout);
+                }
+                this.websocketReconnectTimeout = setTimeout(() => {
+                    this.websocketReconnectTimeout = null;
+                    if (this.useWebSocket && !this.websocket && this.isActive) {
                         this.connectWebSocket();
                     }
                 }, 2000);
