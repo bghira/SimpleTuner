@@ -13,9 +13,9 @@ import time
 from typing import Dict, Optional
 
 import huggingface_hub
-import wandb
 from accelerate.logging import get_logger
 
+import wandb
 from simpletuner.helpers import log_format  # noqa
 from simpletuner.helpers.caching.memory import reclaim_memory
 from simpletuner.helpers.configuration.loader import load_config
@@ -133,20 +133,7 @@ class Trainer:
     ):
         self.accelerator = None
         self.model = None
-        # Ensure checkpoint_manager attribute always exists
         self.checkpoint_manager = None
-        self.job_id = job_id
-        StateTracker.set_job_id(job_id)
-        self.parse_arguments(
-            args=config,
-            disable_accelerator=disable_accelerator,
-            exit_on_error=exit_on_error,
-        )
-        if getattr(self, "config", None) is not None and self.config.model_family in model_families:
-            self.model = model_families[self.config.model_family](self.config, self.accelerator)
-            self.model.check_user_config()
-            StateTracker.set_model(self.model)
-        self._misc_init()
         self.lycoris_wrapped_network = None
         self.lycoris_config = None
         self.lr_scheduler = None
@@ -154,6 +141,23 @@ class Trainer:
         self.should_abort = False
         self._external_abort_checker = None
         self.ema_model = None
+        self.job_id = job_id
+        StateTracker.set_job_id(job_id)
+        try:
+            self.parse_arguments(
+                args=config,
+                disable_accelerator=disable_accelerator,
+                exit_on_error=exit_on_error,
+            )
+        except Exception as e:
+            self._send_webhook_msg(f"Error: {e}", message_level="critical")
+            raise e
+
+        if getattr(self, "config", None) is not None and self.config.model_family in model_families:
+            self.model = model_families[self.config.model_family](self.config, self.accelerator)
+            self.model.check_user_config()
+            StateTracker.set_model(self.model)
+        self._misc_init()
         self.validation = None
         # this updates self.config further, so we will run it here.
         self.init_noise_schedule()
@@ -180,6 +184,7 @@ class Trainer:
             target_logs["grad_absmax"] = self.grad_norm
 
     def parse_arguments(self, args=None, disable_accelerator: bool = False, exit_on_error: bool = False):
+        self.configure_webhook(raw_config=args)
         self.config = load_config(args, exit_on_error=exit_on_error)
         if self.config is None and args:
             # Fallback to the user's persisted defaults when ad-hoc CLI args are incomplete.
@@ -286,8 +291,6 @@ class Trainer:
         try:
             self._exit_on_signal()
             # Initialize essential configurations and schedules
-            self.configure_webhook()
-            self._exit_on_signal()
             self.init_noise_schedule()
             self._exit_on_signal()
             self.init_seed()
@@ -373,17 +376,32 @@ class Trainer:
         self.noise_scheduler = self._get_noise_schedule()
         self.lr = 0.0
 
-    def configure_webhook(self, send_startup_message: bool = True):
+    def configure_webhook(self, send_startup_message: bool = True, raw_config: str = None):
         self.webhook_handler = None
-        if self.config.webhook_config is None:
+        if raw_config is not None:
+            # Handle both dict and argparse.Namespace
+            if hasattr(raw_config, "get"):
+                webhook_config = raw_config.get("webhook_config", raw_config.get("--webhook_config", None))
+            else:
+                # argparse.Namespace - use getattr
+                webhook_config = getattr(raw_config, "webhook_config", getattr(raw_config, "__webhook_config", None))
+            logging.info(f"Creating webhook: {webhook_config}")
+        else:
+            webhook_config = getattr(getattr(self, "config", None), "webhook_config", None)
+        if webhook_config is None:
             return
         from simpletuner.helpers.webhooks.handler import WebhookHandler
 
         self.webhook_handler = WebhookHandler(
             self.accelerator,
-            f"{self.config.tracker_project_name} {self.config.tracker_run_name}",
+            (
+                f"{getattr(self.config, 'tracker_project_name', 'unknown')} {getattr(self.config, 'tracker_run_name', 'unknown')}"
+                if hasattr(self, "config")
+                else "unknown"
+            ),
             send_video=(True if isinstance(self.model, VideoModelFoundation) else False),
-            args=self.config,
+            video_framerate=getattr(self.config, "framerate", None) if hasattr(self, "config") else None,
+            webhook_config=webhook_config,
         )
         StateTracker.set_webhook_handler(self.webhook_handler)
         if send_startup_message:
@@ -1586,6 +1604,12 @@ class Trainer:
         if self.webhook_handler is None or not self.webhook_handler:
             return
         self.webhook_handler.send(message=message, message_level=message_level, store_response=store_response)
+        self.webhook_handler.send_raw(
+            structured_data={"message": message},
+            message_type="_send_webhook_msg",
+            message_level=message_level,
+            job_id=self.job_id,
+        )
 
     def _send_webhook_raw(
         self,
@@ -1597,6 +1621,7 @@ class Trainer:
             logger.error(f"_send_webhook_msg received {type(structured_data)} type message instead of dict.")
             return False
         if not self.webhook_handler:
+            logger.warning(f"No webhook handler is configured.")
             return
         self.webhook_handler.send_raw(
             structured_data=structured_data,
@@ -1619,7 +1644,12 @@ class Trainer:
         initial_msg += f"\n-  Total optimization steps = {self.config.max_train_steps}"
         if self.state["global_step"] > 1:
             initial_msg += f"\n  - Steps completed: {self.state['global_step']}"
-        initial_msg += f"\n-  Total optimization steps remaining = {max(0, getattr(self.config, 'total_steps_remaining_at_start', self.config.max_train_steps))}"
+        steps_remaining_at_start = max(
+            0, getattr(self.config, "total_steps_remaining_at_start", self.config.max_train_steps)
+        )
+        initial_msg += f"\n-  Total optimization steps remaining = {steps_remaining_at_start}"
+        self.state["steps_remaining_at_start"] = steps_remaining_at_start
+        self.state["total_num_steps"] = self.config.max_train_steps
         logger.info(initial_msg)
         self._send_webhook_msg(message=initial_msg)
         structured_data = {
@@ -1864,10 +1894,26 @@ class Trainer:
         save_path_tmp = f"{save_path}-tmp" if self.config.checkpointing_use_tempdir else save_path
 
         # schedulefree optim needs the optimizer to be in eval mode to save the state (and then back to train after)
+        self._send_webhook_raw(
+            structured_data={"message": f"Saving checkpoint to {save_path}"},
+            message_type="checkpoint_state_save",
+        )
         self.mark_optimizer_eval()
         self.accelerator.save_state(save_path_tmp)
+        self._send_webhook_raw(
+            structured_data={"message": f"Saved checkpoint to {save_path}"},
+            message_type="checkpoint_state_save_completed",
+        )
         if getattr(self, "distiller", None) is not None:
+            self._send_webhook_raw(
+                structured_data={"message": f"Saving distillation states to {save_path_tmp}"},
+                message_type="checkpoint_state_save_distiller",
+            )
             self.distiller.on_save_checkpoint(self.state["global_step"], save_path_tmp)
+            self._send_webhook_raw(
+                structured_data={"message": f"Saved distillation states to {save_path_tmp}"},
+                message_type="checkpoint_state_save_distiller_completed",
+            )
         self.mark_optimizer_train()
         for _, backend in StateTracker.get_data_backends().items():
             if "sampler" in backend:
@@ -1880,6 +1926,10 @@ class Trainer:
                 )
         if save_path != save_path_tmp:
             os.rename(save_path_tmp, save_path)
+        self._send_webhook_raw(
+            structured_data={"message": f"Checkpoint saved to {save_path}", "checkpoint_path": save_path},
+            message_type="checkpoint_state_save_finalized",
+        )
 
     def checkpoint_state_latest(self, output_dir):
         if self.checkpoint_manager:
@@ -2223,15 +2273,17 @@ class Trainer:
                         self.config.webhook_reporting_interval is not None
                         and self.state["global_step"] % self.config.webhook_reporting_interval == 0
                     ):
+                        current_state = self.state.copy()
+                        current_state.pop("args")  # we don't need to send the config every time.
                         structured_data = {
-                            "state": self.state,
+                            "state": current_state,
                             "loss": round(self.train_loss, 4),
                             "parent_loss": parent_loss,
                             "learning_rate": self.lr,
                             "epoch": epoch,
                             "final_epoch": self.config.num_train_epochs,
                         }
-                        self._send_webhook_raw(structured_data=structured_data, message_type="train")
+                        self._send_webhook_raw(structured_data=structured_data, message_type="train_status")
 
                     if self.config.checkpointing_steps and self.state["global_step"] % self.config.checkpointing_steps == 0:
                         self._send_webhook_msg(
@@ -2348,6 +2400,16 @@ class Trainer:
                         f"Training has completed."
                         f"\n -> global_step = {self.state['global_step']}, max_train_steps = {self.config.max_train_steps}, epoch = {epoch}, num_train_epochs = {self.config.num_train_epochs}",
                     )
+                    self._send_webhook_raw(
+                        structured_data={
+                            "state": self.state,
+                            "loss": round(self.train_loss, 4),
+                            "learning_rate": self.lr,
+                            "epoch": epoch,
+                            "final_epoch": self.config.num_train_epochs,
+                        },
+                        message_type="training_complete",
+                    )
                     break
             if self.state["global_step"] >= self.config.max_train_steps or (
                 epoch > self.config.num_train_epochs and not self.config.ignore_final_epochs
@@ -2355,12 +2417,26 @@ class Trainer:
                 logger.info(
                     f"Exiting training loop. Beginning model unwind at epoch {epoch}, step {self.state['global_step']}"
                 )
+                self._send_webhook_raw(
+                    structured_data={
+                        "state": self.state,
+                        "loss": round(self.train_loss, 4),
+                        "learning_rate": self.lr,
+                        "epoch": epoch,
+                        "final_epoch": self.config.num_train_epochs,
+                    },
+                    message_type="training_complete",
+                )
                 break
 
         # Create the pipeline using the trained modules and save it.
         self.accelerator.wait_for_everyone()
         validation_images = None
         if self.accelerator.is_main_process:
+            self._send_webhook_raw(
+                structured_data={"message": f"Finalizing model and saving to {self.config.output_dir}"},
+                message_type="model_save_start",
+            )
             self.mark_optimizer_eval()
             if self.validation is not None:
                 self.enable_sageattention_inference()
@@ -2443,6 +2519,10 @@ class Trainer:
             if self.hub_manager is not None and self.accelerator.is_main_process:
                 self.hub_manager.upload_model(validation_images, self.webhook_handler)
         self.accelerator.end_training()
+        self._send_webhook_raw(
+            structured_data={"message": "Training run complete."},
+            message_type="run_complete",
+        )
 
 
 def run_trainer_job(config):
@@ -2462,8 +2542,23 @@ def run_trainer_job(config):
         should_abort_callable = config_payload.pop("should_abort", None)
     else:
         config_payload = config
+    try:
+        trainer = Trainer(config=config_payload, job_id=job_id)
 
-    trainer = Trainer(config=config_payload, job_id=job_id)
+    except Exception as e:
+        webhook_handler = StateTracker.get_webhook_handler()
+        if webhook_handler is not None:
+            webhook_handler.send(
+                message=f"Training job failed to start: {e}",
+                message_level="error",
+            )
+            webhook_handler.send_raw(
+                structured_data={"status": "training_failed"},
+                message_type="training_status",
+                message_level="error",
+                job_id=StateTracker.get_job_id(),
+            )
+        raise e
 
     def _abort_monitor():
         if not callable(should_abort_callable):
