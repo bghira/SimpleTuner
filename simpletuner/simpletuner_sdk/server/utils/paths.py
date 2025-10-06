@@ -109,15 +109,26 @@ def resolve_config_path(
         if check_path.exists():
             return check_path.resolve()
 
-        # Handle legacy paths that redundantly include the config directory name,
-        # e.g. config/deepfloyd/multidatabackend.json when the configs_dir already
-        # points at .../config. In that scenario drop the leading segment and retry.
-        if config_dir and not expanded_path.startswith(os.sep) and Path(expanded_path).parts:
-            config_basename = Path(os.path.expanduser(str(config_dir))).name
+    # Handle legacy paths that redundantly include the config directory name,
+    # e.g. config/deepfloyd/multidatabackend.json when the configs_dir already
+    # points at .../config. In that scenario drop the leading segment and retry.
+    if config_dir and not expanded_path.startswith(os.sep):
+        try:
             parts = Path(expanded_path).parts
-            if parts and parts[0] == config_basename and len(parts) > 1:
+        except Exception:
+            parts = ()
+
+        if parts:
+            config_root = Path(os.path.expanduser(str(config_dir)))
+            config_basename = config_root.name.lower()
+            leading_variants = {config_basename, "config", "configs"}
+            if config_basename.endswith("s") and len(config_basename) > 1:
+                leading_variants.add(config_basename[:-1])
+
+            first_part = parts[0].lower()
+            if first_part in leading_variants and len(parts) > 1:
                 trimmed_path = Path(os.path.join(*parts[1:]))
-                alt_candidate = Path(os.path.expanduser(str(config_dir))) / trimmed_path
+                alt_candidate = config_root / trimmed_path
                 if alt_candidate.exists():
                     return alt_candidate.resolve()
 
