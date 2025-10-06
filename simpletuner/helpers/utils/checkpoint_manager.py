@@ -88,22 +88,28 @@ class CheckpointManager:
             return False, f"Checkpoint '{checkpoint_name}' does not exist"
 
         # Check for required files
-        required_files = ["pytorch_model.bin", "training_state.json"]
+        required_files = ["training_state.json"]
         missing_files = []
 
         for file in required_files:
             file_path = os.path.join(checkpoint_path, file)
             if not os.path.exists(file_path):
-                # Check for safetensors format
-                if file == "pytorch_model.bin":
-                    safetensors_path = os.path.join(checkpoint_path, "model.safetensors")
-                    if not os.path.exists(safetensors_path):
-                        missing_files.append(file)
-                else:
-                    missing_files.append(file)
+                missing_files.append(file)
 
         if missing_files:
             return False, f"Checkpoint missing required files: {', '.join(missing_files)}"
+
+        # Ensure at least one set of weights exists (full-model or adapter)
+        weight_candidates = [
+            "pytorch_model.bin",
+            "model.safetensors",
+            "diffusion_pytorch_model.safetensors",
+            "pytorch_lora_weights.safetensors",
+            "adapter_model.safetensors",
+        ]
+
+        if not any(os.path.exists(os.path.join(checkpoint_path, candidate)) for candidate in weight_candidates):
+            return False, "Checkpoint is missing model or adapter weight files"
 
         # Validate training state
         try:
@@ -134,8 +140,8 @@ class CheckpointManager:
         checkpoints = sorted(checkpoints, key=lambda x: int(x.split("-")[1]))
 
         # Remove old checkpoints if we exceed the limit
-        if len(checkpoints) >= limit:
-            num_to_remove = len(checkpoints) - limit + 1
+        if len(checkpoints) > limit:
+            num_to_remove = len(checkpoints) - limit
             removing_checkpoints = checkpoints[:num_to_remove]
 
             logger.debug(f"{len(checkpoints)} checkpoints exist, removing {len(removing_checkpoints)} checkpoints")
