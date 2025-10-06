@@ -44,6 +44,7 @@ class TrainerProcess:
         self.event_thread = None
         self.events = []
         self.events_lock = threading.Lock()
+        self.output_thread = None
         # Create temp directory for IPC
         self.ipc_dir = tempfile.mkdtemp(prefix=f"trainer_{job_id}_")
         logger.info(f"IPC dir {self.ipc_dir}")
@@ -210,11 +211,19 @@ except Exception as e:
 logger.info("Subprocess exiting")
 '''
 
+        env = os.environ.copy()
+        env.setdefault("WANDB_CONSOLE", "off")
+        env.setdefault("WANDB_SILENT", "true")
+        env.setdefault("WANDB_DISABLE_SERVICE", "true")
+        env.setdefault("WANDB_STDOUT_CAPTURE", "off")
+        env.setdefault("WANDB_STDERR_CAPTURE", "off")
+
         # Start the subprocess
         popen_kwargs = {
             "stdout": subprocess.PIPE,
             "stderr": subprocess.STDOUT,
             "text": True,
+            "env": env,
         }
 
         if os.name != "nt":
@@ -229,6 +238,11 @@ logger.info("Subprocess exiting")
         # Start event listener thread
         self.event_thread = threading.Thread(target=self._event_listener, daemon=True)
         self.event_thread.start()
+
+        # Stream stdout to avoid blocking pipes and preserve logs
+        if self.process.stdout is not None:
+            self.output_thread = threading.Thread(target=self._stream_output, daemon=True)
+            self.output_thread.start()
 
     def _event_listener(self):
         """Listen for events from the subprocess."""
@@ -283,6 +297,25 @@ logger.info("Subprocess exiting")
                 if not self.stop_event.is_set():
                     logger.error(f"Event listener error: {e}")
                 break
+
+    def _stream_output(self):
+        """Continuously read subprocess stdout to prevent pipe backpressure."""
+        if not self.process or self.process.stdout is None:
+            return
+
+        try:
+            for line in iter(self.process.stdout.readline, ""):
+                if line == "":
+                    break
+                try:
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+                except Exception:
+                    # If stdout is unavailable just log the line
+                    logger.info(line.rstrip())
+        except Exception as exc:
+            if not self.stop_event.is_set():
+                logger.debug(f"stdout streaming error for {self.job_id}: {exc}")
 
     def _handle_event(self, event: Dict[str, Any]):
         """Handle an event from the trainer subprocess."""
@@ -439,6 +472,9 @@ logger.info("Subprocess exiting")
             self.stop_event.set()
             # Use shorter timeout - thread is daemon anyway
             self.event_thread.join(timeout=0.5)
+        if self.output_thread and self.output_thread.is_alive():
+            self.output_thread.join(timeout=0.5)
+        self.output_thread = None
 
         # Clean up IPC directory
         try:
