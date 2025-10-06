@@ -25,26 +25,88 @@ else:
     logger.setLevel("ERROR")
 
 
+def _truncate_for_log(
+    obj,
+    *,
+    max_length: int = 256,
+    preview_length: int = 64,
+    suffix: str = "...[truncated]...",
+    _seen: set | None = None,
+):
+    """Return a copy of *obj* with long strings shortened for debug logging."""
+    if _seen is None:
+        _seen = set()
+
+    if isinstance(obj, str):
+        return obj if len(obj) <= max_length else f"{obj[:preview_length]}{suffix}"
+
+    if obj is None or isinstance(obj, (int, float, bool)):
+        return obj
+
+    obj_id = id(obj)
+    if obj_id in _seen:
+        return "<recursion>"
+    _seen.add(obj_id)
+
+    if isinstance(obj, dict):
+        return {
+            (
+                _truncate_for_log(key, max_length=max_length, preview_length=preview_length, suffix=suffix, _seen=_seen)
+                if isinstance(key, str)
+                else key
+            ): _truncate_for_log(value, max_length=max_length, preview_length=preview_length, suffix=suffix, _seen=_seen)
+            for key, value in obj.items()
+        }
+
+    if isinstance(obj, (list, tuple, set)):
+        items = [
+            _truncate_for_log(item, max_length=max_length, preview_length=preview_length, suffix=suffix, _seen=_seen)
+            for item in obj
+        ]
+        if isinstance(obj, tuple):
+            return tuple(items)
+        if isinstance(obj, set):
+            return items
+        return items
+
+    if hasattr(obj, "__dict__") and isinstance(getattr(obj, "__dict__", None), dict):
+        return _truncate_for_log(vars(obj), max_length=max_length, preview_length=preview_length, suffix=suffix, _seen=_seen)
+
+    return str(obj)
+
+
 class WebhookHandler:
     def __init__(
         self,
         accelerator,
         project_name: str,
-        args,
+        webhook_config: dict = None,
         mock_webhook_config: WebhookConfig = None,
         send_video: bool = False,
+        video_framerate: int = None,
     ):
         self.accelerator = accelerator
-        self.config = mock_webhook_config or WebhookConfig(args.webhook_config)
+        self.config = mock_webhook_config or WebhookConfig(webhook_config)
         self.webhook_url = self.config.webhook_url
-        self.webhook_type = self.config.webhook_type  # "discord" or "raw"
+        self.webhook_type = self.config.webhook_type
         self.message_prefix = (
             f"`({self.config.message_prefix})` " if self.config.message_prefix is not None else f"`({project_name})` "
         )
         self.log_level = log_levels.get(self.config.log_level or "info", log_levels["info"])
         self.stored_response = None
         self.send_video = send_video
-        self.video_framerate = args.framerate
+        self.video_framerate = video_framerate
+
+    @staticmethod
+    def from_unprocessed_config(accelerator, project_name: str, raw_json_config: str, send_video: bool = False):
+        """Create a WebhookHandler from a raw JSON string config."""
+        try:
+            config_dict = json.loads(raw_json_config)
+            config = WebhookConfig(config_dict)
+            return WebhookHandler(accelerator, project_name, config, send_video=send_video)
+        except Exception as e:
+            logging.error(f"Could not parse webhook configuration: {e}")
+            return None
 
     def _check_level(self, level: str) -> bool:
         """Check if the message level meets the configured log level."""
@@ -73,8 +135,8 @@ class WebhookHandler:
         elif self.webhook_type == "raw":
             # Prepare raw data payload for direct POST
             if raw_request:
-                # If already fully formed JSON or dict, just send raw
-                data = message
+                # If already fully formed JSON or dict, sanitize for safe JSON encoding first
+                data = self._sanitize_for_json(message)
                 files = None
             else:
                 # Convert images to base64 for a generic "raw" JSON
@@ -87,20 +149,64 @@ class WebhookHandler:
             request_args = {"json": data, "files": files}
 
         else:
-            logger.error(f"Unsupported webhook type: {self.webhook_type}")
+            logging.error(f"Unsupported webhook type: {self.webhook_type}")
             return
 
         # Send request
         try:
-            logger.debug(f"Sending webhook request: {request_args}")
+            logging.debug("Sending webhook request: %s", _truncate_for_log(request_args))
             post_result = requests.post(self.webhook_url, **request_args)
             post_result.raise_for_status()
         except Exception as e:
-            logger.error(f"Could not send webhook request: {e}")
+            logging.error(f"Could not send webhook request: {e}")
             return
 
         if store_response:
             self.stored_response = post_result.headers
+
+    def _sanitize_for_json(self, payload, _seen=None):
+        """Convert objects to JSON-serializable structures."""
+        if _seen is None:
+            _seen = set()
+
+        if payload is None or isinstance(payload, (str, int, float, bool)):
+            return payload
+
+        if isinstance(payload, Path):
+            return str(payload)
+
+        if isinstance(payload, np.generic):
+            return payload.item()
+
+        if isinstance(payload, np.ndarray):
+            return payload.tolist()
+
+        # Avoid infinite recursion on cyclic references
+        obj_id = id(payload)
+        if obj_id in _seen:
+            return str(payload)
+        _seen.add(obj_id)
+
+        if isinstance(payload, dict):
+            return {str(key): self._sanitize_for_json(value, _seen) for key, value in payload.items()}
+
+        if isinstance(payload, (list, tuple, set)):
+            return [self._sanitize_for_json(item, _seen) for item in payload]
+
+        if hasattr(payload, "dict") and callable(payload.dict):
+            try:
+                return self._sanitize_for_json(payload.dict(), _seen)
+            except Exception:
+                pass
+
+        if hasattr(payload, "__dict__"):
+            try:
+                return self._sanitize_for_json(vars(payload), _seen)
+            except TypeError:
+                pass
+
+        # Fallback: string representation
+        return str(payload)
 
     def _prepare_videos(self, videos: list):
         """
@@ -189,7 +295,7 @@ class WebhookHandler:
         If self.send_video is True, `images` is interpreted as `videos`.
         """
         # Only send from main process if it's Discord (to avoid duplicates).
-        if not self.accelerator.is_main_process or self.webhook_type != "discord":
+        if self.accelerator is not None and (not self.accelerator.is_main_process or self.webhook_type != "discord"):
             return
         if not self._check_level(message_level):
             return
@@ -208,7 +314,7 @@ class WebhookHandler:
                         store_response=store_response,
                     )
                 except Exception as e:
-                    logger.error(f"Error sending webhook: {e}")
+                    logging.error(f"Error sending webhook: {e}")
         else:
             self._send_request(message, images, store_response=store_response)
 
@@ -218,14 +324,19 @@ class WebhookHandler:
         message_type: str,
         message_level: str = "info",
         job_id: str = None,
+        images: list = None,
     ):
         """
         Send structured data to a "raw" webhook, e.g. for step progress.
         Ignores 'images' entirely, uses JSON payload only.
         """
-        if self.webhook_type != "raw" or not self.accelerator.is_main_process or not self._check_level(message_level):
+        if (
+            self.webhook_type != "raw"
+            or (self.accelerator is not None and not self.accelerator.is_main_process)
+            or not self._check_level(message_level)
+        ):
             return
         structured_data["message_type"] = message_type
         structured_data["job_id"] = job_id
         structured_data["timestamp"] = int(time.time())
-        self._send_request(message=structured_data, images=None, store_response=False, raw_request=True)
+        self._send_request(message=structured_data, images=images, store_response=False, raw_request=True)
