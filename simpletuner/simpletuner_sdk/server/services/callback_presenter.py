@@ -1,4 +1,5 @@
 """Presenters to transform callback events into SSE and HTMX payloads."""
+
 from __future__ import annotations
 
 import html
@@ -39,15 +40,15 @@ class CallbackPresenter:
     def _severity_to_bootstrap_class(severity: str) -> str:
         """Map severity levels to Bootstrap text classes."""
         mapping = {
-            'success': 'success',
-            'info': 'info',
-            'warning': 'warning',
-            'error': 'danger',      # Bootstrap uses 'danger' not 'error'
-            'critical': 'danger',   # Map critical to danger as well
-            'danger': 'danger',
-            'debug': 'secondary',
+            "success": "success",
+            "info": "info",
+            "warning": "warning",
+            "error": "danger",  # Bootstrap uses 'danger' not 'error'
+            "critical": "danger",  # Map critical to danger as well
+            "danger": "danger",
+            "debug": "secondary",
         }
-        return mapping.get(str(severity).lower(), 'info')
+        return mapping.get(str(severity).lower(), "info")
 
     @classmethod
     def to_htmx_tile(cls, event: CallbackEvent) -> str:
@@ -69,11 +70,11 @@ class CallbackPresenter:
         body_block = f'<div class="event-body text-muted">{body_html}</div>' if body_html else ""
 
         return (
-            "<div class=\"event-item border-bottom py-2\">"
-            "<div class=\"d-flex align-items-start\">"
-            f"<i class=\"{icon} me-2 mt-1\"></i>"
-            "<div class=\"flex-grow-1\">"
-            f"<div class=\"event-headline text-{cls._severity_to_bootstrap_class(severity)}\">{headline_html}</div>"
+            '<div class="event-item border-bottom py-2">'
+            '<div class="d-flex align-items-start">'
+            f'<i class="{icon} me-2 mt-1"></i>'
+            '<div class="flex-grow-1">'
+            f'<div class="event-headline text-{cls._severity_to_bootstrap_class(severity)}">{headline_html}</div>'
             f"{body_block}"
             f"{images_html}"
             f"{timestamp_block}"
@@ -95,9 +96,7 @@ class CallbackPresenter:
                 continue
             rendered.append(
                 (
-                    '<img src="{src}" alt="{alt}" '
-                    'class="event-image img-fluid rounded border mt-2" '
-                    'loading="lazy" />'
+                    '<img src="{src}" alt="{alt}" ' 'class="event-image img-fluid rounded border mt-2" ' 'loading="lazy" />'
                 ).format(src=html.escape(src, quote=True), alt=alt_text)
             )
 
@@ -121,7 +120,7 @@ class CallbackPresenter:
             if value.startswith(("http://", "https://", "//")):
                 return value
             # Only treat as base64 if it looks like base64 (alphanumeric + /+=)
-            if re.match(r'^[A-Za-z0-9+/]+=*$', value):
+            if re.match(r"^[A-Za-z0-9+/]+=*$", value):
                 return f"data:image/png;base64,{value}"
             # Unknown format - return as-is rather than corrupting
             return value

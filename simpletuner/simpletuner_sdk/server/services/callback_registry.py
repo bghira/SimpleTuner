@@ -1,4 +1,5 @@
 """Declarative registry that maps raw webhook payloads into typed events."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -189,7 +190,11 @@ def _progress_from_mixin(raw: Mapping[str, Any]) -> ProgressPayload | None:
     if percent is None and isinstance(current, (int, float)) and isinstance(total, (int, float)) and total:
         percent = float(current) / float(total) * 100
     percent = _clamp_percent(percent)
-    extra = {k: v for k, v in payload.items() if k not in {"progress_type", "current_estimated_index", "total_elements", "progress"}}
+    extra = {
+        k: v
+        for k, v in payload.items()
+        if k not in {"progress_type", "current_estimated_index", "total_elements", "progress"}
+    }
     return ProgressPayload(
         label=label,
         current=None,
@@ -205,11 +210,7 @@ def _progress_from_training_status(raw: Mapping[str, Any]) -> ProgressPayload | 
         return None
     current = state.get("global_step")
     total = raw.get("final_epoch") or state.get("max_steps")
-    extra = {
-        key: value
-        for key, value in raw.items()
-        if key not in {"message_type", "timestamp", "job_id", "state"}
-    }
+    extra = {key: value for key, value in raw.items() if key not in {"message_type", "timestamp", "job_id", "state"}}
     extra["state"] = dict(state)
     percent: float | None = None
     if isinstance(current, (int, float)) and isinstance(total, (int, float)) and total:

@@ -1,4 +1,5 @@
 """Service layer responsible for normalising and persisting webhook callbacks."""
+
 from __future__ import annotations
 
 import copy
@@ -6,11 +7,10 @@ from collections import deque
 from threading import Lock
 from typing import Any, Iterable, Mapping, Sequence
 
+from ...api_state import APIState
 from .callback_events import CallbackCategory, CallbackEvent, CallbackSeverity
 from .callback_registry import CallbackEventRegistry, default_callback_registry
 from .event_store import EventStore
-from ...api_state import APIState
-
 
 _default_service: CallbackService | None = None
 _service_lock = Lock()
@@ -220,11 +220,7 @@ class CallbackService:
 
         percent = extras.get("percent") or state.get("percent")
         current_step = extras.get("current_step") or state.get("global_step")
-        total_steps = (
-            extras.get("total_steps")
-            or extras.get("total_num_steps")
-            or state.get("max_steps")
-        )
+        total_steps = extras.get("total_steps") or extras.get("total_num_steps") or state.get("max_steps")
         epoch = state.get("current_epoch")
         total_epochs = state.get("final_epoch")
         loss = extras.get("loss") or state.get("loss")
@@ -272,10 +268,7 @@ class CallbackService:
 
                 current_step = progress_payload.current
                 if current_step is None:
-                    current_step = (
-                        extras.get("current_step")
-                        or state.get("global_step")
-                    )
+                    current_step = extras.get("current_step") or state.get("global_step")
 
                 total_steps = progress_payload.total
                 if total_steps is None:

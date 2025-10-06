@@ -1,4 +1,5 @@
 """Typed callback event domain models for webhook ingestion."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
@@ -113,8 +114,7 @@ class ValidationPayload:
 class CallbackEventFactory(Protocol):
     """Protocol for factory callables that turn raw payloads into typed events."""
 
-    def __call__(self, raw: Mapping[str, Any]) -> "CallbackEvent":
-        ...
+    def __call__(self, raw: Mapping[str, Any]) -> "CallbackEvent": ...
 
 
 @dataclass(frozen=True)
@@ -251,5 +251,4 @@ def safe_get(mapping: Mapping[str, Any], key: str) -> Any:
 
 # Forward declaration for type checkers
 class CallbackEventRegistry(Protocol):
-    def resolve(self, raw: Mapping[str, Any]) -> CallbackEventFactory | None:
-        ...
+    def resolve(self, raw: Mapping[str, Any]) -> CallbackEventFactory | None: ...
