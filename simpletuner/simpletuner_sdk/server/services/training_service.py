@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import logging
 import os
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -16,8 +17,10 @@ from simpletuner.simpletuner_sdk.api_state import APIState
 from simpletuner.simpletuner_sdk.server.dependencies.common import _load_active_config_cached
 from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
 from simpletuner.simpletuner_sdk.server.services.configs_service import ConfigsService
+from simpletuner.simpletuner_sdk.server.services.field_registry.types import ValidationRuleType
 from simpletuner.simpletuner_sdk.server.services.field_registry_wrapper import lazy_field_registry
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIDefaults, WebUIStateStore
+
 from .webhook_defaults import DEFAULT_CALLBACK_URL, DEFAULT_WEBHOOK_CONFIG
 
 logger = logging.getLogger(__name__)
@@ -83,8 +86,6 @@ def get_all_field_defaults() -> Dict[str, Any]:
 
     defaults: Dict[str, Any] = {}
     for registry_field in lazy_field_registry.get_all_fields():
-        if getattr(registry_field, "model_specific", None):
-            continue
         defaults[registry_field.arg_name] = ConfigsService.convert_value_by_type(
             registry_field.default_value,
             registry_field.field_type,
@@ -128,6 +129,13 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
             stripped = str(item).strip()
             if stripped:
                 disabled_arg_names.add(stripped if stripped.startswith("--") else f"--{stripped}")
+
+    def _is_required_field(arg_name: str) -> bool:
+        lookup = arg_name.lstrip("-")
+        field = lazy_field_registry.get_field(lookup)
+        if not field:
+            return False
+        return any(rule.rule_type == ValidationRuleType.REQUIRED for rule in field.validation_rules)
 
     def _coerce_single(value: Any) -> Any:
         if isinstance(value, (list, tuple)):
@@ -177,9 +185,11 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
     save_options["preserve_defaults"] = getattr(webui_defaults, "auto_preserve_defaults", True)
 
     if "preserve_defaults" in form_dict:
-        save_options["preserve_defaults"] = _coerce_single(form_dict.pop("preserve_defaults")) == "true"
+        raw_preserve = _coerce_single(form_dict.pop("preserve_defaults"))
+        save_options["preserve_defaults"] = ConfigsService._is_truthy(raw_preserve)
     if "create_backup" in form_dict:
-        save_options["create_backup"] = _coerce_single(form_dict.pop("create_backup")) == "true"
+        raw_backup = _coerce_single(form_dict.pop("create_backup"))
+        save_options["create_backup"] = ConfigsService._is_truthy(raw_backup)
     save_options["merge_environment_defaults"] = merge_environment_defaults
 
     directory_fields = ["--output_dir", "--instance_data_dir"]
@@ -190,6 +200,34 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         output_root=resolved_output_dir,
         configs_dir=resolved_configs_dir,
     )
+
+    # Normalize legacy form keys that may still be emitted by older UI states
+    legacy_key_map = {
+        "maximum_caption_length": "--tokenizer_max_length",
+        "--maximum_caption_length": "--tokenizer_max_length",
+        "project_name": "--tracker_project_name",
+        "--project_name": "--tracker_project_name",
+        "__active_tab__": None,
+        "--__active_tab__": None,
+    }
+
+    for legacy_key, target_key in legacy_key_map.items():
+        if legacy_key not in config_dict:
+            continue
+
+        legacy_value = config_dict.pop(legacy_key)
+        if target_key is None:
+            continue
+
+        # Normalize sentinel strings like "None" back to actual None
+        if isinstance(legacy_value, str) and legacy_value.strip().lower() in {"", "none", "null"}:
+            legacy_value = None
+
+        if legacy_value is None:
+            continue
+
+        if target_key not in config_dict:
+            config_dict[target_key] = legacy_value
 
     logger.debug("Prepared config_dict: %s", config_dict)
 
@@ -231,12 +269,12 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
 
     if selected_family:
         selected_family = str(selected_family)
-        for field in lazy_field_registry.get_all_fields():
-            model_specific = getattr(field, "model_specific", None)
+        for field_obj in lazy_field_registry.get_all_fields():
+            model_specific = getattr(field_obj, "model_specific", None)
             if not model_specific or selected_family in model_specific:
                 continue
 
-            for key in filter(None, {field.arg_name, field.name}):
+            for key in filter(None, {field_obj.arg_name, field_obj.name}):
                 alias = key.lstrip("-")
                 base_config.pop(key, None)
                 base_config.pop(alias, None)
@@ -247,11 +285,11 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
 
     if disabled_arg_names:
         for arg_name in list(disabled_arg_names):
+            if _is_required_field(arg_name):
+                continue
             alias = arg_name.lstrip("-")
-            base_config.pop(arg_name, None)
-            base_config.pop(alias, None)
-            existing_config_cli.pop(arg_name, None)
-            existing_config_cli.pop(alias, None)
+            # Only drop values coming from the current form submission; keep
+            # existing/base values so required fields remain populated.
             config_dict.pop(arg_name, None)
             config_dict.pop(alias, None)
 
@@ -263,13 +301,40 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         base_config.pop("accelerator_cache_clear_interval", None)
     complete_config = {**base_config, **config_dict}
 
+    # Ensure required core fields survive modal toggles even when not explicitly submitted
+    def _get_with_alias(source: Dict[str, Any], arg: str) -> Any:
+        if not isinstance(source, dict):
+            return None
+        return source.get(arg) or source.get(arg.lstrip("-"))
+
+    required_args = ["--model_family", "--optimizer", "--data_backend_config", "--output_dir", "--model_type"]
+    for arg_name in required_args:
+        value = complete_config.get(arg_name)
+        if value in (None, ""):
+            fallback = (
+                _get_with_alias(config_dict, arg_name)
+                or _get_with_alias(existing_config_cli, arg_name)
+                or _get_with_alias(base_config, arg_name)
+            )
+            if fallback not in (None, ""):
+                complete_config[arg_name] = fallback
+                config_dict.setdefault(arg_name, fallback)
+
     complete_config = ConfigsService.coerce_config_values_by_field(complete_config)
+
+    # Drop optional string fields that were explicitly cleared
+    for optional_key in ("--cache_dir_vae", "cache_dir_vae"):
+        if complete_config.get(optional_key) in ("", None):
+            complete_config.pop(optional_key, None)
+        config_dict.pop(optional_key, None)
 
     if interval_cleared or complete_config.get("--accelerator_cache_clear_interval") is None:
         complete_config.pop("--accelerator_cache_clear_interval", None)
 
     if disabled_arg_names:
         for arg_name in disabled_arg_names:
+            if _is_required_field(arg_name):
+                continue
             alias = arg_name.lstrip("-")
             complete_config.pop(arg_name, None)
             complete_config.pop(alias, None)
@@ -292,6 +357,15 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
                 save_config[clean_key] = value
         else:
             save_config[clean_key] = value
+
+    scientific_pattern = re.compile(r"^-?\d+(?:\.\d+)?(?:[eE]-?\d+)$")
+    for arg_key, clean_key in (("--learning_rate", "learning_rate"), ("--lr_end", "lr_end")):
+        raw_value = form_dict.get(arg_key)
+        if raw_value is None:
+            raw_value = form_dict.get(arg_key.lstrip("-"))
+        if isinstance(raw_value, str) and scientific_pattern.fullmatch(raw_value.strip()):
+            if clean_key in save_config and isinstance(save_config[clean_key], (int, float)):
+                save_config[clean_key] = raw_value.strip()
 
     return TrainingConfigBundle(
         store=store,
@@ -328,6 +402,32 @@ def persist_config_bundle(bundle: TrainingConfigBundle) -> None:
             logger.info("Created backup at %s", backup_path)
 
     store.save_trainer_config(bundle.active_config, bundle.save_config, overwrite=True)
+
+    literal_scientific_keys = {
+        key: value
+        for key, value in bundle.save_config.items()
+        if key in {"learning_rate", "lr_end"}
+        and isinstance(value, str)
+        and re.fullmatch(r"^-?\d+(?:\.\d+)?(?:[eE]-?\d+)$", value)
+    }
+
+    if literal_scientific_keys:
+        config_path = store._get_config_path(bundle.active_config)
+        try:
+            contents = config_path.read_text(encoding="utf-8")
+        except Exception:
+            contents = ""
+
+        if contents:
+            for key, literal in literal_scientific_keys.items():
+                pattern = re.compile(rf'("{re.escape(key)}"\s*:\s*)"{re.escape(literal)}"')
+
+                def _replace(match, value=literal):
+                    return f"{match.group(1)}{value}"
+
+                contents = pattern.sub(_replace, contents)
+
+            config_path.write_text(contents, encoding="utf-8")
 
     try:
         _load_active_config_cached.clear_cache()
