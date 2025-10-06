@@ -20,6 +20,13 @@ from selenium.webdriver.firefox.options import Options as FirefoxOptions
 
 from simpletuner.simpletuner_sdk.server import ServerMode, create_app
 
+# Use 'fork' on macOS to avoid multiprocessing issues
+if hasattr(multiprocessing, "set_start_method"):
+    try:
+        multiprocessing.set_start_method("fork", force=True)
+    except RuntimeError:
+        pass  # Already set
+
 TEST_HOST = "127.0.0.1"
 
 
