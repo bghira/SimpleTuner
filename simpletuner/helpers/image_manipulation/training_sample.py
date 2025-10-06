@@ -371,6 +371,13 @@ class TrainingSample:
                 images=[self.image],
                 message_level="debug",
             )
+            webhook_handler.send_raw(
+                structured_data={"prepared_sample": str(prepared_sample)},
+                message_type="prepared_sample",
+                message_level="debug",
+                webhook_handler=webhook_handler,
+                job_id=StateTracker.get_job_id(),
+            )
         return prepared_sample
 
     def area(self) -> int:
