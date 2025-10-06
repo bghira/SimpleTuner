@@ -78,6 +78,12 @@ class HubManager:
             webhook_handler.send(
                 message=f"Uploading {'model' if override_path is None else 'intermediary checkpoint'} validation samples to Hugging Face Hub as `{self.repo_id}`."
             )
+            webhook_handler.send_raw(
+                structured_data={"status": "uploading_validation_samples"},
+                message_type="training_status",
+                message_level="info",
+                job_id=StateTracker.get_job_id(),
+            )
         if not self.config.push_to_hub:
             return
         try:
@@ -113,6 +119,12 @@ class HubManager:
             webhook_handler.send(
                 message=f"Uploading {'model' if override_path is None else 'intermediary checkpoint'} to Hugging Face Hub as `{self.repo_id}`."
             )
+            webhook_handler.send_raw(
+                structured_data={"status": "uploading_model"},
+                message_type="training_status",
+                message_level="info",
+                job_id=StateTracker.get_job_id(),
+            )
 
         try:
             self.upload_validation_folder(webhook_handler=webhook_handler, override_path=override_path)
@@ -135,9 +147,21 @@ class HubManager:
                     webhook_handler.send(
                         message=f"(attempt {attempt}/3) Error uploading model to Hugging Face Hub: {e}. Retrying..."
                     )
+                    webhook_handler.send_raw(
+                        structured_data={"status": "uploading_model"},
+                        message_type="training_status",
+                        message_level="info",
+                        job_id=StateTracker.get_job_id(),
+                    )
         if webhook_handler:
             webhook_handler.send(
                 message=f"Model is now available [on Hugging Face Hub](https://huggingface.co/{self._repo_id})."
+            )
+            webhook_handler.send_raw(
+                structured_data={"status": "model_available"},
+                message_type="training_status",
+                message_level="info",
+                job_id=StateTracker.get_job_id(),
             )
 
     def upload_full_model(self, override_path=None):
@@ -258,6 +282,12 @@ class HubManager:
                             if webhook_handler:
                                 webhook_handler.send(
                                     message=f"(attempt {attempt}/3) Error uploading validation image to Hugging Face Hub: {e}. Retrying..."
+                                )
+                                webhook_handler.send_raw(
+                                    structured_data={"status": "uploading_validation_samples"},
+                                    message_type="training_status",
+                                    message_level="info",
+                                    job_id=StateTracker.get_job_id(),
                                 )
                     sub_idx += 1
                     idx += 1
