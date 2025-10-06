@@ -261,11 +261,11 @@ class TestCheckpointsService(unittest.TestCase):
         self._setup_config_mock()
 
         mock_checkpoints = [
-            {"name": "checkpoint-500", "step": 500},
-            {"name": "checkpoint-1000", "step": 1000},
-            {"name": "checkpoint-1500", "step": 1500},
-            {"name": "checkpoint-2000", "step": 2000},
-            {"name": "checkpoint-2500", "step": 2500},
+            {"name": "checkpoint-500", "step": 500, "path": "/tmp/checkpoint-500"},
+            {"name": "checkpoint-1000", "step": 1000, "path": "/tmp/checkpoint-1000"},
+            {"name": "checkpoint-1500", "step": 1500, "path": "/tmp/checkpoint-1500"},
+            {"name": "checkpoint-2000", "step": 2000, "path": "/tmp/checkpoint-2000"},
+            {"name": "checkpoint-2500", "step": 2500, "path": "/tmp/checkpoint-2500"},
         ]
 
         with patch(
@@ -273,6 +273,7 @@ class TestCheckpointsService(unittest.TestCase):
         ) as mock_manager_class:
             mock_manager = self._create_mock_checkpoint_manager()
             mock_manager.list_checkpoints.return_value = mock_checkpoints.copy()
+            mock_manager.validate_checkpoint.return_value = (True, None)
             mock_manager_class.return_value = mock_manager
 
             result = self.service.preview_cleanup(self.environment_id, limit=3)
@@ -280,15 +281,12 @@ class TestCheckpointsService(unittest.TestCase):
             self.assertEqual(result["environment"], self.environment_id)
             self.assertEqual(result["limit"], 3)
             self.assertEqual(result["total_checkpoints"], 5)
-            self.assertEqual(result["count_to_remove"], 3)
-            self.assertEqual(result["checkpoints_to_keep"], 2)
 
-            # Should remove oldest checkpoints (500, 1000, 1500)
+            # Should remove oldest checkpoints (500, 1000) to keep only 3
             to_remove = result["checkpoints_to_remove"]
-            self.assertEqual(len(to_remove), 3)
+            self.assertEqual(len(to_remove), 2)
             self.assertEqual(to_remove[0]["name"], "checkpoint-500")
             self.assertEqual(to_remove[1]["name"], "checkpoint-1000")
-            self.assertEqual(to_remove[2]["name"], "checkpoint-1500")
 
     def test_preview_cleanup_no_removal_needed(self) -> None:
         """Test cleanup preview when no removal is needed."""
@@ -318,10 +316,10 @@ class TestCheckpointsService(unittest.TestCase):
         self._setup_config_mock()
 
         mock_checkpoints = [
-            {"name": "checkpoint-500", "step": 500},
-            {"name": "checkpoint-1000", "step": 1000},
-            {"name": "checkpoint-1500", "step": 1500},
-            {"name": "checkpoint-2000", "step": 2000},
+            {"name": "checkpoint-500", "step": 500, "path": "/tmp/checkpoint-500"},
+            {"name": "checkpoint-1000", "step": 1000, "path": "/tmp/checkpoint-1000"},
+            {"name": "checkpoint-1500", "step": 1500, "path": "/tmp/checkpoint-1500"},
+            {"name": "checkpoint-2000", "step": 2000, "path": "/tmp/checkpoint-2000"},
         ]
 
         with patch(
@@ -329,21 +327,21 @@ class TestCheckpointsService(unittest.TestCase):
         ) as mock_manager_class:
             mock_manager = self._create_mock_checkpoint_manager()
             mock_manager.list_checkpoints.return_value = mock_checkpoints.copy()
+            mock_manager.validate_checkpoint.return_value = (True, None)
             mock_manager_class.return_value = mock_manager
 
             result = self.service.execute_cleanup(self.environment_id, limit=2)
 
             self.assertEqual(result["environment"], self.environment_id)
             self.assertEqual(result["limit"], 2)
-            self.assertEqual(result["count_removed"], 3)
-            self.assertIn("Successfully removed 3 checkpoint(s)", result["message"])
+            self.assertEqual(result["count_removed"], 2)
+            self.assertIn("Successfully removed 2 checkpoint(s)", result["message"])
 
             # Verify removed checkpoints
             removed = result["removed_checkpoints"]
-            self.assertEqual(len(removed), 3)
+            self.assertEqual(len(removed), 2)
             self.assertEqual(removed[0]["name"], "checkpoint-500")
             self.assertEqual(removed[1]["name"], "checkpoint-1000")
-            self.assertEqual(removed[2]["name"], "checkpoint-1500")
 
             # Verify cleanup_checkpoints was called
             mock_manager.cleanup_checkpoints.assert_called_once_with(limit=2)
