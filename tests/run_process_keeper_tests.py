@@ -15,7 +15,12 @@ import sys
 import unittest
 
 # Import test module
-from test_process_keeper import TestProcessLifecycle
+try:
+    # When run from project root
+    from tests.test_process_keeper import TestProcessLifecycle
+except ImportError:
+    # When run from tests directory
+    from test_process_keeper import TestProcessLifecycle
 
 if __name__ == "__main__":
     # Run specific test
