@@ -117,6 +117,8 @@ class UnifiedModeTestCase(unittest.TestCase):
             app = create_unified_app()
         self.assertTrue(hasattr(app.state, "event_store"))
         self.assertIsNotNone(app.state.event_store)
+        self.assertTrue(hasattr(app.state, "callback_service"))
+        self.assertIsNotNone(app.state.callback_service)
         self.assertEqual(app.state.mode, ServerMode.UNIFIED)
 
     def test_event_store_sharing_between_routes(self) -> None:

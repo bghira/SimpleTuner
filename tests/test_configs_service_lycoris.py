@@ -4,10 +4,19 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
-from simpletuner.simpletuner_sdk.server.services.configs_service import ConfigServiceError, ConfigsService
+try:
+    from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
+    from simpletuner.simpletuner_sdk.server.services.configs_service import ConfigServiceError, ConfigsService
+except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency guard
+    ConfigStore = None  # type: ignore[assignment]
+    ConfigsService = None  # type: ignore[assignment]
+    ConfigServiceError = None  # type: ignore[assignment]
+    _SKIP_REASON = f"Dependencies unavailable: {exc}"
+else:
+    _SKIP_REASON = ""
 
 
+@unittest.skipIf(ConfigStore is None or ConfigsService is None or ConfigServiceError is None, _SKIP_REASON)
 class ConfigsServiceLycorisTests(unittest.TestCase):
     """Test suite for Lycoris configuration management in ConfigsService."""
 
@@ -165,6 +174,34 @@ class ConfigsServiceLycorisTests(unittest.TestCase):
 
         self.assertEqual(saved_config["algo"], "loha")
         self.assertEqual(saved_config["multiplier"], 0.5)
+
+    def test_save_lycoris_config_rejects_invalid_environment_name(self) -> None:
+        """Environment identifiers ending with .json should be rejected."""
+        self._create_test_environment("test-env")
+        service = ConfigsService()
+
+        lycoris_config = {"algo": "lokr", "multiplier": 1.0}
+
+        with patch.object(ConfigsService, "_get_store", return_value=self.model_store):
+            with self.assertRaises(ConfigServiceError) as ctx:
+                service.save_lycoris_config("invalid.json", lycoris_config)
+
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("must not end", ctx.exception.message)
+
+    def test_save_lycoris_config_rejects_paths_outside_configs_dir(self) -> None:
+        """Saving LyCORIS configs outside the workspace should raise an error."""
+        self._create_test_environment("test-env", "../outside.json")
+        service = ConfigsService()
+
+        lycoris_config = {"algo": "lokr", "multiplier": 1.0}
+
+        with patch.object(ConfigsService, "_get_store", return_value=self.model_store):
+            with self.assertRaises(ConfigServiceError) as ctx:
+                service.save_lycoris_config("test-env", lycoris_config)
+
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("configs directory", ctx.exception.message)
 
     def test_validate_lycoris_config_accepts_valid_config(self) -> None:
         """Test that validate_lycoris_config accepts a valid configuration."""

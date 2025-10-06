@@ -24,12 +24,16 @@ class _APIStateGuard:
 
     def __enter__(self) -> None:  # pragma: no cover - trivial
         APIState.state_file = str(self.target)
+        if hasattr(APIState, "_state_file_initialised"):
+            APIState._state_file_initialised = False
         APIState.clear_state()
 
     def __exit__(self, exc_type, exc, tb) -> None:  # pragma: no cover - trivial
         APIState.clear_state()
         if self._original_state_file is not None:
             APIState.state_file = self._original_state_file
+            if hasattr(APIState, "_state_file_initialised"):
+                APIState._state_file_initialised = False
 
 
 class APITestEnvironmentMixin:
