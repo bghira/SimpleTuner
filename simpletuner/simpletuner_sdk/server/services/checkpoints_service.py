@@ -108,27 +108,28 @@ class CheckpointsService:
             manager = self._get_checkpoint_manager(environment_id)
             checkpoints = manager.list_checkpoints(include_metadata=True)
 
+            # Always calculate size for each checkpoint
+            for ckpt in checkpoints:
+                ckpt_path = ckpt.get("path")
+                if ckpt_path and os.path.exists(ckpt_path):
+                    try:
+                        size = sum(
+                            os.path.getsize(os.path.join(dirpath, filename))
+                            for dirpath, dirnames, filenames in os.walk(ckpt_path)
+                            for filename in filenames
+                        )
+                        ckpt["size_bytes"] = size
+                    except Exception:
+                        ckpt["size_bytes"] = 0
+                else:
+                    ckpt["size_bytes"] = 0
+
             # Apply sorting
             if sort_by == "step-asc":
                 checkpoints.sort(key=lambda x: x.get("step", 0), reverse=False)
             elif sort_by == "step-desc":
                 checkpoints.sort(key=lambda x: x.get("step", 0), reverse=True)
             elif sort_by == "size-desc":
-                # Calculate size for each checkpoint
-                for ckpt in checkpoints:
-                    ckpt_path = ckpt.get("path")
-                    if ckpt_path and os.path.exists(ckpt_path):
-                        try:
-                            size = sum(
-                                os.path.getsize(os.path.join(dirpath, filename))
-                                for dirpath, dirnames, filenames in os.walk(ckpt_path)
-                                for filename in filenames
-                            )
-                            ckpt["size_bytes"] = size
-                        except Exception:
-                            ckpt["size_bytes"] = 0
-                    else:
-                        ckpt["size_bytes"] = 0
                 checkpoints.sort(key=lambda x: x.get("size_bytes", 0), reverse=True)
 
             previews = [self._build_checkpoint_preview(environment_id, manager, ckpt) for ckpt in checkpoints]
@@ -391,6 +392,10 @@ class CheckpointsService:
             preview["readme"] = readme
         if mtime is not None:
             preview["modified_at"] = mtime
+
+        # Ensure size field is available (alias for size_bytes)
+        if "size_bytes" in preview:
+            preview["size"] = preview["size_bytes"]
 
         self._preview_cache[cache_key] = {"mtime": mtime, "data": dict(preview)}
 
