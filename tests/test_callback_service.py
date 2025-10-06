@@ -79,11 +79,7 @@ class CallbackPresenterTestCase(unittest.TestCase):
     def test_htmx_tile_renders_base64_images(self) -> None:
         service = CallbackService(EventStore())
         event = service.handle_incoming(
-            {
-                "message_type": "validation_log",
-                "message": "Validation sample",
-                "images": ["ZmFrZS1iYXNlNjQ="]
-            }
+            {"message_type": "validation_log", "message": "Validation sample", "images": ["ZmFrZS1iYXNlNjQ="]}
         )
         self.assertIsNotNone(event)
         html_snippet = CallbackPresenter.to_htmx_tile(event)
