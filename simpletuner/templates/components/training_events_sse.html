@@ -45,6 +45,8 @@
     let elements = null;
     let activeJobId = null;
     let managerRegistered = false;
+    let lastCardUpdate = 0;
+    const CARD_UPDATE_THROTTLE = 100; // ms
 
     function getTrainerStore() {
         if (window.Alpine && typeof window.Alpine.store === 'function') {
@@ -99,6 +101,10 @@
 
         if (store) {
             store.isTraining = isActive;
+            // Hide progress bars when training stops or starts fresh
+            if (!isActive || normalized === 'starting') {
+                store.showTrainingProgress = false;
+            }
         }
 
         if (payload.job_id == null && activeJobId) {
@@ -114,17 +120,37 @@
     }
 
     function ensureCard() {
+        // Check if card exists and is still in the DOM
         if (progressCard && document.body.contains(progressCard)) {
             return progressCard;
         }
 
-        const template = document.getElementById(TEMPLATE_ID);
-        if (!template) {
+        // Try to find existing card first before creating new one
+        const dockBody = document.querySelector('.event-dock-body');
+        if (!dockBody) {
             return null;
         }
 
-        const dockBody = document.querySelector('.event-dock-body');
-        if (!dockBody) {
+        const existingCard = dockBody.querySelector('.training-progress-card');
+        if (existingCard) {
+            progressCard = existingCard;
+            elements = {
+                label: progressCard.querySelector('[data-progress-label]'),
+                status: progressCard.querySelector('[data-progress-status]'),
+                bar: progressCard.querySelector('[data-progress-bar]'),
+                step: progressCard.querySelector('[data-progress-step]'),
+                totalSteps: progressCard.querySelector('[data-progress-total-steps]'),
+                epoch: progressCard.querySelector('[data-progress-epoch]'),
+                totalEpochs: progressCard.querySelector('[data-progress-total-epochs]'),
+                loss: progressCard.querySelector('[data-progress-loss]'),
+                lr: progressCard.querySelector('[data-progress-lr]'),
+            };
+            return progressCard;
+        }
+
+        // Only create new card if one doesn't exist
+        const template = document.getElementById(TEMPLATE_ID);
+        if (!template) {
             return null;
         }
 
@@ -191,8 +217,14 @@
         if (currentStep === null && state && state.global_step !== undefined) {
             currentStep = toNumber(state.global_step);
         }
+        if (currentStep === null && payload.global_step !== undefined) {
+            currentStep = toNumber(payload.global_step);
+        }
         if (currentStep === null && extras.current_step !== undefined) {
             currentStep = toNumber(extras.current_step);
+        }
+        if (currentStep === null && payload.current_step !== undefined) {
+            currentStep = toNumber(payload.current_step);
         }
 
         let totalSteps = toNumber(progress.total);
@@ -201,6 +233,12 @@
         }
         if (totalSteps === null && extras.total_num_steps !== undefined) {
             totalSteps = toNumber(extras.total_num_steps);
+        }
+        if (totalSteps === null && payload.total_num_steps !== undefined) {
+            totalSteps = toNumber(payload.total_num_steps);
+        }
+        if (totalSteps === null && state && state.total_num_steps !== undefined) {
+            totalSteps = toNumber(state.total_num_steps);
         }
         if (totalSteps === null && extras.max_steps !== undefined) {
             totalSteps = toNumber(extras.max_steps);
@@ -213,10 +251,19 @@
         if (epoch === null && state && state.current_epoch !== undefined) {
             epoch = toNumber(state.current_epoch);
         }
+        if (epoch === null && payload.current_epoch !== undefined) {
+            epoch = toNumber(payload.current_epoch);
+        }
 
         let totalEpochs = toNumber(extras.final_epoch);
         if (totalEpochs === null && extras.total_epochs !== undefined) {
             totalEpochs = toNumber(extras.total_epochs);
+        }
+        if (totalEpochs === null && extras.total_num_epochs !== undefined) {
+            totalEpochs = toNumber(extras.total_num_epochs);
+        }
+        if (totalEpochs === null && payload.total_num_epochs !== undefined) {
+            totalEpochs = toNumber(payload.total_num_epochs);
         }
         if (totalEpochs === null && state && state.final_epoch !== undefined) {
             totalEpochs = toNumber(state.final_epoch);
@@ -226,6 +273,8 @@
         if (percent === null && currentStep !== null && totalSteps) {
             percent = (currentStep / totalSteps) * 100;
         }
+
+        // Debug logging removed to prevent console spam during training
 
         let loss = extras.loss !== undefined ? toNumber(extras.loss) : null;
         if (loss === null && extras.train_loss !== undefined) {
@@ -281,21 +330,34 @@
             targetJobId = activeJobId;
         }
 
-        const percent = clampPercent(progress.percentage);
+        // Determine total_steps: prefer new value if valid and >= previous
+        // This prevents validation callbacks from overwriting with epoch count
+        let finalTotalSteps = previous.total_steps || 0;
+        if (progress.total_steps && progress.total_steps > 0) {
+            // Only update if new value is >= previous (don't let it decrease)
+            if (progress.total_steps >= finalTotalSteps) {
+                finalTotalSteps = progress.total_steps;
+            }
+        }
+
+        // Calculate percentage from steps if we have valid total_steps
+        let finalPercent;
+        if (finalTotalSteps > 0 && progress.current_step !== null && progress.current_step !== undefined) {
+            finalPercent = clampPercent((progress.current_step / finalTotalSteps) * 100);
+        } else {
+            finalPercent = clampPercent(progress.percentage) || previous.percent || 0;
+        }
+
         const merged = {
-            percent: percent || previous.percent || 0,
-            step: progress.current_step || previous.step || 0,
-            total_steps: progress.total_steps || previous.total_steps || 0,
-            epoch: progress.epoch || previous.epoch || 0,
+            percent: finalPercent,
+            step: progress.current_step ?? previous.step ?? 0,
+            total_steps: finalTotalSteps,
+            epoch: progress.epoch ?? previous.epoch ?? 0,
             loss: progress.loss ?? previous.loss ?? 'N/A',
             learning_rate: progress.lr ?? previous.learning_rate ?? 'N/A',
         };
 
-        if (percent >= (previous.percent || 0)) {
-            merged.percent = percent;
-        } else {
-            merged.percent = previous.percent || percent;
-        }
+        // Debug logging removed to prevent console spam
 
         if (store) {
             store.trainingProgress = merged;
@@ -318,10 +380,19 @@
     }
 
     function updateProgressCard(progress, jobId) {
+        // Throttle updates to reduce visual jank
+        const now = Date.now();
+        if (now - lastCardUpdate < CARD_UPDATE_THROTTLE) {
+            return;
+        }
+        lastCardUpdate = now;
+
         const card = ensureCard();
         if (!card || !elements) {
             return;
         }
+
+        // Debug logging removed to prevent console spam
 
         if (card.classList.contains('d-none')) {
             card.classList.remove('d-none');
@@ -329,30 +400,47 @@
 
         const percent = clampPercent(progress.percentage);
         if (elements.bar) {
-            elements.bar.style.width = `${percent}%`;
-            elements.bar.setAttribute('aria-valuenow', percent);
+            const newWidth = `${percent}%`;
+            if (elements.bar.style.width !== newWidth) {
+                elements.bar.style.width = newWidth;
+                elements.bar.setAttribute('aria-valuenow', percent);
+            }
         }
 
-        if (elements.label) {
-            elements.label.textContent = progress.label || 'Training updates';
+        // Only update text content if it has changed
+        const labelText = progress.label || 'Training updates';
+        if (elements.label && elements.label.textContent !== labelText) {
+            elements.label.textContent = labelText;
         }
-        if (elements.step) {
-            elements.step.textContent = progress.current_step ?? 0;
+
+        const stepText = String(progress.current_step ?? 0);
+        if (elements.step && elements.step.textContent !== stepText) {
+            elements.step.textContent = stepText;
         }
-        if (elements.totalSteps) {
-            elements.totalSteps.textContent = progress.total_steps ?? 0;
+
+        const totalStepsText = String(progress.total_steps ?? 0);
+        if (elements.totalSteps && elements.totalSteps.textContent !== totalStepsText) {
+            elements.totalSteps.textContent = totalStepsText;
         }
-        if (elements.epoch) {
-            elements.epoch.textContent = progress.epoch ?? 0;
+
+        const epochText = String(progress.epoch ?? 0);
+        if (elements.epoch && elements.epoch.textContent !== epochText) {
+            elements.epoch.textContent = epochText;
         }
-        if (elements.totalEpochs) {
-            elements.totalEpochs.textContent = progress.total_epochs ?? 0;
+
+        const totalEpochsText = String(progress.total_epochs ?? 0);
+        if (elements.totalEpochs && elements.totalEpochs.textContent !== totalEpochsText) {
+            elements.totalEpochs.textContent = totalEpochsText;
         }
-        if (elements.loss) {
-            elements.loss.textContent = typeof progress.loss === 'number' ? progress.loss.toFixed(4) : 'N/A';
+
+        const lossText = typeof progress.loss === 'number' ? progress.loss.toFixed(4) : 'N/A';
+        if (elements.loss && elements.loss.textContent !== lossText) {
+            elements.loss.textContent = lossText;
         }
-        if (elements.lr) {
-            elements.lr.textContent = typeof progress.lr === 'number' ? progress.lr.toExponential(2) : 'N/A';
+
+        const lrText = typeof progress.lr === 'number' ? progress.lr.toExponential(2) : 'N/A';
+        if (elements.lr && elements.lr.textContent !== lrText) {
+            elements.lr.textContent = lrText;
         }
 
         setStatus('Running', progress.raw?.severity);
@@ -385,9 +473,53 @@
                 if (messageType === 'configure_webhook') {
                     setStatus('Starting', payload.severity);
                     setTrainingState('starting', { job_id: jobId });
-                } else if (messageType === '_train_initial_msg' || messageType === 'training_status') {
+                } else if (messageType === 'training_status') {
+                    // Check the status field for training_status messages
+                    const status = (payload.status || '').toLowerCase();
+                    if (status === 'training_failed' || status === 'failed' || status === 'error') {
+                        setStatus('Failed', 'danger');
+                        setTrainingState('error', { job_id: jobId });
+                        // Clear stale status messages
+                        const trainingStatusEl = document.getElementById('training-status');
+                        if (trainingStatusEl) {
+                            trainingStatusEl.innerHTML = '';
+                        }
+                        // Hide progress bars when training fails
+                        const store = getTrainerStore();
+                        if (store) {
+                            store.showTrainingProgress = false;
+                        }
+                        // Show error message if available
+                        if (payload.message && window.showToast) {
+                            window.showToast(`Training failed: ${payload.message}`, 'error');
+                        }
+                    } else {
+                        // Other training_status messages (running, etc.)
+                        setStatus('Running', payload.severity);
+                        setTrainingState('running', { job_id: jobId });
+                        const normalized = normalizeProgressPayload(payload);
+                        updateProgressCard(normalized, jobId);
+                        syncTrainerProgress(normalized, jobId);
+                    }
+                } else if (messageType === '_train_initial_msg' || messageType === 'train_status') {
                     setStatus('Running', payload.severity);
                     setTrainingState('running', { job_id: jobId });
+                    // Clear the "Training Starting" message when training actually starts
+                    const trainingStatusEl = document.getElementById('training-status');
+                    if (trainingStatusEl && trainingStatusEl.innerHTML.includes('Training Starting')) {
+                        trainingStatusEl.innerHTML = '';
+                        // Show progress bars only after clearing "Training Starting"
+                        const store = getTrainerStore();
+                        if (store) {
+                            store.showTrainingProgress = true;
+                        }
+                    }
+                    // Update progress card with training data for both message types
+                    if (messageType === '_train_initial_msg' || messageType === 'train_status') {
+                        const normalized = normalizeProgressPayload(payload);
+                        updateProgressCard(normalized, jobId);
+                        syncTrainerProgress(normalized, jobId);
+                    }
                 } else if (messageType === 'training_complete' || messageType === 'run_complete') {
                     setStatus('Completed', 'success');
                     let completionProgress = null;
@@ -399,11 +531,27 @@
                         };
                         store.trainingProgress = completionProgress;
                         window.dispatchEvent(new CustomEvent('training-progress', { detail: completionProgress }));
+                        // Hide progress bars after a short delay to let user see 100%
+                        setTimeout(() => {
+                            if (store) {
+                                store.showTrainingProgress = false;
+                            }
+                        }, 3000);
                     }
                     setTrainingState('completed', { job_id: jobId, progress: completionProgress });
                 } else if (messageType === 'fatal_error' || messageType === 'exit') {
                     setStatus('Stopped', 'danger');
                     setTrainingState('error', { job_id: jobId });
+                    // Clear stale status messages when training fails
+                    const trainingStatusEl = document.getElementById('training-status');
+                    if (trainingStatusEl) {
+                        trainingStatusEl.innerHTML = '';
+                    }
+                    // Hide progress bars when training stops
+                    const store = getTrainerStore();
+                    if (store) {
+                        store.showTrainingProgress = false;
+                    }
                 }
                 break;
             }
@@ -436,13 +584,19 @@
             } else if (info.status === 'disconnected') {
                 setStatus('Disconnected', 'secondary');
                 setTrainingState('idle', { job_id: activeJobId });
+                // Clear "Training Starting" message when connection is lost
+                const trainingStatusEl = document.getElementById('training-status');
+                if (trainingStatusEl) {
+                    trainingStatusEl.innerHTML = '';
+                }
             }
         };
         trackListener('connection-status', connectionStatusHandler);
 
         var trainingProgressHandler = function(data) {
             const jobId = data.raw?.job_id || activeJobId;
-            updateProgressCard(data, jobId);
+            const normalized = normalizeProgressPayload(data);
+            updateProgressCard(normalized, jobId);
         };
         trackListener('training_progress', trainingProgressHandler);
 
@@ -533,10 +687,49 @@
         window.closeSSE();
     });
 
+    // Check training status on page load
+    async function checkInitialTrainingStatus() {
+        try {
+            const response = await fetch('/api/training/status');
+            if (!response.ok) return;
+
+            const data = await response.json();
+
+            // If training is active, initialize the progress card
+            if (data.status === 'running' || data.status === 'starting') {
+                const card = ensureCard();
+                if (card && data.progress) {
+                    // Update progress immediately (normalize first)
+                    const normalized = normalizeProgressPayload(data.progress);
+                    updateProgressCard(normalized, data.job_id);
+                    card.classList.remove('d-none');
+                }
+
+                // Set training state
+                if (data.job_id) {
+                    activeJobId = data.job_id;
+                    setTrainingState(data.status === 'running' ? 'running' : 'starting', { job_id: data.job_id });
+
+                    // Update status badge
+                    if (elements && elements.status) {
+                        const statusText = data.status === 'running' ? 'Running' : 'Starting';
+                        setStatus(statusText, 'info');
+                    }
+                }
+            }
+        } catch (error) {
+            console.debug('Could not fetch initial training status:', error);
+        }
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
         if (document && document.body && !document.body.dataset.trainingActive) {
             document.body.dataset.trainingActive = 'false';
         }
+
+        // Check if training is already running
+        checkInitialTrainingStatus();
+
         waitForManager(0);
     });
 })();
@@ -544,18 +737,37 @@
 
 <style>
 .training-progress-card {
-    border: 1px solid var(--bs-card-border-color, rgba(0, 0, 0, 0.125));
-    background-color: var(--bs-card-bg, var(--bs-body-bg));
-    box-shadow: var(--bs-card-box-shadow, 0 0.25rem 0.5rem rgba(15, 23, 42, 0.08));
+    border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
+    background-color: var(--card-bg, rgba(255, 255, 255, 0.02));
+    box-shadow: var(--shadow-card, 0 4px 12px rgba(0, 0, 0, 0.4));
+    border-radius: var(--radius-lg, 12px);
     margin-bottom: 1rem;
 }
 
+.training-progress-card .card-body {
+    background-color: transparent;
+}
+
 .training-progress-card .progress {
-    background-color: var(--bs-secondary-bg, rgba(0, 0, 0, 0.1));
+    background-color: rgba(255, 255, 255, 0.05);
+    border-radius: var(--radius-sm, 4px);
 }
 
 .training-progress-card .progress-bar {
     transition: width 0.4s ease;
-    background-color: var(--bs-primary, #0d6efd);
+    background: var(--primary-gradient, linear-gradient(135deg, #667eea 0%, #764ba2 100%));
+}
+
+/* Override Bootstrap text color classes for dark theme */
+.training-progress-card .text-dark {
+    color: var(--text-primary, #ffffff) !important;
+}
+
+.training-progress-card .text-muted {
+    color: var(--text-secondary, #94a3b8) !important;
+}
+
+.training-progress-card .card-title {
+    color: var(--text-primary, #ffffff);
 }
 </style>
