@@ -545,13 +545,27 @@ function dataloaderSectionComponent() {
                 if (error.detail && error.detail.validations) {
                     // Map validation errors to field-specific errors
                     const fieldErrors = {};
+                    const errorMessages = [];
                     error.detail.validations.forEach(validation => {
                         if (validation.field && validation.field.includes('.')) {
                             fieldErrors[validation.field] = validation.message;
+                            // Extract dataset ID and field name for display
+                            const parts = validation.field.split('.');
+                            const datasetId = parts[0];
+                            const fieldName = parts.slice(1).join('.');
+                            errorMessages.push(`${datasetId}: ${validation.message}`);
                         }
                     });
                     trainer.datasetValidationErrors = fieldErrors;
-                    window.showToast('Failed to save: validation errors', 'error');
+
+                    // Show detailed error messages
+                    if (errorMessages.length > 0) {
+                        const errorList = errorMessages.map(msg => `• ${msg}`).join('<br>');
+                        const errorHtml = `<div style="text-align: left;"><strong>Validation errors:</strong><br>${errorList}</div>`;
+                        window.showToast(errorHtml, 'error', 8000);
+                    } else {
+                        window.showToast('Failed to save: validation errors', 'error');
+                    }
                 } else {
                     window.showToast(`Failed to save: ${error.detail || 'Unknown error'}`, 'error');
                 }
