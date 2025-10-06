@@ -760,10 +760,13 @@ body {
 }
 
 .event-list {
-    max-height: 400px !important; /* Was 500px */
+    /* Remove fixed max-height to allow dynamic sizing */
+    max-height: none !important;
     padding: var(--spacing-md) !important; /* Was 1rem */
     font-size: 0.8125rem !important; /* Was 0.875rem */
     line-height: 1.4 !important;
+    overflow-y: auto !important;
+    height: 100% !important; /* Fill available space in event-dock-body */
 }
 
 .event-item {

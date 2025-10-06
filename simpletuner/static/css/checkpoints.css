@@ -23,6 +23,9 @@
     transition: all 0.3s ease;
     cursor: pointer;
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
 }
 
 .checkpoint-card::before {
@@ -52,14 +55,14 @@
 }
 
 /* Checkpoint card header */
-.checkpoint-card-header {
+.checkpoint-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     margin-bottom: var(--spacing-md);
 }
 
-.checkpoint-card-header h5 {
+.checkpoint-title {
     font-size: var(--typography-font-size-base);
     font-weight: 600;
     color: var(--text-primary);
@@ -69,7 +72,7 @@
     gap: var(--spacing-sm);
 }
 
-.checkpoint-card-header i {
+.checkpoint-title i {
     font-size: 1rem;
     color: var(--accent-purple);
 }
@@ -129,18 +132,50 @@
     gap: var(--spacing-sm);
 }
 
+/* Checkpoint card content wrapper */
+.checkpoint-card-content {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+}
+
 .checkpoint-preview-image {
     margin: var(--spacing-sm) 0;
     border-radius: var(--radius-sm);
     overflow: hidden;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.06);
+    position: relative;
+    /* Remove fixed min-height, let content determine height */
 }
 
 .checkpoint-preview-image img {
     display: block;
     width: 100%;
     height: auto;
+}
+
+.no-validation-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-lg);
+    text-align: center;
+    /* Use aspect-ratio to match common image ratios */
+    aspect-ratio: 1; /* Default to square, will be overridden by JS if needed */
+    width: 100%;
+}
+
+.no-validation-placeholder i {
+    font-size: 2.5rem;
+    opacity: 0.3;
+}
+
+.no-validation-placeholder span {
+    font-size: var(--typography-font-size-sm);
+    opacity: 0.5;
 }
 
 .checkpoint-tags {
@@ -183,7 +218,7 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: var(--radius-xs);
     padding: var(--spacing-xs) var(--spacing-sm);
-    margin-top: var(--spacing-sm);
+    margin-top: auto;
     word-break: break-all;
 }
 
@@ -492,6 +527,65 @@
     100% { transform: rotate(360deg); }
 }
 
+/* Visibility Controls */
+.checkpoint-visibility-controls {
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    padding-top: var(--spacing-md);
+}
+
+.checkpoint-visibility-controls .form-check-inline {
+    margin-bottom: 0;
+}
+
+.checkpoint-visibility-controls .form-check-label {
+    cursor: pointer;
+    user-select: none;
+    color: var(--text-secondary);
+    transition: color 0.2s ease;
+}
+
+.checkpoint-visibility-controls .form-check-input:checked ~ .form-check-label {
+    color: var(--text-primary);
+}
+
+/* Checkpoint metadata section */
+.checkpoint-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    margin-top: var(--spacing-sm);
+    font-size: var(--typography-font-size-sm);
+    color: var(--text-secondary);
+}
+
+.meta-item {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+}
+
+.meta-item i {
+    font-size: 0.875rem;
+    opacity: 0.7;
+}
+
+/* Upload progress in meta section */
+.checkpoint-meta .progress {
+    background-color: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.checkpoint-meta .progress-bar {
+    font-size: 0.65rem;
+    font-weight: 600;
+    line-height: 14px;
+}
+
+.checkpoint-meta .upload-status {
+    font-size: 0.75rem;
+    opacity: 0.8;
+}
+
 /* Responsive adjustments */
 @media (max-width: 768px) {
     .checkpoints-tab {
@@ -527,4 +621,13 @@
         width: 100%;
         justify-content: center;
     }
+}
+
+/* Collapsible checkpoint notes */
+[data-bs-toggle="collapse"] i {
+    transition: transform 0.3s ease;
+}
+
+[data-bs-toggle="collapse"][aria-expanded="true"] i {
+    transform: rotate(180deg);
 }
