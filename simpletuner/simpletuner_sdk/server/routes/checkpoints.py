@@ -123,6 +123,19 @@ async def execute_cleanup(request: CleanupRequest) -> Dict[str, Any]:
     )
 
 
+@router.delete("/{checkpoint_name}")
+async def delete_checkpoint(
+    checkpoint_name: str,
+    environment: str = Query(..., description="Environment ID (config name)"),
+) -> Dict[str, Any]:
+    """Remove a checkpoint directory for an environment."""
+    return _call_service(
+        CHECKPOINTS_SERVICE.delete_checkpoint,
+        environment,
+        checkpoint_name,
+    )
+
+
 @router.get("/for-resume")
 async def get_checkpoints_for_resume(
     environment: str = Query(..., description="Environment ID (config name)"),
