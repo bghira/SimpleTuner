@@ -39,6 +39,9 @@ class ConfigsService:
     @classmethod
     def _validate_config_name(cls, name: str) -> str:
         candidate = (name or "").strip()
+        if candidate.lower().endswith(".json"):
+            candidate = candidate[:-5].strip()
+
         if not candidate:
             raise ConfigServiceError("Configuration name is required", status.HTTP_400_BAD_REQUEST)
         if not cls._CONFIG_NAME_PATTERN.match(candidate):
@@ -128,7 +131,6 @@ class ConfigsService:
                 "resolution": 1024,
                 "resolution_type": "pixel_area",
                 "caption_strategy": "textfile",
-                "cache_dir_vae": "",
                 "minimum_image_size": 256,
                 "maximum_image_size": 4096,
                 "target_downsample_size": 1024,
@@ -298,6 +300,7 @@ class ConfigsService:
         tags: List[str],
         config_type: str = "model",
     ) -> Dict[str, Any]:
+        name = self._validate_config_name(name)
         store = self._get_store(config_type)
         validation = store.validate_config(config)
         if not validation.is_valid:
@@ -334,6 +337,7 @@ class ConfigsService:
         tags: List[str],
         config_type: str = "model",
     ) -> Dict[str, Any]:
+        name = self._validate_config_name(name)
         store = self._get_store(config_type)
         validation = store.validate_config(config)
         if not validation.is_valid:
@@ -446,6 +450,35 @@ class ConfigsService:
             except Exception:
                 config_payload = {}
 
+        if example:
+            lycoris_value = config_payload.get("lycoris_config") or config_payload.get("--lycoris_config")
+            candidate_names = []
+            if lycoris_value:
+                try:
+                    candidate_names.append(Path(str(lycoris_value)).name)
+                except Exception:
+                    pass
+            candidate_names.append("lycoris_config.json")
+
+            lycoris_path = None
+            seen_names: set[str] = set()
+            for lycoris_name in candidate_names:
+                if not lycoris_name or lycoris_name in seen_names:
+                    continue
+                seen_names.add(lycoris_name)
+                candidate = env_dir / lycoris_name
+                if candidate.exists():
+                    lycoris_path = candidate
+                    break
+
+            if lycoris_path is not None:
+                lycoris_rel = self._format_relative_to_configs(
+                    lycoris_path,
+                    Path(model_store.config_dir),
+                )
+                config_payload["lycoris_config"] = lycoris_rel
+                config_payload.pop("--lycoris_config", None)
+
         pretrained_path = self._resolve_pretrained_path(model_family, model_flavour)
         if not pretrained_path:
             pretrained_path = model_flavour or model_family
@@ -506,9 +539,16 @@ class ConfigsService:
                     selected = example_dataloader_candidates[0]
                     if selected.resolve(strict=False) != dataloader_abs:
                         dataloader_abs.parent.mkdir(parents=True, exist_ok=True)
-                        if dataloader_abs.exists():
-                            dataloader_abs.unlink()
-                        selected.replace(dataloader_abs)
+                        # Use atomic replace operation to avoid TOCTOU race condition
+                        try:
+                            # Path.replace() is atomic on most filesystems
+                            selected.replace(dataloader_abs)
+                        except OSError:
+                            # If replace fails (e.g., file exists and can't be replaced),
+                            # remove and retry atomically
+                            if dataloader_abs.exists():
+                                dataloader_abs.unlink()
+                            selected.replace(dataloader_abs)
                     payload_written = True
 
             if not payload_written:
@@ -574,6 +614,7 @@ class ConfigsService:
         }
 
     def delete_config(self, name: str, config_type: str = "model") -> Dict[str, Any]:
+        name = self._validate_config_name(name)
         store = self._get_store(config_type)
         if store.get_active_config() == name:
             raise ConfigServiceError("Cannot delete the active configuration", status.HTTP_400_BAD_REQUEST)
@@ -583,6 +624,8 @@ class ConfigsService:
         raise ConfigServiceError(f"Configuration '{name}' not found", status.HTTP_404_NOT_FOUND)
 
     def rename_config(self, name: str, new_name: str, config_type: str = "model") -> Dict[str, Any]:
+        name = self._validate_config_name(name)
+        new_name = self._validate_config_name(new_name)
         store = self._get_store(config_type)
         try:
             metadata = store.rename_config(name, new_name)
@@ -597,6 +640,8 @@ class ConfigsService:
             raise ConfigServiceError(str(exc), status.HTTP_409_CONFLICT) from exc
 
     def copy_config(self, name: str, target_name: str, config_type: str = "model") -> Dict[str, Any]:
+        name = self._validate_config_name(name)
+        target_name = self._validate_config_name(target_name)
         store = self._get_store(config_type)
         try:
             metadata = store.copy_config(name, target_name)
@@ -611,6 +656,7 @@ class ConfigsService:
             raise ConfigServiceError(str(exc), status.HTTP_409_CONFLICT) from exc
 
     def activate_config(self, name: str) -> Dict[str, Any]:
+        name = self._validate_config_name(name)
         store = self._get_store()
         try:
             store.set_active_config(name)
@@ -620,6 +666,7 @@ class ConfigsService:
             raise ConfigServiceError(str(exc), status.HTTP_404_NOT_FOUND) from exc
 
     def export_config(self, name: str, include_metadata: bool, config_type: str = "model") -> Dict[str, Any]:
+        name = self._validate_config_name(name)
         store = self._get_store(config_type)
         try:
             return store.export_config(name, include_metadata)
@@ -630,6 +677,8 @@ class ConfigsService:
         self, data: Dict[str, Any], name: Optional[str], overwrite: bool, config_type: str = "model"
     ) -> Dict[str, Any]:
         store = self._get_store(config_type)
+        if name:
+            name = self._validate_config_name(name)
         try:
             metadata = store.import_config(data, name, overwrite)
             self._invalidate_active_config_cache()
@@ -646,6 +695,7 @@ class ConfigsService:
             ) from exc
 
     def create_from_template(self, template_name: str, config_name: str, config_type: str = "model") -> Dict[str, Any]:
+        config_name = self._validate_config_name(config_name)
         store = self._get_store(config_type)
         try:
             metadata = store.create_from_template(template_name, config_name)
@@ -660,6 +710,7 @@ class ConfigsService:
             raise ConfigServiceError(str(exc), status.HTTP_409_CONFLICT) from exc
 
     def validate_config(self, name: str, config_type: str = "model") -> Dict[str, Any]:
+        name = self._validate_config_name(name)
         store = self._get_store(config_type)
         try:
             config, _ = store.load_config(name)
@@ -702,6 +753,7 @@ class ConfigsService:
         Returns:
             The Lycoris configuration dict, or None if not found
         """
+        environment_id = self._validate_config_name(environment_id)
         store = self._get_store("model")
         try:
             config, _ = store.load_config(environment_id)
@@ -741,6 +793,7 @@ class ConfigsService:
         Raises:
             ConfigServiceError: If environment not found or save fails
         """
+        environment_id = self._validate_config_name(environment_id)
         store = self._get_store("model")
         try:
             config, metadata = store.load_config(environment_id)
@@ -758,15 +811,24 @@ class ConfigsService:
             # Create default path: config/{env_id}/lycoris_config.json
             env_dir = Path(store.config_dir) / environment_id
             lycoris_path = env_dir / "lycoris_config.json"
-            lycoris_rel = self._format_relative_to_configs(lycoris_path, Path(store.config_dir))
-            config["lycoris_config"] = lycoris_rel
-            store.save_config(environment_id, config, metadata, overwrite=True)
+            config["lycoris_config"] = self._format_relative_to_configs(
+                lycoris_path,
+                Path(store.config_dir),
+            )
         else:
-            lycoris_path = resolve_config_path(lycoris_path_str, config_dir=store.config_dir, check_cwd_first=True)
-            if not lycoris_path:
-                # If path doesn't resolve, treat it as relative to config dir
-                lycoris_path = Path(store.config_dir) / lycoris_path_str
-            lycoris_rel = lycoris_path_str
+            lycoris_path_candidate = Path(str(lycoris_path_str)).expanduser()
+            if not lycoris_path_candidate.is_absolute():
+                lycoris_path_candidate = Path(store.config_dir) / lycoris_path_candidate
+
+            lycoris_path = lycoris_path_candidate.resolve(strict=False)
+
+            try:
+                lycoris_path.relative_to(Path(store.config_dir).resolve(strict=False))
+            except ValueError as exc:
+                raise ConfigServiceError(
+                    "LyCORIS configuration files must reside within the configs directory",
+                    status.HTTP_400_BAD_REQUEST,
+                ) from exc
 
         # Ensure parent directory exists
         lycoris_path.parent.mkdir(parents=True, exist_ok=True)
@@ -781,6 +843,11 @@ class ConfigsService:
                 f"Failed to write Lycoris config: {exc}",
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
             ) from exc
+
+        lycoris_rel = self._format_relative_to_configs(lycoris_path, Path(store.config_dir))
+        config["lycoris_config"] = lycoris_rel
+        config.pop("--lycoris_config", None)
+        store.save_config(environment_id, config, metadata, overwrite=True)
 
         return {
             "success": True,
@@ -930,8 +997,29 @@ class ConfigsService:
             cleaned = value.strip()
             # Handle the case where None comes through as "None" string
             if cleaned.lower() == "none":
-                return default_value if default_value is not None else ""
-            return cleaned if cleaned else (default_value if default_value is not None else "")
+                return default_value if default_value is not None else None
+            if cleaned:
+                if isinstance(default_value, bool):
+                    lowered = cleaned.lower()
+                    if lowered in {"1", "true", "yes", "on"}:
+                        return True
+                    if lowered in {"0", "false", "no", "off"}:
+                        return False
+                if isinstance(default_value, int):
+                    try:
+                        return int(cleaned)
+                    except ValueError:
+                        pass
+                if isinstance(default_value, float):
+                    try:
+                        return float(cleaned)
+                    except ValueError:
+                        pass
+                return cleaned
+            # Empty string – defer to the defined default, otherwise treat as unset
+            if default_value is not None:
+                return default_value
+            return None
 
         return value
 
@@ -1121,6 +1209,24 @@ class ConfigsService:
         legacy_webhook = ConfigsService._pop_legacy_value(migrated, "webhooks_config")
         if legacy_webhook is not None and "--webhook_config" not in migrated:
             migrated["--webhook_config"] = legacy_webhook
+
+        legacy_checkpoint_steps = ConfigsService._pop_legacy_value(migrated, "save_every_n_steps")
+        if legacy_checkpoint_steps is not None and "--checkpointing_steps" not in migrated:
+            migrated["--checkpointing_steps"] = legacy_checkpoint_steps
+
+        legacy_max_caption = ConfigsService._pop_legacy_value(migrated, "maximum_caption_length")
+        if legacy_max_caption is not None and "--tokenizer_max_length" not in migrated:
+            migrated["--tokenizer_max_length"] = legacy_max_caption
+
+        legacy_project_name = ConfigsService._pop_legacy_value(migrated, "project_name")
+        if isinstance(legacy_project_name, str) and legacy_project_name.strip().lower() in {"", "none", "null"}:
+            legacy_project_name = None
+        if legacy_project_name is not None and "--tracker_project_name" not in migrated:
+            migrated["--tracker_project_name"] = legacy_project_name
+
+        # Drop web UI helper keys if present
+        migrated.pop("__active_tab__", None)
+        migrated.pop("--__active_tab__", None)
 
         # Remove dataset-level fields that should not be part of trainer CLI config
         for dataset_key in (

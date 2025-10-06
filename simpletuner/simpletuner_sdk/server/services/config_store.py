@@ -263,6 +263,23 @@ class ConfigStore:
         # Persist metadata alongside the flattened config for quick lookup
         self._save_metadata_sidecar(path, metadata)
 
+    def _normalize_name(self, name: str) -> str:
+        """
+        Normalize configuration name by stripping .json suffix for model configs.
+
+        Args:
+            name: Configuration name (may include .json suffix)
+
+        Returns:
+            Normalized name without .json suffix
+        """
+        if self.config_type == "model" and name:
+            normalized = str(name).strip()
+            if normalized.lower().endswith(".json"):
+                normalized = normalized[:-5].strip()
+            return normalized
+        return name
+
     def _create_metadata(self, name: str, description: str = None) -> ConfigMetadata:
         """Create metadata for a configuration."""
         now = datetime.now(timezone.utc).isoformat()
@@ -775,6 +792,8 @@ class ConfigStore:
             FileNotFoundError: If config doesn't exist.
             ValueError: If config is invalid.
         """
+        # Normalize name (strip .json suffix for model configs)
+        name = self._normalize_name(name)
         config_path = self._get_config_path(name)
 
         if not config_path.exists():
@@ -865,6 +884,8 @@ class ConfigStore:
         Raises:
             FileExistsError: If config exists and overwrite is False.
         """
+        # Normalize name (strip .json suffix for model configs)
+        name = self._normalize_name(name)
         config_path = self._get_config_path(name)
 
         if config_path.exists() and not overwrite:
@@ -876,7 +897,6 @@ class ConfigStore:
         else:
             metadata.modified_at = datetime.now(timezone.utc).isoformat()
             metadata.name = name
-
         if self.config_type == "dataloader":
             # Preserve original dataset payload shape (list or dict) without injecting metadata.
             data = config if config is not None else []
@@ -976,6 +996,8 @@ class ConfigStore:
         Returns:
             True if deleted, False if not found.
         """
+        # Normalize name (strip .json suffix for model configs)
+        name = self._normalize_name(name)
         config_path = self._get_config_path(name)
         deleted = False
 
@@ -1008,6 +1030,10 @@ class ConfigStore:
             FileNotFoundError: If old config doesn't exist.
             FileExistsError: If new name already exists.
         """
+        # Normalize names (strip .json suffix for model configs)
+        old_name = self._normalize_name(old_name)
+        new_name = self._normalize_name(new_name)
+
         # Check if old config exists
         old_path = self._get_config_path(old_name)
         if not old_path.exists():
@@ -1265,6 +1291,8 @@ class ConfigStore:
         Raises:
             FileNotFoundError: If config doesn't exist.
         """
+        # Normalize name (strip .json suffix for model configs)
+        name = self._normalize_name(name)
         config_path = self._get_config_path(name)
 
         if not config_path.exists():
