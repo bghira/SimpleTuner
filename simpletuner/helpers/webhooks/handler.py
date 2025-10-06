@@ -110,7 +110,7 @@ class WebhookHandler:
 
     def _check_level(self, level: str) -> bool:
         """Check if the message level meets the configured log level."""
-        return log_levels.get(level, "info") <= self.log_level
+        return log_levels.get(level, log_levels["info"]) <= self.log_level
 
     def _send_request(
         self,
@@ -140,9 +140,16 @@ class WebhookHandler:
                 files = None
             else:
                 # Convert images to base64 for a generic "raw" JSON
+                # Convert images, filtering out any that fail
+                converted_images = []
+                if images:
+                    for img in images:
+                        converted = self._convert_image_to_base64(img)
+                        if converted:
+                            converted_images.append(converted)
                 data = {
                     "message": message,
-                    "images": ([self._convert_image_to_base64(img) for img in images] if images else []),
+                    "images": converted_images,
                 }
                 files = None
 
@@ -278,10 +285,25 @@ class WebhookHandler:
 
     def _convert_image_to_base64(self, image):
         """Convert PIL image to a base64 string (for 'raw' webhook type)."""
-        img_byte_array = BytesIO()
-        image.save(img_byte_array, format="PNG")
-        img_byte_array.seek(0)
-        return base64.b64encode(img_byte_array.read()).decode("utf-8")
+        from PIL import Image
+
+        # Handle string paths
+        if isinstance(image, str):
+            try:
+                image = Image.open(image)
+            except Exception as e:
+                logging.error(f"Failed to open image from path {image}: {e}")
+                return None
+
+        # Handle PIL Image objects
+        if hasattr(image, "save"):
+            img_byte_array = BytesIO()
+            image.save(img_byte_array, format="PNG")
+            img_byte_array.seek(0)
+            return base64.b64encode(img_byte_array.read()).decode("utf-8")
+
+        logging.error(f"Unsupported image type: {type(image)}")
+        return None
 
     def send(
         self,
