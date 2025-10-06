@@ -197,6 +197,8 @@ def get_default_config():
 def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     parser = get_argument_parser()
     args = None
+    from simpletuner.helpers.training.state_tracker import StateTracker
+
     try:
         args = parser.parse_args(input_args)
     except Exception:  # pragma: no cover - parser handles errors consistently
@@ -208,10 +210,9 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         if webhook_handler is not None:
             logger.info(f"Sending error message to webhook: {webhook_handler.webhook_url}")
             # Sanitize error message - don't expose raw args in webhook
-            webhook_handler.send_webhook(
-                "error",
-                "Command Line Argument Error",
-                "Failed to parse command line arguments. Please check the server logs for details.",
+            webhook_handler.send(
+                message="Command Line Argument Error: Failed to parse command line arguments. Please check the server logs for details.",
+                message_level="error",
             )
             logger.error(f"Argument parsing failed for input: {input_args}")
         else:
