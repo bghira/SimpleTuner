@@ -174,7 +174,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.NUMBER,
             tab="training",
             section="learning_rate",
-            default_value=500,
+            default_value=0,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="Number of steps to gradually increase LR from 0",
             tooltip="Helps training stability at start. Typically 5-10% of total steps",
