@@ -261,8 +261,9 @@ async def get_config_store() -> ConfigStore:
         ConfigStore instance (singleton with caching)
     """
     try:
-        from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
         from pathlib import Path
+
+        from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
 
         defaults = WebUIStateStore().load_defaults()
         if defaults.configs_dir:
