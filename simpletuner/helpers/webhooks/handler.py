@@ -162,10 +162,20 @@ class WebhookHandler:
         # Send request
         try:
             logging.debug("Sending webhook request: %s", _truncate_for_log(request_args))
-            post_result = requests.post(self.webhook_url, **request_args)
+            post_result = requests.post(self.webhook_url, **request_args, timeout=5)
             post_result.raise_for_status()
+        except (requests.exceptions.ConnectionError, BrokenPipeError) as e:
+            # Connection errors are expected when WebUI is refreshed/closed
+            # Silently ignore to avoid confusing the UI
+            logging.debug(f"Webhook connection unavailable (expected during page refresh): {e}")
+            return
+        except requests.exceptions.Timeout:
+            # Timeout is also benign - just means WebUI is slow/unresponsive
+            logging.debug("Webhook request timed out (WebUI may be busy)")
+            return
         except Exception as e:
-            logging.error(f"Could not send webhook request: {e}")
+            # Log other errors at warning level since they might indicate real issues
+            logging.warning(f"Could not send webhook request: {e}")
             return
 
         if store_response:
