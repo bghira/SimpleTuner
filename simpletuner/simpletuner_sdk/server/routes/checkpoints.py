@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from simpletuner.simpletuner_sdk.server.services.checkpoints_service import CHECKPOINTS_SERVICE, CheckpointsServiceError
+from simpletuner.simpletuner_sdk.server.services.huggingface_service import HUGGINGFACE_SERVICE, HuggingfaceServiceError
 
 router = APIRouter(prefix="/api/checkpoints", tags=["checkpoints"])
 
@@ -32,11 +33,33 @@ class RetentionConfigUpdate(BaseModel):
     retention_limit: int = Field(..., description="Maximum number of checkpoints to keep", ge=1)
 
 
+class UploadCheckpointRequest(BaseModel):
+    """Request model for uploading a single checkpoint."""
+
+    environment: str = Field(..., description="Environment ID (config name)")
+    repo_id: Optional[str] = Field(None, description="Target repository ID (overrides config)")
+    branch: Optional[str] = Field(None, description="Target branch (None for main)")
+    subfolder: Optional[str] = Field(None, description="Subfolder path in repo")
+    callback_url: Optional[str] = Field(None, description="Webhook URL for progress callbacks")
+
+
+class UploadCheckpointsRequest(BaseModel):
+    """Request model for uploading multiple checkpoints."""
+
+    environment: str = Field(..., description="Environment ID (config name)")
+    checkpoint_names: List[str] = Field(..., description="List of checkpoint names to upload")
+    repo_id: Optional[str] = Field(None, description="Target repository ID (overrides config)")
+    upload_mode: str = Field("single_commit", description="Upload mode: 'single_commit' or 'separate_branches'")
+    callback_url: Optional[str] = Field(None, description="Webhook URL for progress callbacks")
+
+
 def _call_service(func, *args, **kwargs):
     """Execute a service call and translate domain errors to HTTP errors."""
     try:
         return func(*args, **kwargs)
     except CheckpointsServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+    except HuggingfaceServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message)
 
 
@@ -186,3 +209,78 @@ async def update_retention_config(request: RetentionConfigUpdate) -> Dict[str, A
         request.environment,
         request.retention_limit,
     )
+
+
+@router.post("/{checkpoint_name}/upload")
+async def upload_checkpoint(
+    checkpoint_name: str,
+    request: UploadCheckpointRequest,
+) -> Dict[str, Any]:
+    """
+    Upload a single checkpoint to HuggingFace Hub.
+
+    Args:
+        checkpoint_name: Name of the checkpoint to upload.
+        request: Upload request with configuration.
+
+    Returns:
+        Dictionary with upload task information.
+    """
+    return _call_service(
+        HUGGINGFACE_SERVICE.upload_checkpoint,
+        request.environment,
+        checkpoint_name,
+        request.repo_id,
+        request.branch,
+        request.subfolder,
+        request.callback_url,
+    )
+
+
+@router.post("/upload")
+async def upload_checkpoints(request: UploadCheckpointsRequest) -> Dict[str, Any]:
+    """
+    Upload multiple checkpoints to HuggingFace Hub.
+
+    Args:
+        request: Upload request with list of checkpoints and configuration.
+
+    Returns:
+        Dictionary with upload task information.
+    """
+    return _call_service(
+        HUGGINGFACE_SERVICE.upload_checkpoints,
+        request.environment,
+        request.checkpoint_names,
+        request.repo_id,
+        request.upload_mode,
+        request.callback_url,
+    )
+
+
+@router.get("/upload/{task_id}/status")
+async def get_upload_status(task_id: str) -> Dict[str, Any]:
+    """
+    Get the status of an upload task.
+
+    Args:
+        task_id: The upload task ID.
+
+    Returns:
+        Dictionary with task status information.
+    """
+    return _call_service(HUGGINGFACE_SERVICE.get_task_status, task_id)
+
+
+@router.post("/upload/{task_id}/cancel")
+async def cancel_upload(task_id: str) -> Dict[str, Any]:
+    """
+    Cancel an upload task.
+
+    Args:
+        task_id: The upload task ID.
+
+    Returns:
+        Dictionary with cancellation status.
+    """
+    return _call_service(HUGGINGFACE_SERVICE.cancel_task, task_id)
