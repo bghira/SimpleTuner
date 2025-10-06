@@ -7,6 +7,7 @@ import sys
 import time
 from collections.abc import Mapping
 from datetime import timedelta
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import torch
@@ -15,7 +16,9 @@ from accelerate.utils import ProjectConfiguration
 
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
 from simpletuner.helpers.training.optimizer_param import is_optimizer_deprecated, is_optimizer_grad_fp32
+from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.simpletuner_sdk.server.services.field_registry.types import ConfigField, FieldType, ValidationRuleType
+from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
 
 logger = logging.getLogger("ArgsParser")
 from simpletuner.helpers.training.multi_process import should_log
@@ -91,7 +94,7 @@ def _infer_numeric_type(field: ConfigField, choice_values: List[Any]):
         if value is not None:
             candidates.append(value)
     for candidate in candidates:
-        if isinstance(candidate, float) and not float(candidate).is_integer():
+        if isinstance(candidate, float):
             return float
         if isinstance(candidate, str):
             try:
@@ -134,10 +137,15 @@ def _add_argument_from_field(parser: argparse.ArgumentParser, field: ConfigField
         )
         parser.add_argument(field.arg_name, **kwargs)
         return
+    if field.field_type == FieldType.SELECT:
+        cli_choices = [str(value) for value in cli_choices]
+
     if cli_choices and not field.dynamic_choices:
         kwargs["choices"] = cli_choices
     default = field.default_value
-    if default not in (None, "==SUPPRESS=="):
+    if field.field_type == FieldType.SELECT and default is not None:
+        default = str(default)
+    if default is not None:
         kwargs["default"] = default
     if field.field_type == FieldType.NUMBER:
         kwargs["type"] = _infer_numeric_type(field, cli_choices)
@@ -196,6 +204,18 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         import traceback
 
         logger.error(traceback.format_exc())
+        webhook_handler = StateTracker.get_webhook_handler()
+        if webhook_handler is not None:
+            logger.info(f"Sending error message to webhook: {webhook_handler.webhook_url}")
+            # Sanitize error message - don't expose raw args in webhook
+            webhook_handler.send_webhook(
+                "error",
+                "Command Line Argument Error",
+                "Failed to parse command line arguments. Please check the server logs for details.",
+            )
+            logger.error(f"Argument parsing failed for input: {input_args}")
+        else:
+            logger.error("No webhook handler available to send error message.")
 
     if args is None and exit_on_error:
         sys.exit(1)
@@ -465,12 +485,61 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             raise ValueError(
                 "--lora_type=lycoris requires you to add a JSON " + "configuration file location with --lycoris_config"
             )
+        # Use resolve_config_path for safe path resolution
+        resolved_lycoris_path = None
+        try:
+            resolved_candidate = resolve_config_path(
+                args.lycoris_config,
+                config_dir=StateTracker.get_config_path(),
+                check_cwd_first=True,
+            )
+            if resolved_candidate is not None:
+                resolved_lycoris_path = resolved_candidate
+        except Exception as e:
+            logger.warning(f"Error resolving lycoris config path: {e}")
+
+        if resolved_lycoris_path is None:
+            # If resolution failed, check if it's a valid path within allowed directories
+            expanded_candidate = os.path.expanduser(args.lycoris_config)
+            if os.path.isabs(expanded_candidate):
+                # For absolute paths, ensure they're within config directory only (security fix)
+                try:
+                    abs_path = Path(expanded_candidate).resolve(strict=True)
+                    config_dir = Path(StateTracker.get_config_path()).resolve()
+
+                    # Only allow paths within config directory for security
+                    if abs_path.is_relative_to(config_dir):
+                        resolved_lycoris_path = abs_path
+                    else:
+                        raise ValueError(
+                            f"Lycoris config path '{args.lycoris_config}' is outside allowed directory. "
+                            f"Must be within: {config_dir}"
+                        )
+                except (ValueError, FileNotFoundError, RuntimeError) as e:
+                    raise ValueError(
+                        f"Lycoris config path '{args.lycoris_config}' is invalid or outside allowed directory. "
+                        f"Must be within: {StateTracker.get_config_path()}. Error: {e}"
+                    )
+            else:
+                # For relative paths, try to resolve within config directory
+                config_dir = Path(StateTracker.get_config_path())
+                candidate = config_dir / expanded_candidate
+                if candidate.exists() and candidate.is_file():
+                    resolved_lycoris_path = candidate.resolve()
+                else:
+                    raise ValueError(f"Could not find lycoris config at '{args.lycoris_config}'. " f"Looked in: {candidate}")
+
+        if resolved_lycoris_path is not None:
+            args.lycoris_config = str(resolved_lycoris_path)
+
         # is it readable?
-        if not os.path.isfile(args.lycoris_config) or not os.access(args.lycoris_config, os.R_OK):
+        lycoris_path_to_check = os.path.expanduser(str(args.lycoris_config))
+        if not os.path.isfile(lycoris_path_to_check) or not os.access(lycoris_path_to_check, os.R_OK):
             raise ValueError(f"Could not find the JSON configuration file at '{args.lycoris_config}'")
         import json
 
-        with open(args.lycoris_config, "r") as f:
+        args.lycoris_config = lycoris_path_to_check
+        with open(lycoris_path_to_check, "r") as f:
             lycoris_config = json.load(f)
         assert lycoris_config is not None, "lycoris_config could not be parsed as JSON"
         assert "algo" in lycoris_config, "lycoris_config JSON must contain algo key"
@@ -534,7 +603,8 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             raise
 
     if (
-        args.sana_complex_human_instruction is not None
+        args.model_family == "sana"
+        and args.sana_complex_human_instruction is not None
         and type(args.sana_complex_human_instruction) is str
         and args.sana_complex_human_instruction not in ["", "None"]
     ):
