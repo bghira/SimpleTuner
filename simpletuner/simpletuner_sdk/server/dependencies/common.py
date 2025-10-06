@@ -32,7 +32,16 @@ _field_service = FieldService()
 @cache_response(ttl_seconds=60)
 def _load_active_config_cached() -> Dict[str, Any]:
     """Load active configuration with caching."""
-    config_store = ConfigStore()
+    try:
+        defaults = WebUIStateStore().load_defaults()
+        if defaults.configs_dir:
+            expanded_dir = Path(defaults.configs_dir).expanduser()
+            config_store = ConfigStore(config_dir=expanded_dir)
+        else:
+            config_store = ConfigStore()
+    except Exception:
+        config_store = ConfigStore()
+
     active_config = config_store.get_active_config()
 
     if active_config is None:
@@ -251,4 +260,15 @@ async def get_config_store() -> ConfigStore:
     Returns:
         ConfigStore instance (singleton with caching)
     """
-    return ConfigStore()  # Returns singleton instance with caching
+    try:
+        from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
+        from pathlib import Path
+
+        defaults = WebUIStateStore().load_defaults()
+        if defaults.configs_dir:
+            expanded_dir = Path(defaults.configs_dir).expanduser()
+            return ConfigStore(config_dir=expanded_dir)
+    except Exception:
+        pass
+
+    return ConfigStore()  # Fallback to default resolution

@@ -12,6 +12,18 @@ from .dataset_plan import DatasetPlanStore
 from .webui_state import WebUIStateStore
 
 
+def _get_config_store(config_type: str = "model") -> ConfigStore:
+    """Get a ConfigStore instance that respects user's configured configs_dir."""
+    try:
+        defaults = WebUIStateStore().load_defaults()
+        if defaults.configs_dir:
+            expanded_dir = Path(defaults.configs_dir).expanduser()
+            return ConfigStore(config_dir=expanded_dir, config_type=config_type)
+    except Exception:
+        pass
+    return ConfigStore(config_type=config_type)
+
+
 def _format_dataset_path(path: Path) -> str:
     """Return a dataset path string relative to the project root when possible."""
     resolved = path.expanduser().resolve(strict=False)
@@ -208,7 +220,7 @@ def build_data_backend_choices() -> List[Dict[str, str]]:
 
     # Include ConfigStore-managed dataloader configs and directory
     try:
-        dataloader_store = ConfigStore(config_type="dataloader")
+        dataloader_store = _get_config_store(config_type="dataloader")
         _add_candidate_dir(Path(dataloader_store.config_dir))
         for metadata in dataloader_store.list_configs():
             name = metadata.get("name")
@@ -236,7 +248,7 @@ def build_data_backend_choices() -> List[Dict[str, str]]:
 
     # Include paths referenced by active configuration
     try:
-        model_store = ConfigStore()
+        model_store = _get_config_store()
         _add_candidate_dir(Path(model_store.config_dir))
         active_name = model_store.get_active_config()
         if active_name:
