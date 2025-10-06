@@ -1,6 +1,10 @@
 <!-- templates/checkpoints_tab.html - Training Checkpoints Management -->
 <link rel="stylesheet" href="/static/css/form-sections.css">
 <link rel="stylesheet" href="/static/css/checkpoints.css">
+<script src="/static/js/vendor/js-yaml.min.js"></script>
+<script src="/static/js/vendor/markdown-it.min.js"></script>
+<script src="/static/js/vendor/purify.min.js"></script>
+<script src="/static/js/services/markdown-service.js"></script>
 <script src="/static/js/modules/checkpoints.js"></script>
 <script>
 if (!window.checkpointsManager) {
@@ -86,6 +90,9 @@ if (!window.checkpointsManager) {
                                 </span>
                             </div>
                         </div>
+                        <div class="checkpoint-preview-image" x-show="checkpoint.assets && checkpoint.assets.length">
+                            <img :src="checkpoint.assets[checkpoint.assets.length - 1].data" :alt="checkpoint.assets[checkpoint.assets.length - 1].name">
+                        </div>
                         <div class="checkpoint-meta">
                             <div class="meta-item">
                                 <i class="fas fa-calendar-alt"></i>
@@ -95,6 +102,11 @@ if (!window.checkpointsManager) {
                                 <i class="fas fa-hdd"></i>
                                 <span x-text="formatSize(checkpoint.size)"></span>
                             </div>
+                        </div>
+                        <div class="checkpoint-tags" x-show="checkpoint.readme_tags && checkpoint.readme_tags.length">
+                            <template x-for="tag in checkpoint.readme_tags" :key="`${checkpoint.id}-tag-${tag}`">
+                                <span class="badge bg-secondary checkpoint-tag-badge" x-text="tag"></span>
+                            </template>
                         </div>
                         <div class="checkpoint-path" x-show="checkpoint.path">
                             <code x-text="checkpoint.path"></code>
@@ -141,6 +153,18 @@ if (!window.checkpointsManager) {
                                           class="badge bg-secondary">Not Validated</span>
                                 </span>
                             </div>
+                            <div class="detail-row" x-show="selectedCheckpoint.validation_message">
+                                <span class="detail-label">Validation Details:</span>
+                                <span class="detail-value text-danger" x-text="selectedCheckpoint.validation_message"></span>
+                            </div>
+                            <div class="detail-row" x-show="selectedCheckpoint.readme_tags && selectedCheckpoint.readme_tags.length">
+                                <span class="detail-label">Tags:</span>
+                                <span class="detail-value detail-tags">
+                                    <template x-for="tag in selectedCheckpoint.readme_tags" :key="`selected-${tag}`">
+                                        <span class="badge bg-secondary checkpoint-tag-badge" x-text="tag"></span>
+                                    </template>
+                                </span>
+                            </div>
                         </div>
                     </div>
 
@@ -164,6 +188,27 @@ if (!window.checkpointsManager) {
                                     </ul>
                                 </span>
                             </div>
+                        </div>
+                    </div>
+
+                    <div class="col-12" x-show="selectedCheckpoint.assets && selectedCheckpoint.assets.length">
+                        <div class="detail-card">
+                            <h6 class="mb-3">Validation Gallery</h6>
+                            <div class="checkpoint-gallery">
+                                <template x-for="asset in selectedCheckpoint.assets" :key="asset.name">
+                                    <figure class="gallery-item">
+                                        <img :src="asset.data" :alt="asset.name">
+                                        <figcaption x-text="asset.name"></figcaption>
+                                    </figure>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-12" x-show="selectedCheckpoint.readme_html">
+                        <div class="detail-card">
+                            <h6 class="mb-3">Checkpoint Notes</h6>
+                            <div class="readme-content" x-html="selectedCheckpoint.readme_html"></div>
                         </div>
                     </div>
 
