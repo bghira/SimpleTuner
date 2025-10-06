@@ -1031,7 +1031,7 @@ class Validation:
                 message_level="info",
             )
             StateTracker.get_webhook_handler().send_raw(
-                {"message": "Validation is starting."}, message_type="validation_start"
+                {"message": "Validation is starting."}, message_type="validation_start", job_id=StateTracker.get_job_id()
             )
 
         if self.accelerator.is_main_process or self.deepspeed:
