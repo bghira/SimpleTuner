@@ -33,6 +33,28 @@ document.addEventListener('alpine:init', () => {
     });
 });
 
+const sanitizeConfigName = (name) => {
+    if (typeof name !== 'string') {
+        return name;
+    }
+    const trimmed = name.trim();
+    return trimmed.toLowerCase().endsWith('.json') ? trimmed.slice(0, -5) : trimmed;
+};
+
+const sanitizeConfigEntry = (entry) => {
+    if (!entry || typeof entry !== 'object') {
+        return entry;
+    }
+    const clone = { ...entry };
+    if (clone.name) {
+        clone.name = sanitizeConfigName(clone.name);
+    }
+    return clone;
+};
+
+window.sanitizeConfigName = sanitizeConfigName;
+window.sanitizeConfigEntry = sanitizeConfigEntry;
+
 function trainerComponent() {
     return {
         init() {
@@ -41,8 +63,9 @@ function trainerComponent() {
                 if (!payload) {
                     return;
                 }
-                this.defaults = { ...payload };
-                this.preserveDefaultsOption = this.defaults.auto_preserve_defaults !== false;
+                const normalizedDefaults = this.normalizeDefaultsPayload(payload);
+                this.defaults = normalizedDefaults;
+                this.preserveDefaultsOption = normalizedDefaults.auto_preserve_defaults;
                 if (typeof window.applyTheme === 'function' && this.defaults.theme) {
                     window.applyTheme(this.defaults.theme);
                 }
@@ -55,6 +78,33 @@ function trainerComponent() {
                     window.removeEventListener('webui-defaults-updated', this._defaultsUpdateHandler);
                 }
             });
+        },
+        autoPreserveEnabled(value) {
+            if (value === undefined || value === null) {
+                return true;
+            }
+            if (typeof value === 'boolean') {
+                return value;
+            }
+            if (typeof value === 'string') {
+                const normalized = value.trim().toLowerCase();
+                if (!normalized) {
+                    return true;
+                }
+                return !['0', 'false', 'no', 'off'].includes(normalized);
+            }
+            if (typeof value === 'number' && Number.isFinite(value)) {
+                return value !== 0;
+            }
+            return Boolean(value);
+        },
+        normalizeDefaultsPayload(payload) {
+            const data = payload || {};
+            const preserveFlag = this.autoPreserveEnabled(data.auto_preserve_defaults);
+            return {
+                ...data,
+                auto_preserve_defaults: preserveFlag,
+            };
         },
          // Tab management
          activeTab: window.location.hash.slice(1) || localStorage.getItem('activeTab') || 'basic',
@@ -117,7 +167,7 @@ function trainerComponent() {
          isTraining: false,
         trainingProgress: {},
         connectionStatus: 'connected',
-       defaults: {},
+        defaults: null,
         mergeEnvironmentDefaults: (() => {
             try {
                 const stored = localStorage.getItem('simpletuner.mergeEnvironmentConfig');
@@ -171,46 +221,49 @@ function trainerComponent() {
          environments: [],
          activeEnvironment: null,
          environmentsLoading: false,
-         async loadEnvironmentConfigs() {
-             this.environmentsLoading = true;
-             try {
-                 const response = await fetch('/api/configs/');
-                 if (!response.ok) {
+        async loadEnvironmentConfigs() {
+            this.environmentsLoading = true;
+            try {
+                const response = await fetch('/api/configs/');
+                if (!response.ok) {
                      console.error('Failed to load environment configs');
                      window.showToast('Failed to load environment configurations', 'error');
                      return;
-                 }
-                 const data = await response.json();
-                 this.environments = data.configs || [];
-                 this.activeEnvironment = data.active || null;
-                 await this.fetchActiveEnvironmentConfig();
-             } catch (error) {
-                 console.error('Error loading configs:', error);
-                 window.showToast('Error loading environment configurations', 'error');
-             } finally {
+                }
+                const data = await response.json();
+                const configs = Array.isArray(data.configs) ? data.configs.map(sanitizeConfigEntry) : [];
+                const active = sanitizeConfigName(data.active || null);
+                this.environments = configs;
+                this.activeEnvironment = active || (configs.length > 0 ? configs[0].name : null);
+                await this.fetchActiveEnvironmentConfig();
+            } catch (error) {
+                console.error('Error loading configs:', error);
+                window.showToast('Error loading environment configurations', 'error');
+            } finally {
                  this.environmentsLoading = false;
              }
          },
-         async switchEnvironment(configName) {
-             try {
-                 const response = await fetch(`/api/configs/${configName}/activate`, {
-                     method: 'POST'
-                 });
-                 if (!response.ok) {
-                     throw new Error('Failed to activate configuration');
-                 }
-                 const previousEnvironment = this.activeEnvironment;
-                 this.activeEnvironment = configName;
+        async switchEnvironment(configName) {
+            try {
+                const sanitizedName = sanitizeConfigName(configName);
+                const response = await fetch(`/api/configs/${encodeURIComponent(sanitizedName)}/activate`, {
+                    method: 'POST'
+                });
+                if (!response.ok) {
+                    throw new Error('Failed to activate configuration');
+                }
+                const previousEnvironment = this.activeEnvironment;
+                this.activeEnvironment = sanitizedName;
 
                  // Update the config selector component
                  // Need to find all config selector instances (might be multiple after tab reloads)
                 const configSelectors = document.querySelectorAll('[x-data="configSelectorComponent()"]');
                 for (const selector of configSelectors) {
                     if (selector.__x) {
-                        selector.__x.$data.activeConfig = configName;
+                        selector.__x.$data.activeConfig = sanitizedName;
                         await selector.__x.$data.loadConfigs();
-                         await selector.__x.$data.validateActiveConfig();
-                     }
+                        await selector.__x.$data.validateActiveConfig();
+                    }
                 }
 
                 // Reset stored form state so tabs reload with fresh values
@@ -223,7 +276,7 @@ function trainerComponent() {
                 // Broadcast environment change event for other components
                 window.dispatchEvent(new CustomEvent('environment-changed', {
                     detail: {
-                        environment: configName,
+                        environment: sanitizedName,
                         previousEnvironment: previousEnvironment
                      }
                  }));
@@ -302,7 +355,11 @@ function trainerComponent() {
             // For environments tab, no refresh needed as it already shows the active config
         },
         async fetchActiveEnvironmentConfig() {
-            if (!this.activeEnvironment) {
+            const active = sanitizeConfigName(this.activeEnvironment);
+            if (active !== this.activeEnvironment) {
+                this.activeEnvironment = active;
+            }
+            if (!active) {
                 this.activeEnvironmentConfig = null;
                 this.activeEnvironmentMetadata = null;
                 await this.updateModelContextFromConfig(null, null);
@@ -310,9 +367,9 @@ function trainerComponent() {
             }
 
             try {
-                const response = await fetch(`/api/configs/${this.activeEnvironment}`);
+                const response = await fetch(`/api/configs/${encodeURIComponent(active)}`);
                 if (!response.ok) {
-                    throw new Error(`Failed to load configuration for ${this.activeEnvironment}`);
+                    throw new Error(`Failed to load configuration for ${active}`);
                 }
 
                 const payload = await response.json();
@@ -2167,19 +2224,20 @@ function trainerComponent() {
                 const data = await response.json();
                 const onboarding = data.onboarding || {};
                 const defaultsPayload = data.resolved_defaults || data.defaults || {};
-                this.defaults = defaultsPayload;
-                this.preserveDefaultsOption = this.defaults.auto_preserve_defaults !== false;
+                const normalizedDefaults = this.normalizeDefaultsPayload(defaultsPayload);
+                this.defaults = normalizedDefaults;
+                this.preserveDefaultsOption = normalizedDefaults.auto_preserve_defaults;
                 this.onboardingSteps = onboarding.steps || [];
                 this.overlayVisible = Boolean(onboarding.overlay_required);
                 this.setActiveOnboardingStep();
-                if (typeof window.applyTheme === 'function' && this.defaults.theme) {
-                    window.applyTheme(this.defaults.theme);
+                if (typeof window.applyTheme === 'function' && normalizedDefaults.theme) {
+                    window.applyTheme(normalizedDefaults.theme);
                 }
                 this.applyEventPreferences();
                 window.dispatchEvent(new CustomEvent('webui-defaults-updated', {
                     detail: {
                         defaults: data.defaults || {},
-                        resolved_defaults: defaultsPayload,
+                        resolved_defaults: normalizedDefaults,
                         source: 'initial-load'
                     }
                 }));
@@ -2191,7 +2249,9 @@ function trainerComponent() {
              const nextStep = this.onboardingSteps.find(step => !step.is_complete && step.required);
              if (nextStep) {
                  this.activeOnboardingStep = nextStep;
-                 const fallback = nextStep.applies_to_default ? this.defaults[nextStep.applies_to_default] : '';
+                 const fallback = nextStep.applies_to_default && this.defaults
+                     ? this.defaults[nextStep.applies_to_default]
+                     : '';
                  this.onboardingForm.value = nextStep.value || fallback || '';
                  this.overlayVisible = true;
                  this.overlayError = '';
@@ -2232,8 +2292,9 @@ function trainerComponent() {
                 const data = await response.json();
                 const onboarding = data.onboarding || {};
                 const defaultsPayload = data.resolved_defaults || data.defaults || {};
-                this.defaults = defaultsPayload;
-                this.preserveDefaultsOption = this.defaults.auto_preserve_defaults !== false;
+                const normalizedDefaults = this.normalizeDefaultsPayload(defaultsPayload);
+                this.defaults = normalizedDefaults;
+                this.preserveDefaultsOption = normalizedDefaults.auto_preserve_defaults;
                 this.onboardingSteps = onboarding.steps || [];
                 this.overlayVisible = Boolean(onboarding.overlay_required);
                 const completedState = this.onboardingSteps.find(step => completedStep && step.id === completedStep.id);
@@ -2254,7 +2315,7 @@ function trainerComponent() {
                     window.dispatchEvent(new CustomEvent('webui-defaults-updated', {
                         detail: {
                             defaults: data.defaults || {},
-                            resolved_defaults: defaultsPayload,
+                            resolved_defaults: normalizedDefaults,
                             source: 'onboarding-step'
                         }
                     }));
@@ -2285,9 +2346,10 @@ function trainerComponent() {
                  }
                 const data = await response.json();
                 const defaultsPayload = data.resolved_defaults || data.defaults || {};
+                const normalizedDefaults = this.normalizeDefaultsPayload(defaultsPayload);
                 // Update state with fresh data
-                this.defaults = defaultsPayload;
-                this.preserveDefaultsOption = this.defaults.auto_preserve_defaults !== false;
+                this.defaults = normalizedDefaults;
+                this.preserveDefaultsOption = normalizedDefaults.auto_preserve_defaults;
                 this.onboardingSteps = data.onboarding.steps || [];
                  this.overlayVisible = Boolean(data.onboarding.overlay_required);
                  this.onboardingForm = { value: '' };
@@ -2299,7 +2361,7 @@ function trainerComponent() {
                 window.dispatchEvent(new CustomEvent('webui-defaults-updated', {
                     detail: {
                         defaults: data.defaults || {},
-                        resolved_defaults: defaultsPayload,
+                        resolved_defaults: normalizedDefaults,
                         source: 'onboarding-reset'
                     }
                 }));
@@ -2919,16 +2981,12 @@ function trainerComponent() {
 
         // Save config with options dialog
         async saveConfig() {
-            const autoPreserve = !this.defaults || this.defaults.auto_preserve_defaults !== false;
-            if (autoPreserve) {
-                await this.doSaveConfig({ preserveDefaults: true });
-                return;
-            }
+            const autoPreserve = this.autoPreserveEnabled(this.defaults ? this.defaults.auto_preserve_defaults : undefined);
 
             // Show the save dialog
             this.showConfigSaveDialog = true;
             this.createConfigBackupOption = false;
-            this.preserveDefaultsOption = this.defaults && this.defaults.auto_preserve_defaults !== false;
+            this.preserveDefaultsOption = autoPreserve;
 
             // Return a promise that will be resolved by the dialog buttons
             return new Promise((resolve) => {
@@ -3031,16 +3089,45 @@ function trainerComponent() {
              }
          });
 
-         // Listen for SSE events
-         document.addEventListener('htmx:sseMessage', (event) => {
-             const data = JSON.parse(event.detail.data);
-             if (data.type === 'training_progress') {
-                 $data.trainingProgress = data.progress;
-                 $data.isTraining = true;
-             } else if (data.type === 'training_complete') {
-                 $data.isTraining = false;
-             }
-         });
+        const handleTrainingProgress = (event) => {
+            const detail = event.detail || {};
+            $data.trainingProgress = {
+                percent: Number(detail.percent || detail.percentage || 0),
+                step: detail.step || detail.current_step || 0,
+                total_steps: detail.total_steps || detail.total || 0,
+                epoch: detail.epoch || 0,
+                loss: detail.loss ?? 'N/A',
+                learning_rate: detail.learning_rate ?? detail.lr ?? 'N/A',
+            };
+            $data.isTraining = true;
+        };
+
+        const handleTrainingStatus = (event) => {
+            const detail = event.detail || {};
+            const status = String(detail.status || '').toLowerCase();
+            if (['running', 'starting', 'initializing'].includes(status)) {
+                $data.isTraining = true;
+                if (detail.progress) {
+                    handleTrainingProgress({ detail: detail.progress });
+                }
+            } else if (status) {
+                $data.isTraining = false;
+                if (status === 'completed' && $data.trainingProgress && ($data.trainingProgress.percent || 0) < 100) {
+                    $data.trainingProgress = {
+                        ...$data.trainingProgress,
+                        percent: 100,
+                    };
+                }
+            }
+        };
+
+        window.addEventListener('training-progress', handleTrainingProgress);
+        window.addEventListener('training-status', handleTrainingStatus);
+
+        window.addEventListener('beforeunload', () => {
+            window.removeEventListener('training-progress', handleTrainingProgress);
+            window.removeEventListener('training-status', handleTrainingStatus);
+        });
 
          // Initialize other components
          $nextTick(async () => {
@@ -3254,41 +3341,49 @@ function trainerComponent() {
                      loading: false,
                      validationState: null,
 
-                     async loadConfigs() {
-                         this.loading = true;
-                         try {
-                             const response = await fetch('/api/configs/');
-                             if (!response.ok) {
-                                 throw new Error(`HTTP error! status: ${response.status}`);
-                             }
-                             const data = await response.json();
-                             this.configs = data.configs || [];
-                             this.activeConfig = data.active || (data.configs && data.configs.length > 0 ? data.configs[0].name : '');
-                             // Validate the active config after loading
-                             await this.validateActiveConfig();
-                          } catch (error) {
-                             console.error('Failed to load configs:', error);
-                             window.showToast('Failed to load configurations', 'error');
-                             // Ensure configs is always an array
-                             this.configs = [];
-                             this.activeConfig = '';
-                         } finally {
+                    async loadConfigs() {
+                        this.loading = true;
+                        try {
+                            const response = await fetch('/api/configs/');
+                            if (!response.ok) {
+                                throw new Error(`HTTP error! status: ${response.status}`);
+                            }
+                            const data = await response.json();
+                            const configs = Array.isArray(data.configs)
+                                ? data.configs.map(sanitizeConfigEntry)
+                                : [];
+                            const active = sanitizeConfigName(data.active || (configs.length > 0 ? configs[0].name : ''));
+                            this.configs = configs;
+                            this.activeConfig = active;
+                            // Validate the active config after loading
+                            await this.validateActiveConfig();
+                         } catch (error) {
+                            console.error('Failed to load configs:', error);
+                            window.showToast('Failed to load configurations', 'error');
+                            // Ensure configs is always an array
+                            this.configs = [];
+                            this.activeConfig = '';
+                        } finally {
                              this.loading = false;
                          }
                      },
 
                      // switchConfig is no longer needed - using $root.switchEnvironment instead
 
-                     async validateActiveConfig() {
-                         if (!this.activeConfig) {
-                             this.validationState = null;
-                             return;
-                         }
+                    async validateActiveConfig() {
+                        const current = sanitizeConfigName(this.activeConfig);
+                        if (current !== this.activeConfig) {
+                            this.activeConfig = current;
+                        }
+                        if (!current) {
+                            this.validationState = null;
+                            return;
+                        }
 
-                         try {
-                             const response = await fetch(`/api/configs/${this.activeConfig}/validate`, {
-                                 method: 'POST'
-                             });
+                        try {
+                            const response = await fetch(`/api/configs/${encodeURIComponent(current)}/validate`, {
+                                method: 'POST'
+                            });
 
                              if (response.ok) {
                                  const validation = await response.json();
@@ -3307,11 +3402,11 @@ function trainerComponent() {
                          }
                      },
 
-                     async saveConfig() {
-                         const formData = new FormData(document.getElementById('trainer-form'));
-                         const config = {};
-                         let configsDir = null;
-                         let outputDir = null;
+                    async saveConfig() {
+                        const formData = new FormData(document.getElementById('trainer-form'));
+                        const config = {};
+                        let configsDir = null;
+                        let outputDir = null;
 
                          for (const [key, value] of formData.entries()) {
                              if (key.startsWith('--')) {
@@ -3322,29 +3417,35 @@ function trainerComponent() {
                          }
 
                          // Extract output_dir from config if present
-                         if (config['--output_dir']) {
-                             outputDir = config['--output_dir'];
-                         }
+                        if (config['--output_dir']) {
+                            outputDir = config['--output_dir'];
+                        }
 
-                         try {
-                             // Save the training config
-                             const response = await fetch(`/api/configs/${this.activeConfig}`, {
-                                 method: 'PUT',
-                                 headers: {
-                                     'Content-Type': 'application/json',
-                                 },
-                                 body: JSON.stringify({
-                                     name: this.activeConfig,
-                                     config: config
-                                 })
-                             });
+                        try {
+                            const targetName = sanitizeConfigName(this.activeConfig);
+                            if (!targetName) {
+                                window.showToast('Select a configuration first', 'warning');
+                                return;
+                            }
+                            // Save the training config
+                            const response = await fetch(`/api/configs/${encodeURIComponent(targetName)}`, {
+                                method: 'PUT',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                },
+                                body: JSON.stringify({
+                                    name: targetName,
+                                    config: config
+                                })
+                            });
 
                              if (!response.ok) {
                                  throw new Error('Failed to save configuration');
                              }
 
                              // Update configs_dir in WebUI defaults if it was changed
-                             if (configsDir !== null && configsDir !== this.defaults.configs_dir) {
+                             const currentConfigsDir = this.defaults ? this.defaults.configs_dir : null;
+                             if (configsDir !== null && configsDir !== currentConfigsDir) {
                                  const defaultsResponse = await fetch('/api/webui/defaults/update', {
                                      method: 'POST',
                                      headers: {
@@ -3358,12 +3459,13 @@ function trainerComponent() {
                                 if (defaultsResponse.ok) {
                                     const data = await defaultsResponse.json();
                                     const defaultsPayload = data.resolved_defaults || data.defaults || {};
-                                    this.defaults = defaultsPayload;
-                                    this.preserveDefaultsOption = this.defaults.auto_preserve_defaults !== false;
+                                    const normalizedDefaults = this.normalizeDefaultsPayload(defaultsPayload);
+                                    this.defaults = normalizedDefaults;
+                                    this.preserveDefaultsOption = normalizedDefaults.auto_preserve_defaults;
                                     window.dispatchEvent(new CustomEvent('webui-defaults-updated', {
                                         detail: {
                                             defaults: data.defaults || {},
-                                            resolved_defaults: defaultsPayload,
+                                            resolved_defaults: normalizedDefaults,
                                             source: 'config-save'
                                         }
                                     }));
@@ -3371,7 +3473,8 @@ function trainerComponent() {
                              }
 
                              // Update output_dir in WebUI defaults if it was changed
-                             if (outputDir !== null && outputDir !== this.defaults.output_dir) {
+                             const currentOutputDir = this.defaults ? this.defaults.output_dir : null;
+                             if (outputDir !== null && outputDir !== currentOutputDir) {
                                  const defaultsResponse = await fetch('/api/webui/defaults/update', {
                                      method: 'POST',
                                      headers: {
@@ -3385,12 +3488,13 @@ function trainerComponent() {
                                 if (defaultsResponse.ok) {
                                     const data = await defaultsResponse.json();
                                     const defaultsPayload = data.resolved_defaults || data.defaults || {};
-                                    this.defaults = defaultsPayload;
-                                    this.preserveDefaultsOption = this.defaults.auto_preserve_defaults !== false;
+                                    const normalizedDefaults = this.normalizeDefaultsPayload(defaultsPayload);
+                                    this.defaults = normalizedDefaults;
+                                    this.preserveDefaultsOption = normalizedDefaults.auto_preserve_defaults;
                                     window.dispatchEvent(new CustomEvent('webui-defaults-updated', {
                                         detail: {
                                             defaults: data.defaults || {},
-                                            resolved_defaults: defaultsPayload,
+                                            resolved_defaults: normalizedDefaults,
                                             source: 'config-save'
                                         }
                                     }));
@@ -3599,22 +3703,6 @@ function trainerComponent() {
             <div id="validation-results"></div>
             <div id="training-status" class="mt-3"></div>
 
-            {% with placement='panel' %}
-                {% include 'components/action_buttons_htmx.html' %}
-            {% endwith %}
-
-            <!-- Training Form -->
-            <form id="trainer-form">
-                <!-- Tab Content -->
-                <div id="tab-content" class="tab-content-wrapper">
-                    <!-- Default basic config content will be loaded via HTMX -->
-                    <div class="text-center py-5">
-                        <i class="fas fa-spinner fa-spin fa-2x"></i>
-                        <p class="mt-3">Loading configuration...</p>
-                    </div>
-                </div>
-            </form>
-
             <!-- Training Progress -->
             <div x-show="isTraining"
                  x-transition
@@ -3649,6 +3737,21 @@ function trainerComponent() {
                 </div>
             </div>
 
+            {% with placement='panel' %}
+                {% include 'components/action_buttons_htmx.html' %}
+            {% endwith %}
+
+            <!-- Training Form -->
+            <form id="trainer-form">
+                <!-- Tab Content -->
+                <div id="tab-content" class="tab-content-wrapper">
+                    <!-- Default basic config content will be loaded via HTMX -->
+                    <div class="text-center py-5">
+                        <i class="fas fa-spinner fa-spin fa-2x"></i>
+                        <p class="mt-3">Loading configuration...</p>
+                    </div>
+                </div>
+            </form>
         </div>
     </main>
 
@@ -3844,6 +3947,76 @@ document.addEventListener('DOMContentLoaded', function() {
             if (csrfToken) {
                 event.detail.headers['X-CSRF-Token'] = csrfToken;
             }
+
+            const trigger = event.detail.elt;
+            if (!trigger || typeof trigger.getAttribute !== 'function') {
+                return;
+            }
+
+            const includeAttr = trigger.getAttribute('hx-include') || '';
+            if (!includeAttr.includes('#trainer-form')) {
+                return;
+            }
+
+            const formElement = document.getElementById('trainer-form');
+            if (!formElement) {
+                return;
+            }
+
+            const formData = new FormData(formElement);
+            const trainerStore = window.Alpine && typeof window.Alpine.store === 'function'
+                ? window.Alpine.store('trainer')
+                : null;
+
+            if (trainerStore) {
+                try {
+                    if (typeof trainerStore.normalizeCheckboxFormData === 'function') {
+                        trainerStore.normalizeCheckboxFormData.call(trainerStore, formData);
+                    }
+                    if (typeof trainerStore.ensureCompleteFormData === 'function') {
+                        trainerStore.ensureCompleteFormData.call(trainerStore, formData);
+                    }
+                    if (typeof trainerStore.appendConfigValuesToFormData === 'function') {
+                        trainerStore.appendConfigValuesToFormData.call(
+                            trainerStore,
+                            formData,
+                            trainerStore.activeEnvironmentConfig || {},
+                        );
+                    }
+                    if (typeof trainerStore.normalizeCheckboxFormData === 'function') {
+                        trainerStore.normalizeCheckboxFormData.call(trainerStore, formData);
+                    }
+                } catch (error) {
+                    console.warn('Unable to prepare complete trainer form data for HTMX request:', error);
+                }
+            }
+
+            const addParameter = (bucket, key, value) => {
+                if (key in bucket) {
+                    const current = bucket[key];
+                    if (Array.isArray(current)) {
+                        current.push(value);
+                    } else {
+                        bucket[key] = [current, value];
+                    }
+                } else {
+                    bucket[key] = value;
+                }
+            };
+
+            const mergedParameters = {};
+            for (const [key, value] of formData.entries()) {
+                addParameter(mergedParameters, key, value);
+            }
+
+            const existingParameters = event.detail.parameters || {};
+            for (const [key, value] of Object.entries(existingParameters)) {
+                if (!(key in mergedParameters)) {
+                    mergedParameters[key] = value;
+                }
+            }
+
+            event.detail.parameters = mergedParameters;
         });
 
         // Global error handling for HTMX requests
