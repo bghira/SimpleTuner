@@ -175,6 +175,7 @@ function trainerComponent() {
          formData: {},
          validationErrors: {},
          isTraining: false,
+         showTrainingProgress: false,
         trainingProgress: {},
         connectionStatus: 'connected',
         defaults: null,
@@ -3117,13 +3118,23 @@ function trainerComponent() {
 
         const handleTrainingProgress = (event) => {
             const detail = event.detail || {};
+            const loss = detail.loss;
+            const formattedLoss = (typeof loss === 'number' && !isNaN(loss))
+                ? loss.toFixed(4)
+                : (loss ?? 'N/A');
+
+            const lr = detail.learning_rate ?? detail.lr;
+            const formattedLr = (typeof lr === 'number' && !isNaN(lr))
+                ? lr.toExponential(2)
+                : (lr ?? 'N/A');
+
             $data.trainingProgress = {
                 percent: Number(detail.percent || detail.percentage || 0),
                 step: detail.step || detail.current_step || 0,
                 total_steps: detail.total_steps || detail.total || 0,
                 epoch: detail.epoch || 0,
-                loss: detail.loss ?? 'N/A',
-                learning_rate: detail.learning_rate ?? detail.lr ?? 'N/A',
+                loss: formattedLoss,
+                learning_rate: formattedLr,
             };
             $data.isTraining = true;
         };
@@ -3756,7 +3767,7 @@ function trainerComponent() {
             <div id="training-status" class="mt-3"></div>
 
             <!-- Training Progress -->
-            <div x-show="isTraining"
+            <div x-show="showTrainingProgress"
                  x-transition
                  class="training-progress-section">
                 <div class="config-card">
@@ -3945,7 +3956,7 @@ function trainerComponent() {
                 <div id="event-list"
                      class="event-list"
                      hx-get="/api/events/recent"
-                     hx-trigger="load{% if events_enabled %}, every {{ polling_interval }}s{% endif %}, refresh"
+                     hx-trigger="load, refresh"
                      hx-swap="innerHTML">
                     <div class="text-muted">Loading events...</div>
                 </div>
