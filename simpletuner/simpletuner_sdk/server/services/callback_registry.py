@@ -205,13 +205,11 @@ def _progress_from_mixin(raw: Mapping[str, Any]) -> ProgressPayload | None:
 
 
 def _progress_from_training_status(raw: Mapping[str, Any]) -> ProgressPayload | None:
-    state = raw.get("state")
-    if not isinstance(state, Mapping):
-        return None
-    current = state.get("global_step")
-    total = raw.get("final_epoch") or state.get("max_steps")
-    extra = {key: value for key, value in raw.items() if key not in {"message_type", "timestamp", "job_id", "state"}}
-    extra["state"] = dict(state)
+    # New format with top-level fields (coupled client-server)
+    current = raw.get("global_step")
+    total = raw.get("total_num_steps") or raw.get("steps_remaining_at_start")
+    extra = {key: value for key, value in raw.items() if key not in {"message_type", "timestamp", "job_id"}}
+
     percent: float | None = None
     if isinstance(current, (int, float)) and isinstance(total, (int, float)) and total:
         percent = float(current) / float(total) * 100
@@ -411,14 +409,6 @@ _basic_message_types["progress_update"] = CallbackEventDefinition(
 )
 
 _basic_message_types["train_status"] = CallbackEventDefinition(
-    category=CallbackCategory.PROGRESS,
-    severity=CallbackSeverity.INFO,
-    body=None,
-    message_field=None,
-    progress_builder=_progress_from_training_status,
-)
-
-_basic_message_types["training_status"] = CallbackEventDefinition(
     category=CallbackCategory.STATUS,
     severity=_status_severity,
     headline=_status_headline,
@@ -479,6 +469,15 @@ default_callback_registry.register_type(
     CallbackEventDefinition(
         category=CallbackCategory.ALERT,
         severity=CallbackSeverity.WARNING,
+        body=_safe_message,
+    ),
+)
+
+default_callback_registry.register_type(
+    "checkpoint_upload",
+    CallbackEventDefinition(
+        category=CallbackCategory.CHECKPOINT,
+        severity=CallbackSeverity.INFO,
         body=_safe_message,
     ),
 )
