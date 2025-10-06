@@ -27,6 +27,15 @@ if (!window.checkpointsManager) {
                     <p class="text-muted mb-0">Browse and manage saved model checkpoints from training runs.</p>
                 </div>
                 <div class="d-flex gap-2 align-items-center">
+                    <button type="button"
+                            class="btn btn-sm"
+                            :class="canUpload() ? 'btn-outline-success' : 'btn-outline-secondary'"
+                            :disabled="!canUpload() || checkpoints.length === 0"
+                            :title="getUploadTooltip()"
+                            @click="showUploadAllModal()">
+                        <i class="fas fa-cloud-upload-alt me-1"></i>
+                        Upload All
+                    </button>
                     <select class="form-select form-select-sm"
                             x-model="sortBy"
                             @change="sortCheckpoints()"
@@ -45,6 +54,41 @@ if (!window.checkpointsManager) {
                         <i class="fas fa-sync-alt me-1" :class="{ 'fa-spin': loading.checkpoints }"></i>
                         Refresh
                     </button>
+                </div>
+            </div>
+            <div class="checkpoint-visibility-controls mt-3">
+                <div class="d-flex flex-wrap gap-3 align-items-center">
+                    <span class="text-muted small me-2">Show:</span>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="checkbox" id="show-validity"
+                               x-model="visibilitySettings.validity"
+                               @change="saveVisibilitySettings()">
+                        <label class="form-check-label small" for="show-validity">Validity</label>
+                    </div>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="checkbox" id="show-images"
+                               x-model="visibilitySettings.images"
+                               @change="saveVisibilitySettings()">
+                        <label class="form-check-label small" for="show-images">Images</label>
+                    </div>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="checkbox" id="show-size"
+                               x-model="visibilitySettings.size"
+                               @change="saveVisibilitySettings()">
+                        <label class="form-check-label small" for="show-size">Size</label>
+                    </div>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="checkbox" id="show-tags"
+                               x-model="visibilitySettings.tags"
+                               @change="saveVisibilitySettings()">
+                        <label class="form-check-label small" for="show-tags">Tags</label>
+                    </div>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="checkbox" id="show-path"
+                               x-model="visibilitySettings.path"
+                               @change="saveVisibilitySettings()">
+                        <label class="form-check-label small" for="show-path">Path</label>
+                    </div>
                 </div>
             </div>
         </div>
@@ -70,45 +114,84 @@ if (!window.checkpointsManager) {
                     <div class="checkpoint-card"
                          :class="{ 'selected': selectedCheckpoint?.id === checkpoint.id }"
                          @click="selectCheckpoint(checkpoint.id)">
-                        <div class="checkpoint-header">
-                            <div class="checkpoint-title">
-                                <i class="fas fa-cube me-2"></i>
-                                <span x-text="`Step ${checkpoint.step}`"></span>
+                        <div class="checkpoint-card-content">
+                            <div class="checkpoint-header">
+                                <div class="checkpoint-title">
+                                    <i class="fas fa-cube me-2"></i>
+                                    <span x-text="`Step ${checkpoint.step}`"></span>
+                                </div>
+                                <div class="d-flex align-items-center gap-2">
+                                    <button type="button"
+                                            class="btn btn-sm"
+                                            :class="canUpload() ? 'btn-success' : 'btn-secondary'"
+                                            :disabled="!canUpload() || checkpoint.uploading"
+                                            :title="getUploadTooltip()"
+                                            @click.stop="uploadCheckpoint(checkpoint.id)"
+                                            style="padding: 0.125rem 0.5rem; font-size: 0.75rem;">
+                                        <i class="fas fa-cloud-upload-alt" x-show="!checkpoint.uploading"></i>
+                                        <i class="fas fa-spinner fa-spin" x-show="checkpoint.uploading"></i>
+                                    </button>
+                                    <div class="checkpoint-status" x-show="visibilitySettings.validity">
+                                        <span x-show="checkpoint.validation_status === 'valid'"
+                                              class="badge bg-success">
+                                            <i class="fas fa-check-circle"></i> Valid
+                                        </span>
+                                        <span x-show="checkpoint.validation_status === 'invalid'"
+                                              class="badge bg-danger">
+                                            <i class="fas fa-times-circle"></i> Invalid
+                                        </span>
+                                        <span x-show="checkpoint.validation_status === 'pending'"
+                                              class="badge bg-secondary">
+                                            <i class="fas fa-question-circle"></i> Not Validated
+                                        </span>
+                                    </div>
+                                </div>
                             </div>
-                            <div class="checkpoint-status">
-                                <span x-show="checkpoint.validation_status === 'valid'"
-                                      class="badge bg-success">
-                                    <i class="fas fa-check-circle"></i> Valid
-                                </span>
-                                <span x-show="checkpoint.validation_status === 'invalid'"
-                                      class="badge bg-danger">
-                                    <i class="fas fa-times-circle"></i> Invalid
-                                </span>
-                                <span x-show="checkpoint.validation_status === 'pending'"
-                                      class="badge bg-secondary">
-                                    <i class="fas fa-question-circle"></i> Not Validated
-                                </span>
+                            <div class="checkpoint-preview-image" x-show="visibilitySettings.images">
+                                <img x-show="checkpoint.assets && checkpoint.assets.length > 0"
+                                     :src="checkpoint.assets[checkpoint.assets.length - 1]?.data"
+                                     :alt="checkpoint.assets[checkpoint.assets.length - 1]?.name">
+                                <div x-show="!checkpoint.assets || checkpoint.assets.length === 0"
+                                     class="no-validation-placeholder">
+                                    <i class="fas fa-image text-muted"></i>
+                                    <span class="text-muted">No validation images</span>
+                                </div>
+                            </div>
+                            <div class="checkpoint-meta">
+                                <!-- Show progress bar instead of date during upload -->
+                                <div class="meta-item" x-show="checkpoint.uploading || checkpoint.uploadProgress > 0" style="flex: 1;">
+                                    <div class="d-flex align-items-center w-100">
+                                        <div class="progress flex-grow-1 me-2" style="height: 14px;">
+                                            <div class="progress-bar progress-bar-striped progress-bar-animated"
+                                                 :class="checkpoint.uploadProgress === 100 ? 'bg-success' : 'bg-primary'"
+                                                 role="progressbar"
+                                                 :style="`width: ${checkpoint.uploadProgress}%`"
+                                                 :aria-valuenow="checkpoint.uploadProgress"
+                                                 aria-valuemin="0"
+                                                 aria-valuemax="100">
+                                                <span class="small" x-text="`${checkpoint.uploadProgress}%`"></span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <small class="text-muted d-block mt-1" x-text="checkpoint.uploadMessage || 'Uploading...'"></small>
+                                </div>
+                                <!-- Show date when not uploading -->
+                                <div class="meta-item" x-show="!checkpoint.uploading && checkpoint.uploadProgress === 0">
+                                    <i class="fas fa-calendar-alt"></i>
+                                    <span x-text="formatDate(checkpoint.created_at)"></span>
+                                </div>
+                                <div class="meta-item" x-show="visibilitySettings.size && (!checkpoint.uploading && checkpoint.uploadProgress === 0)">
+                                    <i class="fas fa-hdd"></i>
+                                    <span x-text="formatSize(checkpoint.size)"></span>
+                                </div>
+                            </div>
+                            <div class="checkpoint-tags" x-show="visibilitySettings.tags && checkpoint.readme_tags && checkpoint.readme_tags.length">
+                                <template x-for="tag in checkpoint.readme_tags" :key="`${checkpoint.id}-tag-${tag}`">
+                                    <span class="badge bg-secondary checkpoint-tag-badge" x-text="tag"></span>
+                                </template>
                             </div>
                         </div>
-                        <div class="checkpoint-preview-image" x-show="checkpoint.assets && checkpoint.assets.length">
-                            <img :src="checkpoint.assets[checkpoint.assets.length - 1].data" :alt="checkpoint.assets[checkpoint.assets.length - 1].name">
-                        </div>
-                        <div class="checkpoint-meta">
-                            <div class="meta-item">
-                                <i class="fas fa-calendar-alt"></i>
-                                <span x-text="formatDate(checkpoint.created_at)"></span>
-                            </div>
-                            <div class="meta-item">
-                                <i class="fas fa-hdd"></i>
-                                <span x-text="formatSize(checkpoint.size)"></span>
-                            </div>
-                        </div>
-                        <div class="checkpoint-tags" x-show="checkpoint.readme_tags && checkpoint.readme_tags.length">
-                            <template x-for="tag in checkpoint.readme_tags" :key="`${checkpoint.id}-tag-${tag}`">
-                                <span class="badge bg-secondary checkpoint-tag-badge" x-text="tag"></span>
-                            </template>
-                        </div>
-                        <div class="checkpoint-path" x-show="checkpoint.path">
+                        <div class="checkpoint-path" x-show="visibilitySettings.path && checkpoint.path">
                             <code x-text="checkpoint.path"></code>
                         </div>
                     </div>
@@ -207,8 +290,20 @@ if (!window.checkpointsManager) {
 
                     <div class="col-12" x-show="selectedCheckpoint.readme_html">
                         <div class="detail-card">
-                            <h6 class="mb-3">Checkpoint Notes</h6>
-                            <div class="readme-content" x-html="selectedCheckpoint.readme_html"></div>
+                            <h6 class="mb-2 d-flex align-items-center justify-content-between">
+                                <span>Checkpoint Notes</span>
+                                <button class="btn btn-sm btn-link text-decoration-none p-0"
+                                        type="button"
+                                        data-bs-toggle="collapse"
+                                        data-bs-target="#checkpointNotesCollapse"
+                                        aria-expanded="false"
+                                        aria-controls="checkpointNotesCollapse">
+                                    <i class="fas fa-chevron-down"></i>
+                                </button>
+                            </h6>
+                            <div class="collapse" id="checkpointNotesCollapse">
+                                <div class="readme-content mt-2" x-html="selectedCheckpoint.readme_html"></div>
+                            </div>
                         </div>
                     </div>
 
@@ -323,6 +418,84 @@ if (!window.checkpointsManager) {
                             </button>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Upload All Modal -->
+    <div class="modal fade"
+         id="uploadAllModal"
+         tabindex="-1"
+         aria-labelledby="uploadAllModalLabel"
+         aria-hidden="true"
+         x-data="{ uploadMode: 'single_commit' }"
+         @show-upload-all-modal.window="new bootstrap.Modal(document.getElementById('uploadAllModal')).show()"
+         @close-upload-all-modal.window="bootstrap.Modal.getInstance(document.getElementById('uploadAllModal'))?.hide()">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="uploadAllModalLabel">
+                        <i class="fas fa-cloud-upload-alt me-2"></i>Upload All Checkpoints
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="mb-3">Choose how to upload <strong x-text="uploadModalCheckpoints.length"></strong> checkpoint(s) to HuggingFace Hub:</p>
+
+                    <div class="mb-2">
+                        <div class="form-check">
+                            <input class="form-check-input"
+                                   type="radio"
+                                   name="uploadMode"
+                                   id="singleCommitMode"
+                                   value="single_commit"
+                                   x-model="uploadMode">
+                            <label class="form-check-label" for="singleCommitMode">
+                                <strong>Single Repository</strong>
+                                <p class="mb-0 small text-muted">
+                                    All checkpoints will be uploaded to the same repository, each in its own subfolder.
+                                    This keeps everything organized in one place.
+                                </p>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input"
+                                   type="radio"
+                                   name="uploadMode"
+                                   id="separateBranchesMode"
+                                   value="separate_branches"
+                                   x-model="uploadMode">
+                            <label class="form-check-label" for="separateBranchesMode">
+                                <strong>Separate Branches</strong>
+                                <p class="mb-0 small text-muted">
+                                    Each checkpoint will be uploaded to its own branch in the repository.
+                                    This allows independent versioning of each checkpoint.
+                                </p>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-info d-flex align-items-start">
+                        <i class="fas fa-info-circle me-2 mt-1"></i>
+                        <div>
+                            <strong>Target Repository:</strong>
+                            <code x-text="uploadConfig.hub_model_id || 'Not configured'"></code>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button"
+                            class="btn btn-primary"
+                            @click="uploadAllCheckpoints(uploadMode)"
+                            :disabled="!uploadModalCheckpoints.length">
+                        <i class="fas fa-cloud-upload-alt me-1"></i>
+                        Start Upload
+                    </button>
                 </div>
             </div>
         </div>
