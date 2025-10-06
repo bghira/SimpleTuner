@@ -1,303 +1,561 @@
-<!-- HTMX SSE component for real-time training events -->
-<div id="training-events-container" class="training-events">
-    <!-- SSE connection status -->
-    <div id="sse-status" class="alert alert-info d-none">
-        <i class="fas fa-plug"></i> <span id="sse-status-text">Connecting to event stream...</span>
-    </div>
-
-    <!-- Progress display -->
-    <div id="training-progress" class="d-none mb-4">
-        <h6>Training Progress</h6>
-        <div class="progress mb-2" style="height: 25px;">
-            <div id="progress-bar"
-                 class="progress-bar progress-bar-striped progress-bar-animated"
-                 role="progressbar"
-                 style="width: 0%"
-                 aria-valuenow="0"
-                 aria-valuemin="0"
-                 aria-valuemax="100">
-                <span id="progress-text">0%</span>
+<template id="callback-progress-template">
+    <div class="card training-progress-card d-none">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <h6 class="card-title mb-1"><i class="fas fa-bolt"></i> Training Progress</h6>
+                    <small class="text-muted" data-progress-label>Waiting for updates…</small>
+                </div>
+                <span class="badge bg-secondary" data-progress-status>Idle</span>
             </div>
-        </div>
-        <div class="row text-muted small">
-            <div class="col">
-                <i class="fas fa-layer-group"></i> Step: <span id="current-step">0</span>/<span id="total-steps">0</span>
+            <div class="progress mt-3" style="height: 8px;">
+                <div class="progress-bar" role="progressbar" data-progress-bar
+                     style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
             </div>
-            <div class="col">
-                <i class="fas fa-sync-alt"></i> Epoch: <span id="current-epoch">0</span>/<span id="total-epochs">0</span>
-            </div>
-            <div class="col">
-                <i class="fas fa-chart-line"></i> Loss: <span id="current-loss">0.000</span>
-            </div>
-            <div class="col">
-                <i class="fas fa-tachometer-alt"></i> LR: <span id="learning-rate">0.0000</span>
+            <div class="row mt-3 text-muted small">
+                <div class="col-6 col-md-3">
+                    <div class="fw-semibold text-dark">Step</div>
+                    <div><span data-progress-step>0</span> / <span data-progress-total-steps>0</span></div>
+                </div>
+                <div class="col-6 col-md-3">
+                    <div class="fw-semibold text-dark">Epoch</div>
+                    <div><span data-progress-epoch>0</span> / <span data-progress-total-epochs>0</span></div>
+                </div>
+                <div class="col-6 col-md-3 mt-3 mt-md-0">
+                    <div class="fw-semibold text-dark">Loss</div>
+                    <div data-progress-loss>N/A</div>
+                </div>
+                <div class="col-6 col-md-3 mt-3 mt-md-0">
+                    <div class="fw-semibold text-dark">Learning Rate</div>
+                    <div data-progress-lr>N/A</div>
+                </div>
             </div>
         </div>
     </div>
-
-    <!-- Event log -->
-    <div id="event-log-container">
-        <h6>Event Log</h6>
-        <div id="event-log" class="event-log-scroll">
-            <!-- Events will be inserted here -->
-        </div>
-    </div>
-
-    <!-- SSE connection with HTMX extension -->
-    <div hx-ext="sse"
-         sse-connect="/api/events"
-         sse-swap="none"
-         id="sse-source">
-        <!-- Listen for different event types -->
-        <div sse-swap="message" hx-trigger="sse:message" hx-target="#event-log" hx-swap="afterbegin">
-            <!-- Message handler -->
-        </div>
-    </div>
-</div>
+</template>
 
 <script>
-// Initialize SSE handling
 (function() {
-    let eventSource = null;
-    let reconnectAttempts = 0;
-    const maxReconnectAttempts = 10;
+    const TEMPLATE_ID = 'callback-progress-template';
+    const CALLBACK_EVENT_TYPES = ['progress', 'validation', 'job', 'status', 'alert', 'checkpoint', 'debug'];
+    const MAX_MANAGER_ATTEMPTS = 10;
+    const MANAGER_RETRY_DELAY = 500;
 
-    function connectSSE() {
-        if (eventSource) {
-            eventSource.close();
-        }
+    let progressCard = null;
+    let elements = null;
+    let activeJobId = null;
+    let managerRegistered = false;
 
-        const apiBaseUrl = window.ServerConfig?.apiBaseUrl || '/';
-        eventSource = new EventSource(`${apiBaseUrl}/api/events`);
-
-        // Connection opened
-        eventSource.addEventListener('open', function(e) {
-            console.log('SSE connection opened');
-            reconnectAttempts = 0;
-            updateConnectionStatus('connected');
-        });
-
-        // Handle messages
-        eventSource.addEventListener('message', function(e) {
+    function getTrainerStore() {
+        if (window.Alpine && typeof window.Alpine.store === 'function') {
             try {
-                const data = JSON.parse(e.data);
-                handleSSEEvent(data);
+                return window.Alpine.store('trainer');
             } catch (error) {
-                console.error('Failed to parse SSE data:', error);
+                console.debug('Unable to access Alpine trainer store', error);
             }
-        });
-
-        // Handle errors
-        eventSource.addEventListener('error', function(e) {
-            console.error('SSE error:', e);
-            updateConnectionStatus('error');
-
-            if (eventSource.readyState === EventSource.CLOSED) {
-                // Connection closed, attempt reconnect
-                if (reconnectAttempts < maxReconnectAttempts) {
-                    reconnectAttempts++;
-                    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
-                    console.log(`Reconnecting in ${delay}ms (attempt ${reconnectAttempts})`);
-                    setTimeout(connectSSE, delay);
-                } else {
-                    updateConnectionStatus('failed');
-                }
-            }
-        });
+        }
+        return null;
     }
 
-    function updateConnectionStatus(status) {
-        const statusEl = document.getElementById('sse-status');
-        const statusTextEl = document.getElementById('sse-status-text');
+    function syncButtonState(isTraining) {
+        if (window.trainerMain && window.trainerMain.actions) {
+            window.trainerMain.actions.updateButtonStates(isTraining);
+            return;
+        }
 
-        if (!statusEl || !statusTextEl) return;
+        const validateBtn = document.getElementById('validateBtn');
+        const runBtn = document.getElementById('runBtn');
+        const cancelBtn = document.getElementById('cancelBtn');
 
-        statusEl.classList.remove('d-none', 'alert-info', 'alert-success', 'alert-warning', 'alert-danger');
-
-        switch(status) {
-            case 'connected':
-                statusEl.classList.add('alert-success');
-                statusTextEl.textContent = 'Connected to event stream';
-                setTimeout(() => statusEl.classList.add('d-none'), 3000);
-                break;
-            case 'error':
-                statusEl.classList.add('alert-warning');
-                statusTextEl.textContent = 'Connection interrupted, reconnecting...';
-                break;
-            case 'failed':
-                statusEl.classList.add('alert-danger');
-                statusTextEl.textContent = 'Failed to connect to event stream';
-                break;
+        if (isTraining) {
+            if (validateBtn) validateBtn.disabled = true;
+            if (runBtn) runBtn.disabled = true;
+            if (cancelBtn) cancelBtn.disabled = false;
+        } else {
+            if (validateBtn) validateBtn.disabled = false;
+            if (runBtn) runBtn.disabled = false;
+            if (cancelBtn) cancelBtn.disabled = true;
         }
     }
 
-    function handleSSEEvent(event) {
-        console.log('SSE Event:', event);
+    function emitTrainingStatus(status, detail) {
+        const payload = Object.assign({ status }, detail || {});
+        window.dispatchEvent(new CustomEvent('training-status', { detail: payload }));
+    }
 
-        switch(event.type) {
-            case 'connected':
-                addEventToLog('Connected to SimpleTuner', 'success');
-                break;
+    function setTrainingState(status, detail) {
+        const normalized = (status || '').toLowerCase() || 'idle';
+        const isActive = ['running', 'starting', 'initializing'].includes(normalized);
+        const store = getTrainerStore();
+        const payload = Object.assign({}, detail || {});
 
-            case 'training_progress':
-                updateTrainingProgress(event.progress || event.data);
-                break;
+        if (isActive && payload.job_id) {
+            activeJobId = payload.job_id;
+        }
 
-            case 'validation_complete':
-                addEventToLog('Validation complete', 'info');
-                break;
+        if (!isActive) {
+            activeJobId = null;
+        }
 
+        if (store) {
+            store.isTraining = isActive;
+        }
+
+        if (payload.job_id == null && activeJobId) {
+            payload.job_id = activeJobId;
+        }
+
+        syncButtonState(isActive);
+        emitTrainingStatus(normalized, payload);
+
+        if (document && document.body) {
+            document.body.dataset.trainingActive = isActive ? 'true' : 'false';
+        }
+    }
+
+    function ensureCard() {
+        if (progressCard && document.body.contains(progressCard)) {
+            return progressCard;
+        }
+
+        const template = document.getElementById(TEMPLATE_ID);
+        if (!template) {
+            return null;
+        }
+
+        const dockBody = document.querySelector('.event-dock-body');
+        if (!dockBody) {
+            return null;
+        }
+
+        const clone = template.content.cloneNode(true);
+        dockBody.insertBefore(clone, dockBody.firstChild);
+        progressCard = dockBody.querySelector('.training-progress-card');
+
+        if (!progressCard) {
+            return null;
+        }
+
+        elements = {
+            label: progressCard.querySelector('[data-progress-label]'),
+            status: progressCard.querySelector('[data-progress-status]'),
+            bar: progressCard.querySelector('[data-progress-bar]'),
+            step: progressCard.querySelector('[data-progress-step]'),
+            totalSteps: progressCard.querySelector('[data-progress-total-steps]'),
+            epoch: progressCard.querySelector('[data-progress-epoch]'),
+            totalEpochs: progressCard.querySelector('[data-progress-total-epochs]'),
+            loss: progressCard.querySelector('[data-progress-loss]'),
+            lr: progressCard.querySelector('[data-progress-lr]'),
+        };
+
+        return progressCard;
+    }
+
+    function clampPercent(value) {
+        const num = Number(value || 0);
+        if (!Number.isFinite(num)) {
+            return 0;
+        }
+        return Math.max(0, Math.min(100, num));
+    }
+
+    function toNumber(value) {
+        if (value === null || value === undefined || value === '') {
+            return null;
+        }
+        const num = Number(value);
+        return Number.isFinite(num) ? num : null;
+    }
+
+    function normalizeProgressPayload(payload) {
+        if (window.SSEManager && typeof window.SSEManager.normalizeProgressPayload === 'function') {
+            return window.SSEManager.normalizeProgressPayload(payload);
+        }
+
+        const progress = payload.progress || {};
+        let extras = {};
+
+        if (progress.extra && typeof progress.extra === 'object') {
+            extras = Object.assign({}, progress.extra);
+        }
+        if (payload.extras && typeof payload.extras === 'object') {
+            extras = Object.assign({}, extras, payload.extras);
+        }
+
+        let state = extras.state || null;
+        if (!state && progress.extra && typeof progress.extra.state === 'object') {
+            state = progress.extra.state;
+        }
+
+        let currentStep = toNumber(progress.current);
+        if (currentStep === null && state && state.global_step !== undefined) {
+            currentStep = toNumber(state.global_step);
+        }
+        if (currentStep === null && extras.current_step !== undefined) {
+            currentStep = toNumber(extras.current_step);
+        }
+
+        let totalSteps = toNumber(progress.total);
+        if (totalSteps === null && extras.total_steps !== undefined) {
+            totalSteps = toNumber(extras.total_steps);
+        }
+        if (totalSteps === null && extras.total_num_steps !== undefined) {
+            totalSteps = toNumber(extras.total_num_steps);
+        }
+        if (totalSteps === null && extras.max_steps !== undefined) {
+            totalSteps = toNumber(extras.max_steps);
+        }
+        if (totalSteps === null && state && state.max_steps !== undefined) {
+            totalSteps = toNumber(state.max_steps);
+        }
+
+        let epoch = toNumber(extras.epoch);
+        if (epoch === null && state && state.current_epoch !== undefined) {
+            epoch = toNumber(state.current_epoch);
+        }
+
+        let totalEpochs = toNumber(extras.final_epoch);
+        if (totalEpochs === null && extras.total_epochs !== undefined) {
+            totalEpochs = toNumber(extras.total_epochs);
+        }
+        if (totalEpochs === null && state && state.final_epoch !== undefined) {
+            totalEpochs = toNumber(state.final_epoch);
+        }
+
+        let percent = toNumber(progress.percent);
+        if (percent === null && currentStep !== null && totalSteps) {
+            percent = (currentStep / totalSteps) * 100;
+        }
+
+        let loss = extras.loss !== undefined ? toNumber(extras.loss) : null;
+        if (loss === null && extras.train_loss !== undefined) {
+            loss = toNumber(extras.train_loss);
+        }
+
+        let learningRate = extras.learning_rate !== undefined ? toNumber(extras.learning_rate) : null;
+        if (learningRate === null && extras.lr !== undefined) {
+            learningRate = toNumber(extras.lr);
+        }
+
+        return {
+            percentage: clampPercent(percent),
+            current_step: currentStep || 0,
+            total_steps: totalSteps || 0,
+            epoch: epoch || 0,
+            total_epochs: totalEpochs || 0,
+            loss: loss,
+            lr: learningRate,
+            label: progress.label || payload.headline || '',
+            raw: payload,
+        };
+    }
+
+    function mapSeverityToBootstrap(severity) {
+        switch (String(severity || '').toLowerCase()) {
+            case 'success':
+                return 'success';
+            case 'warning':
+                return 'warning';
+            case 'danger':
             case 'error':
-                addEventToLog(event.message || 'An error occurred', 'danger');
-                break;
-
-            case 'notification':
-                addEventToLog(event.message, event.level || 'info');
-                break;
-
+            case 'critical':
+                return 'danger';
+            case 'secondary':
+            case 'debug':
+                return 'secondary';
             default:
-                // Handle other event types
-                if (event.data && event.data.message) {
-                    addEventToLog(event.data.message, 'secondary');
+                return 'info';
+        }
+    }
+
+    function syncTrainerProgress(progress, jobId) {
+        let targetJobId = jobId || activeJobId;
+        const store = getTrainerStore();
+        const previous = (store && targetJobId && store.trainingProgress && targetJobId === activeJobId)
+            ? store.trainingProgress
+            : {};
+
+        if (targetJobId && targetJobId !== activeJobId) {
+            activeJobId = targetJobId;
+        } else if (!targetJobId && activeJobId) {
+            targetJobId = activeJobId;
+        }
+
+        const percent = clampPercent(progress.percentage);
+        const merged = {
+            percent: percent || previous.percent || 0,
+            step: progress.current_step || previous.step || 0,
+            total_steps: progress.total_steps || previous.total_steps || 0,
+            epoch: progress.epoch || previous.epoch || 0,
+            loss: progress.loss ?? previous.loss ?? 'N/A',
+            learning_rate: progress.lr ?? previous.learning_rate ?? 'N/A',
+        };
+
+        if (percent >= (previous.percent || 0)) {
+            merged.percent = percent;
+        } else {
+            merged.percent = previous.percent || percent;
+        }
+
+        if (store) {
+            store.trainingProgress = merged;
+            store.isTraining = true;
+        }
+
+        window.dispatchEvent(new CustomEvent('training-progress', { detail: merged }));
+        setTrainingState('running', { job_id: targetJobId, progress: merged });
+    }
+
+    function setStatus(statusText, severity) {
+        const card = ensureCard();
+        if (!card || !elements || !elements.status) {
+            return;
+        }
+
+        const level = mapSeverityToBootstrap(severity);
+        elements.status.className = 'badge bg-' + level;
+        elements.status.textContent = statusText;
+    }
+
+    function updateProgressCard(progress, jobId) {
+        const card = ensureCard();
+        if (!card || !elements) {
+            return;
+        }
+
+        if (card.classList.contains('d-none')) {
+            card.classList.remove('d-none');
+        }
+
+        const percent = clampPercent(progress.percentage);
+        if (elements.bar) {
+            elements.bar.style.width = `${percent}%`;
+            elements.bar.setAttribute('aria-valuenow', percent);
+        }
+
+        if (elements.label) {
+            elements.label.textContent = progress.label || 'Training updates';
+        }
+        if (elements.step) {
+            elements.step.textContent = progress.current_step ?? 0;
+        }
+        if (elements.totalSteps) {
+            elements.totalSteps.textContent = progress.total_steps ?? 0;
+        }
+        if (elements.epoch) {
+            elements.epoch.textContent = progress.epoch ?? 0;
+        }
+        if (elements.totalEpochs) {
+            elements.totalEpochs.textContent = progress.total_epochs ?? 0;
+        }
+        if (elements.loss) {
+            elements.loss.textContent = typeof progress.loss === 'number' ? progress.loss.toFixed(4) : 'N/A';
+        }
+        if (elements.lr) {
+            elements.lr.textContent = typeof progress.lr === 'number' ? progress.lr.toExponential(2) : 'N/A';
+        }
+
+        setStatus('Running', progress.raw?.severity);
+        syncTrainerProgress(progress, jobId);
+    }
+
+    function handleCallbackEvent(category, payload) {
+        const jobId = payload.job_id || payload.raw?.job_id || activeJobId;
+        const messageType = (payload.message_type || '').toLowerCase();
+
+        switch (category) {
+            case 'progress': {
+                const normalized = normalizeProgressPayload(payload);
+                updateProgressCard(normalized, jobId);
+                break;
+            }
+            case 'validation': {
+                break;
+            }
+            case 'alert': {
+                const toastLevel = mapSeverityToBootstrap(payload.severity);
+                if (toastLevel === 'danger') {
+                    setStatus('Error', payload.severity);
+                    setTrainingState('error', { job_id: jobId });
                 }
+                break;
+            }
+            case 'job':
+            case 'status': {
+                if (messageType === 'configure_webhook') {
+                    setStatus('Starting', payload.severity);
+                    setTrainingState('starting', { job_id: jobId });
+                } else if (messageType === '_train_initial_msg' || messageType === 'training_status') {
+                    setStatus('Running', payload.severity);
+                    setTrainingState('running', { job_id: jobId });
+                } else if (messageType === 'training_complete' || messageType === 'run_complete') {
+                    setStatus('Completed', 'success');
+                    let completionProgress = null;
+                    const store = getTrainerStore();
+                    if (store && store.trainingProgress) {
+                        completionProgress = {
+                            ...store.trainingProgress,
+                            percent: 100,
+                        };
+                        store.trainingProgress = completionProgress;
+                        window.dispatchEvent(new CustomEvent('training-progress', { detail: completionProgress }));
+                    }
+                    setTrainingState('completed', { job_id: jobId, progress: completionProgress });
+                } else if (messageType === 'fatal_error' || messageType === 'exit') {
+                    setStatus('Stopped', 'danger');
+                    setTrainingState('error', { job_id: jobId });
+                }
+                break;
+            }
+            default: {
+                // No-op for generic callbacks
+            }
         }
     }
 
-    function updateTrainingProgress(progress) {
-        const progressContainer = document.getElementById('training-progress');
-        if (!progressContainer) return;
-
-        progressContainer.classList.remove('d-none');
-
-        // Update progress bar
-        const progressBar = document.getElementById('progress-bar');
-        const progressText = document.getElementById('progress-text');
-        const percentage = progress.percentage || 0;
-
-        if (progressBar) {
-            progressBar.style.width = percentage + '%';
-            progressBar.setAttribute('aria-valuenow', percentage);
-        }
-        if (progressText) {
-            progressText.textContent = percentage.toFixed(1) + '%';
-        }
-
-        // Update metrics
-        updateMetric('current-step', progress.current_step);
-        updateMetric('total-steps', progress.total_steps);
-        updateMetric('current-epoch', progress.epoch);
-        updateMetric('total-epochs', progress.total_epochs);
-        updateMetric('current-loss', progress.loss?.toFixed(4));
-        updateMetric('learning-rate', progress.lr?.toExponential(2));
-
-        // Add progress event to log
-        if (progress.current_step % 10 === 0) { // Log every 10 steps
-            addEventToLog(
-                `Step ${progress.current_step}/${progress.total_steps} - Loss: ${progress.loss?.toFixed(4)}`,
-                'primary'
-            );
-        }
+    function trackListener(eventType, callback) {
+        registeredListeners.push({ eventType: eventType, callback: callback });
+        window.sseManager.addEventListener(eventType, callback);
     }
 
-    function updateMetric(id, value) {
-        const element = document.getElementById(id);
-        if (element && value !== undefined) {
-            element.textContent = value;
+    function registerManagerListeners() {
+        if (managerRegistered) {
+            return true;
         }
+
+        if (!window.sseManager || typeof window.sseManager.addEventListener !== 'function') {
+            return false;
+        }
+
+        var connectionStatusHandler = function(info) {
+            if (!info) return;
+            if (info.status === 'connected') {
+                setStatus('Connected', 'success');
+            } else if (info.status === 'reconnecting') {
+                setStatus('Reconnecting', 'warning');
+            } else if (info.status === 'disconnected') {
+                setStatus('Disconnected', 'secondary');
+                setTrainingState('idle', { job_id: activeJobId });
+            }
+        };
+        trackListener('connection-status', connectionStatusHandler);
+
+        var trainingProgressHandler = function(data) {
+            const jobId = data.raw?.job_id || activeJobId;
+            updateProgressCard(data, jobId);
+        };
+        trackListener('training_progress', trainingProgressHandler);
+
+        var validationCompleteHandler = function(_data) {};
+        trackListener('validation_complete', validationCompleteHandler);
+
+        var notificationHandler = function(_data) {};
+        trackListener('notification', notificationHandler);
+
+        var errorHandler = function(data) {
+            setStatus('Error', 'danger');
+            setTrainingState('error', { job_id: activeJobId });
+        };
+        trackListener('error', errorHandler);
+
+        CALLBACK_EVENT_TYPES.forEach(function(category) {
+            var callbackHandler = function(payload) {
+                handleCallbackEvent(category, payload);
+            };
+            trackListener('callback:' + category, callbackHandler);
+        });
+
+        managerRegistered = true;
+        return true;
     }
 
-    function addEventToLog(message, level = 'info') {
-        const eventLog = document.getElementById('event-log');
-        if (!eventLog) return;
+    function connectFallbackSSE() {
+        const apiBaseUrl = window.ServerConfig?.apiBaseUrl || '';
+        const source = new EventSource(`${apiBaseUrl}/api/events`);
 
-        const timestamp = new Date().toLocaleTimeString();
-        const eventHtml = `
-            <div class="event-item alert alert-${level} py-2 mb-2 fade-in">
-                <small class="text-muted">${timestamp}</small>
-                <span class="ms-2">${message}</span>
-            </div>
-        `;
+        source.addEventListener('message', function(event) {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.type === 'training_progress') {
+                    const normalized = normalizeProgressPayload({ progress: data });
+                    updateProgressCard(normalized, activeJobId);
+                }
+            } catch (error) {
+                console.error('Failed to parse SSE message', error);
+            }
+        });
 
-        eventLog.insertAdjacentHTML('afterbegin', eventHtml);
+        CALLBACK_EVENT_TYPES.forEach(function(category) {
+            source.addEventListener('callback:' + category, function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleCallbackEvent(category, data);
+                } catch (error) {
+                    console.error('Failed to parse callback event', error);
+                }
+            });
+        });
 
-        // Limit log to 100 entries
-        const events = eventLog.querySelectorAll('.event-item');
-        if (events.length > 100) {
-            events[events.length - 1].remove();
-        }
+        managerRegistered = true;
     }
 
-    // Public API
+    function waitForManager(attempt) {
+        if (registerManagerListeners()) {
+            return;
+        }
+        if (attempt >= MAX_MANAGER_ATTEMPTS) {
+            connectFallbackSSE();
+            return;
+        }
+        setTimeout(() => waitForManager(attempt + 1), MANAGER_RETRY_DELAY);
+    }
+
+    var registeredListeners = [];
+
     window.initSSE = function() {
-        connectSSE();
+        waitForManager(0);
     };
 
     window.closeSSE = function() {
-        if (eventSource) {
-            eventSource.close();
-            eventSource = null;
-            updateConnectionStatus('closed');
+        // Clean up all registered listeners
+        if (window.sseManager && typeof window.sseManager.removeEventListener === 'function') {
+            registeredListeners.forEach(function(item) {
+                window.sseManager.removeEventListener(item.eventType, item.callback);
+            });
+            registeredListeners = [];
         }
+        setTrainingState('idle', { job_id: activeJobId });
+        managerRegistered = false;
     };
 
-    // Auto-initialize if training is active
-    document.addEventListener('DOMContentLoaded', function() {
-        // Check if we should auto-connect (e.g., if training is already running)
-        const trainingActive = document.body.dataset.trainingActive === 'true';
-        if (trainingActive) {
-            connectSSE();
+    // Clean up on page unload
+    window.addEventListener('beforeunload', function() {
+        window.closeSSE();
+    });
+
+    document.addEventListener('DOMContentLoaded', () => {
+        if (document && document.body && !document.body.dataset.trainingActive) {
+            document.body.dataset.trainingActive = 'false';
         }
+        waitForManager(0);
     });
 })();
 </script>
 
 <style>
-/* Event log styling */
-.event-log-scroll {
-    max-height: 400px;
-    overflow-y: auto;
-    border: 1px solid rgba(0, 0, 0, 0.125);
-    border-radius: 0.25rem;
-    padding: 1rem;
-    background-color: var(--bs-gray-100);
+.training-progress-card {
+    border: 1px solid var(--bs-card-border-color, rgba(0, 0, 0, 0.125));
+    background-color: var(--bs-card-bg, var(--bs-body-bg));
+    box-shadow: var(--bs-card-box-shadow, 0 0.25rem 0.5rem rgba(15, 23, 42, 0.08));
+    margin-bottom: 1rem;
 }
 
-.event-item {
-    animation: fadeIn 0.3s ease-in;
+.training-progress-card .progress {
+    background-color: var(--bs-secondary-bg, rgba(0, 0, 0, 0.1));
 }
 
-@keyframes fadeIn {
-    from {
-        opacity: 0;
-        transform: translateY(-10px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-/* Progress bar enhancements */
-.progress {
-    background-color: var(--bs-gray-200);
-}
-
-.progress-bar {
-    transition: width 0.6s ease;
-}
-
-/* Dark mode support */
-@media (prefers-color-scheme: dark) {
-    .event-log-scroll {
-        background-color: var(--bs-gray-900);
-        border-color: var(--bs-gray-700);
-    }
-}
-
-/* Responsive adjustments */
-@media (max-width: 768px) {
-    .event-log-scroll {
-        max-height: 300px;
-    }
+.training-progress-card .progress-bar {
+    transition: width 0.4s ease;
+    background-color: var(--bs-primary, #0d6efd);
 }
 </style>
