@@ -32,7 +32,7 @@ class TestWebhookHandler(unittest.TestCase):
             accelerator=self.mock_accelerator,
             project_name="TestProject",
             mock_webhook_config=self.mock_config_instance,
-            args=MagicMock(framerate=99),
+            video_framerate=99,
         )
 
     @patch("requests.post")

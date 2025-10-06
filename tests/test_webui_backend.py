@@ -37,9 +37,20 @@ class WebUIStateStoreTests(unittest.TestCase):
         self.assertEqual(self.store.base_dir, expected)
 
     def test_save_and_load_defaults(self) -> None:
+        # Use temp directories that actually exist
+        configs_dir = self.temp_path / "configs"
+        configs_dir.mkdir(exist_ok=True)
+        output_dir = self.temp_path / "output"
+        output_dir.mkdir(exist_ok=True)
+
+        # Create the active config directory
+        config_dir = configs_dir / "my-config"
+        config_dir.mkdir(exist_ok=True)
+        (config_dir / "config.json").write_text('{"test": true}')
+
         defaults = WebUIDefaults(
-            configs_dir="/path/to/configs",
-            output_dir="/path/to/output",
+            configs_dir=str(configs_dir),
+            output_dir=str(output_dir),
             active_config="my-config",
         )
 
@@ -120,7 +131,9 @@ class WebUIStateStoreTests(unittest.TestCase):
         import threading
 
         def save_defaults(idx: int):
-            defaults = WebUIDefaults(configs_dir=f"/path/{idx}")
+            path_dir = self.temp_path / f"path_{idx}"
+            path_dir.mkdir(exist_ok=True)
+            defaults = WebUIDefaults(configs_dir=str(path_dir))
             self.store.save_defaults(defaults)
 
         threads = [threading.Thread(target=save_defaults, args=(i,)) for i in range(5)]
@@ -131,47 +144,80 @@ class WebUIStateStoreTests(unittest.TestCase):
 
         loaded = self.store.load_defaults()
         self.assertIsNotNone(loaded.configs_dir)
-        self.assertTrue(loaded.configs_dir.startswith("/path/"))
+        # Check that it's one of the paths we created
+        self.assertTrue(any(loaded.configs_dir.endswith(f"path_{i}") for i in range(5)))
 
 
 class WebUIDefaultsUpdateTests(WebUIStateStoreTests):
     def test_update_configs_dir_only_preserves_other_fields(self) -> None:
-        defaults = WebUIDefaults(configs_dir="/old/configs", output_dir="/old/output", active_config="old-config")
+        # Use temp directories that actually exist
+        old_configs_dir = self.temp_path / "old_configs"
+        old_configs_dir.mkdir(exist_ok=True)
+        old_output_dir = self.temp_path / "old_output"
+        old_output_dir.mkdir(exist_ok=True)
+        new_configs_dir = self.temp_path / "new_configs"
+        new_configs_dir.mkdir(exist_ok=True)
+
+        # Create the old config directory
+        old_config_dir = old_configs_dir / "old-config"
+        old_config_dir.mkdir(exist_ok=True)
+        (old_config_dir / "config.json").write_text('{"test": true}')
+
+        # Create the same config in new location
+        new_config_dir = new_configs_dir / "old-config"
+        new_config_dir.mkdir(exist_ok=True)
+        (new_config_dir / "config.json").write_text('{"test": true}')
+
+        defaults = WebUIDefaults(
+            configs_dir=str(old_configs_dir), output_dir=str(old_output_dir), active_config="old-config"
+        )
         self.store.save_defaults(defaults)
 
         loaded = self.store.load_defaults()
-        loaded.configs_dir = "/new/configs"
+        loaded.configs_dir = str(new_configs_dir)
         self.store.save_defaults(loaded)
 
         final = self.store.load_defaults()
-        self.assertEqual(final.configs_dir, "/new/configs")
-        self.assertEqual(final.output_dir, "/old/output")
+        self.assertEqual(final.configs_dir, str(new_configs_dir))
+        self.assertEqual(final.output_dir, str(old_output_dir))
         self.assertEqual(final.active_config, "old-config")
 
     def test_update_multiple_fields(self) -> None:
+        # Create temp directories
+        configs_dir = self.temp_path / "configs"
+        configs_dir.mkdir(exist_ok=True)
+        output_dir = self.temp_path / "output"
+        output_dir.mkdir(exist_ok=True)
+
         defaults = WebUIDefaults()
-        defaults.configs_dir = "/configs"
-        defaults.output_dir = "/output"
+        defaults.configs_dir = str(configs_dir)
+        defaults.output_dir = str(output_dir)
         self.store.save_defaults(defaults)
 
         loaded = self.store.load_defaults()
-        self.assertEqual(loaded.configs_dir, "/configs")
-        self.assertEqual(loaded.output_dir, "/output")
+        self.assertEqual(loaded.configs_dir, str(configs_dir))
+        self.assertEqual(loaded.output_dir, str(output_dir))
 
 
 class WebUIStateIntegrationTests(WebUIStateStoreTests):
     def test_full_onboarding_flow(self) -> None:
-        self.store.record_onboarding_step("default_configs_dir", version=2, value="/home/user/configs")
-        self.store.record_onboarding_step("default_output_dir", version=1, value="/home/user/output")
+        # Create temp directories
+        configs_dir = self.temp_path / "user_configs"
+        configs_dir.mkdir(exist_ok=True)
+        output_dir = self.temp_path / "user_output"
+        output_dir.mkdir(exist_ok=True)
+
+        self.store.record_onboarding_step("default_configs_dir", version=2, value=str(configs_dir))
+        self.store.record_onboarding_step("default_output_dir", version=1, value=str(output_dir))
 
         defaults = self.store.load_defaults()
-        defaults.configs_dir = "/home/user/configs"
-        defaults.output_dir = "/home/user/output"
+        defaults.configs_dir = str(configs_dir)
+        defaults.output_dir = str(output_dir)
         self.store.save_defaults(defaults)
 
         state = self.store.load_state()
-        self.assertEqual(state.defaults.configs_dir, "/home/user/configs")
-        self.assertEqual(state.defaults.output_dir, "/home/user/output")
+        self.assertEqual(state.defaults.configs_dir, str(configs_dir))
+        self.assertEqual(state.defaults.output_dir, str(output_dir))
         self.assertEqual(len(state.onboarding.steps), 2)
 
     def test_version_upgrade_handling(self) -> None:

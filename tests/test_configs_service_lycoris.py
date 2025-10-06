@@ -176,7 +176,7 @@ class ConfigsServiceLycorisTests(unittest.TestCase):
         self.assertEqual(saved_config["multiplier"], 0.5)
 
     def test_save_lycoris_config_rejects_invalid_environment_name(self) -> None:
-        """Environment identifiers ending with .json should be rejected."""
+        """Environment identifiers ending with .json should be stripped and result in not found if env doesn't exist."""
         self._create_test_environment("test-env")
         service = ConfigsService()
 
@@ -186,8 +186,8 @@ class ConfigsServiceLycorisTests(unittest.TestCase):
             with self.assertRaises(ConfigServiceError) as ctx:
                 service.save_lycoris_config("invalid.json", lycoris_config)
 
-        self.assertEqual(ctx.exception.status_code, 400)
-        self.assertIn("must not end", ctx.exception.message)
+        # The .json suffix is stripped, so it looks for "invalid" environment which doesn't exist
+        self.assertEqual(ctx.exception.status_code, 404)
 
     def test_save_lycoris_config_rejects_paths_outside_configs_dir(self) -> None:
         """Saving LyCORIS configs outside the workspace should raise an error."""

@@ -54,8 +54,30 @@ class _WebUIBaseTestCase(APITestCase, unittest.TestCase):
 class WebUIStateAPITestCase(_WebUIBaseTestCase):
     """Test /api/webui state management endpoints."""
 
+    def setUp(self) -> None:
+        super().setUp()
+        # Set up valid default directories for all tests
+        self.default_configs_dir = str(self.temp_dir / "default_configs")
+        self.default_output_dir = str(self.temp_dir / "default_output")
+
+        # Create the directories
+        os.makedirs(self.default_configs_dir, exist_ok=True)
+        os.makedirs(self.default_output_dir, exist_ok=True)
+
+        # Save default state
+        defaults = WebUIDefaults(configs_dir=self.default_configs_dir, output_dir=self.default_output_dir)
+        self.state_store.save_defaults(defaults)
+
     def test_get_webui_state(self) -> None:
-        defaults = WebUIDefaults(configs_dir="/test/configs", output_dir="/test/output")
+        # Use temp directories
+        configs_dir = str(self.temp_dir / "configs")
+        output_dir = str(self.temp_dir / "output")
+
+        # Create the directories
+        os.makedirs(configs_dir, exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
+
+        defaults = WebUIDefaults(configs_dir=configs_dir, output_dir=output_dir)
         self.state_store.save_defaults(defaults)
 
         response = self.client.get("/api/webui/state")
@@ -64,8 +86,8 @@ class WebUIStateAPITestCase(_WebUIBaseTestCase):
         data = response.json()
         self.assertIn("defaults", data)
         self.assertIn("onboarding", data)
-        self.assertEqual(data["defaults"]["configs_dir"], "/test/configs")
-        self.assertEqual(data["defaults"]["output_dir"], "/test/output")
+        self.assertEqual(data["defaults"]["configs_dir"], configs_dir)
+        self.assertEqual(data["defaults"]["output_dir"], output_dir)
 
     def test_update_onboarding_step(self) -> None:
         response = self.client.post(
@@ -104,27 +126,63 @@ class WebUIStateAPITestCase(_WebUIBaseTestCase):
         self.assertEqual(len(completed_steps), 0)
 
     def test_update_defaults(self) -> None:
+        # Use temp directories
+        configs_dir = str(self.temp_dir / "configs")
+        output_dir = str(self.temp_dir / "output")
+
+        # Create the directories
+        os.makedirs(configs_dir, exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Create the config file that active_config points to
+        config_dir = Path(configs_dir) / "new-config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        config_file = config_dir / "config.json"
+        config_file.write_text('{"test": "config"}')
+
         response = self.client.post(
             "/api/webui/defaults/update",
-            json={"configs_dir": "/new/configs", "output_dir": "/new/output", "active_config": "new-config"},
+            json={"configs_dir": configs_dir, "output_dir": output_dir, "active_config": "new-config"},
         )
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
-        self.assertEqual(data["defaults"]["configs_dir"], os.path.abspath("/new/configs"))
-        self.assertEqual(data["defaults"]["output_dir"], os.path.abspath("/new/output"))
+        self.assertEqual(data["defaults"]["configs_dir"], os.path.abspath(configs_dir))
+        self.assertEqual(data["defaults"]["output_dir"], os.path.abspath(output_dir))
         self.assertEqual(data["defaults"]["active_config"], "new-config")
 
     def test_update_defaults_partial(self) -> None:
-        defaults = WebUIDefaults(configs_dir="/old/configs", output_dir="/old/output", active_config="old-config")
+        # Use temp directories
+        old_configs_dir = str(self.temp_dir / "old_configs")
+        old_output_dir = str(self.temp_dir / "old_output")
+        new_configs_dir = str(self.temp_dir / "new_configs")
+
+        # Create the directories
+        os.makedirs(old_configs_dir, exist_ok=True)
+        os.makedirs(old_output_dir, exist_ok=True)
+        os.makedirs(new_configs_dir, exist_ok=True)
+
+        # Create the config file that active_config points to in old directory
+        old_config_dir = Path(old_configs_dir) / "old-config"
+        old_config_dir.mkdir(parents=True, exist_ok=True)
+        old_config_file = old_config_dir / "config.json"
+        old_config_file.write_text('{"test": "old-config"}')
+
+        # Also create the same config file in the new directory so validation passes
+        new_config_dir = Path(new_configs_dir) / "old-config"
+        new_config_dir.mkdir(parents=True, exist_ok=True)
+        new_config_file = new_config_dir / "config.json"
+        new_config_file.write_text('{"test": "old-config"}')
+
+        defaults = WebUIDefaults(configs_dir=old_configs_dir, output_dir=old_output_dir, active_config="old-config")
         self.state_store.save_defaults(defaults)
 
-        response = self.client.post("/api/webui/defaults/update", json={"configs_dir": "/new/configs"})
+        response = self.client.post("/api/webui/defaults/update", json={"configs_dir": new_configs_dir})
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
-        self.assertEqual(data["defaults"]["configs_dir"], os.path.abspath("/new/configs"))
-        self.assertEqual(data["defaults"]["output_dir"], "/old/output")
+        self.assertEqual(data["defaults"]["configs_dir"], os.path.abspath(new_configs_dir))
+        self.assertEqual(data["defaults"]["output_dir"], os.path.abspath(old_output_dir))
         self.assertEqual(data["defaults"]["active_config"], "old-config")
 
 
@@ -158,11 +216,10 @@ class WebUIRoutesTestCase(_WebUIBaseTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("Training", response.text)
 
-    def test_trainer_tabs_advanced_redirect(self) -> None:
+    def test_trainer_tabs_advanced_removed(self) -> None:
+        """Advanced tab was removed, should return 404."""
         response = self.client.get("/web/trainer/tabs/advanced")
-        self.assertEqual(response.status_code, 200)
-        # Advanced tab now redirects to Basic settings
-        self.assertIn("Basic", response.text)
+        self.assertEqual(response.status_code, 404)
 
     def test_trainer_tabs_datasets(self) -> None:
         response = self.client.get("/web/trainer/tabs/datasets")

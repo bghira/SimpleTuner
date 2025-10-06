@@ -166,11 +166,12 @@ class ConfigsServiceEnvironmentTests(unittest.TestCase):
         )
 
         with patch.object(ConfigsService, "_get_store", return_value=self.model_store):
-            with self.assertRaises(ConfigServiceError) as ctx:
-                service.create_environment(request)
+            # The implementation now strips .json suffix instead of rejecting it
+            result = service.create_environment(request)
 
-        self.assertEqual(ctx.exception.status_code, 400)
-        self.assertIn("must not end with", ctx.exception.message)
+        # Verify the environment was created without the .json suffix
+        self.assertIn("environment", result)
+        self.assertEqual(result["environment"]["name"], "invalid-name")  # .json was stripped
 
     def test_config_store_rejects_json_suffix_directly(self) -> None:
         store = ConfigStore(config_dir=self.config_root, config_type="model")
