@@ -39,11 +39,20 @@ function getPayload() {
     return payload;
 }
 
-// Function to update event list based on received events
+// Function to update event list based on received events using rotation system
 function updateEventList(events) {
     const eventList = document.getElementById('eventList');
+    
+    // Calculate dynamic max events based on container height
+    const maxEvents = calculateDynamicMaxEvents(eventList);
+    
     events.forEach(event => {
         if (!event.message) return; // Skip events without a message
+
+        // Remove oldest event if we've reached the limit (rotation system)
+        if (eventList.children.length >= maxEvents) {
+            eventList.removeChild(eventList.firstChild);
+        }
 
         const eventItem = document.createElement('div');
         eventItem.className = 'event-item';
@@ -79,11 +88,36 @@ function updateEventList(events) {
     eventList.scrollTop = eventList.scrollHeight;
 }
 
+// Function to calculate dynamic max events based on container height
+function calculateDynamicMaxEvents(eventList) {
+    if (!eventList) return 500; // Fallback to original limit
+
+    // Get the available height of the event list container
+    const containerHeight = eventList.clientHeight;
+    if (containerHeight <= 0) return 500; // Fallback if container not visible
+
+    // Calculate approximate event item height (including padding and margins)
+    const eventItemHeight = 30; // Approximate height in pixels for each event item
+    
+    // Calculate how many events can fit in the available space
+    // Reserve some space for padding and scrollbar
+    const availableHeight = containerHeight - 20; // Reserve 20px for padding/scrollbar
+    const calculatedMaxEvents = Math.floor(availableHeight / eventItemHeight);
+
+    // Ensure we have a reasonable range (minimum 3, maximum 1000)
+    const dynamicMaxEvents = Math.max(3, Math.min(1000, calculatedMaxEvents));
+
+    return dynamicMaxEvents;
+}
+
 
 // Function to reset the event list and index
 function resetEventList() {
     const eventList = document.getElementById('eventList');
-    eventList.innerHTML = ''; // Clear the existing events
+    // Use dynamic removal instead of innerHTML swap to avoid full redraw
+    while (eventList.firstChild) {
+        eventList.removeChild(eventList.firstChild);
+    }
     lastEventIndex = 0; // Reset the index
 }
 
@@ -127,19 +161,36 @@ async function fetchBroadcastEvents() {
 fetchBroadcastEvents();
 
 // Function to show toast notification
-function showToast(message, type = 'success') {
+function showToast(message, type = 'success', duration = null) {
     let toastEl;
+    const defaultMessage = type === 'success' ? 'Operation Successful!' :
+                          type === 'error' ? 'An error occurred!' : 'Information!';
+
     if (type === 'success') {
         toastEl = document.getElementById('successToast');
-        toastEl.querySelector('.toast-body').textContent = message || 'Operation Successful!';
     } else if (type === 'error') {
         toastEl = document.getElementById('errorToast');
-        toastEl.querySelector('.toast-body').textContent = message || 'An error occurred!';
     } else {
         toastEl = document.getElementById('infoToast');
-        toastEl.querySelector('.toast-body').textContent = message || 'Information!';
     }
-    const toast = new bootstrap.Toast(toastEl);
+
+    const toastBody = toastEl.querySelector('.toast-body');
+    const finalMessage = message || defaultMessage;
+
+    // Check if message contains HTML tags
+    if (/<[a-z][\s\S]*>/i.test(finalMessage)) {
+        toastBody.innerHTML = finalMessage;
+    } else {
+        toastBody.textContent = finalMessage;
+    }
+
+    // Configure toast options
+    const options = {};
+    if (duration !== null) {
+        options.delay = duration;
+    }
+
+    const toast = new bootstrap.Toast(toastEl, options);
     toast.show();
 }
 

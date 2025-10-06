@@ -34,6 +34,10 @@ class EventHandler {
         this.currentLoss = 0;
         this.learningRate = 0;
 
+        // Dynamic row limit tracking
+        this.currentMaxEvents = 500;
+        this.resizeObserver = null;
+
         this.init();
     }
 
@@ -45,9 +49,42 @@ class EventHandler {
         this.callbackUrl = window.ServerConfig.callbackUrl;
         // EventHandler configured with callback URL
 
+        // Set up resize observer for dynamic row calculation
+        this.setupResizeObserver();
+
         await this.startFetching();
         // Clean up on page unload
         window.addEventListener('beforeunload', () => this.cleanup());
+    }
+
+    setupResizeObserver() {
+        if (!this.eventList) return;
+
+        // Create resize observer to monitor container size changes
+        this.resizeObserver = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                if (entry.target === this.eventList) {
+                    // Recalculate max events when container is resized
+                    const newMaxEvents = this.calculateDynamicMaxEvents();
+                    if (newMaxEvents !== this.currentMaxEvents) {
+                        this.currentMaxEvents = newMaxEvents;
+                        // If we have more events than the new limit, remove excess events
+                        while (this.eventList.children.length > newMaxEvents) {
+                            this.eventList.removeChild(this.eventList.firstChild);
+                        }
+                    }
+                }
+            }
+        });
+
+        // Start observing the event list container
+        this.resizeObserver.observe(this.eventList);
+
+        // Also observe the event dock body to catch resize changes
+        const eventDockBody = this.eventList.closest('.event-dock-body');
+        if (eventDockBody) {
+            this.resizeObserver.observe(eventDockBody);
+        }
     }
 
     async checkServerHealth() {
@@ -212,12 +249,20 @@ class EventHandler {
     updateEventList(events) {
         if (!this.eventList) return;
 
+        // Calculate dynamic max events based on container height
+        const maxEvents = this.calculateDynamicMaxEvents();
+
         events.forEach(event => {
             // Parse structured data for specific event types
             this.parseStructuredData(event);
 
             // Skip events without messages (pure data events)
             if (!event.message && !this.shouldDisplayEvent(event)) return;
+
+            // Remove oldest event if we've reached the limit (rotation system)
+            if (this.eventList.children.length >= maxEvents) {
+                this.eventList.removeChild(this.eventList.firstChild);
+            }
 
             const eventItem = document.createElement('div');
             eventItem.className = 'event-item';
@@ -270,9 +315,27 @@ class EventHandler {
 
         // Auto-scroll to latest
         this.eventList.scrollTop = this.eventList.scrollHeight;
+    }
 
-        // Limit the number of events displayed
-        this.limitEventDisplay();
+    calculateDynamicMaxEvents() {
+        if (!this.eventList) return 500; // Fallback to original limit
+
+        // Get the available height of the event list container
+        const containerHeight = this.eventList.clientHeight;
+        if (containerHeight <= 0) return 500; // Fallback if container not visible
+
+        // Calculate approximate event item height (including padding and margins)
+        const eventItemHeight = 30; // Approximate height in pixels for each event item
+        
+        // Calculate how many events can fit in the available space
+        // Reserve some space for padding and scrollbar
+        const availableHeight = containerHeight - 20; // Reserve 20px for padding/scrollbar
+        const calculatedMaxEvents = Math.floor(availableHeight / eventItemHeight);
+
+        // Ensure we have a reasonable range (minimum 3, maximum 1000)
+        const dynamicMaxEvents = Math.max(3, Math.min(1000, calculatedMaxEvents));
+
+        return dynamicMaxEvents;
     }
 
     formatEventType(type) {
@@ -354,12 +417,18 @@ class EventHandler {
     clearProgressDisplays() {
         const progressContainer = document.getElementById('trainingProgress');
         if (progressContainer) {
-            progressContainer.innerHTML = '';
+            // Use dynamic removal instead of innerHTML swap to avoid full redraw
+            while (progressContainer.firstChild) {
+                progressContainer.removeChild(progressContainer.firstChild);
+            }
         }
 
         const progressBars = document.getElementById('progressBars');
         if (progressBars) {
-            progressBars.innerHTML = '';
+            // Use dynamic removal instead of innerHTML swap to avoid full redraw
+            while (progressBars.firstChild) {
+                progressBars.removeChild(progressBars.firstChild);
+            }
         }
     }
 
@@ -528,7 +597,10 @@ class EventHandler {
 
     resetEventList() {
         if (this.eventList) {
-            this.eventList.innerHTML = '';
+            // Use dynamic removal instead of innerHTML swap to avoid full redraw
+            while (this.eventList.firstChild) {
+                this.eventList.removeChild(this.eventList.firstChild);
+            }
         }
         // Don't reset lastEventIndex here - only do it when explicitly needed
     }
@@ -621,6 +693,11 @@ class EventHandler {
         if (this.websocketReconnectTimeout) {
             clearTimeout(this.websocketReconnectTimeout);
             this.websocketReconnectTimeout = null;
+        }
+        // Clean up resize observer
+        if (this.resizeObserver) {
+            this.resizeObserver.disconnect();
+            this.resizeObserver = null;
         }
     }
 

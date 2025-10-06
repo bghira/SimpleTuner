@@ -25,11 +25,32 @@ if (!window.checkpointsManager) {
                 cleanup: false,
                 saveRetention: false
             },
+            visibilitySettings: {
+                validity: true,
+                images: true,
+                size: true,
+                tags: true,
+                path: true
+            },
+
+            // HuggingFace upload state
+            hfAuthenticated: false,
+            hfUsername: null,
+            uploadConfig: {
+                push_to_hub: false,
+                hub_model_id: null
+            },
+            uploadTasks: {},
+            uploadModalCheckpoints: [],
+
+            // SSE listener cleanup
+            sseListenerCleanup: null,
 
             // Lifecycle
             async init() {
                 try {
                     await this.ensureEnvironment();
+                    this.setupSSEListeners();
                 } catch (error) {
                     console.error('Unable to initialize checkpoints manager:', error);
                     if (window.showToast) {
@@ -40,8 +61,11 @@ if (!window.checkpointsManager) {
 
                 this.markdownService = window.markdownService || this.markdownService;
 
+                await this.loadVisibilitySettings();
                 await this.loadCheckpoints();
                 await this.loadRetentionConfig();
+                await this.checkHuggingFaceAuth();
+                await this.loadUploadConfig();
             },
 
             async ensureEnvironment() {
@@ -107,6 +131,10 @@ if (!window.checkpointsManager) {
                     validation,
                     assets,
                     readme,
+                    // Upload tracking properties
+                    uploading: false,
+                    uploadProgress: 0,
+                    uploadMessage: ''
                 };
 
                 this._applyReadmeMetadata(checkpoint);
@@ -165,6 +193,11 @@ if (!window.checkpointsManager) {
                     const checkpoints = Array.isArray(data.checkpoints) ? data.checkpoints : [];
                     this.checkpoints = checkpoints.map((cp, idx) => this.normalizeCheckpoint(cp, idx));
                     this.sortCheckpoints();
+
+                    // Calculate common aspect ratio from existing validation images
+                    this.$nextTick(() => {
+                        this.updatePlaceholderAspectRatios();
+                    });
                 } catch (error) {
                     console.error('Failed to load checkpoints:', error);
                     if (window.showToast) {
@@ -236,6 +269,17 @@ if (!window.checkpointsManager) {
 
                 this.selectedCheckpoint = checkpoint;
                 this.validationResult = null;
+
+                // Collapse the checkpoint notes section when switching checkpoints
+                this.$nextTick(() => {
+                    const collapseEl = document.getElementById('checkpointNotesCollapse');
+                    if (collapseEl && window.bootstrap) {
+                        const bsCollapse = window.bootstrap.Collapse.getInstance(collapseEl);
+                        if (bsCollapse) {
+                            bsCollapse.hide();
+                        }
+                    }
+                });
             },
 
             // Validation
@@ -532,6 +576,43 @@ if (!window.checkpointsManager) {
                 }
             },
 
+            // Update placeholder aspect ratios based on existing images
+            updatePlaceholderAspectRatios() {
+                // Find the first checkpoint with validation images to get aspect ratio
+                let aspectRatio = null;
+                const imgElements = document.querySelectorAll('.checkpoint-preview-image img');
+
+                for (let img of imgElements) {
+                    if (img.complete && img.naturalWidth > 0) {
+                        aspectRatio = img.naturalWidth / img.naturalHeight;
+                        break;
+                    }
+                }
+
+                // If we found an aspect ratio, apply it to all placeholders
+                if (aspectRatio) {
+                    const placeholders = document.querySelectorAll('.no-validation-placeholder');
+                    placeholders.forEach(placeholder => {
+                        placeholder.style.aspectRatio = aspectRatio;
+                    });
+                }
+
+                // Also set up load listeners for images that haven't loaded yet
+                imgElements.forEach(img => {
+                    if (!img.complete) {
+                        img.addEventListener('load', () => {
+                            if (!aspectRatio && img.naturalWidth > 0) {
+                                aspectRatio = img.naturalWidth / img.naturalHeight;
+                                const placeholders = document.querySelectorAll('.no-validation-placeholder');
+                                placeholders.forEach(placeholder => {
+                                    placeholder.style.aspectRatio = aspectRatio;
+                                });
+                            }
+                        }, { once: true });
+                    }
+                });
+            },
+
             // Utility Functions
             formatDate(dateString) {
                 if (!dateString) return 'Unknown';
@@ -570,6 +651,386 @@ if (!window.checkpointsManager) {
                 const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
                 const index = Math.floor(Math.log(bytes) / Math.log(k));
                 return `${parseFloat((bytes / Math.pow(k, index)).toFixed(2))} ${sizes[index]}`;
+            },
+
+            // Visibility Settings Management
+            async loadVisibilitySettings() {
+                // Load visibility settings from localStorage
+                const stored = localStorage.getItem('checkpoint_visibility_settings');
+                if (stored) {
+                    try {
+                        const settings = JSON.parse(stored);
+                        Object.assign(this.visibilitySettings, settings);
+                    } catch (error) {
+                        console.error('Failed to parse stored visibility settings:', error);
+                    }
+                }
+            },
+
+            async saveVisibilitySettings() {
+                // Save visibility settings to localStorage
+                try {
+                    localStorage.setItem('checkpoint_visibility_settings', JSON.stringify(this.visibilitySettings));
+
+                    // Trigger aspect ratio recalculation after visibility changes
+                    this.$nextTick(() => {
+                        this.updatePlaceholderAspectRatios();
+                    });
+                } catch (error) {
+                    console.error('Error saving visibility settings:', error);
+                }
+            },
+
+            // HuggingFace Integration
+            async checkHuggingFaceAuth() {
+                try {
+                    const response = await fetch('/api/publishing/token/validate');
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.hfAuthenticated = data.valid === true;
+                        this.hfUsername = data.username || null;
+                    } else {
+                        this.hfAuthenticated = false;
+                        this.hfUsername = null;
+                    }
+                } catch (error) {
+                    console.error('Failed to check HuggingFace auth:', error);
+                    this.hfAuthenticated = false;
+                    this.hfUsername = null;
+                }
+            },
+
+            async loadUploadConfig() {
+                try {
+                    const environment = await this.ensureEnvironment();
+                    const response = await fetch(`/api/configs/${environment}`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        const config = data.config || data;
+                        this.uploadConfig.push_to_hub = config['--push_to_hub'] || config.push_to_hub || false;
+                        this.uploadConfig.hub_model_id = config['--hub_model_id'] || config.hub_model_id || null;
+                    }
+                } catch (error) {
+                    console.error('Failed to load upload config:', error);
+                }
+            },
+
+            canUpload() {
+                return this.hfAuthenticated && this.uploadConfig.push_to_hub && this.uploadConfig.hub_model_id;
+            },
+
+            getUploadTooltip() {
+                if (!this.hfAuthenticated) {
+                    return 'Login to HuggingFace on the Publishing tab to upload';
+                }
+                if (!this.uploadConfig.push_to_hub) {
+                    return 'Enable push_to_hub on the Publishing tab to upload';
+                }
+                if (!this.uploadConfig.hub_model_id) {
+                    return 'Configure a target repository on the Publishing tab to upload';
+                }
+                return 'Upload checkpoint to HuggingFace Hub';
+            },
+
+            async uploadCheckpoint(checkpointId) {
+                const checkpoint = this.checkpoints.find(c => c.id === checkpointId);
+                if (!checkpoint || !this.canUpload()) {
+                    return;
+                }
+
+                try {
+                    // Get the callback URL for webhook notifications
+                    const callbackUrl = `${window.location.origin}/callback`;
+
+                    const response = await fetch(`/api/checkpoints/${checkpoint.name}/upload`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            environment: this.environment,
+                            repo_id: this.uploadConfig.hub_model_id,
+                            callback_url: callbackUrl
+                        })
+                    });
+
+                    if (!response.ok) {
+                        const error = await response.json();
+                        throw new Error(error.detail || 'Upload failed');
+                    }
+
+                    const result = await response.json();
+
+                    // Store task for tracking with checkpoint info
+                    this.uploadTasks[result.task_id] = {
+                        ...result,
+                        checkpoint: checkpoint.name
+                    };
+
+                    if (window.showToast) {
+                        window.showToast(`Upload started for ${checkpoint.name}`, 'success');
+                    }
+
+                    // Start monitoring the upload
+                    this.monitorUpload(result.task_id);
+                } catch (error) {
+                    console.error('Upload failed:', error);
+                    if (window.showToast) {
+                        window.showToast(`Upload failed: ${error.message}`, 'error');
+                    }
+                }
+            },
+
+            async monitorUpload(taskId) {
+                const checkStatus = async () => {
+                    try {
+                        const response = await fetch(`/api/checkpoints/upload/${taskId}/status`);
+                        if (!response.ok) {
+                            throw new Error('Failed to get upload status');
+                        }
+
+                        const status = await response.json();
+                        this.uploadTasks[taskId] = status;
+
+                        if (status.status === 'completed') {
+                            if (window.showToast) {
+                                window.showToast(`Upload completed for ${status.checkpoint}`, 'success');
+                            }
+                        } else if (status.status === 'failed') {
+                            if (window.showToast) {
+                                window.showToast(`Upload failed: ${status.error}`, 'error');
+                            }
+                        } else if (status.status === 'running') {
+                            // Continue monitoring
+                            setTimeout(() => checkStatus(), 2000);
+                        }
+                    } catch (error) {
+                        console.error('Failed to monitor upload:', error);
+                    }
+                };
+
+                checkStatus();
+            },
+
+            showUploadAllModal() {
+                if (!this.canUpload()) {
+                    return;
+                }
+
+                // Collect all checkpoint names
+                this.uploadModalCheckpoints = this.checkpoints.map(c => c.name);
+
+                // Show modal using Alpine.js event
+                this.$dispatch('show-upload-all-modal');
+            },
+
+            async uploadAllCheckpoints(uploadMode) {
+                if (!this.uploadModalCheckpoints.length || !this.canUpload()) {
+                    return;
+                }
+
+                try {
+                    // Get the callback URL for webhook notifications
+                    const callbackUrl = `${window.location.origin}/callback`;
+
+                    const response = await fetch('/api/checkpoints/upload', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            environment: this.environment,
+                            checkpoint_names: this.uploadModalCheckpoints,
+                            repo_id: this.uploadConfig.hub_model_id,
+                            upload_mode: uploadMode,
+                            callback_url: callbackUrl
+                        })
+                    });
+
+                    if (!response.ok) {
+                        const error = await response.json();
+                        throw new Error(error.detail || 'Upload failed');
+                    }
+
+                    const result = await response.json();
+
+                    // Store all tasks
+                    result.tasks.forEach(task => {
+                        this.uploadTasks[task.task_id] = task;
+                        this.monitorUpload(task.task_id);
+                    });
+
+                    if (window.showToast) {
+                        window.showToast(`Started uploading ${result.count} checkpoints`, 'success');
+                    }
+
+                    // Close modal
+                    this.$dispatch('close-upload-all-modal');
+                } catch (error) {
+                    console.error('Upload all failed:', error);
+                    if (window.showToast) {
+                        window.showToast(`Upload failed: ${error.message}`, 'error');
+                    }
+                }
+            },
+
+            // SSE Support
+            setupSSEListeners() {
+                console.log('[Checkpoints] Setting up SSE listeners');
+                console.log('[Checkpoints] SSEManager available?', !!window.SSEManager);
+
+                // Remove any existing listener
+                if (this.sseListenerCleanup) {
+                    this.sseListenerCleanup();
+                }
+
+                // Add listener for checkpoint upload messages
+                const checkpointListener = (data) => {
+                    console.log('[Checkpoints] Checkpoint SSE event received:', data);
+                    if (data.message_type === 'checkpoint_upload') {
+                        this.handleUploadProgress(data);
+                    } else {
+                        console.log('[Checkpoints] Non-upload checkpoint message:', data.message_type);
+                    }
+                };
+
+                // Add a catch-all debug listener
+                const debugListener = (data) => {
+                    if (data.message_type === 'checkpoint_upload') {
+                        console.log('[Checkpoints DEBUG] Found checkpoint_upload in event!', data);
+                    }
+                };
+
+                // Register with SSE Manager if available
+                if (window.SSEManager && window.SSEManager.addEventListener) {
+                    console.log('[Checkpoints] Registering SSE listeners');
+
+                    // Register checkpoint listener
+                    window.SSEManager.addEventListener('callback:checkpoint', checkpointListener);
+
+                    // Also listen to other event types in case it's coming through differently
+                    const eventTypes = ['callback:progress', 'callback:validation', 'callback:alert', 'callback:status', 'callback:job', 'callback:debug', 'callback'];
+                    eventTypes.forEach(type => {
+                        window.SSEManager.addEventListener(type, debugListener);
+                    });
+
+                    // Store cleanup function
+                    this.sseListenerCleanup = () => {
+                        if (window.SSEManager && window.SSEManager.removeEventListener) {
+                            window.SSEManager.removeEventListener('callback:checkpoint', checkpointListener);
+                            eventTypes.forEach(type => {
+                                window.SSEManager.removeEventListener(type, debugListener);
+                            });
+                        }
+                    };
+                } else {
+                    console.error('[Checkpoints] SSEManager not available!');
+                }
+            },
+
+            handleUploadProgress(data) {
+                console.log('[Checkpoints] Received upload progress:', data);
+
+                // Extract data from extras field (where webhook data is stored)
+                const extras = data.extras || {};
+                const taskId = extras.task_id;
+                const task = this.uploadTasks[taskId];
+
+                if (!task) {
+                    // Unknown task, might be from another session
+                    console.warn('[Checkpoints] Unknown task ID:', taskId, 'Available tasks:', Object.keys(this.uploadTasks));
+                    return;
+                }
+
+                // Update task info
+                task.status = extras.status;
+                task.progress = extras.progress || 0;
+                task.message = extras.message || data.body || '';
+                task.error = extras.error;
+
+                // Find checkpoint card and update UI
+                const checkpointName = task.checkpoint || extras.checkpoint;
+                const checkpoint = this.checkpoints.find(c => c.name === checkpointName);
+
+                const event = extras.event;
+
+                if (checkpoint) {
+                    console.log('[Checkpoints] Updating checkpoint UI:', checkpointName, 'event:', event, 'progress:', task.progress);
+                    console.log('[Checkpoints] Current checkpoint state - uploading:', checkpoint.uploading, 'progress:', checkpoint.uploadProgress);
+
+                    // Update checkpoint upload state
+                    if (event === 'started') {
+                        checkpoint.uploading = true;
+                        checkpoint.uploadProgress = 0;
+                        checkpoint.uploadMessage = 'Starting upload...';
+                        console.log('[Checkpoints] Set uploading=true, progress=0');
+                    } else if (event === 'progress') {
+                        checkpoint.uploading = true;
+                        checkpoint.uploadProgress = task.progress;
+                        checkpoint.uploadMessage = task.message;
+                        console.log('[Checkpoints] Set progress:', task.progress, 'message:', task.message);
+                    } else if (event === 'completed') {
+                        checkpoint.uploading = true; // Keep showing the bar
+                        checkpoint.uploadProgress = 100;
+                        checkpoint.uploadMessage = 'Upload completed ✓';
+
+                        console.log('[Checkpoints] Upload completed, keeping progress bar visible for 5 seconds');
+
+                        // Show success toast
+                        if (window.showToast) {
+                            window.showToast(`Successfully uploaded ${checkpointName}`, 'success');
+                        }
+
+                        // Clean up task after a longer delay to keep the success state visible
+                        setTimeout(() => {
+                            console.log('[Checkpoints] Cleaning up upload UI for', checkpointName);
+                            checkpoint.uploading = false;
+                            delete this.uploadTasks[taskId];
+                            checkpoint.uploadProgress = 0;
+                            checkpoint.uploadMessage = '';
+                        }, 5000);
+                    } else if (event === 'failed') {
+                        checkpoint.uploading = false;
+                        checkpoint.uploadProgress = 0;
+                        checkpoint.uploadMessage = '';
+
+                        // Show error toast
+                        if (window.showToast) {
+                            window.showToast(`Upload failed: ${task.error || 'Unknown error'}`, 'error');
+                        }
+
+                        // Clean up task
+                        delete this.uploadTasks[taskId];
+                    }
+                }
+
+                // For batch uploads, update overall progress
+                if (task.mode === 'batch' && task.checkpoints) {
+                    // Calculate overall progress for batch
+                    const batchProgress = task.progress || 0;
+                    const batchMessage = `Batch upload: ${task.message || 'Processing...'}`;
+
+                    // Update all checkpoints in the batch
+                    task.checkpoints.forEach(cpName => {
+                        const cp = this.checkpoints.find(c => c.name === cpName);
+                        if (cp) {
+                            cp.uploading = extras.status === 'running';
+                            cp.uploadProgress = batchProgress;
+                            cp.uploadMessage = batchMessage;
+                        }
+                    });
+
+                    // Clean up on completion
+                    if (event === 'completed' || event === 'failed') {
+                        setTimeout(() => {
+                            task.checkpoints.forEach(cpName => {
+                                const cp = this.checkpoints.find(c => c.name === cpName);
+                                if (cp) {
+                                    cp.uploading = false;
+                                    cp.uploadProgress = 0;
+                                    cp.uploadMessage = '';
+                                }
+                            });
+                            delete this.uploadTasks[taskId];
+                        }, 3000);
+                    }
+                }
             }
         };
     };

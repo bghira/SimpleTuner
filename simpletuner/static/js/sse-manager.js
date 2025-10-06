@@ -115,13 +115,28 @@
             if (currentStep === null && state && state.global_step !== undefined) {
                 currentStep = toNumber(state.global_step);
             }
+            if (currentStep === null && payload.global_step !== undefined) {
+                currentStep = toNumber(payload.global_step);
+            }
             if (currentStep === null && extras.current_step !== undefined) {
                 currentStep = toNumber(extras.current_step);
+            }
+            if (currentStep === null && payload.current_step !== undefined) {
+                currentStep = toNumber(payload.current_step);
             }
 
             var totalSteps = toNumber(progress.total);
             if (totalSteps === null && (extras.total_steps !== undefined)) {
                 totalSteps = toNumber(extras.total_steps);
+            }
+            if (totalSteps === null && (extras.total_num_steps !== undefined)) {
+                totalSteps = toNumber(extras.total_num_steps);
+            }
+            if (totalSteps === null && (payload.total_num_steps !== undefined)) {
+                totalSteps = toNumber(payload.total_num_steps);
+            }
+            if (totalSteps === null && state && state.total_num_steps !== undefined) {
+                totalSteps = toNumber(state.total_num_steps);
             }
             if (totalSteps === null && (extras.max_steps !== undefined)) {
                 totalSteps = toNumber(extras.max_steps);
@@ -134,10 +149,19 @@
             if (epoch === null && state && state.current_epoch !== undefined) {
                 epoch = toNumber(state.current_epoch);
             }
+            if (epoch === null && payload.current_epoch !== undefined) {
+                epoch = toNumber(payload.current_epoch);
+            }
 
             var totalEpochs = toNumber(extras.final_epoch);
             if (totalEpochs === null && extras.total_epochs !== undefined) {
                 totalEpochs = toNumber(extras.total_epochs);
+            }
+            if (totalEpochs === null && extras.total_num_epochs !== undefined) {
+                totalEpochs = toNumber(extras.total_num_epochs);
+            }
+            if (totalEpochs === null && payload.total_num_epochs !== undefined) {
+                totalEpochs = toNumber(payload.total_num_epochs);
             }
             if (totalEpochs === null && state && state.final_epoch !== undefined) {
                 totalEpochs = toNumber(state.final_epoch);
@@ -420,7 +444,10 @@
                 case 'training_progress':
                     // Update training progress UI
                     if (window.htmx) {
-                        htmx.trigger('#training-progress', 'update-progress', data);
+                        const progressEl = document.querySelector('#training-progress');
+                        if (progressEl) {
+                            htmx.trigger(progressEl, 'update-progress', data);
+                        }
                     }
                     notifyListeners('training_progress', data);
                     break;
