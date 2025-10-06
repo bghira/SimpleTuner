@@ -7,9 +7,9 @@ from typing import Union
 import diffusers
 import numpy as np
 import torch
-import wandb
 from tqdm import tqdm
 
+import wandb
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelFoundation, VideoModelFoundation
 from simpletuner.helpers.training.wrappers import unwrap_model
 
@@ -1030,6 +1030,9 @@ class Validation:
                 message="Validations are generating.. this might take a minute! 🖼️",
                 message_level="info",
             )
+            StateTracker.get_webhook_handler().send_raw(
+                {"message": "Validation is starting."}, message_type="validation_start"
+            )
 
         if self.accelerator.is_main_process or self.deepspeed:
             logger.debug("Starting validation process...")
@@ -1872,6 +1875,13 @@ class Validation:
                     f"\nValidation prompt: `{validation_prompt if validation_prompt != '' else '(blank prompt)'}`"
                     f"\nEvaluation score: {self.eval_scores.get(validation_shortname, 'N/A')}"
                 ),
+                images=validation_images[validation_shortname],
+            )
+            StateTracker.get_webhook_handler().send_raw(
+                structured_data={"message": f"Validation: {validation_shortname}"},
+                message_type="validation_log",
+                message_level="info",
+                job_id=StateTracker.get_job_id(),
                 images=validation_images[validation_shortname],
             )
 
