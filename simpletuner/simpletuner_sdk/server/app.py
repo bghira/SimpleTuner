@@ -226,12 +226,15 @@ def create_unified_app() -> FastAPI:
     app = create_app(mode=ServerMode.UNIFIED)
 
     # Set up shared event store for unified mode
+    from .services.callback_service import CallbackService
     from .services.event_store import EventStore
 
     event_store = EventStore()
+    callback_service = CallbackService(event_store)
 
-    # Store event store in app state for access by routes
+    # Store event service in app state for access by routes
     app.state.event_store = event_store
+    app.state.callback_service = callback_service
     app.state.mode = ServerMode.UNIFIED
 
     # Configure webhook handler to use direct event store in unified mode
