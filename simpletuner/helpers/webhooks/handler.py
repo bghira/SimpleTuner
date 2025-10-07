@@ -114,7 +114,7 @@ class WebhookHandler:
 
     def _send_request(
         self,
-        message: str,
+        message: str | dict,
         images: list = None,
         store_response: bool = False,
         raw_request: bool = False,

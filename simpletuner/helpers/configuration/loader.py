@@ -120,6 +120,8 @@ def load_config(args: dict = None, exit_on_error: bool = False):
         mapped_config = helpers[config_backend]()
         if config_backend == "cmd":
             return mapped_config
+    else:
+        mapped_config = json_file.normalize_args(args)
 
     if isinstance(mapped_config, dict):
         # Convert dict to list of command-line style arguments
