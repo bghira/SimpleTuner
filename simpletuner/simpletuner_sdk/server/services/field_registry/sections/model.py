@@ -393,7 +393,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.NUMBER,
             tab="basic",
             section="image_processing",
-            subsection="aspect_buckets",
+            subsection="advanced",
             default_value=2,
             choices=[{"value": i, "label": str(i)} for i in range(1, 10)],
             validation_rules=[

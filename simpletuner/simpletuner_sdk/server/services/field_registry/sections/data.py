@@ -43,7 +43,7 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.SELECT,
             tab="basic",
             section="image_processing",
-            subsection="resolution",
+            subsection="advanced",
             default_value="pixel_area",
             choices=[
                 {"value": "pixel", "label": "Pixel (shortest edge)"},
@@ -180,12 +180,13 @@ def register_data_fields(registry: "FieldRegistry") -> None:
         ConfigField(
             name="ignore_missing_files",
             arg_name="--ignore_missing_files",
-            ui_label="Ignore Missing Files",
+            ui_label="Keep missing images in buckets",
             field_type=FieldType.CHECKBOX,
             tab="basic",
-            section="data_config",
+            section="training_data",
+            subsection="advanced",
             default_value=False,
-            help_text="Continue training even if some files are missing",
+            help_text="Prevent trainer from removing files from buckets if they're missing from disk, allowing removal of files from disk without breaking training",
             tooltip="When enabled, missing files are logged but don't stop training. Useful for large datasets.",
             importance=ImportanceLevel.ADVANCED,
             order=7,
@@ -199,8 +200,8 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             arg_name="--vae_cache_scan_behaviour",
             ui_label="VAE Cache Scan Behaviour",
             field_type=FieldType.SELECT,
-            tab="basic",
-            section="data_config",
+            tab="model",
+            section="vae_config",
             default_value="recreate",
             choices=[
                 {"value": "recreate", "label": "Recreate"},
@@ -209,7 +210,7 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             help_text="How to scan VAE cache for missing files",
             tooltip="'recreate': rebuild inconsistent cache entries. 'sync': adjust bucket metadata to match existing latents.",
             importance=ImportanceLevel.ADVANCED,
-            order=8,
+            order=20,
         )
     )
 
@@ -220,13 +221,13 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             arg_name="--vae_enable_slicing",
             ui_label="Enable VAE Slicing",
             field_type=FieldType.CHECKBOX,
-            tab="basic",
-            section="data_config",
+            tab="model",
+            section="vae_config",
             default_value=False,
             help_text="Enable VAE attention slicing for memory efficiency",
             tooltip="Reduces VAE memory usage by processing attention in slices. May slightly slow encoding.",
             importance=ImportanceLevel.ADVANCED,
-            order=9,
+            order=21,
         )
     )
 
@@ -237,13 +238,13 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             arg_name="--vae_enable_tiling",
             ui_label="Enable VAE Tiling",
             field_type=FieldType.CHECKBOX,
-            tab="basic",
-            section="data_config",
+            tab="model",
+            section="vae_config",
             default_value=False,
             help_text="Enable VAE tiling for large images",
             tooltip="Process large images in tiles to reduce memory usage. Useful for very high resolution images.",
             importance=ImportanceLevel.ADVANCED,
-            order=10,
+            order=22,
         )
     )
 
