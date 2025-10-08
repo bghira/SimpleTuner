@@ -85,6 +85,7 @@ class FieldService:
     # Fields that the WebUI manages internally so users cannot override them
     _WEBUI_FORCED_VALUES = {
         "webhook_config": DEFAULT_WEBHOOK_CONFIG,
+        "webhook_reporting_interval": 1,
     }
     _WEBUI_FIELD_HINTS = {
         "webhook_config": "Managed by the WebUI so training callbacks can reach the server. Use the CLI to supply custom webhooks.",
