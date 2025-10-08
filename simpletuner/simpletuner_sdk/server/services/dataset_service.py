@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, Iterable, List, Optional, Set
 
 from ..utils.paths import get_config_directory, get_simpletuner_root, resolve_config_path
 from .config_store import ConfigStore
@@ -33,6 +33,49 @@ def _format_dataset_path(path: Path) -> str:
         return str(resolved)
 
 
+def _normalise_dataset_path(
+    resolved: Path,
+    configs_dir: Optional[str] = None,
+    extra_roots: Optional[Iterable[Path]] = None,
+) -> str:
+    """Return a normalised dataset path preferring relative paths within known config roots."""
+
+    candidate_roots: List[Path] = []
+
+    def _add_candidate(raw: Optional[Path | str]) -> None:
+        if not raw:
+            return
+        try:
+            candidate = Path(raw).expanduser().resolve(strict=False)
+        except Exception:
+            candidate = Path(raw).expanduser()
+        if candidate not in candidate_roots:
+            candidate_roots.append(candidate)
+
+    _add_candidate(configs_dir)
+    if configs_dir:
+        try:
+            _add_candidate(Path(configs_dir).expanduser() / "dataloaders")
+        except Exception:
+            pass
+
+    if extra_roots:
+        for root in extra_roots:
+            _add_candidate(root)
+
+    for root in sorted(candidate_roots, key=lambda p: len(str(p)), reverse=True):
+        try:
+            relative = resolved.relative_to(root)
+            posix = relative.as_posix()
+            if posix and posix != ".":
+                return posix
+            return resolved.name
+        except ValueError:
+            continue
+
+    return _format_dataset_path(resolved)
+
+
 def normalize_dataset_config_value(
     value: Optional[str],
     configs_dir: Optional[str] = None,
@@ -42,13 +85,28 @@ def normalize_dataset_config_value(
     if not value:
         return value
 
+    extra_roots: List[Path] = []
+    try:
+        dataset_plan_root = DatasetPlanStore().path.parent
+        extra_roots.append(dataset_plan_root)
+    except Exception:
+        pass
+    try:
+        extra_roots.append(Path(get_config_directory()).expanduser())
+    except Exception:
+        pass
+    try:
+        extra_roots.append(Path(get_simpletuner_root()).expanduser())
+    except Exception:
+        pass
+
     try:
         resolved = resolve_config_path(value, config_dir=configs_dir, check_cwd_first=True)
     except Exception:
         resolved = None
 
     if resolved:
-        return _format_dataset_path(resolved)
+        return _normalise_dataset_path(Path(resolved), configs_dir=configs_dir, extra_roots=extra_roots)
 
     if configs_dir:
         try:
@@ -61,7 +119,7 @@ def normalize_dataset_config_value(
                 except Exception:
                     resolved_trimmed = None
                 if resolved_trimmed:
-                    return _format_dataset_path(resolved_trimmed)
+                    return _normalise_dataset_path(Path(resolved_trimmed), configs_dir=configs_dir, extra_roots=extra_roots)
                 return trimmed.as_posix()
         except Exception:
             pass
@@ -163,7 +221,11 @@ def build_data_backend_choices() -> List[Dict[str, str]]:
         if not path:
             return
         resolved = path.expanduser().resolve(strict=False)
-        value = _format_dataset_path(resolved)
+        value = _normalise_dataset_path(
+            resolved,
+            configs_dir=str(workspace_config_root) if workspace_config_root else None,
+            extra_roots=config_roots,
+        )
 
         rel_path = _relative_to_config_roots(resolved)
         rel_path_path = Path(rel_path)
