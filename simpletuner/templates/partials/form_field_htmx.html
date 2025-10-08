@@ -7,6 +7,7 @@
 {% set col_class = field.col_class|default('col-md-6') %}
 {% set custom_component = field.custom_component|default('') %}
 {% set uses_custom_label = custom_component == 'merge_environment_toggle' %}
+{% set is_toggle_field = field_type in ['checkbox', 'toggle'] %}
 
 <div class="{{ col_class }} mb-3 {{ field.extra_classes|default('') }}"
      x-on:input="$store.trainer.markFormDirty()"
@@ -17,7 +18,9 @@
 
     <!-- Field Label -->
     {% if not uses_custom_label %}
-    <label for="{{ field_id }}" class="form-label">
+    <label id="{{ field_id }}__title"
+           {% if not is_toggle_field %}for="{{ field_id }}"{% endif %}
+           class="form-label">
         {{ field.label }}
         {% if field.required %}
         <span class="text-danger">*</span>
@@ -242,11 +245,12 @@
                     <input type="checkbox"
                            class="form-check-input"
                            id="{{ field_id }}"
+                           aria-labelledby="{{ field_id }}__switch_label"
                            :checked="mergeEnabled"
                            @change="mergeEnabled = $event.target.checked">
-                    <label class="form-check-label" for="{{ field_id }}">
+                    <span class="form-check-label" id="{{ field_id }}__switch_label">
                         {{ field.checkbox_label|default(field.label) }}
-                    </label>
+                    </span>
                 </div>
                 <div class="position-relative" @mouseenter="open = true" @mouseleave="open = false">
                     <button type="button"
@@ -381,6 +385,7 @@
                    id="{{ field_id }}"
                    name="{{ field_name }}"
                    value="true"
+                   aria-labelledby="{{ field_id }}__title {{ field_id }}__switch_label"
                    {% if field_value %}checked{% endif %}
                    {% if field.disabled %}disabled{% endif %}
                    data-debounce="300"
@@ -390,9 +395,9 @@
                    hx-swap="innerHTML"
                    hx-on::after-request="window.handleFieldValidation(event, this)"
                    data-feedback-id="field-feedback-{{ field_id }}">
-            <label class="form-check-label" for="{{ field_id }}">
+            <span class="form-check-label" id="{{ field_id }}__switch_label">
                 {{ field.checkbox_label|default('Enable') }}
-            </label>
+            </span>
         </div>
 
     {% elif field_type == 'select' %}

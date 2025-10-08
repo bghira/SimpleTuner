@@ -13,6 +13,7 @@
 {% set field_cmd_args_help = field.cmd_args_help or cmd_args_help or '' %}
 {% set custom_component = field.custom_component or '' %}
 {% set uses_custom_label = custom_component == 'merge_environment_toggle' %}
+{% set is_toggle_field = field_type in ['checkbox', 'toggle'] %}
 {% if field.min is defined %}
     {% set field_min = field.min %}
 {% elif min is defined %}
@@ -42,7 +43,9 @@
 
     <!-- Label -->
     {% if not uses_custom_label %}
-    <label for="{{ field_id }}" class="form-label d-flex align-items-center gap-1">
+    <label id="{{ field_id }}__title"
+           {% if not is_toggle_field %}for="{{ field_id }}"{% endif %}
+           class="form-label d-flex align-items-center gap-1">
         <span>{{ field_label }}</span>
         {% if field_required %}
             <span class="text-danger">*</span>
@@ -318,11 +321,12 @@
                     <input type="checkbox"
                            class="form-check-input"
                            id="{{ field_id }}"
+                           aria-labelledby="{{ field_id }}__switch_label"
                            :checked="mergeEnabled"
                            @change="mergeEnabled = $event.target.checked">
-                    <label class="form-check-label" for="{{ field_id }}">
+                    <span class="form-check-label" id="{{ field_id }}__switch_label">
                         {{ field.checkbox_label or field_label }}
-                    </label>
+                    </span>
                 </div>
                 <div class="position-relative" @mouseenter="open = true" @mouseleave="open = false">
                     <button type="button"
@@ -457,10 +461,11 @@
                    name="{{ field_name }}"
                    class="form-check-input"
                    value="true"
+                   aria-labelledby="{{ field_id }}__title {{ field_id }}__switch_label"
                    {% if field_value %}checked{% endif %}>
-            <label class="form-check-label" for="{{ field_id }}">
+            <span class="form-check-label" id="{{ field_id }}__switch_label">
                 {{ field_label }}
-            </label>
+            </span>
         </div>
 
     {% elif field_type == 'file' %}
