@@ -225,12 +225,15 @@ async def get_training_status():
             # Process keeper might not have this job
             pass
 
+    startup_stages = APIState.get_state("training_startup_stages") or {}
+
     return {
         "status": status,
         "config": config,
         "job_id": job_id,
         "job_info": job_info,
         "progress": progress,
+        "startup_progress": startup_stages,
     }
 
 
