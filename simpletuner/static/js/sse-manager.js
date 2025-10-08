@@ -185,18 +185,58 @@
                 learningRate = toNumber(extras.lr);
             }
 
-            return {
-                type: 'training_progress',
-                percentage: Number(percent || 0),
-                current_step: currentStep || 0,
-                total_steps: totalSteps || 0,
-                epoch: epoch || 0,
-                total_epochs: totalEpochs || 0,
-                loss: loss !== null ? loss : undefined,
-                lr: learningRate !== null ? learningRate : undefined,
-                label: progress.label || payload.headline || '',
-                raw: payload
-            };
+            var messageType = String(payload.message_type || '').toLowerCase();
+            var messages = [];
+            var jobId = payload.job_id || extras.job_id || null;
+
+            if (messageType === 'progress_update') {
+                var stageType = extras.progress_type || progress.progress_type || payload.progress_type || 'progress_update';
+                var stageLabel = progress.label || extras.readable_type || payload.readable_type || stageType;
+                var stageCurrent = toNumber(progress.current);
+                if (stageCurrent === null && extras.current_estimated_index !== undefined) {
+                    stageCurrent = toNumber(extras.current_estimated_index);
+                }
+                var stageTotal = toNumber(progress.total);
+                if (stageTotal === null && extras.total_elements !== undefined) {
+                    stageTotal = toNumber(extras.total_elements);
+                }
+                var stagePercent = toNumber(progress.percent);
+                if (stagePercent === null && stageCurrent !== null && stageTotal) {
+                    stagePercent = (stageCurrent / stageTotal) * 100;
+                }
+                if (!Number.isFinite(stagePercent)) {
+                    stagePercent = 0;
+                }
+                stagePercent = Math.max(0, Math.min(100, stagePercent));
+
+                messages.push({
+                    type: 'startup_progress',
+                    job_id: jobId,
+                    progress_type: stageType,
+                    label: stageLabel,
+                    percent: Math.round(stagePercent || 0),
+                    current: stageCurrent || 0,
+                    total: stageTotal || 0,
+                    raw: payload
+                });
+            } else {
+                var trainingLabel = progress.label || payload.readable_type || payload.headline || '';
+                messages.push({
+                    type: 'training_progress',
+                    job_id: jobId,
+                    percentage: Number(percent || 0),
+                    current_step: currentStep || 0,
+                    total_steps: totalSteps || 0,
+                    epoch: epoch || 0,
+                    total_epochs: totalEpochs || 0,
+                    loss: loss !== null ? loss : undefined,
+                    lr: learningRate !== null ? learningRate : undefined,
+                    label: trainingLabel,
+                    raw: payload
+                });
+            }
+
+            return messages;
         }
 
         function handleCallbackEvent(category, payload) {
@@ -205,8 +245,16 @@
 
             switch (category) {
                 case 'progress': {
-                    var progressData = transformProgressPayload(payload);
-                    handleMessage(progressData);
+                    var progressMessages = transformProgressPayload(payload);
+                    if (Array.isArray(progressMessages)) {
+                        progressMessages.forEach(function(msg) {
+                            if (msg) {
+                                handleMessage(msg);
+                            }
+                        });
+                    } else if (progressMessages) {
+                        handleMessage(progressMessages);
+                    }
                     break;
                 }
                 case 'validation': {
@@ -450,6 +498,11 @@
                         }
                     }
                     notifyListeners('training_progress', data);
+                    break;
+
+                case 'startup_progress':
+                    notifyListeners('startup_progress', data);
+                    window.dispatchEvent(new CustomEvent('startup-progress', { detail: data }));
                     break;
 
                 case 'validation_complete':

@@ -47,6 +47,8 @@
     let managerRegistered = false;
     let lastCardUpdate = 0;
     const CARD_UPDATE_THROTTLE = 100; // ms
+    const startupStages = new Map();
+    let startupJobId = null;
 
     function getTrainerStore() {
         if (window.Alpine && typeof window.Alpine.store === 'function') {
@@ -99,6 +101,10 @@
             activeJobId = null;
         }
 
+        if (normalized !== 'starting') {
+            clearStartupProgress();
+        }
+
         if (store) {
             store.isTraining = isActive;
             // Hide progress bars when training stops or starts fresh
@@ -117,6 +123,250 @@
         if (document && document.body) {
             document.body.dataset.trainingActive = isActive ? 'true' : 'false';
         }
+    }
+
+    function clearStartupProgress() {
+        startupStages.clear();
+        startupJobId = null;
+        const container = document.getElementById('training-status');
+        if (!container) {
+            return;
+        }
+        const alert = container.querySelector('.startup-progress-alert');
+        if (!alert) {
+            return;
+        }
+        const list = alert.querySelector('.startup-progress-list');
+        if (list) {
+            list.remove();
+        }
+        if (alert.dataset.startupGenerated === 'true') {
+            alert.remove();
+        }
+    }
+
+    function prettifyStageLabel(value) {
+        if (!value) return 'Progress';
+        return String(value)
+            .replace(/[_-]+/g, ' ')
+            .replace(/\b\w/g, function(chr) {
+                return chr.toUpperCase();
+            });
+    }
+
+    function resolveProgressTypeFromPayload(rawPayload) {
+        if (!rawPayload || typeof rawPayload !== 'object') {
+            return '';
+        }
+        const fromProgress = rawPayload.progress?.extra?.progress_type;
+        if (typeof fromProgress === 'string') {
+            return fromProgress;
+        }
+        const fromExtras = rawPayload.extras?.progress_type;
+        if (typeof fromExtras === 'string') {
+            return fromExtras;
+        }
+        const topLevel = rawPayload.progress_type;
+        return typeof topLevel === 'string' ? topLevel : '';
+    }
+
+    function renderStartupProgress() {
+        const container = document.getElementById('training-status');
+        if (!container) {
+            return;
+        }
+
+        let alert = container.querySelector('.startup-progress-alert');
+        if (!alert) {
+            const existing = container.querySelector('.alert');
+            if (existing) {
+                alert = existing;
+            }
+        }
+
+        if (startupStages.size === 0) {
+            if (alert) {
+                const list = alert.querySelector('.startup-progress-list');
+                if (list) {
+                    list.remove();
+                }
+                if (alert.dataset.startupGenerated === 'true') {
+                    alert.remove();
+                }
+            }
+            return;
+        }
+
+        if (!alert) {
+            alert = document.createElement('div');
+        }
+
+        alert.classList.add('alert', 'alert-info', 'startup-progress-alert');
+        if (alert.dataset.startupGenerated !== 'true') {
+            alert.dataset.startupGenerated = 'true';
+            alert.innerHTML = '';
+        }
+        if (!container.contains(alert)) {
+            container.appendChild(alert);
+        }
+
+        let header = alert.querySelector('.startup-progress-header');
+        if (!header) {
+            header = document.createElement('div');
+            header.className = 'd-flex align-items-center mb-2 startup-progress-header';
+            alert.insertBefore(header, alert.firstChild);
+        } else {
+            header.innerHTML = '';
+        }
+
+        const icon = document.createElement('i');
+        icon.className = 'fas fa-cog fa-spin me-2';
+        header.appendChild(icon);
+
+        const title = document.createElement('strong');
+        title.textContent = 'Initialising';
+        header.appendChild(title);
+
+        if (startupJobId) {
+            let jobInfo = alert.querySelector('[data-startup-job]');
+            if (!jobInfo) {
+                jobInfo = document.createElement('p');
+                jobInfo.className = 'mb-2 small text-muted';
+                jobInfo.dataset.startupJob = 'true';
+            }
+            jobInfo.textContent = `Job ID: ${startupJobId}`;
+            alert.insertBefore(jobInfo, header.nextSibling);
+        } else {
+            const jobInfo = alert.querySelector('[data-startup-job]');
+            if (jobInfo) {
+                jobInfo.remove();
+            }
+        }
+
+        let listEl = alert.querySelector('.startup-progress-list');
+        if (!listEl) {
+            listEl = document.createElement('div');
+            listEl.className = 'startup-progress-list';
+            alert.appendChild(listEl);
+        }
+
+        listEl.innerHTML = '';
+
+        startupStages.forEach((stage, type) => {
+            const stageWrapper = document.createElement('div');
+            stageWrapper.className = 'startup-progress-item mb-2';
+
+            const header = document.createElement('div');
+            header.className = 'd-flex justify-content-between align-items-center mb-1';
+
+            const title = document.createElement('span');
+            title.className = 'fw-semibold';
+            const keyText = String(type || '');
+            const baseLabel = stage.label && stage.label !== keyText ? stage.label : null;
+            const displayLabel = baseLabel || prettifyStageLabel(keyText);
+            title.textContent = displayLabel;
+            if (!baseLabel) {
+                const suffix = document.createElement('span');
+                suffix.className = 'text-muted small ms-2';
+                suffix.textContent = `(${keyText})`;
+                title.appendChild(suffix);
+            }
+
+            const badge = document.createElement('span');
+            badge.className = 'badge bg-info text-dark';
+            badge.textContent = `${Math.round(clampPercent(stage.percent))}%`;
+
+            header.appendChild(title);
+            header.appendChild(badge);
+            stageWrapper.appendChild(header);
+
+            const progressOuter = document.createElement('div');
+            progressOuter.className = 'progress progress-sm';
+
+            const bar = document.createElement('div');
+            bar.className = 'progress-bar progress-bar-striped progress-bar-animated';
+            bar.setAttribute('role', 'progressbar');
+            bar.style.width = `${clampPercent(stage.percent)}%`;
+            bar.setAttribute('aria-valuenow', stage.current || 0);
+            bar.setAttribute('aria-valuemin', '0');
+            bar.setAttribute('aria-valuemax', stage.total || 100);
+
+            progressOuter.appendChild(bar);
+            stageWrapper.appendChild(progressOuter);
+
+            listEl.appendChild(stageWrapper);
+        });
+    }
+
+    function handleStartupProgressUpdate(data) {
+        if (!data) {
+            return;
+        }
+
+        if (data.job_id && startupJobId && data.job_id !== startupJobId) {
+            clearStartupProgress();
+        }
+        if (data.job_id) {
+            startupJobId = data.job_id;
+        }
+
+        const key = String(data.progress_type || data.label || `stage_${startupStages.size}`);
+        const stagePercent = clampPercent(data.percent);
+        const stageData = {
+            label: data.label || key,
+            percent: Math.round(stagePercent),
+            current: Number(data.current || 0),
+            total: Number(data.total || 0),
+        };
+
+        if (stageData.percent >= 100 || (stageData.total > 0 && stageData.current >= stageData.total)) {
+            startupStages.delete(key);
+        } else {
+            startupStages.set(key, stageData);
+        }
+
+        renderStartupProgress();
+
+        const store = getTrainerStore();
+        if (!store || store.showTrainingProgress) {
+            return;
+        }
+
+        if (startupStages.size === 0) {
+            return;
+        }
+
+        let totalWeight = 0;
+        let sumCurrent = 0;
+        let averagePercent = 0;
+        let count = 0;
+
+        startupStages.forEach((stage) => {
+            count += 1;
+            averagePercent += stage.percent;
+            if (stage.total > 0) {
+                totalWeight += stage.total;
+                sumCurrent += stage.current;
+            }
+        });
+
+        let percent = 0;
+        if (totalWeight > 0) {
+            percent = Math.round(clampPercent((sumCurrent / totalWeight) * 100));
+        } else if (count > 0) {
+            percent = Math.round(clampPercent(averagePercent / count));
+        }
+
+        store.trainingProgress = Object.assign({}, store.trainingProgress, {
+            percent: percent,
+            step: sumCurrent || 0,
+            total_steps: totalWeight || 0,
+            epoch: 0,
+            total_epochs: 0,
+            loss: 'N/A',
+            learning_rate: 'N/A',
+        });
+        window.dispatchEvent(new CustomEvent('training-progress', { detail: store.trainingProgress }));
     }
 
     function ensureCard() {
@@ -286,8 +536,13 @@
             learningRate = toNumber(extras.lr);
         }
 
+        const messageType = String(payload.message_type || '').toLowerCase();
+        const progressType = resolveProgressTypeFromPayload(payload);
+        const isStartupProgress = messageType === 'progress_update' && progressType.startsWith('init_');
+        const normalizedPercent = clampPercent(percent);
+
         return {
-            percentage: clampPercent(percent),
+            percentage: isStartupProgress ? Math.round(normalizedPercent) : normalizedPercent,
             current_step: currentStep || 0,
             total_steps: totalSteps || 0,
             epoch: epoch || 0,
@@ -364,8 +619,12 @@
             store.isTraining = true;
         }
 
+        const messageType = String(progress.raw?.message_type || '').toLowerCase();
+        const progressType = resolveProgressTypeFromPayload(progress.raw);
+        const isStartupProgress = messageType === 'progress_update' && progressType.startsWith('init_');
+
         window.dispatchEvent(new CustomEvent('training-progress', { detail: merged }));
-        setTrainingState('running', { job_id: targetJobId, progress: merged });
+        setTrainingState(isStartupProgress ? 'starting' : 'running', { job_id: targetJobId, progress: merged });
     }
 
     function setStatus(statusText, severity) {
@@ -399,6 +658,9 @@
         }
 
         const percent = clampPercent(progress.percentage);
+        const messageType = String(progress.raw?.message_type || '').toLowerCase();
+        const progressType = resolveProgressTypeFromPayload(progress.raw);
+        const isStartupProgress = messageType === 'progress_update' && progressType.startsWith('init_');
         if (elements.bar) {
             const newWidth = `${percent}%`;
             if (elements.bar.style.width !== newWidth) {
@@ -408,7 +670,8 @@
         }
 
         // Only update text content if it has changed
-        const labelText = progress.label || 'Training updates';
+        const defaultLabel = isStartupProgress ? 'Initialising' : 'Training updates';
+        const labelText = progress.label || defaultLabel;
         if (elements.label && elements.label.textContent !== labelText) {
             elements.label.textContent = labelText;
         }
@@ -443,7 +706,7 @@
             elements.lr.textContent = lrText;
         }
 
-        setStatus('Running', progress.raw?.severity);
+        setStatus(isStartupProgress ? 'Initialising' : 'Running', progress.raw?.severity);
         syncTrainerProgress(progress, jobId);
     }
 
@@ -504,15 +767,18 @@
                 } else if (messageType === '_train_initial_msg' || messageType === 'train_status') {
                     setStatus('Running', payload.severity);
                     setTrainingState('running', { job_id: jobId });
-                    // Clear the "Training Starting" message when training actually starts
+                    // Remove startup alert message once training status updates arrive
                     const trainingStatusEl = document.getElementById('training-status');
-                    if (trainingStatusEl && trainingStatusEl.innerHTML.includes('Training Starting')) {
-                        trainingStatusEl.innerHTML = '';
-                        // Show progress bars only after clearing "Training Starting"
-                        const store = getTrainerStore();
-                        if (store) {
-                            store.showTrainingProgress = true;
+                    if (trainingStatusEl) {
+                        const startupAlert = trainingStatusEl.querySelector('.startup-progress-alert');
+                        if (startupAlert) {
+                            trainingStatusEl.innerHTML = '';
                         }
+                    }
+                    // Ensure the main progress card is visible once training begins
+                    const store = getTrainerStore();
+                    if (store) {
+                        store.showTrainingProgress = true;
                     }
                     // Update progress card with training data for both message types
                     if (messageType === '_train_initial_msg' || messageType === 'train_status') {
@@ -584,7 +850,7 @@
             } else if (info.status === 'disconnected') {
                 setStatus('Disconnected', 'secondary');
                 setTrainingState('idle', { job_id: activeJobId });
-                // Clear "Training Starting" message when connection is lost
+                // Clear any startup progress message when connection is lost
                 const trainingStatusEl = document.getElementById('training-status');
                 if (trainingStatusEl) {
                     trainingStatusEl.innerHTML = '';
@@ -599,6 +865,11 @@
             updateProgressCard(normalized, jobId);
         };
         trackListener('training_progress', trainingProgressHandler);
+
+        var startupProgressHandler = function(data) {
+            handleStartupProgressUpdate(data);
+        };
+        trackListener('startup_progress', startupProgressHandler);
 
         var validationCompleteHandler = function(_data) {};
         trackListener('validation_complete', validationCompleteHandler);
@@ -679,6 +950,7 @@
             registeredListeners = [];
         }
         setTrainingState('idle', { job_id: activeJobId });
+        clearStartupProgress();
         managerRegistered = false;
     };
 
@@ -696,6 +968,23 @@
             const data = await response.json();
 
             // If training is active, initialize the progress card
+            if (data.startup_progress && typeof data.startup_progress === 'object') {
+                startupStages.clear();
+                Object.entries(data.startup_progress).forEach(([key, stage]) => {
+                    if (!stage) return;
+                    startupStages.set(key, {
+                        label: stage.label || key,
+                        percent: clampPercent(stage.percent),
+                        current: Number(stage.current || 0),
+                        total: Number(stage.total || 0),
+                    });
+                });
+                if (startupStages.size > 0) {
+                    startupJobId = data.job_id || startupJobId;
+                    renderStartupProgress();
+                }
+            }
+
             if (data.status === 'running' || data.status === 'starting') {
                 const card = ensureCard();
                 if (card && data.progress) {
