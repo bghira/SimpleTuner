@@ -177,7 +177,9 @@ def _progress_from_mixin(raw: Mapping[str, Any]) -> ProgressPayload | None:
     payload = raw.get("message")
     if not isinstance(payload, Mapping):
         return None
-    label = payload.get("progress_type")
+    progress_type = payload.get("progress_type") or raw.get("progress_type")
+    readable = raw.get("readable_type") or payload.get("readable_type")
+    label = readable or progress_type
     current = payload.get("current_estimated_index")
     total = payload.get("total_elements")
     progress_value = payload.get("progress")
@@ -190,15 +192,19 @@ def _progress_from_mixin(raw: Mapping[str, Any]) -> ProgressPayload | None:
     if percent is None and isinstance(current, (int, float)) and isinstance(total, (int, float)) and total:
         percent = float(current) / float(total) * 100
     percent = _clamp_percent(percent)
-    extra = {
-        k: v
-        for k, v in payload.items()
-        if k not in {"progress_type", "current_estimated_index", "total_elements", "progress"}
-    }
+    if percent is not None:
+        percent = round(percent)
+    extra = {k: v for k, v in payload.items() if k not in {"current_estimated_index", "total_elements"}}
+    if readable:
+        extra.setdefault("readable_type", readable)
+    if progress_type is not None:
+        extra.setdefault("progress_type", progress_type)
+    current_value = _maybe_float(current) if current is not None else _maybe_float(raw.get("current_estimated_index"))
+    total_value = _maybe_float(total) if total is not None else _maybe_float(raw.get("total_elements"))
     return ProgressPayload(
         label=label,
-        current=None,
-        total=_maybe_float(total),
+        current=current_value,
+        total=total_value,
         percent=percent,
         extra=extra,
     )

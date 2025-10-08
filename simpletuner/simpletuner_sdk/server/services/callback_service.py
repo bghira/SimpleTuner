@@ -8,7 +8,7 @@ from threading import Lock
 from typing import Any, Iterable, Mapping, Sequence
 
 from ...api_state import APIState
-from .callback_events import CallbackCategory, CallbackEvent, CallbackSeverity
+from .callback_events import CallbackCategory, CallbackEvent, CallbackSeverity, ProgressPayload
 from .callback_registry import CallbackEventRegistry, default_callback_registry
 from .event_store import EventStore
 
@@ -248,6 +248,50 @@ class CallbackService:
             return None
         return max(0.0, min(100.0, numeric))
 
+    def _clear_startup_stages(self) -> None:
+        APIState.set_state("training_startup_stages", {})
+
+    def _update_startup_stage(
+        self,
+        progress_payload: ProgressPayload,
+        *,
+        job_changed: bool = False,
+    ) -> None:
+        extras = progress_payload.extra or {}
+        progress_type = extras.get("progress_type")
+        if not progress_type:
+            return
+
+        stages = APIState.get_state("training_startup_stages") or {}
+        if job_changed:
+            stages = {}
+
+        percent_value = self._clamp_percent(progress_payload.percent)
+        percent = int(round(percent_value)) if percent_value is not None else 0
+        current = progress_payload.current
+        if current is None:
+            current = extras.get("current_estimated_index")
+        total = progress_payload.total
+        if total is None:
+            total = extras.get("total_elements")
+
+        label = progress_payload.label or extras.get("readable_type") or progress_type
+        stage_state = {
+            "label": label,
+            "progress_type": progress_type,
+            "percent": percent,
+            "current": current or 0,
+            "total": total or 0,
+        }
+
+        # Remove stage once complete
+        if percent >= 100 or (stage_state["total"] and stage_state["current"] >= stage_state["total"]):
+            stages.pop(progress_type, None)
+        else:
+            stages[progress_type] = stage_state
+
+        APIState.set_state("training_startup_stages", stages)
+
     def _update_training_state(self, event: CallbackEvent) -> None:
         job_id = event.job_id
         message_type = (event.message_type or "").lower()
@@ -301,6 +345,9 @@ class CallbackService:
 
                 merged_progress = self._merge_progress_state(previous_progress, progress_state)
                 APIState.set_state("training_progress", merged_progress)
+
+                if message_type == "progress_update":
+                    self._update_startup_stage(progress_payload, job_changed=job_changed)
             return
 
         # Handle startup messages - these always mean training is starting/running
@@ -308,6 +355,7 @@ class CallbackService:
             APIState.set_state("training_status", "running" if message_type != "configure_webhook" else "starting")
             if job_id:
                 APIState.set_state("current_job_id", job_id)
+            self._clear_startup_stages()
             return
 
         # Handle train_status messages - derive status from payload, don't hardcode
@@ -340,6 +388,9 @@ class CallbackService:
                     previous_progress = {}
                 merged_progress = self._merge_progress_state(previous_progress, progress_state)
                 APIState.set_state("training_progress", merged_progress)
+
+            if status_from_payload and status_from_payload.lower() not in {"starting", "initializing"}:
+                self._clear_startup_stages()
             # DON'T return - fall through to severity checks below
 
         if message_type in {"training_complete", "run_complete"}:
@@ -350,11 +401,13 @@ class CallbackService:
                 APIState.set_state("training_progress", progress_state)
             APIState.set_state("training_status", "completed")
             APIState.set_state("current_job_id", None)
+            self._clear_startup_stages()
             return
 
         if message_type in {"exit", "fatal_error"} or event.severity in {CallbackSeverity.ERROR, CallbackSeverity.CRITICAL}:
             APIState.set_state("training_status", "error")
             APIState.set_state("current_job_id", None)
+            self._clear_startup_stages()
             return
 
         if event.category == CallbackCategory.ALERT and event.severity == CallbackSeverity.WARNING:
