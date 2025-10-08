@@ -11,13 +11,14 @@ class WebhookMixin:
     def set_webhook_handler(self, webhook_handler: WebhookHandler):
         self.webhook_handler = webhook_handler
 
-    def send_progress_update(self, type: str, progress: int, total: int, current: int):
+    def send_progress_update(self, type: str, progress: int, total: int, current: int, readable_type: str = None):
         if total == 1:
             return
         if int(current_rank) != 0:
             return
         progress = {
             "message_type": "progress_update",
+            "readable_type": readable_type,
             "message": {
                 "progress_type": type,
                 "progress": progress,
