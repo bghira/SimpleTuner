@@ -88,6 +88,7 @@ def _normalise_identifier(dataset: Dict[str, Any]) -> str:
 def compute_validations(
     datasets: List[Dict[str, Any]],
     blueprints: Optional[List[BackendBlueprint]] = None,
+    model_family: Optional[str] = None,
 ) -> List[ValidationMessage]:
     """Perform lightweight validation mirroring the UI logic."""
     validations: List[ValidationMessage] = []
@@ -146,15 +147,42 @@ def compute_validations(
                 )
             )
 
+    # Check if this is a video-only model
+    is_video_model = False
+    if model_family:
+        try:
+            from simpletuner.helpers.models.common import VideoModelFoundation
+            from simpletuner.helpers.models.registry import ModelRegistry
+
+            model_cls = ModelRegistry.get(model_family)
+            if model_cls:
+                is_video_model = issubclass(model_cls, VideoModelFoundation)
+        except Exception:
+            pass
+
+    # For video models, require at least one video dataset
+    # For image models, require at least one image dataset
     image_count = sum(1 for dataset in datasets if dataset.get("dataset_type") == "image")
-    if image_count == 0:
-        validations.append(
-            ValidationMessage(
-                field="datasets",
-                message="at least one image dataset is required",
-                level="error",
+    video_count = sum(1 for dataset in datasets if dataset.get("dataset_type") == "video")
+
+    if is_video_model:
+        if video_count == 0:
+            validations.append(
+                ValidationMessage(
+                    field="datasets",
+                    message="at least one video dataset is required for video models",
+                    level="error",
+                )
             )
-        )
+    else:
+        if image_count == 0:
+            validations.append(
+                ValidationMessage(
+                    field="datasets",
+                    message="at least one image dataset is required",
+                    level="error",
+                )
+            )
 
     text_embed_datasets = [dataset for dataset in datasets if dataset.get("dataset_type") == "text_embeds"]
     if not text_embed_datasets:
