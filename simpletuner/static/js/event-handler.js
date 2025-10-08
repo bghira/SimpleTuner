@@ -326,7 +326,7 @@ class EventHandler {
 
         // Calculate approximate event item height (including padding and margins)
         const eventItemHeight = 30; // Approximate height in pixels for each event item
-        
+
         // Calculate how many events can fit in the available space
         // Reserve some space for padding and scrollbar
         const availableHeight = containerHeight - 20; // Reserve 20px for padding/scrollbar
@@ -375,14 +375,15 @@ class EventHandler {
                 break;
 
             case 'progress_update':
-                if (event.message && event.message.progress_type) {
-                    this.updateProgressBar(
-                        event.message.progress_type,
-                        event.message.progress,
-                        event.message.total_elements
-                    );
-                }
-                break;
+            if (event.message && event.message.progress_type) {
+                this.updateProgressBar(
+                    event.message.progress_type,
+                    event.message.progress,
+                    event.message.total_elements,
+                    event.message.readable_type || event.message.label
+                );
+            }
+            break;
 
             case 'training_config':
                 if (event.total_num_steps) {
@@ -464,7 +465,15 @@ class EventHandler {
         // For progress updates, format the progress info
         else if (event.message_type === 'progress_update' && event.message) {
             const progress = event.message;
-            message = `${progress.progress_type}: ${progress.progress}/${progress.total_elements}`;
+            const label = progress.readable_type || progress.label || progress.progress_type || 'Progress';
+            const currentVal = progress.current_estimated_index ?? progress.progress ?? 0;
+            const totalVal = progress.total_elements ?? progress.total ?? 0;
+            const percent = totalVal ? Math.min(100, (currentVal / totalVal) * 100).toFixed(1) : progress.progress;
+            if (percent !== undefined && percent !== null && !Number.isNaN(Number(percent))) {
+                message = `${label}: ${currentVal}/${totalVal} (${percent}%)`;
+            } else {
+                message = `${label}: ${currentVal}/${totalVal}`;
+            }
         }
 
         return this.escapeHtml(message);
@@ -494,7 +503,7 @@ class EventHandler {
         }
     }
 
-    updateProgressBar(type, current, total) {
+    updateProgressBar(type, current, total, label) {
         // Update specific progress bars for different operations
         const safeType = type.replace(/[^a-z0-9]/gi, '-').toLowerCase();
         const progressId = `progress-${safeType}`;
@@ -515,7 +524,7 @@ class EventHandler {
 
         if (progressElement) {
             const percent = Math.min(100, (current / total) * 100);
-            const formattedType = type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            const formattedType = (label || type).replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
 
             progressElement.innerHTML = `
                 <label class="progress-label">${formattedType}</label>
