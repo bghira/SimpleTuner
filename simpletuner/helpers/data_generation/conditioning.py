@@ -464,6 +464,7 @@ class DataGenerator:
                 total = sum(len(v) for v in aspect_cache.values())
                 self.send_progress_update(
                     type="init_data_generation_started",
+                    readable_type="Data Generation in Progress",
                     progress=0,
                     total=total,
                     current=0,
@@ -514,6 +515,7 @@ class DataGenerator:
                                 last_report = stats["processed"] // self.webhook_progress_interval
                                 self.send_progress_update(
                                     type="data_generation",
+                                    readable_type="Data Generation in Progress",
                                     progress=int(stats["processed"] / stats["total"] * 100),
                                     total=stats["total"],
                                     current=stats["processed"],
@@ -544,6 +546,7 @@ class DataGenerator:
                     if hasattr(self, "webhook_handler") and self.webhook_handler:
                         self.send_progress_update(
                             type="data_generation_bucket_complete",
+                            readable_type=f"Data Generation (bucket {bucket}) completed",
                             progress=100,
                             total=stats["total"],
                             current=stats["processed"],
