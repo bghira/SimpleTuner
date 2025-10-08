@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from fastapi import status
 
-from simpletuner.helpers.publishing.huggingface import HubManager, LORA_SAFETENSORS_FILENAME
+from simpletuner.helpers.publishing.huggingface import LORA_SAFETENSORS_FILENAME, HubManager
 from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
 from simpletuner.simpletuner_sdk.server.services.publishing_service import PublishingService
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
@@ -233,11 +233,7 @@ class HuggingfaceService:
             task.future = future
 
             return {
-                "tasks": [{
-                    "task_id": task_id,
-                    "checkpoints": checkpoint_names,
-                    "mode": "batch"
-                }],
+                "tasks": [{"task_id": task_id, "checkpoints": checkpoint_names, "mode": "batch"}],
                 "count": 1,
                 "repo_id": repo_id,
                 "upload_mode": upload_mode,
@@ -260,11 +256,13 @@ class HuggingfaceService:
                 self._tasks[task_id] = task
                 future = self._executor.submit(self._upload_checkpoint_worker, task, config)
                 task.future = future
-                tasks.append({
-                    "task_id": task_id,
-                    "checkpoint": checkpoint_name,
-                    "branch": checkpoint_name,
-                })
+                tasks.append(
+                    {
+                        "task_id": task_id,
+                        "checkpoint": checkpoint_name,
+                        "branch": checkpoint_name,
+                    }
+                )
 
             return {
                 "tasks": tasks,
@@ -288,7 +286,8 @@ class HuggingfaceService:
             # Check if this is a LoRA model
             is_lora = "lora" in config.get("--model_type", config.get("model_type", "")).lower()
 
-            from huggingface_hub import HfApi, CommitOperationAdd, create_repo
+            from huggingface_hub import CommitOperationAdd, HfApi, create_repo
+
             api = HfApi()
 
             # Ensure the repository exists
@@ -302,7 +301,7 @@ class HuggingfaceService:
                         repo_id=task.repo_id,
                         repo_type="model",
                         exist_ok=True,
-                        private=config.get("--hub_private_repo", config.get("hub_private_repo", False))
+                        private=config.get("--hub_private_repo", config.get("hub_private_repo", False)),
                     )
                     task.message = f"Created repository {task.repo_id}"
                     self._send_callback(task, "progress")
@@ -311,7 +310,9 @@ class HuggingfaceService:
                     logger.error(f"Failed to create repository: {error_msg}")
                     # Check if it's a permission issue
                     if "403" in error_msg or "forbidden" in error_msg.lower():
-                        raise Exception(f"Permission denied: Cannot create repository {task.repo_id}. Please check your HuggingFace token permissions.")
+                        raise Exception(
+                            f"Permission denied: Cannot create repository {task.repo_id}. Please check your HuggingFace token permissions."
+                        )
                     elif "401" in error_msg or "unauthorized" in error_msg.lower():
                         raise Exception(f"Authentication failed: Please check your HuggingFace token is valid.")
                     # For other errors, log but continue - the repo might already exist
@@ -440,7 +441,7 @@ class HuggingfaceService:
         """Perform the actual upload using HubManager."""
         # For manual checkpoint uploads, always use direct upload without model card
         # This avoids all the complexity of mocking the training environment
-        from huggingface_hub import upload_folder, create_branch, create_repo, HfApi
+        from huggingface_hub import HfApi, create_branch, create_repo, upload_folder
 
         # First, ensure the repository exists
         api = HfApi()
@@ -456,7 +457,7 @@ class HuggingfaceService:
                     repo_id=task.repo_id,
                     repo_type="model",
                     exist_ok=True,
-                    private=config.get("--hub_private_repo", config.get("hub_private_repo", False))
+                    private=config.get("--hub_private_repo", config.get("hub_private_repo", False)),
                 )
                 task.message = f"Created repository {task.repo_id}"
                 self._send_callback(task, "progress")
@@ -465,7 +466,9 @@ class HuggingfaceService:
                 logger.error(f"Failed to create repository: {error_msg}")
                 # Check if it's a permission issue
                 if "403" in error_msg or "forbidden" in error_msg.lower():
-                    raise Exception(f"Permission denied: Cannot create repository {task.repo_id}. Please check your HuggingFace token permissions.")
+                    raise Exception(
+                        f"Permission denied: Cannot create repository {task.repo_id}. Please check your HuggingFace token permissions."
+                    )
                 elif "401" in error_msg or "unauthorized" in error_msg.lower():
                     raise Exception(f"Authentication failed: Please check your HuggingFace token is valid.")
                 # For other errors, log but continue - the repo might already exist
@@ -477,6 +480,7 @@ class HuggingfaceService:
         if task.subfolder and is_lora:
             # For LoRA models with subfolders, we upload files directly
             from huggingface_hub import HfApi, upload_file
+
             api = HfApi()
 
             task.progress = 25
@@ -497,6 +501,7 @@ class HuggingfaceService:
             # Create branch if needed
             if task.branch:
                 from huggingface_hub import create_branch
+
                 try:
                     create_branch(
                         repo_id=task.repo_id,
@@ -583,6 +588,7 @@ class HuggingfaceService:
 
                 # Monkey-patch tqdm to capture progress
                 import tqdm
+
                 original_tqdm = tqdm.tqdm
                 parent_service = self
                 captured_bars = []
@@ -617,18 +623,27 @@ class HuggingfaceService:
 
                 # Replace tqdm temporarily
                 tqdm.tqdm = ProgressCaptureTqdm
-                if hasattr(tqdm, 'std'):
+                if hasattr(tqdm, "std"):
                     tqdm.std.tqdm = ProgressCaptureTqdm
                 # Also patch auto module if it exists
-                if hasattr(tqdm, 'auto'):
+                if hasattr(tqdm, "auto"):
                     tqdm.auto.tqdm = ProgressCaptureTqdm
 
                 try:
                     # Count files for initial message
                     from pathlib import Path
+
                     upload_path_obj = Path(upload_path)
-                    file_count = sum(1 for f in upload_path_obj.rglob("*") if f.is_file() and not any(f.match(p) for p in ["*.pyc", "__pycache__", "*.tmp", "*.log", ".git"]))
-                    total_size = sum(f.stat().st_size for f in upload_path_obj.rglob("*") if f.is_file() and not any(f.match(p) for p in ["*.pyc", "__pycache__", "*.tmp", "*.log", ".git"]))
+                    file_count = sum(
+                        1
+                        for f in upload_path_obj.rglob("*")
+                        if f.is_file() and not any(f.match(p) for p in ["*.pyc", "__pycache__", "*.tmp", "*.log", ".git"])
+                    )
+                    total_size = sum(
+                        f.stat().st_size
+                        for f in upload_path_obj.rglob("*")
+                        if f.is_file() and not any(f.match(p) for p in ["*.pyc", "__pycache__", "*.tmp", "*.log", ".git"])
+                    )
 
                     task.progress = 50
                     task.message = f"Starting upload of {file_count} files ({self._format_size(total_size)})..."
@@ -641,15 +656,15 @@ class HuggingfaceService:
                         path_in_repo=path_in_repo,
                         commit_message=f"Upload {task.checkpoint_name} checkpoint",
                         revision=task.branch if task.branch else None,
-                        ignore_patterns=["*.pyc", "__pycache__", "*.tmp", "*.log", ".git"]
+                        ignore_patterns=["*.pyc", "__pycache__", "*.tmp", "*.log", ".git"],
                     )
 
                 finally:
                     # Restore original tqdm
                     tqdm.tqdm = original_tqdm
-                    if hasattr(tqdm, 'std'):
+                    if hasattr(tqdm, "std"):
                         tqdm.std.tqdm = original_tqdm
-                    if hasattr(tqdm, 'auto'):
+                    if hasattr(tqdm, "auto"):
                         tqdm.auto.tqdm = original_tqdm
 
             except Exception as e:
@@ -700,7 +715,6 @@ class HuggingfaceService:
 
         except Exception as e:
             logger.error(f"Failed to send callback: {str(e)}")
-
 
     def get_task_status(self, task_id: str) -> Dict[str, Any]:
         """Get status of an upload task."""
@@ -753,7 +767,7 @@ class HuggingfaceService:
 
     def _format_size(self, size_bytes: int) -> str:
         """Format byte size to human readable format."""
-        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+        for unit in ["B", "KB", "MB", "GB", "TB"]:
             if size_bytes < 1024.0:
                 return f"{size_bytes:.1f} {unit}"
             size_bytes /= 1024.0
