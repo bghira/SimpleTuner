@@ -65,7 +65,10 @@
 
     <!-- Input Field -->
     {% if custom_component == 'dataset_config_select' %}
-        <div class="dataset-dropdown dropdown w-100" data-field-id="{{ field_id }}">
+        <div class="dataset-dropdown dropdown w-100"
+             data-field-id="{{ field_id }}"
+             data-selected-env="{{ field.selected_environment or '' }}"
+             data-selected-path="{{ field.selected_path or '' }}">
             <input type="hidden" id="{{ field_id }}" name="{{ field_name }}" value="{{ field_value }}"{% if field_required %} data-required="true"{% endif %}>
             <button class="btn btn-outline-secondary w-100 dropdown-toggle text-start dataset-toggle"
                     type="button"
@@ -100,34 +103,105 @@
                 if (!window.__datasetDropdownInit) {
                     window.__datasetDropdownInit = true;
 
-                    window.__setDatasetSelection = function(dropdown, env, path, value) {
+                    const updateDropdownLabel = function(dropdown, value) {
+                        if (!dropdown) return;
+                        const toggle = dropdown.querySelector('.dataset-toggle-label');
+                        if (!toggle) return;
+
+                        const hiddenInput = dropdown.querySelector('input[type="hidden"]');
+                        const fallbackValue = value != null ? value : hiddenInput ? hiddenInput.value : '';
+
+                        const env = dropdown.dataset.selectedEnv || dropdown.dataset.defaultEnv || '';
+                        const path = dropdown.dataset.selectedPath || dropdown.dataset.defaultPath || '';
+
+                        if (env && path) {
+                            toggle.innerHTML = `
+                                <span class="dataset-env">${env}</span>
+                                <span class="dataset-separator">|</span>
+                                <span class="dataset-path">${path}</span>
+                            `;
+                        } else if (path) {
+                            toggle.innerHTML = `
+                                <span class="dataset-path">${path}</span>
+                            `;
+                        } else if (fallbackValue) {
+                            toggle.textContent = fallbackValue;
+                        } else {
+                            toggle.textContent = 'Select dataset configuration';
+                        }
+                    };
+
+                    const syncDropdownDefaults = function(dropdown, env, path) {
+                        if (!dropdown) return;
+                        if (env && !dropdown.dataset.defaultEnv) {
+                            dropdown.dataset.defaultEnv = env;
+                        }
+                        if (path && !dropdown.dataset.defaultPath) {
+                            dropdown.dataset.defaultPath = path;
+                        }
+                    };
+
+                    const applySelection = function(dropdown, env, path, value) {
                         if (!dropdown) return;
                         const hiddenInput = dropdown.querySelector('input[type="hidden"]');
-                        const toggle = dropdown.querySelector('.dataset-toggle-label');
-                        if (hiddenInput) {
-                            hiddenInput.value = value || '';
+                        if (hiddenInput && typeof value === 'string') {
+                            hiddenInput.value = value;
                         }
-                        if (toggle) {
-                            if (env && path) {
-                                toggle.innerHTML = `
-                                    <span class="dataset-env">${env}</span>
-                                    <span class="dataset-separator">|</span>
-                                    <span class="dataset-path">${path}</span>
-                                `;
-                            } else {
-                                toggle.textContent = 'Select dataset configuration';
-                            }
+                        if (env && path) {
+                            dropdown.dataset.selectedEnv = env;
+                            dropdown.dataset.selectedPath = path;
                         }
-
+                        syncDropdownDefaults(dropdown, env, path);
+                        const targetValue = value != null ? value : hiddenInput ? hiddenInput.value : '';
+                        if (targetValue) {
+                            dropdown.dataset.lastValue = targetValue;
+                        }
                         dropdown.querySelectorAll('.dataset-option').forEach(function(item) {
                             const itemValue = item.dataset.value || '';
-                            if (itemValue === value) {
+                            if (itemValue === targetValue) {
                                 item.classList.add('active');
                             } else {
                                 item.classList.remove('active');
                             }
                         });
+                        updateDropdownLabel(dropdown, value);
                     };
+
+                    window.__setDatasetSelection = applySelection;
+
+                    window.__refreshDatasetDropdowns = function() {
+                        document.querySelectorAll('.dataset-dropdown').forEach(function(dropdown) {
+                            const hiddenInput = dropdown.querySelector('input[type="hidden"]');
+                            if (!hiddenInput) {
+                                return;
+                            }
+                            const currentValue = hiddenInput.value;
+                            const storedValue = dropdown.dataset.lastValue || '';
+                            const valueToApply = currentValue || storedValue;
+                            const env = dropdown.dataset.selectedEnv || dropdown.dataset.defaultEnv || '';
+                            const path = dropdown.dataset.selectedPath || dropdown.dataset.defaultPath || '';
+                            applySelection(dropdown, env, path, valueToApply);
+                        });
+                    };
+
+                    document.addEventListener('htmx:afterSwap', function() {
+                        window.__refreshDatasetDropdowns();
+                    });
+
+                    document.addEventListener('htmx:afterSettle', function() {
+                        window.__refreshDatasetDropdowns();
+                    });
+
+                    document.querySelectorAll('.dataset-dropdown').forEach(function(dropdown) {
+                        const hiddenInput = dropdown.querySelector('input[type="hidden"]');
+                        if (hiddenInput && !hiddenInput.dataset.datasetObserver) {
+                            const observer = new MutationObserver(function() {
+                                updateDropdownLabel(dropdown, hiddenInput.value);
+                            });
+                            observer.observe(hiddenInput, { attributes: true, attributeFilter: ['value'] });
+                            hiddenInput.dataset.datasetObserver = 'true';
+                        }
+                    });
 
                     document.addEventListener('click', function(event) {
                         const optionEl = event.target.closest('.dataset-option');
@@ -144,7 +218,7 @@
                         const path = optionEl.dataset.path || '';
                         const value = optionEl.dataset.value || '';
 
-                        window.__setDatasetSelection(dropdown, env, path, value);
+                        applySelection(dropdown, env, path, value);
 
                         const toggleButton = dropdown.querySelector('.dataset-toggle');
                         if (toggleButton && window.bootstrap && window.bootstrap.Dropdown) {
@@ -157,35 +231,26 @@
                         }
                     });
 
-                    document.addEventListener('htmx:afterSwap', function() {
-                        document.querySelectorAll('.dataset-dropdown').forEach(function(dropdown) {
-                            const hiddenInput = dropdown.querySelector('input[type="hidden"]');
-                            const currentValue = hiddenInput ? hiddenInput.value : '';
-                            const option = currentValue
-                                ? dropdown.querySelector(`.dataset-option[data-value="${CSS.escape(currentValue)}"]`)
-                                : null;
-                            if (option) {
-                                window.__setDatasetSelection(dropdown, option.dataset.environment, option.dataset.path, currentValue);
-                            } else {
-                                window.__setDatasetSelection(dropdown, '', '', '');
-                            }
-                        });
-                    });
                 }
 
-                const dropdown = document.querySelector('.dataset-dropdown[data-field-id="{{ field_id }}"]');
-                if (dropdown) {
+                document.querySelectorAll('.dataset-dropdown').forEach(function(dropdown) {
                     const hiddenInput = dropdown.querySelector('input[type="hidden"]');
                     const currentValue = hiddenInput ? hiddenInput.value : '';
                     const optionEl = currentValue
                         ? dropdown.querySelector(`.dataset-option[data-value="${CSS.escape(currentValue)}"]`)
                         : null;
-                    if (optionEl) {
-                        window.__setDatasetSelection(dropdown, optionEl.dataset.environment, optionEl.dataset.path, currentValue);
-                    } else {
-                        window.__setDatasetSelection(dropdown, '', '', '');
+                    const initialEnv = optionEl ? optionEl.dataset.environment : dropdown.dataset.selectedEnv || '';
+                    const initialPath = optionEl ? optionEl.dataset.path : dropdown.dataset.selectedPath || '';
+                    if (currentValue) {
+                        dropdown.dataset.lastValue = currentValue;
                     }
-                }
+                    if (!dropdown.dataset.defaultEnv && initialEnv && initialPath) {
+                        dropdown.dataset.defaultEnv = initialEnv;
+                        dropdown.dataset.defaultPath = initialPath;
+                    }
+                    const valueToApply = currentValue || dropdown.dataset.lastValue || '';
+                    window.__setDatasetSelection(dropdown, initialEnv, initialPath, valueToApply);
+                });
             })();
         </script>
 
