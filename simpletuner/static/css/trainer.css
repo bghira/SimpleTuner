@@ -1136,6 +1136,20 @@ optgroup option {
     font-size: 0.75rem;
 }
 
+.startup-progress-alert .startup-progress-list {
+    margin-top: var(--spacing-xs);
+}
+
+.startup-progress-alert .progress {
+    height: 6px;
+    background-color: rgba(59, 130, 246, 0.15);
+    border-radius: var(--radius-sm);
+}
+
+.startup-progress-alert .startup-progress-item:last-child {
+    margin-bottom: 0;
+}
+
 /* Mobile sidebar toggle button */
 .sidebar-toggle {
     display: none;
