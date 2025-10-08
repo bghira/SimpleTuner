@@ -486,7 +486,7 @@ def cmd_server(args) -> int:
     host = getattr(args, "host", "0.0.0.0")
     port = getattr(args, "port", None)  # Will be determined by mode
     reload = getattr(args, "reload", False)
-    mode = getattr(args, "mode", "trainer")
+    mode = getattr(args, "mode", "unified")
 
     # Determine port based on mode if not specified
     if port is None:
@@ -508,7 +508,7 @@ def cmd_server(args) -> int:
 
         # Map mode string to enum
         server_mode = {"trainer": ServerMode.TRAINER, "callback": ServerMode.CALLBACK, "unified": ServerMode.UNIFIED}.get(
-            mode, ServerMode.TRAINER
+            mode, ServerMode.UNIFIED
         )
 
         # Create app with specified mode
@@ -631,7 +631,7 @@ Examples:
     server_parser.add_argument(
         "--mode",
         choices=["trainer", "callback", "unified"],
-        default="trainer",
+        default="unified",
         help="Server mode: trainer (8001), callback (8002), or unified (both in single process)",
     )
     server_parser.add_argument(
