@@ -406,9 +406,40 @@ class VAECache(WebhookMixin):
                     f"Found video latent of shape: {original_shape} (B, F, C, H, W) to (B, C, F, H, W) {samples.shape}"
                 )
 
-            num_frames = samples.shape[1]
+            num_frames = samples.shape[2]
             if self.num_video_frames is not None and self.num_video_frames != num_frames:
                 samples = samples[:, :, : self.num_video_frames, :, :]
+
+            spatial_ratio = getattr(self.vae, "spatial_compression_ratio", None)
+            if spatial_ratio and spatial_ratio > 1:
+                # The encoder expects latent spatial dims to be divisible by its stride (typically 2).
+                # Ensure that (height / spatial_ratio) and (width / spatial_ratio) remain divisible by 2
+                # by trimming down in spatial_ratio-sized steps when necessary.
+                height = samples.shape[-2]
+                width = samples.shape[-1]
+
+                def _align_dimension(dim: int) -> int:
+                    aligned = (dim // spatial_ratio) * spatial_ratio
+                    min_dim = spatial_ratio * 2  # keep at least two stride steps
+                    if aligned < min_dim:
+                        # Not enough room to align; fall back to original (will likely error later)
+                        return dim
+                    while aligned >= min_dim and ((aligned // spatial_ratio) % 2 != 0):
+                        aligned -= spatial_ratio
+                    return max(min_dim, aligned)
+
+                target_height = _align_dimension(height)
+                target_width = _align_dimension(width)
+
+                if target_height != height or target_width != width:
+                    logger.warning(
+                        "Adjusted video frames from (%s, %s) to (%s, %s) to satisfy VAE stride requirements",
+                        height,
+                        width,
+                        target_height,
+                        target_width,
+                    )
+                    samples = samples[..., :target_height, :target_width]
         elif StateTracker.get_model_family() in ["hunyuan-video", "mochi"]:
             raise Exception(f"{StateTracker.get_model_family()} not supported for VAE Caching yet.")
         logger.debug(f"Final samples shape: {samples.shape}")
@@ -655,13 +686,21 @@ class VAECache(WebhookMixin):
                 for filepath, processed_image_array, metadata in batch_results:
                     try:
                         # Convert back to PIL for TrainingSample compatibility
+                        prepared_input = processed_image_array
                         if isinstance(processed_image_array, np.ndarray):
-                            pil_image = Image.fromarray(processed_image_array)
+                            if processed_image_array.ndim == 3:
+                                prepared_input = Image.fromarray(processed_image_array)
+                            elif processed_image_array.ndim == 4:
+                                # Leave video tensors as-is; TrainingSample handles multi-frame arrays.
+                                prepared_input = processed_image_array
+                            else:
+                                logger.warning(f"Skipping {filepath}: unexpected array shape {processed_image_array.shape}")
+                                continue
                         else:
-                            pil_image = processed_image_array
+                            prepared_input = processed_image_array
 
                         result = prepare_sample(
-                            image=pil_image,
+                            image=prepared_input,
                             data_backend_id=self.id,
                             filepath=filepath,
                             model=self.model,
@@ -941,9 +980,10 @@ class VAECache(WebhookMixin):
             total_count = len([item for sublist in aspect_bucket_cache.values() for item in sublist])
             self.send_progress_update(
                 type="init_cache_vae_processing_started",
+                readable_type="VAE Cache initialising",
                 progress=int(len(processed_images) / max(1, total_count) * 100),
                 total=total_count,
-                current=len(processed_images),
+                current=0,
             )
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -1001,6 +1041,7 @@ class VAECache(WebhookMixin):
                                 last_reported_index = statistics["total"] // self.webhook_progress_interval
                                 self.send_progress_update(
                                     type="vaecache",
+                                    readable_type=f"VAE Caching (bucket {bucket})",
                                     progress=int(statistics["total"] / len(relevant_files) * 100),
                                     total=len(relevant_files),
                                     current=statistics["total"],
@@ -1064,6 +1105,7 @@ class VAECache(WebhookMixin):
                             progress=100,
                             total=statistics["total"],
                             current=statistics["total"],
+                            readable_type=f"VAE Caching (bucket {bucket}) completed",
                         )
                     self.debug_log("Completed process_buckets, all futures have been returned.")
                 except Exception as e:
