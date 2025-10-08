@@ -391,7 +391,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             arg_name="--aspect_bucket_rounding",
             ui_label="Aspect Bucket Rounding Precision",
             field_type=FieldType.NUMBER,
-            tab="data",
+            tab="basic",
             section="image_processing",
             subsection="aspect_buckets",
             default_value=2,
