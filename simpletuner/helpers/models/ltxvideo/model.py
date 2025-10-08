@@ -231,7 +231,7 @@ class LTXVideo(VideoModelFoundation):
             )
         if self.config.aspect_bucket_alignment != 64:
             logger.warning(
-                "{self.NAME} requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
+                f"{self.NAME} requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
             )
             self.config.aspect_bucket_alignment = 64
 
