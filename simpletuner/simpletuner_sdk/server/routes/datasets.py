@@ -110,7 +110,18 @@ async def get_dataset_plan() -> DatasetPlanResponse:
         validation = ValidationMessage(field="datasets", message=str(exc), level="error")
         return DatasetPlanResponse(datasets=[], validations=[validation], source="default", updated_at=None)
 
-    validations = compute_validations(datasets, get_dataset_blueprints())
+    # Get model_family from active config
+    model_family = None
+    try:
+        from simpletuner.simpletuner_sdk.server.services.configs_service import ConfigsService
+
+        configs_service = ConfigsService()
+        active_config = configs_service.get_active_config()
+        model_family = active_config["config"].get("model_family") or active_config["config"].get("--model_family")
+    except Exception:
+        pass
+
+    validations = compute_validations(datasets, get_dataset_blueprints(), model_family=model_family)
     return DatasetPlanResponse(
         datasets=datasets,
         validations=validations,
@@ -135,7 +146,18 @@ async def test_dataset_connection(request: DatasetConnectionRequest) -> Dict[str
 def _persist_plan(payload: DatasetPlanPayload) -> DatasetPlanResponse:
     datasets: List[Dict[str, Any]] = [entry.model_dump(exclude_none=True) for entry in payload.datasets]
 
-    validations = compute_validations(datasets, get_dataset_blueprints())
+    # Get model_family from active config
+    model_family = None
+    try:
+        from simpletuner.simpletuner_sdk.server.services.configs_service import ConfigsService
+
+        configs_service = ConfigsService()
+        active_config = configs_service.get_active_config()
+        model_family = active_config["config"].get("model_family") or active_config["config"].get("--model_family")
+    except Exception:
+        pass
+
+    validations = compute_validations(datasets, get_dataset_blueprints(), model_family=model_family)
     errors = [message for message in validations if message.level == "error"]
     if errors:
         raise HTTPException(
@@ -228,8 +250,19 @@ async def create_dataset(dataset: Dict[str, Any]) -> Dict[str, Any]:
     # Add dataset to plan
     datasets.append(dataset)
 
+    # Get model_family from active config
+    model_family = None
+    try:
+        from simpletuner.simpletuner_sdk.server.services.configs_service import ConfigsService
+
+        configs_service = ConfigsService()
+        active_config = configs_service.get_active_config()
+        model_family = active_config["config"].get("model_family") or active_config["config"].get("--model_family")
+    except Exception:
+        pass
+
     # Validate the updated plan
-    validations = compute_validations(datasets, get_dataset_blueprints())
+    validations = compute_validations(datasets, get_dataset_blueprints(), model_family=model_family)
     errors = [v for v in validations if v.level == "error"]
 
     if errors:
@@ -269,8 +302,19 @@ async def update_dataset(dataset_id: str, dataset: Dict[str, Any]) -> Dict[str, 
     dataset["id"] = dataset_id
     datasets[dataset_index] = dataset
 
+    # Get model_family from active config
+    model_family = None
+    try:
+        from simpletuner.simpletuner_sdk.server.services.configs_service import ConfigsService
+
+        configs_service = ConfigsService()
+        active_config = configs_service.get_active_config()
+        model_family = active_config.get("model_family") or active_config.get("--model_family")
+    except Exception:
+        pass
+
     # Validate the updated plan
-    validations = compute_validations(datasets, get_dataset_blueprints())
+    validations = compute_validations(datasets, get_dataset_blueprints(), model_family=model_family)
     errors = [v for v in validations if v.level == "error"]
 
     if errors:
