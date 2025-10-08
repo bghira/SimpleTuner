@@ -42,10 +42,10 @@ function getPayload() {
 // Function to update event list based on received events using rotation system
 function updateEventList(events) {
     const eventList = document.getElementById('eventList');
-    
+
     // Calculate dynamic max events based on container height
     const maxEvents = calculateDynamicMaxEvents(eventList);
-    
+
     events.forEach(event => {
         if (!event.message) return; // Skip events without a message
 
@@ -98,7 +98,7 @@ function calculateDynamicMaxEvents(eventList) {
 
     // Calculate approximate event item height (including padding and margins)
     const eventItemHeight = 30; // Approximate height in pixels for each event item
-    
+
     // Calculate how many events can fit in the available space
     // Reserve some space for padding and scrollbar
     const availableHeight = containerHeight - 20; // Reserve 20px for padding/scrollbar
