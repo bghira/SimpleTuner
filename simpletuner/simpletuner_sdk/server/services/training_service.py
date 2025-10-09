@@ -309,8 +309,16 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
 
     required_args = ["--model_family", "--optimizer", "--data_backend_config", "--output_dir", "--model_type"]
     for arg_name in required_args:
+        alias = arg_name.lstrip("-")
+        explicit_present = isinstance(config_dict, dict) and (arg_name in config_dict or alias in config_dict)
         value = complete_config.get(arg_name)
         if value in (None, ""):
+            if explicit_present:
+                explicit_value = config_dict.get(arg_name)
+                if explicit_value in (None, ""):
+                    explicit_value = config_dict.get(alias)
+                complete_config[arg_name] = explicit_value
+                continue
             fallback = (
                 _get_with_alias(config_dict, arg_name)
                 or _get_with_alias(existing_config_cli, arg_name)
@@ -499,6 +507,28 @@ def validate_training_config(
             )
     except ValueError:
         errors.append("Warmup steps must be a whole number.")
+
+    def _read_required(key: str) -> Any:
+        alias = key.lstrip("-")
+        for candidate in (source, complete_config):
+            if not isinstance(candidate, dict):
+                continue
+            if key in candidate:
+                return candidate.get(key)
+            if alias in candidate:
+                return candidate.get(alias)
+        return None
+
+    required_text_fields = {
+        "--output_dir": "Output directory is required.",
+        "--tracker_project_name": "Model name is required.",
+    }
+    for _field, message in required_text_fields.items():
+        value = _read_required(_field)
+        if isinstance(value, str):
+            value = value.strip()
+        if not value:
+            errors.append(message)
 
     return TrainingValidationResult(
         errors=errors,
