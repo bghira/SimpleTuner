@@ -70,7 +70,7 @@ class APIState:
         cls._ensure_state_file()
         with open(cls.state_file, "w") as f:
             json.dump(cls.state, f)
-            logger.info(f"Saved state to {cls.state_file}: {cls.state}")
+            logger.debug(f"Saved state to {cls.state_file}: {cls.state}")
 
     @classmethod
     def get_state(cls, key=None):
