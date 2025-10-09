@@ -5,6 +5,8 @@ env_to_args_map = {
     "DATALOADER_CONFIG": "--data_backend_config",
     "ASPECT_BUCKET_ROUNDING": "--aspect_bucket_rounding",
     "TRAINING_SEED": "--seed",
+    "ACCELERATE_CONFIG_PATH": "--accelerate_config",
+    "ACCELERATE_EXTRA_ARGS": "--accelerate_extra_args",
     "USE_EMA": "--use_ema",
     "USE_XFORMERS": "--enable_xformers_memory_efficient_attention",
     "MINIMUM_RESOLUTION": "--minimum_image_size",
