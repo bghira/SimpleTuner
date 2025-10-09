@@ -1069,7 +1069,13 @@ class ConfigsService:
             "--accelerator_cache_clear_interval",
         }
 
-        always_include_fields = {"--model_flavour", "--optimizer_config"}
+        always_include_fields = {
+            "--model_flavour",
+            "--optimizer_config",
+            "--output_dir",
+            "--tracker_project_name",
+            "--tracker_run_name",
+        }
 
         for key, value in form_data.items():
             if key in excluded_fields:
@@ -1124,6 +1130,8 @@ class ConfigsService:
                 value = non_empty[-1] if non_empty else ""
 
             converted_value = ConfigsService.convert_value_by_type(value, field_type, default_value)
+            if config_key in always_include_fields and value in (None, ""):
+                converted_value = "" if value in (None, "") else converted_value
 
             # Skip if the final converted value is empty (unless it's a field that must always be included)
             if config_key not in always_include_fields and config_key not in numeric_fields:
