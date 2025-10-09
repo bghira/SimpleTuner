@@ -6,10 +6,14 @@ import logging
 import math
 import os
 import random
+import shlex
 import shutil
+import signal
+import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 from typing import Dict, Optional
 
 import huggingface_hub
@@ -18,6 +22,7 @@ from accelerate.logging import get_logger
 import wandb
 from simpletuner.helpers import log_format  # noqa
 from simpletuner.helpers.caching.memory import reclaim_memory
+from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
 from simpletuner.helpers.configuration.loader import load_config
 from simpletuner.helpers.data_backend.factory import BatchFetcher, configure_multi_databackend, random_dataloader_iterator
 from simpletuner.helpers.models.all import model_families
@@ -42,6 +47,7 @@ from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation import Validation, prepare_validation_prompt_list
 from simpletuner.helpers.training.wrappers import unwrap_model
 from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
+from simpletuner.simpletuner_sdk.api_state import APIState
 
 logger = get_logger("SimpleTuner", log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
@@ -131,6 +137,11 @@ class Trainer:
         job_id: str = None,
         exit_on_error: bool = False,
     ):
+        if job_id in (None, ""):
+            job_id_env = os.environ.get("SIMPLETUNER_JOB_ID")
+            if job_id_env:
+                job_id = job_id_env
+
         self.accelerator = None
         self.model = None
         self.checkpoint_manager = None
@@ -195,6 +206,26 @@ class Trainer:
 
         if self.config is None:
             raise ValueError("Training configuration could not be parsed")
+
+        accelerate_config_path = getattr(self.config, "accelerate_config", None)
+        if accelerate_config_path not in (None, "", "None"):
+            os.environ["ACCELERATE_CONFIG_PATH"] = os.path.expanduser(str(accelerate_config_path))
+
+        accelerate_extra_args = getattr(self.config, "accelerate_extra_args", None)
+        if accelerate_extra_args not in (None, ""):
+            os.environ["ACCELERATE_EXTRA_ARGS"] = str(accelerate_extra_args)
+
+        num_processes_value = getattr(self.config, "num_processes", None)
+        if num_processes_value not in (None, ""):
+            os.environ["TRAINING_NUM_PROCESSES"] = str(num_processes_value)
+
+        num_machines_value = getattr(self.config, "num_machines", None)
+        if num_machines_value not in (None, ""):
+            os.environ["TRAINING_NUM_MACHINES"] = str(num_machines_value)
+
+        dynamo_backend_value = getattr(self.config, "dynamo_backend", None)
+        if dynamo_backend_value not in (None, ""):
+            os.environ["TRAINING_DYNAMO_BACKEND"] = str(dynamo_backend_value)
 
         report_to_value = getattr(self.config, "report_to", None)
         if report_to_value is None or (isinstance(report_to_value, str) and not report_to_value.strip()):
@@ -2279,7 +2310,7 @@ class Trainer:
                             "final_epoch": self.config.num_train_epochs,
                             **current_state,
                         }
-                        self._send_webhook_raw(structured_data=structured_data, message_type="train_status")
+                        self._send_webhook_raw(structured_data=structured_data, message_type="training_status")
 
                     if self.config.checkpointing_steps and self.state["global_step"] % self.config.checkpointing_steps == 0:
                         self._send_webhook_msg(
@@ -2297,7 +2328,7 @@ class Trainer:
                             "final_epoch": self.config.num_train_epochs,
                             **current_state,
                         }
-                        self._send_webhook_raw(structured_data=structured_data, message_type="train_status")
+                        self._send_webhook_raw(structured_data=structured_data, message_type="training_status")
                         if self.accelerator.is_main_process and self.config.checkpoints_total_limit is not None:
                             # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
                             self.checkpoint_state_cleanup(
@@ -2326,7 +2357,7 @@ class Trainer:
                             "final_epoch": self.config.num_train_epochs,
                             **current_state,
                         }
-                        self._send_webhook_raw(structured_data=structured_data, message_type="train_status")
+                        self._send_webhook_raw(structured_data=structured_data, message_type="training_status")
                         if self.accelerator.is_main_process and self.config.checkpoints_rolling_total_limit is not None:
                             # _before_ saving state, check if this save would set us over the `checkpoints_rolling_total_limit`
                             self.checkpoint_state_cleanup(
@@ -2566,6 +2597,313 @@ def run_trainer_job(config):
         should_abort_callable = config_payload.pop("should_abort", None)
     else:
         config_payload = config
+
+    def _extract_value(mapping: Dict[str, object], *keys: str, default=None):
+        for key in keys:
+            if key in mapping:
+                value = mapping[key]
+                if isinstance(value, str) and value.strip() == "":
+                    continue
+                if value not in (None, "==SUPPRESS=="):
+                    return value
+        return default
+
+    def _safe_int(value: object, fallback: int) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return fallback
+
+    accelerate_config_path = None
+    accelerate_extra_args = None
+    requested_processes = None
+    requested_machines = None
+    requested_dynamo_backend = None
+    mixed_precision_value = "bf16"
+    main_process_ip_value = "127.0.0.1"
+    main_process_port_value = 29500
+    machine_rank_value = 0
+    same_network_value = True
+
+    if isinstance(config_payload, dict):
+        accelerate_config_path = _extract_value(config_payload, "accelerate_config", "--accelerate_config")
+        accelerate_extra_args = _extract_value(
+            config_payload,
+            "accelerate_extra_args",
+            "--accelerate_extra_args",
+        )
+        requested_processes = _extract_value(config_payload, "num_processes", "--num_processes")
+        requested_machines = _extract_value(config_payload, "num_machines", "--num_machines")
+        requested_dynamo_backend = _extract_value(
+            config_payload,
+            "dynamo_backend",
+            "--dynamo_backend",
+            "training_dynamo_backend",
+            "--training_dynamo_backend",
+        )
+        mixed_precision_value = _extract_value(
+            config_payload, "mixed_precision", "--mixed_precision", default=mixed_precision_value
+        )
+        main_process_ip_value = _extract_value(
+            config_payload,
+            "main_process_ip",
+            "--main_process_ip",
+            default=main_process_ip_value,
+        )
+        main_process_port_value = _extract_value(
+            config_payload,
+            "main_process_port",
+            "--main_process_port",
+            default=main_process_port_value,
+        )
+        machine_rank_value = _extract_value(
+            config_payload,
+            "machine_rank",
+            "--machine_rank",
+            default=machine_rank_value,
+        )
+        same_network_value = _extract_value(
+            config_payload,
+            "same_network",
+            "--same_network",
+            default=same_network_value,
+        )
+        if isinstance(same_network_value, str):
+            same_network_value = same_network_value.strip().lower() in {"1", "true", "yes", "on"}
+
+    def _launch_with_accelerate() -> Optional[int]:
+        use_accelerate = False
+
+        nonlocal accelerate_config_path, main_process_port_value, machine_rank_value
+
+        config_candidate = accelerate_config_path
+        if isinstance(config_candidate, str) and config_candidate.strip():
+            use_accelerate = True
+
+        extra_candidate = accelerate_extra_args
+        if isinstance(extra_candidate, str) and extra_candidate.strip():
+            use_accelerate = True
+
+        proc_count = _safe_int(requested_processes, 1)
+        machine_count = _safe_int(requested_machines, 1)
+        if proc_count > 1 or machine_count > 1:
+            use_accelerate = True
+
+        dyn_backend_normalized = (requested_dynamo_backend or "").strip().lower()
+        if dyn_backend_normalized and dyn_backend_normalized not in {"no", "none", ""}:
+            use_accelerate = True
+
+        if not use_accelerate:
+            return None
+
+        launch_env = os.environ.copy()
+        if job_id:
+            launch_env["SIMPLETUNER_JOB_ID"] = job_id
+
+        # Normalise accelerate config path if provided
+        config_file_arg = None
+        if isinstance(accelerate_config_path, str) and accelerate_config_path.strip():
+            expanded_path = os.path.expanduser(accelerate_config_path.strip())
+            accelerate_config_path = expanded_path
+            if os.path.isfile(expanded_path):
+                config_file_arg = expanded_path
+            else:
+                logger.warning("Accelerate config file not found at %s; falling back to CLI parameters", expanded_path)
+
+        if mixed_precision_value:
+            launch_env["MIXED_PRECISION"] = str(mixed_precision_value)
+        launch_env.setdefault("MIXED_PRECISION", "bf16")
+
+        if proc_count:
+            launch_env["TRAINING_NUM_PROCESSES"] = str(proc_count)
+        if machine_count:
+            launch_env["TRAINING_NUM_MACHINES"] = str(machine_count)
+        if dyn_backend_normalized:
+            launch_env["TRAINING_DYNAMO_BACKEND"] = dyn_backend_normalized
+
+        if accelerate_extra_args:
+            launch_env["ACCELERATE_EXTRA_ARGS"] = str(accelerate_extra_args)
+
+        if machine_count > 1:
+            if not main_process_ip_value:
+                raise ValueError(
+                    "Main process IP is required when launching across multiple machines. "
+                    "Provide it under Hardware > Accelerate settings or supply an accelerate config file."
+                )
+            if not main_process_port_value:
+                raise ValueError(
+                    "Main process port is required when launching across multiple machines. "
+                    "Provide it under Hardware > Accelerate settings or supply an accelerate config file."
+                )
+            if machine_rank_value is None:
+                raise ValueError(
+                    "Machine rank must be specified for multi-node launches. "
+                    "Set it under Hardware > Accelerate settings for each node."
+                )
+
+            main_process_port_int = _safe_int(main_process_port_value, 29500)
+            if main_process_port_int <= 0:
+                raise ValueError("Main process port must be a positive integer.")
+            machine_rank_int = _safe_int(machine_rank_value, 0)
+            if machine_rank_int < 0:
+                raise ValueError("Machine rank must be zero or greater.")
+            main_process_port_value = main_process_port_int
+            machine_rank_value = machine_rank_int
+
+        cmd = ["accelerate", "launch"]
+
+        if config_file_arg:
+            cmd.append(f"--config_file={config_file_arg}")
+        else:
+            cmd.extend(
+                [
+                    f"--mixed_precision={launch_env.get('MIXED_PRECISION', 'bf16')}",
+                    f"--num_processes={launch_env.get('TRAINING_NUM_PROCESSES', '1')}",
+                    f"--num_machines={launch_env.get('TRAINING_NUM_MACHINES', '1')}",
+                    f"--dynamo_backend={launch_env.get('TRAINING_DYNAMO_BACKEND', 'no')}",
+                ]
+            )
+            if machine_count > 1:
+                cmd.append(f"--main_process_ip={main_process_ip_value}")
+                cmd.append(f"--main_process_port={main_process_port_value}")
+                cmd.append(f"--machine_rank={machine_rank_value}")
+                if same_network_value:
+                    cmd.append("--same_network")
+
+        extra_args = []
+        if accelerate_extra_args:
+            try:
+                extra_args = shlex.split(str(accelerate_extra_args))
+            except ValueError:
+                logger.warning("Failed to parse accelerate extra args; using raw string")
+                extra_args = [str(accelerate_extra_args)]
+        if extra_args:
+            cmd.extend(extra_args)
+
+        import simpletuner
+
+        train_py = Path(simpletuner.__file__).parent / "train.py"
+        cmd.append(str(train_py))
+
+        cli_args: list[str] = []
+        if isinstance(config_payload, dict):
+            train_cli_payload = dict(config_payload)
+            for accel_key in {
+                "accelerate_config",
+                "--accelerate_config",
+                "accelerate_extra_args",
+                "--accelerate_extra_args",
+                "main_process_ip",
+                "--main_process_ip",
+                "main_process_port",
+                "--main_process_port",
+                "machine_rank",
+                "--machine_rank",
+                "same_network",
+                "--same_network",
+            }:
+                train_cli_payload.pop(accel_key, None)
+            for webhook_key in ("--webhook_config", "webhook_config"):
+                webhook_value = train_cli_payload.get(webhook_key)
+                if isinstance(webhook_value, dict):
+                    try:
+                        train_cli_payload[webhook_key] = json.dumps(webhook_value)
+                    except Exception:
+                        train_cli_payload.pop(webhook_key, None)
+            try:
+                cli_args = mapping_to_cli_args(train_cli_payload)
+            except Exception as exc:
+                logger.warning("Failed to convert config payload to CLI args: %s", exc)
+                cli_args = []
+        if cli_args:
+            launch_env.setdefault("CONFIG_BACKEND", "cmd")
+            cmd.extend(cli_args)
+
+        logging.info("Launching training via accelerate: %s", " ".join(cmd))
+
+        popen_kwargs = {
+            "env": launch_env,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.STDOUT,
+            "text": True,
+            "bufsize": 1,
+        }
+        if os.name != "nt":
+            popen_kwargs["preexec_fn"] = os.setsid
+        process = subprocess.Popen(cmd, **popen_kwargs)
+
+        output_lock = threading.Lock()
+
+        def _forward_output():
+            if not process.stdout:
+                return
+            for line in iter(process.stdout.readline, ""):
+                if not line:
+                    break
+                with output_lock:
+                    try:
+                        sys.stdout.write(line)
+                        sys.stdout.flush()
+                    except Exception:
+                        logger.info(line.rstrip())
+
+        reader_thread = threading.Thread(target=_forward_output, daemon=True)
+        reader_thread.start()
+
+        try:
+            while process.poll() is None:
+                if callable(should_abort_callable) and should_abort_callable():
+                    logger.info("Abort requested; terminating accelerate launcher")
+                    _terminate_accelerate_process(process)
+                    try:
+                        process.wait(timeout=15)
+                    except subprocess.TimeoutExpired:
+                        logger.warning("Accelerate process unresponsive; forcing kill")
+                        _kill_accelerate_process(process)
+                    break
+                time.sleep(0.5)
+        except KeyboardInterrupt:
+            logger.info("Keyboard interrupt received; terminating accelerate launcher")
+            _terminate_accelerate_process(process)
+            raise
+        finally:
+            if process.stdout:
+                process.stdout.close()
+            reader_thread.join(timeout=2)
+            if process.poll() is None:
+                _terminate_accelerate_process(process)
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    logger.warning("Accelerate process still alive; forcing kill")
+                    _kill_accelerate_process(process)
+
+        returncode = process.wait()
+        if returncode != 0:
+            raise RuntimeError(f"Accelerate launch exited with status {returncode}")
+        return returncode
+
+    try:
+        accelerate_result = _launch_with_accelerate()
+    except Exception as exc:
+        webhook_handler = StateTracker.get_webhook_handler()
+        if webhook_handler is not None:
+            webhook_handler.send(
+                message=f"Training job failed to start: {exc}",
+                message_level="error",
+            )
+            webhook_handler.send_raw(
+                structured_data={"status": "training_failed", "error": str(exc)},
+                message_type="training_status",
+                message_level="error",
+                job_id=StateTracker.get_job_id(),
+            )
+        APIState.set_state("training_status", "failed")
+        raise
+
+    if accelerate_result is not None:
+        return accelerate_result
+
     try:
         trainer = Trainer(config=config_payload, job_id=job_id)
 
@@ -2602,3 +2940,31 @@ def run_trainer_job(config):
 
     trainer.run()
     return {"status": "completed"}
+
+
+def _terminate_accelerate_process(process: subprocess.Popen) -> None:
+    try:
+        if process.poll() is None:
+            if os.name != "nt" and getattr(process, "pid", None):
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                    return
+                except Exception:
+                    pass
+            process.terminate()
+    except Exception as exc:
+        logger.warning("Failed to terminate accelerate process cleanly: %s", exc)
+
+
+def _kill_accelerate_process(process: subprocess.Popen) -> None:
+    try:
+        if process.poll() is None:
+            if os.name != "nt" and getattr(process, "pid", None):
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                    return
+                except Exception:
+                    pass
+            process.kill()
+    except Exception as exc:
+        logger.warning("Failed to kill accelerate process: %s", exc)
