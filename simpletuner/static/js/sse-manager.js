@@ -491,7 +491,7 @@
             switch (data.type) {
                 case 'training_progress':
                     // Update training progress UI
-                    if (window.htmx) {
+                    if (window.htmx && !data.reset) {
                         const progressEl = document.querySelector('#training-progress');
                         if (progressEl) {
                             htmx.trigger(progressEl, 'update-progress', data);

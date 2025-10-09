@@ -3118,6 +3118,17 @@ function trainerComponent() {
 
         const handleTrainingProgress = (event) => {
             const detail = event.detail || {};
+
+            if (detail.reset) {
+                $data.trainingProgress = {};
+                $data.isTraining = false;
+                $data.showTrainingProgress = false;
+                if (window.eventHandler && typeof window.eventHandler.resetTrainingState === 'function') {
+                    window.eventHandler.resetTrainingState();
+                }
+                return;
+            }
+
             const loss = detail.loss;
             const formattedLoss = (typeof loss === 'number' && !isNaN(loss))
                 ? loss.toFixed(4)
@@ -3137,6 +3148,7 @@ function trainerComponent() {
                 learning_rate: formattedLr,
             };
             $data.isTraining = true;
+            $data.showTrainingProgress = true;
         };
 
         const handleTrainingStatus = (event) => {
@@ -3154,6 +3166,8 @@ function trainerComponent() {
                         ...$data.trainingProgress,
                         percent: 100,
                     };
+                } else if (['failed', 'error', 'cancelled', 'stopped'].includes(status)) {
+                    handleTrainingProgress({ detail: { reset: true } });
                 }
             }
         };
@@ -3249,6 +3263,8 @@ function trainerComponent() {
                 <div class="mb-3" x-show="activeOnboardingStep">
                     <label class="form-label" x-text="activeOnboardingStep ? activeOnboardingStep.title : ''"></label>
                     <input type="text"
+                           id="onboarding-input"
+                           name="onboarding_input"
                            class="form-control"
                            x-model="onboardingForm.value"
                            :placeholder="(activeOnboardingStep && activeOnboardingStep.applies_to_default && defaults[activeOnboardingStep.applies_to_default]) || '/path/to/output'"
@@ -3298,6 +3314,8 @@ function trainerComponent() {
                         <i class="fas fa-search search-icon"></i>
                         <input
                             type="text"
+                            id="sidebar-search"
+                            name="sidebar_search"
                             class="search-input"
                             placeholder="Search tabs and fields..."
                             x-model="query"

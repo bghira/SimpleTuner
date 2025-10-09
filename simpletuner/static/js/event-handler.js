@@ -394,6 +394,13 @@ class EventHandler {
                 }
                 break;
 
+            case 'training_status':
+                const trainingStatus = String(event.status || '').toLowerCase();
+                if (['failed', 'error', 'cancelled', 'stopped', 'completed'].includes(trainingStatus)) {
+                    this.resetTrainingState();
+                }
+                break;
+
             case 'exit':
             case 'fatal_error':
                 // Clear progress displays on completion/error

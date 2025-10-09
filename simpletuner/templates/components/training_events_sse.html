@@ -49,6 +49,9 @@
     const CARD_UPDATE_THROTTLE = 100; // ms
     const startupStages = new Map();
     let startupJobId = null;
+    const completedJobIds = new Set();
+    let lastResetJobId = null;
+    let suppressAnonymousProgress = false;
 
     function getTrainerStore() {
         if (window.Alpine && typeof window.Alpine.store === 'function') {
@@ -95,6 +98,9 @@
 
         if (isActive && payload.job_id) {
             activeJobId = payload.job_id;
+            completedJobIds.delete(payload.job_id);
+            lastResetJobId = null;
+            suppressAnonymousProgress = false;
         }
 
         if (!isActive) {
@@ -427,6 +433,47 @@
         return progressCard;
     }
 
+    function resetTrainingProgressUI(status, jobId) {
+        const store = getTrainerStore();
+        if (store) {
+            store.trainingProgress = {};
+            store.isTraining = false;
+            store.showTrainingProgress = false;
+        }
+
+        if (jobId) {
+            completedJobIds.add(jobId);
+            lastResetJobId = jobId;
+            suppressAnonymousProgress = false;
+        } else {
+            lastResetJobId = null;
+            suppressAnonymousProgress = true;
+        }
+        activeJobId = null;
+        clearStartupProgress();
+
+        if (progressCard) {
+            progressCard.classList.add('d-none');
+            if (elements && elements.bar) {
+                elements.bar.style.width = '0%';
+                elements.bar.setAttribute('aria-valuenow', 0);
+            }
+        }
+
+        const progressContainer = document.getElementById('trainingProgress');
+        if (progressContainer) {
+            progressContainer.innerHTML = '';
+        }
+
+        const progressBars = document.getElementById('progressBars');
+        if (progressBars) {
+            progressBars.innerHTML = '';
+        }
+
+        window.dispatchEvent(new CustomEvent('training-progress', { detail: { reset: true } }));
+        setTrainingState(status || 'idle', { job_id: jobId });
+    }
+
     function clampPercent(value) {
         const num = Number(value || 0);
         if (!Number.isFinite(num)) {
@@ -444,12 +491,26 @@
     }
 
     function normalizeProgressPayload(payload) {
+        if (payload && payload.reset) {
+            return { reset: true, status: payload.status, job_id: payload.job_id };
+        }
         if (window.SSEManager && typeof window.SSEManager.normalizeProgressPayload === 'function') {
             return window.SSEManager.normalizeProgressPayload(payload);
         }
 
         const progress = payload.progress || {};
         let extras = {};
+        if (progress && typeof progress === 'object' && !Array.isArray(progress) && Object.keys(progress).length === 0) {
+            return null;
+        }
+        const statusLower = String(payload.status || '').toLowerCase();
+        if (['failed', 'error', 'cancelled', 'stopped'].includes(statusLower)) {
+            return {
+                reset: true,
+                status: statusLower,
+                job_id: payload.job_id || progress.job_id,
+            };
+        }
 
         if (progress.extra && typeof progress.extra === 'object') {
             extras = Object.assign({}, progress.extra);
@@ -617,6 +678,7 @@
         if (store) {
             store.trainingProgress = merged;
             store.isTraining = true;
+            store.showTrainingProgress = true;
         }
 
         const messageType = String(progress.raw?.message_type || '').toLowerCase();
@@ -713,10 +775,32 @@
     function handleCallbackEvent(category, payload) {
         const jobId = payload.job_id || payload.raw?.job_id || activeJobId;
         const messageType = (payload.message_type || '').toLowerCase();
+        const store = getTrainerStore();
+
+        if (payload && payload.reset) {
+            resetTrainingProgressUI(payload.status || 'idle', jobId);
+            return;
+        }
 
         switch (category) {
             case 'progress': {
+                if (jobId && completedJobIds.has(jobId)) {
+                    return;
+                }
+                if (!jobId && suppressAnonymousProgress && !(store && store.isTraining)) {
+                    return;
+                }
+                if (jobId && lastResetJobId && lastResetJobId === jobId && !(store && store.isTraining)) {
+                    return;
+                }
+                if (!jobId && !activeJobId && !(store && store.isTraining)) {
+                    return;
+                }
                 const normalized = normalizeProgressPayload(payload);
+                if (normalized && normalized.reset) {
+                    resetTrainingProgressUI(payload.status || 'idle', jobId);
+                    return;
+                }
                 updateProgressCard(normalized, jobId);
                 break;
             }
@@ -739,30 +823,31 @@
                 } else if (messageType === 'training_status') {
                     // Check the status field for training_status messages
                     const status = (payload.status || '').toLowerCase();
-                    if (status === 'training_failed' || status === 'failed' || status === 'error') {
+                    if (['training_failed', 'failed', 'error'].includes(status)) {
                         setStatus('Failed', 'danger');
-                        setTrainingState('error', { job_id: jobId });
+                        resetTrainingProgressUI('failed', jobId);
                         // Clear stale status messages
                         const trainingStatusEl = document.getElementById('training-status');
                         if (trainingStatusEl) {
                             trainingStatusEl.innerHTML = '';
                         }
-                        // Hide progress bars when training fails
-                        const store = getTrainerStore();
-                        if (store) {
-                            store.showTrainingProgress = false;
-                        }
-                        // Show error message if available
                         if (payload.message && window.showToast) {
                             window.showToast(`Training failed: ${payload.message}`, 'error');
                         }
+                    } else if (['cancelled', 'stopped'].includes(status)) {
+                        setStatus('Stopped', 'warning');
+                        resetTrainingProgressUI(status, jobId);
                     } else {
                         // Other training_status messages (running, etc.)
                         setStatus('Running', payload.severity);
                         setTrainingState('running', { job_id: jobId });
                         const normalized = normalizeProgressPayload(payload);
-                        updateProgressCard(normalized, jobId);
-                        syncTrainerProgress(normalized, jobId);
+                        if (normalized && normalized.reset) {
+                            resetTrainingProgressUI(status, jobId);
+                        } else {
+                            updateProgressCard(normalized, jobId);
+                            syncTrainerProgress(normalized, jobId);
+                        }
                     }
                 } else if (messageType === '_train_initial_msg' || messageType === 'train_status') {
                     setStatus('Running', payload.severity);
@@ -783,8 +868,12 @@
                     // Update progress card with training data for both message types
                     if (messageType === '_train_initial_msg' || messageType === 'train_status') {
                         const normalized = normalizeProgressPayload(payload);
-                        updateProgressCard(normalized, jobId);
-                        syncTrainerProgress(normalized, jobId);
+                        if (normalized && normalized.reset) {
+                            resetTrainingProgressUI(payload.status || 'idle', jobId);
+                        } else {
+                            updateProgressCard(normalized, jobId);
+                            syncTrainerProgress(normalized, jobId);
+                        }
                     }
                 } else if (messageType === 'training_complete' || messageType === 'run_complete') {
                     setStatus('Completed', 'success');
@@ -800,24 +889,17 @@
                         // Hide progress bars after a short delay to let user see 100%
                         setTimeout(() => {
                             if (store) {
-                                store.showTrainingProgress = false;
+                            store.showTrainingProgress = false;
                             }
                         }, 3000);
+                    }
+                    if (jobId) {
+                        completedJobIds.add(jobId);
                     }
                     setTrainingState('completed', { job_id: jobId, progress: completionProgress });
                 } else if (messageType === 'fatal_error' || messageType === 'exit') {
                     setStatus('Stopped', 'danger');
-                    setTrainingState('error', { job_id: jobId });
-                    // Clear stale status messages when training fails
-                    const trainingStatusEl = document.getElementById('training-status');
-                    if (trainingStatusEl) {
-                        trainingStatusEl.innerHTML = '';
-                    }
-                    // Hide progress bars when training stops
-                    const store = getTrainerStore();
-                    if (store) {
-                        store.showTrainingProgress = false;
-                    }
+                    resetTrainingProgressUI('failed', jobId);
                 }
                 break;
             }
@@ -860,8 +942,26 @@
         trackListener('connection-status', connectionStatusHandler);
 
         var trainingProgressHandler = function(data) {
-            const jobId = data.raw?.job_id || activeJobId;
+            if (data && data.reset) {
+                resetTrainingProgressUI(data.status || 'idle', data.job_id || activeJobId);
+                return;
+            }
+            const jobId = data.raw?.job_id || data.job_id || activeJobId;
+            const store = getTrainerStore();
+            if (jobId && completedJobIds.has(jobId)) {
+                return;
+            }
+            if (jobId && lastResetJobId && lastResetJobId === jobId && !(store && store.isTraining)) {
+                return;
+            }
+            if (!jobId && suppressAnonymousProgress && !(store && store.isTraining)) {
+                return;
+            }
             const normalized = normalizeProgressPayload(data);
+            if (normalized && normalized.reset) {
+                resetTrainingProgressUI(data.status || 'idle', jobId);
+                return;
+            }
             updateProgressCard(normalized, jobId);
         };
         trackListener('training_progress', trainingProgressHandler);

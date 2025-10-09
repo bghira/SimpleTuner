@@ -279,6 +279,12 @@ class TrainerMain {
                 if (!progress) {
                     return null;
                 }
+                if (typeof progress === 'object' && !Array.isArray(progress) && Object.keys(progress).length === 0) {
+                    return null;
+                }
+                if (progress.reset) {
+                    return { reset: true };
+                }
                 const percentValue = Number(progress.percent || progress.percentage || 0);
                 const clampedPercent = Number.isFinite(percentValue) ? Math.max(0, Math.min(100, percentValue)) : 0;
                 return {
@@ -296,7 +302,11 @@ class TrainerMain {
             if (store) {
                 store.isTraining = isTraining;
                 if (normalizedProgress) {
-                    store.trainingProgress = normalizedProgress;
+                    if (normalizedProgress.reset) {
+                        store.trainingProgress = {};
+                    } else {
+                        store.trainingProgress = normalizedProgress;
+                    }
                 }
             }
 
@@ -305,12 +315,20 @@ class TrainerMain {
                 job_id: jobId,
             };
             if (normalizedProgress) {
-                detail.progress = normalizedProgress;
+                if (normalizedProgress.reset) {
+                    detail.progress = { reset: true };
+                } else {
+                    detail.progress = normalizedProgress;
+                }
             }
 
             window.dispatchEvent(new CustomEvent('training-status', { detail }));
             if (normalizedProgress) {
-                window.dispatchEvent(new CustomEvent('training-progress', { detail: normalizedProgress }));
+                if (normalizedProgress.reset) {
+                    window.dispatchEvent(new CustomEvent('training-progress', { detail: { reset: true } }));
+                } else {
+                    window.dispatchEvent(new CustomEvent('training-progress', { detail: normalizedProgress }));
+                }
             }
 
             if (document && document.body) {
