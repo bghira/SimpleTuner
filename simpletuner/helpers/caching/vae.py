@@ -1034,10 +1034,7 @@ class VAECache(WebhookMixin):
                             statistics["cached"] += 1
                             future_to_process = executor.submit(self._encode_images_in_batch)
                             futures.append(future_to_process)
-                            if (
-                                self.webhook_handler is not None
-                                and int(statistics["total"] // self.webhook_progress_interval) > last_reported_index
-                            ):
+                            if self.webhook_handler is not None:
                                 last_reported_index = statistics["total"] // self.webhook_progress_interval
                                 self.send_progress_update(
                                     type="vaecache",
