@@ -183,6 +183,12 @@ class DatasetRouteTests(APITestCase, unittest.TestCase):
                     "dataset_type": "image",
                     "instance_data_dir": "/data/images",
                 },
+                {
+                    "id": "videos",
+                    "type": "local",
+                    "dataset_type": "video",
+                    "instance_data_dir": "/data/videos",
+                },
             ]
         }
 
@@ -190,7 +196,6 @@ class DatasetRouteTests(APITestCase, unittest.TestCase):
 
         with self.client_session(ServerMode.TRAINER) as client:
             response = client.post("/api/datasets/plan", json=payload)
-
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data["source"], "disk")

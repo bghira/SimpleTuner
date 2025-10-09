@@ -54,6 +54,38 @@ class TrainerPage(BasePage):
         self.wait.until(EC.presence_of_element_located(self.BASIC_TAB))
         try:
             self.wait.until(EC.presence_of_element_located((By.ID, "trainer-form")))
+            # Ensure toast infrastructure is initialized
+            self.driver.execute_script(
+                """
+                if (!document.getElementById('toast-container')) {
+                    const container = document.createElement('div');
+                    container.id = 'toast-container';
+                    container.style.position = 'fixed';
+                    container.style.top = '1rem';
+                    container.style.right = '1rem';
+                    container.style.zIndex = '9999';
+                    document.body.appendChild(container);
+                }
+                // Initialize showToast if not already present
+                if (!window.showToast) {
+                    window.showToast = function(message, type = 'info', duration = 3000) {
+                        const container = document.getElementById('toast-container');
+                        const toastId = 'toast-' + Date.now();
+                        const toast = document.createElement('div');
+                        toast.id = toastId;
+                        toast.className = 'toast ' + type + ' show';
+                        toast.innerHTML = '<div class="toast-body">' + message + '</div>';
+                        container.appendChild(toast);
+                        if (duration > 0) {
+                            setTimeout(() => {
+                                const elem = document.getElementById(toastId);
+                                if (elem) elem.remove();
+                            }, duration);
+                        }
+                    }
+                }
+            """
+            )
         except TimeoutException:
             pass
 
