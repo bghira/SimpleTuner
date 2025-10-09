@@ -68,7 +68,9 @@ class APIState:
     @classmethod
     def save_state(cls):
         cls._ensure_state_file()
-        with open(cls.state_file, "w") as f:
+        state_path = Path(cls.state_file)
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(state_path, "w") as f:
             json.dump(cls.state, f)
             logger.debug(f"Saved state to {cls.state_file}: {cls.state}")
 
