@@ -6,6 +6,7 @@ SimpleTuner CLI - Command-line interface for SimpleTuner
 import argparse
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -271,6 +272,8 @@ def find_accelerate_config() -> Optional[str]:
 
 def run_training(example: Optional[str] = None, env: Optional[str] = None, extra_args: Optional[list] = None) -> int:
     """Run training with specified example or environment."""
+    extra_args = list(extra_args or [])
+
     # Set ENV first so config.env loading works correctly
     if env:
         os.environ["ENV"] = env
@@ -282,6 +285,72 @@ def run_training(example: Optional[str] = None, env: Optional[str] = None, extra
 
     # Setup environment after loading config.env files
     training_env = os.environ.copy()
+
+    # Extract accelerate-related overrides from extra args so they can influence launch semantics.
+    overrides = {
+        "accelerate_config": None,
+        "accelerate_extra_args": None,
+        "num_processes": None,
+        "num_machines": None,
+        "dynamo_backend": None,
+    }
+    cleaned_extra_args: List[str] = []
+
+    idx = 0
+    while idx < len(extra_args):
+        arg = extra_args[idx]
+        consumed_next = False
+
+        def _extract_value(current_arg: str) -> Optional[str]:
+            nonlocal consumed_next
+            if "=" in current_arg:
+                return current_arg.split("=", 1)[1]
+            if idx + 1 < len(extra_args):
+                candidate = extra_args[idx + 1]
+                if not candidate.startswith("--"):
+                    consumed_next = True
+                    return candidate
+            return None
+
+        if arg.startswith("--accelerate_config"):
+            value = _extract_value(arg)
+            if value:
+                overrides["accelerate_config"] = value
+        elif arg.startswith("--accelerate_extra_args"):
+            value = _extract_value(arg)
+            if value:
+                overrides["accelerate_extra_args"] = value
+        elif arg.startswith("--num_processes"):
+            value = _extract_value(arg)
+            if value:
+                overrides["num_processes"] = value
+        elif arg.startswith("--num_machines"):
+            value = _extract_value(arg)
+            if value:
+                overrides["num_machines"] = value
+        elif arg.startswith("--dynamo_backend"):
+            value = _extract_value(arg)
+            if value:
+                overrides["dynamo_backend"] = value
+        else:
+            cleaned_extra_args.append(arg)
+
+        if consumed_next:
+            idx += 1  # Skip the value we just consumed
+        idx += 1
+
+    extra_args = cleaned_extra_args
+
+    if overrides["accelerate_config"]:
+        training_env["ACCELERATE_CONFIG_PATH"] = os.path.expanduser(str(overrides["accelerate_config"]))
+    if overrides["accelerate_extra_args"]:
+        training_env["ACCELERATE_EXTRA_ARGS"] = str(overrides["accelerate_extra_args"])
+    if overrides["num_processes"]:
+        training_env["TRAINING_NUM_PROCESSES"] = str(overrides["num_processes"])
+    if overrides["num_machines"]:
+        training_env["TRAINING_NUM_MACHINES"] = str(overrides["num_machines"])
+    if overrides["dynamo_backend"]:
+        training_env["TRAINING_DYNAMO_BACKEND"] = str(overrides["dynamo_backend"])
 
     # Check for config file if no example/env specified
     if not example and not env:
@@ -341,7 +410,18 @@ def run_training(example: Optional[str] = None, env: Optional[str] = None, extra
         return 1
 
     # Setup accelerate command
-    accelerate_config = find_accelerate_config()
+    accelerate_config = None
+    accelerate_env_path = training_env.get("ACCELERATE_CONFIG_PATH")
+    if accelerate_env_path:
+        candidate = Path(accelerate_env_path).expanduser()
+        if candidate.exists():
+            accelerate_config = str(candidate)
+        else:
+            print(f"Accelerate config override not found at {candidate}. Falling back to discovery.")
+            training_env.pop("ACCELERATE_CONFIG_PATH", None)
+
+    if accelerate_config is None:
+        accelerate_config = find_accelerate_config()
 
     if accelerate_config:
         print(f"Using Accelerate config file: {accelerate_config}")
@@ -367,7 +447,7 @@ def run_training(example: Optional[str] = None, env: Optional[str] = None, extra
     accelerate_extra_args = training_env.get("ACCELERATE_EXTRA_ARGS", "")
     if accelerate_extra_args:
         # Insert extra args before the train.py script
-        accel_extra = accelerate_extra_args.split()
+        accel_extra = shlex.split(accelerate_extra_args)
         cmd = cmd[:-1] + accel_extra + cmd[-1:]
 
     # Add any extra train.py arguments after the script path
