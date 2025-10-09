@@ -414,7 +414,7 @@ _basic_message_types["progress_update"] = CallbackEventDefinition(
     dedupe_builder=_dedupe_progress_key,
 )
 
-_basic_message_types["train_status"] = CallbackEventDefinition(
+_basic_message_types["training_status"] = CallbackEventDefinition(
     category=CallbackCategory.STATUS,
     severity=_status_severity,
     headline=_status_headline,

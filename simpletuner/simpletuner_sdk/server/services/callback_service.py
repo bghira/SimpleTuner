@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 from collections import deque
 from threading import Lock
@@ -11,6 +12,7 @@ from ...api_state import APIState
 from .callback_events import CallbackCategory, CallbackEvent, CallbackSeverity, ProgressPayload
 from .callback_registry import CallbackEventRegistry, default_callback_registry
 from .event_store import EventStore
+from .sse_manager import get_sse_manager
 
 _default_service: CallbackService | None = None
 _service_lock = Lock()
@@ -31,6 +33,7 @@ class CallbackService:
         self._typed_by_index: dict[int, CallbackEvent] = {}
         self._index_order: deque[int] = deque(maxlen=event_store.max_events)
         self._dedupe_cache: dict[str, int] = {}
+        self._job_status: dict[str, str] = {}
         self._bootstrap_from_store()
 
     def handle_incoming(self, raw_payload: Mapping[str, Any]) -> CallbackEvent | None:
@@ -39,6 +42,9 @@ class CallbackService:
             raise TypeError("raw_payload must be a mapping")
 
         event = CallbackEvent.from_message(raw_payload, registry=self._registry)
+
+        if self._should_suppress_event(event):
+            return None
 
         typed_event = None
         with self._lock:
@@ -84,7 +90,11 @@ class CallbackService:
             indices = list(self._index_order)[-limit:]
             snapshot = {idx: self._typed_by_index.get(idx) for idx in indices}
         # Iterate over snapshot without holding lock
-        return [snapshot[idx] for idx in reversed(indices) if snapshot.get(idx) is not None]
+        return [
+            event
+            for idx in reversed(indices)
+            if (event := snapshot.get(idx)) is not None and not self._should_suppress_event(event)
+        ]
 
     def stream_since(self, index: int) -> list[CallbackEvent]:
         """Return all events newer than the provided index."""
@@ -93,7 +103,11 @@ class CallbackService:
             matching_indices = [idx for idx in self._index_order if idx > index]
             snapshot = {idx: self._typed_by_index.get(idx) for idx in matching_indices}
         # Build result from snapshot without holding lock
-        return [snapshot[idx] for idx in matching_indices if snapshot.get(idx) is not None]
+        return [
+            event
+            for idx in matching_indices
+            if (event := snapshot.get(idx)) is not None and not self._should_suppress_event(event)
+        ]
 
     def latest_for_job(self, job_id: str | None) -> CallbackEvent | None:
         """Return the newest event for a specific job identifier."""
@@ -293,7 +307,7 @@ class CallbackService:
         APIState.set_state("training_startup_stages", stages)
 
     def _update_training_state(self, event: CallbackEvent) -> None:
-        job_id = event.job_id
+        job_id = self._derive_job_id(event)
         message_type = (event.message_type or "").lower()
         previous_job_id = APIState.get_state("current_job_id")
         job_changed = bool(job_id and job_id != previous_job_id)
@@ -302,6 +316,7 @@ class CallbackService:
             APIState.set_state("training_status", "running")
             if job_id:
                 APIState.set_state("current_job_id", job_id)
+                self._job_status[job_id] = "running"
 
             progress_payload = event.progress
             if progress_payload:
@@ -355,17 +370,19 @@ class CallbackService:
             APIState.set_state("training_status", "running" if message_type != "configure_webhook" else "starting")
             if job_id:
                 APIState.set_state("current_job_id", job_id)
+                self._job_status.pop(job_id, None)
             self._clear_startup_stages()
             return
 
         # Handle train_status messages - derive status from payload, don't hardcode
-        if message_type == "train_status":
+        if message_type in {"training_status", "train_status"}:
             # Try to get status from extras, default to 'running'
-            status_from_payload = event.extras.get("status", "running") if event.extras else "running"
+            status_from_payload = (event.extras.get("status") if event.extras else None) or event.body or "running"
             APIState.set_state("training_status", status_from_payload)
 
             if job_id:
                 APIState.set_state("current_job_id", job_id)
+                self._job_status[job_id] = status_from_payload.lower()
 
             # Extract progress from event.progress (which now contains the training data)
             progress_state = None
@@ -389,8 +406,16 @@ class CallbackService:
                 merged_progress = self._merge_progress_state(previous_progress, progress_state)
                 APIState.set_state("training_progress", merged_progress)
 
-            if status_from_payload and status_from_payload.lower() not in {"starting", "initializing"}:
-                self._clear_startup_stages()
+            if status_from_payload:
+                status_lower = status_from_payload.lower()
+                if status_lower not in {"starting", "initializing", "running"}:
+                    self._clear_startup_stages()
+                if status_lower in {"failed", "error", "cancelled", "stopped"}:
+                    APIState.set_state("training_progress", None)
+                    if status_lower in {"failed", "error"}:
+                        APIState.set_state("training_status", "failed")
+                    APIState.set_state("current_job_id", None)
+                    self._broadcast_progress_reset(job_id or previous_job_id, status=status_lower)
             # DON'T return - fall through to severity checks below
 
         if message_type in {"training_complete", "run_complete"}:
@@ -401,17 +426,114 @@ class CallbackService:
                 APIState.set_state("training_progress", progress_state)
             APIState.set_state("training_status", "completed")
             APIState.set_state("current_job_id", None)
+            if job_id:
+                self._job_status[job_id] = "completed"
             self._clear_startup_stages()
             return
 
         if message_type in {"exit", "fatal_error"} or event.severity in {CallbackSeverity.ERROR, CallbackSeverity.CRITICAL}:
             APIState.set_state("training_status", "error")
             APIState.set_state("current_job_id", None)
+            APIState.set_state("training_progress", None)
             self._clear_startup_stages()
+            self._broadcast_progress_reset(job_id or previous_job_id, status="failed")
+            if job_id:
+                self._job_status[job_id] = "failed"
             return
 
         if event.category == CallbackCategory.ALERT and event.severity == CallbackSeverity.WARNING:
             APIState.set_state("training_status", "warning")
+
+    def _broadcast_progress_reset(self, job_id: str | None, *, status: str) -> None:
+        """Emit an SSE message instructing clients to reset training progress UI."""
+
+        if job_id:
+            self._job_status[job_id] = status.lower()
+
+        payload = {
+            "type": "training_progress",
+            "job_id": job_id,
+            "status": status,
+            "reset": True,
+            "percent": 0,
+            "step": 0,
+            "total_steps": 0,
+            "epoch": 0,
+            "total_epochs": 0,
+        }
+
+        async def _broadcast():
+            manager = get_sse_manager()
+            await manager.broadcast(payload, event_type="training_progress")
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            loop.create_task(_broadcast())
+        else:
+            asyncio.run(_broadcast())
+
+    def _should_suppress_event(self, event: CallbackEvent) -> bool:
+        if not event or not isinstance(event, CallbackEvent):
+            return False
+
+        job_id = self._derive_job_id(event)
+        if not job_id:
+            return False
+
+        status = self._job_status.get(job_id, "")
+        terminal_statuses = {"failed", "error", "completed", "cancelled", "stopped"}
+
+        if status in terminal_statuses:
+            if event.category == CallbackCategory.PROGRESS:
+                return True
+            if event.category == CallbackCategory.STATUS:
+                message_type = (event.message_type or "").lower()
+                if message_type in {"training_status", "train_status"}:
+                    return True
+
+        return False
+
+    def _derive_job_id(self, event: CallbackEvent) -> str | None:
+        if not event:
+            return None
+
+        candidates: list[str | None] = []
+
+        if getattr(event, "job_id", None):
+            candidates.append(event.job_id)
+
+        raw = getattr(event, "raw", None)
+        if isinstance(raw, Mapping):
+            candidates.append(raw.get("job_id"))
+
+        extras = getattr(event, "extras", None)
+        if isinstance(extras, Mapping):
+            candidates.append(extras.get("job_id"))
+
+        # Fall back to the API state if neither the event nor raw payload include a job id.
+        current_job = APIState.get_state("current_job_id")
+        if current_job:
+            candidates.append(current_job)
+
+        progress = getattr(event, "progress", None)
+        if progress and hasattr(progress, "extra"):
+            progress_extra = getattr(progress, "extra", None)
+            if isinstance(progress_extra, Mapping):
+                candidates.append(progress_extra.get("job_id"))
+                state = progress_extra.get("state")
+                if isinstance(state, Mapping):
+                    candidates.append(state.get("job_id"))
+
+        for candidate in candidates:
+            if isinstance(candidate, str):
+                normalized = candidate.strip()
+                if normalized:
+                    return normalized
+        return None
 
 
 __all__ = ["CallbackService"]
