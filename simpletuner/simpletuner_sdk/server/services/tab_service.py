@@ -27,6 +27,7 @@ class TabType(str, Enum):
     """Available tab types in the trainer interface."""
 
     BASIC = "basic"
+    HARDWARE = "hardware"
     MODEL = "model"
     TRAINING = "training"
     DATASETS = "datasets"
@@ -70,6 +71,14 @@ class TabService:
                 icon="fas fa-cog",
                 template="form_tab.html",
                 description="Essential settings to get started",
+                extra_context_handler=None,
+            ),
+            TabType.HARDWARE: TabConfig(
+                id="hardware-config",
+                title="Hardware",
+                icon="fas fa-microchip",
+                template="form_tab.html",
+                description="Accelerate launch, distributed compute, and worker tuning",
                 extra_context_handler=None,
             ),
             TabType.MODEL: TabConfig(
