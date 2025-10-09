@@ -1176,6 +1176,177 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # Accelerate Config Path
+    registry._add_field(
+        ConfigField(
+            name="accelerate_config",
+            arg_name="--accelerate_config",
+            ui_label="Accelerate Config Path",
+            field_type=FieldType.TEXT,
+            tab="hardware",
+            section="accelerate",
+            default_value=None,
+            placeholder="~/.cache/huggingface/accelerate/default_config.yaml",
+            validation_rules=[ValidationRule(ValidationRuleType.PATH_EXISTS, message="Accelerate config file not found")],
+            help_text="Path to the accelerate `default_config.yaml` used when launching training.",
+            tooltip="Overrides the default Hugging Face accelerate config discovery. The YAML controls distributed mode, DeepSpeed, multi-GPU, and multi-node settings.",
+            importance=ImportanceLevel.IMPORTANT,
+            order=10,
+        )
+    )
+
+    # Training Num Processes
+    registry._add_field(
+        ConfigField(
+            name="num_processes",
+            arg_name="--num_processes",
+            ui_label="Processes per Node",
+            field_type=FieldType.NUMBER,
+            tab="hardware",
+            section="accelerate",
+            default_value=1,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must launch at least one process")],
+            help_text="Process count passed to accelerate launch when no config file is supplied.",
+            tooltip="For single-node multi-GPU starts, set this to the number of visible GPUs. Ignored when an accelerate config file is provided.",
+            importance=ImportanceLevel.ADVANCED,
+            order=20,
+        )
+    )
+
+    # Training Num Machines
+    registry._add_field(
+        ConfigField(
+            name="num_machines",
+            arg_name="--num_machines",
+            ui_label="Machine Count",
+            field_type=FieldType.NUMBER,
+            tab="hardware",
+            section="accelerate",
+            default_value=1,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")],
+            help_text="Total machines participating when using accelerate launch without a config file.",
+            tooltip="Only used when fallback CLI flags are required. Provide full multi-node details via accelerate config for production runs.",
+            importance=ImportanceLevel.ADVANCED,
+            order=21,
+        )
+    )
+
+    # Accelerate Extra Args
+    registry._add_field(
+        ConfigField(
+            name="accelerate_extra_args",
+            arg_name="--accelerate_extra_args",
+            ui_label="Extra Accelerate Flags",
+            field_type=FieldType.TEXT,
+            tab="hardware",
+            section="accelerate",
+            subsection="advanced",
+            default_value=None,
+            placeholder="--machine_rank=0 --main_process_ip=10.0.0.100",
+            help_text="Additional arguments inserted between `accelerate launch` and `simpletuner/train.py`.",
+            tooltip="Use for rare cases where you cannot express a setting in accelerate config. Space-separated flags are appended verbatim.",
+            importance=ImportanceLevel.ADVANCED,
+            order=40,
+        )
+    )
+
+    # Main Process IP
+    registry._add_field(
+        ConfigField(
+            name="main_process_ip",
+            arg_name="--main_process_ip",
+            ui_label="Main Process IP",
+            field_type=FieldType.TEXT,
+            tab="hardware",
+            section="accelerate",
+            default_value="127.0.0.1",
+            help_text="Hostname or IP of the coordination node (usually rank 0). Required when running across multiple machines without an accelerate config file.",
+            tooltip="Set to the address reachable by every worker. When using an accelerate YAML this value is usually supplied there instead.",
+            dependencies=[FieldDependency(field="num_machines", operator="greater_than", value=1, action="show")],
+            importance=ImportanceLevel.IMPORTANT,
+            order=45,
+        )
+    )
+
+    # Main Process Port
+    registry._add_field(
+        ConfigField(
+            name="main_process_port",
+            arg_name="--main_process_port",
+            ui_label="Main Process Port",
+            field_type=FieldType.NUMBER,
+            tab="hardware",
+            section="accelerate",
+            default_value=29500,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Port must be positive")],
+            help_text="TCP port used for rendezvous when launching across machines.",
+            tooltip="All nodes must be able to reach this port on the main process host. Pick an open port and ensure firewalls allow access.",
+            dependencies=[FieldDependency(field="num_machines", operator="greater_than", value=1, action="show")],
+            importance=ImportanceLevel.IMPORTANT,
+            order=46,
+        )
+    )
+
+    # Machine Rank
+    registry._add_field(
+        ConfigField(
+            name="machine_rank",
+            arg_name="--machine_rank",
+            ui_label="Machine Rank",
+            field_type=FieldType.NUMBER,
+            tab="hardware",
+            section="accelerate",
+            default_value=0,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Rank must be >= 0")],
+            help_text="Unique rank for this machine within the cluster (0-based).",
+            tooltip="Set to 0 on the primary node, 1 on the second, and so on.",
+            dependencies=[FieldDependency(field="num_machines", operator="greater_than", value=1, action="show")],
+            importance=ImportanceLevel.IMPORTANT,
+            order=47,
+        )
+    )
+
+    # Same Network
+    registry._add_field(
+        ConfigField(
+            name="same_network",
+            arg_name="--same_network",
+            ui_label="Machines Share Network",
+            field_type=FieldType.CHECKBOX,
+            tab="hardware",
+            section="accelerate",
+            default_value=True,
+            help_text="Indicates that all machines can reach each other without SSH tunnelling.",
+            tooltip="Disable if workers require SSH tunnelling to communicate.",
+            dependencies=[FieldDependency(field="num_machines", operator="greater_than", value=1, action="show")],
+            importance=ImportanceLevel.ADVANCED,
+            order=48,
+        )
+    )
+
+    # Torch Dynamo Backend
+    registry._add_field(
+        ConfigField(
+            name="dynamo_backend",
+            arg_name="--dynamo_backend",
+            ui_label="Torch Dynamo Backend",
+            field_type=FieldType.SELECT,
+            tab="hardware",
+            section="accelerate",
+            subsection="advanced",
+            default_value="no",
+            choices=[
+                {"value": "no", "label": "Disabled"},
+                {"value": "inductor", "label": "Torch Dynamo (inductor)"},
+            ],
+            help_text="Selects the torch.compile backend used when falling back to command-line accelerate flags.",
+            tooltip="Use only when `i_know_what_i_am_doing` is enabled. Prefer managing `dynamo_config` within accelerate YAML for multi-node DeepSpeed setups.",
+            dependencies=[FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True, action="show")],
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=50,
+        )
+    )
+
     # Max Workers
     registry._add_field(
         ConfigField(
@@ -1183,7 +1354,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--max_workers",
             ui_label="Max Workers",
             field_type=FieldType.NUMBER,
-            tab="basic",
+            tab="hardware",
             section="hardware",
             default_value=32,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")],
@@ -1220,7 +1391,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--torch_num_threads",
             ui_label="Torch Num Threads",
             field_type=FieldType.NUMBER,
-            tab="basic",
+            tab="hardware",
             section="hardware",
             subsection="advanced",
             default_value=8,
@@ -1275,7 +1446,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             arg_name="--aspect_bucket_worker_count",
             ui_label="Aspect Bucket Worker Count",
             field_type=FieldType.NUMBER,
-            tab="basic",
+            tab="hardware",
             section="hardware",
             default_value=12,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")],
