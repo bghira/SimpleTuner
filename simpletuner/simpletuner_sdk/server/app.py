@@ -4,6 +4,9 @@ FastAPI application factory for SimpleTuner server with multiple modes.
 
 import logging
 import os
+import signal
+import sys
+from contextlib import asynccontextmanager
 from enum import Enum
 from typing import Optional
 
@@ -15,6 +18,9 @@ from fastapi.staticfiles import StaticFiles
 from .utils.paths import get_simpletuner_root, get_static_directory, get_template_directory
 
 logger = logging.getLogger("SimpleTunerServer")
+
+# Track if we're shutting down to avoid duplicate cleanup
+_shutting_down = False
 
 
 # These placeholders allow tests to monkeypatch heavy imports before the app factory runs.
@@ -33,6 +39,59 @@ class ServerMode(Enum):
     TRAINER = "trainer"  # Training API only (port 8001)
     CALLBACK = "callback"  # Callback receiver only (port 8002)
     UNIFIED = "unified"  # Both APIs in single process
+
+
+def cleanup_training_processes():
+    """Terminate all active training processes."""
+    global _shutting_down
+    if _shutting_down:
+        return
+    _shutting_down = True
+
+    try:
+        from simpletuner.simpletuner_sdk import process_keeper
+
+        # Get all active processes
+        processes = process_keeper.list_processes()
+        if processes:
+            logger.info(f"Terminating {len(processes)} active training process(es)...")
+            for job_id in processes.keys():
+                logger.info(f"Terminating training process: {job_id}")
+                try:
+                    # Use shorter timeout for faster shutdown
+                    process_keeper.terminate_process(job_id)
+                except Exception as e:
+                    logger.error(f"Error terminating process {job_id}: {e}")
+            logger.info("All training processes terminated.")
+        else:
+            logger.info("No active training processes to terminate.")
+    except Exception as e:
+        logger.error(f"Error during shutdown cleanup: {e}")
+
+
+def signal_handler(signum, frame):
+    """Handle shutdown signals."""
+    logger.info(f"Received signal {signum}, shutting down immediately...")
+    cleanup_training_processes()
+    sys.exit(0)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handle application startup and shutdown."""
+    # Startup
+    logger.info("SimpleTuner server starting up...")
+    # Register signal handlers for immediate shutdown (only works in main thread)
+    try:
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+    except ValueError:
+        # signal.signal() only works in main thread - ignore in test environments
+        logger.debug("Could not register signal handlers (not in main thread)")
+    yield
+    # Shutdown
+    logger.info("SimpleTuner server shutting down...")
+    cleanup_training_processes()
 
 
 def create_app(
@@ -54,9 +113,9 @@ def create_app(
         Configured FastAPI application
     """
 
-    # Create base app
+    # Create base app with lifespan handler
     title = f"SimpleTuner {mode.value.capitalize()} Server"
-    app = FastAPI(title=title)
+    app = FastAPI(title=title, lifespan=lifespan)
 
     # Configure CORS if enabled
     if enable_cors:
