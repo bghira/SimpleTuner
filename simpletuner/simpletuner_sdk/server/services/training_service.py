@@ -546,6 +546,8 @@ def start_training_job(runtime_config: Dict[str, Any]) -> str:
 
     APIState.set_state("training_config", runtime_payload)
     APIState.set_state("training_status", "starting")
+    APIState.set_state("training_progress", None)
+    APIState.set_state("training_startup_stages", {})
 
     job_id = str(uuid.uuid4())[:8]
 
