@@ -268,7 +268,7 @@ class SDXL(ImageModelFoundation):
         if self.config.unet_attention_slice:
             if torch.backends.mps.is_available():
                 logger.warning(
-                    "Using attention slicing when training {self.NAME} on MPS can result in NaN errors on the first backward pass. If you run into issues, disable this option and reduce your batch size instead to reduce memory consumption."
+                    f"Using attention slicing when training {self.NAME} on MPS can result in NaN errors on the first backward pass. If you run into issues, disable this option and reduce your batch size instead to reduce memory consumption."
                 )
             if self.model.get_trained_component() is not None:
                 self.model.get_trained_component().set_attention_slice("auto")
@@ -281,7 +281,7 @@ class SDXL(ImageModelFoundation):
             logger.warning(f"-!- {self.NAME} supports a max length of 77 tokens, --tokenizer_max_length is ignored -!-")
         if self.config.aspect_bucket_alignment != 64:
             logger.warning(
-                "{self.NAME} requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
+                f"{self.NAME} requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
             )
             self.config.aspect_bucket_alignment = 64
 
