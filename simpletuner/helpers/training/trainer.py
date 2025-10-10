@@ -47,6 +47,14 @@ from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation import Validation, prepare_validation_prompt_list
 from simpletuner.helpers.training.wrappers import unwrap_model
 from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
+from simpletuner.helpers.webhooks.events import (
+    attach_timestamp,
+    checkpoint_event,
+    error_event,
+    lifecycle_stage_event,
+    notification_event,
+    training_status_event,
+)
 from simpletuner.simpletuner_sdk.api_state import APIState
 
 logger = get_logger("SimpleTuner", log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -64,6 +72,8 @@ training_logger.setLevel(training_logger_level)
 # Less important logs.
 filelock_logger.setLevel("WARNING")
 connection_logger.setLevel("WARNING")
+
+
 import accelerate
 import diffusers
 import torch
@@ -372,13 +382,13 @@ class Trainer:
             self._send_webhook_msg(
                 message=f"Failed to run training: {e}",
             )
-            self._send_webhook_raw(
-                structured_data={
-                    "message": f"Failed to run training: {e}",
-                    "status": "error",
-                },
-                message_type="fatal_error",
+            event = error_event(
+                message=f"Failed to run training: {e}",
+                title="Fatal Error",
+                job_id=self.job_id,
+                data={"status": "error"},
             )
+            self._emit_event(event, message_level="critical")
 
             raise e
 
@@ -440,10 +450,11 @@ class Trainer:
                 message="SimpleTuner has launched. Hold onto your butts!",
                 store_response=True,
             )
-        self._send_webhook_raw(
-            structured_data={"message": "Training job has started, configuration has begun."},
-            message_type="configure_webhook",
+        event = notification_event(
+            message="Training job has started, configuration has begun.",
+            job_id=self.job_id,
         )
+        self._emit_event(event)
 
     def _misc_init(self):
         """things that do not really need an order."""
@@ -537,6 +548,8 @@ class Trainer:
         self.hub_manager = None
         if not self.accelerator.is_main_process:
             return
+        if access_token is None:
+            access_token = getattr(self, "hf_access_token", None)
         if access_token:
             huggingface_hub.login(token=access_token)
         self.hub_manager = HubManager(config=self.config, model=self.model)
@@ -572,25 +585,45 @@ class Trainer:
 
     def init_load_base_model(self):
         webhook_msg = f"Loading model: `{self.config.pretrained_model_name_or_path}`..."
-        self._send_webhook_msg(message=webhook_msg)
-        self._send_webhook_raw(
-            structured_data={"message": webhook_msg},
-            message_type="init_load_base_model_begin",
+        # Send to Discord but don't emit event (lifecycle event below will handle that)
+        self._send_webhook_msg(message=webhook_msg, emit_event=False)
+        self._emit_event(
+            lifecycle_stage_event(
+                key="load_base_model",
+                label="Loading base model",
+                status="running",
+                message=webhook_msg,
+                job_id=self.job_id,
+            )
         )
         self.model.load_model(move_to_device=False)
         self.accelerator.wait_for_everyone()
-        self._send_webhook_raw(
-            structured_data={"message": "Base model has loaded."},
-            message_type="init_load_base_model_completed",
+        self._emit_event(
+            lifecycle_stage_event(
+                key="load_base_model",
+                label="Loading base model",
+                status="completed",
+                message="Base model has loaded.",
+                current=1,
+                total=1,
+                percent=100,
+                job_id=self.job_id,
+            ),
         )
 
     def init_data_backend(self):
         try:
             self.init_clear_backend_cache()
-            self._send_webhook_msg(message="Configuring data backends... (this may take a while!)")
-            self._send_webhook_raw(
-                structured_data={"message": "Configuring data backends."},
-                message_type="init_data_backend_begin",
+            # Send to Discord but don't emit event (lifecycle event below will handle that)
+            self._send_webhook_msg(message="Configuring data backends... (this may take a while!)", emit_event=False)
+            self._emit_event(
+                lifecycle_stage_event(
+                    key="data_backend",
+                    label="Configuring data backends",
+                    status="running",
+                    message="Configuring data backends... (this may take a while!)",
+                    job_id=self.job_id,
+                )
             )
             configure_multi_databackend(
                 self.config,
@@ -599,9 +632,17 @@ class Trainer:
                 tokenizers=self.model.tokenizers,
                 model=self.model,
             )
-            self._send_webhook_raw(
-                structured_data={"message": "Completed configuring data backends."},
-                message_type="init_data_backend_completed",
+            self._emit_event(
+                lifecycle_stage_event(
+                    key="data_backend",
+                    label="Configuring data backends",
+                    status="completed",
+                    message="Completed configuring data backends.",
+                    current=1,
+                    total=1,
+                    percent=100,
+                    job_id=self.job_id,
+                )
             )
         except Exception as e:
             import traceback
@@ -611,12 +652,15 @@ class Trainer:
                 message=f"Failed to load data backends: {e}",
                 message_level="critical",
             )
-            self._send_webhook_raw(
-                structured_data={
-                    "message": f"Failed to load data backends: {e}",
-                    "status": "error",
-                },
-                message_type="fatal_error",
+            self._emit_event(
+                lifecycle_stage_event(
+                    key="data_backend",
+                    label="Configuring data backends",
+                    status="failed",
+                    message=f"Failed to load data backends: {e}",
+                    job_id=self.job_id,
+                ),
+                message_level="critical",
             )
 
             raise e
@@ -639,10 +683,16 @@ class Trainer:
             logger.debug(f"Collected validation prompts: {validation_prompt_metadata}")
         self._recalculate_training_steps()
         logger.info(f"Collected the following data backends: {collected_data_backend_keys}")
-        self._send_webhook_msg(message=f"Collected the following data backends: {collected_data_backend_keys}")
-        self._send_webhook_raw(
-            structured_data={"message": f"Collected the following data backends: {collected_data_backend_keys}"},
-            message_type="init_data_backend",
+        # Send to Discord but don't emit event (notification event below will handle that)
+        self._send_webhook_msg(
+            message=f"Collected the following data backends: {collected_data_backend_keys}", emit_event=False
+        )
+        self._emit_event(
+            notification_event(
+                message=f"Collected the following data backends: {collected_data_backend_keys}",
+                severity="info",
+                job_id=self.job_id,
+            )
         )
         self.accelerator.wait_for_everyone()
 
@@ -1163,10 +1213,16 @@ class Trainer:
         logger.info("Loading our accelerator...")
         if torch.backends.mps.is_available():
             self.accelerator.native_amp = False
-        self._send_webhook_msg(message="Moving weights to GPU...")
-        self._send_webhook_raw(
-            structured_data={"message": "Moving weights to GPU"},
-            message_type="init_prepare_models_begin",
+        # Send to Discord but don't emit event (lifecycle event below will handle that)
+        self._send_webhook_msg(message="Preparing model components...", emit_event=False)
+        self._emit_event(
+            lifecycle_stage_event(
+                key="prepare_models",
+                label="Preparing model components",
+                status="running",
+                message="Preparing model components",
+                job_id=self.job_id,
+            )
         )
         primary_model = self.model.get_trained_component(unwrap_model=False)
         results = self.accelerator.prepare(primary_model, lr_scheduler, self.optimizer, self.train_dataloaders[0])
@@ -1190,9 +1246,12 @@ class Trainer:
                 try:
                     self.ema_model.pin_memory()
                 except Exception as e:
-                    self._send_webhook_raw(
-                        structured_data={"message": f"Failed to pin EMA to CPU: {e}"},
-                        message_type="error",
+                    self._emit_event(
+                        notification_event(
+                            message=f"Failed to pin EMA to CPU: {e}",
+                            severity="warning",
+                            job_id=self.job_id,
+                        )
                     )
                     logger.error(f"Failed to pin EMA model to CPU: {e}")
 
@@ -1210,9 +1269,17 @@ class Trainer:
             self.text_encoder_1, self.text_encoder_2 = self.accelerator.prepare(self.text_encoder_1, self.text_encoder_2)
         self._recalculate_training_steps()
         self.accelerator.wait_for_everyone()
-        self._send_webhook_raw(
-            structured_data={"message": "Completed moving weights to GPU"},
-            message_type="init_prepare_models_completed",
+        self._emit_event(
+            lifecycle_stage_event(
+                key="prepare_models",
+                label="Preparing model components",
+                status="completed",
+                message="Completed preparing model components",
+                current=1,
+                total=1,
+                percent=100,
+                job_id=self.job_id,
+            )
         )
 
     def init_unload_vae(self):
@@ -1274,16 +1341,29 @@ class Trainer:
         if not self.accelerator.is_main_process:
             return
         logger.info("Benchmarking base model for comparison. Supply `--disable_benchmark: true` to disable this behaviour.")
-        self._send_webhook_raw(
-            structured_data={"message": "Base model benchmark begins"},
-            message_type="init_benchmark_base_model_begin",
+        self._emit_event(
+            lifecycle_stage_event(
+                key="benchmark_base_model",
+                label="Benchmarking base model",
+                status="running",
+                message="Base model benchmark begins",
+                job_id=self.job_id,
+            )
         )
         # we'll run validation on base model if it hasn't already.
         self.validation.run_validations(validation_type="base_model", step=0)
         self.validation.save_benchmark("base_model")
-        self._send_webhook_raw(
-            structured_data={"message": "Base model benchmark completed"},
-            message_type="init_benchmark_base_model_completed",
+        self._emit_event(
+            lifecycle_stage_event(
+                key="benchmark_base_model",
+                label="Benchmarking base model",
+                status="completed",
+                message="Base model benchmark completed",
+                current=1,
+                total=1,
+                percent=100,
+                job_id=self.job_id,
+            )
         )
 
     def init_resume_checkpoint(self, lr_scheduler):
@@ -1304,10 +1384,14 @@ class Trainer:
 
         if path is None:
             logger.info(f"Checkpoint '{self.config.resume_from_checkpoint}' does not exist. Starting a new training run.")
-            self._send_webhook_raw(
-                structured_data={"message": "No model to resume. Beginning fresh training run."},
-                message_type="init_resume_checkpoint",
+            event = lifecycle_stage_event(
+                key="resume_checkpoint",
+                label="Resume Checkpoint",
+                status="completed",
+                message="No model to resume. Beginning fresh training run.",
+                job_id=self.job_id,
             )
+            self._emit_event(event)
 
             self.config.resume_from_checkpoint = None
             return lr_scheduler
@@ -1327,18 +1411,24 @@ class Trainer:
                     if k in ("base_lrs", "_last_lr"):
                         v[0] = self.config.learning_rate
         except Exception as e:
-            self._send_webhook_raw(
-                structured_data={"message": "Could not update learning rate scheduler LR value."},
-                message_type="warning",
+            event = notification_event(
+                message="Could not update learning rate scheduler LR value.",
+                severity="warning",
+                job_id=self.job_id,
             )
+            self._emit_event(event)
             logger.error(
                 f"Could not update lr_scheduler {self.config.lr_scheduler} learning rate to {self.config.learning_rate} upon resume: {e}"
             )
 
-        self._send_webhook_raw(
-            structured_data={"message": f"Resuming model: {path}"},
-            message_type="init_resume_checkpoint",
+        event = lifecycle_stage_event(
+            key="resume_checkpoint",
+            label="Resume Checkpoint",
+            status="running",
+            message=f"Resuming model: {path}",
+            job_id=self.job_id,
         )
+        self._emit_event(event)
         training_state_filename = f"training_state.json"
         if get_rank() > 0:
             training_state_filename = f"training_state-{get_rank()}.json"
@@ -1354,10 +1444,15 @@ class Trainer:
         self.state["global_resume_step"] = self.state["global_step"] = StateTracker.get_global_step()
         StateTracker.set_global_resume_step(self.state["global_resume_step"])
         training_state_in_ckpt = StateTracker.get_training_state()
-        self._send_webhook_raw(
-            structured_data=training_state_in_ckpt,
-            message_type="init_resume_checkpoint_details",
+        event = lifecycle_stage_event(
+            key="resume_checkpoint",
+            label="Resume Checkpoint",
+            status="completed",
+            message=f"Resumed from global_step {self.state['global_resume_step']}",
+            job_id=self.job_id,
+            extra=training_state_in_ckpt,
         )
+        self._emit_event(event)
         logger.debug(f"Training state inside checkpoint: {training_state_in_ckpt}")
         if hasattr(lr_scheduler, "last_step"):
             lr_scheduler.last_step = self.state["global_resume_step"]
@@ -1398,6 +1493,22 @@ class Trainer:
                 group["running_d_denom"] = group["running_d_denom"].to(p.device)
                 if "use_focus" not in group:
                     group["use_focus"] = False
+
+        # Emit completion event for resume checkpoint stage
+        if self.config.resume_from_checkpoint:
+            from ..webhooks.events import lifecycle_stage_event
+
+            completion_event = lifecycle_stage_event(
+                key="resume_checkpoint",
+                label="Resuming checkpoint",
+                status="completed",
+                percent=100,
+                current=1,
+                total=1,
+                job_id=self.job_id,
+                severity="info",
+            )
+            self._emit_event(completion_event, message_level="info")
 
         return lr_scheduler
 
@@ -1441,14 +1552,18 @@ class Trainer:
                     self.accelerator.trackers = []
                 else:
                     logger.error(f"Could not initialize trackers: {e}")
-                    self._send_webhook_raw(
-                        structured_data={"message": f"Could not initialize trackers. Continuing without. {e}"},
-                        message_type="error",
+                    event = error_event(
+                        message=f"Could not initialize trackers. Continuing without. {e}",
+                        job_id=self.job_id,
                     )
-            self._send_webhook_raw(
-                structured_data=public_args.__dict__,
-                message_type="training_config",
+                    self._emit_event(event)
+            event = notification_event(
+                message="Training configuration initialized",
+                title="Training Config",
+                job_id=self.job_id,
+                data=public_args.__dict__,
             )
+            self._emit_event(event)
 
     def resume_and_prepare(self):
         self.init_optimizer()
@@ -1628,38 +1743,34 @@ class Trainer:
             logger.debug("Setting optimiser into eval() mode.")
             self.optimizer.eval()
 
-    def _send_webhook_msg(self, message: str, message_level: str = "info", store_response: bool = False):
+    def _send_webhook_msg(
+        self, message: str, message_level: str = "info", store_response: bool = False, emit_event: bool = True
+    ):
         if type(message) is not str:
             logger.error(f"_send_webhook_msg received {type(message)} type message instead of str.")
             return False
         if self.webhook_handler is None or not self.webhook_handler:
             return
         self.webhook_handler.send(message=message, message_level=message_level, store_response=store_response)
-        self.webhook_handler.send_raw(
-            structured_data={"message": message},
-            message_type="_send_webhook_msg",
-            message_level=message_level,
-            job_id=self.job_id,
-        )
+        # Only emit event if requested (to avoid duplicates when a structured event is also being sent)
+        if emit_event:
+            event = notification_event(message=message, severity=message_level, job_id=self.job_id)
+            self._emit_event(event, message_level=message_level)
 
-    def _send_webhook_raw(
-        self,
-        structured_data: dict,
-        message_type: str,
-        message_level: str = "info",
-    ):
-        if type(structured_data) is not dict:
-            logger.error(f"_send_webhook_msg received {type(structured_data)} type message instead of dict.")
+    def _emit_event(self, event: dict, message_level: str = "info"):
+        if not isinstance(event, dict):
+            logger.error(f"_emit_event expected dict payload, received {type(event)}.")
             return False
         if not self.webhook_handler:
-            logger.warning(f"No webhook handler is configured.")
-            return
-        self.webhook_handler.send_raw(
-            structured_data=structured_data,
-            message_type=message_type,
-            message_level=message_level,
-            job_id=self.job_id,
-        )
+            logger.warning("No webhook handler is configured.")
+            return False
+        if self.job_id and event.get("job_id") is None:
+            event["job_id"] = self.job_id
+        attach_timestamp(event)
+        if "severity" not in event:
+            event["severity"] = message_level
+        self.webhook_handler.send_raw(event, message_level=message_level, job_id=self.job_id)
+        return True
 
     def _train_initial_msg(self):
         initial_msg = "\n***** Running training *****"
@@ -1682,25 +1793,40 @@ class Trainer:
         self.state["steps_remaining_at_start"] = steps_remaining_at_start
         self.state["total_num_steps"] = self.config.max_train_steps
         logger.info(initial_msg)
-        self._send_webhook_msg(message=initial_msg)
-        structured_data = {
-            "total_num_batches": self.config.total_num_batches,
-            "total_num_epochs": self.config.num_train_epochs,
-            "total_num_steps": self.config.max_train_steps,
-            "current_epoch": self.state["first_epoch"],
-            "total_batch_size": self.config.total_batch_size,
-            "micro_batch_size": self.config.train_batch_size,
-            "global_step": self.state["global_step"],
-            "remaining_num_steps": max(
-                0,
-                getattr(
-                    self.config,
-                    "total_steps_remaining_at_start",
-                    self.config.max_train_steps,
-                ),
-            ),
+        # Send to Discord webhook but don't emit as event (to avoid cluttering event dock)
+        if self.webhook_handler is not None:
+            self.webhook_handler.send(message=initial_msg, message_level="info")
+        progress_percent = 0.0
+        if self.config.max_train_steps:
+            progress_percent = (self.state["global_step"] / self.config.max_train_steps) * 100
+        progress_payload = {
+            "label": "Training initialisation",
+            "current": self.state["global_step"],
+            "total": self.config.max_train_steps,
+            "percent": progress_percent,
+            "metrics": {
+                "epoch": self.state["first_epoch"],
+                "total_epochs": self.config.num_train_epochs,
+            },
         }
-        self._send_webhook_raw(structured_data=structured_data, message_type="_train_initial_msg")
+        status_event = training_status_event(
+            status="running",  # Changed from "starting" - all initialization is complete
+            message=initial_msg,
+            job_id=self.job_id,
+            severity="info",
+            progress=progress_payload,
+            extra={
+                "total_num_batches": self.config.total_num_batches,
+                "total_num_epochs": self.config.num_train_epochs,
+                "total_num_steps": self.config.max_train_steps,
+                "current_epoch": self.state["first_epoch"],
+                "total_batch_size": self.config.total_batch_size,
+                "micro_batch_size": self.config.train_batch_size,
+                "global_step": self.state["global_step"],
+                "remaining_num_steps": steps_remaining_at_start,
+            },
+        )
+        self._emit_event(status_event)
 
     def _epoch_rollover(self, epoch):
         if self.state["first_epoch"] == epoch:
@@ -1756,10 +1882,14 @@ class Trainer:
             self.abort()
 
         if self.should_abort:
-            self._send_webhook_raw(
-                structured_data={"message": "Aborting training run."},
-                message_type="exit",
+            event = lifecycle_stage_event(
+                key="training_abort",
+                label="Training Aborted",
+                status="completed",
+                message="Aborting training run.",
+                job_id=self.job_id,
             )
+            self._emit_event(event)
             raise StopIteration("Training run received abort signal.")
 
     def abort(self):
@@ -1925,26 +2055,42 @@ class Trainer:
         save_path_tmp = f"{save_path}-tmp" if self.config.checkpointing_use_tempdir else save_path
 
         # schedulefree optim needs the optimizer to be in eval mode to save the state (and then back to train after)
-        self._send_webhook_raw(
-            structured_data={"message": f"Saving checkpoint to {save_path}"},
-            message_type="checkpoint_state_save",
+        event = lifecycle_stage_event(
+            key="checkpoint_save",
+            label="Saving Checkpoint",
+            status="running",
+            message=f"Saving checkpoint to {save_path}",
+            job_id=self.job_id,
         )
+        self._emit_event(event)
         self.mark_optimizer_eval()
         self.accelerator.save_state(save_path_tmp)
-        self._send_webhook_raw(
-            structured_data={"message": f"Saved checkpoint to {save_path}"},
-            message_type="checkpoint_state_save_completed",
+        event = lifecycle_stage_event(
+            key="checkpoint_save",
+            label="Saving Checkpoint",
+            status="completed",
+            message=f"Saved checkpoint to {save_path}",
+            job_id=self.job_id,
         )
+        self._emit_event(event)
         if getattr(self, "distiller", None) is not None:
-            self._send_webhook_raw(
-                structured_data={"message": f"Saving distillation states to {save_path_tmp}"},
-                message_type="checkpoint_state_save_distiller",
+            event = lifecycle_stage_event(
+                key="checkpoint_save_distiller",
+                label="Saving Distillation States",
+                status="running",
+                message=f"Saving distillation states to {save_path_tmp}",
+                job_id=self.job_id,
             )
+            self._emit_event(event)
             self.distiller.on_save_checkpoint(self.state["global_step"], save_path_tmp)
-            self._send_webhook_raw(
-                structured_data={"message": f"Saved distillation states to {save_path_tmp}"},
-                message_type="checkpoint_state_save_distiller_completed",
+            event = lifecycle_stage_event(
+                key="checkpoint_save_distiller",
+                label="Saving Distillation States",
+                status="completed",
+                message=f"Saved distillation states to {save_path_tmp}",
+                job_id=self.job_id,
             )
+            self._emit_event(event)
         self.mark_optimizer_train()
         for _, backend in StateTracker.get_data_backends().items():
             if "sampler" in backend:
@@ -1957,10 +2103,12 @@ class Trainer:
                 )
         if save_path != save_path_tmp:
             os.rename(save_path_tmp, save_path)
-        self._send_webhook_raw(
-            structured_data={"message": f"Checkpoint saved to {save_path}", "checkpoint_path": save_path},
-            message_type="checkpoint_state_save_finalized",
+        event = checkpoint_event(
+            path=save_path,
+            label=f"Checkpoint saved to {save_path}",
+            job_id=self.job_id,
         )
+        self._emit_event(event)
 
     def checkpoint_state_latest(self, output_dir):
         if self.checkpoint_manager:
@@ -2296,21 +2444,28 @@ class Trainer:
                     )
                     webhook_pending_msg = f"Step {self.state['global_step']} of {self.config.max_train_steps}: loss {round(loss.item(), 4)}, lr {self.lr}, epoch {epoch}/{self.config.num_train_epochs}, ema_decay_value {ema_decay_value}, train_loss {round(self.train_loss, 4)}"
 
-                    if (
-                        self.config.webhook_reporting_interval is not None
-                        and self.state["global_step"] % self.config.webhook_reporting_interval == 0
-                    ):
+                    if self.webhook_handler is not None:
                         current_state = self.state.copy()
                         current_state.pop("args")  # we don't need to send the config every time.
-                        structured_data = {
-                            "loss": self.train_loss,
-                            "parent_loss": parent_loss,
-                            "learning_rate": float(self.lr),
-                            "epoch": epoch,
-                            "final_epoch": self.config.num_train_epochs,
-                            **current_state,
-                        }
-                        self._send_webhook_raw(structured_data=structured_data, message_type="training_status")
+                        event = training_status_event(
+                            status="running",
+                            job_id=self.job_id,
+                            progress={
+                                "current": current_state.get("global_step"),
+                                "total": current_state.get("total_num_steps"),
+                                "metrics": {
+                                    "loss": self.train_loss,
+                                    "parent_loss": parent_loss,
+                                    "learning_rate": float(self.lr),
+                                    "epoch": epoch,
+                                },
+                            },
+                            extra={
+                                "final_epoch": self.config.num_train_epochs,
+                                **current_state,
+                            },
+                        )
+                        self._emit_event(event)
 
                     if self.config.checkpointing_steps and self.state["global_step"] % self.config.checkpointing_steps == 0:
                         self._send_webhook_msg(
@@ -2320,15 +2475,25 @@ class Trainer:
                         # Also send structured progress update at checkpoint time
                         current_state = self.state.copy()
                         current_state.pop("args", None)
-                        structured_data = {
-                            "loss": self.train_loss,
-                            "parent_loss": parent_loss,
-                            "learning_rate": float(self.lr),
-                            "epoch": epoch,
-                            "final_epoch": self.config.num_train_epochs,
-                            **current_state,
-                        }
-                        self._send_webhook_raw(structured_data=structured_data, message_type="training_status")
+                        event = training_status_event(
+                            status="running",
+                            job_id=self.job_id,
+                            progress={
+                                "current": current_state.get("global_step"),
+                                "total": current_state.get("total_num_steps"),
+                                "metrics": {
+                                    "loss": self.train_loss,
+                                    "parent_loss": parent_loss,
+                                    "learning_rate": float(self.lr),
+                                    "epoch": epoch,
+                                },
+                            },
+                            extra={
+                                "final_epoch": self.config.num_train_epochs,
+                                **current_state,
+                            },
+                        )
+                        self._emit_event(event)
                         if self.accelerator.is_main_process and self.config.checkpoints_total_limit is not None:
                             # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
                             self.checkpoint_state_cleanup(
@@ -2349,15 +2514,25 @@ class Trainer:
                         # Also send structured progress update at checkpoint time
                         current_state = self.state.copy()
                         current_state.pop("args", None)
-                        structured_data = {
-                            "loss": self.train_loss,
-                            "parent_loss": parent_loss,
-                            "learning_rate": float(self.lr),
-                            "epoch": epoch,
-                            "final_epoch": self.config.num_train_epochs,
-                            **current_state,
-                        }
-                        self._send_webhook_raw(structured_data=structured_data, message_type="training_status")
+                        event = training_status_event(
+                            status="running",
+                            job_id=self.job_id,
+                            progress={
+                                "current": current_state.get("global_step"),
+                                "total": current_state.get("total_num_steps"),
+                                "metrics": {
+                                    "loss": self.train_loss,
+                                    "parent_loss": parent_loss,
+                                    "learning_rate": float(self.lr),
+                                    "epoch": epoch,
+                                },
+                            },
+                            extra={
+                                "final_epoch": self.config.num_train_epochs,
+                                **current_state,
+                            },
+                        )
+                        self._emit_event(event)
                         if self.accelerator.is_main_process and self.config.checkpoints_rolling_total_limit is not None:
                             # _before_ saving state, check if this save would set us over the `checkpoints_rolling_total_limit`
                             self.checkpoint_state_cleanup(
@@ -2455,16 +2630,24 @@ class Trainer:
                         f"Training has completed."
                         f"\n -> global_step = {self.state['global_step']}, max_train_steps = {self.config.max_train_steps}, epoch = {epoch}, num_train_epochs = {self.config.num_train_epochs}",
                     )
-                    self._send_webhook_raw(
-                        structured_data={
-                            "state": self.state,
+                    event = lifecycle_stage_event(
+                        key="training_complete",
+                        label="Training Complete",
+                        status="completed",
+                        message="Training run complete",
+                        job_id=self.job_id,
+                        percent=100,
+                        metrics={
                             "loss": round(self.train_loss, 4),
                             "learning_rate": self.lr,
                             "epoch": epoch,
+                        },
+                        extra={
+                            "state": self.state,
                             "final_epoch": self.config.num_train_epochs,
                         },
-                        message_type="training_complete",
                     )
+                    self._emit_event(event)
                     break
             if self.state["global_step"] >= self.config.max_train_steps or (
                 epoch > self.config.num_train_epochs and not self.config.ignore_final_epochs
@@ -2472,26 +2655,38 @@ class Trainer:
                 logger.info(
                     f"Exiting training loop. Beginning model unwind at epoch {epoch}, step {self.state['global_step']}"
                 )
-                self._send_webhook_raw(
-                    structured_data={
-                        "state": self.state,
+                event = lifecycle_stage_event(
+                    key="training_complete",
+                    label="Training Complete",
+                    status="completed",
+                    message="Training run complete",
+                    job_id=self.job_id,
+                    percent=100,
+                    metrics={
                         "loss": round(self.train_loss, 4),
                         "learning_rate": self.lr,
                         "epoch": epoch,
+                    },
+                    extra={
+                        "state": self.state,
                         "final_epoch": self.config.num_train_epochs,
                     },
-                    message_type="training_complete",
                 )
+                self._emit_event(event)
                 break
 
         # Create the pipeline using the trained modules and save it.
         self.accelerator.wait_for_everyone()
         validation_images = None
         if self.accelerator.is_main_process:
-            self._send_webhook_raw(
-                structured_data={"message": f"Finalizing model and saving to {self.config.output_dir}"},
-                message_type="model_save_start",
+            event = lifecycle_stage_event(
+                key="model_save",
+                label="Saving Final Model",
+                status="running",
+                message=f"Finalizing model and saving to {self.config.output_dir}",
+                job_id=self.job_id,
             )
+            self._emit_event(event)
             self.mark_optimizer_eval()
             if self.validation is not None:
                 self.enable_sageattention_inference()
@@ -2574,10 +2769,15 @@ class Trainer:
             if self.hub_manager is not None and self.accelerator.is_main_process:
                 self.hub_manager.upload_model(validation_images, self.webhook_handler)
         self.accelerator.end_training()
-        self._send_webhook_raw(
-            structured_data={"message": "Training run complete."},
-            message_type="run_complete",
+        event = lifecycle_stage_event(
+            key="training_complete",
+            label="Training Complete",
+            status="completed",
+            message="Training run complete.",
+            job_id=self.job_id,
+            percent=100,
         )
+        self._emit_event(event)
 
 
 def run_trainer_job(config):
@@ -2671,6 +2871,29 @@ def run_trainer_job(config):
         if isinstance(same_network_value, str):
             same_network_value = same_network_value.strip().lower() in {"1", "true", "yes", "on"}
 
+    def _resolve_hf_token() -> Optional[str]:
+        possible_env_vars = (
+            "HUGGINGFACEHUB_API_TOKEN",
+            "HUGGINGFACE_HUB_TOKEN",
+            "HF_TOKEN",
+            "HF_API_TOKEN",
+        )
+        for env_var in possible_env_vars:
+            token = os.environ.get(env_var)
+            if token:
+                return token
+        try:
+            from huggingface_hub import HfFolder
+
+            token = HfFolder.get_token()
+            if token:
+                return token
+        except Exception:
+            pass
+        return None
+
+    hf_token = _resolve_hf_token()
+
     def _launch_with_accelerate() -> Optional[int]:
         use_accelerate = False
 
@@ -2699,6 +2922,9 @@ def run_trainer_job(config):
         launch_env = os.environ.copy()
         if job_id:
             launch_env["SIMPLETUNER_JOB_ID"] = job_id
+        if hf_token:
+            for var in ("HUGGINGFACEHUB_API_TOKEN", "HUGGINGFACE_HUB_TOKEN", "HF_TOKEN", "HF_API_TOKEN"):
+                launch_env.setdefault(var, hf_token)
 
         # Normalise accelerate config path if provided
         config_file_arg = None
@@ -2904,8 +3130,15 @@ def run_trainer_job(config):
     if accelerate_result is not None:
         return accelerate_result
 
+    if hf_token:
+        for var in ("HUGGINGFACEHUB_API_TOKEN", "HUGGINGFACE_HUB_TOKEN", "HF_TOKEN", "HF_API_TOKEN"):
+            os.environ.setdefault(var, hf_token)
+
     try:
         trainer = Trainer(config=config_payload, job_id=job_id)
+
+        if hf_token:
+            trainer.hf_access_token = hf_token
 
     except Exception as e:
         webhook_handler = StateTracker.get_webhook_handler()
