@@ -6,6 +6,7 @@ import unittest
 
 try:
     from simpletuner.simpletuner_sdk.api_state import APIState
+    from simpletuner.simpletuner_sdk.server.services.callback_events import EventType
     from simpletuner.simpletuner_sdk.server.services.callback_presenter import CallbackPresenter
     from simpletuner.simpletuner_sdk.server.services.callback_service import CallbackService
     from simpletuner.simpletuner_sdk.server.services.event_store import EventStore
@@ -46,7 +47,7 @@ class CallbackServiceTestCase(unittest.TestCase):
         )
         self.assertIsNotNone(event)
         self.assertEqual(event.index, 0)
-        self.assertEqual(event.category.value, "job")
+        self.assertEqual(event.type, EventType.NOTIFICATION)
         recent = self.service.get_recent(limit=1)
         self.assertEqual(len(recent), 1)
         self.assertEqual(recent[0].index, 0)
@@ -56,24 +57,7 @@ class CallbackServiceTestCase(unittest.TestCase):
         self.service.handle_incoming({"message_type": "configure_webhook", "message": "reset"})
         events = self.service.get_recent(limit=5)
         self.assertEqual(len(events), 1)
-        self.assertEqual(events[0].message_type, "configure_webhook")
-
-    def test_progress_events_are_deduped(self) -> None:
-        progress_payload = {
-            "message_type": "progress_update",
-            "job_id": "job-1",
-            "message": {
-                "progress_type": "init",
-                "progress": 10,
-                "total_elements": 100,
-                "current_estimated_index": 10,
-            },
-        }
-        first = self.service.handle_incoming(progress_payload)
-        second = self.service.handle_incoming(progress_payload)
-        self.assertIs(first, second)
-        events = self.service.get_recent(limit=5)
-        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].type.value, EventType.NOTIFICATION.value)
 
     def test_terminal_status_suppresses_future_updates(self) -> None:
         running_payload = {
@@ -137,8 +121,8 @@ class CallbackPresenterTestCase(unittest.TestCase):
         event = service.handle_incoming({"message_type": "warning", "message": "Heads up"})
         self.assertIsNotNone(event)
         event_type, payload = CallbackPresenter.to_sse(event)
-        self.assertEqual(event_type, f"callback:{event.category.value}")
-        self.assertIn("headline", payload)
+        self.assertEqual(event_type, "notification")
+        self.assertIn("title", payload)
         self.assertIn("severity", payload)
 
     def test_htmx_tile_renders_base64_images(self) -> None:

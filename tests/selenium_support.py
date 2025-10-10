@@ -30,8 +30,13 @@ if hasattr(multiprocessing, "set_start_method"):
 TEST_HOST = "127.0.0.1"
 
 
-def _run_test_server(port: int) -> None:
+def _run_test_server(port: int, home_path: str, webui_config_path: str) -> None:
     import uvicorn
+
+    # Ensure the subprocess uses the test's temporary HOME directory
+    os.environ["HOME"] = home_path
+    os.environ["SIMPLETUNER_WEB_UI_CONFIG"] = webui_config_path
+    os.environ["TQDM_DISABLE"] = "1"
 
     app = create_app(mode=ServerMode.TRAINER)
     uvicorn.run(app, host=TEST_HOST, port=port, log_level="error")
@@ -43,6 +48,7 @@ class _TestServerManager:
     def __init__(self) -> None:
         self._process: Optional[multiprocessing.Process] = None
         self.port: Optional[int] = None
+        self.home_path: Optional[str] = None
 
     @property
     def base_url(self) -> str:
@@ -50,13 +56,18 @@ class _TestServerManager:
             raise RuntimeError("Test server port unavailable")
         return f"http://{TEST_HOST}:{self.port}"
 
-    def start(self) -> str:
+    def start(self, home_path: str) -> str:
+        # If server is already running with a different home path, restart it
         if self._process and self._process.is_alive():
-            return self.base_url
+            if self.home_path == home_path:
+                return self.base_url
+            # Home path changed, need to restart the server
+            self.stop()
 
-        self.stop()
+        self.home_path = home_path
+        webui_config_path = str(Path(home_path) / ".simpletuner" / "webui")
         self.port = self._find_free_port()
-        self._process = multiprocessing.Process(target=_run_test_server, args=(self.port,))
+        self._process = multiprocessing.Process(target=_run_test_server, args=(self.port, home_path, webui_config_path))
         self._process.daemon = True
         self._process.start()
         self._wait_for_server(self.port)
@@ -129,9 +140,9 @@ def ensure_global_home() -> Path:
     return _GLOBAL_HOME_PATH
 
 
-def ensure_test_server() -> str:
+def ensure_test_server(home_path: Path) -> str:
     """Ensure the singleton test server is running."""
-    return _SERVER_MANAGER.start()
+    return _SERVER_MANAGER.start(str(home_path))
 
 
 def _chrome_options() -> ChromeOptions:
@@ -245,7 +256,7 @@ class SeleniumTestCase(unittest.TestCase):
     def setUpClass(cls) -> None:
         super().setUpClass()
         cls.home_path = ensure_global_home()
-        cls.base_url = ensure_test_server()
+        cls.base_url = ensure_test_server(cls.home_path)
         cls._driver_cache = {}
 
     @classmethod

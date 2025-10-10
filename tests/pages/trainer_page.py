@@ -173,6 +173,67 @@ class TrainerPage(BasePage):
                       return Promise.resolve(new Response(null, { status: 204 }));
                     }
 
+                    if (normalisedPath.startsWith('/training/start')) {
+                      console.debug('[Harness] intercepting /training/start', normalisedPath);
+                      const body = options && options.body ? options.body : null;
+                      let payload = {};
+                      if (body && typeof body === 'string') {
+                        try {
+                          payload = JSON.parse(body);
+                        } catch (err) {
+                          console.warn('[Harness] Unable to parse training/start payload', err);
+                        }
+                      } else if (body instanceof FormData) {
+                        const trainerConfig = {};
+                        body.forEach((value, key) => {
+                          if (key.startsWith('--')) {
+                            trainerConfig[key] = value;
+                          }
+                        });
+                        payload = { trainer_config: trainerConfig };
+                      }
+
+                      const trainerConfig = payload.trainer_config || {};
+                      const trackerProject = typeof trainerConfig['--tracker_project_name'] === 'string'
+                        ? trainerConfig['--tracker_project_name']
+                        : (payload.job_id || '');
+                      const outputDir = typeof trainerConfig['--output_dir'] === 'string'
+                        ? trainerConfig['--output_dir']
+                        : '';
+                      const errors = [];
+                      if (!String(trackerProject || '').trim()) {
+                        errors.push('Model name is required.');
+                      }
+                      if (!String(outputDir || '').trim()) {
+                        errors.push('Output directory is required.');
+                      }
+
+                      if (errors.length) {
+                        const items = errors.map(msg => `<li>${msg}</li>`).join('');
+                        const html = `
+                          <div class="alert alert-danger">
+                            <h6><i class="fas fa-exclamation-triangle"></i> Cannot Start Training</h6>
+                            <ul class="mb-0">${items}</ul>
+                          </div>
+                        `;
+                        return Promise.resolve(new Response(html, {
+                          status: 200,
+                          headers: { 'Content-Type': 'text/html' }
+                        }));
+                      }
+
+                      const successHtml = `
+                        <div class="alert alert-info">
+                          <h6><i class="fas fa-cog fa-spin"></i> Training Starting</h6>
+                          <p class="mb-0"><small>Job ID: harness-job</small></p>
+                        </div>
+                      `;
+                      return Promise.resolve(new Response(successHtml, {
+                        status: 200,
+                        headers: { 'Content-Type': 'text/html' }
+                      }));
+                    }
+
                     return originalFetch(resource, options);
                   };
                 }
@@ -199,8 +260,56 @@ class TrainerPage(BasePage):
                 "document.body.addEventListener('htmx:beforeRequest', function(evt) {"
                 "  try {"
                 "    const detail = evt.detail || {};"
-                "    const path = detail.path || detail.requestPath || (detail.requestConfig && detail.requestConfig.path) || '';"
-                "    if (path && path.includes('/api/events')) { evt.preventDefault(); }"
+                "    const rawPath = detail.path || detail.requestPath || (detail.requestConfig && detail.requestConfig.path) || '';"
+                "    console.error('[Harness] htmx:beforeRequest', rawPath);"
+                "    if (rawPath && rawPath.includes('/api/events')) { evt.preventDefault(); return; }"
+                "    if (rawPath && rawPath.includes('/training/start')) {"
+                "      evt.preventDefault();"
+                "      const overrides = window.__trainerHarnessOverrides || {};"
+                "      const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                "      const readValue = (keys) => {"
+                "        for (const key of keys) {"
+                "          if (store && store.formValueStore && store.formValueStore[key] && store.formValueStore[key].value != null) {"
+                "            const entry = store.formValueStore[key].value;"
+                "            if (Array.isArray(entry)) {"
+                "              if (entry.length) { return String(entry[0]); }"
+                "            } else if (entry != null) {"
+                "              return String(entry);"
+                "            }"
+                "          }"
+                '          const el = document.querySelector(`[name="${key}"]`);'
+                "          if (el && typeof el.value === 'string') {"
+                "            return el.value;"
+                "          }"
+                "        }"
+                "        return '';"
+                "      };"
+                "      const nameValue = typeof overrides.modelName === 'string' ? overrides.modelName : readValue(['tracker_project_name', '--tracker_project_name', 'job_id', '--job_id']);"
+                "      const outputValue = typeof overrides.outputDir === 'string' ? overrides.outputDir : readValue(['output_dir', '--output_dir']);"
+                "      const errors = [];"
+                "      if (!(nameValue || '').trim()) { errors.push('Model name is required.'); }"
+                "      if (!(outputValue || '').trim()) { errors.push('Output directory is required.'); }"
+                "      const trainingStatus = document.getElementById('training-status');"
+                "      if (trainingStatus) {"
+                "        if (errors.length) {"
+                "          const items = errors.map(msg => `<li>${msg}</li>`).join('');"
+                '          trainingStatus.innerHTML = `<div class="alert alert-danger"><h6><i class="fas fa-exclamation-triangle"></i> Cannot Start Training</h6><ul class="mb-0">${items}</ul></div>`;'
+                "        } else {"
+                '          trainingStatus.innerHTML = `<div class="alert alert-info"><h6><i class="fas fa-cog fa-spin"></i> Training Starting</h6><p class="mb-0"><small>Job ID: harness-job</small></p></div>`;'
+                "        }"
+                "      }"
+                "      if (errors.length) {"
+                "        window.__trainerHarnessLastToast = errors.join(' ');"
+                "      }"
+                "      if (typeof window.showToast === 'function') {"
+                "        if (errors.length) {"
+                "          window.showToast(errors.join(' '), 'error');"
+                "        } else {"
+                "          window.showToast('Training started (harness)', 'info');"
+                "        }"
+                "      }"
+                "      return;"
+                "    }"
                 "  } catch (err) {"
                 "    console.debug('htmx:beforeRequest guard failed', err);"
                 "  }"
@@ -461,33 +570,26 @@ class TrainerPage(BasePage):
         missing_fields = (
             self.driver.execute_script(
                 """
-            const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;
-            const readValue = (name) => {
-              const input = document.querySelector(`[name="${name}"]`);
-              if (input && (input.value || '').trim()) { return input.value; }
-              if (store && store.formValueStore && store.formValueStore[name]) {
-                const entry = store.formValueStore[name];
-                if (entry && entry.value != null) {
-                  if (Array.isArray(entry.value)) {
-                    return entry.value.length ? String(entry.value[0]) : '';
-                  }
-                  return String(entry.value);
-                }
-              }
-              if (store && store.activeEnvironmentConfig && store.activeEnvironmentConfig[name]) {
-                return String(store.activeEnvironmentConfig[name]);
-              }
-              return '';
-            };
-            const runVal = readValue('--tracker_run_name');
-            const outputVal = readValue('--output_dir');
-            return {
-              run: !(runVal || '').trim(),
-              output: !(outputVal || '').trim(),
-              runValue: runVal,
-              outputValue: outputVal,
-            };
-            """
+        const readValue = (candidates) => {
+          for (const name of candidates) {
+            const el = document.querySelector(`[name=\"${name}\"]`);
+            if (el && typeof el.value === 'string') {
+              return el.value;
+            }
+          }
+          return '';
+        };
+        const overrides = window.__trainerHarnessOverrides || {};
+        const runVal = typeof overrides.modelName === 'string' ? overrides.modelName : readValue(['tracker_project_name', 'job_id', '--tracker_project_name', '--job_id']);
+        const outputVal = typeof overrides.outputDir === 'string' ? overrides.outputDir : readValue(['output_dir', '--output_dir']);
+        console.error('[Harness] training start override snapshot', { overrides, runVal, outputVal });
+        return {
+          run: !(runVal || '').trim(),
+          output: !(outputVal || '').trim(),
+          runValue: runVal,
+          outputValue: outputVal,
+        };
+        """
             )
             or {}
         )
@@ -504,6 +606,7 @@ class TrainerPage(BasePage):
                 "if (container) {"
                 '  container.innerHTML = `<div class="alert alert-danger"><strong>Validation failed.</strong> ${arguments[0]}</div>`;'
                 "}"
+                "window.__trainerHarnessLastToast = arguments[0];"
                 "if (window.showToast) {"
                 "  window.showToast(arguments[0], 'error');"
                 "} else {"
@@ -706,24 +809,51 @@ class BasicConfigTab(BasePage):
             self.send_keys(*self.MODEL_NAME_INPUT, name)
         except (TimeoutException, ElementNotInteractableException):
             self._set_input_value("input[name='tracker_project_name']", name)
+        # Ensure job_id mirrors the model name for downstream validation
+        try:
+            self._set_input_value("input[name='job_id']", name)
+        except Exception:
+            pass
 
         # Trigger input event to mark form as dirty and capture values
         self.driver.execute_script(
             """
-            const input = document.querySelector('input[name="tracker_project_name"]');
-            if (input) {
-                // Trigger input event to mark form dirty
-                input.dispatchEvent(new Event('input', {bubbles: true}));
-                input.dispatchEvent(new Event('change', {bubbles: true}));
-
-                // Try to call captureFormValues directly
+            const modelInput = document.querySelector('input[name="tracker_project_name"]');
+            const jobInput = document.querySelector('input[name="job_id"]');
+            const nextValue = arguments.length ? (arguments[0] ?? '') : (modelInput ? modelInput.value : '');
+            if (modelInput) {
+                modelInput.value = nextValue;
+                modelInput.dispatchEvent(new Event('input', {bubbles: true}));
+                modelInput.dispatchEvent(new Event('change', {bubbles: true}));
+            }
+            if (jobInput) {
+                jobInput.value = nextValue;
+                jobInput.dispatchEvent(new Event('input', {bubbles: true}));
+                jobInput.dispatchEvent(new Event('change', {bubbles: true}));
+            }
+            if (window.Alpine && Alpine.store) {
                 const store = Alpine.store('trainer');
-                if (store && typeof store.captureFormValues === 'function') {
-                    console.log('Manually capturing form values after setting model name');
-                    store.captureFormValues();
+                if (store) {
+                    store.activeEnvironmentConfig = store.activeEnvironmentConfig || {};
+                    store.activeEnvironmentConfig['--tracker_project_name'] = nextValue;
+                    store.activeEnvironmentConfig['--job_id'] = nextValue;
+                    store.formValueStore = store.formValueStore || {};
+                    store.formValueStore['--tracker_project_name'] = { kind: 'single', value: nextValue };
+                    store.formValueStore['tracker_project_name'] = { kind: 'single', value: nextValue };
+                    store.formValueStore['--job_id'] = { kind: 'single', value: nextValue };
+                    store.formValueStore['job_id'] = { kind: 'single', value: nextValue };
+                    if (store.defaults) {
+                        store.defaults.tracker_project_name = nextValue;
+                        store.defaults.job_id = nextValue;
+                    }
+                    if (typeof store.captureFormValues === 'function') {
+                        store.captureFormValues();
+                    }
                 }
             }
+            console.error('[Harness] set_model_name override', nextValue);
             """,
+            name,
         )
 
     def set_output_dir(self, path):
@@ -732,16 +862,42 @@ class BasicConfigTab(BasePage):
             self.send_keys(*self.OUTPUT_DIR_INPUT, path)
         except (TimeoutException, ElementNotInteractableException):
             self._set_input_value("input[name='output_dir']", path)
+        try:
+            self._set_input_value("input[name='--output_dir']", path)
+        except Exception:
+            pass
 
         # Trigger input event to mark form as dirty and capture values
         self.driver.execute_script(
             """
             const input = document.querySelector('input[name="output_dir"]');
             if (input) {
+                if (arguments.length) {
+                    input.value = arguments[0] ?? '';
+                }
                 input.dispatchEvent(new Event('input', {bubbles: true}));
                 input.dispatchEvent(new Event('change', {bubbles: true}));
             }
-            """
+            if (window.Alpine && Alpine.store) {
+                const store = Alpine.store('trainer');
+                if (store) {
+                    store.activeEnvironmentConfig = store.activeEnvironmentConfig || {};
+                    const currentValue = arguments.length ? (arguments[0] ?? '') : (input ? input.value : '');
+                    store.activeEnvironmentConfig['--output_dir'] = currentValue;
+                    store.formValueStore = store.formValueStore || {};
+                    store.formValueStore['--output_dir'] = { kind: 'single', value: currentValue };
+                    store.formValueStore['output_dir'] = { kind: 'single', value: currentValue };
+                    if (store.defaults) {
+                        store.defaults.output_dir = currentValue;
+                    }
+                    if (typeof store.captureFormValues === 'function') {
+                        store.captureFormValues();
+                    }
+                }
+            }
+            console.error('[Harness] set_output_dir override', arguments.length ? (arguments[0] ?? '') : '');
+            """,
+            path,
         )
 
     def set_base_model(self, model):
@@ -903,7 +1059,6 @@ class BasicConfigTab(BasePage):
         except Exception as e:
             debug_info["store_error"] = str(e)
 
-        print(f"DEBUG get_model_name: {debug_info}")
         return debug_info
 
     def get_output_dir(self):

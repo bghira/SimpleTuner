@@ -294,7 +294,7 @@ class ConfigIntegrationTestCase(_WebUIBaseTestCase):
             {
                 "--job_id": "my-model",
                 "--output_dir": "/path/to/output",
-                "--pretrained_model_name_or_path": "black-forest-labs/FLUX.1-dev",
+                "--pretrained_model_name_or_path": "jimmycarter/LibreFlux-SimpleTuner",
             },
             Mock(),
         )

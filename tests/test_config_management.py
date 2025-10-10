@@ -26,7 +26,7 @@ def test_config_store():
         config = {
             "--model_type": "lora",
             "--model_family": "flux",
-            "--pretrained_model_name_or_path": "black-forest-labs/FLUX.1-dev",
+            "--pretrained_model_name_or_path": "jimmycarter/LibreFlux-SimpleTuner",
             "--output_dir": "/tmp/test_output",
             "--train_batch_size": 2,
             "--learning_rate": 0.0002,

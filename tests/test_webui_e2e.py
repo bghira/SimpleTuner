@@ -37,7 +37,7 @@ class BasicConfigurationFlowTestCase(_TrainerPageMixin, WebUITestCase):
             basic_tab.set_output_dir("/test/output")
             trainer_page.switch_to_model_tab()
             trainer_page.wait_for_tab("model")
-            basic_tab.set_base_model("black-forest-labs/FLUX.1-dev")
+            basic_tab.set_base_model("jimmycarter/LibreFlux-SimpleTuner")
 
             basic_tab.save_changes()
             toast_message = trainer_page.get_toast_message()
@@ -109,9 +109,6 @@ class BasicConfigurationFlowTestCase(_TrainerPageMixin, WebUITestCase):
                 message=f"Model name field did not update to {test_values['model_name']}",
             )
 
-            # Debug: Check what's in the store after setting values
-            print(f"DEBUG after setting values: {basic_tab.get_model_name_debug()}")
-
             # Switch to a different tab
             trainer_page.switch_to_model_tab()
             trainer_page.wait_for_tab("model")
@@ -133,10 +130,6 @@ class BasicConfigurationFlowTestCase(_TrainerPageMixin, WebUITestCase):
             import time
 
             time.sleep(0.5)
-
-            # Debug: Check what's actually in the model name field
-            debug_info = basic_tab.get_model_name_debug()
-            print(f"DEBUG INFO before assertion: {debug_info}")
 
             # Verify values were preserved after tab switch
             self.assertEqual(basic_tab.get_model_name(), test_values["model_name"])
@@ -194,7 +187,7 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
             basic_tab.set_output_dir("/tmp/test-output")
             trainer_page.switch_to_model_tab()
             trainer_page.wait_for_tab("model")
-            basic_tab.set_base_model("black-forest-labs/FLUX.1-dev")
+            basic_tab.set_base_model("jimmycarter/LibreFlux-SimpleTuner")
             model_tab.select_model_family("flux")
 
             trainer_page.switch_to_training_tab()

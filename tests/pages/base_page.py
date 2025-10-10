@@ -191,7 +191,16 @@ class BasePage:
         except Exception:
             pass
 
+        harness_message = self.get_harness_toast()
+        if harness_message:
+            return harness_message
         return None
+
+    def get_harness_toast(self):
+        try:
+            return self.driver.execute_script("return window.__trainerHarnessLastToast || null;")
+        except Exception:
+            return None
 
     def dismiss_toast(self):
         """Dismiss the current toast notification."""

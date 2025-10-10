@@ -33,7 +33,7 @@ class MockArgs:
         self.mixed_precision = "bf16"
         self.model_type = "full"
         self.cache_dir = "/tmp/benchmark_cache"
-        self.pretrained_model_name_or_path = "black-forest-labs/FLUX.1-dev"
+        self.pretrained_model_name_or_path = "jimmycarter/LibreFlux-SimpleTuner"
         self.controlnet_model_name_or_path = None
         self.revision = None
         self.variant = None

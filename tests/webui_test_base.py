@@ -51,8 +51,8 @@ class WebUITestCase(SeleniumTestCase):
         config_payload = {
             "--model_family": "flux",
             "--model_type": "lora",
-            "--model_flavour": "v0.3",
-            "--pretrained_model_name_or_path": "black-forest-labs/FLUX.1-dev",
+            "--model_flavour": "libreflux",
+            "--pretrained_model_name_or_path": "jimmycarter/LibreFlux-SimpleTuner",
             "--output_dir": "/test/output",
             "--data_backend_config": str(env_dir / "multidatabackend.json"),
             "--job_id": "test-model",
@@ -68,8 +68,8 @@ class WebUITestCase(SeleniumTestCase):
         default_config = {
             "--model_family": "flux",
             "--model_type": "lora",
-            "--model_flavour": "flux-dev",
-            "--pretrained_model_name_or_path": "black-forest-labs/FLUX.1-dev",
+            "--model_flavour": "libreflux",
+            "--pretrained_model_name_or_path": "jimmycarter/LibreFlux-SimpleTuner",
             "--output_dir": "/tmp/output",
             "--data_backend_config": str(default_env_dir / "multidatabackend.json"),
             "--job_id": "autogen-default",
