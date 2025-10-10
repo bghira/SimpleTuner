@@ -2,7 +2,7 @@ import base64
 import json
 import logging
 import os
-import time
+from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 
@@ -353,14 +353,13 @@ class WebhookHandler:
     def send_raw(
         self,
         structured_data: dict,
-        message_type: str,
+        message_type: str | None = None,
         message_level: str = "info",
-        job_id: str = None,
-        images: list = None,
+        job_id: str | None = None,
+        images: list | None = None,
     ):
         """
-        Send structured data to a "raw" webhook, e.g. for step progress.
-        Ignores 'images' entirely, uses JSON payload only.
+        Send structured data to a "raw" webhook (JSON payload).
         """
         if (
             self.webhook_type != "raw"
@@ -368,7 +367,22 @@ class WebhookHandler:
             or not self._check_level(message_level)
         ):
             return
-        structured_data["message_type"] = message_type
-        structured_data["job_id"] = job_id
-        structured_data["timestamp"] = int(time.time())
-        self._send_request(message=structured_data, images=images, store_response=False, raw_request=True)
+        if not isinstance(structured_data, dict):
+            logging.error("send_raw expects a mapping payload.")
+            return
+
+        payload = dict(structured_data)
+
+        if message_type and "type" not in payload:
+            payload["type"] = message_type
+
+        if job_id and payload.get("job_id") is None:
+            payload["job_id"] = job_id
+
+        if "severity" not in payload and message_level:
+            payload["severity"] = message_level
+
+        if "timestamp" not in payload:
+            payload["timestamp"] = datetime.now(tz=timezone.utc).isoformat()
+
+        self._send_request(message=payload, images=images, store_response=False, raw_request=True)

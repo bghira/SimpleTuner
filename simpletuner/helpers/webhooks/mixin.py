@@ -1,5 +1,6 @@
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
 from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.webhooks.events import attach_timestamp, lifecycle_stage_event
 from simpletuner.helpers.webhooks.handler import WebhookHandler
 
 current_rank = get_rank()
@@ -16,15 +17,20 @@ class WebhookMixin:
             return
         if int(current_rank) != 0:
             return
-        progress = {
-            "message_type": "progress_update",
-            "readable_type": readable_type,
-            "message": {
-                "progress_type": type,
-                "progress": progress,
-                "total_elements": total,
-                "current_estimated_index": current,
-            },
-        }
+        if not self.webhook_handler:
+            return
 
-        self.webhook_handler.send_raw(progress, "progress_update", job_id=StateTracker.get_job_id())
+        stage_key = type
+        if isinstance(stage_key, str) and stage_key.startswith("init_cache_vae_processing"):
+            stage_key = "vae_cache"
+
+        event = lifecycle_stage_event(
+            key=stage_key,
+            label=readable_type,
+            percent=progress,
+            current=current,
+            total=total,
+            job_id=StateTracker.get_job_id(),
+        )
+        attach_timestamp(event)
+        self.webhook_handler.send_raw(event, message_level="info", job_id=StateTracker.get_job_id())
