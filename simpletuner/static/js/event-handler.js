@@ -375,15 +375,27 @@ class EventHandler {
                 break;
 
             case 'progress_update':
-            if (event.message && event.message.progress_type) {
-                this.updateProgressBar(
-                    event.message.progress_type,
-                    event.message.progress,
-                    event.message.total_elements,
-                    event.message.readable_type || event.message.label
-                );
+            case 'lifecycle.stage': {
+                const stageInfo = event.stage || event.message;
+                if (stageInfo) {
+                    const progressInfo = stageInfo.progress || stageInfo;
+                    const progressType = stageInfo.progress_type || stageInfo.key || stageInfo.label || 'progress';
+                    let currentValue = Number(progressInfo.current ?? progressInfo.current_estimated_index);
+                    let totalValue = Number(progressInfo.total ?? progressInfo.total_elements);
+                    if (!Number.isFinite(currentValue) || !Number.isFinite(totalValue) || totalValue <= 0) {
+                        const percentValue = Number(progressInfo.percent ?? progressInfo.progress ?? 0);
+                        currentValue = Number.isFinite(percentValue) ? percentValue : 0;
+                        totalValue = 100;
+                    }
+                    this.updateProgressBar(
+                        String(progressType),
+                        currentValue,
+                        totalValue,
+                        stageInfo.readable_type || stageInfo.label || this.prettifyLabel(progressType)
+                    );
+                }
+                break;
             }
-            break;
 
             case 'training_config':
                 if (event.total_num_steps) {
@@ -470,16 +482,32 @@ class EventHandler {
         }
 
         // For progress updates, format the progress info
-        else if (event.message_type === 'progress_update' && event.message) {
-            const progress = event.message;
-            const label = progress.readable_type || progress.label || progress.progress_type || 'Progress';
-            const currentVal = progress.current_estimated_index ?? progress.progress ?? 0;
-            const totalVal = progress.total_elements ?? progress.total ?? 0;
-            const percent = totalVal ? Math.min(100, (currentVal / totalVal) * 100).toFixed(1) : progress.progress;
-            if (percent !== undefined && percent !== null && !Number.isNaN(Number(percent))) {
-                message = `${label}: ${currentVal}/${totalVal} (${percent}%)`;
+        else if (event.message_type === 'progress_update' || event.message_type === 'lifecycle.stage') {
+            const stageInfo = event.stage || event.message || {};
+            const progress = stageInfo.progress || stageInfo;
+            const label = stageInfo.readable_type || stageInfo.label || stageInfo.progress_type || stageInfo.key;
+            let currentVal = Number(progress.current_estimated_index ?? progress.current);
+            if (!Number.isFinite(currentVal)) {
+                currentVal = NaN;
+            }
+            let totalVal = Number(progress.total_elements ?? progress.total);
+            if (!Number.isFinite(totalVal)) {
+                totalVal = NaN;
+            }
+            let percent = Number(progress.percent ?? progress.progress);
+            if (!Number.isFinite(percent)) {
+                percent = NaN;
+            }
+            if (!Number.isFinite(currentVal) || !Number.isFinite(totalVal) || totalVal <= 0) {
+                currentVal = Number.isFinite(percent) ? percent : 0;
+                totalVal = 100;
+            } else if (!Number.isFinite(percent)) {
+                percent = (currentVal / totalVal) * 100;
+            }
+            if (Number.isFinite(percent)) {
+                message = `${this.prettifyLabel(label)}: ${currentVal}/${totalVal} (${percent.toFixed(1)}%)`;
             } else {
-                message = `${label}: ${currentVal}/${totalVal}`;
+                message = `${this.prettifyLabel(label)}: ${currentVal}/${totalVal}`;
             }
         }
 
@@ -510,6 +538,15 @@ class EventHandler {
         }
     }
 
+    prettifyLabel(value) {
+        if (!value) return 'Progress';
+        return String(value)
+            .replace(/[_-]+/g, ' ')
+            .replace(/\b\w/g, function(chr) {
+                return chr.toUpperCase();
+            });
+    }
+
     updateProgressBar(type, current, total, label) {
         // Update specific progress bars for different operations
         const safeType = type.replace(/[^a-z0-9]/gi, '-').toLowerCase();
@@ -530,7 +567,9 @@ class EventHandler {
         }
 
         if (progressElement) {
-            const percent = Math.min(100, (current / total) * 100);
+            const safeTotal = Number.isFinite(Number(total)) && Number(total) > 0 ? Number(total) : 100;
+            const safeCurrent = Number.isFinite(Number(current)) ? Number(current) : 0;
+            const percent = Math.min(100, (safeCurrent / safeTotal) * 100);
             const formattedType = (label || type).replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
 
             progressElement.innerHTML = `
