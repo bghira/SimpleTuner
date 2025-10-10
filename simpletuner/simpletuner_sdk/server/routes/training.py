@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Mapping
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 
@@ -225,7 +226,21 @@ async def get_training_status():
             # Process keeper might not have this job
             pass
 
-    startup_stages = APIState.get_state("training_startup_stages") or {}
+    raw_startup_stages = APIState.get_state("training_startup_stages") or {}
+    startup_stages = (
+        {key: value for key, value in raw_startup_stages.items() if isinstance(value, Mapping)}
+        if isinstance(raw_startup_stages, Mapping)
+        else {}
+    )
+
+    if startup_stages:
+        stage_statuses = {
+            str(stage.get("status", "")).lower() for stage in startup_stages.values() if isinstance(stage, Mapping)
+        }
+        if any(status_name in {"failed", "error"} for status_name in stage_statuses):
+            status = "error"
+        elif status not in {"failed", "error", "fatal", "cancelled", "stopped", "completed", "success", "running"}:
+            status = "starting"
 
     return {
         "status": status,
