@@ -1857,7 +1857,7 @@ class Validation:
             validation_image.save(
                 os.path.join(
                     self.save_dir,
-                    f"step_{StateTracker.get_global_step()}_{validation_shortname}_{res_label}.png",
+                    f"step_{StateTracker.get_global_step()}_{validation_shortname}_{validation_img_idx}_{res_label}.png",
                 )
             )
             validation_img_idx += 1
