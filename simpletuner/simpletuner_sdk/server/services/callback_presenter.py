@@ -6,20 +6,36 @@ import html
 import re
 from typing import Any, Mapping
 
-from .callback_events import CallbackEvent
+from .callback_events import CallbackEvent, EventType
 
 
 class CallbackPresenter:
     """Utilities that translate typed callback events into presentation payloads."""
 
     CATEGORY_ICONS: Mapping[str, str] = {
-        "progress": "fas fa-chart-line text-info",
-        "checkpoint": "fas fa-save text-primary",
-        "validation": "fas fa-check-double text-success",
-        "alert": "fas fa-exclamation-triangle text-danger",
-        "status": "fas fa-info-circle text-secondary",
-        "job": "fas fa-cog text-muted",
-        "debug": "fas fa-bug text-muted",
+        EventType.TRAINING_PROGRESS.value: "fas fa-chart-line text-info",
+        EventType.LIFECYCLE_STAGE.value: "fas fa-cogs text-primary",
+        EventType.CHECKPOINT.value: "fas fa-save text-primary",
+        EventType.VALIDATION.value: "fas fa-check-double text-success",
+        EventType.TRAINING_STATUS.value: "fas fa-info-circle text-secondary",
+        EventType.TRAINING_SUMMARY.value: "fas fa-flag-checkered text-success",
+        EventType.ERROR.value: "fas fa-exclamation-triangle text-danger",
+        EventType.NOTIFICATION.value: "fas fa-bell text-muted",
+        EventType.DEBUG.value: "fas fa-bug text-muted",
+    }
+
+    # Map event types to SSE channel names consumed by the WebUI
+    _EVENT_TYPE_TO_SSE = {
+        EventType.LIFECYCLE_STAGE: "startup_progress",
+        EventType.TRAINING_PROGRESS: "training_progress",
+        EventType.TRAINING_STATUS: "training_status",
+        EventType.TRAINING_SUMMARY: "training_status",
+        EventType.NOTIFICATION: "notification",
+        EventType.ERROR: "error",
+        EventType.CHECKPOINT: "callback:checkpoint",
+        EventType.VALIDATION: "callback:validation",
+        EventType.METRIC: "callback:metric",
+        EventType.DEBUG: "callback:debug",
     }
 
     @classmethod
@@ -33,7 +49,9 @@ class CallbackPresenter:
     def to_sse(cls, event: CallbackEvent) -> tuple[str, dict[str, Any]]:
         """Return an SSE tuple of event type and payload."""
         payload = cls.to_dict(event)
-        event_type = f"callback:{event.category.value}"
+        event_type = cls._EVENT_TYPE_TO_SSE.get(event.type, event.type.value)
+        if callable(event_type):
+            event_type = event_type(event)
         return event_type, payload
 
     @staticmethod
@@ -54,9 +72,9 @@ class CallbackPresenter:
     def to_htmx_tile(cls, event: CallbackEvent) -> str:
         """Render a compact HTML snippet suitable for HTMX fragments."""
         payload = cls.to_dict(event)
-        icon = cls.CATEGORY_ICONS.get(event.category.value, "fas fa-info-circle text-muted")
-        headline = payload.get("headline") or payload.get("body") or "Update"
-        body = payload.get("body")
+        icon = cls.CATEGORY_ICONS.get(event.type.value, "fas fa-info-circle text-muted")
+        headline = payload.get("title") or payload.get("message") or "Update"
+        body = payload.get("message")
         timestamp = payload.get("timestamp_display")
         severity = html.escape(str(payload.get("severity", "info")))
 

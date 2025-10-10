@@ -6,11 +6,10 @@ import asyncio
 import copy
 from collections import deque
 from threading import Lock
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from ...api_state import APIState
-from .callback_events import CallbackCategory, CallbackEvent, CallbackSeverity, ProgressPayload
-from .callback_registry import CallbackEventRegistry, default_callback_registry
+from .callback_events import CallbackEvent, EventSeverity, EventType, ProgressData, StageData, StageStatus
 from .event_store import EventStore
 from .sse_manager import get_sse_manager
 
@@ -21,18 +20,11 @@ _service_lock = Lock()
 class CallbackService:
     """Wraps the event store to provide typed callback events and read APIs."""
 
-    def __init__(
-        self,
-        event_store: EventStore,
-        *,
-        registry: CallbackEventRegistry | None = None,
-    ) -> None:
+    def __init__(self, event_store: EventStore) -> None:
         self._store = event_store
-        self._registry = registry or default_callback_registry
         self._lock = Lock()
         self._typed_by_index: dict[int, CallbackEvent] = {}
         self._index_order: deque[int] = deque(maxlen=event_store.max_events)
-        self._dedupe_cache: dict[str, int] = {}
         self._job_status: dict[str, str] = {}
         self._bootstrap_from_store()
 
@@ -41,55 +33,44 @@ class CallbackService:
         if not isinstance(raw_payload, Mapping):
             raise TypeError("raw_payload must be a mapping")
 
-        event = CallbackEvent.from_message(raw_payload, registry=self._registry)
+        normalized_payload = dict(raw_payload)
+        message_type = str(normalized_payload.get("message_type") or normalized_payload.get("type") or "").lower()
+        if message_type == "configure_webhook":
+            normalized_payload.setdefault("reset_history", True)
+
+        event = CallbackEvent.from_message(normalized_payload)
 
         if self._should_suppress_event(event):
             return None
 
-        typed_event = None
-        with self._lock:
-            if event.reset_history:
+        if event.reset_history:
+            with self._lock:
                 self._store.clear()
                 self._typed_by_index.clear()
                 self._index_order.clear()
-                self._dedupe_cache.clear()
 
-            if event.dedupe_key:
-                existing_index = self._dedupe_cache.get(event.dedupe_key)
-                if existing_index is not None:
-                    existing_event = self._typed_by_index.get(existing_index)
-                    if existing_event:
-                        return existing_event
-
-            record = self._prepare_record(raw_payload)
+        with self._lock:
+            record = self._prepare_record(normalized_payload)
             index = self._store.add_event(record)
             typed_event = event.with_index(index)
             record["typed"] = typed_event.to_payload()
-            record["category"] = typed_event.category.value
+            record["type"] = typed_event.type.value
             record["severity"] = typed_event.severity.value
             record["timestamp"] = typed_event.timestamp.isoformat()
 
             self._typed_by_index[index] = typed_event
             self._append_index(index)
 
-            if event.dedupe_key:
-                self._dedupe_cache[event.dedupe_key] = index
-
-        # Update training state outside the lock to avoid blocking
-        if typed_event:
-            self._update_training_state(typed_event)
-
+        self._update_training_state(typed_event)
         return typed_event
 
     def get_recent(self, limit: int = 10) -> list[CallbackEvent]:
         """Return the most recent *limit* events, newest first."""
         if limit <= 0:
             return []
-        # Snapshot indices while holding lock, then release before iteration
         with self._lock:
             indices = list(self._index_order)[-limit:]
             snapshot = {idx: self._typed_by_index.get(idx) for idx in indices}
-        # Iterate over snapshot without holding lock
         return [
             event
             for idx in reversed(indices)
@@ -98,11 +79,9 @@ class CallbackService:
 
     def stream_since(self, index: int) -> list[CallbackEvent]:
         """Return all events newer than the provided index."""
-        # Snapshot indices and events while holding lock, then release before iteration
         with self._lock:
             matching_indices = [idx for idx in self._index_order if idx > index]
             snapshot = {idx: self._typed_by_index.get(idx) for idx in matching_indices}
-        # Build result from snapshot without holding lock
         return [
             event
             for idx in matching_indices
@@ -113,11 +92,9 @@ class CallbackService:
         """Return the newest event for a specific job identifier."""
         if not job_id:
             return None
-        # Snapshot indices while holding lock, then search without lock
         with self._lock:
             indices = list(reversed(self._index_order))
             snapshot = {idx: self._typed_by_index.get(idx) for idx in indices}
-        # Search snapshot without holding lock
         for idx in indices:
             event = snapshot.get(idx)
             if event and event.job_id == job_id:
@@ -129,12 +106,9 @@ class CallbackService:
         return [event.to_payload() for event in events]
 
     def _append_index(self, index: int) -> None:
-        # Check if deque is at capacity and will evict
         if self._index_order.maxlen and len(self._index_order) == self._index_order.maxlen:
             oldest = self._index_order[0]
-            # Deque will automatically evict oldest when we append
             self._index_order.append(index)
-            # Clean up evicted index from tracking structures
             self._evict_index(oldest)
         else:
             self._index_order.append(index)
@@ -146,7 +120,8 @@ class CallbackService:
             payload_copy = dict(raw_payload)
         return {
             "raw": payload_copy,
-            "message_type": payload_copy.get("message_type"),
+            "type": payload_copy.get("type") or payload_copy.get("message_type"),
+            "severity": payload_copy.get("severity"),
             "job_id": payload_copy.get("job_id"),
             "timestamp": payload_copy.get("timestamp"),
         }
@@ -164,289 +139,275 @@ class CallbackService:
         if index is None:
             return
         raw_payload = record.get("raw") if isinstance(record.get("raw"), Mapping) else record
-        event = CallbackEvent.from_message(raw_payload, registry=self._registry).with_index(index)
-        self._typed_by_index[index] = event
-        if event.dedupe_key:
-            self._dedupe_cache[event.dedupe_key] = index
+        try:
+            event = CallbackEvent.from_message(raw_payload).with_index(index)
+        except Exception:
+            return
 
-        # Check if deque is at capacity and will evict
+        self._typed_by_index[index] = event
         if self._index_order.maxlen and len(self._index_order) == self._index_order.maxlen:
             oldest = self._index_order[0]
-            # Deque will automatically evict oldest when we append
             self._index_order.append(index)
-            # Clean up evicted index from tracking structures
             self._evict_index(oldest)
         else:
             self._index_order.append(index)
 
-        # Ensure record has normalised typed payload for downstream consumers
         if isinstance(record, dict):
             record.setdefault("raw", event.raw)
             record.setdefault("typed", event.to_payload())
-            record.setdefault("category", event.category.value)
+            record.setdefault("type", event.type.value)
             record.setdefault("severity", event.severity.value)
             record.setdefault("timestamp", event.timestamp.isoformat())
 
     def _evict_index(self, index: int) -> None:
         self._typed_by_index.pop(index, None)
-        stale_keys = [key for key, value in self._dedupe_cache.items() if value == index]
-        for key in stale_keys:
-            self._dedupe_cache.pop(key, None)
 
     @staticmethod
-    def _merge_progress_state(previous: Mapping[str, Any], current: Mapping[str, Any]) -> dict[str, Any]:
-        merged: dict[str, Any] = {}
+    def _merge_progress_state(
+        previous: Mapping[str, Any] | None,
+        progress: ProgressData,
+        extra: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        merged: dict[str, Any] = dict(previous) if isinstance(previous, Mapping) else {}
 
-        if isinstance(previous, Mapping):
-            merged.update(previous)
-
-        new_percent = CallbackService._clamp_percent(current.get("percent"))
-        if new_percent is not None:
-            prev_percent = CallbackService._clamp_percent(merged.get("percent")) or 0
-            merged["percent"] = max(prev_percent, new_percent)
+        percent = progress.normalized_percent
+        if percent is not None:
+            merged["percent"] = max(float(merged.get("percent") or 0), percent)
         elif "percent" not in merged:
-            merged["percent"] = 0
+            merged["percent"] = 0.0
 
-        for key in ("step", "total_steps", "epoch", "total_epochs"):
-            value = current.get(key)
-            if value:
-                merged[key] = value
-            elif key not in merged:
-                merged[key] = 0
+        if progress.current is not None:
+            merged["step"] = int(progress.current)
+        else:
+            merged.setdefault("step", 0)
 
-        for key in ("loss", "learning_rate"):
-            value = current.get(key)
-            if value is not None:
-                merged[key] = value
-            elif key not in merged:
-                merged[key] = None
+        if progress.total is not None:
+            merged["total_steps"] = int(progress.total)
+        else:
+            merged.setdefault("total_steps", 0)
+
+        merged.setdefault("epoch", 0)
+        merged.setdefault("total_epochs", 0)
+
+        metrics = dict(progress.metrics or {})
+        if isinstance(extra, Mapping):
+            for key in ("loss", "learning_rate", "lr", "epoch", "total_epochs", "final_epoch"):
+                if key in extra and key not in metrics:
+                    metrics[key] = extra[key]
+
+        epoch = _maybe_int(metrics.pop("epoch", None))
+        if epoch is not None:
+            merged["epoch"] = epoch
+
+        total_epochs = _maybe_int(metrics.pop("total_epochs", None) or metrics.pop("final_epoch", None))
+        if total_epochs is not None:
+            merged["total_epochs"] = total_epochs
+
+        loss = _maybe_float(metrics.pop("loss", None))
+        if loss is not None:
+            merged["loss"] = loss
+        else:
+            merged.setdefault("loss", None)
+
+        lr = _maybe_float(metrics.pop("learning_rate", None) or metrics.pop("lr", None))
+        if lr is not None:
+            merged["learning_rate"] = lr
+        else:
+            merged.setdefault("learning_rate", None)
+
+        if metrics:
+            extra_metrics = merged.setdefault("metrics", {})
+            if isinstance(extra_metrics, Mapping):
+                extra_metrics = dict(extra_metrics)
+            extra_metrics.update(metrics)
+            merged["metrics"] = extra_metrics
 
         return merged
 
-    @staticmethod
-    def _extract_progress_from_extras(extras: Mapping[str, Any]) -> dict[str, Any] | None:
-        if not isinstance(extras, Mapping):
-            return None
+    def _update_startup_stage(
+        self,
+        stage: StageData,
+        *,
+        job_id: str | None,
+        job_changed: bool = False,
+    ) -> None:
+        if isinstance(stage.key, str) and stage.key.startswith("stage_") and stage.key[6:].isdigit():
+            return
 
-        state = extras.get("state")
-        if not isinstance(state, Mapping):
-            return None
+        stages_state = APIState.get_state("training_startup_stages") or {}
+        stages = dict(stages_state) if isinstance(stages_state, Mapping) else {}
+        if job_changed:
+            stages = {}
+        else:
+            for existing_key in list(stages.keys()):
+                if existing_key != stage.key:
+                    stages.pop(existing_key, None)
 
-        percent = extras.get("percent") or state.get("percent")
-        current_step = extras.get("current_step") or state.get("global_step")
-        total_steps = extras.get("total_steps") or extras.get("total_num_steps") or state.get("max_steps")
-        epoch = state.get("current_epoch")
-        total_epochs = state.get("final_epoch")
-        loss = extras.get("loss") or state.get("loss")
-        learning_rate = extras.get("learning_rate") or extras.get("lr") or state.get("learning_rate")
+        progress = stage.progress or ProgressData()
+        percent = progress.normalized_percent
+        percent_value = int(round(percent)) if percent is not None else 0
+        current = int(progress.current or 0)
+        total = int(progress.total or 0)
 
-        return {
-            "percent": CallbackService._clamp_percent(percent) or 0,
-            "step": current_step or 0,
-            "total_steps": total_steps or 0,
-            "epoch": epoch or 0,
-            "total_epochs": total_epochs or 0,
-            "loss": loss,
-            "learning_rate": learning_rate,
+        state = {
+            "label": stage.label or _prettify(stage.key),
+            "progress_type": stage.key,
+            "status": stage.status.value,
+            "percent": percent_value,
+            "current": current,
+            "total": total,
         }
 
-    @staticmethod
-    def _clamp_percent(value: Any) -> float | None:
-        if value in (None, ""):
-            return None
-        try:
-            numeric = float(value)
-        except (TypeError, ValueError):
-            return None
-        if not (numeric == numeric):  # NaN check
-            return None
-        return max(0.0, min(100.0, numeric))
+        should_remove = stage.status == StageStatus.COMPLETED or stage.status == StageStatus.FAILED
+        should_remove = should_remove or (total and current >= total) or percent_value >= 100
+
+        if should_remove and stage.status != StageStatus.FAILED:
+            state["status"] = StageStatus.COMPLETED.value
+            state["percent"] = 100
+            state["current"] = total or state["current"]
+        elif stage.status == StageStatus.FAILED:
+            state["status"] = StageStatus.FAILED.value
+
+        stages[stage.key] = state
+
+        APIState.set_state("training_startup_stages", stages)
+        self._broadcast_startup_stage(job_id, state)
+
+    def _handle_progress_event(self, event: CallbackEvent, job_id: str | None, job_changed: bool) -> None:
+        if event.progress is None:
+            return
+        APIState.set_state("training_status", "running")
+        if job_id:
+            self._job_status[job_id] = "running"
+        previous_progress = APIState.get_state("training_progress") or {}
+        if job_changed:
+            previous_progress = {}
+        merged = self._merge_progress_state(previous_progress, event.progress, event.data)
+        APIState.set_state("training_progress", merged)
+        self._clear_startup_stages()
+
+    def _handle_status_event(self, event: CallbackEvent, job_id: str | None) -> None:
+        raw_status = None
+        if isinstance(event.data, Mapping):
+            raw_status = event.data.get("status") or event.data.get("state")
+        if not raw_status and isinstance(event.raw, Mapping):
+            raw_status = event.raw.get("status") or event.raw.get("state")
+        if not raw_status:
+            raw_status = event.message or event.title or "running"
+        status = str(raw_status).strip().lower()
+        if not status:
+            status = "running"
+
+        APIState.set_state("training_status", status)
+        if job_id:
+            self._job_status[job_id] = status
+
+        if status in {"failed", "error", "fatal", "cancelled", "stopped"}:
+            APIState.set_state("training_progress", None)
+            self._clear_startup_stages()
+            self._broadcast_progress_reset(job_id, status=status)
+        elif status in {"completed", "success"}:
+            progress_state = APIState.get_state("training_progress") or {}
+            if isinstance(progress_state, Mapping):
+                progress_state = dict(progress_state)
+                progress_state["percent"] = 100
+                APIState.set_state("training_progress", progress_state)
+            self._clear_startup_stages()
+        elif status == "running":
+            self._clear_startup_stages()
+
+    def _handle_summary_event(self, event: CallbackEvent, job_id: str | None) -> None:
+        progress_state = APIState.get_state("training_progress") or {}
+        if isinstance(progress_state, Mapping):
+            progress_state = dict(progress_state)
+            progress_state["percent"] = 100
+            APIState.set_state("training_progress", progress_state)
+        APIState.set_state("training_status", "completed")
+        if job_id:
+            self._job_status[job_id] = "completed"
+        self._clear_startup_stages()
+
+    def _handle_error_event(self, event: CallbackEvent, job_id: str | None) -> None:
+        APIState.set_state("training_status", "error")
+        APIState.set_state("training_progress", None)
+        self._clear_startup_stages()
+        self._broadcast_progress_reset(job_id, status="failed")
+        if job_id:
+            self._job_status[job_id] = "failed"
+
+    def _update_training_state(self, event: CallbackEvent) -> None:
+        job_id = self._derive_job_id(event)
+        previous_job_id = APIState.get_state("current_job_id")
+        job_changed = bool(job_id and job_id != previous_job_id)
+
+        if job_id:
+            APIState.set_state("current_job_id", job_id)
+
+        if event.stage:
+            current_status = str(APIState.get_state("training_status") or "").lower()
+            if current_status not in {"running", "completed", "success", "failed", "error", "fatal", "cancelled", "stopped"}:
+                APIState.set_state("training_status", "starting")
+                current_status = "starting"
+            if job_id:
+                self._job_status[job_id] = current_status
+            self._update_startup_stage(event.stage, job_id=job_id, job_changed=job_changed)
+            return
+
+        if event.type == EventType.TRAINING_PROGRESS:
+            self._handle_progress_event(event, job_id, job_changed)
+            return
+
+        if event.type == EventType.TRAINING_STATUS:
+            self._handle_status_event(event, job_id)
+            return
+
+        if event.type == EventType.TRAINING_SUMMARY:
+            self._handle_summary_event(event, job_id)
+            return
+
+        if event.type == EventType.ERROR or event.severity in {EventSeverity.ERROR, EventSeverity.CRITICAL}:
+            self._handle_error_event(event, job_id)
+            return
+
+        if event.type in {EventType.CHECKPOINT, EventType.VALIDATION}:
+            APIState.set_state("training_status", "running")
+            if job_id:
+                self._job_status[job_id] = "running"
+            return
+
+        if event.type == EventType.NOTIFICATION and event.progress:
+            self._handle_progress_event(event, job_id, job_changed)
 
     def _clear_startup_stages(self) -> None:
         APIState.set_state("training_startup_stages", {})
 
-    def _update_startup_stage(
-        self,
-        progress_payload: ProgressPayload,
-        *,
-        job_changed: bool = False,
-    ) -> None:
-        extras = progress_payload.extra or {}
-        progress_type = extras.get("progress_type")
-        if not progress_type:
-            return
-
-        stages = APIState.get_state("training_startup_stages") or {}
-        if job_changed:
-            stages = {}
-
-        percent_value = self._clamp_percent(progress_payload.percent)
-        percent = int(round(percent_value)) if percent_value is not None else 0
-        current = progress_payload.current
-        if current is None:
-            current = extras.get("current_estimated_index")
-        total = progress_payload.total
-        if total is None:
-            total = extras.get("total_elements")
-
-        label = progress_payload.label or extras.get("readable_type") or progress_type
-        stage_state = {
-            "label": label,
-            "progress_type": progress_type,
-            "percent": percent,
-            "current": current or 0,
-            "total": total or 0,
+    def _broadcast_startup_stage(self, job_id: str | None, stage_state: Mapping[str, Any]) -> None:
+        payload = {
+            "type": "startup_progress",
+            "job_id": job_id,
+            "progress_type": stage_state.get("progress_type"),
+            "label": stage_state.get("label"),
+            "percent": stage_state.get("percent", 0),
+            "current": stage_state.get("current", 0),
+            "total": stage_state.get("total", 0),
+            "status": stage_state.get("status", "running"),
         }
 
-        # Remove stage once complete
-        if percent >= 100 or (stage_state["total"] and stage_state["current"] >= stage_state["total"]):
-            stages.pop(progress_type, None)
+        async def _broadcast():
+            manager = get_sse_manager()
+            await manager.broadcast(payload, event_type="startup_progress")
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            loop.create_task(_broadcast())
         else:
-            stages[progress_type] = stage_state
-
-        APIState.set_state("training_startup_stages", stages)
-
-    def _update_training_state(self, event: CallbackEvent) -> None:
-        job_id = self._derive_job_id(event)
-        message_type = (event.message_type or "").lower()
-        previous_job_id = APIState.get_state("current_job_id")
-        job_changed = bool(job_id and job_id != previous_job_id)
-
-        if event.category == CallbackCategory.PROGRESS:
-            APIState.set_state("training_status", "running")
-            if job_id:
-                APIState.set_state("current_job_id", job_id)
-                self._job_status[job_id] = "running"
-
-            progress_payload = event.progress
-            if progress_payload:
-                state = {}
-                extras = dict(progress_payload.extra or {})
-                if isinstance(extras.get("state"), dict):
-                    state = extras["state"]
-
-                current_step = progress_payload.current
-                if current_step is None:
-                    current_step = extras.get("current_step") or state.get("global_step")
-
-                total_steps = progress_payload.total
-                if total_steps is None:
-                    total_steps = (
-                        extras.get("total_steps")
-                        or extras.get("total_num_steps")
-                        or extras.get("max_steps")
-                        or state.get("max_steps")
-                    )
-
-                epoch = extras.get("epoch") or state.get("current_epoch")
-                total_epochs = extras.get("final_epoch") or extras.get("total_epochs") or state.get("final_epoch")
-
-                loss = extras.get("loss") or extras.get("train_loss")
-                learning_rate = extras.get("learning_rate") or extras.get("lr")
-
-                progress_state = {
-                    "percent": progress_payload.percent or 0,
-                    "step": current_step or 0,
-                    "total_steps": total_steps or 0,
-                    "epoch": epoch or 0,
-                    "total_epochs": total_epochs or 0,
-                    "loss": loss,
-                    "learning_rate": learning_rate,
-                }
-
-                previous_progress = APIState.get_state("training_progress") or {}
-                if job_changed:
-                    previous_progress = {}
-
-                merged_progress = self._merge_progress_state(previous_progress, progress_state)
-                APIState.set_state("training_progress", merged_progress)
-
-                if message_type == "progress_update":
-                    self._update_startup_stage(progress_payload, job_changed=job_changed)
-            return
-
-        # Handle startup messages - these always mean training is starting/running
-        if message_type in {"configure_webhook", "_train_initial_msg"}:
-            APIState.set_state("training_status", "running" if message_type != "configure_webhook" else "starting")
-            if job_id:
-                APIState.set_state("current_job_id", job_id)
-                self._job_status.pop(job_id, None)
-            self._clear_startup_stages()
-            return
-
-        # Handle train_status messages - derive status from payload, don't hardcode
-        if message_type in {"training_status", "train_status"}:
-            # Try to get status from extras, default to 'running'
-            status_from_payload = (event.extras.get("status") if event.extras else None) or event.body or "running"
-            APIState.set_state("training_status", status_from_payload)
-
-            if job_id:
-                APIState.set_state("current_job_id", job_id)
-                self._job_status[job_id] = status_from_payload.lower()
-
-            # Extract progress from event.progress (which now contains the training data)
-            progress_state = None
-            if event.progress:
-                # Get progress data from the progress payload
-                progress_extra = event.progress.extra or {}
-                progress_state = {
-                    "percent": event.progress.percent or 0,
-                    "step": progress_extra.get("global_step") or 0,
-                    "total_steps": progress_extra.get("total_num_steps") or 0,
-                    "epoch": progress_extra.get("current_epoch") or progress_extra.get("epoch") or 0,
-                    "total_epochs": progress_extra.get("final_epoch") or 0,
-                    "loss": progress_extra.get("loss") or progress_extra.get("train_loss"),
-                    "learning_rate": progress_extra.get("learning_rate") or progress_extra.get("lr"),
-                }
-
-            if progress_state:
-                previous_progress = APIState.get_state("training_progress") or {}
-                if job_changed:
-                    previous_progress = {}
-                merged_progress = self._merge_progress_state(previous_progress, progress_state)
-                APIState.set_state("training_progress", merged_progress)
-
-            if status_from_payload:
-                status_lower = status_from_payload.lower()
-                if status_lower not in {"starting", "initializing", "running"}:
-                    self._clear_startup_stages()
-                if status_lower in {"failed", "error", "cancelled", "stopped"}:
-                    APIState.set_state("training_progress", None)
-                    if status_lower in {"failed", "error"}:
-                        APIState.set_state("training_status", "failed")
-                    APIState.set_state("current_job_id", None)
-                    self._broadcast_progress_reset(job_id or previous_job_id, status=status_lower)
-            # DON'T return - fall through to severity checks below
-
-        if message_type in {"training_complete", "run_complete"}:
-            progress_state = APIState.get_state("training_progress") or {}
-            if isinstance(progress_state, dict):
-                progress_state = dict(progress_state)
-                progress_state["percent"] = 100
-                APIState.set_state("training_progress", progress_state)
-            APIState.set_state("training_status", "completed")
-            APIState.set_state("current_job_id", None)
-            if job_id:
-                self._job_status[job_id] = "completed"
-            self._clear_startup_stages()
-            return
-
-        if message_type in {"exit", "fatal_error"} or event.severity in {CallbackSeverity.ERROR, CallbackSeverity.CRITICAL}:
-            APIState.set_state("training_status", "error")
-            APIState.set_state("current_job_id", None)
-            APIState.set_state("training_progress", None)
-            self._clear_startup_stages()
-            self._broadcast_progress_reset(job_id or previous_job_id, status="failed")
-            if job_id:
-                self._job_status[job_id] = "failed"
-            return
-
-        if event.category == CallbackCategory.ALERT and event.severity == CallbackSeverity.WARNING:
-            APIState.set_state("training_status", "warning")
+            asyncio.run(_broadcast())
 
     def _broadcast_progress_reset(self, job_id: str | None, *, status: str) -> None:
-        """Emit an SSE message instructing clients to reset training progress UI."""
-
         if job_id:
             self._job_status[job_id] = status.lower()
 
@@ -477,7 +438,7 @@ class CallbackService:
             asyncio.run(_broadcast())
 
     def _should_suppress_event(self, event: CallbackEvent) -> bool:
-        if not event or not isinstance(event, CallbackEvent):
+        if not event:
             return False
 
         job_id = self._derive_job_id(event)
@@ -485,48 +446,41 @@ class CallbackService:
             return False
 
         status = self._job_status.get(job_id, "")
-        terminal_statuses = {"failed", "error", "completed", "cancelled", "stopped"}
-
-        if status in terminal_statuses:
-            if event.category == CallbackCategory.PROGRESS:
+        if status in {"failed", "error", "completed", "cancelled", "stopped"}:
+            if event.type in {EventType.TRAINING_PROGRESS, EventType.LIFECYCLE_STAGE}:
                 return True
-            if event.category == CallbackCategory.STATUS:
-                message_type = (event.message_type or "").lower()
-                if message_type in {"training_status", "train_status"}:
-                    return True
-
+            if event.type == EventType.TRAINING_STATUS:
+                return True
         return False
 
     def _derive_job_id(self, event: CallbackEvent) -> str | None:
         if not event:
             return None
 
-        candidates: list[str | None] = []
+        candidates: list[str | None] = [
+            event.job_id,
+        ]
 
-        if getattr(event, "job_id", None):
-            candidates.append(event.job_id)
+        if isinstance(event.data, Mapping):
+            candidates.append(event.data.get("job_id"))
 
-        raw = getattr(event, "raw", None)
-        if isinstance(raw, Mapping):
-            candidates.append(raw.get("job_id"))
+        if isinstance(event.raw, Mapping):
+            candidates.append(event.raw.get("job_id"))
+            raw_progress = event.raw.get("progress")
+            if isinstance(raw_progress, Mapping):
+                candidates.append(raw_progress.get("job_id"))
 
-        extras = getattr(event, "extras", None)
-        if isinstance(extras, Mapping):
-            candidates.append(extras.get("job_id"))
+        stage = event.stage
+        if stage and isinstance(stage.metadata, Mapping):
+            candidates.append(stage.metadata.get("job_id"))
 
-        # Fall back to the API state if neither the event nor raw payload include a job id.
+        progress = event.progress
+        if progress and isinstance(progress.metrics, Mapping):
+            candidates.append(progress.metrics.get("job_id"))
+
         current_job = APIState.get_state("current_job_id")
         if current_job:
             candidates.append(current_job)
-
-        progress = getattr(event, "progress", None)
-        if progress and hasattr(progress, "extra"):
-            progress_extra = getattr(progress, "extra", None)
-            if isinstance(progress_extra, Mapping):
-                candidates.append(progress_extra.get("job_id"))
-                state = progress_extra.get("state")
-                if isinstance(state, Mapping):
-                    candidates.append(state.get("job_id"))
 
         for candidate in candidates:
             if isinstance(candidate, str):
@@ -552,4 +506,24 @@ def get_default_callback_service() -> CallbackService:
         return _default_service
 
 
-__all__.append("get_default_callback_service")
+def _maybe_int(value: Any) -> int | None:
+    numeric = _maybe_float(value)
+    if numeric is None:
+        return None
+    return int(numeric)
+
+
+def _maybe_float(value: Any) -> float | None:
+    if value in (None, "", False):
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if numeric != numeric:  # NaN
+        return None
+    return numeric
+
+
+def _prettify(value: str) -> str:
+    return " ".join(part.capitalize() for part in value.replace("_", " ").split())
