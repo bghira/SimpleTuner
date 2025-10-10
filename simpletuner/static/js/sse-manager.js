@@ -19,13 +19,15 @@
         var lastHeartbeat = null;
         var connectionUrl = '/api/events';
         var listeners = {};
-        var CALLBACK_EVENT_TYPES = ['progress', 'validation', 'job', 'status', 'alert', 'checkpoint', 'debug'];
+        var CALLBACK_EVENT_TYPES = ['progress', 'validation', 'job', 'status', 'alert', 'checkpoint', 'metric', 'debug'];
         var connectionState = 'disconnected'; // disconnected, connecting, connected
 
         // Store listener references for cleanup
         var heartbeatListener = null;
         var trainingProgressListener = null;
         var validationCompleteListener = null;
+        var startupProgressListener = null;
+        var trainingStatusListener = null;
         var connectionListener = null;
         var callbackEventListeners = {};
 
@@ -95,84 +97,103 @@
         }
 
         function transformProgressPayload(payload) {
-            var progress = payload.progress || {};
+            if (!payload || typeof payload !== 'object') {
+                return null;
+            }
+
+            var progress = (payload.progress && typeof payload.progress === 'object') ? payload.progress : {};
+            var stage = (payload.stage && typeof payload.stage === 'object') ? payload.stage : null;
+            var data = (payload.data && typeof payload.data === 'object') ? payload.data : {};
             var extras = {};
 
+            if (progress.metrics && typeof progress.metrics === 'object') {
+                extras = Object.assign({}, progress.metrics);
+            }
+
             if (progress.extra && typeof progress.extra === 'object') {
-                extras = Object.assign({}, progress.extra);
+                extras = Object.assign({}, extras, progress.extra);
+            }
+
+            if (payload.metrics && typeof payload.metrics === 'object') {
+                extras = Object.assign({}, extras, payload.metrics);
             }
 
             if (payload.extras && typeof payload.extras === 'object') {
                 extras = Object.assign({}, extras, payload.extras);
             }
 
-            var state = extras.state || null;
-            if (!state && progress.extra && typeof progress.extra.state === 'object') {
-                state = progress.extra.state;
+            if (data && typeof data === 'object') {
+                extras = Object.assign({}, extras, data);
             }
 
+            if (extras.state && typeof extras.state === 'object') {
+                extras = Object.assign({}, extras, extras.state);
+                delete extras.state;
+            }
+
+            if (stage) {
+                var stageProgress = (stage.progress && typeof stage.progress === 'object') ? stage.progress : {};
+                var stageLabel = stage.label || stageProgress.label || stage.key || stage.progress_type || 'Stage';
+                var stageCurrent = toNumber(stageProgress.current || stage.current);
+                var stageTotal = toNumber(stageProgress.total || stage.total);
+                var stagePercent = toNumber(stageProgress.percent || stage.percent);
+                if (stagePercent === null && stageCurrent !== null && stageTotal) {
+                    stagePercent = (stageCurrent / stageTotal) * 100;
+                }
+                if (!Number.isFinite(stagePercent)) {
+                    stagePercent = 0;
+                }
+
+                return {
+                    type: 'startup_progress',
+                    job_id: payload.job_id || extras.job_id || null,
+                    progress_type: stage.key || stage.progress_type || stageLabel,
+                    label: stageLabel,
+                    percent: Math.round(stagePercent || 0),
+                    current: stageCurrent || 0,
+                    total: stageTotal || 0,
+                    status: stage.status || 'running',
+                    raw: payload
+                };
+            }
+
+            var jobId = payload.job_id || extras.job_id || null;
+
             var currentStep = toNumber(progress.current);
-            if (currentStep === null && state && state.global_step !== undefined) {
-                currentStep = toNumber(state.global_step);
-            }
-            if (currentStep === null && payload.global_step !== undefined) {
-                currentStep = toNumber(payload.global_step);
-            }
-            if (currentStep === null && extras.current_step !== undefined) {
-                currentStep = toNumber(extras.current_step);
+            if (currentStep === null) {
+                currentStep = toNumber(extras.current_step || extras.global_step || extras.step);
             }
             if (currentStep === null && payload.current_step !== undefined) {
                 currentStep = toNumber(payload.current_step);
             }
 
             var totalSteps = toNumber(progress.total);
-            if (totalSteps === null && (extras.total_steps !== undefined)) {
-                totalSteps = toNumber(extras.total_steps);
+            if (totalSteps === null) {
+                totalSteps = toNumber(extras.total_steps || extras.total_num_steps || extras.max_steps);
             }
-            if (totalSteps === null && (extras.total_num_steps !== undefined)) {
-                totalSteps = toNumber(extras.total_num_steps);
-            }
-            if (totalSteps === null && (payload.total_num_steps !== undefined)) {
+            if (totalSteps === null && payload.total_num_steps !== undefined) {
                 totalSteps = toNumber(payload.total_num_steps);
-            }
-            if (totalSteps === null && state && state.total_num_steps !== undefined) {
-                totalSteps = toNumber(state.total_num_steps);
-            }
-            if (totalSteps === null && (extras.max_steps !== undefined)) {
-                totalSteps = toNumber(extras.max_steps);
-            }
-            if (totalSteps === null && state && state.max_steps !== undefined) {
-                totalSteps = toNumber(state.max_steps);
-            }
-
-            var epoch = toNumber(extras.epoch);
-            if (epoch === null && state && state.current_epoch !== undefined) {
-                epoch = toNumber(state.current_epoch);
-            }
-            if (epoch === null && payload.current_epoch !== undefined) {
-                epoch = toNumber(payload.current_epoch);
-            }
-
-            var totalEpochs = toNumber(extras.final_epoch);
-            if (totalEpochs === null && extras.total_epochs !== undefined) {
-                totalEpochs = toNumber(extras.total_epochs);
-            }
-            if (totalEpochs === null && extras.total_num_epochs !== undefined) {
-                totalEpochs = toNumber(extras.total_num_epochs);
-            }
-            if (totalEpochs === null && payload.total_num_epochs !== undefined) {
-                totalEpochs = toNumber(payload.total_num_epochs);
-            }
-            if (totalEpochs === null && state && state.final_epoch !== undefined) {
-                totalEpochs = toNumber(state.final_epoch);
             }
 
             var percent = toNumber(progress.percent);
+            if (percent === null) {
+                percent = toNumber(extras.percent);
+            }
             if (percent === null && currentStep !== null && totalSteps) {
                 percent = (currentStep / totalSteps) * 100;
             }
             if (!Number.isFinite(percent)) {
                 percent = 0;
+            }
+
+            var epoch = toNumber(extras.epoch || extras.current_epoch);
+            if (epoch === null && payload.current_epoch !== undefined) {
+                epoch = toNumber(payload.current_epoch);
+            }
+
+            var totalEpochs = toNumber(extras.total_epochs || extras.total_num_epochs || extras.final_epoch);
+            if (totalEpochs === null && payload.total_num_epochs !== undefined) {
+                totalEpochs = toNumber(payload.total_num_epochs);
             }
 
             var loss = extras.loss !== undefined ? toNumber(extras.loss) : null;
@@ -185,58 +206,21 @@
                 learningRate = toNumber(extras.lr);
             }
 
-            var messageType = String(payload.message_type || '').toLowerCase();
-            var messages = [];
-            var jobId = payload.job_id || extras.job_id || null;
+            var label = progress.label || payload.title || payload.message || payload.headline || payload.readable_type || '';
 
-            if (messageType === 'progress_update') {
-                var stageType = extras.progress_type || progress.progress_type || payload.progress_type || 'progress_update';
-                var stageLabel = progress.label || extras.readable_type || payload.readable_type || stageType;
-                var stageCurrent = toNumber(progress.current);
-                if (stageCurrent === null && extras.current_estimated_index !== undefined) {
-                    stageCurrent = toNumber(extras.current_estimated_index);
-                }
-                var stageTotal = toNumber(progress.total);
-                if (stageTotal === null && extras.total_elements !== undefined) {
-                    stageTotal = toNumber(extras.total_elements);
-                }
-                var stagePercent = toNumber(progress.percent);
-                if (stagePercent === null && stageCurrent !== null && stageTotal) {
-                    stagePercent = (stageCurrent / stageTotal) * 100;
-                }
-                if (!Number.isFinite(stagePercent)) {
-                    stagePercent = 0;
-                }
-                stagePercent = Math.max(0, Math.min(100, stagePercent));
-
-                messages.push({
-                    type: 'startup_progress',
-                    job_id: jobId,
-                    progress_type: stageType,
-                    label: stageLabel,
-                    percent: Math.round(stagePercent || 0),
-                    current: stageCurrent || 0,
-                    total: stageTotal || 0,
-                    raw: payload
-                });
-            } else {
-                var trainingLabel = progress.label || payload.readable_type || payload.headline || '';
-                messages.push({
-                    type: 'training_progress',
-                    job_id: jobId,
-                    percentage: Number(percent || 0),
-                    current_step: currentStep || 0,
-                    total_steps: totalSteps || 0,
-                    epoch: epoch || 0,
-                    total_epochs: totalEpochs || 0,
-                    loss: loss !== null ? loss : undefined,
-                    lr: learningRate !== null ? learningRate : undefined,
-                    label: trainingLabel,
-                    raw: payload
-                });
-            }
-
-            return messages;
+            return {
+                type: 'training_progress',
+                job_id: jobId,
+                percentage: Number(percent || 0),
+                current_step: currentStep || 0,
+                total_steps: totalSteps || 0,
+                epoch: epoch || 0,
+                total_epochs: totalEpochs || 0,
+                loss: loss !== null ? loss : undefined,
+                lr: learningRate !== null ? learningRate : undefined,
+                label: label,
+                raw: payload
+            };
         }
 
         function handleCallbackEvent(category, payload) {
@@ -339,6 +323,8 @@
                 eventSource.removeEventListener('heartbeat', heartbeatListener);
                 eventSource.removeEventListener('training_progress', trainingProgressListener);
                 eventSource.removeEventListener('validation_complete', validationCompleteListener);
+                eventSource.removeEventListener('startup_progress', startupProgressListener);
+                eventSource.removeEventListener('training_status', trainingStatusListener);
                 eventSource.removeEventListener('connection', connectionListener);
 
                 // Remove callback event listeners
@@ -357,6 +343,8 @@
             heartbeatListener = null;
             trainingProgressListener = null;
             validationCompleteListener = null;
+            startupProgressListener = null;
+            trainingStatusListener = null;
             connectionListener = null;
             callbackEventListeners = {};
         }
@@ -450,6 +438,29 @@
                     }
                 };
                 eventSource.addEventListener('validation_complete', validationCompleteListener);
+
+                startupProgressListener = function(event) {
+                    lastHeartbeat = Date.now();
+                    try {
+                        var data = JSON.parse(event.data);
+                        notifyListeners('startup_progress', data);
+                        window.dispatchEvent(new CustomEvent('startup-progress', { detail: data }));
+                    } catch (error) {
+                        console.error('Error parsing startup progress:', error);
+                    }
+                };
+                eventSource.addEventListener('startup_progress', startupProgressListener);
+
+                trainingStatusListener = function(event) {
+                    lastHeartbeat = Date.now();
+                    try {
+                        var data = JSON.parse(event.data);
+                        notifyListeners('training_status', data);
+                    } catch (error) {
+                        console.error('Error parsing training status:', error);
+                    }
+                };
+                eventSource.addEventListener('training_status', trainingStatusListener);
 
                 connectionListener = function(event) {
                     lastHeartbeat = Date.now();
@@ -648,7 +659,13 @@
             /**
              * Expose progress normalizer for external consumers
              */
-            normalizeProgressPayload: transformProgressPayload,
+            normalizeProgressPayload: function(payload) {
+                var result = transformProgressPayload(payload);
+                if (!result || result.type === 'startup_progress') {
+                    return null;
+                }
+                return result;
+            },
 
             /**
              * Expose severity mapping helper

@@ -135,6 +135,14 @@ class TrainerMain {
                 this.form.initializeDependencies();
                 this.form.setupJSONEditors();
             }
+            const targetId = evt.detail && evt.detail.target ? evt.detail.target.id : null;
+            if (targetId === 'training-status' || targetId === 'validation-results') {
+                const feedback = this._extractAlertFeedback(evt.detail.target);
+                this._handleFeedbackResult(feedback);
+                if (feedback && (feedback.severity === 'error' || feedback.severity === 'warning')) {
+                    this.actions.updateButtonStates(false);
+                }
+            }
         });
     }
 
@@ -164,6 +172,11 @@ class TrainerMain {
             this.ui.showLoadingOverlay('Starting training...');
             const html = await this.actions.startTraining(payload);
             this.ui.updateResultContainer('training-status', html);
+            const feedback = this._extractAlertFeedback(html);
+            this._handleFeedbackResult(feedback);
+            if (feedback && (feedback.severity === 'error' || feedback.severity === 'warning')) {
+                return;
+            }
             this.actions.updateButtonStates(true);
 
             // Initialize event handler if available
@@ -176,6 +189,145 @@ class TrainerMain {
             this.ui.showToast(error.message, 'error');
         } finally {
             this.ui.hideLoadingOverlay();
+        }
+    }
+
+    _extractAlertFeedback(source) {
+        if (!source) {
+            return null;
+        }
+        try {
+            let html = source;
+            if (typeof source !== 'string') {
+                html = source.innerHTML || '';
+            }
+            if (!html) {
+                return null;
+            }
+            const parser = typeof DOMParser !== 'undefined' ? new DOMParser() : null;
+            if (!parser) {
+                return null;
+            }
+            const doc = parser.parseFromString(html, 'text/html');
+            const alertEl = doc.querySelector('.alert');
+            if (!alertEl) {
+                return null;
+            }
+            const text = alertEl.textContent ? alertEl.textContent.trim() : '';
+            let severity = 'info';
+            if (alertEl.classList.contains('alert-danger')) {
+                severity = 'error';
+            } else if (alertEl.classList.contains('alert-warning')) {
+                severity = 'warning';
+            } else if (alertEl.classList.contains('alert-success')) {
+                severity = 'success';
+            }
+            return { severity, message: text };
+        } catch (error) {
+            console.warn('TrainerMain: failed to parse alert feedback', error);
+            return null;
+        }
+    }
+
+    _handleFeedbackResult(feedback) {
+        if (!feedback) {
+            return;
+        }
+        const normalizedMessage =
+            (typeof feedback.message === 'string' && feedback.message.trim()) ||
+            'Operation completed with feedback.';
+        if (feedback.severity === 'error') {
+            this.ui.showToast(normalizedMessage, 'error');
+            this.actions.updateButtonStates(false);
+            this._resetProgressState();
+            return;
+        }
+        if (feedback.severity === 'warning') {
+            this.ui.showToast(normalizedMessage, 'info');
+            this.actions.updateButtonStates(false);
+            this._resetProgressState();
+            return;
+        }
+        if (feedback.severity === 'success') {
+            this.ui.showToast(normalizedMessage, 'success');
+        }
+    }
+
+    _resetProgressState() {
+        let currentJobId = null;
+        try {
+            const store = window.Alpine && typeof window.Alpine.store === 'function' ? window.Alpine.store('trainer') : null;
+            if (store) {
+                const activeConfig = store.activeEnvironmentConfig || {};
+                currentJobId = activeConfig['--job_id'] || activeConfig.job_id || currentJobId;
+                store.trainingProgress = {};
+                store.showTrainingProgress = false;
+                store.isTraining = false;
+                if (store.formValueStore) {
+                    delete store.formValueStore['--job_id'];
+                    delete store.formValueStore.job_id;
+                }
+                store.activeEnvironmentConfig = Object.assign({}, activeConfig, { '--job_id': '' });
+            }
+        } catch (err) {
+            console.warn('TrainerMain: failed to reset Alpine store progress state', err);
+        }
+
+        try {
+            const progressCard = document.querySelector('.training-progress-card');
+            if (progressCard) {
+                progressCard.classList.add('d-none');
+                const progressBar = progressCard.querySelector('[data-progress-bar]');
+                if (progressBar) {
+                    progressBar.style.width = '0%';
+                    progressBar.setAttribute('aria-valuenow', '0');
+                    progressBar.textContent = '0%';
+                }
+            }
+
+            const progressContainer = document.getElementById('trainingProgress');
+            if (progressContainer) {
+                progressContainer.innerHTML = '';
+            }
+
+            const progressBars = document.getElementById('progressBars');
+            if (progressBars) {
+                progressBars.innerHTML = '';
+            }
+
+            if (document && document.body) {
+                document.body.dataset.trainingActive = 'false';
+            }
+
+            const jobInput = document.querySelector('input[name="job_id"]');
+            if (jobInput) {
+                currentJobId = currentJobId || jobInput.value || null;
+                jobInput.value = '';
+            }
+        } catch (err) {
+            console.warn('TrainerMain: failed to clear progress DOM state', err);
+        }
+
+        if (window.eventHandler && typeof window.eventHandler.resetTrainingState === 'function') {
+            try {
+                window.eventHandler.resetTrainingState();
+            } catch (err) {
+                console.warn('TrainerMain: eventHandler.resetTrainingState failed', err);
+            }
+        }
+
+        try {
+            window.dispatchEvent(
+                new CustomEvent('training-progress', {
+                    detail: {
+                        reset: true,
+                        status: 'failed',
+                        job_id: currentJobId,
+                    },
+                })
+            );
+        } catch (err) {
+            console.warn('TrainerMain: failed to dispatch training-progress reset event', err);
         }
     }
 
