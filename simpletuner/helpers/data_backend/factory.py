@@ -306,6 +306,21 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["resolution"] = (edge_value * edge_value) / base_value
         output["config"]["resolution_type"] = "area"
 
+        def _maybe_convert_pixel_edge(field_name: str) -> None:
+            raw_value = output["config"].get(field_name)
+            if raw_value in (None, ""):
+                return
+            try:
+                numeric_value = float(raw_value)
+            except (TypeError, ValueError):
+                return
+            if numeric_value <= 0 or numeric_value <= 10:
+                return
+            output["config"][field_name] = (numeric_value * numeric_value) / 1_000_000.0
+
+        for field in ("maximum_image_size", "minimum_image_size", "target_downsample_size"):
+            _maybe_convert_pixel_edge(field)
+
     if "parquet" in backend:
         output["config"]["parquet"] = backend["parquet"]
     if "caption_strategy" in backend:
@@ -2061,7 +2076,7 @@ class FactoryRegistry:
         ):
             raise ValueError("Each dataset needs a unique 'id' field.")
 
-        info_log(f"Configuring data backend: {backend['id']}")
+        info_log(f"Configuring data backend: {backend['id']}: {backend}")
         conditioning_type = backend.get("conditioning_type")
         if backend.get("dataset_type") == "conditioning" or conditioning_type is not None:
             backend["dataset_type"] = "conditioning"

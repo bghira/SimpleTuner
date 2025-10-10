@@ -37,7 +37,7 @@
 <script>
 (function() {
     const TEMPLATE_ID = 'callback-progress-template';
-    const CALLBACK_EVENT_TYPES = ['progress', 'validation', 'job', 'status', 'alert', 'checkpoint', 'debug'];
+    const CALLBACK_EVENT_TYPES = ['progress', 'validation', 'job', 'status', 'alert', 'checkpoint', 'metric', 'debug'];
     const MAX_MANAGER_ATTEMPTS = 10;
     const MANAGER_RETRY_DELAY = 500;
 
@@ -52,6 +52,8 @@
     const completedJobIds = new Set();
     let lastResetJobId = null;
     let suppressAnonymousProgress = false;
+    let startupProgressReady = false;
+    let pendingStartupCard = null;
 
     function getTrainerStore() {
         if (window.Alpine && typeof window.Alpine.store === 'function') {
@@ -105,16 +107,17 @@
 
         if (!isActive) {
             activeJobId = null;
+            startupProgressReady = false;
+            pendingStartupCard = null;
         }
 
-        if (normalized !== 'starting') {
+        if (!['starting', 'running', 'initializing'].includes(normalized)) {
             clearStartupProgress();
         }
 
         if (store) {
             store.isTraining = isActive;
-            // Hide progress bars when training stops or starts fresh
-            if (!isActive || normalized === 'starting') {
+            if (!isActive) {
                 store.showTrainingProgress = false;
             }
         }
@@ -134,6 +137,8 @@
     function clearStartupProgress() {
         startupStages.clear();
         startupJobId = null;
+        pendingStartupCard = null;
+        startupProgressReady = false;
         const container = document.getElementById('training-status');
         if (!container) {
             return;
@@ -158,6 +163,110 @@
             .replace(/\b\w/g, function(chr) {
                 return chr.toUpperCase();
             });
+    }
+
+    function reflectStartupProgressInCard(stageKey, stage, jobId) {
+        if (!stage) {
+            return;
+        }
+
+        if (!startupProgressReady) {
+            pendingStartupCard = { stageKey, stage, jobId };
+            return;
+        }
+
+        pendingStartupCard = { stageKey, stage, jobId };
+
+        const store = getTrainerStore();
+        if (store && !store.showTrainingProgress) {
+            store.showTrainingProgress = true;
+        }
+
+        if (jobId && (!activeJobId || activeJobId !== jobId)) {
+            activeJobId = jobId;
+        }
+
+        const card = ensureCard();
+        if (!card || !elements) {
+            return;
+        }
+
+        if (card.classList.contains('d-none')) {
+            card.classList.remove('d-none');
+        }
+
+        const percent = clampPercent(stage.percent);
+        if (elements.bar) {
+            const width = `${percent}%`;
+            if (elements.bar.style.width !== width) {
+                elements.bar.style.width = width;
+                elements.bar.setAttribute('aria-valuenow', percent);
+            }
+        }
+
+        const labelText = stage.label || prettifyStageLabel(stageKey);
+        if (elements.label && labelText && elements.label.textContent !== labelText) {
+            elements.label.textContent = labelText;
+        }
+
+        const currentValue = Number(stage.current || 0);
+        const totalValue = Number(stage.total || 0);
+
+        if (elements.step && elements.step.textContent !== String(currentValue)) {
+            elements.step.textContent = String(currentValue);
+        }
+        if (elements.totalSteps && elements.totalSteps.textContent !== String(totalValue)) {
+            elements.totalSteps.textContent = String(totalValue);
+        }
+        if (elements.epoch && elements.epoch.textContent !== '0') {
+            elements.epoch.textContent = '0';
+        }
+        if (elements.totalEpochs && elements.totalEpochs.textContent !== '0') {
+            elements.totalEpochs.textContent = '0';
+        }
+        if (elements.loss && elements.loss.textContent !== 'N/A') {
+            elements.loss.textContent = 'N/A';
+        }
+        if (elements.lr && elements.lr.textContent !== 'N/A') {
+            elements.lr.textContent = 'N/A';
+        }
+
+        setStatus('Initialising', 'info');
+        setTrainingState('starting', { job_id: activeJobId });
+
+        if (store) {
+            const updated = Object.assign({}, store.trainingProgress || {}, {
+                percent: percent,
+                step: currentValue,
+                total_steps: totalValue,
+                epoch: 0,
+                total_epochs: 0,
+                loss: 'N/A',
+                learning_rate: 'N/A',
+            });
+            store.trainingProgress = updated;
+            window.dispatchEvent(new CustomEvent('training-progress', { detail: updated }));
+        }
+    }
+
+    function showPendingStartupCard() {
+        if (!startupProgressReady) {
+            return;
+        }
+        if (pendingStartupCard) {
+            const snapshot = pendingStartupCard;
+            pendingStartupCard = null;
+            reflectStartupProgressInCard(snapshot.stageKey, snapshot.stage, snapshot.jobId);
+            return;
+        }
+        if (startupStages.size > 0) {
+            const entries = Array.from(startupStages.entries());
+            const [key, stage] = entries[entries.length - 1];
+            const jobId = startupJobId || activeJobId;
+            if (stage) {
+                reflectStartupProgressInCard(key, stage, jobId);
+            }
+        }
     }
 
     function resolveProgressTypeFromPayload(rawPayload) {
@@ -317,62 +426,87 @@
         }
 
         const key = String(data.progress_type || data.label || `stage_${startupStages.size}`);
+        if (key.startsWith('stage_')) {
+            const suffix = key.slice(6);
+            if (/^\d+$/.test(suffix)) {
+                return;
+            }
+        }
+        const stageJobId = data.job_id || startupJobId || activeJobId;
         const stagePercent = clampPercent(data.percent);
+        const stageStatus = String(data.status || 'running').toLowerCase();
         const stageData = {
             label: data.label || key,
             percent: Math.round(stagePercent),
             current: Number(data.current || 0),
             total: Number(data.total || 0),
+            status: stageStatus,
         };
 
-        if (stageData.percent >= 100 || (stageData.total > 0 && stageData.current >= stageData.total)) {
+        pendingStartupCard = { stageKey: key, stage: stageData, jobId: stageJobId };
+
+        const stageComplete =
+            stageData.status === 'failed'
+            || stageData.status === 'completed'
+            || stageData.percent >= 100
+            || (stageData.total > 0 && stageData.current >= stageData.total);
+        if (stageComplete) {
             startupStages.delete(key);
+            if (pendingStartupCard && pendingStartupCard.stageKey === key) {
+                pendingStartupCard = null;
+            }
         } else {
             startupStages.set(key, stageData);
         }
 
         renderStartupProgress();
 
+        if (startupProgressReady && !stageComplete) {
+            reflectStartupProgressInCard(key, stageData, stageJobId);
+        }
+
         const store = getTrainerStore();
-        if (!store || store.showTrainingProgress) {
+        if (!store) {
             return;
         }
 
-        if (startupStages.size === 0) {
-            return;
-        }
-
-        let totalWeight = 0;
-        let sumCurrent = 0;
-        let averagePercent = 0;
-        let count = 0;
-
-        startupStages.forEach((stage) => {
-            count += 1;
-            averagePercent += stage.percent;
-            if (stage.total > 0) {
-                totalWeight += stage.total;
-                sumCurrent += stage.current;
+        if (!startupProgressReady) {
+            if (startupStages.size === 0) {
+                return;
             }
-        });
 
-        let percent = 0;
-        if (totalWeight > 0) {
-            percent = Math.round(clampPercent((sumCurrent / totalWeight) * 100));
-        } else if (count > 0) {
-            percent = Math.round(clampPercent(averagePercent / count));
+            let totalWeight = 0;
+            let sumCurrent = 0;
+            let averagePercent = 0;
+            let count = 0;
+
+            startupStages.forEach((stage) => {
+                count += 1;
+                averagePercent += stage.percent;
+                if (stage.total > 0) {
+                    totalWeight += stage.total;
+                    sumCurrent += stage.current;
+                }
+            });
+
+            let percent = 0;
+            if (totalWeight > 0) {
+                percent = Math.round(clampPercent((sumCurrent / totalWeight) * 100));
+            } else if (count > 0) {
+                percent = Math.round(clampPercent(averagePercent / count));
+            }
+
+            store.trainingProgress = Object.assign({}, store.trainingProgress, {
+                percent: percent,
+                step: sumCurrent || 0,
+                total_steps: totalWeight || 0,
+                epoch: 0,
+                total_epochs: 0,
+                loss: 'N/A',
+                learning_rate: 'N/A',
+            });
+            window.dispatchEvent(new CustomEvent('training-progress', { detail: store.trainingProgress }));
         }
-
-        store.trainingProgress = Object.assign({}, store.trainingProgress, {
-            percent: percent,
-            step: sumCurrent || 0,
-            total_steps: totalWeight || 0,
-            epoch: 0,
-            total_epochs: 0,
-            loss: 'N/A',
-            learning_rate: 'N/A',
-        });
-        window.dispatchEvent(new CustomEvent('training-progress', { detail: store.trainingProgress }));
     }
 
     function ensureCard() {
@@ -495,15 +629,39 @@
             return { reset: true, status: payload.status, job_id: payload.job_id };
         }
         if (window.SSEManager && typeof window.SSEManager.normalizeProgressPayload === 'function') {
-            return window.SSEManager.normalizeProgressPayload(payload);
+            const normalized = window.SSEManager.normalizeProgressPayload(payload);
+            if (normalized) {
+                return normalized;
+            }
         }
 
-        const progress = payload.progress || {};
-        let extras = {};
-        if (progress && typeof progress === 'object' && !Array.isArray(progress) && Object.keys(progress).length === 0) {
-            return null;
+        const progress = (payload && typeof payload.progress === 'object' && !Array.isArray(payload.progress))
+            ? payload.progress
+            : {};
+        const data = (payload && typeof payload.data === 'object' && !Array.isArray(payload.data)) ? payload.data : {};
+
+        let metrics = {};
+        if (progress.metrics && typeof progress.metrics === 'object') {
+            metrics = Object.assign({}, progress.metrics);
         }
-        const statusLower = String(payload.status || '').toLowerCase();
+        if (progress.extra && typeof progress.extra === 'object') {
+            metrics = Object.assign({}, metrics, progress.extra);
+        }
+        if (payload.metrics && typeof payload.metrics === 'object') {
+            metrics = Object.assign({}, metrics, payload.metrics);
+        }
+        if (payload.extras && typeof payload.extras === 'object') {
+            metrics = Object.assign({}, metrics, payload.extras);
+        }
+        if (data && typeof data === 'object') {
+            metrics = Object.assign({}, metrics, data);
+        }
+        if (metrics.state && typeof metrics.state === 'object') {
+            metrics = Object.assign({}, metrics, metrics.state);
+            delete metrics.state;
+        }
+
+        const statusLower = String(payload.status || metrics.status || '').toLowerCase();
         if (['failed', 'error', 'cancelled', 'stopped'].includes(statusLower)) {
             return {
                 reset: true,
@@ -512,95 +670,57 @@
             };
         }
 
-        if (progress.extra && typeof progress.extra === 'object') {
-            extras = Object.assign({}, progress.extra);
-        }
-        if (payload.extras && typeof payload.extras === 'object') {
-            extras = Object.assign({}, extras, payload.extras);
-        }
-
-        let state = extras.state || null;
-        if (!state && progress.extra && typeof progress.extra.state === 'object') {
-            state = progress.extra.state;
-        }
-
         let currentStep = toNumber(progress.current);
-        if (currentStep === null && state && state.global_step !== undefined) {
-            currentStep = toNumber(state.global_step);
-        }
-        if (currentStep === null && payload.global_step !== undefined) {
-            currentStep = toNumber(payload.global_step);
-        }
-        if (currentStep === null && extras.current_step !== undefined) {
-            currentStep = toNumber(extras.current_step);
+        if (currentStep === null) {
+            currentStep = toNumber(metrics.current_step || metrics.global_step || metrics.step);
         }
         if (currentStep === null && payload.current_step !== undefined) {
             currentStep = toNumber(payload.current_step);
         }
 
         let totalSteps = toNumber(progress.total);
-        if (totalSteps === null && extras.total_steps !== undefined) {
-            totalSteps = toNumber(extras.total_steps);
-        }
-        if (totalSteps === null && extras.total_num_steps !== undefined) {
-            totalSteps = toNumber(extras.total_num_steps);
+        if (totalSteps === null) {
+            totalSteps = toNumber(metrics.total_steps || metrics.total_num_steps || metrics.max_steps);
         }
         if (totalSteps === null && payload.total_num_steps !== undefined) {
             totalSteps = toNumber(payload.total_num_steps);
         }
-        if (totalSteps === null && state && state.total_num_steps !== undefined) {
-            totalSteps = toNumber(state.total_num_steps);
-        }
-        if (totalSteps === null && extras.max_steps !== undefined) {
-            totalSteps = toNumber(extras.max_steps);
-        }
-        if (totalSteps === null && state && state.max_steps !== undefined) {
-            totalSteps = toNumber(state.max_steps);
-        }
-
-        let epoch = toNumber(extras.epoch);
-        if (epoch === null && state && state.current_epoch !== undefined) {
-            epoch = toNumber(state.current_epoch);
-        }
-        if (epoch === null && payload.current_epoch !== undefined) {
-            epoch = toNumber(payload.current_epoch);
-        }
-
-        let totalEpochs = toNumber(extras.final_epoch);
-        if (totalEpochs === null && extras.total_epochs !== undefined) {
-            totalEpochs = toNumber(extras.total_epochs);
-        }
-        if (totalEpochs === null && extras.total_num_epochs !== undefined) {
-            totalEpochs = toNumber(extras.total_num_epochs);
-        }
-        if (totalEpochs === null && payload.total_num_epochs !== undefined) {
-            totalEpochs = toNumber(payload.total_num_epochs);
-        }
-        if (totalEpochs === null && state && state.final_epoch !== undefined) {
-            totalEpochs = toNumber(state.final_epoch);
-        }
 
         let percent = toNumber(progress.percent);
+        if (percent === null) {
+            percent = toNumber(metrics.percent);
+        }
         if (percent === null && currentStep !== null && totalSteps) {
             percent = (currentStep / totalSteps) * 100;
         }
 
-        // Debug logging removed to prevent console spam during training
-
-        let loss = extras.loss !== undefined ? toNumber(extras.loss) : null;
-        if (loss === null && extras.train_loss !== undefined) {
-            loss = toNumber(extras.train_loss);
+        let epoch = toNumber(metrics.epoch || metrics.current_epoch);
+        if (epoch === null && payload.current_epoch !== undefined) {
+            epoch = toNumber(payload.current_epoch);
         }
 
-        let learningRate = extras.learning_rate !== undefined ? toNumber(extras.learning_rate) : null;
-        if (learningRate === null && extras.lr !== undefined) {
-            learningRate = toNumber(extras.lr);
+        let totalEpochs = toNumber(metrics.total_epochs || metrics.total_num_epochs || metrics.final_epoch);
+        if (totalEpochs === null && payload.total_num_epochs !== undefined) {
+            totalEpochs = toNumber(payload.total_num_epochs);
         }
 
-        const messageType = String(payload.message_type || '').toLowerCase();
+        let loss = metrics.loss !== undefined ? toNumber(metrics.loss) : null;
+        if (loss === null && metrics.train_loss !== undefined) {
+            loss = toNumber(metrics.train_loss);
+        }
+
+        let learningRate = metrics.learning_rate !== undefined ? toNumber(metrics.learning_rate) : null;
+        if (learningRate === null && metrics.lr !== undefined) {
+            learningRate = toNumber(metrics.lr);
+        }
+
+        const messageType = String(payload.message_type || payload.type || '').toLowerCase();
+        const normalizedType = messageType.replace(/\./g, '_');
         const progressType = resolveProgressTypeFromPayload(payload);
-        const isStartupProgress = messageType === 'progress_update' && progressType.startsWith('init_');
         const normalizedPercent = clampPercent(percent);
+        const isStartupProgress = normalizedType === 'progress_update'
+            && typeof progressType === 'string'
+            && progressType.startsWith('init_');
 
         return {
             percentage: isStartupProgress ? Math.round(normalizedPercent) : normalizedPercent,
@@ -610,7 +730,7 @@
             total_epochs: totalEpochs || 0,
             loss: loss,
             lr: learningRate,
-            label: progress.label || payload.headline || '',
+            label: progress.label || payload.title || payload.message || payload.headline || '',
             raw: payload,
         };
     }
@@ -682,8 +802,9 @@
         }
 
         const messageType = String(progress.raw?.message_type || '').toLowerCase();
+        const normalizedType = messageType.replace(/\./g, '_');
         const progressType = resolveProgressTypeFromPayload(progress.raw);
-        const isStartupProgress = messageType === 'progress_update' && progressType.startsWith('init_');
+        const isStartupProgress = normalizedType === 'progress_update' && progressType.startsWith('init_');
 
         window.dispatchEvent(new CustomEvent('training-progress', { detail: merged }));
         setTrainingState(isStartupProgress ? 'starting' : 'running', { job_id: targetJobId, progress: merged });
@@ -721,8 +842,14 @@
 
         const percent = clampPercent(progress.percentage);
         const messageType = String(progress.raw?.message_type || '').toLowerCase();
+        const normalizedType = messageType.replace(/\./g, '_');
         const progressType = resolveProgressTypeFromPayload(progress.raw);
-        const isStartupProgress = messageType === 'progress_update' && progressType.startsWith('init_');
+        const isStartupProgress = normalizedType === 'progress_update' && progressType.startsWith('init_');
+        if (!isStartupProgress) {
+            startupProgressReady = false;
+            pendingStartupCard = null;
+            clearStartupProgress();
+        }
         if (elements.bar) {
             const newWidth = `${percent}%`;
             if (elements.bar.style.width !== newWidth) {
@@ -775,6 +902,7 @@
     function handleCallbackEvent(category, payload) {
         const jobId = payload.job_id || payload.raw?.job_id || activeJobId;
         const messageType = (payload.message_type || '').toLowerCase();
+        const normalizedMessageType = messageType.replace(/\./g, '_');
         const store = getTrainerStore();
 
         if (payload && payload.reset) {
@@ -820,7 +948,7 @@
                 if (messageType === 'configure_webhook') {
                     setStatus('Starting', payload.severity);
                     setTrainingState('starting', { job_id: jobId });
-                } else if (messageType === 'training_status') {
+                } else if (normalizedMessageType === 'training_status') {
                     // Check the status field for training_status messages
                     const status = (payload.status || '').toLowerCase();
                     if (['training_failed', 'failed', 'error'].includes(status)) {
@@ -849,10 +977,25 @@
                             syncTrainerProgress(normalized, jobId);
                         }
                     }
-                } else if (messageType === '_train_initial_msg' || messageType === 'train_status') {
+                } else if (normalizedMessageType === '_train_initial_msg') {
+                    setStatus('Initialising', payload.severity);
+                    setTrainingState('starting', { job_id: jobId });
+                    const trainingStatusEl = document.getElementById('training-status');
+                    if (trainingStatusEl) {
+                        const startupAlert = trainingStatusEl.querySelector('.startup-progress-alert');
+                        if (startupAlert) {
+                            startupAlert.classList.remove('d-none');
+                        }
+                    }
+                    const store = getTrainerStore();
+                    if (store) {
+                        store.showTrainingProgress = true;
+                    }
+                    startupProgressReady = true;
+                    showPendingStartupCard();
+                } else if (normalizedMessageType === 'train_status') {
                     setStatus('Running', payload.severity);
                     setTrainingState('running', { job_id: jobId });
-                    // Remove startup alert message once training status updates arrive
                     const trainingStatusEl = document.getElementById('training-status');
                     if (trainingStatusEl) {
                         const startupAlert = trainingStatusEl.querySelector('.startup-progress-alert');
@@ -860,22 +1003,18 @@
                             trainingStatusEl.innerHTML = '';
                         }
                     }
-                    // Ensure the main progress card is visible once training begins
                     const store = getTrainerStore();
                     if (store) {
                         store.showTrainingProgress = true;
                     }
-                    // Update progress card with training data for both message types
-                    if (messageType === '_train_initial_msg' || messageType === 'train_status') {
-                        const normalized = normalizeProgressPayload(payload);
-                        if (normalized && normalized.reset) {
-                            resetTrainingProgressUI(payload.status || 'idle', jobId);
-                        } else {
-                            updateProgressCard(normalized, jobId);
-                            syncTrainerProgress(normalized, jobId);
-                        }
+                    const normalized = normalizeProgressPayload(payload);
+                    if (normalized && normalized.reset) {
+                        resetTrainingProgressUI(payload.status || 'idle', jobId);
+                    } else {
+                        updateProgressCard(normalized, jobId);
+                        syncTrainerProgress(normalized, jobId);
                     }
-                } else if (messageType === 'training_complete' || messageType === 'run_complete') {
+                } else if (normalizedMessageType === 'training_complete' || normalizedMessageType === 'run_complete') {
                     setStatus('Completed', 'success');
                     let completionProgress = null;
                     const store = getTrainerStore();
@@ -897,7 +1036,7 @@
                         completedJobIds.add(jobId);
                     }
                     setTrainingState('completed', { job_id: jobId, progress: completionProgress });
-                } else if (messageType === 'fatal_error' || messageType === 'exit') {
+                } else if (normalizedMessageType === 'fatal_error' || normalizedMessageType === 'exit') {
                     setStatus('Stopped', 'danger');
                     resetTrainingProgressUI('failed', jobId);
                 }
@@ -976,6 +1115,11 @@
 
         var notificationHandler = function(_data) {};
         trackListener('notification', notificationHandler);
+
+        var trainingStatusHandler = function(data) {
+            handleCallbackEvent('status', data);
+        };
+        trackListener('training_status', trainingStatusHandler);
 
         var errorHandler = function(data) {
             setStatus('Error', 'danger');
@@ -1070,15 +1214,22 @@
             // If training is active, initialize the progress card
             if (data.startup_progress && typeof data.startup_progress === 'object') {
                 startupStages.clear();
-                Object.entries(data.startup_progress).forEach(([key, stage]) => {
+                const stageEntries = Object.entries(data.startup_progress)
+                    .filter(([key]) => !(typeof key === 'string' && key.startsWith('stage_') && /^\d+$/.test(key.slice(6))));
+
+                stageEntries.forEach(([key, stage]) => {
                     if (!stage) return;
-                    startupStages.set(key, {
+                    const stageStatus = String(stage.status || 'running').toLowerCase();
+                    const normalizedStage = {
                         label: stage.label || key,
                         percent: clampPercent(stage.percent),
                         current: Number(stage.current || 0),
                         total: Number(stage.total || 0),
-                    });
+                        status: stageStatus,
+                    };
+                    startupStages.set(key, normalizedStage);
                 });
+
                 if (startupStages.size > 0) {
                     startupJobId = data.job_id || startupJobId;
                     renderStartupProgress();
@@ -1087,11 +1238,13 @@
 
             if (data.status === 'running' || data.status === 'starting') {
                 const card = ensureCard();
-                if (card && data.progress) {
+                if (data.status === 'running' && card && data.progress) {
                     // Update progress immediately (normalize first)
                     const normalized = normalizeProgressPayload(data.progress);
-                    updateProgressCard(normalized, data.job_id);
-                    card.classList.remove('d-none');
+                    if (normalized) {
+                        updateProgressCard(normalized, data.job_id);
+                        card.classList.remove('d-none');
+                    }
                 }
 
                 // Set training state
@@ -1105,6 +1258,31 @@
                         setStatus(statusText, 'info');
                     }
                 }
+
+                const statusPayload = {
+                    job_id: data.job_id,
+                    status: data.status,
+                    message_type: 'training.status',
+                    severity: data.status === 'running' ? 'info' : 'warning',
+                };
+
+                if (data.progress && typeof data.progress === 'object') {
+                    statusPayload.progress = {
+                        current: data.progress.step,
+                        total: data.progress.total_steps,
+                        percent: data.progress.percent,
+                        metrics: {
+                            loss: data.progress.loss,
+                            learning_rate: data.progress.learning_rate,
+                            epoch: data.progress.epoch,
+                            total_epochs: data.progress.total_epochs,
+                        },
+                    };
+                }
+
+                statusPayload.raw = Object.assign({}, statusPayload);
+
+                handleCallbackEvent('status', statusPayload);
             }
         } catch (error) {
             console.debug('Could not fetch initial training status:', error);
