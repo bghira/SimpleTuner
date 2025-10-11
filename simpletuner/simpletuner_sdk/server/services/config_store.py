@@ -204,19 +204,33 @@ class ConfigStore:
     def _ensure_directories(self):
         """Ensure configuration directories exist."""
         # Always ensure templates exist (shared across config types)
-        self.template_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self.template_dir.mkdir(parents=True, exist_ok=True)
+        except (PermissionError, OSError) as e:
+            # Log but don't fail if we can't create template directory
+            # This can happen in restricted CI environments
+            import logging
+
+            logging.debug(f"Could not create template directory {self.template_dir}: {e}")
 
         if self.config_type == "dataloader":
             # Avoid creating a dedicated dataloaders directory unless the user explicitly saves one.
             # Dataloaders typically live alongside their environments.
             return
 
-        self.config_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self.config_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create default config if it doesn't exist
-        default_config = self.config_dir / "default.json"
-        if not default_config.exists():
-            self._create_default_config(default_config)
+            # Create default config if it doesn't exist
+            default_config = self.config_dir / "default.json"
+            if not default_config.exists():
+                self._create_default_config(default_config)
+        except (PermissionError, OSError) as e:
+            # Log but don't fail if we can't create config directory
+            # This can happen in restricted CI environments or tests
+            import logging
+
+            logging.debug(f"Could not create config directory {self.config_dir}: {e}")
 
     def _create_default_config(self, path: Path):
         """Create a default configuration file."""
