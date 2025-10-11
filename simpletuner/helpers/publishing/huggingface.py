@@ -272,8 +272,12 @@ class HubManager:
                             if not filtered_images[shortname]:
                                 del filtered_images[shortname]
 
-                # Use filtered images if we found any, otherwise use original validation images
-                images_to_upload = filtered_images if filtered_images else validation_images
+                # Only use images that were actually generated at this checkpoint step.
+                # Don't fall back to validation_images as those may be from a different step
+                # (e.g., benchmark images from step 0) and shouldn't be associated with this checkpoint.
+                # If no validation was run at this checkpoint step, we simply don't include validation
+                # images in the model card.
+                images_to_upload = filtered_images if filtered_images else None
 
                 self.upload_model(
                     validation_images=images_to_upload,
