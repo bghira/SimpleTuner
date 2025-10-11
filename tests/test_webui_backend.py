@@ -147,6 +147,29 @@ class WebUIStateStoreTests(unittest.TestCase):
         # Check that it's one of the paths we created
         self.assertTrue(any(loaded.configs_dir.endswith(f"path_{i}") for i in range(5)))
 
+    def test_accelerate_overrides_persist_and_normalize(self) -> None:
+        defaults = WebUIDefaults()
+        defaults.accelerate_overrides = {
+            "mode": "manual",
+            "num_processes": "4",
+            "--same_network": "false",
+            "--main_process_port": "12345",
+            "--unknown_key": 10,
+            "device_ids": ["0", 1, 1, 3],
+            "manual_count": "3",
+        }
+
+        self.store.save_defaults(defaults)
+        loaded = self.store.load_defaults()
+
+        self.assertEqual(loaded.accelerate_overrides.get("--num_processes"), 4)
+        self.assertFalse(loaded.accelerate_overrides.get("--same_network"))
+        self.assertEqual(loaded.accelerate_overrides.get("--main_process_port"), 12345)
+        self.assertNotIn("--unknown_key", loaded.accelerate_overrides)
+        self.assertEqual(loaded.accelerate_overrides.get("mode"), "manual")
+        self.assertEqual(loaded.accelerate_overrides.get("manual_count"), 3)
+        self.assertEqual(loaded.accelerate_overrides.get("device_ids"), [0, 1, 3])
+
 
 class WebUIDefaultsUpdateTests(WebUIStateStoreTests):
     def test_update_configs_dir_only_preserves_other_fields(self) -> None:

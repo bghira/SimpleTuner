@@ -88,6 +88,9 @@ class WebUIStateAPITestCase(_WebUIBaseTestCase):
         self.assertIn("onboarding", data)
         self.assertEqual(data["defaults"]["configs_dir"], configs_dir)
         self.assertEqual(data["defaults"]["output_dir"], output_dir)
+        accelerate_step = next((s for s in data["onboarding"]["steps"] if s["id"] == "accelerate_defaults"), None)
+        self.assertIsNotNone(accelerate_step)
+        self.assertTrue(accelerate_step["required"])
 
     def test_update_onboarding_step(self) -> None:
         response = self.client.post(
@@ -142,7 +145,12 @@ class WebUIStateAPITestCase(_WebUIBaseTestCase):
 
         response = self.client.post(
             "/api/webui/defaults/update",
-            json={"configs_dir": configs_dir, "output_dir": output_dir, "active_config": "new-config"},
+            json={
+                "configs_dir": configs_dir,
+                "output_dir": output_dir,
+                "active_config": "new-config",
+                "accelerate_overrides": {"mode": "manual", "device_ids": [0, 1], "manual_count": 4},
+            },
         )
 
         self.assertEqual(response.status_code, 200)
@@ -150,6 +158,10 @@ class WebUIStateAPITestCase(_WebUIBaseTestCase):
         self.assertEqual(data["defaults"]["configs_dir"], os.path.abspath(configs_dir))
         self.assertEqual(data["defaults"]["output_dir"], os.path.abspath(output_dir))
         self.assertEqual(data["defaults"]["active_config"], "new-config")
+        overrides = data["defaults"].get("accelerate_overrides", {})
+        self.assertEqual(overrides.get("mode"), "manual")
+        self.assertEqual(overrides.get("device_ids"), [0, 1])
+        self.assertEqual(overrides.get("manual_count"), 4)
 
     def test_update_defaults_partial(self) -> None:
         # Use temp directories
@@ -184,6 +196,13 @@ class WebUIStateAPITestCase(_WebUIBaseTestCase):
         self.assertEqual(data["defaults"]["configs_dir"], os.path.abspath(new_configs_dir))
         self.assertEqual(data["defaults"]["output_dir"], os.path.abspath(old_output_dir))
         self.assertEqual(data["defaults"]["active_config"], "old-config")
+
+    def test_gpu_inventory_endpoint_returns_payload(self) -> None:
+        response = self.client.get("/api/hardware/gpus")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("count", data)
+        self.assertIn("optimal_processes", data)
 
 
 class WebUIRoutesTestCase(_WebUIBaseTestCase):
