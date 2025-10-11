@@ -19,6 +19,7 @@ from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
 from simpletuner.simpletuner_sdk.server.services.configs_service import ConfigsService
 from simpletuner.simpletuner_sdk.server.services.field_registry.types import ValidationRuleType
 from simpletuner.simpletuner_sdk.server.services.field_registry_wrapper import lazy_field_registry
+from simpletuner.simpletuner_sdk.server.services.hardware_service import detect_gpu_inventory
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIDefaults, WebUIStateStore
 
 from .webhook_defaults import DEFAULT_CALLBACK_URL, DEFAULT_WEBHOOK_CONFIG
@@ -252,6 +253,91 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
     existing_config_cli = ConfigsService._migrate_legacy_keys(existing_config_cli)
 
     all_defaults = get_all_field_defaults()
+
+    def _has_accelerate_config(*sources: Dict[str, Any]) -> bool:
+        for source in sources:
+            if not isinstance(source, dict):
+                continue
+            for candidate in ("--accelerate_config", "accelerate_config"):
+                value = source.get(candidate)
+                if isinstance(value, str) and value.strip():
+                    return True
+        return False
+
+    accelerate_config_present = _has_accelerate_config(existing_config_cli, config_dict)
+
+    onboarding_accelerate_raw = getattr(webui_defaults, "accelerate_overrides", None)
+    onboarding_accelerate = onboarding_accelerate_raw if isinstance(onboarding_accelerate_raw, dict) else {}
+    accelerate_mode = onboarding_accelerate.get("mode") if isinstance(onboarding_accelerate, dict) else None
+    manual_count_value = onboarding_accelerate.get("manual_count") if isinstance(onboarding_accelerate, dict) else None
+
+    def _coerce_device_ids(value: Any) -> List[int]:
+        if not isinstance(value, (list, tuple, set)):
+            return []
+        result: List[int] = []
+        for item in value:
+            try:
+                result.append(int(item))
+            except (TypeError, ValueError):
+                continue
+        return result
+
+    accelerate_device_ids = (
+        _coerce_device_ids(onboarding_accelerate.get("device_ids")) if isinstance(onboarding_accelerate, dict) else []
+    )
+    cleaned_onboarding: Dict[str, Any] = {}
+    meta_keys = {"mode", "device_ids", "manual_count"}
+    for override_key, override_value in onboarding_accelerate.items():
+        if override_value in (None, ""):
+            continue
+        if isinstance(override_key, str) and override_key.strip() in meta_keys:
+            continue
+        cli_key = override_key if str(override_key).startswith("--") else f"--{str(override_key).lstrip('-')}"
+        cleaned_onboarding[cli_key] = override_value
+
+    accelerate_visible_devices: Optional[List[int]] = None
+
+    if onboarding_accelerate and not accelerate_config_present:
+        process_count: Optional[int] = cleaned_onboarding.get("--num_processes")
+
+        if not isinstance(process_count, int) or process_count <= 0:
+            process_count = None
+
+        normalized_mode = str(accelerate_mode).strip().lower() if accelerate_mode else None
+        if normalized_mode not in {"auto", "manual", "disabled"}:
+            normalized_mode = None
+
+        if normalized_mode == "auto":
+            gpu_inventory = detect_gpu_inventory()
+            process_count = gpu_inventory.get("optimal_processes") or gpu_inventory.get("count") or 1
+            accelerate_visible_devices = None
+        elif normalized_mode == "manual":
+            if accelerate_device_ids:
+                accelerate_visible_devices = accelerate_device_ids
+                process_count = max(len(accelerate_device_ids), 1)
+            elif isinstance(manual_count_value, int) and manual_count_value > 0:
+                process_count = manual_count_value
+            elif isinstance(process_count, int) and process_count > 0:
+                process_count = process_count
+            else:
+                process_count = 1
+        elif normalized_mode == "disabled":
+            process_count = 1
+            accelerate_visible_devices = []
+        else:
+            # Fallback to previously stored value or default to auto-detect count if available
+            if not isinstance(process_count, int) or process_count <= 0:
+                gpu_inventory = detect_gpu_inventory()
+                process_count = gpu_inventory.get("optimal_processes") or 1
+            if process_count <= 1:
+                normalized_mode = "disabled"
+            else:
+                normalized_mode = "manual"
+
+        cleaned_onboarding["--num_processes"] = max(int(process_count or 1), 1)
+        accelerate_mode = normalized_mode
+
+        all_defaults.update({k: v for k, v in cleaned_onboarding.items() if k.startswith("--")})
     if merge_environment_defaults:
         base_config = {**all_defaults, **existing_config_cli}
     else:
@@ -300,6 +386,15 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         base_config.pop("--accelerator_cache_clear_interval", None)
         base_config.pop("accelerator_cache_clear_interval", None)
     complete_config = {**base_config, **config_dict}
+
+    if not accelerate_config_present:
+        if accelerate_visible_devices:
+            device_list = [int(device_id) for device_id in accelerate_visible_devices]
+            complete_config["accelerate_visible_devices"] = device_list
+            config_dict["accelerate_visible_devices"] = device_list
+        if accelerate_mode:
+            complete_config["accelerate_strategy"] = accelerate_mode
+            config_dict["accelerate_strategy"] = accelerate_mode
 
     # Ensure required core fields survive modal toggles even when not explicitly submitted
     def _get_with_alias(source: Dict[str, Any], arg: str) -> Any:
@@ -360,7 +455,10 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
     config_dict["--webhook_reporting_interval"] = 1
 
     save_config: Dict[str, Any] = {}
+    non_persistent_keys = {"accelerate_visible_devices", "accelerate_strategy"}
     for key, value in complete_config.items():
+        if key in non_persistent_keys:
+            continue
         if value is None:
             continue
         clean_key = key[2:] if key.startswith("--") else key

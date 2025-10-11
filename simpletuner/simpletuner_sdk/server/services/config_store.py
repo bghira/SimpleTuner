@@ -228,14 +228,16 @@ class ConfigStore:
         else:
             # Get onboarding values for default config
             output_dir = "output/models"
+            accelerate_overrides: Dict[str, Any] = {}
             try:
                 state_store = WebUIStateStore()
                 defaults = state_store.load_defaults()
                 if defaults.output_dir:
                     output_dir = defaults.output_dir
+                accelerate_overrides = dict(getattr(defaults, "accelerate_overrides", {}) or {})
             except Exception:
                 # Fall back to hardcoded default if WebUI state is not available
-                pass
+                accelerate_overrides = {}
 
             # Default model config
             default_config = {
@@ -253,6 +255,16 @@ class ConfigStore:
                 "--gradient_checkpointing": True,
                 "--use_ema": False,
             }
+
+            if accelerate_overrides:
+                meta_keys = {"mode", "device_ids", "manual_count"}
+                for override_key, override_value in accelerate_overrides.items():
+                    if override_value in (None, ""):
+                        continue
+                    if isinstance(override_key, str) and override_key.strip() in meta_keys:
+                        continue
+                    cli_key = override_key if str(override_key).startswith("--") else f"--{str(override_key).lstrip('-')}"
+                    default_config[cli_key] = override_value
 
             metadata = self._create_metadata("default", "Default training configuration")
 

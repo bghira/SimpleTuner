@@ -13,6 +13,121 @@ _WEBUI_CONFIG_ENV = "SIMPLETUNER_WEB_UI_CONFIG"
 _XDG_HOME_ENV = "XDG_HOME"
 _XDG_CONFIG_HOME_ENV = "XDG_CONFIG_HOME"
 
+_ALLOWED_ACCELERATE_CLI_KEYS = {
+    "--num_processes",
+    "--num_machines",
+    "--main_process_ip",
+    "--main_process_port",
+    "--machine_rank",
+    "--same_network",
+    "--accelerate_extra_args",
+    "--dynamo_backend",
+}
+_ALLOWED_ACCELERATE_META_KEYS = {"mode", "device_ids", "manual_count"}
+_INT_ACCELERATE_KEYS = {
+    "--num_processes",
+    "--num_machines",
+    "--main_process_port",
+    "--machine_rank",
+}
+_BOOL_ACCELERATE_KEYS = {"--same_network"}
+
+
+def _normalise_accelerate_overrides(raw: Any) -> Dict[str, Any]:
+    """Convert persisted accelerate overrides into a cleaned mapping."""
+
+    if not raw:
+        return {}
+
+    if isinstance(raw, str):
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+    elif isinstance(raw, dict):
+        payload = raw
+    else:
+        return {}
+
+    cleaned: Dict[str, Any] = {}
+    for key, value in payload.items():
+        if value in (None, ""):
+            continue
+
+        if not isinstance(key, str):
+            key = str(key)
+        normalized_key = key.strip()
+        if not normalized_key:
+            continue
+
+        if normalized_key.startswith("--"):
+            cli_key = normalized_key
+        else:
+            cli_key = normalized_key
+
+        if cli_key in _ALLOWED_ACCELERATE_CLI_KEYS:
+            if cli_key in _INT_ACCELERATE_KEYS:
+                try:
+                    cleaned[cli_key] = int(value)
+                except (TypeError, ValueError):
+                    continue
+                continue
+
+            if cli_key in _BOOL_ACCELERATE_KEYS:
+                if isinstance(value, bool):
+                    cleaned[cli_key] = value
+                elif isinstance(value, str):
+                    cleaned[cli_key] = value.strip().lower() in {"1", "true", "yes", "on"}
+                else:
+                    cleaned[cli_key] = bool(value)
+                continue
+
+            cleaned[cli_key] = str(value).strip()
+            continue
+
+        if normalized_key in _ALLOWED_ACCELERATE_META_KEYS:
+            if normalized_key == "mode":
+                if isinstance(value, str):
+                    normalized_value = value.strip().lower()
+                    if normalized_value in {"auto", "manual", "disabled"}:
+                        cleaned[normalized_key] = normalized_value
+                continue
+
+            if normalized_key == "manual_count":
+                try:
+                    cleaned[normalized_key] = max(1, int(value))
+                except (TypeError, ValueError):
+                    continue
+                continue
+
+            if normalized_key == "device_ids":
+                parsed: list[int] = []
+                if isinstance(value, str):
+                    tokens = [token.strip() for token in value.split(",") if token.strip()]
+                    for token in tokens:
+                        try:
+                            parsed.append(int(token))
+                        except ValueError:
+                            continue
+                elif isinstance(value, (list, tuple, set)):
+                    for item in value:
+                        try:
+                            parsed.append(int(item))
+                        except (TypeError, ValueError):
+                            continue
+                if parsed:
+                    seen = set()
+                    ordered: list[int] = []
+                    for device_id in parsed:
+                        if device_id in seen:
+                            continue
+                        seen.add(device_id)
+                        ordered.append(device_id)
+                    cleaned[normalized_key] = ordered
+                continue
+
+    return cleaned
+
 
 @dataclass
 class OnboardingStepState:
@@ -41,6 +156,7 @@ class WebUIDefaults:
     event_polling_interval: int = 5
     event_stream_enabled: bool = True
     auto_preserve_defaults: bool = True
+    accelerate_overrides: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -122,7 +238,12 @@ class WebUIStateStore:
         payload = self._read_json("defaults")
         if not payload:
             return WebUIDefaults()
-        data = {key: payload.get(key) for key in WebUIDefaults().__dict__.keys()}
+        data: Dict[str, Any] = {}
+        for key in WebUIDefaults().__dict__.keys():
+            if key == "accelerate_overrides":
+                data[key] = _normalise_accelerate_overrides(payload.get(key))
+            else:
+                data[key] = payload.get(key)
         defaults = WebUIDefaults(**data)
 
         # Normalise theme selection
@@ -157,6 +278,8 @@ class WebUIStateStore:
             defaults.auto_preserve_defaults = True
         else:
             defaults.auto_preserve_defaults = bool(auto_preserve_value)
+
+        defaults.accelerate_overrides = _normalise_accelerate_overrides(defaults.accelerate_overrides)
 
         defaults.active_config = self._validate_active_config(defaults.active_config, defaults.configs_dir)
         return defaults

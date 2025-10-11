@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
@@ -15,6 +16,7 @@ from simpletuner.simpletuner_sdk.server.services.webui_state import (
     WebUIOnboardingState,
     WebUIState,
     WebUIStateStore,
+    _normalise_accelerate_overrides,
 )
 
 router = APIRouter(prefix="/api/webui", tags=["webui"])
@@ -52,6 +54,15 @@ _STEP_DEFINITIONS: List[OnboardingStepDefinition] = [
         required=True,
         applies_to_default="output_dir",
     ),
+    OnboardingStepDefinition(
+        id="accelerate_defaults",
+        title="Accelerate GPU Defaults",
+        prompt="Review the detected hardware and choose how many processes Accelerate should launch by default.",
+        input_type="accelerate_auto",
+        version=1,
+        required=True,
+        applies_to_default="accelerate_overrides",
+    ),
 ]
 _STEP_INDEX: Dict[str, OnboardingStepDefinition] = {step.id: step for step in _STEP_DEFINITIONS}
 
@@ -59,7 +70,7 @@ _STEP_INDEX: Dict[str, OnboardingStepDefinition] = {step.id: step for step in _S
 class OnboardingStepUpdate(BaseModel):
     """Payload for onboarding step updates."""
 
-    value: Optional[str] = None
+    value: Optional[Any] = None
 
 
 def _build_state_response(state: WebUIState, steps: List[OnboardingStepDefinition]) -> Dict[str, object]:
@@ -117,7 +128,29 @@ async def get_webui_state() -> Dict[str, object]:
     return _build_state_response(state, _STEP_DEFINITIONS)
 
 
-def _normalise_value(step: OnboardingStepDefinition, value: Optional[str]) -> Optional[str]:
+def _normalise_value(step: OnboardingStepDefinition, value: object) -> Optional[object]:
+    if step.input_type == "accelerate_auto":
+        if value is None:
+            return None
+        if isinstance(value, str):
+            candidate = value.strip()
+            if not candidate:
+                return None
+            try:
+                payload = json.loads(candidate)
+            except json.JSONDecodeError as error:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Invalid accelerator selection payload: {error}",
+                ) from error
+            return payload
+        if isinstance(value, dict):
+            return value
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Accelerator selection must be an object.",
+        )
+
     if value is None:
         return None
     normalised = value.strip()
@@ -137,6 +170,8 @@ def _apply_step_to_defaults(
         defaults.output_dir = value
     elif step.applies_to_default == "configs_dir" and value is not None:
         defaults.configs_dir = value
+    elif step.applies_to_default == "accelerate_overrides":
+        defaults.accelerate_overrides = _normalise_accelerate_overrides(value)
 
 
 @router.post("/onboarding/steps/{step_id}")
@@ -192,6 +227,7 @@ class DefaultsUpdate(BaseModel):
     event_polling_interval: Optional[int] = None
     event_stream_enabled: Optional[bool] = None
     auto_preserve_defaults: Optional[bool] = None
+    accelerate_overrides: Optional[Dict[str, object]] = None
 
 
 @router.post("/defaults/update")
@@ -224,6 +260,8 @@ async def update_defaults(payload: DefaultsUpdate) -> Dict[str, object]:
             defaults.event_stream_enabled = bool(payload.event_stream_enabled)
         if payload.auto_preserve_defaults is not None:
             defaults.auto_preserve_defaults = bool(payload.auto_preserve_defaults)
+        if payload.accelerate_overrides is not None:
+            defaults.accelerate_overrides = _normalise_accelerate_overrides(payload.accelerate_overrides)
 
         # Save updated defaults
         store.save_defaults(defaults)
