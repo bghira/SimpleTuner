@@ -55,9 +55,14 @@ class TestWebhookHandler(unittest.TestCase):
 
     @patch("requests.post")
     def test_do_not_send_lower_than_configured_level(self, mock_post):
-        # Set a higher log level and test
-        self.handler.log_level = 1  # Error level
-        self.handler.send("Test message", message_level="info")
+        # Create handler with error log level and test
+        config = {
+            "webhook_type": "discord",
+            "webhook_url": "http://test.com/webhook",
+            "log_level": "error",  # Higher log level
+        }
+        handler = WebhookHandler(accelerator=self.mock_accelerator, project_name="TestProject", webhook_config=config)
+        handler.send("Test message", message_level="info")
         mock_post.assert_not_called()
 
     @patch("requests.post")
@@ -89,6 +94,54 @@ class TestWebhookHandler(unittest.TestCase):
         content = kwargs.get("data", {}).get("content", "")
         self.assertIn(self.mock_config_instance.values.get("message_prefix"), content)
         self.assertIn("Test message", content)
+
+    def test_single_dict_config(self):
+        """Test that a single dict config is properly converted to list format"""
+        config = {"webhook_type": "discord", "webhook_url": "http://test.com/webhook", "log_level": "info"}
+        handler = WebhookHandler(accelerator=self.mock_accelerator, project_name="TestProject", webhook_config=config)
+        self.assertEqual(len(handler.backends), 1)
+        self.assertEqual(handler.backends[0]["webhook_url"], "http://test.com/webhook")
+
+    def test_list_config(self):
+        """Test that a list config with multiple webhooks is properly handled"""
+        config = [
+            {"webhook_type": "raw", "callback_url": "http://localhost:8001/callback", "log_level": "info"},
+            {"webhook_type": "discord", "webhook_url": "http://discord.com/webhook1", "log_level": "warning"},
+        ]
+        handler = WebhookHandler(accelerator=self.mock_accelerator, project_name="TestProject", webhook_config=config)
+        self.assertEqual(len(handler.backends), 2)
+        self.assertEqual(handler.backends[0]["webhook_type"], "raw")
+        self.assertEqual(handler.backends[1]["webhook_type"], "discord")
+
+    @patch("requests.post")
+    def test_multiple_backends_send(self, mock_post):
+        """Test that messages are sent to all configured backends"""
+        config = [
+            {"webhook_type": "discord", "webhook_url": "http://discord.com/webhook1", "log_level": "info"},
+            {"webhook_type": "discord", "webhook_url": "http://discord.com/webhook2", "log_level": "info"},
+        ]
+        handler = WebhookHandler(accelerator=self.mock_accelerator, project_name="TestProject", webhook_config=config)
+        handler.send("Test message", message_level="info")
+        # Should be called twice, once for each backend
+        self.assertEqual(mock_post.call_count, 2)
+
+    @patch("requests.post")
+    def test_log_level_filtering(self, mock_post):
+        """Test that backends filter messages based on their log levels"""
+        config = [
+            {"webhook_type": "discord", "webhook_url": "http://discord.com/webhook1", "log_level": "info"},
+            {"webhook_type": "discord", "webhook_url": "http://discord.com/webhook2", "log_level": "error"},
+        ]
+        handler = WebhookHandler(accelerator=self.mock_accelerator, project_name="TestProject", webhook_config=config)
+        # Send info message - should only go to first backend
+        handler.send("Test info", message_level="info")
+        self.assertEqual(mock_post.call_count, 1)
+
+        mock_post.reset_mock()
+
+        # Send error message - should go to both backends
+        handler.send("Test error", message_level="error")
+        self.assertEqual(mock_post.call_count, 2)
 
 
 if __name__ == "__main__":
