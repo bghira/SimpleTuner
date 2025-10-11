@@ -63,7 +63,7 @@ def _normalise_accelerate_overrides(raw: Any) -> Dict[str, Any]:
         if normalized_key.startswith("--"):
             cli_key = normalized_key
         else:
-            cli_key = normalized_key
+            cli_key = f"--{normalized_key.lstrip('-')}"
 
         if cli_key in _ALLOWED_ACCELERATE_CLI_KEYS:
             if cli_key in _INT_ACCELERATE_KEYS:

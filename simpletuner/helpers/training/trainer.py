@@ -1496,8 +1496,6 @@ class Trainer:
 
         # Emit completion event for resume checkpoint stage
         if self.config.resume_from_checkpoint:
-            from ..webhooks.events import lifecycle_stage_event
-
             completion_event = lifecycle_stage_event(
                 key="resume_checkpoint",
                 label="Resuming checkpoint",

@@ -385,7 +385,7 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         existing_config_cli.pop("accelerator_cache_clear_interval", None)
         base_config.pop("--accelerator_cache_clear_interval", None)
         base_config.pop("accelerator_cache_clear_interval", None)
-    complete_config = {**base_config, **config_dict}
+    complete_config = {**base_config, **existing_config_cli, **config_dict}
 
     if not accelerate_config_present:
         if accelerate_visible_devices:
@@ -455,7 +455,13 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
     config_dict["--webhook_reporting_interval"] = 1
 
     save_config: Dict[str, Any] = {}
-    non_persistent_keys = {"accelerate_visible_devices", "accelerate_strategy"}
+    non_persistent_keys = {
+        "accelerate_visible_devices",
+        "accelerate_strategy",
+        "--accelerate_visible_devices",
+        "--accelerate_strategy",
+    }
+
     for key, value in complete_config.items():
         if key in non_persistent_keys:
             continue
@@ -651,6 +657,18 @@ def start_training_job(runtime_config: Dict[str, Any]) -> str:
 
     job_config = dict(runtime_payload)
     job_config["__job_id__"] = job_id
+
+    # Remove non-CLI arguments that shouldn't be passed to the trainer
+    non_cli_keys = {
+        "accelerate_visible_devices",
+        "accelerate_strategy",
+        "--accelerate_visible_devices",
+        "--accelerate_strategy",
+        "ui-accelerate-mode",
+        "--ui-accelerate-mode",
+    }
+    for key in non_cli_keys:
+        job_config.pop(key, None)
 
     process_keeper.submit_job(job_id, run_trainer_job, job_config)
 
