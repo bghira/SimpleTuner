@@ -216,6 +216,20 @@ function trainerComponent() {
          onboardingSteps: [],
          activeOnboardingStep: null,
          onboardingForm: { value: '' },
+         gpuInventory: {
+             loading: false,
+             error: '',
+             devices: [],
+             backend: null,
+             count: 0,
+             detected: false,
+             optimalProcesses: 1,
+         },
+         onboardingAccelerate: {
+             mode: 'auto',
+             manualCount: 1,
+             deviceIds: [],
+         },
 
         // Form dirty tracking
         formDirty: false,
@@ -2225,22 +2239,22 @@ function trainerComponent() {
                 }
             }
         },
-         async initializeWebUIState() {
-             try {
-                 const response = await fetch('/api/webui/state');
-                 if (!response.ok) {
-                     console.warn('Failed to load WebUI state');
-                     return;
-                 }
-                const data = await response.json();
-                const onboarding = data.onboarding || {};
-                const defaultsPayload = data.resolved_defaults || data.defaults || {};
-                const normalizedDefaults = this.normalizeDefaultsPayload(defaultsPayload);
-                this.defaults = normalizedDefaults;
-                this.preserveDefaultsOption = normalizedDefaults.auto_preserve_defaults;
-                this.onboardingSteps = onboarding.steps || [];
-                this.overlayVisible = Boolean(onboarding.overlay_required);
-                this.setActiveOnboardingStep();
+        async initializeWebUIState() {
+            try {
+                const response = await fetch('/api/webui/state');
+                if (!response.ok) {
+                    console.warn('Failed to load WebUI state');
+                    return;
+                }
+               const data = await response.json();
+               const onboarding = data.onboarding || {};
+               const defaultsPayload = data.resolved_defaults || data.defaults || {};
+               const normalizedDefaults = this.normalizeDefaultsPayload(defaultsPayload);
+               this.defaults = normalizedDefaults;
+               this.preserveDefaultsOption = normalizedDefaults.auto_preserve_defaults;
+               this.onboardingSteps = onboarding.steps || [];
+               this.overlayVisible = Boolean(onboarding.overlay_required);
+                await this.setActiveOnboardingStep();
                 if (typeof window.applyTheme === 'function' && normalizedDefaults.theme) {
                     window.applyTheme(normalizedDefaults.theme);
                 }
@@ -2256,40 +2270,221 @@ function trainerComponent() {
                 console.error('Failed to load WebUI state', error);
             }
         },
-         setActiveOnboardingStep() {
-             const nextStep = this.onboardingSteps.find(step => !step.is_complete && step.required);
-             if (nextStep) {
-                 this.activeOnboardingStep = nextStep;
-                 const fallback = nextStep.applies_to_default && this.defaults
-                     ? this.defaults[nextStep.applies_to_default]
-                     : '';
-                 this.onboardingForm.value = nextStep.value || fallback || '';
-                 this.overlayVisible = true;
-                 this.overlayError = '';
-                 this.$nextTick(() => {
-                     if (this.$refs.onboardingInput) {
-                         this.$refs.onboardingInput.focus();
-                         this.$refs.onboardingInput.select();
-                     }
-                 });
-             } else {
+        async ensureGpuInventory() {
+            if (this.gpuInventory.loading) {
+                return;
+            }
+            if (this.gpuInventory.devices.length || this.gpuInventory.detected) {
+                return;
+            }
+            this.gpuInventory.loading = true;
+            this.gpuInventory.error = '';
+            try {
+                const response = await fetch('/api/hardware/gpus');
+                if (!response.ok) {
+                    throw new Error(`GPU inventory request failed with status ${response.status}`);
+                }
+                const payload = await response.json();
+                const devices = Array.isArray(payload.devices) ? payload.devices : [];
+                this.gpuInventory.devices = devices.map((device, index) => ({
+                    index: typeof device.index === 'number' ? device.index : index,
+                    id: device.id ?? device.index ?? index,
+                    name: device.name || `GPU ${typeof device.index === 'number' ? device.index : index}`,
+                    memory_gb: typeof device.memory_gb === 'number' ? device.memory_gb : null,
+                }));
+                this.gpuInventory.backend = payload.backend || null;
+                this.gpuInventory.count = typeof payload.count === 'number' ? payload.count : this.gpuInventory.devices.length;
+                this.gpuInventory.detected = Boolean(payload.detected && this.gpuInventory.devices.length > 0);
+                let optimal = typeof payload.optimal_processes === 'number' ? payload.optimal_processes : null;
+                if (!optimal || optimal < 1) {
+                    optimal = this.gpuInventory.devices.length || 1;
+                }
+                this.gpuInventory.optimalProcesses = optimal;
+            } catch (error) {
+                console.error('Failed to detect GPU inventory', error);
+                this.gpuInventory.error = 'Unable to detect GPUs automatically. Configure processes manually if needed.';
+                this.gpuInventory.devices = [];
+                this.gpuInventory.backend = null;
+                this.gpuInventory.count = 0;
+                this.gpuInventory.detected = false;
+                this.gpuInventory.optimalProcesses = 1;
+            } finally {
+                this.gpuInventory.loading = false;
+            }
+        },
+        normalizeAccelerateSelection(rawValue) {
+            const fallback = {
+                mode: 'auto',
+                manual_count: null,
+                device_ids: [],
+                '--num_processes': null,
+            };
+            if (!rawValue) {
+                return { ...fallback };
+            }
+            let payload = rawValue;
+            if (typeof rawValue === 'string') {
+                const trimmed = rawValue.trim();
+                if (!trimmed) {
+                    return { ...fallback };
+                }
+                try {
+                    payload = JSON.parse(trimmed);
+                } catch (error) {
+                    const parsed = parseInt(trimmed, 10);
+                    if (Number.isFinite(parsed)) {
+                        return {
+                            mode: parsed > 1 ? 'manual' : 'disabled',
+                            manual_count: parsed,
+                            device_ids: [],
+                            '--num_processes': parsed,
+                        };
+                    }
+                    return { ...fallback };
+                }
+            }
+            if (!payload || typeof payload !== 'object') {
+                return { ...fallback };
+            }
+            const clone = { ...payload };
+            const rawDevices = Array.isArray(clone.device_ids) ? clone.device_ids : [];
+            const deviceIds = rawDevices
+                .map((value) => {
+                    const parsed = parseInt(value, 10);
+                    return Number.isNaN(parsed) ? null : parsed;
+                })
+                .filter((value) => value !== null);
+            const manualCount = typeof clone.manual_count === 'number'
+                ? clone.manual_count
+                : parseInt(clone.manual_count, 10);
+            const numProcesses = typeof clone['--num_processes'] === 'number'
+                ? clone['--num_processes']
+                : parseInt(clone['--num_processes'], 10);
+            let mode = typeof clone.mode === 'string' ? clone.mode.trim().toLowerCase() : undefined;
+            if (!['auto', 'manual', 'disabled'].includes(mode || '')) {
+                if (deviceIds.length > 1) {
+                    mode = 'manual';
+                } else if (Number.isFinite(numProcesses) && numProcesses > 1) {
+                    mode = 'manual';
+                } else if (Number.isFinite(numProcesses) && numProcesses <= 1) {
+                    mode = 'disabled';
+                } else {
+                    mode = 'auto';
+                }
+            }
+            return {
+                mode: mode || 'auto',
+                manual_count: Number.isFinite(manualCount) && manualCount > 0 ? manualCount : null,
+                device_ids: deviceIds,
+                '--num_processes': Number.isFinite(numProcesses) && numProcesses > 0 ? numProcesses : null,
+            };
+        },
+        async prepareAccelerateOnboarding(rawValue) {
+            await this.ensureGpuInventory();
+            const normalized = this.normalizeAccelerateSelection(rawValue);
+            const fallbackProcesses = this.gpuInventory.optimalProcesses || 1;
+            const devices = Array.from(new Set(normalized.device_ids || []));
+            let manualCount = normalized.manual_count || normalized['--num_processes'] || fallbackProcesses;
+            if (!Number.isFinite(manualCount) || manualCount < 1) {
+                manualCount = fallbackProcesses;
+            }
+            this.onboardingAccelerate = {
+                mode: normalized.mode || 'auto',
+                manualCount: Math.max(1, parseInt(manualCount, 10) || fallbackProcesses || 1),
+                deviceIds: devices,
+            };
+            this.onboardingForm.value = normalized;
+        },
+        serializeAccelerateOnboardingValue() {
+            const mode = (this.onboardingAccelerate.mode || 'auto').toLowerCase();
+            const uniqueDeviceIds = Array.isArray(this.onboardingAccelerate.deviceIds)
+                ? Array.from(new Set(this.onboardingAccelerate.deviceIds
+                    .map((value) => {
+                        const parsed = parseInt(value, 10);
+                        return Number.isNaN(parsed) ? null : parsed;
+                    })
+                    .filter((value) => value !== null)))
+                : [];
+            const manualCount = parseInt(this.onboardingAccelerate.manualCount, 10);
+            const hasManualCount = Number.isFinite(manualCount) && manualCount > 0;
+            let numProcesses;
+            if (mode === 'disabled') {
+                numProcesses = 1;
+            } else if (mode === 'auto') {
+                numProcesses = this.gpuInventory.optimalProcesses || this.gpuInventory.count || 1;
+            } else if (mode === 'manual') {
+                if (uniqueDeviceIds.length > 0) {
+                    numProcesses = uniqueDeviceIds.length;
+                } else if (hasManualCount) {
+                    numProcesses = manualCount;
+                } else {
+                    this.overlayError = 'Select at least one GPU or provide a process count.';
+                    return null;
+                }
+            } else {
+                numProcesses = this.gpuInventory.optimalProcesses || 1;
+            }
+
+            const normalizedProcesses = Math.max(1, parseInt(numProcesses, 10) || 1);
+            const payload = {
+                mode: mode === 'manual' ? 'manual' : mode === 'disabled' ? 'disabled' : 'auto',
+                '--num_processes': normalizedProcesses,
+            };
+
+            if (mode === 'manual' && uniqueDeviceIds.length > 0) {
+                payload.device_ids = uniqueDeviceIds;
+            } else if (mode === 'manual' && hasManualCount) {
+                payload.manual_count = Math.max(1, manualCount);
+            }
+
+            return payload;
+        },
+        async setActiveOnboardingStep() {
+            const nextStep = this.onboardingSteps.find(step => !step.is_complete && step.required);
+            if (nextStep) {
+                this.activeOnboardingStep = nextStep;
+                const fallback = nextStep.applies_to_default && this.defaults
+                    ? this.defaults[nextStep.applies_to_default]
+                    : '';
+                if (nextStep.input_type === 'accelerate_auto') {
+                    await this.prepareAccelerateOnboarding(nextStep.value || fallback || null);
+                } else {
+                    this.onboardingForm.value = nextStep.value || fallback || '';
+                }
+                this.overlayVisible = true;
+                this.overlayError = '';
+                this.$nextTick(() => {
+                    if (this.$refs.onboardingInput && nextStep.input_type === 'directory') {
+                        this.$refs.onboardingInput.focus();
+                        this.$refs.onboardingInput.select();
+                    }
+                });
+            } else {
                  this.activeOnboardingStep = null;
                  this.overlayVisible = false;
              }
          },
-         async submitOnboardingStep() {
-             if (!this.activeOnboardingStep) {
-                 return;
-             }
-             const completedStep = this.activeOnboardingStep;
-             const currentInputValue = this.onboardingForm.value;
-             this.overlaySaving = true;
-             this.overlayError = '';
-             try {
-                 const response = await fetch(`/api/webui/onboarding/steps/${this.activeOnboardingStep.id}`, {
-                     method: 'POST',
-                     headers: { 'Content-Type': 'application/json' },
-                     body: JSON.stringify({ value: this.onboardingForm.value })
+        async submitOnboardingStep() {
+            if (!this.activeOnboardingStep) {
+                return;
+            }
+            const completedStep = this.activeOnboardingStep;
+            this.overlaySaving = true;
+            this.overlayError = '';
+            if (completedStep.input_type === 'accelerate_auto') {
+                const payload = this.serializeAccelerateOnboardingValue();
+                if (!payload) {
+                    this.overlaySaving = false;
+                    return;
+                }
+                this.onboardingForm.value = payload;
+            }
+            const currentInputValue = this.onboardingForm.value;
+            try {
+                const response = await fetch(`/api/webui/onboarding/steps/${this.activeOnboardingStep.id}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ value: this.onboardingForm.value })
                  });
                  if (!response.ok) {
                      let detail = 'Failed to save preferences.';
@@ -2331,14 +2526,14 @@ function trainerComponent() {
                         }
                     }));
                 }
-                this.setActiveOnboardingStep();
+                await this.setActiveOnboardingStep();
             } catch (error) {
                 console.error('Failed to save onboarding step', error);
                 this.overlayError = 'Something went wrong. Please try again.';
             } finally {
                  this.overlaySaving = false;
-             }
-         },
+            }
+        },
          async resetOnboarding() {
              if (!confirm('Are you sure you want to reset the onboarding process? This will clear all your settings.')) {
                  return;
@@ -2362,9 +2557,10 @@ function trainerComponent() {
                 this.defaults = normalizedDefaults;
                 this.preserveDefaultsOption = normalizedDefaults.auto_preserve_defaults;
                 this.onboardingSteps = data.onboarding.steps || [];
-                 this.overlayVisible = Boolean(data.onboarding.overlay_required);
-                 this.onboardingForm = { value: '' };
-                 this.setActiveOnboardingStep();
+                this.overlayVisible = Boolean(data.onboarding.overlay_required);
+                this.onboardingForm = { value: '' };
+                this.onboardingAccelerate = { mode: 'auto', manualCount: 1, deviceIds: [] };
+                await this.setActiveOnboardingStep();
 
                 if (window.showToast) {
                     window.showToast('Onboarding reset successfully. Please enter your settings again.', 'success');
@@ -3260,7 +3456,7 @@ function trainerComponent() {
             <h2 x-text="activeOnboardingStep ? activeOnboardingStep.title : 'Welcome to SimpleTuner'"></h2>
             <p class="onboarding-prompt" x-text="activeOnboardingStep ? activeOnboardingStep.prompt : ''"></p>
             <form @submit.prevent="submitOnboardingStep">
-                <div class="mb-3" x-show="activeOnboardingStep">
+                <div class="mb-3" x-show="activeOnboardingStep && activeOnboardingStep.input_type === 'directory'">
                     <label class="form-label" x-text="activeOnboardingStep ? activeOnboardingStep.title : ''"></label>
                     <input type="text"
                            id="onboarding-input"
@@ -3269,10 +3465,102 @@ function trainerComponent() {
                            x-model="onboardingForm.value"
                            :placeholder="(activeOnboardingStep && activeOnboardingStep.applies_to_default && defaults[activeOnboardingStep.applies_to_default]) || '/path/to/output'"
                            x-ref="onboardingInput">
-                    <div class="form-text" x-show="activeOnboardingStep && activeOnboardingStep.input_type === 'directory'">
+                    <div class="form-text">
                         Example: /home/you/simpletuner-output
                     </div>
                 </div>
+                <template x-if="activeOnboardingStep && activeOnboardingStep.input_type === 'accelerate_auto'">
+                    <div class="mb-3">
+                        <label class="form-label">GPU launch strategy</label>
+                        <div class="form-check">
+                            <input class="form-check-input"
+                                   type="radio"
+                                   id="accelerate-mode-disabled"
+                                   value="disabled"
+                                   x-model="onboardingAccelerate.mode"
+                                   name="accelerate_mode">
+                            <label class="form-check-label" for="accelerate-mode-disabled">
+                                Single GPU only
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input"
+                                   type="radio"
+                                   id="accelerate-mode-auto"
+                                   value="auto"
+                                   x-model="onboardingAccelerate.mode"
+                                   name="accelerate_mode">
+                            <label class="form-check-label" for="accelerate-mode-auto">
+                                Auto-detect available GPUs
+                                <span class="text-muted" x-show="gpuInventory.devices.length">&mdash; will launch <span x-text="gpuInventory.optimalProcesses"></span> processes</span>
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input"
+                                   type="radio"
+                                   id="accelerate-mode-manual"
+                                   value="manual"
+                                   x-model="onboardingAccelerate.mode"
+                                   name="accelerate_mode">
+                            <label class="form-check-label" for="accelerate-mode-manual">
+                                Choose GPUs manually
+                            </label>
+                        </div>
+
+                        <template x-if="gpuInventory.loading">
+                            <div class="alert alert-info mt-3 py-2">
+                                Detecting GPUs...
+                            </div>
+                        </template>
+                        <template x-if="!gpuInventory.loading && gpuInventory.error">
+                            <div class="alert alert-warning mt-3 py-2" x-text="gpuInventory.error"></div>
+                        </template>
+
+                        <template x-if="!gpuInventory.loading && gpuInventory.devices.length">
+                            <div class="gpu-device-list mt-3">
+                                <div class="fw-semibold mb-2">Detected GPUs</div>
+                                <div class="list-group">
+                                    <template x-for="device in gpuInventory.devices" :key="device.index">
+                                        <label class="list-group-item d-flex align-items-center justify-content-between">
+                                            <div>
+                                                <span class="fw-medium" x-text="device.name"></span>
+                                                <span class="text-muted ms-2" x-show="device.memory_gb" x-text="device.memory_gb + ' GB'"></span>
+                                            </div>
+                                            <input type="checkbox"
+                                                   class="form-check-input"
+                                                   x-model.number="onboardingAccelerate.deviceIds"
+                                                   :value="device.index"
+                                                   :disabled="onboardingAccelerate.mode !== 'manual'">
+                                        </label>
+                                    </template>
+                                </div>
+                            </div>
+                        </template>
+
+                        <div x-show="onboardingAccelerate.mode === 'manual' && !gpuInventory.devices.length" class="mt-3">
+                            <label class="form-label" for="accelerate-manual-count">Processes to launch</label>
+                            <input type="number"
+                                   min="1"
+                                   id="accelerate-manual-count"
+                                   class="form-control"
+                                   x-model.number="onboardingAccelerate.manualCount">
+                            <div class="form-text">Set to the number of GPUs or processes to run.</div>
+                        </div>
+
+                        <div class="mt-3 text-muted">
+                            <template x-if="onboardingAccelerate.mode === 'manual' && onboardingAccelerate.deviceIds.length">
+                                <span>Will launch <span x-text="onboardingAccelerate.deviceIds.length"></span> process<span x-text="onboardingAccelerate.deviceIds.length === 1 ? '' : 'es'"></span> on selected GPUs.</span>
+                            </template>
+                            <template x-if="onboardingAccelerate.mode === 'auto'">
+                                <span>Auto mode launches <span x-text="gpuInventory.optimalProcesses"></span> process<span x-text="gpuInventory.optimalProcesses === 1 ? '' : 'es'"></span> (one per detected GPU).</span>
+                            </template>
+                            <template x-if="onboardingAccelerate.mode === 'disabled'">
+                                <span>SimpleTuner will restrict Accelerate to a single GPU.</span>
+                            </template>
+                        </div>
+                        <div x-effect="if (onboardingAccelerate.mode === 'manual' && gpuInventory.devices.length) { const selected = (onboardingAccelerate.deviceIds || []).length; if (selected > 0 && onboardingAccelerate.manualCount !== selected) { onboardingAccelerate.manualCount = selected; } }"></div>
+                    </div>
+                </template>
                 <template x-if="overlayError">
                     <div class="alert alert-danger py-2 px-3" x-text="overlayError"></div>
                 </template>
