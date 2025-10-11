@@ -235,7 +235,7 @@ class DependencyManager {
         const metadata = this.fieldMetadata.get(fieldName);
         if (!metadata) return;
 
-        const sectionId = `${metadata.section}-section`;
+        const sectionId = `section-${metadata.section}`;
         const section = document.getElementById(sectionId);
         if (!section) return;
 

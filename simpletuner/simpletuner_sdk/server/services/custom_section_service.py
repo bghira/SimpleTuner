@@ -31,6 +31,7 @@ class CustomSectionService:
             icon="fas fa-key",
             template="partials/authentication_section.html",
             description="HuggingFace Hub authentication settings",
+            order=1,
         )
 
         # Publishing tab repository configuration section
@@ -41,9 +42,10 @@ class CustomSectionService:
             icon="fas fa-cog",
             template="partials/publishing_repository_section.html",
             description=None,
+            order=2,
         )
 
-        # Publishing tab Discord webhooks section
+        # Publishing tab Discord webhooks section (placed at bottom)
         self.register_custom_section(
             tab="publishing",
             section_id="discord_webhooks",
@@ -51,6 +53,7 @@ class CustomSectionService:
             icon="fas fa-bell",
             template="partials/webhooks_section.html",
             description="Configure Discord and custom webhook destinations for training notifications",
+            order=999,  # High order to place at bottom
         )
 
     def register_custom_section(
@@ -121,10 +124,10 @@ class CustomSectionService:
         # Create a map of field sections by ID for easy lookup
         field_section_map = {section["id"]: section for section in field_sections}
 
-        # Merge sections, with custom sections coming first
+        # Merge all sections together
         merged_sections = []
 
-        # Add custom sections first
+        # Add custom sections
         for custom_section in custom_sections:
             merged_sections.append(custom_section)
 
@@ -132,6 +135,9 @@ class CustomSectionService:
         for field_section in field_sections:
             if field_section["id"] not in [cs["id"] for cs in custom_sections]:
                 merged_sections.append(field_section)
+
+        # Sort by order property (default to 100 for sections without order)
+        merged_sections.sort(key=lambda s: s.get("order", 100))
 
         logger.debug(
             f"Merged sections for tab '{tab}': {len(merged_sections)} total "
