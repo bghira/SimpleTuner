@@ -751,6 +751,28 @@ function trainerComponent() {
                 }
             }
 
+            if (dataset.crop_style === 'balanced') {
+                dataset.crop_style = 'random';
+            }
+
+            if (dataset.crop_style === 'centre') {
+                dataset.crop_style = 'center';
+            }
+
+            if (dataset.crop_aspect === 'original') {
+                dataset.crop_aspect = 'preserve';
+            }
+
+            const allowedCropStyles = ['center', 'corner', 'face', 'random'];
+            if (!allowedCropStyles.includes(dataset.crop_style)) {
+                dataset.crop_style = 'random';
+            }
+
+            const allowedCropAspects = ['square', 'preserve', 'closest', 'random'];
+            if (!allowedCropAspects.includes(dataset.crop_aspect)) {
+                dataset.crop_aspect = 'square';
+            }
+
             const allowedResolutionTypes = ['pixel', 'pixel_area'];
             if (!allowedResolutionTypes.includes(dataset.resolution_type)) {
                 dataset.resolution_type = 'pixel';
@@ -1277,6 +1299,28 @@ function trainerComponent() {
 
                 if (cleaned.type !== 'local') {
                     delete cleaned.instance_data_dir;
+                }
+
+                if (cleaned.crop_style === 'balanced') {
+                    cleaned.crop_style = 'random';
+                }
+
+                if (cleaned.crop_style === 'centre') {
+                    cleaned.crop_style = 'center';
+                }
+
+                if (cleaned.crop_aspect === 'original') {
+                    cleaned.crop_aspect = 'preserve';
+                }
+
+                const allowedSanitizedCropStyles = ['center', 'corner', 'face', 'random'];
+                if (!allowedSanitizedCropStyles.includes(cleaned.crop_style)) {
+                    cleaned.crop_style = 'random';
+                }
+
+                const allowedSanitizedAspects = ['square', 'preserve', 'closest', 'random'];
+                if (!allowedSanitizedAspects.includes(cleaned.crop_aspect)) {
+                    cleaned.crop_aspect = 'square';
                 }
 
                 const allowedResolutionTypes = ['pixel', 'pixel_area'];

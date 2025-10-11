@@ -1085,8 +1085,9 @@ function dataloaderSectionComponent() {
                                         x-model="dataset.crop_style"
                                         @change="markAsUnsaved()">
                                     <option value="center">Center</option>
+                                    <option value="corner">Corner</option>
+                                    <option value="face">Face Detection</option>
                                     <option value="random">Random</option>
-                                    <option value="balanced">Balanced</option>
                                 </select>
                             </div>
                             <div class="col-md-6">
@@ -1095,8 +1096,9 @@ function dataloaderSectionComponent() {
                                         x-model="dataset.crop_aspect"
                                         @change="markAsUnsaved()">
                                     <option value="square">Square</option>
+                                    <option value="preserve">Preserve original</option>
                                     <option value="closest">Closest bucket</option>
-                                    <option value="original">Preserve original</option>
+                                    <option value="random">Weighted buckets</option>
                                 </select>
                             </div>
                         </div>
@@ -1106,13 +1108,13 @@ function dataloaderSectionComponent() {
                                 <input type="text" class="form-control form-control-sm"
                                        x-model="dataset._cropAspectBucketsText"
                                        @input="markAsUnsaved()"
-                                       :disabled="dataset.crop_aspect !== 'closest'"
+                                       :disabled="!['closest', 'random'].includes(dataset.crop_aspect)"
                                        placeholder="0.75, 1.0, 1.33">
                                 <div class="form-text"
-                                     x-text="dataset.crop_aspect === 'closest'
-                                        ? 'Comma separated list of aspect ratios to prefer when cropping.'
-                                        : 'Select &quot;Closest bucket&quot; to enable custom aspect buckets.'">
-                                    Comma separated list of aspect ratios to prefer when cropping.
+                                     x-text="['closest', 'random'].includes(dataset.crop_aspect)
+                                        ? 'Comma separated list of aspect ratios used for bucket selection.'
+                                        : 'Select \"Closest bucket\" or \"Weighted buckets\" to enable custom aspect buckets.'">
+                                    Comma separated list of aspect ratios used for bucket selection.
                                 </div>
                             </div>
                         </div>
