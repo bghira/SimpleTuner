@@ -115,6 +115,21 @@ def _add_argument_from_field(parser: argparse.ArgumentParser, field: ConfigField
     cli_choices = [value for value in choice_values if value is not None]
     help_text = field.help_text or getattr(field, "cmd_args_help", "") or field.tooltip
     kwargs: Dict[str, Any] = {}
+    option_strings: List[str] = []
+    if isinstance(field.arg_name, str):
+        option_strings.append(field.arg_name)
+    elif isinstance(field.arg_name, (list, tuple)):
+        option_strings.extend(field.arg_name)
+    else:
+        option_strings.append(str(field.arg_name))
+
+    if field.aliases:
+        option_strings.extend(field.aliases)
+
+    # Deduplicate while preserving order
+    seen_opts = set()
+    option_strings = [opt for opt in option_strings if not (opt in seen_opts or seen_opts.add(opt))]
+
     if help_text:
         kwargs["help"] = help_text
     if _is_required(field):
@@ -135,7 +150,7 @@ def _add_argument_from_field(parser: argparse.ArgumentParser, field: ConfigField
                 "default": default_bool,
             }
         )
-        parser.add_argument(field.arg_name, **kwargs)
+        parser.add_argument(*option_strings, **kwargs)
         return
     if field.field_type == FieldType.SELECT:
         cli_choices = [str(value) for value in cli_choices]
@@ -151,7 +166,7 @@ def _add_argument_from_field(parser: argparse.ArgumentParser, field: ConfigField
         kwargs["type"] = _infer_numeric_type(field, cli_choices)
     else:
         kwargs.setdefault("type", str)
-    parser.add_argument(field.arg_name, **kwargs)
+    parser.add_argument(*option_strings, **kwargs)
 
 
 def _populate_parser_from_field_registry(parser: argparse.ArgumentParser) -> None:
