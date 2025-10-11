@@ -249,11 +249,19 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
                 logger.error(f"Could not load controlnet_custom_config: {e}")
                 raise
     if args.webhook_config is not None and type(args.webhook_config) is str:
-        if args.webhook_config.startswith("{"):
+        if args.webhook_config.startswith("{") or args.webhook_config.startswith("["):
             try:
                 import ast
 
-                args.webhook_config = ast.literal_eval(args.webhook_config)
+                parsed_config = ast.literal_eval(args.webhook_config)
+                # Normalize single dict to list for consistency
+                if isinstance(parsed_config, dict):
+                    args.webhook_config = [parsed_config]
+                elif isinstance(parsed_config, list):
+                    args.webhook_config = parsed_config
+                else:
+                    logger.error(f"webhook_config must be dict or list, got {type(parsed_config)}")
+                    raise ValueError(f"Invalid webhook_config type: {type(parsed_config)}")
             except Exception as e:
                 logger.error(f"Could not load webhook_config: {e}")
                 raise
@@ -264,7 +272,15 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
                     with open(args.webhook_config, "r") as f:
                         import json
 
-                        args.webhook_config = json.load(f)
+                        loaded_config = json.load(f)
+                        # Normalize single dict to list for consistency
+                        if isinstance(loaded_config, dict):
+                            args.webhook_config = [loaded_config]
+                        elif isinstance(loaded_config, list):
+                            args.webhook_config = loaded_config
+                        else:
+                            logger.error(f"webhook_config must be dict or list, got {type(loaded_config)}")
+                            raise ValueError(f"Invalid webhook_config type: {type(loaded_config)}")
                 except Exception as e:
                     logger.error(f"Could not load webhook_config from file: {e}")
                     raise
