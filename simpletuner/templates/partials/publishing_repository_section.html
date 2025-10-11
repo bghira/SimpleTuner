@@ -30,12 +30,11 @@
                             x-model="selectedNamespace"
                             @change="updateFullRepo"
                             :disabled="loading">
-                        <option value="" x-show="loading" selected x-cloak>Loading…</option>
-                        <option value="" x-show="!loading && namespaces.length === 0" x-cloak>Login to load namespaces</option>
-                        <option x-show="selectedNamespace && !namespaces.includes(selectedNamespace)"
-                                x-bind:value="selectedNamespace"
-                                x-text="selectedNamespace"
-                                x-cloak></option>
+                        <!-- Show loading option only while loading and no namespaces yet -->
+                        <option value="" x-show="loading && namespaces.length === 0" disabled>Loading…</option>
+                        <!-- Show login prompt when not loading and no namespaces available -->
+                        <option value="" x-show="!loading && namespaces.length === 0" disabled>Login to load namespaces</option>
+                        <!-- Show namespaces once loaded -->
                         <template x-for="namespace in namespaces" :key="namespace">
                             <option :value="namespace" x-text="namespace"></option>
                         </template>

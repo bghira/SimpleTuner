@@ -191,7 +191,8 @@ document.addEventListener('alpine:init', () => {
 
                         this.namespaces = Array.from(new Set(list));
 
-                        if (!this.selectedNamespace && this.namespaces.length) {
+                        // If no namespace is selected and we have namespaces, select the first one
+                        if (!this.selectedNamespace && this.namespaces.length > 0) {
                             this.selectedNamespace = this.namespaces[0];
                         }
                     } catch (error) {
@@ -199,6 +200,7 @@ document.addEventListener('alpine:init', () => {
                         this.error = error.message || 'Unable to load namespaces';
                     } finally {
                         this.loading = false;
+                        // Update fullRepo after loading completes to sync with selected namespace
                         this.updateFullRepo();
                     }
                 },
