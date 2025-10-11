@@ -658,128 +658,138 @@ class ConfigStore:
         elif self.config_type == "webhook":
             # For webhook configs, look for files with "webhook_type" key
             # Check subdirectories for any JSON files
-            for subdir in self.config_dir.iterdir():
-                if subdir.is_dir():
-                    for config_file in subdir.glob("*.json"):
-                        try:
-                            with config_file.open("r", encoding="utf-8") as f:
-                                data = json.load(f)
+            if self.config_dir.exists():
+                for subdir in self.config_dir.iterdir():
+                    if subdir.is_dir():
+                        for config_file in subdir.glob("*.json"):
+                            try:
+                                with config_file.open("r", encoding="utf-8") as f:
+                                    data = json.load(f)
 
-                            # Only include if it has webhook_type key
-                            if isinstance(data, dict) and "webhook_type" in data:
-                                metadata = {
-                                    "name": f"{subdir.name}/{config_file.name}",
-                                    "created_at": datetime.fromtimestamp(
-                                        config_file.stat().st_ctime, tz=timezone.utc
-                                    ).isoformat(),
-                                    "modified_at": datetime.fromtimestamp(
-                                        config_file.stat().st_mtime, tz=timezone.utc
-                                    ).isoformat(),
-                                    "webhook_type": data.get("webhook_type"),
-                                    "callback_url": data.get("callback_url"),
-                                }
-                                configs.append(metadata)
-                        except Exception:
-                            # Skip invalid files
-                            continue
+                                # Only include if it has webhook_type key
+                                if isinstance(data, dict) and "webhook_type" in data:
+                                    metadata = {
+                                        "name": f"{subdir.name}/{config_file.name}",
+                                        "created_at": datetime.fromtimestamp(
+                                            config_file.stat().st_ctime, tz=timezone.utc
+                                        ).isoformat(),
+                                        "modified_at": datetime.fromtimestamp(
+                                            config_file.stat().st_mtime, tz=timezone.utc
+                                        ).isoformat(),
+                                        "webhook_type": data.get("webhook_type"),
+                                        "callback_url": data.get("callback_url"),
+                                    }
+                                    configs.append(metadata)
+                            except Exception:
+                                # Skip invalid files
+                                continue
 
-            # Also check root-level JSON files
-            for config_file in self.config_dir.glob("*.json"):
-                try:
-                    with config_file.open("r", encoding="utf-8") as f:
-                        data = json.load(f)
+                # Also check root-level JSON files
+                for config_file in self.config_dir.glob("*.json"):
+                    try:
+                        with config_file.open("r", encoding="utf-8") as f:
+                            data = json.load(f)
 
-                    # Only include if it has webhook_type key
-                    if isinstance(data, dict) and "webhook_type" in data:
-                        metadata = {
-                            "name": config_file.stem,
-                            "created_at": datetime.fromtimestamp(config_file.stat().st_ctime, tz=timezone.utc).isoformat(),
-                            "modified_at": datetime.fromtimestamp(config_file.stat().st_mtime, tz=timezone.utc).isoformat(),
-                            "webhook_type": data.get("webhook_type"),
-                            "callback_url": data.get("callback_url"),
-                        }
-                        configs.append(metadata)
-                except Exception:
-                    # Skip invalid files
-                    continue
+                        # Only include if it has webhook_type key
+                        if isinstance(data, dict) and "webhook_type" in data:
+                            metadata = {
+                                "name": config_file.stem,
+                                "created_at": datetime.fromtimestamp(
+                                    config_file.stat().st_ctime, tz=timezone.utc
+                                ).isoformat(),
+                                "modified_at": datetime.fromtimestamp(
+                                    config_file.stat().st_mtime, tz=timezone.utc
+                                ).isoformat(),
+                                "webhook_type": data.get("webhook_type"),
+                                "callback_url": data.get("callback_url"),
+                            }
+                            configs.append(metadata)
+                    except Exception:
+                        # Skip invalid files
+                        continue
         elif self.config_type == "lycoris":
             # For lycoris configs, look for files with "algo" key
             # Check subdirectories for lycoris_config.json
-            for subdir in self.config_dir.iterdir():
-                if subdir.is_dir():
-                    # Check for lycoris_config.json specifically
-                    config_file = subdir / "lycoris_config.json"
-                    if config_file.exists():
-                        try:
-                            with config_file.open("r", encoding="utf-8") as f:
-                                data = json.load(f)
+            if self.config_dir.exists():
+                for subdir in self.config_dir.iterdir():
+                    if subdir.is_dir():
+                        # Check for lycoris_config.json specifically
+                        config_file = subdir / "lycoris_config.json"
+                        if config_file.exists():
+                            try:
+                                with config_file.open("r", encoding="utf-8") as f:
+                                    data = json.load(f)
 
-                            # Only include if it has algo key
-                            if isinstance(data, dict) and "algo" in data:
-                                metadata = {
-                                    "name": subdir.name,
-                                    "created_at": datetime.fromtimestamp(
-                                        config_file.stat().st_ctime, tz=timezone.utc
-                                    ).isoformat(),
-                                    "modified_at": datetime.fromtimestamp(
-                                        config_file.stat().st_mtime, tz=timezone.utc
-                                    ).isoformat(),
-                                    "algo": data.get("algo"),
-                                    "factor": data.get("factor"),
-                                    "multiplier": data.get("multiplier"),
-                                }
-                                configs.append(metadata)
-                        except Exception:
-                            # Skip invalid files
-                            continue
+                                # Only include if it has algo key
+                                if isinstance(data, dict) and "algo" in data:
+                                    metadata = {
+                                        "name": subdir.name,
+                                        "created_at": datetime.fromtimestamp(
+                                            config_file.stat().st_ctime, tz=timezone.utc
+                                        ).isoformat(),
+                                        "modified_at": datetime.fromtimestamp(
+                                            config_file.stat().st_mtime, tz=timezone.utc
+                                        ).isoformat(),
+                                        "algo": data.get("algo"),
+                                        "factor": data.get("factor"),
+                                        "multiplier": data.get("multiplier"),
+                                    }
+                                    configs.append(metadata)
+                            except Exception:
+                                # Skip invalid files
+                                continue
 
-                    # Also check other JSON files in subdirs
-                    for other_config in subdir.glob("*.json"):
-                        if other_config.name == "lycoris_config.json":
-                            continue  # Already handled
-                        try:
-                            with other_config.open("r", encoding="utf-8") as f:
-                                data = json.load(f)
+                        # Also check other JSON files in subdirs
+                        for other_config in subdir.glob("*.json"):
+                            if other_config.name == "lycoris_config.json":
+                                continue  # Already handled
+                            try:
+                                with other_config.open("r", encoding="utf-8") as f:
+                                    data = json.load(f)
 
-                            # Only include if it has algo key
-                            if isinstance(data, dict) and "algo" in data:
-                                metadata = {
-                                    "name": f"{subdir.name}/{other_config.name}",
-                                    "created_at": datetime.fromtimestamp(
-                                        other_config.stat().st_ctime, tz=timezone.utc
-                                    ).isoformat(),
-                                    "modified_at": datetime.fromtimestamp(
-                                        other_config.stat().st_mtime, tz=timezone.utc
-                                    ).isoformat(),
-                                    "algo": data.get("algo"),
-                                    "factor": data.get("factor"),
-                                    "multiplier": data.get("multiplier"),
-                                }
-                                configs.append(metadata)
-                        except Exception:
-                            # Skip invalid files
-                            continue
+                                # Only include if it has algo key
+                                if isinstance(data, dict) and "algo" in data:
+                                    metadata = {
+                                        "name": f"{subdir.name}/{other_config.name}",
+                                        "created_at": datetime.fromtimestamp(
+                                            other_config.stat().st_ctime, tz=timezone.utc
+                                        ).isoformat(),
+                                        "modified_at": datetime.fromtimestamp(
+                                            other_config.stat().st_mtime, tz=timezone.utc
+                                        ).isoformat(),
+                                        "algo": data.get("algo"),
+                                        "factor": data.get("factor"),
+                                        "multiplier": data.get("multiplier"),
+                                    }
+                                    configs.append(metadata)
+                            except Exception:
+                                # Skip invalid files
+                                continue
 
-            # Also check root-level JSON files
-            for config_file in self.config_dir.glob("*.json"):
-                try:
-                    with config_file.open("r", encoding="utf-8") as f:
-                        data = json.load(f)
+                # Also check root-level JSON files
+                for config_file in self.config_dir.glob("*.json"):
+                    try:
+                        with config_file.open("r", encoding="utf-8") as f:
+                            data = json.load(f)
 
-                    # Only include if it has algo key
-                    if isinstance(data, dict) and "algo" in data:
-                        metadata = {
-                            "name": config_file.stem,
-                            "created_at": datetime.fromtimestamp(config_file.stat().st_ctime, tz=timezone.utc).isoformat(),
-                            "modified_at": datetime.fromtimestamp(config_file.stat().st_mtime, tz=timezone.utc).isoformat(),
-                            "algo": data.get("algo"),
-                            "factor": data.get("factor"),
-                            "multiplier": data.get("multiplier"),
-                        }
-                        configs.append(metadata)
-                except Exception:
-                    # Skip invalid files
-                    continue
+                        # Only include if it has algo key
+                        if isinstance(data, dict) and "algo" in data:
+                            metadata = {
+                                "name": config_file.stem,
+                                "created_at": datetime.fromtimestamp(
+                                    config_file.stat().st_ctime, tz=timezone.utc
+                                ).isoformat(),
+                                "modified_at": datetime.fromtimestamp(
+                                    config_file.stat().st_mtime, tz=timezone.utc
+                                ).isoformat(),
+                                "algo": data.get("algo"),
+                                "factor": data.get("factor"),
+                                "multiplier": data.get("multiplier"),
+                            }
+                            configs.append(metadata)
+                    except Exception:
+                        # Skip invalid files
+                        continue
 
         return sorted(configs, key=lambda x: x.get("name", ""))
 

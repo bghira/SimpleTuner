@@ -256,6 +256,20 @@ class WebUIRoutesTestCase(_WebUIBaseTestCase):
 class TrainingAPITestCase(_WebUIBaseTestCase):
     """Test training control API endpoints."""
 
+    def setUp(self) -> None:
+        super().setUp()
+        # Set up valid default directories for all tests
+        self.default_configs_dir = str(self.temp_dir / "configs")
+        self.default_output_dir = str(self.temp_dir / "output")
+
+        # Create the directories
+        os.makedirs(self.default_configs_dir, exist_ok=True)
+        os.makedirs(self.default_output_dir, exist_ok=True)
+
+        # Save default state
+        defaults = WebUIDefaults(configs_dir=self.default_configs_dir, output_dir=self.default_output_dir)
+        self.state_store.save_defaults(defaults)
+
     def test_validate_config(self) -> None:
         form_data = {"--model_type": "lora", "--model_family": "flux", "--resolution": "1024"}
         response = self.client.post("/api/training/validate", data=form_data)
