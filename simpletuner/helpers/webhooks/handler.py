@@ -80,22 +80,58 @@ class WebhookHandler:
         self,
         accelerator,
         project_name: str,
-        webhook_config: dict = None,
+        webhook_config: dict | list = None,
         mock_webhook_config: WebhookConfig = None,
         send_video: bool = False,
         video_framerate: int = None,
     ):
         self.accelerator = accelerator
-        self.config = mock_webhook_config or WebhookConfig(webhook_config)
-        self.webhook_url = self.config.webhook_url
-        self.webhook_type = self.config.webhook_type
-        self.message_prefix = (
-            f"`({self.config.message_prefix})` " if self.config.message_prefix is not None else f"`({project_name})` "
-        )
-        self.log_level = log_levels.get(self.config.log_level or "info", log_levels["info"])
-        self.stored_response = None
         self.send_video = send_video
         self.video_framerate = video_framerate
+        self.stored_response = None
+
+        # Handle mock config for testing
+        if mock_webhook_config is not None:
+            self.backends = [self._create_backend(mock_webhook_config, project_name)]
+        else:
+            # Normalize webhook_config to list format
+            if webhook_config is None:
+                self.backends = []
+            elif isinstance(webhook_config, dict):
+                # Single dict → wrap in list
+                self.backends = [self._create_backend(WebhookConfig(webhook_config), project_name)]
+            elif isinstance(webhook_config, list):
+                # List of dicts → create backend for each
+                self.backends = [self._create_backend(WebhookConfig(config), project_name) for config in webhook_config]
+            else:
+                raise ValueError(f"webhook_config must be dict or list, got {type(webhook_config)}")
+
+        # For backward compatibility, expose first backend's properties
+        if self.backends:
+            first_backend = self.backends[0]
+            self.config = first_backend["config"]
+            self.webhook_url = first_backend["webhook_url"]
+            self.webhook_type = first_backend["webhook_type"]
+            self.message_prefix = first_backend["message_prefix"]
+            self.log_level = first_backend["log_level"]
+        else:
+            self.config = None
+            self.webhook_url = None
+            self.webhook_type = None
+            self.message_prefix = f"`({project_name})` "
+            self.log_level = log_levels["info"]
+
+    def _create_backend(self, config: WebhookConfig, project_name: str) -> dict:
+        """Create a webhook backend configuration."""
+        return {
+            "config": config,
+            "webhook_url": config.webhook_url,
+            "webhook_type": config.webhook_type,
+            "message_prefix": (
+                f"`({config.message_prefix})` " if config.message_prefix is not None else f"`({project_name})` "
+            ),
+            "log_level": log_levels.get(config.log_level or "info", log_levels["info"]),
+        }
 
     @staticmethod
     def from_unprocessed_config(accelerator, project_name: str, raw_json_config: str, send_video: bool = False):
@@ -108,21 +144,26 @@ class WebhookHandler:
             logging.error(f"Could not parse webhook configuration: {e}")
             return None
 
-    def _check_level(self, level: str) -> bool:
-        """Check if the message level meets the configured log level."""
-        return log_levels.get(level, log_levels["info"]) <= self.log_level
+    def _check_level(self, level: str, backend_log_level: int) -> bool:
+        """Check if the message level meets the backend's configured log level."""
+        return log_levels.get(level, log_levels["info"]) <= backend_log_level
 
-    def _send_request(
+    def _send_request_to_backend(
         self,
+        backend: dict,
         message: str | dict,
         images: list = None,
         store_response: bool = False,
         raw_request: bool = False,
     ):
-        """Send the webhook request based on the webhook type."""
-        if self.webhook_type == "discord":
+        """Send a webhook request to a specific backend."""
+        webhook_type = backend["webhook_type"]
+        webhook_url = backend["webhook_url"]
+        message_prefix = backend["message_prefix"]
+
+        if webhook_type == "discord":
             # Prepare Discord-style payload
-            data = {"content": f"{self.message_prefix}{message}"}
+            data = {"content": f"{message_prefix}{message}"}
             if self.send_video:
                 # images is actually a list of "videos" in this usage
                 files = self._prepare_videos(images)
@@ -132,7 +173,7 @@ class WebhookHandler:
 
             request_args = {"data": data, "files": files}
 
-        elif self.webhook_type == "raw":
+        elif webhook_type == "raw":
             # Prepare raw data payload for direct POST
             if raw_request:
                 # If already fully formed JSON or dict, sanitize for safe JSON encoding first
@@ -156,13 +197,13 @@ class WebhookHandler:
             request_args = {"json": data, "files": files}
 
         else:
-            logging.error(f"Unsupported webhook type: {self.webhook_type}")
+            logging.error(f"Unsupported webhook type: {webhook_type}")
             return
 
         # Send request
         try:
-            logging.debug("Sending webhook request: %s", _truncate_for_log(request_args))
-            post_result = requests.post(self.webhook_url, **request_args, timeout=5)
+            logging.debug("Sending webhook request to %s: %s", webhook_url, _truncate_for_log(request_args))
+            post_result = requests.post(webhook_url, **request_args, timeout=5)
             post_result.raise_for_status()
         except (requests.exceptions.ConnectionError, BrokenPipeError) as e:
             # Connection errors are expected when WebUI is refreshed/closed
@@ -175,7 +216,7 @@ class WebhookHandler:
             return
         except Exception as e:
             # Log other errors at warning level since they might indicate real issues
-            logging.warning(f"Could not send webhook request: {e}")
+            logging.warning(f"Could not send webhook request to {webhook_url}: {e}")
             return
 
         if store_response:
@@ -323,32 +364,47 @@ class WebhookHandler:
         store_response: bool = False,
     ):
         """
-        Send a message through the webhook with optional images/videos.
+        Send a message through all configured webhooks with optional images/videos.
         If self.send_video is True, `images` is interpreted as `videos`.
         """
-        # Only send from main process if it's Discord (to avoid duplicates).
-        if self.accelerator is not None and (not self.accelerator.is_main_process or self.webhook_type != "discord"):
-            return
-        if not self._check_level(message_level):
+        # Only send from main process
+        if self.accelerator is not None and not self.accelerator.is_main_process:
             return
 
         if images is not None and not isinstance(images, list):
             images = [images]
 
-        # Discord limits: max 10 attachments
-        max_attachments = 10
-        if images and len(images) > max_attachments:
-            for i in range(0, len(images), max_attachments):
+        # Send to each backend that meets the log level requirement
+        for backend in self.backends:
+            if not self._check_level(message_level, backend["log_level"]):
+                continue
+
+            # Skip Discord on non-main process
+            if (
+                backend["webhook_type"] == "discord"
+                and self.accelerator is not None
+                and not self.accelerator.is_main_process
+            ):
+                continue
+
+            # Discord limits: max 10 attachments
+            max_attachments = 10
+            if images and len(images) > max_attachments:
+                for i in range(0, len(images), max_attachments):
+                    try:
+                        self._send_request_to_backend(
+                            backend,
+                            message,
+                            images[i : i + max_attachments],
+                            store_response=store_response,
+                        )
+                    except Exception as e:
+                        logging.error(f"Error sending webhook to {backend['webhook_url']}: {e}")
+            else:
                 try:
-                    self._send_request(
-                        message,
-                        images[i : i + max_attachments],
-                        store_response=store_response,
-                    )
+                    self._send_request_to_backend(backend, message, images, store_response=store_response)
                 except Exception as e:
-                    logging.error(f"Error sending webhook: {e}")
-        else:
-            self._send_request(message, images, store_response=store_response)
+                    logging.error(f"Error sending webhook to {backend['webhook_url']}: {e}")
 
     def send_raw(
         self,
@@ -359,14 +415,12 @@ class WebhookHandler:
         images: list | None = None,
     ):
         """
-        Send structured data to a "raw" webhook (JSON payload).
+        Send structured data to all "raw" webhooks (JSON payload).
         """
-        if (
-            self.webhook_type != "raw"
-            or (self.accelerator is not None and not self.accelerator.is_main_process)
-            or not self._check_level(message_level)
-        ):
+        # Only send from main process
+        if self.accelerator is not None and not self.accelerator.is_main_process:
             return
+
         if not isinstance(structured_data, dict):
             logging.error("send_raw expects a mapping payload.")
             return
@@ -385,4 +439,16 @@ class WebhookHandler:
         if "timestamp" not in payload:
             payload["timestamp"] = datetime.now(tz=timezone.utc).isoformat()
 
-        self._send_request(message=payload, images=images, store_response=False, raw_request=True)
+        # Send to all raw webhook backends that meet the log level
+        for backend in self.backends:
+            if backend["webhook_type"] != "raw":
+                continue
+            if not self._check_level(message_level, backend["log_level"]):
+                continue
+
+            try:
+                self._send_request_to_backend(
+                    backend, message=payload, images=images, store_response=False, raw_request=True
+                )
+            except Exception as e:
+                logging.error(f"Error sending raw webhook to {backend['webhook_url']}: {e}")
