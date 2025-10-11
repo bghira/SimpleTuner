@@ -1,4 +1,5 @@
 """Test webhook_config normalization in cmd_args processing."""
+
 import ast
 import json
 import os
@@ -47,18 +48,14 @@ class TestWebhookCmdArgsNormalization(unittest.TestCase):
 
     def test_file_load_dict_normalization(self):
         """Test loading and normalizing dict from JSON file."""
-        webhook_dict = {
-            "webhook_type": "discord",
-            "webhook_url": "http://test.com/webhook",
-            "log_level": "warning"
-        }
+        webhook_dict = {"webhook_type": "discord", "webhook_url": "http://test.com/webhook", "log_level": "warning"}
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(webhook_dict, f)
             temp_file = f.name
 
         try:
-            with open(temp_file, 'r') as f:
+            with open(temp_file, "r") as f:
                 loaded_config = json.load(f)
 
             # Normalize as done in cmd_args.py
@@ -78,24 +75,16 @@ class TestWebhookCmdArgsNormalization(unittest.TestCase):
     def test_file_load_list_preservation(self):
         """Test loading and preserving list from JSON file."""
         webhook_list = [
-            {
-                "webhook_type": "raw",
-                "callback_url": "http://localhost:8001/callback",
-                "log_level": "info"
-            },
-            {
-                "webhook_type": "discord",
-                "webhook_url": "http://discord.com/webhook",
-                "log_level": "error"
-            }
+            {"webhook_type": "raw", "callback_url": "http://localhost:8001/callback", "log_level": "info"},
+            {"webhook_type": "discord", "webhook_url": "http://discord.com/webhook", "log_level": "error"},
         ]
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(webhook_list, f)
             temp_file = f.name
 
         try:
-            with open(temp_file, 'r') as f:
+            with open(temp_file, "r") as f:
                 loaded_config = json.load(f)
 
             # Normalize as done in cmd_args.py
