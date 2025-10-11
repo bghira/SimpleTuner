@@ -729,7 +729,7 @@ class Flux(ImageModelFoundation):
             if not self.config.flux_attention_masked_training:
                 logger.warning("LibreFlux requires attention masking. Enabling it.")
                 self.config.flux_attention_masked_training = True
-            if self.config.fused_qkv_projections:
+            if self.config.fuse_qkv_projections:
                 logger.warning("LibreFlux does not support fused QKV projections. Disabling it.")
                 self.config.fuse_qkv_projections = False
         if self.config.model_flavour == "fluxbooru":

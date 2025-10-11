@@ -102,3 +102,4 @@ class ConfigField:
     checkbox_label: Optional[str] = None
     webui_onboarding: bool = False
     disabled: bool = False
+    aliases: Optional[List[str]] = None

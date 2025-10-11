@@ -522,6 +522,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.EXPERIMENTAL,
             model_specific=["flux"],
             order=19,
+            aliases=["--fused_qkv_projections"],
         )
     )
 
