@@ -17,10 +17,13 @@ export class TrainerValidation {
         const payload = {
             trainer_config: {},
             dataloader_config: [],
-            webhook_config: {
-                webhook_type: "raw",
-                callback_url: `${this.callbackUrl}/callback`
-            },
+            webhook_config: [
+                {
+                    webhook_type: "raw",
+                    callback_url: `${this.callbackUrl}/callback`,
+                    log_level: "info"
+                }
+            ],
             job_id: formData.get('job_id')
         };
 
@@ -41,12 +44,15 @@ export class TrainerValidation {
                 } catch (error) {
                     throw new Error('Invalid JSON for Dataloader Config');
                 }
-            } else if (key === 'webhook_config') {
+            } else if (key === '--discord_webhooks') {
                 try {
-                    const webhooksConfig = JSON.parse(value);
-                    payload.webhook_config = { ...payload.webhook_config, ...webhooksConfig };
+                    const discordWebhooks = JSON.parse(value);
+                    // Add user-configured Discord webhooks to the list
+                    if (Array.isArray(discordWebhooks) && discordWebhooks.length > 0) {
+                        payload.webhook_config.push(...discordWebhooks);
+                    }
                 } catch (error) {
-                    console.warn('Invalid JSON for Webhooks Config, using defaults');
+                    console.warn('Invalid JSON for Discord Webhooks, skipping');
                 }
             }
         }

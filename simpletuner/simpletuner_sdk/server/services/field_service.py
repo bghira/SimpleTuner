@@ -88,6 +88,7 @@ class FieldService:
         "project_name",
         "uploadMode",
         "ui-accelerate-mode",
+        "discord_webhooks",
     }
     # Fields that the WebUI manages internally so users cannot override them
     _WEBUI_FORCED_VALUES = {

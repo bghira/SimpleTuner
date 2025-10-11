@@ -12,7 +12,7 @@ else:
     logger.setLevel("ERROR")
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from simpletuner.helpers.configuration.cmd_args import get_default_config
 from simpletuner.helpers.configuration.json_file import normalize_args
@@ -36,12 +36,24 @@ class ConfigModel(BaseModel):
     trainer_config: dict
     # what we will write as config/multidatabackend.json
     dataloader_config: list
-    # what we will write as config/webhooks.json
-    webhook_config: dict
+    # what we will write as config/webhooks.json (list of webhook configs)
+    webhook_config: list | dict  # Accept both for backward compat, will normalize to list
     # optional lycoris_config
     lycoris_config: dict = None
     # optional user_prompt_library
     user_prompt_library: dict = None
+
+    @field_validator("webhook_config", mode="before")
+    @classmethod
+    def normalize_webhook_config(cls, v):
+        """Normalize webhook_config to list format for consistency."""
+        if v is None:
+            return []
+        if isinstance(v, dict):
+            return [v]
+        if isinstance(v, list):
+            return v
+        raise ValueError(f"webhook_config must be dict or list, got {type(v)}")
 
 
 class Configuration:

@@ -43,6 +43,16 @@ class CustomSectionService:
             description=None,
         )
 
+        # Publishing tab Discord webhooks section
+        self.register_custom_section(
+            tab="publishing",
+            section_id="discord_webhooks",
+            title="Discord Webhooks",
+            icon="fas fa-bell",
+            template="partials/webhooks_section.html",
+            description="Configure Discord and custom webhook destinations for training notifications",
+        )
+
     def register_custom_section(
         self,
         tab: str,
