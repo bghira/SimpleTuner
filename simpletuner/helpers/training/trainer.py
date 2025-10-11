@@ -14,7 +14,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import huggingface_hub
 from accelerate.logging import get_logger
@@ -2825,6 +2825,8 @@ def run_trainer_job(config):
     machine_rank_value = 0
     same_network_value = True
 
+    selected_device_ids: Optional[List[str]] = None
+
     if isinstance(config_payload, dict):
         accelerate_config_path = _extract_value(config_payload, "accelerate_config", "--accelerate_config")
         accelerate_extra_args = _extract_value(
@@ -2870,6 +2872,30 @@ def run_trainer_job(config):
         )
         if isinstance(same_network_value, str):
             same_network_value = same_network_value.strip().lower() in {"1", "true", "yes", "on"}
+
+        accelerate_visible_devices = _extract_value(
+            config_payload,
+            "accelerate_visible_devices",
+            "--accelerate_visible_devices",
+        )
+        if isinstance(accelerate_visible_devices, str):
+            tokens = [token.strip() for token in accelerate_visible_devices.split(",") if token.strip()]
+            if tokens:
+                selected_device_ids = tokens
+        elif isinstance(accelerate_visible_devices, (list, tuple, set)):
+            tokens: List[str] = []
+            for item in accelerate_visible_devices:
+                if isinstance(item, str):
+                    stripped = item.strip()
+                    if stripped:
+                        tokens.append(stripped)
+                else:
+                    try:
+                        tokens.append(str(int(item)))
+                    except (TypeError, ValueError):
+                        continue
+            if tokens:
+                selected_device_ids = tokens
 
     def _resolve_hf_token() -> Optional[str]:
         possible_env_vars = (
@@ -2925,6 +2951,9 @@ def run_trainer_job(config):
         if hf_token:
             for var in ("HUGGINGFACEHUB_API_TOKEN", "HUGGINGFACE_HUB_TOKEN", "HF_TOKEN", "HF_API_TOKEN"):
                 launch_env.setdefault(var, hf_token)
+
+        if selected_device_ids:
+            launch_env["CUDA_VISIBLE_DEVICES"] = ",".join(selected_device_ids)
 
         # Normalise accelerate config path if provided
         config_file_arg = None
