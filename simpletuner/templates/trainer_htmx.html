@@ -4303,11 +4303,8 @@ function trainerComponent() {
                  x-transition.opacity.duration.150ms>
                 {% set events_enabled = webui_defaults.event_stream_enabled if webui_defaults is defined and webui_defaults.event_stream_enabled is not none else True %}
                 {% set polling_interval = webui_defaults.event_polling_interval if webui_defaults is defined and webui_defaults.event_polling_interval else 5 %}
-                <div id="event-list"
-                     class="event-list"
-                     hx-get="/api/events/recent"
-                     hx-trigger="load, refresh"
-                     hx-swap="innerHTML">
+                <div id="eventList"
+                     class="event-list">
                     <div class="text-muted">Loading events...</div>
                 </div>
             </div>
