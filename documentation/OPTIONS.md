@@ -43,7 +43,7 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 - **What**: Determines which model architecture is being trained.
 - **Choices**: pixart_sigma, flux, sd3, sdxl, kolors, legacy
 
-### `--fused_qkv_projections`
+### `--fuse_qkv_projections`
 
 - **What**: Fuses the QKV projections in the model's attention blocks to make more efficient use of hardware.
 - **Note**: Only available with NVIDIA H100 or H200 with Flash Attention 3 installed manually.
@@ -251,25 +251,6 @@ A lot of settings are instead set through the [dataloader config](/documentation
 - **What**: Enable CLIP evaluation of generated images during validations.
 - **Why**: CLIP scores calculate the distance of the generated image features to the provided validation prompt. This can give an idea of whether prompt adherence is improving, though it requires a large number of validation prompts to have any meaningful value.
 - **Options**: "none" or "clip"
-
-### `--crop`
-
-- **What**: When `--crop=true` is supplied, SimpleTuner will crop all (new) images in the training dataset. It will not re-process old images.
-- **Why**: Training on cropped images seems to result in better fine detail learning, especially on SDXL models.
-
-### `--crop_style`
-
-- **What**: When `--crop=true`, the trainer may be instructed to crop in different ways.
-- **Why**: The `crop_style` option can be set to `center` (or `centre`) for a classic centre-crop, `corner` to elect for the lowest-right corner, `face` to detect and centre upon the largest subject face, and `random` for a random image slice. Default: random.
-
-### `--crop_aspect`
-
-- **What**: When using `--crop=true`, the `--crop_aspect` option may be supplied with a value of `square` or `preserve`.
-- **Options**: If cropping is enabled, default behaviour is to crop all images to a square aspect ratio.
-  - `crop_aspect=preserve` will crop images to a size matching their original aspect ratio.
-  - `crop_aspect=closest` will use the closest value from `crop_aspect_buckets`
-  - `crop_aspect=random` will use a random aspect value from `crop_aspect_buckets` without going too far - it will use square crops if your aspects are incompatible
-  - `crop_aspect=square` will use the standard square crop style
 
 ### `--caption_strategy`
 
@@ -1022,7 +1003,7 @@ options:
                         Scale the learning rate by the number of GPUs,
                         gradient accumulation steps, and batch size
   --lr_scale_sqrt [LR_SCALE_SQRT]
-                        If using --lr-scale, use the square root of (number of
+                        If using --lr_scale, use the square root of (number of
                         GPUs * gradient accumulation steps * batch size)
   --ignore_final_epochs [IGNORE_FINAL_EPOCHS]
                         When provided, the max epoch counter will not
