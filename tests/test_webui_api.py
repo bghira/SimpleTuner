@@ -93,16 +93,19 @@ class WebUIStateAPITestCase(_WebUIBaseTestCase):
         self.assertTrue(accelerate_step["required"])
 
     def test_update_onboarding_step(self) -> None:
+        # Use a path within our temp directory that can actually be created
+        test_configs_dir = str(self.temp_dir / "user_configs")
+
         response = self.client.post(
             "/api/webui/onboarding/steps/default_configs_dir",
-            json={"value": "/home/user/configs"},
+            json={"value": test_configs_dir},
         )
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
         step = next((s for s in data["onboarding"]["steps"] if s["id"] == "default_configs_dir"), None)
         self.assertIsNotNone(step)
-        self.assertEqual(step["value"], os.path.abspath(os.path.expanduser("/home/user/configs")))
+        self.assertEqual(step["value"], os.path.abspath(os.path.expanduser(test_configs_dir)))
         self.assertTrue(step["is_complete"])
 
     def test_update_onboarding_invalid_step(self) -> None:

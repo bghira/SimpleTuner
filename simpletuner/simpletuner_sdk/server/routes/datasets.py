@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import HTMLResponse
@@ -80,7 +81,7 @@ def _store() -> DatasetPlanStore:
                 )
                 if resolved_path:
                     return DatasetPlanStore(path=resolved_path)
-    except Exception as e:
+    except Exception:
         pass  # Fall back to default behavior
 
     try:
@@ -217,8 +218,71 @@ async def update_dataset_plan(payload: DatasetPlanPayload) -> DatasetPlanRespons
 
 # File Browser and Dataset Detection Endpoints
 
-import json
-import glob
+
+def _resolve_datasets_dir_and_validate_path(
+    path: Optional[str] = None,
+) -> Tuple[Path, Optional[str], bool]:
+    """
+    Resolve datasets_dir from WebUI state and validate the requested path.
+
+    Returns:
+        Tuple of (validated_path_obj, datasets_dir, allow_outside)
+
+    Raises:
+        HTTPException: If path validation fails or access is denied
+    """
+    # Load resolved defaults from WebUIStateStore (includes fallbacks)
+    webui_state = WebUIStateStore()
+    defaults_raw = webui_state.load_defaults()
+    defaults_bundle = webui_state.resolve_defaults(defaults_raw)
+    resolved = defaults_bundle["resolved"]
+
+    # Also check onboarding values as they might have been set but not yet applied to defaults
+    onboarding = webui_state.load_onboarding()
+    datasets_dir = resolved.get("datasets_dir")
+
+    # If datasets_dir is still the fallback, check if there's an onboarding value
+    # Use correct step ID: "default_datasets_dir" (not "datasets_dir")
+    if datasets_dir == defaults_bundle["fallbacks"].get("datasets_dir"):
+        datasets_step = onboarding.steps.get("default_datasets_dir")
+        if datasets_step and datasets_step.value:
+            datasets_dir = datasets_step.value
+
+    allow_outside = resolved.get("allow_dataset_paths_outside_dir", False)
+
+    # Use provided path or fall back to resolved datasets_dir (which includes fallback)
+    if path is None:
+        path = datasets_dir
+
+    path_obj = Path(path).resolve()
+
+    # Enforce datasets_dir root unless override is enabled
+    if not allow_outside and datasets_dir:
+        datasets_root = Path(datasets_dir).resolve()
+        try:
+            path_obj.relative_to(datasets_root)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "Access denied: path is outside configured datasets directory. "
+                    "Enable 'allow_dataset_paths_outside_dir' to browse other locations."
+                ),
+            )
+
+    if not path_obj.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Directory does not exist: {path_obj}",
+        )
+
+    if not path_obj.is_dir():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Path is not a directory: {path_obj}",
+        )
+
+    return path_obj, datasets_dir, allow_outside
 
 
 @router.get("/browse")
@@ -233,53 +297,7 @@ async def browse_directories(path: Optional[str] = None) -> Dict[str, Any]:
     Enforces datasets_dir root unless allow_dataset_paths_outside_dir is enabled.
     """
     try:
-        # Load resolved defaults from WebUIStateStore (includes fallbacks)
-        webui_state = WebUIStateStore()
-        defaults_raw = webui_state.load_defaults()
-        defaults_bundle = webui_state.resolve_defaults(defaults_raw)
-        resolved = defaults_bundle["resolved"]
-
-        # Also check onboarding values as they might have been set but not yet applied to defaults
-        onboarding = webui_state.load_onboarding()
-        datasets_dir = resolved.get("datasets_dir")
-
-        # If datasets_dir is still the fallback, check if there's an onboarding value
-        # Use correct step ID: "default_datasets_dir" (not "datasets_dir")
-        if datasets_dir == defaults_bundle["fallbacks"].get("datasets_dir"):
-            datasets_step = onboarding.steps.get("default_datasets_dir")
-            if datasets_step and datasets_step.value:
-                datasets_dir = datasets_step.value
-
-        allow_outside = resolved.get("allow_dataset_paths_outside_dir", False)
-
-        # Use provided path or fall back to resolved datasets_dir (which includes fallback)
-        if path is None:
-            path = datasets_dir
-
-        path_obj = Path(path).resolve()
-
-        # Enforce datasets_dir root unless override is enabled
-        if not allow_outside and datasets_dir:
-            datasets_root = Path(datasets_dir).resolve()
-            try:
-                path_obj.relative_to(datasets_root)
-            except ValueError:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Access denied: path is outside configured datasets directory. Enable 'allow_dataset_paths_outside_dir' to browse other locations."
-                )
-
-        if not path_obj.exists():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Directory does not exist: {path}"
-            )
-
-        if not path_obj.is_dir():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Path is not a directory: {path}"
-            )
+        path_obj, datasets_dir, allow_outside = _resolve_datasets_dir_and_validate_path(path)
 
         directories = []
 
@@ -308,7 +326,7 @@ async def browse_directories(path: Optional[str] = None) -> Dict[str, Any]:
                 dir_info["datasetId"] = dataset_id
 
                 # Count files in the directory (excluding json metadata)
-                all_files = [f for f in item.iterdir() if f.is_file() and not f.suffix == '.json']
+                all_files = [f for f in item.iterdir() if f.is_file() and f.suffix != ".json"]
                 dir_info["fileCount"] = len(all_files)
 
             directories.append(dir_info)
@@ -330,18 +348,20 @@ async def browse_directories(path: Optional[str] = None) -> Dict[str, Any]:
             "directories": directories,
             "currentPath": str(path_obj),
             "parentPath": parent_path,
-            "canGoUp": can_go_up
+            "canGoUp": can_go_up,
         }
 
+    except HTTPException:
+        raise
     except PermissionError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Permission denied accessing path: {path}"
+            detail=f"Permission denied accessing path: {path_obj}",
         )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error browsing directories: {str(e)}"
+            detail=f"Error browsing directories: {str(e)}",
         )
 
 
@@ -354,64 +374,19 @@ async def detect_dataset(path: str) -> Dict[str, Any]:
     Enforces datasets_dir root unless allow_dataset_paths_outside_dir is enabled.
     """
     try:
-        # Load resolved defaults from WebUIStateStore (includes fallbacks)
-        webui_state = WebUIStateStore()
-        defaults_raw = webui_state.load_defaults()
-        defaults_bundle = webui_state.resolve_defaults(defaults_raw)
-        resolved = defaults_bundle["resolved"]
-
-        # Also check onboarding values as they might have been set but not yet applied to defaults
-        onboarding = webui_state.load_onboarding()
-        datasets_dir = resolved.get("datasets_dir")
-
-        # If datasets_dir is still the fallback, check if there's an onboarding value
-        # Use correct step ID: "default_datasets_dir" (not "datasets_dir")
-        if datasets_dir == defaults_bundle["fallbacks"].get("datasets_dir"):
-            datasets_step = onboarding.steps.get("default_datasets_dir")
-            if datasets_step and datasets_step.value:
-                datasets_dir = datasets_step.value
-
-        allow_outside = resolved.get("allow_dataset_paths_outside_dir", False)
-
-        path_obj = Path(path).resolve()
-
-        # Enforce datasets_dir root unless override is enabled
-        if not allow_outside and datasets_dir:
-            datasets_root = Path(datasets_dir).resolve()
-            try:
-                path_obj.relative_to(datasets_root)
-            except ValueError:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Access denied: path is outside configured datasets directory"
-                )
-
-        if not path_obj.exists():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Directory does not exist: {path}"
-            )
-
-        if not path_obj.is_dir():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Path is not a directory: {path}"
-            )
+        path_obj, _, _ = _resolve_datasets_dir_and_validate_path(path)
 
         # Look for aspect bucket indices file
         bucket_files = list(path_obj.glob("aspect_ratio_bucket_indices_*.json"))
         if not bucket_files:
-            return {
-                "hasDataset": False,
-                "path": str(path_obj)
-            }
+            return {"hasDataset": False, "path": str(path_obj)}
 
         bucket_file = bucket_files[0]
         filename = bucket_file.stem
         dataset_id = filename.replace("aspect_ratio_bucket_indices_", "")
 
         # Read the bucket indices file to get config
-        with open(bucket_file, 'r') as f:
+        with open(bucket_file, "r") as f:
             bucket_data = json.load(f)
 
         config = bucket_data.get("config", {})
@@ -426,23 +401,25 @@ async def detect_dataset(path: str) -> Dict[str, Any]:
             "path": str(path_obj),
             "config": config,
             "totalFiles": total_files,
-            "aspectRatios": list(aspect_buckets.keys())
+            "aspectRatios": list(aspect_buckets.keys()),
         }
 
+    except HTTPException:
+        raise
     except PermissionError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Permission denied accessing path: {path}"
+            detail=f"Permission denied accessing path: {path}",
         )
     except json.JSONDecodeError as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error parsing dataset metadata: {str(e)}"
+            detail=f"Error parsing dataset metadata: {str(e)}",
         )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error detecting dataset: {str(e)}"
+            detail=f"Error detecting dataset: {str(e)}",
         )
 
 

@@ -203,6 +203,7 @@ async def update_onboarding_step(step_id: str, payload: OnboardingStepUpdate) ->
     # Auto-create directory if it's a directory type and doesn't exist
     if definition.input_type == "directory" and value:
         from pathlib import Path
+
         dir_path = Path(value)
         if not dir_path.exists():
             try:
