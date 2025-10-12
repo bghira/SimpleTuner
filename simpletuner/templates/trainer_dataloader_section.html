@@ -201,6 +201,14 @@ function dataloaderSectionComponent() {
         if (!Array.isArray(dataset._skipDiscovery)) {
             dataset._skipDiscovery = this.parseSkipDiscovery(dataset.skip_file_discovery);
         }
+        // Initialize text_embeds and image_embeds to empty string if undefined or null
+        // This ensures x-model bindings work correctly in select dropdowns
+        if (dataset.text_embeds === undefined || dataset.text_embeds === null) {
+            dataset.text_embeds = '';
+        }
+        if (dataset.image_embeds === undefined || dataset.image_embeds === null) {
+            dataset.image_embeds = '';
+        }
     },
     syncCaptionFilterSelections() {
         if (!Array.isArray(this.datasets)) {
@@ -360,6 +368,24 @@ function dataloaderSectionComponent() {
                 id: entry.id,
                 label: `${entry.id}${entry.dataset_type ? ` (${entry.dataset_type})` : ''}`
             }));
+    },
+    renderDatasetOptions(dataset, type, emptyLabel) {
+        const options = this.datasetOptionsForType(dataset, type);
+        let html = `<option value="">${emptyLabel}</option>`;
+        options.forEach(option => {
+            html += `<option value="${this.escapeHtml(option.id)}">${this.escapeHtml(option.label)}</option>`;
+        });
+        return html;
+    },
+    escapeHtml(text) {
+        const map = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#039;'
+        };
+        return String(text).replace(/[&<>"']/g, m => map[m]);
     },
     getGeneratorOption(value) {
         return CONDITIONING_GENERATOR_TYPES.find((option) => option.value === value) || null;
@@ -1140,7 +1166,8 @@ function dataloaderSectionComponent() {
                                     </div>
                                 </div>
                             </div>
-                            <div class="dataset-subgroup mt-3">
+                            <div class="dataset-subgroup mt-3"
+                                 x-show="(dataset.type === 'local' && dataset.dataset_type !== 'image_embeds') || dataset.dataset_type === 'image' || dataset.dataset_type === 'video'">
                                 <div class="dataset-subgroup-title">Storage Paths</div>
                                 <div class="row g-3">
                                     <div class="col-md-6"
@@ -1649,8 +1676,8 @@ function dataloaderSectionComponent() {
                                                 x-model="dataset.text_embeds"
                                                 @change="markAsUnsaved()">
                                             <option value="">Use default text embed backend</option>
-                                            <template x-for="option in datasetOptionsForType(dataset, 'text_embeds')" :key="option.id">
-                                                <option :value="option.id" x-text="option.label"></option>
+                                            <template x-for="option in datasetOptionsForType(dataset, 'text_embeds')">
+                                                <option :value="option.id" x-text="option.label" :selected="dataset.text_embeds === option.id"></option>
                                             </template>
                                         </select>
                                         <div class="invalid-feedback d-block"
@@ -1666,8 +1693,8 @@ function dataloaderSectionComponent() {
                                                 x-model="dataset.image_embeds"
                                                 @change="markAsUnsaved()">
                                             <option value="">None</option>
-                                            <template x-for="option in datasetOptionsForType(dataset, 'image_embeds')" :key="option.id">
-                                                <option :value="option.id" x-text="option.label"></option>
+                                            <template x-for="option in datasetOptionsForType(dataset, 'image_embeds')">
+                                                <option :value="option.id" x-text="option.label" :selected="dataset.image_embeds === option.id"></option>
                                             </template>
                                         </select>
                                         <div class="invalid-feedback d-block"
