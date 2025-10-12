@@ -390,6 +390,29 @@
     }
 
     removeDataset(index) {
+        const dataset = this.datasets[index];
+
+        // Check if this dataset is referenced by other datasets
+        if (dataset.dataset_type === 'text_embeds' || dataset.dataset_type === 'image_embeds') {
+            const refField = dataset.dataset_type === 'text_embeds' ? 'text_embeds' : 'image_embeds';
+            const referencingDatasets = [];
+
+            this.datasets.forEach((d, idx) => {
+                if (idx !== index && d[refField] === dataset.id) {
+                    referencingDatasets.push(d.id);
+                }
+            });
+
+            if (referencingDatasets.length > 0) {
+                alert(
+                    `Cannot delete "${dataset.id}" because it is referenced by the following dataset(s):\n\n` +
+                    referencingDatasets.map(id => `• ${id}`).join('\n') +
+                    `\n\nPlease remove these references first or delete the referencing datasets.`
+                );
+                return;
+            }
+        }
+
         if (confirm('Are you sure you want to remove this dataset?')) {
             this.datasets.splice(index, 1);
             this.render();
