@@ -38,8 +38,15 @@
             editingQueuedDataset: false,
             editingIndex: -1,
 
+            // Config mode
+            createNewConfig: false,
+            existingDatasets: [],
+            existingTextEmbeds: null,
+
             // Step-specific state
             datasetIdError: '',
+            separateVaeCache: false,  // Whether to create separate VAE cache dataset
+            separateTextEmbeds: false, // Whether to create separate text embeds dataset
             resolutionConfigSkipped: false,
             showAdvancedResolution: false,
             conditioningConfigured: false,
@@ -50,6 +57,22 @@
             },
             conditioningGenerators: CONDITIONING_GENERATOR_TYPES,
             newAspectBucket: null,
+
+            // Separate cache dataset configs
+            textEmbedsDataset: {
+                id: 'text-embeds',
+                cache_dir: 'cache/text'
+            },
+            vaeCacheDataset: {
+                id: 'vae-cache',
+                type: 'local',  // Backend type: local or aws
+                // AWS-specific fields
+                aws_bucket_name: '',
+                aws_region_name: null,
+                aws_endpoint_url: '',
+                aws_access_key_id: '',
+                aws_secret_access_key: ''
+            },
 
             // File browser state
             fileBrowserOpen: false,
@@ -64,7 +87,7 @@
             fileBrowserError: null,
             fileBrowserErrorType: null, // 'not_found' | 'permission' | 'other'
 
-            // Model context (ControlNet detection)
+            // Model context (ControlNet detection and video model detection)
             get showConditioningStep() {
                 const trainer = Alpine.store('trainer');
                 if (!trainer) return false;
@@ -72,14 +95,99 @@
                 return Boolean(context.controlnetEnabled || context.requiresConditioningDataset);
             },
 
+            get isVideoModel() {
+                const trainer = Alpine.store('trainer');
+                if (!trainer) return false;
+                const context = trainer.modelContext || {};
+                return Boolean(context.isVideoModel || context.supportsVideo);
+            },
+
+            // Dynamic step configuration
+            get stepDefinitions() {
+                const steps = [
+                    { id: 'name', number: 1, label: 'Name', fixed: true },
+                    { id: 'type', number: 2, label: 'Type', fixed: true },
+                    { id: 'config', number: 3, label: 'Config', fixed: true }
+                ];
+
+                // Insert Step 2.1 (text embeds) if enabled
+                if (this.separateTextEmbeds) {
+                    steps.push({ id: 'text-embeds', number: 3.1, label: 'Text Cache', fixed: false });
+                }
+
+                // Insert Step 2.2 (VAE cache) if enabled
+                if (this.separateVaeCache) {
+                    steps.push({ id: 'vae-cache', number: 3.2, label: 'VAE Cache', fixed: false });
+                }
+
+                // Add remaining fixed steps
+                steps.push(
+                    { id: 'resolution', number: 4, label: 'Resolution', fixed: true },
+                    { id: 'cropping', number: 5, label: 'Cropping', fixed: true },
+                    { id: 'captions', number: 6, label: 'Captions', fixed: true }
+                );
+
+                // Conditional conditioning step
+                if (this.showConditioningStep) {
+                    steps.push({ id: 'conditioning', number: 7, label: 'Conditioning', fixed: false });
+                }
+
+                // Final review step
+                steps.push({ id: 'review', number: 8, label: 'Review', fixed: true });
+
+                // Renumber steps sequentially
+                steps.forEach((step, index) => {
+                    step.displayNumber = index + 1;
+                });
+
+                return steps;
+            },
+
+            get totalSteps() {
+                return this.stepDefinitions.length;
+            },
+
+            get currentStepDef() {
+                return this.stepDefinitions[this.wizardStep - 1];
+            },
+
+            // Map logical step IDs to display numbers
+            getStepNumber(stepId) {
+                const step = this.stepDefinitions.find(s => s.id === stepId);
+                return step ? step.displayNumber : null;
+            },
+
+            isStepCompleted(stepId) {
+                const stepNum = this.getStepNumber(stepId);
+                return stepNum !== null && this.wizardStep > stepNum;
+            },
+
+            isStepActive(stepId) {
+                const stepNum = this.getStepNumber(stepId);
+                return stepNum !== null && this.wizardStep === stepNum;
+            },
+
             get canProceed() {
-                switch (this.wizardStep) {
-                    case 1:
+                if (!this.currentStepDef) return false;
+
+                switch (this.currentStepDef.id) {
+                    case 'name':
                         return this.currentDataset.id && this.currentDataset.id.trim().length > 0;
-                    case 2:
+                    case 'type':
                         return this.selectedBackend !== null;
-                    case 3:
+                    case 'config':
                         return this.validateRequiredFields();
+                    case 'text-embeds':
+                        return this.textEmbedsDataset.id && this.textEmbedsDataset.cache_dir;
+                    case 'vae-cache':
+                        if (!this.vaeCacheDataset.id || !this.vaeCacheDataset.type || !this.currentDataset.cache_dir_vae) {
+                            return false;
+                        }
+                        // If AWS is selected, validate AWS fields
+                        if (this.vaeCacheDataset.type === 'aws') {
+                            return this.vaeCacheDataset.aws_bucket_name && this.vaeCacheDataset.aws_bucket_name.trim().length > 0;
+                        }
+                        return true;
                     default:
                         return true;
                 }
@@ -95,6 +203,29 @@
                 await this.loadBlueprints();
             },
 
+            async loadExistingConfig() {
+                try {
+                    const response = await fetch('/api/datasets/plan');
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.existingDatasets = data.datasets || [];
+
+                        // Find existing text_embeds dataset
+                        this.existingTextEmbeds = this.existingDatasets.find(
+                            d => d.dataset_type === 'text_embeds'
+                        );
+
+                        console.log('[WIZARD] Loaded existing config:', {
+                            datasetCount: this.existingDatasets.length,
+                            hasTextEmbeds: !!this.existingTextEmbeds
+                        });
+                    }
+                } catch (error) {
+                    console.error('[WIZARD] Failed to load existing config:', error);
+                    // Non-fatal - wizard can still work without this
+                }
+            },
+
             async loadBlueprints() {
                 try {
                     const response = await fetch('/api/datasets/blueprints');
@@ -107,9 +238,13 @@
                 }
             },
 
-            openWizard() {
+            async openWizard() {
                 console.log('[WIZARD] Opening wizard...');
                 this.resetWizard();
+
+                // Load existing datasets to check for text_embeds and validate IDs
+                await this.loadExistingConfig();
+
                 this.wizardOpen = true;
                 console.log('[WIZARD] wizardOpen set to:', this.wizardOpen);
 
@@ -154,9 +289,13 @@
                 if (obj === null || typeof obj !== 'object') {
                     return obj;
                 }
-                // Use structured clone if available (modern browsers)
+                // Try structured clone first (modern browsers), but fall back to JSON if it fails
                 if (typeof structuredClone !== 'undefined') {
-                    return structuredClone(obj);
+                    try {
+                        return structuredClone(obj);
+                    } catch (e) {
+                        console.warn('[WIZARD] structuredClone failed, falling back to JSON:', e);
+                    }
                 }
                 // Fallback to JSON round-trip (loses functions, but we don't have any in dataset objects)
                 return JSON.parse(JSON.stringify(obj));
@@ -178,6 +317,7 @@
                     prepend_instance_prompt: false,
                     metadata_backend: 'discovery',
                     cache_dir_vae: 'cache/vae',
+                    cache_dir_text: 'cache/text',
                     probability: 1,
                     repeats: 0,
                     parquet: {
@@ -238,10 +378,26 @@
                     return false;
                 }
 
+                // Check if ID exists in existing datasets (when NOT editing and NOT creating new config)
+                if (!this.editingQueuedDataset && !this.createNewConfig) {
+                    const existsInExisting = this.existingDatasets.some(d => d.id === id);
+                    if (existsInExisting) {
+                        this.datasetIdError = 'Dataset ID already exists in current config (will be replaced)';
+                        // This is a warning, not an error - allow it but warn user
+                        // return false; // Uncomment to prevent replacement
+                    }
+                }
+
                 // Check if ID contains invalid characters
                 if (!/^[a-zA-Z0-9_-]+$/.test(id)) {
                     this.datasetIdError = 'Dataset ID can only contain letters, numbers, hyphens, and underscores';
                     return false;
+                }
+
+                // Clear error if we got here and only had the replacement warning
+                if (this.datasetIdError.includes('will be replaced')) {
+                    // Keep the warning but allow proceeding
+                    return true;
                 }
 
                 this.datasetIdError = '';
@@ -266,44 +422,41 @@
                 if (!this.currentDataset.cache_dir_vae || this.currentDataset.cache_dir_vae === 'cache/vae') {
                     this.currentDataset.cache_dir_vae = `cache/vae/${this.currentDataset.id}`;
                 }
+                // Also update text cache dir if needed
+                if (!this.currentDataset.cache_dir_text || this.currentDataset.cache_dir_text === 'cache/text') {
+                    this.currentDataset.cache_dir_text = `cache/text/${this.currentDataset.id}`;
+                }
             },
 
             wizardNextStep() {
-                // Skip conditioning step (7) if not applicable
-                if (this.wizardStep === 6 && !this.showConditioningStep) {
-                    this.wizardStep = 7; // Skip conditioning (step 7), go to review (step 7)
-                } else {
+                if (this.wizardStep < this.totalSteps) {
                     this.wizardStep++;
                 }
                 this.updateWizardTitle();
             },
 
             wizardPrevStep() {
-                // Skip conditioning step when going back if not applicable
-                if (this.wizardStep === 7 && !this.showConditioningStep) {
-                    this.wizardStep = 6; // Go back to captions (step 6)
-                } else {
+                if (this.wizardStep > 1) {
                     this.wizardStep--;
                 }
                 this.updateWizardTitle();
             },
 
-            goToStep(step) {
+            goToStep(stepNumber) {
                 // Allow clicking on completed steps to go back
-                if (step < this.wizardStep) {
-                    this.wizardStep = step;
+                if (stepNumber < this.wizardStep && stepNumber >= 1 && stepNumber <= this.totalSteps) {
+                    this.wizardStep = stepNumber;
                     this.updateWizardTitle();
                 }
             },
 
             updateWizardTitle() {
-                const stepNames = ['Name', 'Type', 'Config', 'Resolution', 'Cropping', 'Captions', 'Conditioning', 'Review'];
-                const stepNum = this.showConditioningStep ? this.wizardStep :
-                    (this.wizardStep >= 7 ? this.wizardStep - 1 : this.wizardStep);
-                const stepName = this.showConditioningStep ?
-                    stepNames[this.wizardStep - 1] :
-                    stepNames.filter((_, i) => i !== 6)[Math.min(stepNum - 1, 6)];
-                this.wizardTitle = `Create Dataset - Step ${stepNum}: ${stepName}`;
+                const stepDef = this.currentStepDef;
+                if (stepDef) {
+                    this.wizardTitle = `Create Dataset - Step ${stepDef.displayNumber}: ${stepDef.label}`;
+                } else {
+                    this.wizardTitle = 'Create Dataset';
+                }
             },
 
             skipResolutionConfig() {
@@ -364,6 +517,14 @@
                 // Clean up parquet config if not using parquet caption strategy
                 if (datasetToAdd.caption_strategy !== 'parquet') {
                     delete datasetToAdd.parquet;
+                }
+
+                // Set references to separate cache datasets if enabled
+                if (this.separateTextEmbeds && this.textEmbedsDataset.id) {
+                    datasetToAdd.text_embeds = this.textEmbedsDataset.id;
+                }
+                if (this.separateVaeCache && this.vaeCacheDataset.id) {
+                    datasetToAdd.image_embeds = this.vaeCacheDataset.id;
                 }
 
                 // If editing, remove any old conditioning datasets associated with this dataset
@@ -494,6 +655,19 @@
 
             async confirmAllDatasets() {
                 console.log('[WIZARD] confirmAllDatasets called, queue length:', this.datasetQueue.length);
+
+                // If we're on the review step with a current dataset that hasn't been added to queue yet,
+                // automatically add it first
+                const reviewStepNum = this.getStepNumber('review');
+                if (this.wizardStep === reviewStepNum && this.currentDataset.id && !this.editingQueuedDataset) {
+                    // Check if current dataset is already in queue
+                    const alreadyInQueue = this.datasetQueue.some(d => d.id === this.currentDataset.id);
+                    if (!alreadyInQueue) {
+                        console.log('[WIZARD] Auto-adding current dataset to queue before save');
+                        this.addDatasetToQueue();
+                    }
+                }
+
                 if (this.datasetQueue.length === 0) {
                     this.showToast('No datasets to save', 'warning');
                     return;
@@ -502,20 +676,109 @@
                 this.saving = true;
 
                 try {
+                    // Prepare datasets to save
+                    let datasetsToSave = [...this.datasetQueue];
+
+                    // Add separate text embeds dataset if configured
+                    if (this.separateTextEmbeds) {
+                        const hasTextEmbeds = datasetsToSave.some(d => d.dataset_type === 'text_embeds');
+                        if (!hasTextEmbeds) {
+                            console.log('[WIZARD] Adding separate text_embeds dataset');
+                            datasetsToSave.push({
+                                id: this.textEmbedsDataset.id,
+                                type: 'text_embeds',
+                                dataset_type: 'text_embeds',
+                                default: true,
+                                cache_dir: this.textEmbedsDataset.cache_dir
+                            });
+                        }
+                    }
+
+                    // Add separate VAE cache dataset if configured
+                    if (this.separateVaeCache) {
+                        const hasImageEmbeds = datasetsToSave.some(d => d.dataset_type === 'image_embeds');
+                        if (!hasImageEmbeds) {
+                            console.log('[WIZARD] Adding separate image_embeds dataset for VAE cache');
+                            const vaeCacheConfig = {
+                                id: this.vaeCacheDataset.id,
+                                type: this.vaeCacheDataset.type,
+                                dataset_type: 'image_embeds',
+                                default: true
+                            };
+
+                            // Add AWS-specific fields if AWS backend is selected
+                            if (this.vaeCacheDataset.type === 'aws') {
+                                vaeCacheConfig.aws_bucket_name = this.vaeCacheDataset.aws_bucket_name;
+                                if (this.vaeCacheDataset.aws_region_name) {
+                                    vaeCacheConfig.aws_region_name = this.vaeCacheDataset.aws_region_name;
+                                }
+                                if (this.vaeCacheDataset.aws_endpoint_url) {
+                                    vaeCacheConfig.aws_endpoint_url = this.vaeCacheDataset.aws_endpoint_url;
+                                }
+                                if (this.vaeCacheDataset.aws_access_key_id) {
+                                    vaeCacheConfig.aws_access_key_id = this.vaeCacheDataset.aws_access_key_id;
+                                }
+                                if (this.vaeCacheDataset.aws_secret_access_key) {
+                                    vaeCacheConfig.aws_secret_access_key = this.vaeCacheDataset.aws_secret_access_key;
+                                }
+                            }
+
+                            datasetsToSave.push(vaeCacheConfig);
+                        }
+                    }
+
+                    // If creating new config, ensure text_embeds dataset is included
+                    if (this.createNewConfig && !this.separateTextEmbeds) {
+                        const hasTextEmbeds = datasetsToSave.some(d => d.dataset_type === 'text_embeds');
+                        if (!hasTextEmbeds && this.currentDataset.cache_dir_text) {
+                            console.log('[WIZARD] Auto-adding text_embeds dataset for new config');
+                            datasetsToSave.push({
+                                id: 'text-embeds',
+                                type: 'text_embeds',
+                                dataset_type: 'text_embeds',
+                                default: true,
+                                cache_dir: this.currentDataset.cache_dir_text
+                            });
+                        }
+                    }
+
+                    if (!this.createNewConfig) {
+                        // Append mode: merge with existing datasets
+                        console.log('[WIZARD] Append mode: merging with existing datasets');
+                        datasetsToSave = this.mergeWithExistingDatasets(datasetsToSave);
+                    }
+
                     const response = await fetch('/api/datasets/plan', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json'
                         },
                         body: JSON.stringify({
-                            datasets: this.datasetQueue,
+                            datasets: datasetsToSave,
                             createBackup: false
                         })
                     });
 
                     if (!response.ok) {
                         const error = await response.json();
-                        throw new Error(error.detail?.message || 'Failed to save datasets');
+                        let errorMessage = 'Failed to save datasets';
+
+                        if (error.detail?.message) {
+                            errorMessage = error.detail.message;
+                        }
+
+                        // If there are validation errors, show them
+                        if (error.detail?.validations && Array.isArray(error.detail.validations)) {
+                            const errorFields = error.detail.validations
+                                .filter(v => v.level === 'error')
+                                .map(v => `${v.field}: ${v.message}`)
+                                .join('; ');
+                            if (errorFields) {
+                                errorMessage += ` (${errorFields})`;
+                            }
+                        }
+
+                        throw new Error(errorMessage);
                     }
 
                     const result = await response.json();
@@ -535,9 +798,31 @@
                 } catch (error) {
                     console.error('Failed to save datasets:', error);
                     this.showToast(error.message || 'Failed to save datasets', 'error');
+                    // DO NOT reset wizard on error - keep user on review step
+                    // DO NOT close modal - let them fix the issue
                 } finally {
                     this.saving = false;
                 }
+            },
+
+            mergeWithExistingDatasets(newDatasets) {
+                // Start with existing datasets
+                const merged = [...this.existingDatasets];
+
+                // Add new datasets, checking for ID conflicts
+                for (const newDataset of newDatasets) {
+                    const existingIndex = merged.findIndex(d => d.id === newDataset.id);
+                    if (existingIndex >= 0) {
+                        // Replace existing dataset with same ID
+                        console.log(`[WIZARD] Replacing existing dataset: ${newDataset.id}`);
+                        merged[existingIndex] = newDataset;
+                    } else {
+                        // Add new dataset
+                        merged.push(newDataset);
+                    }
+                }
+
+                return merged;
             },
 
             showToast(message, type = 'info') {
