@@ -1,10 +1,11 @@
 <!-- Dataset Creation Wizard Modal -->
-<div x-show="wizardOpen"
-     x-cloak
-     class="modal-backdrop"
+<div class="modal-backdrop"
      @keydown.escape.window="closeWizard()"
-     x-transition.opacity>
-    <div class="modal-dialog modal-xl" @click.stop>
+     @click.self="closeWizard()"
+     x-show="wizardOpen"
+     x-transition.opacity.duration.300ms
+     x-cloak>
+    <div class="modal-dialog modal-xl">
         <div class="modal-header">
             <h5 class="modal-title">
                 <i class="fas fa-magic me-2"></i>
@@ -27,21 +28,29 @@
                 <div class="step-number">3</div>
                 <div class="step-label">Config</div>
             </div>
-            <div class="wizard-step" :class="{ 'active': wizardStep >= 4, 'completed': wizardStep > 4 }" @click="wizardStep >= 4 && goToStep(4)">
+            <div class="wizard-step" :class="{ 'active': wizardStep === 4, 'completed': wizardStep > 4 }" @click="wizardStep >= 4 && goToStep(4)">
                 <div class="step-number">4</div>
                 <div class="step-label">Resolution</div>
             </div>
-            <div class="wizard-step" :class="{ 'active': wizardStep >= 5, 'completed': wizardStep > 5 }" x-show="showConditioningStep" @click="wizardStep >= 5 && goToStep(5)">
+            <div class="wizard-step" :class="{ 'active': wizardStep === 5, 'completed': wizardStep > 5 }" @click="wizardStep >= 5 && goToStep(5)">
                 <div class="step-number">5</div>
-                <div class="step-label">Conditioning</div>
+                <div class="step-label">Cropping</div>
             </div>
             <div class="wizard-step" :class="{ 'active': wizardStep === 6, 'completed': wizardStep > 6 }" @click="wizardStep >= 6 && goToStep(6)">
-                <div class="step-number"><span x-text="showConditioningStep ? '6' : '5'"></span></div>
+                <div class="step-number">6</div>
+                <div class="step-label">Captions</div>
+            </div>
+            <div class="wizard-step" :class="{ 'active': wizardStep === 7, 'completed': wizardStep > 7 }" x-show="showConditioningStep" @click="wizardStep >= 7 && goToStep(7)">
+                <div class="step-number">7</div>
+                <div class="step-label">Conditioning</div>
+            </div>
+            <div class="wizard-step" :class="{ 'active': wizardStep === (showConditioningStep ? 8 : 7), 'completed': wizardStep > (showConditioningStep ? 8 : 7) }" @click="wizardStep >= (showConditioningStep ? 8 : 7) && goToStep(showConditioningStep ? 8 : 7)">
+                <div class="step-number"><span x-text="showConditioningStep ? '8' : '7'"></span></div>
                 <div class="step-label">Review</div>
             </div>
         </div>
 
-        <form @submit.prevent="handleStepSubmit()">
+        <form @submit.prevent="handleStepSubmit()" novalidate>
             <div class="modal-body">
                 <!-- Step 1: Dataset Name -->
                 <div x-show="wizardStep === 1" class="wizard-step-content">
@@ -52,8 +61,8 @@
                                class="form-control"
                                x-model="currentDataset.id"
                                placeholder="my-training-images"
-                               required
-                               :disabled="editingQueuedDataset">
+                               :disabled="editingQueuedDataset"
+                               :class="{ 'is-invalid': datasetIdError }">
                         <div class="form-text">This identifier must be unique across all datasets in your configuration.</div>
                         <div x-show="datasetIdError" class="text-danger small mt-1" x-text="datasetIdError"></div>
                     </div>
@@ -94,55 +103,91 @@
                                 <div class="mb-3">
                                     <label class="form-label" x-text="field.label + ' *'"></label>
                                     <!-- Text input -->
-                                    <input x-show="field.type === 'text'"
-                                           type="text"
-                                           class="form-control"
-                                           :placeholder="field.placeholder"
-                                           x-model="currentDataset[field.id]"
-                                           required>
+                                    <template x-if="field.type === 'text'">
+                                        <div class="input-group">
+                                            <input type="text"
+                                                   class="form-control"
+                                                   :placeholder="field.placeholder"
+                                                   x-model="currentDataset[field.id]">
+                                            <button type="button"
+                                                    class="btn btn-outline-secondary"
+                                                    x-show="field.id === 'instance_data_dir'"
+                                                    @click="openFileBrowser(field.id)"
+                                                    title="Browse directories">
+                                                <i class="fas fa-folder-open"></i>
+                                            </button>
+                                        </div>
+                                    </template>
                                     <!-- Number input -->
-                                    <input x-show="field.type === 'number'"
-                                           type="number"
-                                           class="form-control"
-                                           :placeholder="field.placeholder"
-                                           :min="field.min"
-                                           :max="field.max"
-                                           :step="field.step"
-                                           x-model.number="currentDataset[field.id]"
-                                           required>
+                                    <template x-if="field.type === 'number'">
+                                        <input type="number"
+                                               class="form-control"
+                                               :placeholder="field.placeholder"
+                                               :min="field.min"
+                                               :max="field.max"
+                                               :step="field.step"
+                                               x-model.number="currentDataset[field.id]">
+                                    </template>
                                     <!-- Select dropdown -->
-                                    <select x-show="field.type === 'select'"
-                                            class="form-select"
-                                            x-model="currentDataset[field.id]"
-                                            required>
-                                        <template x-for="option in field.options" :key="option.value">
-                                            <option :value="option.value" x-text="option.label"></option>
-                                        </template>
-                                    </select>
+                                    <template x-if="field.type === 'select'">
+                                        <select class="form-select"
+                                                x-model="currentDataset[field.id]">
+                                            <template x-for="option in field.options" :key="option.value">
+                                                <option :value="option.value" x-text="option.label"></option>
+                                            </template>
+                                        </select>
+                                    </template>
                                     <div class="form-text" x-show="field.description" x-text="field.description"></div>
                                 </div>
                             </template>
+
+                            <!-- VAE Cache Directory (always show) -->
+                            <div class="mb-3" x-init="if (currentDataset.id && currentDataset.cache_dir_vae === 'cache/vae') { currentDataset.cache_dir_vae = `cache/vae/${currentDataset.id}` }">
+                                <label class="form-label">
+                                    VAE Cache Directory
+                                    <i class="fas fa-info-circle text-muted ms-1"
+                                       style="font-size: 0.875rem; cursor: help;"
+                                       title="Directory where VAE latents will be cached"></i>
+                                </label>
+                                <input type="text"
+                                       class="form-control"
+                                       x-model="currentDataset.cache_dir_vae"
+                                       placeholder="cache/vae/dataset-name"
+                                       @focus="if (currentDataset.id && currentDataset.cache_dir_vae === 'cache/vae') { currentDataset.cache_dir_vae = `cache/vae/${currentDataset.id}` }">
+                                <div class="form-text">
+                                    Cached VAE latents speed up training. Auto-updates with dataset ID.
+                                </div>
+                            </div>
                         </div>
                     </template>
                 </div>
 
                 <!-- Step 4: Resolution Configuration -->
                 <div x-show="wizardStep === 4" class="wizard-step-content">
-                    <h6 class="mb-3">Configure image resolution settings</h6>
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h6 class="mb-0">Configure image resolution settings</h6>
+                        <button type="button"
+                                class="btn btn-sm btn-outline-secondary"
+                                x-show="!resolutionConfigSkipped"
+                                @click="skipResolutionConfig()">
+                            <i class="fas fa-forward me-1"></i>
+                            Skip - I'll configure later
+                        </button>
+                    </div>
 
                     <div x-show="!resolutionConfigSkipped" class="mb-4">
                         <!-- Resolution Type -->
                         <div class="mb-4">
-                            <label class="form-label fw-bold">Resolution Type</label>
-                            <div class="alert alert-info">
-                                <i class="fas fa-lightbulb me-2"></i>
-                                <strong>Resolution Type</strong> determines how images are resized:
-                                <ul class="mb-2 mt-2">
-                                    <li><strong>pixel_area (RECOMMENDED)</strong>: Maintains aspect ratio, resizes to target megapixel area</li>
-                                    <li><strong>pixel</strong>: Fixed edge length (may distort aspect ratios)</li>
-                                    <li><strong>area</strong>: Direct megapixel target</li>
-                                </ul>
-                                💡 We recommend <strong>"pixel_area"</strong> for most training scenarios as it preserves image proportions while ensuring consistent memory usage.
+                            <label class="form-label fw-bold">
+                                Resolution Type
+                                <i class="fas fa-info-circle text-muted ms-1"
+                                   style="font-size: 0.875rem; cursor: help;"
+                                   title="Determines how images are resized during training"></i>
+                            </label>
+                            <div class="form-text mb-2" style="font-size: 0.875rem; color: rgba(255, 255, 255, 0.6);">
+                                <strong>pixel_area</strong> (recommended) maintains aspect ratios •
+                                <strong>pixel</strong> uses fixed edge length •
+                                <strong>area</strong> targets direct megapixels
                             </div>
                             <div class="btn-group w-100" role="group">
                                 <input type="radio" class="btn-check" id="res-type-pixel-area" value="pixel_area" x-model="currentDataset.resolution_type">
@@ -172,12 +217,13 @@
                                     </div>
                                 </template>
                             </div>
+                            <label class="form-label small text-muted mt-2">Or enter custom resolution:</label>
                             <input type="number"
                                    class="form-control"
                                    x-model.number="currentDataset.resolution"
                                    min="256"
                                    step="64"
-                                   placeholder="Custom resolution">
+                                   placeholder="e.g. 1280, 1536, 2560">
                         </div>
 
                         <!-- Advanced Options (Collapsible) -->
@@ -203,24 +249,339 @@
                         </div>
                     </div>
 
-                    <div class="d-flex gap-2">
-                        <button type="button"
-                                class="btn btn-primary"
-                                x-show="resolutionConfigSkipped"
-                                @click="resolutionConfigSkipped = false">
-                            Configure Resolution Settings
-                        </button>
-                        <button type="button"
-                                class="btn btn-outline-secondary"
-                                x-show="!resolutionConfigSkipped"
-                                @click="skipResolutionConfig()">
-                            Skip - I'll configure later
-                        </button>
+                    <div x-show="resolutionConfigSkipped" class="p-3 rounded" style="background: rgba(245, 158, 11, 0.1); border-left: 3px solid rgba(245, 158, 11, 0.5);">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <i class="fas fa-info-circle me-2" style="color: rgba(245, 158, 11, 0.8);"></i>
+                                <span style="color: rgba(255, 255, 255, 0.9);">Using default resolution: <strong>1024px, pixel_area</strong></span>
+                            </div>
+                            <button type="button"
+                                    class="btn btn-sm btn-outline-warning"
+                                    @click="resolutionConfigSkipped = false">
+                                <i class="fas fa-cog me-1"></i>
+                                Configure
+                            </button>
+                        </div>
                     </div>
                 </div>
 
-                <!-- Step 5: ControlNet/Conditioning (Conditional) -->
-                <div x-show="wizardStep === 5 && showConditioningStep" class="wizard-step-content">
+                <!-- Step 5: Cropping -->
+                <div x-show="wizardStep === 5" class="wizard-step-content">
+                    <h6 class="mb-3">Configure image cropping behavior</h6>
+
+                    <!-- Enable/Disable Cropping Toggle -->
+                    <div class="mb-4">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="enableCropping" x-model="currentDataset.crop">
+                            <label class="form-check-label fw-bold" for="enableCropping">
+                                Enable Image Cropping
+                                <i class="fas fa-info-circle text-muted ms-1"
+                                   style="font-size: 0.875rem; cursor: help;"
+                                   title="Enable cropping to fit images to target dimensions"></i>
+                            </label>
+                        </div>
+                        <div class="form-text" style="font-size: 0.875rem; color: rgba(255, 255, 255, 0.6);">
+                            When disabled, images will only be resized without cropping
+                        </div>
+                    </div>
+
+                    <!-- Cropping Options (only shown when cropping is enabled) -->
+                    <div x-show="currentDataset.crop" x-transition>
+                        <!-- Crop Style -->
+                        <div class="mb-4">
+                            <label class="form-label fw-bold">Crop Style</label>
+                            <div class="form-text mb-3" style="font-size: 0.875rem; color: rgba(255, 255, 255, 0.6);">
+                                Choose where crops are taken from in the image
+                            </div>
+
+                            <div class="row g-2">
+                                <div class="col-md-3 col-6">
+                                    <div class="crop-style-option"
+                                         :class="{ 'selected': currentDataset.crop_style === 'random' }"
+                                         @click="currentDataset.crop_style = 'random'">
+                                        <i class="fas fa-dice"></i>
+                                        <span>Random</span>
+                                    </div>
+                                </div>
+                                <div class="col-md-3 col-6">
+                                    <div class="crop-style-option"
+                                         :class="{ 'selected': currentDataset.crop_style === 'center' }"
+                                         @click="currentDataset.crop_style = 'center'">
+                                        <i class="fas fa-bullseye"></i>
+                                        <span>Center</span>
+                                    </div>
+                                </div>
+                                <div class="col-md-3 col-6">
+                                    <div class="crop-style-option"
+                                         :class="{ 'selected': currentDataset.crop_style === 'corner' }"
+                                         @click="currentDataset.crop_style = 'corner'">
+                                        <i class="fas fa-border-style"></i>
+                                        <span>Corner</span>
+                                    </div>
+                                </div>
+                                <div class="col-md-3 col-6">
+                                    <div class="crop-style-option"
+                                         :class="{ 'selected': currentDataset.crop_style === 'face' }"
+                                         @click="currentDataset.crop_style = 'face'">
+                                        <i class="fas fa-smile"></i>
+                                        <span>Face</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Crop Aspect -->
+                        <div class="mb-4">
+                            <label class="form-label fw-bold">Crop Aspect Ratio</label>
+                            <div class="form-text mb-3" style="font-size: 0.875rem; color: rgba(255, 255, 255, 0.6);">
+                                Choose how aspect ratios are handled during cropping
+                            </div>
+
+                            <div class="row g-2">
+                                <div class="col-md-3 col-6">
+                                    <div class="crop-style-option"
+                                         :class="{ 'selected': currentDataset.crop_aspect === 'square' }"
+                                         @click="currentDataset.crop_aspect = 'square'">
+                                        <i class="fas fa-square"></i>
+                                        <span>Square</span>
+                                    </div>
+                                </div>
+                                <div class="col-md-3 col-6">
+                                    <div class="crop-style-option"
+                                         :class="{ 'selected': currentDataset.crop_aspect === 'preserve' }"
+                                         @click="currentDataset.crop_aspect = 'preserve'">
+                                        <i class="fas fa-lock"></i>
+                                        <span>Preserve</span>
+                                    </div>
+                                </div>
+                                <div class="col-md-3 col-6">
+                                    <div class="crop-style-option"
+                                         :class="{ 'selected': currentDataset.crop_aspect === 'closest' }"
+                                         @click="currentDataset.crop_aspect = 'closest'">
+                                        <i class="fas fa-ruler-combined"></i>
+                                        <span>Closest</span>
+                                    </div>
+                                </div>
+                                <div class="col-md-3 col-6">
+                                    <div class="crop-style-option"
+                                         :class="{ 'selected': currentDataset.crop_aspect === 'random' }"
+                                         @click="currentDataset.crop_aspect = 'random'">
+                                        <i class="fas fa-random"></i>
+                                        <span>Random</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Aspect Buckets (only shown when crop_aspect is 'closest' or 'random') -->
+                        <div x-show="currentDataset.crop_aspect === 'closest' || currentDataset.crop_aspect === 'random'" x-transition class="mb-4">
+                            <label class="form-label fw-bold">Aspect Ratio Buckets</label>
+                            <div class="form-text mb-2" style="font-size: 0.875rem; color: rgba(255, 255, 255, 0.6);">
+                                Define aspect ratio buckets (e.g., 0.75 = 3:4, 1.0 = 1:1, 1.33 = 4:3)
+                            </div>
+
+                            <div class="aspect-buckets-container mb-2">
+                                <template x-if="!currentDataset.crop_aspect_buckets || currentDataset.crop_aspect_buckets.length === 0">
+                                    <div class="text-muted small">No aspect buckets defined yet</div>
+                                </template>
+                                <template x-for="(bucket, index) in currentDataset.crop_aspect_buckets" :key="index">
+                                    <span class="aspect-bucket-bubble">
+                                        <span x-text="bucket"></span>
+                                        <button type="button" class="aspect-bucket-remove" @click="removeAspectBucket(index)">
+                                            <i class="fas fa-times"></i>
+                                        </button>
+                                    </span>
+                                </template>
+                            </div>
+
+                            <div class="input-group" style="max-width: 300px;">
+                                <input type="number"
+                                       class="form-control"
+                                       x-model.number="newAspectBucket"
+                                       step="0.01"
+                                       min="0.1"
+                                       max="10"
+                                       placeholder="e.g. 1.5"
+                                       @keydown.enter.prevent="addAspectBucket()">
+                                <button type="button" class="btn btn-primary" @click="addAspectBucket()">
+                                    <i class="fas fa-plus"></i> Add
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 6: Captions -->
+                <div x-show="wizardStep === 6"
+                     class="wizard-step-content"
+                     x-effect="if (currentDataset.caption_strategy === 'parquet') { currentDataset.metadata_backend = 'parquet'; } else if (selectedBackend === 'local' || selectedBackend === 'aws') { if (currentDataset.metadata_backend === 'parquet') { currentDataset.metadata_backend = 'discovery'; } }">
+                    <h6 class="mb-3">Configure caption settings</h6>
+
+                    <!-- Fixed caption strategy notice for HuggingFace/CSV -->
+                    <template x-if="selectedBackend === 'huggingface'">
+                        <div class="p-3 mb-4 rounded" style="background: rgba(56, 189, 248, 0.1); border-left: 3px solid rgba(56, 189, 248, 0.5);">
+                            <i class="fas fa-info-circle me-2" style="color: rgba(56, 189, 248, 0.8);"></i>
+                            <span style="color: rgba(255, 255, 255, 0.9);">
+                                Hugging Face datasets use the <strong>huggingface</strong> caption strategy (fixed)
+                            </span>
+                        </div>
+                    </template>
+
+                    <template x-if="selectedBackend === 'csv'">
+                        <div class="p-3 mb-4 rounded" style="background: rgba(56, 189, 248, 0.1); border-left: 3px solid rgba(56, 189, 248, 0.5);">
+                            <i class="fas fa-info-circle me-2" style="color: rgba(56, 189, 248, 0.8);"></i>
+                            <span style="color: rgba(255, 255, 255, 0.9);">
+                                CSV datasets use the <strong>csv</strong> caption strategy (fixed)
+                            </span>
+                        </div>
+                    </template>
+
+                    <!-- Caption Strategy (only for local/aws backends) -->
+                    <div class="mb-4" x-show="selectedBackend === 'local' || selectedBackend === 'aws'">
+                        <label class="form-label fw-bold">Caption Strategy</label>
+                        <div class="form-text mb-2" style="font-size: 0.875rem; color: rgba(255, 255, 255, 0.6);">
+                            How captions should be loaded for each image
+                        </div>
+                        <select class="form-select" x-model="currentDataset.caption_strategy">
+                            <option value="textfile">Text File - Load from .txt files next to images</option>
+                            <option value="filename">Filename - Use cleaned filename as caption</option>
+                            <option value="instanceprompt">Instance Prompt - Use same caption for all images</option>
+                            <option value="parquet">Parquet - Load from parquet table</option>
+                        </select>
+                    </div>
+
+                    <!-- Parquet Configuration (only shown when parquet is selected) -->
+                    <div x-show="currentDataset.caption_strategy === 'parquet'" x-transition class="mb-4">
+                        <h6 class="mb-3 text-info">
+                            <i class="fas fa-database me-2"></i>
+                            Parquet Configuration
+                        </h6>
+
+                        <div class="mb-3">
+                            <label class="form-label">Parquet/JSONL File Path *</label>
+                            <input type="text"
+                                   class="form-control"
+                                   x-model="currentDataset.parquet.path"
+                                   placeholder="/path/to/metadata.parquet">
+                            <div class="form-text">Path to the parquet or JSONL metadata file</div>
+                        </div>
+
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Filename Column *</label>
+                                <input type="text"
+                                       class="form-control"
+                                       x-model="currentDataset.parquet.filename_column"
+                                       placeholder="id">
+                                <div class="form-text">Column containing image IDs/filenames</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Caption Column *</label>
+                                <input type="text"
+                                       class="form-control"
+                                       x-model="currentDataset.parquet.caption_column"
+                                       placeholder="caption">
+                                <div class="form-text">Column containing image captions</div>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Width Column (optional)</label>
+                                <input type="text"
+                                       class="form-control"
+                                       x-model="currentDataset.parquet.width_column"
+                                       placeholder="width">
+                                <div class="form-text">Column with image width (speeds up loading)</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Height Column (optional)</label>
+                                <input type="text"
+                                       class="form-control"
+                                       x-model="currentDataset.parquet.height_column"
+                                       placeholder="height">
+                                <div class="form-text">Column with image height (speeds up loading)</div>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Fallback Caption Column (optional)</label>
+                            <input type="text"
+                                   class="form-control"
+                                   x-model="currentDataset.parquet.fallback_caption_column"
+                                   placeholder="tags">
+                            <div class="form-text">Fallback column when primary caption is empty</div>
+                        </div>
+
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" id="identifierExt" x-model="currentDataset.parquet.identifier_includes_extension">
+                            <label class="form-check-label" for="identifierExt">
+                                Filename includes extension
+                                <i class="fas fa-info-circle text-muted ms-1"
+                                   style="font-size: 0.75rem; cursor: help;"
+                                   title="Enable if filename column contains file extensions (e.g., '12345.png')"></i>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Instance Prompt Section -->
+                    <div class="mb-4">
+                        <!-- Prepend Toggle (only for non-instanceprompt strategies) -->
+                        <div class="mb-3" x-show="currentDataset.caption_strategy !== 'instanceprompt'">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input"
+                                       type="checkbox"
+                                       id="prependPrompt"
+                                       x-model="currentDataset.prepend_instance_prompt">
+                                <label class="form-check-label fw-bold" for="prependPrompt">
+                                    Prepend Instance Prompt
+                                    <i class="fas fa-info-circle text-muted ms-1"
+                                       style="font-size: 0.875rem; cursor: help;"
+                                       title="Enable to add a trigger word/phrase at the beginning of every caption"></i>
+                                </label>
+                            </div>
+                            <div class="form-text" style="font-size: 0.875rem; color: rgba(255, 255, 255, 0.6);">
+                                Add a consistent trigger word or phrase to the beginning of all captions (e.g., "a photo of xyz")
+                            </div>
+                        </div>
+
+                        <!-- Instance Prompt Field -->
+                        <div>
+                            <label class="form-label fw-bold">
+                                Instance Prompt
+                                <span x-show="currentDataset.caption_strategy === 'instanceprompt'" class="text-danger">*</span>
+                            </label>
+
+                            <!-- Dynamic description based on caption strategy -->
+                            <template x-if="currentDataset.caption_strategy === 'instanceprompt'">
+                                <div class="form-text mb-2" style="font-size: 0.875rem; color: rgba(255, 255, 255, 0.6);">
+                                    This prompt will be used as the <strong>sole caption</strong> for all images in the dataset
+                                </div>
+                            </template>
+                            <template x-if="currentDataset.caption_strategy !== 'instanceprompt' && currentDataset.prepend_instance_prompt">
+                                <div class="form-text mb-2" style="font-size: 0.875rem; color: rgba(255, 255, 255, 0.6);">
+                                    Enter the trigger word or phrase to prepend to all captions
+                                </div>
+                            </template>
+                            <template x-if="currentDataset.caption_strategy !== 'instanceprompt' && !currentDataset.prepend_instance_prompt">
+                                <div class="form-text mb-2" style="font-size: 0.875rem; color: rgba(245, 158, 11, 0.8);">
+                                    <i class="fas fa-info-circle me-1"></i>
+                                    Enable "Prepend Instance Prompt" above to use this field
+                                </div>
+                            </template>
+
+                            <input type="text"
+                                   class="form-control"
+                                   x-model="currentDataset.instance_prompt"
+                                   placeholder="e.g., a photo of xyz"
+                                   :disabled="currentDataset.caption_strategy !== 'instanceprompt' && !currentDataset.prepend_instance_prompt"
+                                   :required="currentDataset.caption_strategy === 'instanceprompt'">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 7: ControlNet/Conditioning (Conditional) -->
+                <div x-show="wizardStep === 7 && showConditioningStep" class="wizard-step-content">
                     <h6 class="mb-3">Auto-generate conditioning data for ControlNet</h6>
                     <div x-show="!conditioningConfigured" class="mb-4">
                         <div class="alert alert-info">
@@ -268,32 +629,188 @@
                     </div>
                 </div>
 
-                <!-- Step 6: Review & Confirm -->
-                <div x-show="wizardStep === (showConditioningStep ? 6 : 5)" class="wizard-step-content">
+                <!-- Step 8: Review & Confirm (or Step 7 if no conditioning) -->
+                <div x-show="wizardStep === (showConditioningStep ? 8 : 7)" class="wizard-step-content">
                     <h6 class="mb-3">Review Your Dataset Configuration</h6>
 
                     <div class="card mb-3">
                         <div class="card-body">
-                            <h6 class="card-title">
+                            <h6 class="card-title mb-3">
                                 <i class="fas fa-database me-2"></i>
                                 <span x-text="currentDataset.id"></span>
                             </h6>
-                            <div class="row">
-                                <div class="col-md-6">
+
+                            <!-- Basic Info -->
+                            <div class="row mb-3">
+                                <div class="col-md-6 mb-2">
                                     <small class="text-muted">Backend Type:</small>
-                                    <div x-text="selectedBackend"></div>
+                                    <div class="fw-bold" x-text="selectedBackend"></div>
                                 </div>
-                                <div class="col-md-6">
-                                    <small class="text-muted">Resolution:</small>
-                                    <div><span x-text="currentDataset.resolution"></span> (<span x-text="currentDataset.resolution_type"></span>)</div>
+                                <div class="col-md-6 mb-2">
+                                    <small class="text-muted">Dataset Type:</small>
+                                    <div class="fw-bold" x-text="currentDataset.dataset_type"></div>
                                 </div>
                             </div>
+
+                            <!-- Config -->
+                            <div class="mb-3">
+                                <small class="text-muted d-block mb-1">Configuration:</small>
+                                <div class="row">
+                                    <div class="col-md-6 mb-2">
+                                        <small>Instance Data Path:</small>
+                                        <div class="text-truncate" x-text="currentDataset.instance_data_dir || 'Not set'" style="font-size: 0.875rem;"></div>
+                                    </div>
+                                    <div class="col-md-6 mb-2">
+                                        <small>Metadata Backend:</small>
+                                        <div x-text="currentDataset.metadata_backend" style="font-size: 0.875rem;"></div>
+                                    </div>
+                                    <div class="col-md-6 mb-2">
+                                        <small>Caption Strategy:</small>
+                                        <div x-text="currentDataset.caption_strategy" style="font-size: 0.875rem;"></div>
+                                    </div>
+                                    <div class="col-md-6 mb-2">
+                                        <small>VAE Cache Dir:</small>
+                                        <div x-text="currentDataset.cache_dir_vae" style="font-size: 0.875rem;"></div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Resolution -->
+                            <div class="mb-3">
+                                <small class="text-muted d-block mb-1">Resolution:</small>
+                                <div class="d-flex gap-3 flex-wrap">
+                                    <div>
+                                        <small>Size:</small>
+                                        <div class="fw-bold" x-text="currentDataset.resolution"></div>
+                                    </div>
+                                    <div>
+                                        <small>Type:</small>
+                                        <div class="fw-bold" x-text="currentDataset.resolution_type"></div>
+                                    </div>
+                                    <template x-if="currentDataset.maximum_image_size">
+                                        <div>
+                                            <small>Max Size:</small>
+                                            <div x-text="currentDataset.maximum_image_size"></div>
+                                        </div>
+                                    </template>
+                                    <template x-if="currentDataset.target_downsample_size">
+                                        <div>
+                                            <small>Downsample:</small>
+                                            <div x-text="currentDataset.target_downsample_size"></div>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+
+                            <!-- Cropping -->
+                            <div class="mb-3">
+                                <small class="text-muted d-block mb-1">Cropping:</small>
+                                <template x-if="!currentDataset.crop">
+                                    <div class="text-muted" style="font-size: 0.875rem;">
+                                        <i class="fas fa-times-circle me-1"></i> Disabled
+                                    </div>
+                                </template>
+                                <template x-if="currentDataset.crop">
+                                    <div class="d-flex gap-3 flex-wrap">
+                                        <div>
+                                            <small>Style:</small>
+                                            <div class="fw-bold" x-text="currentDataset.crop_style"></div>
+                                        </div>
+                                        <div>
+                                            <small>Aspect:</small>
+                                            <div class="fw-bold" x-text="currentDataset.crop_aspect"></div>
+                                        </div>
+                                        <template x-if="(currentDataset.crop_aspect === 'closest' || currentDataset.crop_aspect === 'random') && currentDataset.crop_aspect_buckets && currentDataset.crop_aspect_buckets.length > 0">
+                                            <div>
+                                                <small>Buckets:</small>
+                                                <div class="d-flex gap-1 flex-wrap">
+                                                    <template x-for="bucket in currentDataset.crop_aspect_buckets" :key="bucket">
+                                                        <span class="badge bg-secondary" x-text="bucket" style="font-size: 0.75rem;"></span>
+                                                    </template>
+                                                </div>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </template>
+                            </div>
+
+                            <!-- Captions -->
+                            <div class="mb-3">
+                                <small class="text-muted d-block mb-1">Captions:</small>
+                                <div class="d-flex gap-3 flex-wrap mb-2">
+                                    <div>
+                                        <small>Strategy:</small>
+                                        <div class="fw-bold" x-text="currentDataset.caption_strategy"></div>
+                                    </div>
+                                    <template x-if="currentDataset.instance_prompt && currentDataset.caption_strategy !== 'instanceprompt'">
+                                        <div>
+                                            <small>Instance Prompt:</small>
+                                            <div x-text="currentDataset.instance_prompt" style="font-size: 0.875rem;"></div>
+                                        </div>
+                                    </template>
+                                    <template x-if="currentDataset.prepend_instance_prompt && currentDataset.caption_strategy !== 'instanceprompt'">
+                                        <div>
+                                            <span class="badge bg-info" style="font-size: 0.75rem;">Prepending to captions</span>
+                                        </div>
+                                    </template>
+                                    <template x-if="currentDataset.caption_strategy === 'instanceprompt'">
+                                        <div>
+                                            <small>Prompt:</small>
+                                            <div x-text="currentDataset.instance_prompt || 'Not set'" style="font-size: 0.875rem;"></div>
+                                        </div>
+                                    </template>
+                                </div>
+
+                                <!-- Parquet Config Details -->
+                                <template x-if="currentDataset.caption_strategy === 'parquet' && currentDataset.parquet">
+                                    <div class="mt-2 p-2 rounded" style="background: rgba(56, 189, 248, 0.05); border: 1px solid rgba(56, 189, 248, 0.2);">
+                                        <small class="text-muted d-block mb-1"><i class="fas fa-database me-1"></i> Parquet Config:</small>
+                                        <div class="row g-2">
+                                            <div class="col-md-6">
+                                                <small>Path:</small>
+                                                <div class="text-truncate" x-text="currentDataset.parquet.path" style="font-size: 0.75rem;"></div>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <small>Filename Col:</small>
+                                                <div x-text="currentDataset.parquet.filename_column" style="font-size: 0.75rem;"></div>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <small>Caption Col:</small>
+                                                <div x-text="currentDataset.parquet.caption_column" style="font-size: 0.75rem;"></div>
+                                            </div>
+                                            <template x-if="currentDataset.parquet.fallback_caption_column">
+                                                <div class="col-md-6">
+                                                    <small>Fallback Col:</small>
+                                                    <div x-text="currentDataset.parquet.fallback_caption_column" style="font-size: 0.75rem;"></div>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+
+                            <!-- Conditioning -->
                             <template x-if="conditioningConfigured && selectedConditioningType">
-                                <div class="mt-2">
-                                    <small class="text-muted">Conditioning:</small>
-                                    <div x-text="selectedConditioningType"></div>
+                                <div class="mb-3">
+                                    <small class="text-muted d-block mb-1">Conditioning:</small>
+                                    <div class="fw-bold" x-text="selectedConditioningType"></div>
                                 </div>
                             </template>
+
+                            <!-- Advanced Settings -->
+                            <div>
+                                <small class="text-muted d-block mb-1">Additional Settings:</small>
+                                <div class="row">
+                                    <div class="col-md-6 mb-2">
+                                        <small>Probability:</small>
+                                        <div x-text="currentDataset.probability" style="font-size: 0.875rem;"></div>
+                                    </div>
+                                    <div class="col-md-6 mb-2">
+                                        <small>Repeats:</small>
+                                        <div x-text="currentDataset.repeats" style="font-size: 0.875rem;"></div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -336,20 +853,20 @@
                 </button>
                 <button type="submit"
                         class="btn btn-primary"
-                        x-show="wizardStep < (showConditioningStep ? 6 : 5)"
+                        x-show="wizardStep < (showConditioningStep ? 8 : 7)"
                         :disabled="!canProceed">
                     Next <i class="fas fa-arrow-right ms-1"></i>
                 </button>
                 <button type="button"
                         class="btn btn-success"
-                        x-show="wizardStep === (showConditioningStep ? 6 : 5)"
+                        x-show="wizardStep === (showConditioningStep ? 8 : 7)"
                         @click="addDatasetToQueue()">
                     <i class="fas fa-plus me-1"></i> Add Another Dataset
                 </button>
                 <button type="button"
                         class="btn btn-primary"
-                        x-show="wizardStep === (showConditioningStep ? 6 : 5)"
-                        @click="confirmAllDatasets()"
+                        x-show="wizardStep === (showConditioningStep ? 8 : 7)"
+                        @click.prevent.stop="confirmAllDatasets()"
                         :disabled="saving">
                     <i class="fas fa-check me-1" x-show="!saving"></i>
                     <i class="fas fa-spinner fa-spin me-1" x-show="saving"></i>
@@ -357,5 +874,156 @@
                 </button>
             </div>
         </form>
+    </div>
+
+    <!-- File Browser Modal (nested) -->
+    <div class="modal-backdrop file-browser-backdrop"
+         x-show="fileBrowserOpen"
+         x-transition.opacity
+         x-cloak>
+        <div class="modal-dialog modal-lg">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-folder-tree me-2"></i>
+                    Select Dataset Directory
+                </h5>
+                <button type="button" class="btn-close" @click="closeFileBrowser()"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Current path -->
+                <div class="mb-3">
+                    <label class="form-label">Current Path:</label>
+                    <div class="input-group">
+                        <input type="text"
+                               class="form-control font-monospace"
+                               x-model="currentPath"
+                               readonly>
+                        <button type="button"
+                                class="btn btn-outline-secondary"
+                                @click="goToParentDirectory()"
+                                :disabled="!canGoUp"
+                                title="Go up one level">
+                            <i class="fas fa-level-up-alt"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Directory listing -->
+                <div class="directory-list-container">
+                    <!-- Loading State -->
+                    <div x-show="loadingDirectories" class="text-center py-4">
+                        <i class="fas fa-spinner fa-spin fa-2x"></i>
+                        <p class="mt-2">Loading directories...</p>
+                    </div>
+
+                    <!-- Error State -->
+                    <template x-if="!loadingDirectories && fileBrowserError">
+                        <div class="p-4 rounded" style="background: rgba(220, 38, 38, 0.1); border: 2px solid rgba(220, 38, 38, 0.3);">
+                            <div class="text-center mb-3">
+                                <i class="fas fa-exclamation-triangle fa-3x" style="color: rgba(220, 38, 38, 0.8);"></i>
+                            </div>
+                            <h6 class="text-center mb-3" style="color: rgba(220, 38, 38, 0.9);">
+                                <template x-if="fileBrowserErrorType === 'not_found'">
+                                    <span>Directory Not Found</span>
+                                </template>
+                                <template x-if="fileBrowserErrorType === 'permission'">
+                                    <span>Access Denied</span>
+                                </template>
+                                <template x-if="fileBrowserErrorType === 'other'">
+                                    <span>Error Loading Directories</span>
+                                </template>
+                            </h6>
+                            <p class="text-center mb-4" x-text="fileBrowserError"></p>
+
+                            <!-- Action buttons -->
+                            <div class="d-flex justify-content-center gap-2">
+                                <button type="button"
+                                        class="btn btn-outline-secondary"
+                                        @click="closeFileBrowser()">
+                                    <i class="fas fa-times me-1"></i>
+                                    Cancel
+                                </button>
+                                <template x-if="fileBrowserErrorType === 'not_found'">
+                                    <button type="button"
+                                            class="btn btn-primary"
+                                            @click="openDatasetsDirConfig()">
+                                        <i class="fas fa-cog me-1"></i>
+                                        Configure Path
+                                    </button>
+                                </template>
+                            </div>
+                        </div>
+                    </template>
+
+                    <!-- Empty State -->
+                    <template x-if="!loadingDirectories && !fileBrowserError && directories.length === 0">
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle me-2"></i>
+                            No subdirectories found in this location.
+                        </div>
+                    </template>
+
+                    <!-- Success State: Directory Listing -->
+                    <template x-if="!loadingDirectories && !fileBrowserError">
+                        <div class="list-group">
+                            <template x-for="dir in directories" :key="dir.path">
+                                <button type="button"
+                                        class="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
+                                        @click="selectDirectory(dir.path)"
+                                        @dblclick="navigateToDirectory(dir.path)">
+                                    <div>
+                                        <i class="fas fa-folder me-2" :class="{ 'text-success': dir.hasDataset }"></i>
+                                        <span x-text="dir.name"></span>
+                                        <span x-show="dir.hasDataset" class="badge bg-success ms-2">
+                                            Dataset: <span x-text="dir.datasetId"></span>
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <span x-show="dir.fileCount !== undefined" class="badge bg-secondary me-2">
+                                            <span x-text="dir.fileCount"></span> files
+                                        </span>
+                                        <i class="fas fa-chevron-right"></i>
+                                    </div>
+                                </button>
+                            </template>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- Dataset info if detected -->
+                <div x-show="selectedDirInfo && selectedDirInfo.hasDataset" class="mt-3 p-3 bg-dark rounded">
+                    <h6 class="text-success mb-2">
+                        <i class="fas fa-check-circle me-2"></i>
+                        Existing Dataset Detected
+                    </h6>
+                    <template x-if="selectedDirInfo">
+                        <div>
+                            <p class="mb-2"><strong>Dataset ID:</strong> <span x-text="selectedDirInfo.datasetId"></span></p>
+                            <p class="mb-2"><strong>Type:</strong> <span x-text="selectedDirInfo.config?.dataset_type || 'image'"></span></p>
+                            <p class="mb-2"><strong>Resolution:</strong> <span x-text="selectedDirInfo.config?.resolution || 'N/A'"></span></p>
+                            <p class="mb-0"><strong>Files:</strong> <span x-text="selectedDirInfo.totalFiles || 'N/A'"></span></p>
+                            <button type="button"
+                                    class="btn btn-sm btn-success mt-2"
+                                    @click="importDatasetConfig()">
+                                <i class="fas fa-download me-1"></i>
+                                Import Configuration
+                            </button>
+                        </div>
+                    </template>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" @click="closeFileBrowser()">
+                    Cancel
+                </button>
+                <button type="button"
+                        class="btn btn-primary"
+                        @click="confirmDirectory()"
+                        :disabled="!selectedPath">
+                    <i class="fas fa-check me-1"></i>
+                    Select Directory
+                </button>
+            </div>
+        </div>
     </div>
 </div>

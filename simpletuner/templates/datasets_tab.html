@@ -1,6 +1,7 @@
 <!-- templates/datasets_tab.html - Datasets configuration tab content -->
 <link rel="stylesheet" href="/static/css/form-sections.css">
 <link rel="stylesheet" href="/static/css/dataset-wizard.css">
+
 <div class="tab-fragment" id="datasets-tab-content" data-tab-name="datasets"
      x-data="datasetWizardComponent()" x-init="init()">
     <!-- Main Card -->
@@ -13,7 +14,8 @@
                 </div>
                 <button type="button"
                         class="btn btn-success"
-                        @click="openWizard()">
+                        @click.prevent="openWizard()"
+                        style="position: relative; z-index: 10;">
                     <i class="fas fa-plus me-1"></i> Create Dataset
                 </button>
             </div>
@@ -27,5 +29,3 @@
     <!-- Dataset Creation Wizard Modal -->
     {% include 'partials/dataset_wizard_modal.html' %}
 </div>
-
-<script src="/static/js/dataset-wizard.js"></script>
