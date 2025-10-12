@@ -12,12 +12,20 @@
                     <h5 class="mb-1"><i class="fas fa-database me-2"></i>Dataset Configuration</h5>
                     <p class="text-muted mb-0">Configure datasets and data loaders for training</p>
                 </div>
-                <button type="button"
-                        class="btn btn-success"
-                        @click.prevent="openWizard()"
-                        style="position: relative; z-index: 10;">
-                    <i class="fas fa-plus me-1"></i> Create Dataset
-                </button>
+                <div class="btn-group" role="group" style="position: relative; z-index: 10;">
+                    <button type="button"
+                            class="btn btn-primary"
+                            @click.prevent="openNewConfigModal()"
+                            title="Create a new multidatabackend configuration file">
+                        <i class="fas fa-file-plus me-1"></i> New Configuration
+                    </button>
+                    <button type="button"
+                            class="btn btn-success"
+                            @click.prevent="openWizard()"
+                            title="Add a dataset to the current configuration">
+                        <i class="fas fa-plus me-1"></i> Create Dataset
+                    </button>
+                </div>
             </div>
         </div>
         <div class="card-body">
@@ -28,4 +36,81 @@
 
     <!-- Dataset Creation Wizard Modal -->
     {% include 'partials/dataset_wizard_modal.html' %}
+
+    <!-- New Configuration Modal -->
+    <div x-show="showNewConfigModal"
+         x-cloak
+         class="modal fade"
+         :class="{ 'show d-block': showNewConfigModal }"
+         id="new-dataloader-config-modal"
+         tabindex="-1"
+         style="background-color: rgba(0,0,0,0.5);"
+         @click.self="closeNewConfigModal()"
+         @keydown.escape="if (showNewConfigModal && !creatingConfig) closeNewConfigModal()">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-file-plus me-2"></i>Create New Configuration
+                    </h5>
+                    <button type="button"
+                            class="btn-close"
+                            @click="closeNewConfigModal()"
+                            aria-label="Close"></button>
+                </div>
+                <form @submit.prevent @keydown.enter.prevent>
+                    <div class="modal-body">
+                        <p class="text-muted mb-3">
+                            Create a new dataset configuration file in your current environment directory.
+                        </p>
+
+                        <div class="mb-3">
+                            <label for="new-config-name" class="form-label">
+                                Configuration Identifier <span class="text-danger">*</span>
+                            </label>
+                            <input type="text"
+                                   class="form-control"
+                                   id="new-config-name"
+                                   x-model="newConfigName"
+                                   placeholder="e.g., my-training-data"
+                                   required
+                                   pattern="[a-zA-Z0-9_\-]+"
+                                   title="Only letters, numbers, hyphens, and underscores allowed"
+                                   @keydown.enter.prevent="if (newConfigName && newConfigName.trim() && !creatingConfig) createNewDataloaderConfig()"
+                                   autocomplete="off">
+                            <div class="form-text">
+                                Will be saved as <code>multidatabackend-<span x-text="newConfigName || 'name'"></span>.json</code>
+                            </div>
+                        </div>
+                        <!-- Hidden field to prevent single-input form auto-submission -->
+                        <input type="text" style="display:none;" tabindex="-1" autocomplete="off">
+
+                        <div class="alert alert-info" role="alert" x-show="currentEnvironment">
+                            <i class="fas fa-info-circle me-1"></i>
+                            <strong>Target location:</strong>
+                            <div class="mt-1 font-monospace small" x-text="currentEnvironment || 'No environment selected'"></div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button"
+                                class="btn btn-outline-secondary"
+                                @click="closeNewConfigModal()">
+                            Cancel
+                        </button>
+                        <button type="button"
+                                class="btn btn-primary"
+                                @click.prevent.stop="createNewDataloaderConfig()"
+                                :disabled="creatingConfig || !newConfigName">
+                            <span x-show="!creatingConfig">
+                                <i class="fas fa-check me-1"></i> Create
+                            </span>
+                            <span x-show="creatingConfig">
+                                <i class="fas fa-spinner fa-spin me-1"></i> Creating...
+                            </span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
 </div>

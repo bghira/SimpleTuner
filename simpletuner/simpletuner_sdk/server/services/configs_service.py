@@ -113,7 +113,7 @@ class ConfigsService:
                     return path.as_posix()
 
     @staticmethod
-    def _write_default_dataloader(path: Path, environment: str) -> None:
+    def _write_default_dataloader(path: Path, environment: str, include_defaults: bool = True) -> None:
         if path.exists():
             raise ConfigServiceError(
                 f"Dataloader config already exists at '{path}'",
@@ -122,30 +122,34 @@ class ConfigsService:
 
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        default_plan: List[Dict[str, Any]] = [
-            {
-                "id": f"{environment}-images",
-                "type": "local",
-                "dataset_type": "image",
-                "instance_data_dir": "",
-                "resolution": 1024,
-                "resolution_type": "pixel_area",
-                "caption_strategy": "textfile",
-                "minimum_image_size": 256,
-                "maximum_image_size": 4096,
-                "target_downsample_size": 1024,
-                "crop": True,
-                "crop_style": "center",
-                "crop_aspect": "square",
-            },
-            {
-                "id": f"{environment}-text-embeds",
-                "type": "local",
-                "dataset_type": "text_embeds",
-                "default": True,
-                "cache_dir": "",
-            },
-        ]
+        if include_defaults:
+            default_plan: List[Dict[str, Any]] = [
+                {
+                    "id": f"{environment}-images",
+                    "type": "local",
+                    "dataset_type": "image",
+                    "instance_data_dir": "",
+                    "resolution": 1024,
+                    "resolution_type": "pixel_area",
+                    "caption_strategy": "textfile",
+                    "minimum_image_size": 256,
+                    "maximum_image_size": 4096,
+                    "target_downsample_size": 1024,
+                    "crop": True,
+                    "crop_style": "center",
+                    "crop_aspect": "square",
+                },
+                {
+                    "id": f"{environment}-text-embeds",
+                    "type": "local",
+                    "dataset_type": "text_embeds",
+                    "default": True,
+                    "cache_dir": "",
+                },
+            ]
+        else:
+            # Create empty dataloader config
+            default_plan = []
 
         with path.open("w", encoding="utf-8") as handle:
             json.dump(default_plan, handle, indent=2)
@@ -576,7 +580,9 @@ class ConfigsService:
             },
         }
 
-    def create_environment_dataloader(self, environment: str, requested_path: Optional[str]) -> Dict[str, Any]:
+    def create_environment_dataloader(
+        self, environment: str, requested_path: Optional[str], include_defaults: bool = True
+    ) -> Dict[str, Any]:
         env_name = self._validate_config_name(environment)
         model_store = self._get_store("model")
 
@@ -596,7 +602,7 @@ class ConfigsService:
                 status.HTTP_409_CONFLICT,
             )
 
-        self._write_default_dataloader(dataloader_abs, env_name)
+        self._write_default_dataloader(dataloader_abs, env_name, include_defaults)
 
         config_payload["data_backend_config"] = dataloader_rel
         config_payload.pop("--data_backend_config", None)

@@ -976,6 +976,140 @@
                         webuiState.openOnboardingStepModal('default_datasets_dir');
                     }
                 }
+            },
+
+            // New Configuration Modal State & Methods
+            showNewConfigModal: false,
+            newConfigName: '',
+            creatingConfig: false,
+            currentEnvironment: '',
+
+            openNewConfigModal() {
+                // Get the current environment from the trainer store
+                const trainer = Alpine.store('trainer');
+                if (trainer && trainer.activeEnvironment) {
+                    this.currentEnvironment = trainer.activeEnvironment;
+                } else {
+                    // Fallback: Get from webui state
+                    const webuiState = Alpine.store('webuiState');
+                    if (webuiState && webuiState.defaults && webuiState.defaults.configs_dir) {
+                        this.currentEnvironment = webuiState.defaults.configs_dir;
+                    }
+                }
+
+                this.newConfigName = '';
+                this.showNewConfigModal = true;
+                document.body.classList.add('modal-open');
+            },
+
+            closeNewConfigModal() {
+                this.showNewConfigModal = false;
+                this.newConfigName = '';
+                this.creatingConfig = false;
+                document.body.classList.remove('modal-open');
+            },
+
+            async createNewDataloaderConfig() {
+                // EXTENSIVE LOGGING to find the culprit
+                const stack = new Error().stack;
+                console.log('[NEW CONFIG] ============ FUNCTION CALLED ============');
+                console.log('[NEW CONFIG] Stack trace:', stack);
+                console.log('[NEW CONFIG] Current state - name:', this.newConfigName, 'creating:', this.creatingConfig);
+
+                // Check if this is being called from Alpine event handler
+                if (stack.includes('Alpine') || stack.includes('cdn.min.js')) {
+                    console.log('[NEW CONFIG] ⚠️ CALLED FROM ALPINE.JS FRAMEWORK');
+                }
+
+                // Log all event listeners on the button
+                const button = document.querySelector('#new-dataloader-config-modal button.btn-primary');
+                if (button) {
+                    console.log('[NEW CONFIG] Button element:', button);
+                    console.log('[NEW CONFIG] Button onclick:', button.onclick);
+                }
+
+                // CRITICAL: Use timestamp-based guard to prevent infinite loops
+                const now = Date.now();
+                if (this._lastConfigCreationAttempt && (now - this._lastConfigCreationAttempt) < 2000) {
+                    console.log('[NEW CONFIG] Blocked: too soon after last attempt (debounce)');
+                    return;
+                }
+
+                // Guard against multiple simultaneous calls
+                if (!this.newConfigName || !this.newConfigName.trim() || this.creatingConfig) {
+                    console.log('[NEW CONFIG] Blocked: empty name or already creating');
+                    return;
+                }
+
+                // Validate config name format
+                const namePattern = /^[a-zA-Z0-9_-]+$/;
+                if (!namePattern.test(this.newConfigName)) {
+                    if (window.showToast) {
+                        window.showToast('Invalid configuration name. Use only letters, numbers, hyphens, and underscores.', 'error');
+                    }
+                    return;
+                }
+
+                // Get the current environment name
+                const trainer = Alpine.store('trainer');
+                const environmentName = trainer && trainer.activeEnvironment;
+
+                if (!environmentName) {
+                    if (window.showToast) {
+                        window.showToast('No environment selected. Please select an environment first.', 'error');
+                    }
+                    return;
+                }
+
+                console.log('[NEW CONFIG] Creating config:', this.newConfigName, 'for environment:', environmentName);
+
+                // Set guards
+                this._lastConfigCreationAttempt = now;
+                this.creatingConfig = true;
+
+                try {
+                    // Use the proper endpoint to create a dataloader for the environment
+                    // This creates an EMPTY multidatabackend config (no default datasets)
+                    const response = await fetch(`/api/configs/${encodeURIComponent(environmentName)}/dataloader`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            path: this.newConfigName ? `${environmentName}/multidatabackend-${this.newConfigName}.json` : null,
+                            include_defaults: false
+                        })
+                    });
+
+                    if (!response.ok) {
+                        const error = await response.json().catch(() => ({ detail: 'Failed to create configuration' }));
+                        throw new Error(error.detail || 'Failed to create configuration');
+                    }
+
+                    const result = await response.json();
+
+                    // Show success message
+                    if (window.showToast) {
+                        window.showToast(`Configuration created successfully at ${result.dataloader?.path || this.newConfigName + '.json'}`, 'success');
+                    }
+
+                    // Close the modal
+                    this.closeNewConfigModal();
+
+                    // Reload the dataset plan to reflect the new config (but don't await to avoid blocking)
+                    this.loadExistingConfig().catch(err => {
+                        console.error('[NEW CONFIG] Failed to reload config:', err);
+                    });
+
+                } catch (error) {
+                    console.error('[NEW CONFIG] Failed to create configuration:', error);
+                    if (window.showToast) {
+                        window.showToast(error.message || 'Failed to create configuration', 'error');
+                    }
+                    // Don't close modal on error so user can retry with different name
+                } finally {
+                    this.creatingConfig = false;
+                }
             }
         };
     };

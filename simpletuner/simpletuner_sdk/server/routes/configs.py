@@ -66,6 +66,7 @@ class EnvironmentDataloaderRequest(BaseModel):
     """Request parameters for creating a dataloader config for an environment."""
 
     path: Optional[str] = None
+    include_defaults: bool = True
 
 
 class LycorisConfigRequest(BaseModel):
@@ -179,7 +180,7 @@ async def copy_config(name: str, request: ConfigCopyRequest, config_type: str = 
 @router.post("/{name}/dataloader")
 async def create_environment_dataloader(name: str, request: EnvironmentDataloaderRequest) -> Dict[str, Any]:
     """Create a dataloader configuration for an environment."""
-    return _call_service(CONFIGS_SERVICE.create_environment_dataloader, name, request.path)
+    return _call_service(CONFIGS_SERVICE.create_environment_dataloader, name, request.path, request.include_defaults)
 
 
 @router.post("/{name}/activate")
