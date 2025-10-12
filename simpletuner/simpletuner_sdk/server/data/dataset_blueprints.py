@@ -57,7 +57,7 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                 "metadata_backend": "discovery",
                 "caption_strategy": "textfile",
                 "resolution": 1024,
-                "resolution_type": "pixel",
+                "resolution_type": "pixel_area",
                 "probability": 1,
                 "repeats": 0,
                 "cache_dir_vae": "cache/vae",

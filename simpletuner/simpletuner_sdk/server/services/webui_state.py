@@ -151,11 +151,13 @@ class WebUIDefaults:
 
     output_dir: Optional[str] = None
     configs_dir: Optional[str] = None
+    datasets_dir: Optional[str] = None
     active_config: Optional[str] = None
     theme: str = "dark"
     event_polling_interval: int = 5
     event_stream_enabled: bool = True
     auto_preserve_defaults: bool = True
+    allow_dataset_paths_outside_dir: bool = False
     accelerate_overrides: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -281,6 +283,15 @@ class WebUIStateStore:
 
         defaults.accelerate_overrides = _normalise_accelerate_overrides(defaults.accelerate_overrides)
 
+        # Normalise allow_dataset_paths_outside_dir toggle
+        allow_paths_value = payload.get("allow_dataset_paths_outside_dir", False)
+        if isinstance(allow_paths_value, str):
+            defaults.allow_dataset_paths_outside_dir = allow_paths_value.strip().lower() in {"1", "true", "yes", "on"}
+        elif allow_paths_value is None:
+            defaults.allow_dataset_paths_outside_dir = False
+        else:
+            defaults.allow_dataset_paths_outside_dir = bool(allow_paths_value)
+
         defaults.active_config = self._validate_active_config(defaults.active_config, defaults.configs_dir)
         return defaults
 
@@ -316,6 +327,7 @@ class WebUIStateStore:
         return {
             "configs_dir": str(home_dir / ".simpletuner" / "configs"),
             "output_dir": str(home_dir / ".simpletuner" / "output"),
+            "datasets_dir": str(home_dir / ".simpletuner" / "datasets"),
         }
 
     def resolve_defaults(self, defaults: WebUIDefaults) -> Dict[str, Any]:
@@ -336,6 +348,13 @@ class WebUIStateStore:
         else:
             resolved["output_dir"] = fallbacks["output_dir"]
             resolved["output_dir__source"] = "fallback"
+
+        datasets_dir = resolved.get("datasets_dir")
+        if datasets_dir:
+            resolved["datasets_dir__source"] = "stored"
+        else:
+            resolved["datasets_dir"] = fallbacks["datasets_dir"]
+            resolved["datasets_dir__source"] = "fallback"
 
         return {
             "raw": raw,

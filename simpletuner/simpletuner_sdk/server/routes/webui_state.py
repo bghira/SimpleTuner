@@ -55,6 +55,15 @@ _STEP_DEFINITIONS: List[OnboardingStepDefinition] = [
         applies_to_default="output_dir",
     ),
     OnboardingStepDefinition(
+        id="default_datasets_dir",
+        title="Default datasets directory",
+        prompt="Where do you want to store your datasets? (optional - leave blank to allow datasets anywhere)",
+        input_type="directory",
+        version=1,
+        required=False,
+        applies_to_default="datasets_dir",
+    ),
+    OnboardingStepDefinition(
         id="accelerate_defaults",
         title="Accelerate GPU Defaults",
         prompt="Review the detected hardware and choose how many processes Accelerate should launch by default.",

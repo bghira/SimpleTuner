@@ -1,0 +1,282 @@
+/* Dataset Creation Wizard Styles */
+
+.wizard-progress {
+    display: flex;
+    justify-content: space-between;
+    padding: 1.5rem 2rem 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(0, 0, 0, 0.2);
+}
+
+.wizard-step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex: 1;
+    position: relative;
+    cursor: pointer;
+    opacity: 0.5;
+    transition: opacity 0.3s;
+}
+
+.wizard-step.active {
+    opacity: 1;
+}
+
+.wizard-step.completed {
+    opacity: 0.8;
+}
+
+.wizard-step:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    top: 18px;
+    left: 50%;
+    width: 100%;
+    height: 2px;
+    background: rgba(255, 255, 255, 0.15);
+    z-index: 0;
+}
+
+.wizard-step.completed:not(:last-child)::after {
+    background: rgba(56, 189, 248, 0.5);
+}
+
+.step-number {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.1);
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 0.9rem;
+    margin-bottom: 0.5rem;
+    position: relative;
+    z-index: 1;
+    transition: all 0.3s;
+}
+
+.wizard-step.active .step-number {
+    background: rgba(56, 189, 248, 0.2);
+    border-color: #38bdf8;
+    color: #38bdf8;
+    box-shadow: 0 0 10px rgba(56, 189, 248, 0.3);
+}
+
+.wizard-step.completed .step-number {
+    background: rgba(34, 197, 94, 0.2);
+    border-color: #22c55e;
+    color: #22c55e;
+}
+
+.step-label {
+    font-size: 0.75rem;
+    text-align: center;
+    font-weight: 500;
+}
+
+.wizard-step.active .step-label {
+    color: #38bdf8;
+    font-weight: 600;
+}
+
+.wizard-step-content {
+    padding: 1rem 0;
+}
+
+.backend-card {
+    padding: 1.5rem;
+    border-radius: 0.5rem;
+    background: rgba(32, 36, 50, 0.9);
+    border: 2px solid rgba(255, 255, 255, 0.08);
+    cursor: pointer;
+    transition: all 0.3s;
+    text-align: center;
+}
+
+.backend-card:hover {
+    border-color: rgba(56, 189, 248, 0.5);
+    background: rgba(32, 36, 50, 1);
+    transform: translateY(-2px);
+}
+
+.backend-card.selected {
+    border-color: #38bdf8;
+    background: rgba(56, 189, 248, 0.1);
+    box-shadow: 0 0 15px rgba(56, 189, 248, 0.2);
+}
+
+.backend-icon {
+    font-size: 2.5rem;
+    margin-bottom: 1rem;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.backend-card.selected .backend-icon {
+    color: #38bdf8;
+}
+
+.backend-card h6 {
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+/* Modal overrides for wizard */
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.75);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1050;
+    padding: 1.5rem;
+    overflow-y: auto;
+}
+
+.modal-dialog.modal-xl {
+    background: #1c1f2e;
+    border-radius: 0.75rem;
+    width: 100%;
+    max-width: 900px;
+    max-height: 90vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.modal-header {
+    padding: 1.25rem 1.5rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.modal-title {
+    margin: 0;
+    font-size: 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.modal-body {
+    padding: 1.5rem;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.modal-footer {
+    padding: 1rem 1.5rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    flex-shrink: 0;
+}
+
+.btn-close {
+    background: none;
+    border: 0;
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 1.25rem;
+    cursor: pointer;
+    padding: 0;
+    width: 1.5rem;
+    height: 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.btn-close:hover {
+    color: #fff;
+}
+
+.btn-close::before {
+    content: '×';
+    font-size: 1.75rem;
+    line-height: 1;
+}
+
+/* Alpine.js cloak */
+[x-cloak] {
+    display: none !important;
+}
+
+/* Form elements in wizard */
+.wizard-step-content .form-label {
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+    display: block;
+}
+
+.wizard-step-content .form-control,
+.wizard-step-content .form-select {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #fff;
+}
+
+.wizard-step-content .form-control:focus,
+.wizard-step-content .form-select:focus {
+    background: rgba(0, 0, 0, 0.4);
+    border-color: #38bdf8;
+    box-shadow: 0 0 0 0.2rem rgba(56, 189, 248, 0.15);
+}
+
+.wizard-step-content .form-text {
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 0.875rem;
+    margin-top: 0.25rem;
+}
+
+.wizard-step-content .alert-info {
+    background: rgba(56, 189, 248, 0.1);
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    color: #e0f2fe;
+}
+
+/* Dataset queue cards */
+.wizard-step-content .card {
+    background: rgba(32, 36, 50, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.wizard-step-content .card-body {
+    padding: 1rem;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .wizard-progress {
+        padding: 1rem;
+    }
+
+    .step-label {
+        display: none;
+    }
+
+    .modal-dialog.modal-xl {
+        max-width: 100%;
+        margin: 0;
+        height: 100vh;
+        max-height: 100vh;
+        border-radius: 0;
+    }
+
+    .backend-card {
+        padding: 1rem;
+    }
+
+    .backend-icon {
+        font-size: 2rem;
+    }
+}

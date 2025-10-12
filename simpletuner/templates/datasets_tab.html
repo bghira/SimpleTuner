@@ -1,15 +1,31 @@
 <!-- templates/datasets_tab.html - Datasets configuration tab content -->
 <link rel="stylesheet" href="/static/css/form-sections.css">
-<div class="tab-fragment" id="datasets-tab-content" data-tab-name="datasets">
+<link rel="stylesheet" href="/static/css/dataset-wizard.css">
+<div class="tab-fragment" id="datasets-tab-content" data-tab-name="datasets"
+     x-data="datasetWizardComponent()" x-init="init()">
     <!-- Main Card -->
     <div class="card mb-4">
         <div class="card-header">
-            <h5 class="mb-1"><i class="fas fa-database me-2"></i>Dataset Configuration</h5>
-            <p class="text-muted mb-0">Configure datasets and data loaders for training</p>
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h5 class="mb-1"><i class="fas fa-database me-2"></i>Dataset Configuration</h5>
+                    <p class="text-muted mb-0">Configure datasets and data loaders for training</p>
+                </div>
+                <button type="button"
+                        class="btn btn-success"
+                        @click="openWizard()">
+                    <i class="fas fa-plus me-1"></i> Create Dataset
+                </button>
+            </div>
         </div>
         <div class="card-body">
             <!-- Include the dataloader builder section -->
             {% include 'trainer_dataloader_section.html' %}
         </div>
     </div>
+
+    <!-- Dataset Creation Wizard Modal -->
+    {% include 'partials/dataset_wizard_modal.html' %}
 </div>
+
+<script src="/static/js/dataset-wizard.js"></script>

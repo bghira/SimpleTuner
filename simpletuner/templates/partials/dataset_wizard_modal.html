@@ -1,0 +1,361 @@
+<!-- Dataset Creation Wizard Modal -->
+<div x-show="wizardOpen"
+     x-cloak
+     class="modal-backdrop"
+     @keydown.escape.window="closeWizard()"
+     x-transition.opacity>
+    <div class="modal-dialog modal-xl" @click.stop>
+        <div class="modal-header">
+            <h5 class="modal-title">
+                <i class="fas fa-magic me-2"></i>
+                <span x-text="wizardTitle"></span>
+            </h5>
+            <button type="button" class="btn-close" aria-label="Close" @click="closeWizard()"></button>
+        </div>
+
+        <!-- Progress Steps -->
+        <div class="wizard-progress">
+            <div class="wizard-step" :class="{ 'active': wizardStep === 1, 'completed': wizardStep > 1 }" @click="wizardStep >= 1 && goToStep(1)">
+                <div class="step-number">1</div>
+                <div class="step-label">Name</div>
+            </div>
+            <div class="wizard-step" :class="{ 'active': wizardStep === 2, 'completed': wizardStep > 2 }" @click="wizardStep >= 2 && goToStep(2)">
+                <div class="step-number">2</div>
+                <div class="step-label">Type</div>
+            </div>
+            <div class="wizard-step" :class="{ 'active': wizardStep === 3, 'completed': wizardStep > 3 }" @click="wizardStep >= 3 && goToStep(3)">
+                <div class="step-number">3</div>
+                <div class="step-label">Config</div>
+            </div>
+            <div class="wizard-step" :class="{ 'active': wizardStep >= 4, 'completed': wizardStep > 4 }" @click="wizardStep >= 4 && goToStep(4)">
+                <div class="step-number">4</div>
+                <div class="step-label">Resolution</div>
+            </div>
+            <div class="wizard-step" :class="{ 'active': wizardStep >= 5, 'completed': wizardStep > 5 }" x-show="showConditioningStep" @click="wizardStep >= 5 && goToStep(5)">
+                <div class="step-number">5</div>
+                <div class="step-label">Conditioning</div>
+            </div>
+            <div class="wizard-step" :class="{ 'active': wizardStep === 6, 'completed': wizardStep > 6 }" @click="wizardStep >= 6 && goToStep(6)">
+                <div class="step-number"><span x-text="showConditioningStep ? '6' : '5'"></span></div>
+                <div class="step-label">Review</div>
+            </div>
+        </div>
+
+        <form @submit.prevent="handleStepSubmit()">
+            <div class="modal-body">
+                <!-- Step 1: Dataset Name -->
+                <div x-show="wizardStep === 1" class="wizard-step-content">
+                    <h6 class="mb-3">Enter a unique name for your dataset</h6>
+                    <div class="mb-3">
+                        <label class="form-label">Dataset ID *</label>
+                        <input type="text"
+                               class="form-control"
+                               x-model="currentDataset.id"
+                               placeholder="my-training-images"
+                               required
+                               :disabled="editingQueuedDataset">
+                        <div class="form-text">This identifier must be unique across all datasets in your configuration.</div>
+                        <div x-show="datasetIdError" class="text-danger small mt-1" x-text="datasetIdError"></div>
+                    </div>
+                </div>
+
+                <!-- Step 2: Backend Type Selection -->
+                <div x-show="wizardStep === 2" class="wizard-step-content">
+                    <h6 class="mb-3">Where is your dataset stored?</h6>
+                    <div class="row g-3">
+                        <template x-for="blueprint in blueprints" :key="blueprint.id">
+                            <div class="col-md-6" x-show="blueprint.datasetTypes.includes('image')">
+                                <div class="backend-card"
+                                     :class="{ 'selected': selectedBackend === blueprint.backendType }"
+                                     @click="selectBackend(blueprint.backendType)">
+                                    <div class="backend-icon">
+                                        <i class="fas"
+                                           :class="{
+                                               'fa-folder': blueprint.backendType === 'local',
+                                               'fa-cloud': blueprint.backendType === 'aws',
+                                               'fa-robot': blueprint.backendType === 'huggingface',
+                                               'fa-file-csv': blueprint.backendType === 'csv'
+                                           }"></i>
+                                    </div>
+                                    <h6 x-text="blueprint.label"></h6>
+                                    <p class="text-muted small mb-0" x-text="blueprint.description"></p>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Step 3: Required Credentials/Paths -->
+                <div x-show="wizardStep === 3" class="wizard-step-content">
+                    <h6 class="mb-3">Configure required settings</h6>
+                    <template x-if="selectedBlueprint">
+                        <div>
+                            <template x-for="field in selectedBlueprint.fields.filter(f => f.required)" :key="field.id">
+                                <div class="mb-3">
+                                    <label class="form-label" x-text="field.label + ' *'"></label>
+                                    <!-- Text input -->
+                                    <input x-show="field.type === 'text'"
+                                           type="text"
+                                           class="form-control"
+                                           :placeholder="field.placeholder"
+                                           x-model="currentDataset[field.id]"
+                                           required>
+                                    <!-- Number input -->
+                                    <input x-show="field.type === 'number'"
+                                           type="number"
+                                           class="form-control"
+                                           :placeholder="field.placeholder"
+                                           :min="field.min"
+                                           :max="field.max"
+                                           :step="field.step"
+                                           x-model.number="currentDataset[field.id]"
+                                           required>
+                                    <!-- Select dropdown -->
+                                    <select x-show="field.type === 'select'"
+                                            class="form-select"
+                                            x-model="currentDataset[field.id]"
+                                            required>
+                                        <template x-for="option in field.options" :key="option.value">
+                                            <option :value="option.value" x-text="option.label"></option>
+                                        </template>
+                                    </select>
+                                    <div class="form-text" x-show="field.description" x-text="field.description"></div>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- Step 4: Resolution Configuration -->
+                <div x-show="wizardStep === 4" class="wizard-step-content">
+                    <h6 class="mb-3">Configure image resolution settings</h6>
+
+                    <div x-show="!resolutionConfigSkipped" class="mb-4">
+                        <!-- Resolution Type -->
+                        <div class="mb-4">
+                            <label class="form-label fw-bold">Resolution Type</label>
+                            <div class="alert alert-info">
+                                <i class="fas fa-lightbulb me-2"></i>
+                                <strong>Resolution Type</strong> determines how images are resized:
+                                <ul class="mb-2 mt-2">
+                                    <li><strong>pixel_area (RECOMMENDED)</strong>: Maintains aspect ratio, resizes to target megapixel area</li>
+                                    <li><strong>pixel</strong>: Fixed edge length (may distort aspect ratios)</li>
+                                    <li><strong>area</strong>: Direct megapixel target</li>
+                                </ul>
+                                💡 We recommend <strong>"pixel_area"</strong> for most training scenarios as it preserves image proportions while ensuring consistent memory usage.
+                            </div>
+                            <div class="btn-group w-100" role="group">
+                                <input type="radio" class="btn-check" id="res-type-pixel-area" value="pixel_area" x-model="currentDataset.resolution_type">
+                                <label class="btn btn-outline-primary" for="res-type-pixel-area">
+                                    <i class="fas fa-check-circle me-1" x-show="currentDataset.resolution_type === 'pixel_area'"></i>
+                                    pixel_area (Recommended)
+                                </label>
+                                <input type="radio" class="btn-check" id="res-type-pixel" value="pixel" x-model="currentDataset.resolution_type">
+                                <label class="btn btn-outline-primary" for="res-type-pixel">pixel</label>
+                                <input type="radio" class="btn-check" id="res-type-area" value="area" x-model="currentDataset.resolution_type">
+                                <label class="btn btn-outline-primary" for="res-type-area">area</label>
+                            </div>
+                        </div>
+
+                        <!-- Base Resolution -->
+                        <div class="mb-4">
+                            <label class="form-label fw-bold">Base Resolution</label>
+                            <div class="form-text mb-2">Higher resolutions require more VRAM but produce better quality. 1024 is recommended for most GPUs.</div>
+                            <div class="row g-2 mb-2">
+                                <template x-for="preset in [512, 768, 1024, 1536, 2048]" :key="preset">
+                                    <div class="col">
+                                        <button type="button"
+                                                class="btn w-100"
+                                                :class="currentDataset.resolution === preset ? 'btn-primary' : 'btn-outline-secondary'"
+                                                @click="currentDataset.resolution = preset"
+                                                x-text="preset"></button>
+                                    </div>
+                                </template>
+                            </div>
+                            <input type="number"
+                                   class="form-control"
+                                   x-model.number="currentDataset.resolution"
+                                   min="256"
+                                   step="64"
+                                   placeholder="Custom resolution">
+                        </div>
+
+                        <!-- Advanced Options (Collapsible) -->
+                        <div class="mb-3">
+                            <button type="button"
+                                    class="btn btn-sm btn-outline-secondary"
+                                    @click="showAdvancedResolution = !showAdvancedResolution">
+                                <i class="fas" :class="showAdvancedResolution ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+                                Advanced Resolution Options
+                            </button>
+                            <div x-show="showAdvancedResolution" class="mt-3" x-transition>
+                                <div class="mb-3">
+                                    <label class="form-label">Maximum Image Size</label>
+                                    <input type="number" class="form-control" x-model.number="currentDataset.maximum_image_size" placeholder="Optional clamp before downsampling">
+                                    <div class="form-text">Clamp before downsampling (match resolution type)</div>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Target Downsample Size</label>
+                                    <input type="number" class="form-control" x-model.number="currentDataset.target_downsample_size" placeholder="Secondary clamp">
+                                    <div class="form-text">Secondary clamp for very large assets</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <button type="button"
+                                class="btn btn-primary"
+                                x-show="resolutionConfigSkipped"
+                                @click="resolutionConfigSkipped = false">
+                            Configure Resolution Settings
+                        </button>
+                        <button type="button"
+                                class="btn btn-outline-secondary"
+                                x-show="!resolutionConfigSkipped"
+                                @click="skipResolutionConfig()">
+                            Skip - I'll configure later
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Step 5: ControlNet/Conditioning (Conditional) -->
+                <div x-show="wizardStep === 5 && showConditioningStep" class="wizard-step-content">
+                    <h6 class="mb-3">Auto-generate conditioning data for ControlNet</h6>
+                    <div x-show="!conditioningConfigured" class="mb-4">
+                        <div class="alert alert-info">
+                            <i class="fas fa-robot me-2"></i>
+                            ControlNet training detected! Would you like to automatically generate conditioning data during training?
+                        </div>
+                        <button type="button" class="btn btn-success mb-3" @click="conditioningConfigured = true">
+                            <i class="fas fa-check me-1"></i> Yes - Configure Conditioning
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary mb-3 ms-2" @click="skipConditioning()">
+                            No - Skip Conditioning Setup
+                        </button>
+                    </div>
+
+                    <div x-show="conditioningConfigured">
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Select Conditioning Generator</label>
+                            <select class="form-select" x-model="selectedConditioningType">
+                                <option value="">Select a generator...</option>
+                                <template x-for="gen in conditioningGenerators" :key="gen.value">
+                                    <option :value="gen.value">
+                                        <span x-text="gen.label"></span> - <span x-text="gen.description"></span>
+                                    </option>
+                                </template>
+                            </select>
+                        </div>
+
+                        <!-- Conditioning params (simplified for now) -->
+                        <div x-show="selectedConditioningType === 'canny'" class="mt-3">
+                            <h6 class="mb-2">Canny Parameters</h6>
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">Low Threshold</label>
+                                    <input type="number" class="form-control" x-model.number="conditioningParams.low_threshold" value="100">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">High Threshold</label>
+                                    <input type="number" class="form-control" x-model.number="conditioningParams.high_threshold" value="200">
+                                </div>
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-outline-secondary btn-sm mt-2" @click="conditioningConfigured = false">
+                            <i class="fas fa-times me-1"></i> Cancel Conditioning
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Step 6: Review & Confirm -->
+                <div x-show="wizardStep === (showConditioningStep ? 6 : 5)" class="wizard-step-content">
+                    <h6 class="mb-3">Review Your Dataset Configuration</h6>
+
+                    <div class="card mb-3">
+                        <div class="card-body">
+                            <h6 class="card-title">
+                                <i class="fas fa-database me-2"></i>
+                                <span x-text="currentDataset.id"></span>
+                            </h6>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <small class="text-muted">Backend Type:</small>
+                                    <div x-text="selectedBackend"></div>
+                                </div>
+                                <div class="col-md-6">
+                                    <small class="text-muted">Resolution:</small>
+                                    <div><span x-text="currentDataset.resolution"></span> (<span x-text="currentDataset.resolution_type"></span>)</div>
+                                </div>
+                            </div>
+                            <template x-if="conditioningConfigured && selectedConditioningType">
+                                <div class="mt-2">
+                                    <small class="text-muted">Conditioning:</small>
+                                    <div x-text="selectedConditioningType"></div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
+                    <!-- Dataset Queue -->
+                    <div x-show="datasetQueue.length > 0" class="mb-3">
+                        <h6 class="mb-2">Datasets in Queue (<span x-text="datasetQueue.length"></span>)</h6>
+                        <template x-for="(dataset, index) in datasetQueue" :key="index">
+                            <div class="card mb-2">
+                                <div class="card-body py-2 d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <strong x-text="dataset.id"></strong>
+                                        <span class="text-muted ms-2" x-text="`(${dataset.type})`"></span>
+                                    </div>
+                                    <div class="btn-group btn-group-sm">
+                                        <button type="button" class="btn btn-outline-secondary" @click="editQueuedDataset(index)">
+                                            <i class="fas fa-edit"></i>
+                                        </button>
+                                        <button type="button" class="btn btn-outline-danger" @click="removeFromQueue(index)">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button type="button"
+                        class="btn btn-outline-secondary"
+                        @click="wizardPrevStep()"
+                        x-show="wizardStep > 1 && !editingQueuedDataset">
+                    <i class="fas fa-arrow-left me-1"></i> Back
+                </button>
+                <button type="button"
+                        class="btn btn-outline-secondary"
+                        @click="closeWizard()">
+                    Cancel
+                </button>
+                <button type="submit"
+                        class="btn btn-primary"
+                        x-show="wizardStep < (showConditioningStep ? 6 : 5)"
+                        :disabled="!canProceed">
+                    Next <i class="fas fa-arrow-right ms-1"></i>
+                </button>
+                <button type="button"
+                        class="btn btn-success"
+                        x-show="wizardStep === (showConditioningStep ? 6 : 5)"
+                        @click="addDatasetToQueue()">
+                    <i class="fas fa-plus me-1"></i> Add Another Dataset
+                </button>
+                <button type="button"
+                        class="btn btn-primary"
+                        x-show="wizardStep === (showConditioningStep ? 6 : 5)"
+                        @click="confirmAllDatasets()"
+                        :disabled="saving">
+                    <i class="fas fa-check me-1" x-show="!saving"></i>
+                    <i class="fas fa-spinner fa-spin me-1" x-show="saving"></i>
+                    <span x-text="saving ? 'Saving...' : 'Confirm & Save All'"></span>
+                </button>
+            </div>
+        </form>
+    </div>
+</div>

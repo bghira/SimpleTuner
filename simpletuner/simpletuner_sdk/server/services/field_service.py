@@ -83,6 +83,8 @@ class FieldService:
 
     _WEBUI_ONLY_FIELDS = {
         "configs_dir",
+        "datasets_dir",
+        "allow_dataset_paths_outside_dir",
         "num_validation_images",
         "__active_tab__",
         "project_name",
