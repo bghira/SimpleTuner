@@ -215,6 +215,235 @@ async def update_dataset_plan(payload: DatasetPlanPayload) -> DatasetPlanRespons
     return _persist_plan(payload)
 
 
+# File Browser and Dataset Detection Endpoints
+
+import json
+import glob
+
+
+@router.get("/browse")
+async def browse_directories(path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Browse directories at the given path and detect existing datasets.
+
+    Returns a list of directories with metadata about whether they contain
+    existing SimpleTuner datasets (detected via aspect bucket JSON files).
+
+    If no path is provided, uses the configured datasets_dir from defaults.
+    Enforces datasets_dir root unless allow_dataset_paths_outside_dir is enabled.
+    """
+    try:
+        # Load resolved defaults from WebUIStateStore (includes fallbacks)
+        webui_state = WebUIStateStore()
+        defaults_raw = webui_state.load_defaults()
+        defaults_bundle = webui_state.resolve_defaults(defaults_raw)
+        resolved = defaults_bundle["resolved"]
+
+        # Also check onboarding values as they might have been set but not yet applied to defaults
+        onboarding = webui_state.load_onboarding()
+        datasets_dir = resolved.get("datasets_dir")
+
+        # If datasets_dir is still the fallback, check if there's an onboarding value
+        if datasets_dir == defaults_bundle["fallbacks"].get("datasets_dir"):
+            datasets_step = onboarding.steps.get("datasets_dir")
+            if datasets_step and datasets_step.value:
+                datasets_dir = datasets_step.value
+
+        allow_outside = resolved.get("allow_dataset_paths_outside_dir", False)
+
+        # Use provided path or fall back to resolved datasets_dir (which includes fallback)
+        if path is None:
+            path = datasets_dir
+
+        path_obj = Path(path).resolve()
+
+        # Enforce datasets_dir root unless override is enabled
+        if not allow_outside and datasets_dir:
+            datasets_root = Path(datasets_dir).resolve()
+            try:
+                path_obj.relative_to(datasets_root)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Access denied: path is outside configured datasets directory. Enable 'allow_dataset_paths_outside_dir' to browse other locations."
+                )
+
+        if not path_obj.exists():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Directory does not exist: {path}"
+            )
+
+        if not path_obj.is_dir():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Path is not a directory: {path}"
+            )
+
+        directories = []
+
+        for item in sorted(path_obj.iterdir()):
+            if not item.is_dir():
+                continue
+
+            dir_info = {
+                "name": item.name,
+                "path": str(item),
+                "hasDataset": False,
+                "datasetId": None,
+                "fileCount": None,
+            }
+
+            # Check for aspect bucket metadata files
+            bucket_files = list(item.glob("aspect_ratio_bucket_indices_*.json"))
+            if bucket_files:
+                # Extract dataset ID from filename
+                # Format: aspect_ratio_bucket_indices_{dataset_id}.json
+                bucket_file = bucket_files[0]
+                filename = bucket_file.stem  # Remove .json
+                dataset_id = filename.replace("aspect_ratio_bucket_indices_", "")
+
+                dir_info["hasDataset"] = True
+                dir_info["datasetId"] = dataset_id
+
+                # Count files in the directory (excluding json metadata)
+                all_files = [f for f in item.iterdir() if f.is_file() and not f.suffix == '.json']
+                dir_info["fileCount"] = len(all_files)
+
+            directories.append(dir_info)
+
+        # Calculate parent path in a platform-neutral way
+        parent_path = str(path_obj.parent) if path_obj.parent != path_obj else None
+
+        # Check if we can go up (don't allow going above datasets_dir unless override)
+        can_go_up = parent_path is not None
+        if can_go_up and not allow_outside and datasets_dir:
+            datasets_root = Path(datasets_dir).resolve()
+            try:
+                Path(parent_path).resolve().relative_to(datasets_root)
+            except ValueError:
+                can_go_up = False
+                parent_path = None
+
+        return {
+            "directories": directories,
+            "currentPath": str(path_obj),
+            "parentPath": parent_path,
+            "canGoUp": can_go_up
+        }
+
+    except PermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Permission denied accessing path: {path}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error browsing directories: {str(e)}"
+        )
+
+
+@router.get("/detect")
+async def detect_dataset(path: str) -> Dict[str, Any]:
+    """
+    Detect if a directory contains an existing SimpleTuner dataset by reading
+    the aspect bucket metadata files and returning the configuration.
+
+    Enforces datasets_dir root unless allow_dataset_paths_outside_dir is enabled.
+    """
+    try:
+        # Load resolved defaults from WebUIStateStore (includes fallbacks)
+        webui_state = WebUIStateStore()
+        defaults_raw = webui_state.load_defaults()
+        defaults_bundle = webui_state.resolve_defaults(defaults_raw)
+        resolved = defaults_bundle["resolved"]
+
+        # Also check onboarding values as they might have been set but not yet applied to defaults
+        onboarding = webui_state.load_onboarding()
+        datasets_dir = resolved.get("datasets_dir")
+
+        # If datasets_dir is still the fallback, check if there's an onboarding value
+        if datasets_dir == defaults_bundle["fallbacks"].get("datasets_dir"):
+            datasets_step = onboarding.steps.get("datasets_dir")
+            if datasets_step and datasets_step.value:
+                datasets_dir = datasets_step.value
+
+        allow_outside = resolved.get("allow_dataset_paths_outside_dir", False)
+
+        path_obj = Path(path).resolve()
+
+        # Enforce datasets_dir root unless override is enabled
+        if not allow_outside and datasets_dir:
+            datasets_root = Path(datasets_dir).resolve()
+            try:
+                path_obj.relative_to(datasets_root)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Access denied: path is outside configured datasets directory"
+                )
+
+        if not path_obj.exists():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Directory does not exist: {path}"
+            )
+
+        if not path_obj.is_dir():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Path is not a directory: {path}"
+            )
+
+        # Look for aspect bucket indices file
+        bucket_files = list(path_obj.glob("aspect_ratio_bucket_indices_*.json"))
+        if not bucket_files:
+            return {
+                "hasDataset": False,
+                "path": str(path_obj)
+            }
+
+        bucket_file = bucket_files[0]
+        filename = bucket_file.stem
+        dataset_id = filename.replace("aspect_ratio_bucket_indices_", "")
+
+        # Read the bucket indices file to get config
+        with open(bucket_file, 'r') as f:
+            bucket_data = json.load(f)
+
+        config = bucket_data.get("config", {})
+
+        # Count total files from aspect ratio buckets
+        aspect_buckets = bucket_data.get("aspect_ratio_bucket_indices", {})
+        total_files = sum(len(files) for files in aspect_buckets.values())
+
+        return {
+            "hasDataset": True,
+            "datasetId": dataset_id,
+            "path": str(path_obj),
+            "config": config,
+            "totalFiles": total_files,
+            "aspectRatios": list(aspect_buckets.keys())
+        }
+
+    except PermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Permission denied accessing path: {path}"
+        )
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error parsing dataset metadata: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error detecting dataset: {str(e)}"
+        )
+
+
 # HTMX Individual Dataset CRUD Operations
 
 
