@@ -133,6 +133,10 @@ function dataloaderSectionComponent() {
     get conditioningRequired() {
         return Boolean(this.modelContext.requiresConditioningDataset);
     },
+    get isVideoModel() {
+        const context = this.modelContext || {};
+        return Boolean(context.isVideoModel || context.supportsVideo);
+    },
     get conditioningDatasetType() {
         return this.modelContext.conditioningDatasetType || 'conditioning';
     },
@@ -900,7 +904,10 @@ function dataloaderSectionComponent() {
                     <div class="preset-name">AWS with Local Cache</div>
                     <div class="preset-description">Cloud storage with fast local caching</div>
                 </button>
-                <button type="button" class="preset-btn" data-preset="video-training" @click="loadPreset('video-training')" :disabled="!storeReady">
+                <button type="button" class="preset-btn" data-preset="video-training"
+                        @click="loadPreset('video-training')"
+                        :disabled="!storeReady || !isVideoModel"
+                        :title="isVideoModel ? 'Load video training preset' : 'Video training is only available for video models'">
                     <div class="preset-name">Video Training</div>
                     <div class="preset-description">Configuration for video model training</div>
                 </button>
@@ -909,6 +916,35 @@ function dataloaderSectionComponent() {
                         :title="conditioningSupported ? 'Load control-focused preset' : 'Active model does not support conditioning features'">
                     <div class="preset-name">ControlNet Training</div>
                     <div class="preset-description">Setup with conditioning generation</div>
+                </button>
+            </div>
+        </div>
+
+        <!-- Add Dataset Buttons -->
+        <div class="mb-4" x-show="!datasetsLoading">
+            <h6 class="subsection-title">Add Dataset Manually</h6>
+            <p class="text-muted small mb-3">Configure individual datasets with custom settings. For guided setup, use the Dataset Wizard above.</p>
+            <div class="add-dataset-container">
+                <button type="button" class="add-dataset-btn" @click="addDataset('image')">
+                    <i class="fas fa-plus"></i> 🖼️ Add Image Dataset
+                </button>
+                <button type="button" class="add-dataset-btn"
+                        @click="addDataset('video')"
+                        :disabled="!isVideoModel"
+                        :title="isVideoModel ? 'Add a video dataset' : 'Video datasets are only available for video models'">
+                    <i class="fas fa-plus"></i> 🎬 Add Video Dataset
+                </button>
+                <button type="button" class="add-dataset-btn" @click="addDataset('text_embeds')">
+                    <i class="fas fa-plus"></i> 💾 Add Text Embeds
+                </button>
+                <button type="button" class="add-dataset-btn" @click="addDataset('image_embeds')">
+                    <i class="fas fa-plus"></i> 💾 Add Image Embeds
+                </button>
+                <button type="button" class="add-dataset-btn"
+                        @click="addDataset('conditioning')"
+                        :disabled="!conditioningSupported"
+                        :title="conditioningSupported ? 'Add a conditioning dataset' : 'No supported model features for conditioning'">
+                    <i class="fas fa-plus"></i> 🎨 Add Conditioning
                 </button>
             </div>
         </div>
@@ -1975,28 +2011,6 @@ function dataloaderSectionComponent() {
                 <i class="fas fa-database mb-2" style="font-size: 2rem;"></i>
                 <p>No datasets configured. Add a dataset to get started.</p>
             </div>
-        </div>
-
-        <!-- Add Dataset Buttons -->
-        <div class="add-dataset-container">
-            <button type="button" class="add-dataset-btn" @click="addDataset('image')">
-                <i class="fas fa-plus"></i> 🖼️ Add Image Dataset
-            </button>
-            <button type="button" class="add-dataset-btn" @click="addDataset('video')">
-                <i class="fas fa-plus"></i> 🎬 Add Video Dataset
-            </button>
-            <button type="button" class="add-dataset-btn" @click="addDataset('text_embeds')">
-                <i class="fas fa-plus"></i> 💾 Add Text Embeds
-            </button>
-            <button type="button" class="add-dataset-btn" @click="addDataset('image_embeds')">
-                <i class="fas fa-plus"></i> 💾 Add Image Embeds
-            </button>
-            <button type="button" class="add-dataset-btn"
-                    @click="addDataset('conditioning')"
-                    :disabled="!conditioningSupported"
-                    :title="conditioningSupported ? 'Add a conditioning dataset' : 'No supported model features for conditioning'">
-                <i class="fas fa-plus"></i> 🎨 Add Conditioning
-            </button>
         </div>
 
         <!-- Save Buttons -->
