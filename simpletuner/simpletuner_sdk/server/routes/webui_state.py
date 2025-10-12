@@ -57,10 +57,10 @@ _STEP_DEFINITIONS: List[OnboardingStepDefinition] = [
     OnboardingStepDefinition(
         id="default_datasets_dir",
         title="Default datasets directory",
-        prompt="Where do you want to store your datasets? (optional - leave blank to allow datasets anywhere)",
+        prompt="Where do you want to store your datasets? (Leave blank to allow datasets anywhere)",
         input_type="directory",
-        version=1,
-        required=False,
+        version=2,
+        required=True,
         applies_to_default="datasets_dir",
     ),
     OnboardingStepDefinition(
@@ -179,6 +179,8 @@ def _apply_step_to_defaults(
         defaults.output_dir = value
     elif step.applies_to_default == "configs_dir" and value is not None:
         defaults.configs_dir = value
+    elif step.applies_to_default == "datasets_dir" and value is not None:
+        defaults.datasets_dir = value
     elif step.applies_to_default == "accelerate_overrides":
         defaults.accelerate_overrides = _normalise_accelerate_overrides(value)
 
@@ -191,11 +193,25 @@ async def update_onboarding_step(step_id: str, payload: OnboardingStepUpdate) ->
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Unknown onboarding step '{step_id}'")
 
     value = _normalise_value(definition, payload.value)
-    if definition.required and not value:
+    # Special case: datasets_dir can be empty (means allow datasets anywhere)
+    if definition.required and not value and definition.id != "default_datasets_dir":
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="A value is required to complete this step.",
         )
+
+    # Auto-create directory if it's a directory type and doesn't exist
+    if definition.input_type == "directory" and value:
+        from pathlib import Path
+        dir_path = Path(value)
+        if not dir_path.exists():
+            try:
+                dir_path.mkdir(parents=True, exist_ok=True)
+            except (OSError, PermissionError) as error:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to create directory '{value}': {error}",
+                ) from error
 
     store = WebUIStateStore()
     try:
@@ -231,11 +247,13 @@ class DefaultsUpdate(BaseModel):
 
     configs_dir: Optional[str] = None
     output_dir: Optional[str] = None
+    datasets_dir: Optional[str] = None
     active_config: Optional[str] = None
     theme: Optional[str] = None
     event_polling_interval: Optional[int] = None
     event_stream_enabled: Optional[bool] = None
     auto_preserve_defaults: Optional[bool] = None
+    allow_dataset_paths_outside_dir: Optional[bool] = None
     accelerate_overrides: Optional[Dict[str, object]] = None
 
 
@@ -254,6 +272,12 @@ async def update_defaults(payload: DefaultsUpdate) -> Dict[str, object]:
         if payload.output_dir is not None:
             normalized_path = os.path.abspath(os.path.expanduser(payload.output_dir.strip()))
             defaults.output_dir = normalized_path
+        if payload.datasets_dir is not None:
+            if payload.datasets_dir.strip():
+                normalized_path = os.path.abspath(os.path.expanduser(payload.datasets_dir.strip()))
+                defaults.datasets_dir = normalized_path
+            else:
+                defaults.datasets_dir = None
         if payload.active_config is not None:
             defaults.active_config = payload.active_config
         if payload.theme is not None:
@@ -269,6 +293,8 @@ async def update_defaults(payload: DefaultsUpdate) -> Dict[str, object]:
             defaults.event_stream_enabled = bool(payload.event_stream_enabled)
         if payload.auto_preserve_defaults is not None:
             defaults.auto_preserve_defaults = bool(payload.auto_preserve_defaults)
+        if payload.allow_dataset_paths_outside_dir is not None:
+            defaults.allow_dataset_paths_outside_dir = bool(payload.allow_dataset_paths_outside_dir)
         if payload.accelerate_overrides is not None:
             defaults.accelerate_overrides = _normalise_accelerate_overrides(payload.accelerate_overrides)
 
