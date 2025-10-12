@@ -14,46 +14,22 @@
             <button type="button" class="btn-close" aria-label="Close" @click="closeWizard()"></button>
         </div>
 
-        <!-- Progress Steps -->
+        <!-- Progress Steps (Dynamic) -->
         <div class="wizard-progress">
-            <div class="wizard-step" :class="{ 'active': wizardStep === 1, 'completed': wizardStep > 1 }" @click="wizardStep >= 1 && goToStep(1)">
-                <div class="step-number">1</div>
-                <div class="step-label">Name</div>
-            </div>
-            <div class="wizard-step" :class="{ 'active': wizardStep === 2, 'completed': wizardStep > 2 }" @click="wizardStep >= 2 && goToStep(2)">
-                <div class="step-number">2</div>
-                <div class="step-label">Type</div>
-            </div>
-            <div class="wizard-step" :class="{ 'active': wizardStep === 3, 'completed': wizardStep > 3 }" @click="wizardStep >= 3 && goToStep(3)">
-                <div class="step-number">3</div>
-                <div class="step-label">Config</div>
-            </div>
-            <div class="wizard-step" :class="{ 'active': wizardStep === 4, 'completed': wizardStep > 4 }" @click="wizardStep >= 4 && goToStep(4)">
-                <div class="step-number">4</div>
-                <div class="step-label">Resolution</div>
-            </div>
-            <div class="wizard-step" :class="{ 'active': wizardStep === 5, 'completed': wizardStep > 5 }" @click="wizardStep >= 5 && goToStep(5)">
-                <div class="step-number">5</div>
-                <div class="step-label">Cropping</div>
-            </div>
-            <div class="wizard-step" :class="{ 'active': wizardStep === 6, 'completed': wizardStep > 6 }" @click="wizardStep >= 6 && goToStep(6)">
-                <div class="step-number">6</div>
-                <div class="step-label">Captions</div>
-            </div>
-            <div class="wizard-step" :class="{ 'active': wizardStep === 7, 'completed': wizardStep > 7 }" x-show="showConditioningStep" @click="wizardStep >= 7 && goToStep(7)">
-                <div class="step-number">7</div>
-                <div class="step-label">Conditioning</div>
-            </div>
-            <div class="wizard-step" :class="{ 'active': wizardStep === (showConditioningStep ? 8 : 7), 'completed': wizardStep > (showConditioningStep ? 8 : 7) }" @click="wizardStep >= (showConditioningStep ? 8 : 7) && goToStep(showConditioningStep ? 8 : 7)">
-                <div class="step-number"><span x-text="showConditioningStep ? '8' : '7'"></span></div>
-                <div class="step-label">Review</div>
-            </div>
+            <template x-for="(step, index) in stepDefinitions" :key="step.id">
+                <div class="wizard-step"
+                     :class="{ 'active': isStepActive(step.id), 'completed': isStepCompleted(step.id) }"
+                     @click="isStepCompleted(step.id) && goToStep(step.displayNumber)">
+                    <div class="step-number" x-text="step.displayNumber"></div>
+                    <div class="step-label" x-text="step.label"></div>
+                </div>
+            </template>
         </div>
 
         <form @submit.prevent="handleStepSubmit()" novalidate>
             <div class="modal-body">
                 <!-- Step 1: Dataset Name -->
-                <div x-show="wizardStep === 1" class="wizard-step-content">
+                <div x-show="isStepActive('name')" class="wizard-step-content">
                     <h6 class="mb-3">Enter a unique name for your dataset</h6>
                     <div class="mb-3">
                         <label class="form-label">Dataset ID *</label>
@@ -66,14 +42,64 @@
                         <div class="form-text">This identifier must be unique across all datasets in your configuration.</div>
                         <div x-show="datasetIdError" class="text-danger small mt-1" x-text="datasetIdError"></div>
                     </div>
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="createNewConfig"
+                                   x-model="createNewConfig">
+                            <label class="form-check-label" for="createNewConfig">
+                                Create new standalone config
+                            </label>
+                        </div>
+                        <div class="form-text">
+                            <strong>Unchecked (default):</strong> Add datasets to your current environment's config.<br>
+                            <strong>Checked:</strong> Create a completely new config file (includes required text embed datasets).
+                        </div>
+                    </div>
                 </div>
 
-                <!-- Step 2: Backend Type Selection -->
-                <div x-show="wizardStep === 2" class="wizard-step-content">
+                <!-- Step 2: Dataset Type and Backend Selection -->
+                <div x-show="isStepActive('type')" class="wizard-step-content">
+                    <h6 class="mb-4">Dataset Type</h6>
+                    <div class="mb-4">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <div class="backend-card"
+                                     :class="{ 'selected': currentDataset.dataset_type === 'image' }"
+                                     @click="currentDataset.dataset_type = 'image'">
+                                    <div class="backend-icon">
+                                        <i class="fas fa-image"></i>
+                                    </div>
+                                    <h6>Image Dataset</h6>
+                                    <p class="text-muted small mb-0">For training with still images</p>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="backend-card"
+                                     :class="{
+                                         'selected': currentDataset.dataset_type === 'video',
+                                         'opacity-50': !isVideoModel
+                                     }"
+                                     @click="isVideoModel && (currentDataset.dataset_type = 'video')"
+                                     :style="!isVideoModel ? 'cursor: not-allowed;' : ''">
+                                    <div class="backend-icon">
+                                        <i class="fas fa-video"></i>
+                                    </div>
+                                    <h6>Video Dataset</h6>
+                                    <p class="text-muted small mb-0">
+                                        <span x-show="isVideoModel">For training with video sequences</span>
+                                        <span x-show="!isVideoModel" class="text-warning">Not available for this model</span>
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <h6 class="mb-3">Where is your dataset stored?</h6>
                     <div class="row g-3">
                         <template x-for="blueprint in blueprints" :key="blueprint.id">
-                            <div class="col-md-6" x-show="blueprint.datasetTypes.includes('image')">
+                            <div class="col-md-6" x-show="blueprint.datasetTypes.includes(currentDataset.dataset_type)">
                                 <div class="backend-card"
                                      :class="{ 'selected': selectedBackend === blueprint.backendType }"
                                      @click="selectBackend(blueprint.backendType)">
@@ -95,8 +121,46 @@
                 </div>
 
                 <!-- Step 3: Required Credentials/Paths -->
-                <div x-show="wizardStep === 3" class="wizard-step-content">
+                <div x-show="isStepActive('config')" class="wizard-step-content">
                     <h6 class="mb-3">Configure required settings</h6>
+
+                    <!-- Cache Dataset Options -->
+                    <div class="mb-4 p-3 rounded" style="background: rgba(56, 189, 248, 0.05); border: 1px solid rgba(56, 189, 248, 0.2);">
+                        <h6 class="mb-3">
+                            <i class="fas fa-database me-2"></i>
+                            Cache Dataset Options
+                        </h6>
+                        <div class="form-text mb-3">
+                            Create separate dedicated datasets for caching embeddings. This allows you to reuse cached data across multiple training datasets.
+                        </div>
+
+                        <div class="form-check mb-2">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="separateTextEmbeds"
+                                   x-model="separateTextEmbeds">
+                            <label class="form-check-label" for="separateTextEmbeds">
+                                <strong>Create separate text embeddings cache dataset</strong>
+                            </label>
+                            <div class="form-text ms-4">
+                                Creates a dedicated <code>text_embeds</code> dataset that can be shared across multiple image datasets.
+                            </div>
+                        </div>
+
+                        <div class="form-check">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="separateVaeCache"
+                                   x-model="separateVaeCache">
+                            <label class="form-check-label" for="separateVaeCache">
+                                <strong>Create separate VAE latent cache dataset</strong>
+                            </label>
+                            <div class="form-text ms-4">
+                                Creates a dedicated <code>image_embeds</code> dataset for VAE latent caching. Useful when training multiple models with the same images.
+                            </div>
+                        </div>
+                    </div>
+
                     <template x-if="selectedBlueprint">
                         <div>
                             <template x-for="field in selectedBlueprint.fields.filter(f => f.required)" :key="field.id">
@@ -141,29 +205,220 @@
                                 </div>
                             </template>
 
-                            <!-- VAE Cache Directory (always show) -->
+                            <!-- VAE Cache Directory (conditionally disabled) -->
                             <div class="mb-3" x-init="if (currentDataset.id && currentDataset.cache_dir_vae === 'cache/vae') { currentDataset.cache_dir_vae = `cache/vae/${currentDataset.id}` }">
                                 <label class="form-label">
                                     VAE Cache Directory
                                     <i class="fas fa-info-circle text-muted ms-1"
                                        style="font-size: 0.875rem; cursor: help;"
                                        title="Directory where VAE latents will be cached"></i>
+                                    <span class="badge bg-info ms-2" x-show="separateVaeCache">Configure in VAE Cache step</span>
                                 </label>
                                 <input type="text"
                                        class="form-control"
                                        x-model="currentDataset.cache_dir_vae"
                                        placeholder="cache/vae/dataset-name"
+                                       :disabled="separateVaeCache"
                                        @focus="if (currentDataset.id && currentDataset.cache_dir_vae === 'cache/vae') { currentDataset.cache_dir_vae = `cache/vae/${currentDataset.id}` }">
-                                <div class="form-text">
+                                <div class="form-text" x-show="!separateVaeCache">
                                     Cached VAE latents speed up training. Auto-updates with dataset ID.
+                                </div>
+                                <div class="form-text text-info" x-show="separateVaeCache">
+                                    <i class="fas fa-arrow-right me-1"></i>
+                                    You'll configure this in the dedicated VAE Cache step.
+                                </div>
+                            </div>
+
+                            <!-- Text Embed Cache Directory (conditional) -->
+                            <div class="mb-3" x-show="(createNewConfig || !existingTextEmbeds) && !separateTextEmbeds" x-init="if (currentDataset.id && currentDataset.cache_dir_text === 'cache/text') { currentDataset.cache_dir_text = `cache/text/${currentDataset.id}` }">
+                                <label class="form-label">
+                                    Text Embed Cache Directory
+                                    <i class="fas fa-info-circle text-muted ms-1"
+                                       style="font-size: 0.875rem; cursor: help;"
+                                       title="Directory where text embeddings will be cached"></i>
+                                    <span class="badge bg-warning text-dark ms-2" x-show="createNewConfig">Required for new config</span>
+                                </label>
+                                <input type="text"
+                                       class="form-control"
+                                       x-model="currentDataset.cache_dir_text"
+                                       placeholder="cache/text/dataset-name"
+                                       @focus="if (currentDataset.id && currentDataset.cache_dir_text === 'cache/text') { currentDataset.cache_dir_text = `cache/text/${currentDataset.id}` }">
+                                <div class="form-text">
+                                    Cached text embeddings improve training performance. Auto-updates with dataset ID.
                                 </div>
                             </div>
                         </div>
                     </template>
                 </div>
 
+                <!-- Step 3.1: Text Embeds Cache Configuration (Conditional) -->
+                <div x-show="isStepActive('text-embeds')" class="wizard-step-content">
+                    <h6 class="mb-3">
+                        <i class="fas fa-font me-2"></i>
+                        Configure Text Embeddings Cache
+                    </h6>
+                    <div class="alert alert-info mb-4">
+                        <i class="fas fa-info-circle me-2"></i>
+                        This dedicated dataset will store cached text embeddings that can be reused across multiple training sessions.
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Text Embeds Dataset ID *</label>
+                        <input type="text"
+                               class="form-control"
+                               x-model="textEmbedsDataset.id"
+                               placeholder="text-embeds">
+                        <div class="form-text">Unique identifier for this text embeddings cache dataset</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Cache Directory *</label>
+                        <input type="text"
+                               class="form-control"
+                               x-model="textEmbedsDataset.cache_dir"
+                               placeholder="cache/text">
+                        <div class="form-text">Directory where text embeddings will be stored</div>
+                    </div>
+
+                    <div class="p-3 rounded mb-2" style="background: rgba(34, 197, 94, 0.1); border-left: 3px solid rgba(34, 197, 94, 0.5);">
+                        <i class="fas fa-lightbulb me-2" style="color: rgba(34, 197, 94, 0.8);"></i>
+                        <strong>Tip:</strong> All image datasets in your configuration will automatically use this shared text embeddings cache.
+                    </div>
+                    <div class="p-3 rounded" style="background: rgba(34, 197, 94, 0.1); border-left: 3px solid rgba(34, 197, 94, 0.5);">
+                        <i class="fas fa-check-circle me-2" style="color: rgba(34, 197, 94, 0.8);"></i>
+                        <strong>Safe to Share:</strong> Multiple datasets can safely use the same text embed cache directory. Common captions will be deduplicated, reducing disk space usage.
+                    </div>
+                </div>
+
+                <!-- Step 3.2: VAE Cache Configuration (Conditional) -->
+                <div x-show="isStepActive('vae-cache')" class="wizard-step-content">
+                    <h6 class="mb-3">
+                        <i class="fas fa-layer-group me-2"></i>
+                        Configure VAE Latent Cache Backend
+                    </h6>
+                    <div class="alert alert-info mb-4">
+                        <i class="fas fa-info-circle me-2"></i>
+                        The <code>image_embeds</code> dataset provides a storage backend for VAE latents. Each image dataset can point to its own cache directory within this backend.
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="form-label">VAE Cache Dataset ID *</label>
+                        <input type="text"
+                               class="form-control"
+                               x-model="vaeCacheDataset.id"
+                               placeholder="vae-cache">
+                        <div class="form-text">Unique identifier for this VAE cache backend dataset</div>
+                    </div>
+
+                    <h6 class="mb-3">Select Storage Backend</h6>
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-6">
+                            <div class="backend-card"
+                                 :class="{ 'selected': vaeCacheDataset.type === 'local' }"
+                                 @click="vaeCacheDataset.type = 'local'">
+                                <div class="backend-icon">
+                                    <i class="fas fa-folder"></i>
+                                </div>
+                                <h6>Local Storage</h6>
+                                <p class="text-muted small mb-0">Store VAE cache on local filesystem</p>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="backend-card"
+                                 :class="{ 'selected': vaeCacheDataset.type === 'aws' }"
+                                 @click="vaeCacheDataset.type = 'aws'">
+                                <div class="backend-icon">
+                                    <i class="fas fa-cloud"></i>
+                                </div>
+                                <h6>S3-Compatible</h6>
+                                <p class="text-muted small mb-0">Store VAE cache in S3-compatible storage</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- AWS-specific fields -->
+                    <div x-show="vaeCacheDataset.type === 'aws'" x-transition>
+                        <h6 class="mb-3">S3-Compatible Storage Configuration</h6>
+
+                        <div class="mb-3">
+                            <label class="form-label">S3 Bucket Name *</label>
+                            <input type="text"
+                                   class="form-control"
+                                   x-model="vaeCacheDataset.aws_bucket_name"
+                                   placeholder="my-vae-cache-bucket">
+                            <div class="form-text">Name of the S3 bucket to store VAE cache</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">S3 Endpoint URL</label>
+                            <input type="text"
+                                   class="form-control"
+                                   x-model="vaeCacheDataset.aws_endpoint_url"
+                                   placeholder="https://s3.amazonaws.com">
+                            <div class="form-text">S3-compatible endpoint URL (e.g., AWS S3, Cloudflare R2, MinIO, etc.)</div>
+                        </div>
+
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Access Key ID</label>
+                                <input type="text"
+                                       class="form-control"
+                                       x-model="vaeCacheDataset.aws_access_key_id"
+                                       placeholder="AKIAIOSFODNN7EXAMPLE">
+                                <div class="form-text">S3 access key (optional if using IAM role)</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Secret Access Key</label>
+                                <input type="password"
+                                       class="form-control"
+                                       x-model="vaeCacheDataset.aws_secret_access_key"
+                                       placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY">
+                                <div class="form-text">S3 secret key (optional if using IAM role)</div>
+                            </div>
+                        </div>
+
+                        <div class="mb-4">
+                            <label class="form-label">Region Name</label>
+                            <input type="text"
+                                   class="form-control"
+                                   x-model="vaeCacheDataset.aws_region_name"
+                                   placeholder="us-east-1">
+                            <div class="form-text">Region name (optional, leave empty to use default)</div>
+                        </div>
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="form-label">
+                            <span x-show="vaeCacheDataset.type === 'local'">VAE Cache Directory *</span>
+                            <span x-show="vaeCacheDataset.type === 'aws'">VAE Cache Prefix *</span>
+                            <i class="fas fa-info-circle text-muted ms-1"
+                               style="font-size: 0.875rem; cursor: help;"
+                               :title="vaeCacheDataset.type === 'local' ? 'Local directory path for VAE latents' : 'S3 prefix/path for VAE latents'"></i>
+                        </label>
+                        <input type="text"
+                               class="form-control"
+                               x-model="currentDataset.cache_dir_vae"
+                               :placeholder="vaeCacheDataset.type === 'local' ? 'cache/vae/dataset-name' : 'vae-cache/dataset-name'">
+                        <div class="form-text" x-show="vaeCacheDataset.type === 'local'">
+                            Path where VAE latents will be stored for your image dataset. This will be stored in the <strong>image dataset config</strong>, not the image_embeds dataset.
+                        </div>
+                        <div class="form-text" x-show="vaeCacheDataset.type === 'aws'">
+                            S3 prefix where VAE latents will be stored for your image dataset. This will be stored in the <strong>image dataset config</strong>, not the image_embeds dataset.
+                        </div>
+                    </div>
+
+                    <div class="p-3 rounded mb-2" style="background: rgba(245, 158, 11, 0.1); border-left: 3px solid rgba(245, 158, 11, 0.5);">
+                        <i class="fas fa-info-circle me-2" style="color: rgba(245, 158, 11, 0.8);"></i>
+                        <strong>Note:</strong> Multiple image datasets can share the same <code>image_embeds</code> backend by pointing to different <span x-text="vaeCacheDataset.type === 'local' ? 'directories' : 'prefixes'"></span>.
+                    </div>
+                    <div class="p-3 rounded" style="background: rgba(220, 38, 38, 0.1); border-left: 3px solid rgba(220, 38, 38, 0.5);">
+                        <i class="fas fa-exclamation-triangle me-2" style="color: rgba(220, 38, 38, 0.8);"></i>
+                        <strong>Warning:</strong> Each dataset must use a unique VAE cache <span x-text="vaeCacheDataset.type === 'local' ? 'directory' : 'prefix'"></span>. Sharing the same cache location across datasets will cause data corruption.
+                    </div>
+                </div>
+
                 <!-- Step 4: Resolution Configuration -->
-                <div x-show="wizardStep === 4" class="wizard-step-content">
+                <div x-show="isStepActive('resolution')" class="wizard-step-content">
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <h6 class="mb-0">Configure image resolution settings</h6>
                         <button type="button"
@@ -266,7 +521,7 @@
                 </div>
 
                 <!-- Step 5: Cropping -->
-                <div x-show="wizardStep === 5" class="wizard-step-content">
+                <div x-show="isStepActive('cropping')" class="wizard-step-content">
                     <h6 class="mb-3">Configure image cropping behavior</h6>
 
                     <!-- Enable/Disable Cropping Toggle -->
@@ -412,7 +667,7 @@
                 </div>
 
                 <!-- Step 6: Captions -->
-                <div x-show="wizardStep === 6"
+                <div x-show="isStepActive('captions')"
                      class="wizard-step-content"
                      x-effect="if (currentDataset.caption_strategy === 'parquet') { currentDataset.metadata_backend = 'parquet'; } else if (selectedBackend === 'local' || selectedBackend === 'aws') { if (currentDataset.metadata_backend === 'parquet') { currentDataset.metadata_backend = 'discovery'; } }">
                     <h6 class="mb-3">Configure caption settings</h6>
@@ -581,7 +836,7 @@
                 </div>
 
                 <!-- Step 7: ControlNet/Conditioning (Conditional) -->
-                <div x-show="wizardStep === 7 && showConditioningStep" class="wizard-step-content">
+                <div x-show="isStepActive('conditioning')" class="wizard-step-content">
                     <h6 class="mb-3">Auto-generate conditioning data for ControlNet</h6>
                     <div x-show="!conditioningConfigured" class="mb-4">
                         <div class="alert alert-info">
@@ -629,8 +884,8 @@
                     </div>
                 </div>
 
-                <!-- Step 8: Review & Confirm (or Step 7 if no conditioning) -->
-                <div x-show="wizardStep === (showConditioningStep ? 8 : 7)" class="wizard-step-content">
+                <!-- Step 8: Review & Confirm -->
+                <div x-show="isStepActive('review')" class="wizard-step-content">
                     <h6 class="mb-3">Review Your Dataset Configuration</h6>
 
                     <div class="card mb-3">
@@ -853,19 +1108,19 @@
                 </button>
                 <button type="submit"
                         class="btn btn-primary"
-                        x-show="wizardStep < (showConditioningStep ? 8 : 7)"
+                        x-show="!isStepActive('review')"
                         :disabled="!canProceed">
                     Next <i class="fas fa-arrow-right ms-1"></i>
                 </button>
                 <button type="button"
                         class="btn btn-success"
-                        x-show="wizardStep === (showConditioningStep ? 8 : 7)"
+                        x-show="isStepActive('review')"
                         @click="addDatasetToQueue()">
                     <i class="fas fa-plus me-1"></i> Add Another Dataset
                 </button>
                 <button type="button"
                         class="btn btn-primary"
-                        x-show="wizardStep === (showConditioningStep ? 8 : 7)"
+                        x-show="isStepActive('review')"
                         @click.prevent.stop="confirmAllDatasets()"
                         :disabled="saving">
                     <i class="fas fa-check me-1" x-show="!saving"></i>
