@@ -212,6 +212,35 @@ def compute_validations(
                 )
             )
 
+    # Check for orphaned text_embeds and image_embeds references
+    text_embed_ids = {dataset.get("id") for dataset in datasets if dataset.get("dataset_type") == "text_embeds"}
+    image_embed_ids = {dataset.get("id") for dataset in datasets if dataset.get("dataset_type") == "image_embeds"}
+
+    for dataset in datasets:
+        dataset_id = dataset.get("id", "unknown")
+
+        # Check text_embeds reference
+        text_embeds_ref = dataset.get("text_embeds")
+        if text_embeds_ref and text_embeds_ref not in text_embed_ids:
+            validations.append(
+                ValidationMessage(
+                    field=f"{_normalise_identifier(dataset)}.text_embeds",
+                    message=f"references non-existent text_embeds dataset '{text_embeds_ref}'",
+                    level="error",
+                )
+            )
+
+        # Check image_embeds reference
+        image_embeds_ref = dataset.get("image_embeds")
+        if image_embeds_ref and image_embeds_ref not in image_embed_ids:
+            validations.append(
+                ValidationMessage(
+                    field=f"{_normalise_identifier(dataset)}.image_embeds",
+                    message=f"references non-existent image_embeds dataset '{image_embeds_ref}'",
+                    level="error",
+                )
+            )
+
     if blueprints is None:
         blueprints = get_dataset_blueprints()
 
