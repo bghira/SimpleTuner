@@ -244,8 +244,9 @@ async def browse_directories(path: Optional[str] = None) -> Dict[str, Any]:
         datasets_dir = resolved.get("datasets_dir")
 
         # If datasets_dir is still the fallback, check if there's an onboarding value
+        # Use correct step ID: "default_datasets_dir" (not "datasets_dir")
         if datasets_dir == defaults_bundle["fallbacks"].get("datasets_dir"):
-            datasets_step = onboarding.steps.get("datasets_dir")
+            datasets_step = onboarding.steps.get("default_datasets_dir")
             if datasets_step and datasets_step.value:
                 datasets_dir = datasets_step.value
 
@@ -364,8 +365,9 @@ async def detect_dataset(path: str) -> Dict[str, Any]:
         datasets_dir = resolved.get("datasets_dir")
 
         # If datasets_dir is still the fallback, check if there's an onboarding value
+        # Use correct step ID: "default_datasets_dir" (not "datasets_dir")
         if datasets_dir == defaults_bundle["fallbacks"].get("datasets_dir"):
-            datasets_step = onboarding.steps.get("datasets_dir")
+            datasets_step = onboarding.steps.get("default_datasets_dir")
             if datasets_step and datasets_step.value:
                 datasets_dir = datasets_step.value
 
