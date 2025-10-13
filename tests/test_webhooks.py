@@ -1,3 +1,4 @@
+import os
 import unittest
 from io import BytesIO
 from unittest.mock import MagicMock, patch
@@ -142,6 +143,86 @@ class TestWebhookHandler(unittest.TestCase):
         # Send error message - should go to both backends
         handler.send("Test error", message_level="error")
         self.assertEqual(mock_post.call_count, 2)
+
+    @patch("requests.post")
+    def test_ssl_verification_enabled_by_default(self, mock_post):
+        """Test that SSL verification is enabled by default for HTTPS URLs"""
+        config = {"webhook_type": "raw", "callback_url": "https://example.com/webhook", "log_level": "info"}
+        handler = WebhookHandler(accelerator=self.mock_accelerator, project_name="TestProject", webhook_config=config)
+        handler.send("Test message", message_level="info")
+
+        # Check that verify=True is passed to requests.post
+        args, kwargs = mock_post.call_args
+        self.assertTrue(kwargs.get("verify", True))
+
+    @patch("requests.post")
+    def test_ssl_verification_disabled_via_config(self, mock_post):
+        """Test that SSL verification can be disabled via config"""
+        config = {
+            "webhook_type": "raw",
+            "callback_url": "https://example.com/webhook",
+            "log_level": "info",
+            "ssl_no_verify": True,
+        }
+        handler = WebhookHandler(accelerator=self.mock_accelerator, project_name="TestProject", webhook_config=config)
+        handler.send("Test message", message_level="info")
+
+        # Check that verify=False is passed to requests.post
+        args, kwargs = mock_post.call_args
+        self.assertFalse(kwargs.get("verify", True))
+
+    @patch("requests.post")
+    @patch.dict(os.environ, {"SIMPLETUNER_SSL_NO_VERIFY": "true"})
+    def test_ssl_verification_disabled_via_env(self, mock_post):
+        """Test that SSL verification can be disabled via environment variable"""
+        config = {"webhook_type": "raw", "callback_url": "https://example.com/webhook", "log_level": "info"}
+        handler = WebhookHandler(accelerator=self.mock_accelerator, project_name="TestProject", webhook_config=config)
+        handler.send("Test message", message_level="info")
+
+        # Check that verify=False is passed to requests.post
+        args, kwargs = mock_post.call_args
+        self.assertFalse(kwargs.get("verify", True))
+
+    @patch("requests.post")
+    def test_http_urls_no_ssl_verification(self, mock_post):
+        """Test that HTTP URLs don't use SSL verification"""
+        config = {"webhook_type": "raw", "callback_url": "http://example.com/webhook", "log_level": "info"}
+        handler = WebhookHandler(accelerator=self.mock_accelerator, project_name="TestProject", webhook_config=config)
+        handler.send("Test message", message_level="info")
+
+        # HTTP URLs should still have verify=True (requests handles this)
+        args, kwargs = mock_post.call_args
+        self.assertTrue(kwargs.get("verify", True))
+
+    @patch("requests.post")
+    def test_ssl_verification_with_multiple_backends(self, mock_post):
+        """Test SSL verification with multiple webhook backends"""
+        config = [
+            {
+                "webhook_type": "raw",
+                "callback_url": "https://example.com/webhook1",
+                "log_level": "info",
+                "ssl_no_verify": True,
+            },
+            {
+                "webhook_type": "raw",
+                "callback_url": "https://example.com/webhook2",
+                "log_level": "info",
+                "ssl_no_verify": False,
+            },
+        ]
+        handler = WebhookHandler(accelerator=self.mock_accelerator, project_name="TestProject", webhook_config=config)
+        handler.send("Test message", message_level="info")
+
+        # Should be called twice, once for each backend
+        self.assertEqual(mock_post.call_count, 2)
+
+        # Check the verify parameter for each call
+        first_call_args, first_call_kwargs = mock_post.call_args_list[0]
+        second_call_args, second_call_kwargs = mock_post.call_args_list[1]
+
+        self.assertFalse(first_call_kwargs.get("verify", True))  # First backend has ssl_no_verify=True
+        self.assertTrue(second_call_kwargs.get("verify", True))  # Second backend has ssl_no_verify=False
 
 
 if __name__ == "__main__":
