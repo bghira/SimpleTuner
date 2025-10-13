@@ -394,10 +394,9 @@ def get_validation_resolutions():
      - if it has comma, we will split and treat each value as above
     """
     validation_resolution_parameter = StateTracker.get_args().validation_resolution
-    num_validation_images = StateTracker.get_args().num_validation_images
     if type(validation_resolution_parameter) is str and "," in validation_resolution_parameter:
-        return [r for res in validation_resolution_parameter.split(",") for r in [parse_validation_resolution(res)] * num_validation_images]
-    return [parse_validation_resolution(validation_resolution_parameter)] * num_validation_images
+        return [parse_validation_resolution(res) for res in validation_resolution_parameter.split(",")]
+    return [parse_validation_resolution(validation_resolution_parameter)]
 
 
 def parse_validation_resolution(input_str: str) -> tuple:
@@ -1846,8 +1845,9 @@ class Validation:
 
     def _save_images(self, validation_images, validation_shortname, validation_prompt):
         validation_img_idx = 0
+        resolutions = [_res for res in self.validation_resolutions for _res in [res] * self.config.num_eval_images]
         for validation_image in validation_images[validation_shortname]:
-            res = self.validation_resolutions[validation_img_idx]
+            res = resolutions[validation_img_idx]
             if "x" in res:
                 res_label = str(res)
             elif type(res) is tuple:
