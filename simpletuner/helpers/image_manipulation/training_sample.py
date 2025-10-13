@@ -366,17 +366,30 @@ class TrainingSample:
             intermediary_size=self.intermediary_size,
         )
         if webhook_handler:
+            # Send the debug message with the image using send() (following validation pattern)
             webhook_handler.send(
                 message=f"Debug info for prepared sample, {str(prepared_sample)}",
                 images=[self.image],
                 message_level="debug",
             )
-            webhook_handler.send_raw(
-                structured_data={"prepared_sample": str(prepared_sample)},
-                message_type="prepared_sample",
-                message_level="debug",
+
+            # Send structured data using send_raw() with proper event structure
+            from simpletuner.helpers.webhooks.events import notification_event
+
+            event = notification_event(
+                message=f"Prepared sample debug info",
+                severity="debug",
                 job_id=StateTracker.get_job_id(),
+                data={
+                    "prepared_sample": {
+                        "original_size": prepared_sample.original_size,
+                        "target_size": prepared_sample.target_size,
+                        "aspect_ratio": prepared_sample.aspect_ratio,
+                        "crop_coordinates": prepared_sample.crop_coordinates,
+                    }
+                },
             )
+            webhook_handler.send_raw(event, message_level="debug", job_id=StateTracker.get_job_id())
         return prepared_sample
 
     def area(self) -> int:
