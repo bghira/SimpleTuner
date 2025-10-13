@@ -180,6 +180,7 @@ base_deps = [
     "hf-xet>=1.1.5",
     "peft-singlora>=0.2.0",
     "trainingsample>=0.2.1",
+    "cryptography>=41.0.0",
     # Minimal PyTorch for base install (CPU-only)
     "torch>=2.7.1",
     "torchvision>=0.22.1",
