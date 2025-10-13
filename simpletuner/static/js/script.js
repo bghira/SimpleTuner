@@ -205,7 +205,7 @@ if (legacyValidateBtn && !buttonUsesHTMX(legacyValidateBtn)) {
         const payload = getPayload();
         if (!payload) return;
 
-        fetch('http://localhost:8000/training/configuration/check', {
+        fetch(`${window.location.origin}/training/configuration/check`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -238,7 +238,7 @@ if (legacyRunBtn && !buttonUsesHTMX(legacyRunBtn)) {
         const payload = getPayload();
         if (!payload) return;
 
-        fetch('http://localhost:8001/api/training/start', {
+        fetch(`${window.ServerConfig.apiBaseUrl}/api/training/start`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -271,7 +271,7 @@ if (legacyCancelBtn && !buttonUsesHTMX(legacyCancelBtn)) {
         const payload = { job_id: document.getElementById('job_id').value };
         showToast('Cancelling may take a while.', 'success');
 
-        fetch('http://localhost:8000/training/cancel', {
+        fetch(`${window.location.origin}/training/cancel`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

@@ -4,15 +4,15 @@
     // Define the ServerConfig object
     window.ServerConfig = {
         mode: 'unknown',
-        apiBaseUrl: 'http://localhost:8001',
-        callbackUrl: 'http://localhost:8002', // Default to separate mode
+        apiBaseUrl: `${window.location.origin}`,
+        callbackUrl: `${window.location.origin}`, // Default to same origin
         isReady: false,
 
         // Initialize and detect server configuration
         init: async function() {
             try {
-                // Query the health endpoint on the trainer port
-                const response = await fetch('http://localhost:8001/health', {
+                // Query the health endpoint on the current host
+                const response = await fetch(`${this.apiBaseUrl}/health`, {
                     method: 'GET',
                     mode: 'cors',
                     credentials: 'omit',
@@ -25,25 +25,35 @@
 
                     // Configure URLs based on detected mode
                     if (this.mode === 'unified') {
-                        // In unified mode, all endpoints are on port 8001
-                        this.callbackUrl = 'http://localhost:8001';
-                        // Server running in unified mode - all endpoints on port 8001
+                        // In unified mode, all endpoints are on the same host
+                        this.callbackUrl = this.apiBaseUrl;
+                        // Server running in unified mode - all endpoints on same host
                     } else if (this.mode === 'trainer') {
-                        // In trainer-only mode, callback endpoints might be on 8002
-                        // Try to detect if callback server is running
+                        // In trainer-only mode, callback endpoints might be on a different port
+                        // Try to detect if callback server is running on a different port
                         try {
-                            const callbackResponse = await fetch('http://localhost:8002/health', {
-                                method: 'GET',
-                                mode: 'cors',
-                                credentials: 'omit',
-                                cache: 'no-cache',
-                                signal: AbortSignal.timeout(1000) // 1 second timeout
-                            });
-                            if (callbackResponse.ok) {
-                                // Separate callback server detected on port 8002
+                            // Try common callback ports by modifying the current origin
+                            const currentUrl = new URL(this.apiBaseUrl);
+                            const callbackPorts = [8002, 8001]; // Try different ports
+
+                            for (const port of callbackPorts) {
+                                if (port.toString() !== currentUrl.port) {
+                                    const callbackUrl = `${currentUrl.protocol}//${currentUrl.hostname}:${port}`;
+                                    const callbackResponse = await fetch(`${callbackUrl}/health`, {
+                                        method: 'GET',
+                                        mode: 'cors',
+                                        credentials: 'omit',
+                                        cache: 'no-cache',
+                                        signal: AbortSignal.timeout(1000) // 1 second timeout
+                                    });
+                                    if (callbackResponse.ok) {
+                                        this.callbackUrl = callbackUrl;
+                                        break;
+                                    }
+                                }
                             }
                         } catch (err) {
-                            console.warn('No callback server detected on port 8002, some features may not work');
+                            console.warn('No callback server detected, some features may not work');
                         }
                     }
 
