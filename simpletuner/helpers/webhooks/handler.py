@@ -131,6 +131,8 @@ class WebhookHandler:
                 f"`({config.message_prefix})` " if config.message_prefix is not None else f"`({project_name})` "
             ),
             "log_level": log_levels.get(config.log_level or "info", log_levels["info"]),
+            "ssl_no_verify": getattr(config, "ssl_no_verify", False)
+            or os.environ.get("SIMPLETUNER_SSL_NO_VERIFY", "false").lower() == "true",
         }
 
     @staticmethod
@@ -203,7 +205,9 @@ class WebhookHandler:
         # Send request
         try:
             logging.debug("Sending webhook request to %s: %s", webhook_url, _truncate_for_log(request_args))
-            post_result = requests.post(webhook_url, **request_args, timeout=5)
+            # Configure SSL verification
+            verify = not backend.get("ssl_no_verify", False)
+            post_result = requests.post(webhook_url, **request_args, timeout=5, verify=verify)
             post_result.raise_for_status()
         except (requests.exceptions.ConnectionError, BrokenPipeError) as e:
             # Connection errors are expected when WebUI is refreshed/closed

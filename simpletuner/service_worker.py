@@ -114,8 +114,22 @@ def main():
     os.makedirs("templates", exist_ok=True)
     os.makedirs("configs", exist_ok=True)
 
+    # Check for SSL configuration
+    ssl_enabled = os.environ.get("SIMPLETUNER_SSL_ENABLED", "false").lower() == "true"
+    ssl_keyfile = os.environ.get("SIMPLETUNER_SSL_KEYFILE")
+    ssl_certfile = os.environ.get("SIMPLETUNER_SSL_CERTFILE")
+
+    # Configure uvicorn
+    uvicorn_config = {"app": app, "host": "0.0.0.0", "port": 8001, "reload": True, "log_level": "info"}
+
+    if ssl_enabled and ssl_keyfile and ssl_certfile:
+        uvicorn_config.update({"ssl_keyfile": ssl_keyfile, "ssl_certfile": ssl_certfile})
+        print("SSL enabled for service worker")
+    else:
+        print("SSL disabled for service worker")
+
     # Run the server
-    uvicorn.run(app, host="0.0.0.0", port=8001, reload=True, log_level="info")
+    uvicorn.run(**uvicorn_config)
 
 
 # Main entry point

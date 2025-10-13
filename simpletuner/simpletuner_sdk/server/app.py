@@ -99,6 +99,7 @@ def create_app(
     enable_cors: bool = True,
     static_dir: Optional[str] = None,
     template_dir: Optional[str] = None,
+    ssl_no_verify: bool = False,
 ) -> FastAPI:
     """
     Create a FastAPI application with the specified mode.
@@ -116,6 +117,9 @@ def create_app(
     # Create base app with lifespan handler
     title = f"SimpleTuner {mode.value.capitalize()} Server"
     app = FastAPI(title=title, lifespan=lifespan)
+
+    # Store SSL configuration in app state
+    app.state.ssl_no_verify = ssl_no_verify
 
     # Configure CORS if enabled
     if enable_cors:

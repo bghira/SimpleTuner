@@ -4,6 +4,7 @@ SimpleTuner CLI - Command-line interface for SimpleTuner
 """
 
 import argparse
+import datetime
 import json
 import os
 import shlex
@@ -567,6 +568,10 @@ def cmd_server(args) -> int:
     port = getattr(args, "port", None)  # Will be determined by mode
     reload = getattr(args, "reload", False)
     mode = getattr(args, "mode", "unified")
+    ssl = getattr(args, "ssl", False)
+    ssl_key = getattr(args, "ssl_key", None)
+    ssl_cert = getattr(args, "ssl_cert", None)
+    ssl_no_verify = getattr(args, "ssl_no_verify", False)
 
     # Determine port based on mode if not specified
     if port is None:
@@ -577,9 +582,29 @@ def cmd_server(args) -> int:
         else:  # unified
             port = 8001
 
-    print(f"Starting SimpleTuner {mode} server on {host}:{port}")
+    # Handle SSL configuration
+    ssl_config = None
+    if ssl:
+        ssl_config = _setup_ssl_config(ssl_key, ssl_cert)
+        if not ssl_config:
+            return 1
+
+    protocol = "https" if ssl_config else "http"
+    print(f"Starting SimpleTuner {mode} server:")
     if mode in {"trainer", "unified"}:
-        print("Web interface available at /web/")
+        print(f"> API: {protocol}://{host}:{port}/api")
+        print(f"> Web: {protocol}://{host}:{port}/web")
+
+    # Set environment variables for webhook configuration
+    os.environ["SIMPLETUNER_SSL_ENABLED"] = "true" if ssl_config else "false"
+    os.environ["SIMPLETUNER_SSL_NO_VERIFY"] = "true" if ssl_no_verify else "false"
+    os.environ["SIMPLETUNER_WEBHOOK_HOST"] = host
+    os.environ["SIMPLETUNER_WEBHOOK_PORT"] = str(port)
+
+    # Set SSL certificate paths for service worker
+    if ssl_config:
+        os.environ["SIMPLETUNER_SSL_KEYFILE"] = ssl_config["keyfile"]
+        os.environ["SIMPLETUNER_SSL_CERTFILE"] = ssl_config["certfile"]
 
     try:
         import uvicorn
@@ -592,7 +617,7 @@ def cmd_server(args) -> int:
         )
 
         # Create app with specified mode
-        app = create_app(mode=server_mode)
+        app = create_app(mode=server_mode, ssl_no_verify=ssl_no_verify)
 
         # Create necessary directories
         os.makedirs("static/css", exist_ok=True)
@@ -600,8 +625,14 @@ def cmd_server(args) -> int:
         os.makedirs("templates", exist_ok=True)
         os.makedirs("configs", exist_ok=True)
 
+        # Configure uvicorn SSL
+        uvicorn_config = {"app": app, "host": host, "port": port, "reload": reload, "log_level": "info"}
+
+        if ssl_config:
+            uvicorn_config.update({"ssl_keyfile": ssl_config["keyfile"], "ssl_certfile": ssl_config["certfile"]})
+
         # Run the server
-        uvicorn.run(app, host=host, port=port, reload=reload, log_level="info")
+        uvicorn.run(**uvicorn_config)
         return 0
     except KeyboardInterrupt:
         print("\nServer stopped by user.")
@@ -616,6 +647,124 @@ def cmd_server(args) -> int:
 
         traceback.print_exc()
         return 1
+
+
+def _setup_ssl_config(ssl_key: Optional[str] = None, ssl_cert: Optional[str] = None) -> Optional[dict]:
+    """Set up SSL configuration, generating certificates if needed."""
+
+    # If user provided both key and cert, use them directly
+    if ssl_key and ssl_cert:
+        key_path = Path(ssl_key).expanduser()
+        cert_path = Path(ssl_cert).expanduser()
+
+        if not key_path.exists():
+            print(f"Error: SSL key file not found: {key_path}")
+            return None
+        if not cert_path.exists():
+            print(f"Error: SSL certificate file not found: {cert_path}")
+            return None
+
+        print(f"Using provided SSL certificate: {cert_path}")
+        print(f"Using provided SSL key: {key_path}")
+        return {"keyfile": str(key_path), "certfile": str(cert_path)}
+
+    # Auto-generate certificate in ~/.simpletuner/ssl
+    ssl_dir = Path.home() / ".simpletuner" / "ssl"
+    ssl_dir.mkdir(parents=True, exist_ok=True)
+
+    key_path = ssl_dir / "server.key"
+    cert_path = ssl_dir / "server.crt"
+
+    if key_path.exists() and cert_path.exists():
+        print(f"Using existing SSL certificate: {cert_path}")
+        print(f"Using existing SSL key: {key_path}")
+        return {"keyfile": str(key_path), "certfile": str(cert_path)}
+
+    print("Generating self-signed SSL certificate...")
+
+    try:
+        # Generate self-signed certificate
+        import ipaddress
+
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.x509.oid import NameOID
+
+        # Generate private key
+        private_key = rsa.generate_private_key(
+            public_exponent=65537,
+            key_size=2048,
+        )
+
+        # Create certificate
+        subject = issuer = x509.Name(
+            [
+                x509.NameAttribute(NameOID.COUNTRY_NAME, "US"),
+                x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "CA"),
+                x509.NameAttribute(NameOID.LOCALITY_NAME, "San Francisco"),
+                x509.NameAttribute(NameOID.ORGANIZATION_NAME, "SimpleTuner"),
+                x509.NameAttribute(NameOID.COMMON_NAME, "localhost"),
+            ]
+        )
+
+        cert = (
+            x509.CertificateBuilder()
+            .subject_name(subject)
+            .issuer_name(issuer)
+            .public_key(private_key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(datetime.datetime.utcnow())
+            .not_valid_after(
+                # Certificate valid for 1 year
+                datetime.datetime.utcnow()
+                + datetime.timedelta(days=365)
+            )
+            .add_extension(
+                x509.SubjectAlternativeName(
+                    [
+                        x509.DNSName("localhost"),
+                        x509.DNSName("*.localhost"),
+                        x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
+                        x509.IPAddress(ipaddress.IPv4Address("0.0.0.0")),
+                    ]
+                ),
+                critical=False,
+            )
+            .sign(private_key, hashes.SHA256())
+        )
+
+        # Write private key to file
+        with open(key_path, "wb") as f:
+            f.write(
+                private_key.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.PKCS8,
+                    encryption_algorithm=serialization.NoEncryption(),
+                )
+            )
+
+        # Write certificate to file
+        with open(cert_path, "wb") as f:
+            f.write(cert.public_bytes(serialization.Encoding.PEM))
+
+        # Set appropriate permissions
+        key_path.chmod(0o600)
+        cert_path.chmod(0o644)
+
+        print(f"Generated SSL certificate: {cert_path}")
+        print(f"Generated SSL key: {key_path}")
+        print("Note: This is a self-signed certificate. Browsers will show security warnings.")
+
+        return {"keyfile": str(key_path), "certfile": str(cert_path)}
+
+    except ImportError:
+        print("Error: cryptography package required for SSL certificate generation.")
+        print("Install it with: pip install cryptography")
+        return None
+    except Exception as e:
+        print(f"Error generating SSL certificate: {e}")
+        return None
 
 
 def get_version() -> str:
@@ -718,6 +867,24 @@ Examples:
         "--reload",
         action="store_true",
         help="Enable auto-reload for development",
+    )
+    server_parser.add_argument(
+        "--ssl",
+        action="store_true",
+        help="Enable SSL/TLS encryption",
+    )
+    server_parser.add_argument(
+        "--ssl-key",
+        help="Path to SSL private key file (default: ~/.simpletuner/ssl/server.key)",
+    )
+    server_parser.add_argument(
+        "--ssl-certificate",
+        help="Path to SSL certificate file (default: ~/.simpletuner/ssl/server.crt)",
+    )
+    server_parser.add_argument(
+        "--ssl-no-verify",
+        action="store_true",
+        help="Disable SSL certificate verification for webhook connections",
     )
     server_parser.set_defaults(func=cmd_server)
 
