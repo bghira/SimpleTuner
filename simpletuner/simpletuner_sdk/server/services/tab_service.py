@@ -105,14 +105,6 @@ class TabService:
                 description="Dataset loading and preprocessing",
                 extra_context_handler=self._datasets_tab_context,
             ),
-            TabType.ENVIRONMENTS: TabConfig(
-                id="environments-config",
-                title="Environment",
-                icon="fas fa-server",
-                template="environments_tab.html",
-                description="Environment and compute settings",
-                extra_context_handler=self._environments_tab_context,
-            ),
             TabType.VALIDATION: TabConfig(
                 id="validation-config",
                 title="Validation & Output",
@@ -136,6 +128,14 @@ class TabService:
                 template="checkpoints_tab.html",
                 description="Browse and manage training checkpoints",
                 extra_context_handler=self._checkpoints_tab_context,
+            ),
+            TabType.ENVIRONMENTS: TabConfig(
+                id="environments-config",
+                title="Environment",
+                icon="fas fa-server",
+                template="environments_tab.html",
+                description="Environment and compute settings",
+                extra_context_handler=self._environments_tab_context,
             ),
             TabType.UI_SETTINGS: TabConfig(
                 id="ui-settings",
@@ -290,9 +290,40 @@ class TabService:
         # This tab uses a different template structure
         # Add data backend choices if available
         try:
+            from .dataset_service import normalize_dataset_config_value
+
             context["data_backend_choices"] = build_data_backend_choices()
+
+            # Get the current selected value from raw_config since config_values might be filtered
+            raw_config = context.get("raw_config", {})
+            field_value = (
+                raw_config.get("data_backend_config")
+                or raw_config.get("--data_backend_config")
+                or config_values.get("data_backend_config")
+                or config_values.get("--data_backend_config")
+                or ""
+            )
+
+            # Normalize the value to match what the selector uses
+            if field_value:
+                field_value = normalize_dataset_config_value(field_value)
+
+            # Find the selected option to populate the label
+            selected_option = next(
+                (opt for opt in context["data_backend_choices"] if opt.get("value") == field_value),
+                None,
+            )
+
+            context["selected_value"] = field_value
+            context["selected_env"] = selected_option.get("environment") if selected_option else ""
+            context["selected_path"] = selected_option.get("path") if selected_option else ""
+
         except Exception as exc:  # pragma: no cover - defensive guard
             logger.warning("Could not build data backend choices: %s", exc)
+            context["data_backend_choices"] = []
+            context["selected_value"] = ""
+            context["selected_env"] = ""
+            context["selected_path"] = ""
 
         return context
 

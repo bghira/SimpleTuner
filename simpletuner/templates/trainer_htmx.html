@@ -31,6 +31,50 @@ document.addEventListener('alpine:init', () => {
         cancelSaveConfig: () => {},
         confirmSaveConfig: () => {}
     });
+
+    // Shared dataloader configs store
+    Alpine.store('dataloaderConfigs', {
+        configs: [],
+        loaded: false,
+        loading: false,
+
+        async load(force = false) {
+            if (this.loading) return;
+            if (this.loaded && !force) return;
+
+            this.loading = true;
+            try {
+                const response = await fetch('/api/configs/?config_type=dataloader');
+                if (response.ok) {
+                    const data = await response.json();
+                    this.configs = (data.configs || []).map(item => ({
+                        name: item.name,
+                        path: item.path || '',
+                        dataset_count: item.dataset_count || 0,
+                        absolute_path: item.absolute_path || item.path || ''
+                    })).filter(item => item.path);
+                    this.loaded = true;
+                }
+            } catch (error) {
+                console.error('Failed to load dataloader configs:', error);
+            } finally {
+                this.loading = false;
+            }
+        },
+
+        getByPath(path) {
+            return this.configs.find(c => c.path === path);
+        },
+
+        filterByEnvironment(environmentName) {
+            if (!environmentName) return this.configs;
+            return this.configs.filter(config => {
+                const path = config.path || '';
+                const name = config.name || '';
+                return path.startsWith(environmentName + '/') || name.startsWith(environmentName);
+            });
+        }
+    });
 });
 
 const sanitizeConfigName = (name) => {

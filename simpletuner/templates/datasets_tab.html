@@ -2,12 +2,99 @@
 <link rel="stylesheet" href="/static/css/form-sections.css">
 <link rel="stylesheet" href="/static/css/dataset-wizard.css">
 
+<style>
+/* Dataset dropdown styling for datasets page - matches basic tab */
+.dataset-dropdown .dataset-toggle-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+}
+
+.dataset-dropdown .dataset-env {
+    font-weight: 600;
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+.dataset-dropdown .dataset-separator {
+    flex: 0 0 auto;
+    opacity: 0.7;
+    padding: 0 0.5rem;
+}
+
+.dataset-dropdown .dataset-path {
+    flex: 1 1 auto;
+    text-align: right;
+    font-family: var(--bs-font-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+.dataset-dropdown .dataset-toggle {
+    background-color: rgba(15, 23, 42, 0.65);
+    color: #e2e8f0;
+    border: 1px solid rgba(148, 163, 184, 0.4);
+    display: flex;
+    align-items: center;
+    padding-right: 2.5rem; /* Make room for the dropdown arrow */
+}
+
+.dataset-dropdown .dataset-toggle::after {
+    position: absolute;
+    right: 1rem;
+}
+
+.dataset-dropdown .dataset-toggle:hover,
+.dataset-dropdown .dataset-toggle:focus {
+    background-color: rgba(30, 41, 59, 0.85);
+    border-color: rgba(148, 163, 184, 0.65);
+    color: #f8fafc;
+    box-shadow: 0 0 12px rgba(56, 189, 248, 0.25);
+}
+
+.dataset-dropdown .dataset-dropdown-menu {
+    max-height: 280px;
+    overflow-y: auto;
+    background-color: rgba(15, 23, 42, 0.95);
+    border: 1px solid rgba(56, 189, 248, 0.25);
+    box-shadow: 0 18px 40px rgba(8, 47, 73, 0.45);
+    backdrop-filter: blur(6px);
+}
+
+.dataset-dropdown .dataset-option {
+    color: #e2e8f0;
+    padding: 0.5rem 1rem;
+}
+
+.dataset-dropdown .dataset-option:hover,
+.dataset-dropdown .dataset-option:focus,
+.dataset-dropdown .dataset-option.active,
+.dataset-dropdown .dataset-option:active {
+    background-color: rgba(56, 189, 248, 0.25);
+    color: #f8fafc;
+    border-left: 2px solid rgba(125, 211, 252, 0.6);
+}
+
+.dataset-dropdown .dataset-option .dataset-path {
+    color: rgba(148, 163, 184, 0.85);
+}
+
+.dataset-dropdown .dataset-option:hover .dataset-path,
+.dataset-dropdown .dataset-option:focus .dataset-path,
+.dataset-dropdown .dataset-option.active .dataset-path {
+    color: rgba(203, 213, 225, 0.9);
+}
+</style>
+
 <div class="tab-fragment" id="datasets-tab-content" data-tab-name="datasets"
      x-data="datasetWizardComponent()" x-init="init()">
     <!-- Main Card -->
     <div class="card mb-4">
         <div class="card-header">
-            <div class="d-flex justify-content-between align-items-center">
+            <div class="d-flex justify-content-between align-items-start mb-3">
                 <div>
                     <h5 class="mb-1"><i class="fas fa-database me-2"></i>Dataset Configuration</h5>
                     <p class="text-muted mb-0">Configure datasets and data loaders for training</p>
@@ -27,6 +114,66 @@
                     </button>
                 </div>
             </div>
+            <!-- Dataloader Config Selector -->
+            <div class="d-flex align-items-center gap-3">
+                <div class="flex-grow-1">
+                    {% if data_backend_choices %}
+                    <div class="mb-0">
+                        <label for="datasets-page-data-backend-config" class="form-label small mb-1 d-block">
+                            <i class="fas fa-file-code me-1"></i>Active Dataloader Configuration
+                        </label>
+                        <div class="dataset-dropdown dropdown w-100"
+                             data-field-id="datasets_page_data_backend_config"
+                             data-selected-env="{{ selected_env | default('') }}"
+                             data-selected-path="{{ selected_path | default('') }}">
+                            <input type="hidden"
+                                   id="datasets_page_data_backend_config"
+                                   name="datasets_page_data_backend_config"
+                                   value="{{ selected_value | default('') }}">
+
+                            <button class="btn btn-outline-secondary w-100 dropdown-toggle dataset-toggle"
+                                    type="button"
+                                    data-bs-toggle="dropdown"
+                                    aria-expanded="false">
+                                <span class="dataset-toggle-label d-flex justify-content-between align-items-center">
+                                    {% if selected_env and selected_path %}
+                                        <span class="dataset-env">{{ selected_env }}</span>
+                                        <span class="dataset-path">{{ selected_path }}</span>
+                                    {% else %}
+                                        <span class="text-muted">Select dataset configuration</span>
+                                    {% endif %}
+                                </span>
+                            </button>
+
+                            <div class="dropdown-menu w-100 dataset-dropdown-menu">
+                                {% for option in data_backend_choices %}
+                                    <button class="dropdown-item dataset-option"
+                                            type="button"
+                                            data-value="{{ option.value }}"
+                                            data-environment="{{ option.environment }}"
+                                            data-path="{{ option.path }}">
+                                        <span class="d-flex justify-content-between align-items-center w-100">
+                                            <span class="dataset-env">{{ option.environment }}</span>
+                                            <span class="dataset-path">{{ option.path }}</span>
+                                        </span>
+                                    </button>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+
+                <div class="form-check" style="padding-top: 1.75rem;">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           id="filterByEnvironment">
+                    <label class="form-check-label small" for="filterByEnvironment">
+                        Only show configs from<br>current environment
+                        <span class="badge bg-info text-dark" id="current-env-badge">none</span>
+                    </label>
+                </div>
+            </div>
         </div>
         <div class="card-body">
             <!-- Include the dataloader builder section -->
@@ -36,6 +183,56 @@
 
     <!-- Dataset Creation Wizard Modal -->
     {% include 'partials/dataset_wizard_modal.html' %}
+
+    <!-- Initialize dataset selector -->
+    <script>
+    (function() {
+        // Wait for Alpine and the global dataset dropdown functions to be ready
+        function initDatasetPageSelector() {
+            const selector = document.getElementById('datasets-page-data-backend-config');
+            const dropdown = document.querySelector('[data-field-id="datasets_page_data_backend_config"]');
+            const badge = document.getElementById('current-env-badge');
+
+            if (!selector || !dropdown) {
+                return;
+            }
+
+            // Function to sync the environment badge with the trainer store
+            function syncEnvironmentBadge() {
+                const trainerStore = Alpine.store('trainer');
+                if (trainerStore && badge) {
+                    const env = trainerStore.selectedEnvironment || '';
+                    badge.textContent = env || 'none';
+                }
+            }
+
+            // Initial sync
+            syncEnvironmentBadge();
+
+            // Watch for trainer store changes
+            if (window.Alpine) {
+                Alpine.effect(() => {
+                    const trainerStore = Alpine.store('trainer');
+                    if (trainerStore) {
+                        syncEnvironmentBadge();
+                    }
+                });
+            }
+
+            // Ensure the global dataset dropdown functionality is applied
+            if (window.__refreshDatasetDropdowns) {
+                window.__refreshDatasetDropdowns();
+            }
+        }
+
+        // Initialize when Alpine is ready
+        if (window.Alpine) {
+            initDatasetPageSelector();
+        } else {
+            document.addEventListener('alpine:init', initDatasetPageSelector);
+        }
+    })();
+    </script>
 
     <!-- New Configuration Modal -->
     <div x-show="showNewConfigModal"

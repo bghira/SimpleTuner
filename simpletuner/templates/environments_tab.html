@@ -76,6 +76,7 @@ function environmentsTabComponent() {
          createNewDataloader: true,
          selectedDataloaderPath: '',
          exampleLocked: false,
+         expandedEnvironments: {},
         dataloaderModal: {
             open: false,
             environment: '',
@@ -520,21 +521,11 @@ function environmentsTabComponent() {
         },
 
         async ensureDataloaderConfigs() {
-            if (this.dataloaderConfigs.length > 0) {
-                return;
-            }
-            try {
-                const response = await fetch('/api/configs/?config_type=dataloader');
-                if (response.ok) {
-                    const data = await response.json();
-                    this.dataloaderConfigs = (data.configs || []).map(item => ({
-                        name: item.name,
-                        path: item.path || '',
-                        dataset_count: item.dataset_count || 0
-                    })).filter(item => item.path);
-                }
-            } catch (error) {
-                console.error('Failed to load dataloader configs:', error);
+            const store = Alpine.store('dataloaderConfigs');
+            if (store) {
+                await store.load();
+                // Update local cache for backwards compatibility
+                this.dataloaderConfigs = store.configs;
             }
         },
 
@@ -635,6 +626,11 @@ function environmentsTabComponent() {
                     const result = await response.json().catch(() => null);
                     this.closeCreateEnvironmentModal();
                     await this.loadConfigs();
+                    // Force reload shared dataloader store
+                    const dataloaderStore = Alpine.store('dataloaderConfigs');
+                    if (dataloaderStore) {
+                        await dataloaderStore.load(true);
+                    }
                     this.dataloaderConfigs = [];
                     const trainerStore = Alpine.store('trainer');
                     if (trainerStore) {
@@ -716,6 +712,11 @@ function environmentsTabComponent() {
 
                 if (response.ok) {
                 this.closeCreateDataloaderModal();
+                // Force reload shared dataloader store
+                const dataloaderStore = Alpine.store('dataloaderConfigs');
+                if (dataloaderStore) {
+                    await dataloaderStore.load(true);
+                }
                 if (this.configType === 'dataloader') {
                     await this.loadConfigs();
                 } else {
@@ -742,8 +743,89 @@ function environmentsTabComponent() {
                     ? data.configs.map((entry) => this.normalizeConfigEntry(entry))
                     : [];
                 this.configs = configs;
+
+                // Load all dataloader configs if we're viewing model configs
+                if (this.configType === 'model') {
+                    await this.loadAllDataloaderConfigs();
+                }
             } catch (error) {
                 console.error('Failed to load configs:', error);
+            }
+        },
+
+        async loadAllDataloaderConfigs() {
+            const store = Alpine.store('dataloaderConfigs');
+            if (store) {
+                await store.load();
+            }
+        },
+
+        get allDataloaderConfigs() {
+            const store = Alpine.store('dataloaderConfigs');
+            return store ? store.configs : [];
+        },
+
+        toggleEnvironmentExpansion(configName) {
+            const key = this.normalizeConfigNameForType(configName);
+            this.expandedEnvironments[key] = !this.expandedEnvironments[key];
+        },
+
+        isEnvironmentExpanded(configName) {
+            const key = this.normalizeConfigNameForType(configName);
+            return Boolean(this.expandedEnvironments[key]);
+        },
+
+        getDataloadersForEnvironment(config) {
+            if (!config) return [];
+            const dataBackendPath = config.data_backend_config || config['--data_backend_config'] || config.dataloader_path;
+            if (!dataBackendPath) return [];
+
+            // Find matching dataloaders by path
+            return this.allDataloaderConfigs.filter(dl => {
+                const dlPath = dl.path || '';
+                return dlPath === dataBackendPath || dlPath.includes(dataBackendPath) || dataBackendPath.includes(dlPath);
+            });
+        },
+
+        async copyDataloaderJSON(dataloaderPath) {
+            try {
+                const response = await fetch(`/api/configs/dataloader/content?path=${encodeURIComponent(dataloaderPath)}`);
+                if (!response.ok) {
+                    throw new Error('Failed to fetch dataloader content');
+                }
+                const data = await response.json();
+                const jsonString = JSON.stringify(data, null, 2);
+                await navigator.clipboard.writeText(jsonString);
+                window.showToast('JSON copied to clipboard', 'success');
+            } catch (error) {
+                console.error('Failed to copy dataloader JSON:', error);
+                window.showToast('Failed to copy JSON: ' + error.message, 'error');
+            }
+        },
+
+        async deleteDataloader(dataloaderPath, dataloaderName) {
+            if (!confirm(`Delete dataloader configuration "${dataloaderName}"?\n\nWarning: Any environments referencing this configuration will need to be updated.`)) {
+                return;
+            }
+            try {
+                const response = await fetch(`/api/configs/dataloader?path=${encodeURIComponent(dataloaderPath)}`, {
+                    method: 'DELETE'
+                });
+                if (!response.ok) {
+                    const error = await response.json().catch(() => ({}));
+                    throw new Error(error.detail || 'Failed to delete dataloader');
+                }
+                window.showToast('Dataloader configuration deleted', 'success');
+
+                // Reload shared store
+                const store = Alpine.store('dataloaderConfigs');
+                if (store) {
+                    await store.load(true);
+                }
+                await this.loadConfigs();
+            } catch (error) {
+                console.error('Failed to delete dataloader:', error);
+                window.showToast('Failed to delete dataloader: ' + error.message, 'error');
             }
         },
 
@@ -1391,6 +1473,57 @@ function environmentsTabComponent() {
                                         title="Delete">
                                     <i class="fas fa-trash"></i>
                                 </button>
+                            </div>
+
+                            <!-- Expandable Dataloader Configs Section -->
+                            <div x-show="configType === 'model' && hasDataloader(config)" class="mt-3">
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-info w-100"
+                                        @click="toggleEnvironmentExpansion(config.name)">
+                                    <i class="fas"
+                                       :class="isEnvironmentExpanded(config.name) ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+                                    <span x-text="isEnvironmentExpanded(config.name) ? 'Hide' : 'Show'"></span>
+                                    Dataloader Configs
+                                    <span class="badge bg-secondary ms-1" x-text="getDataloadersForEnvironment(config).length"></span>
+                                </button>
+
+                                <div x-show="isEnvironmentExpanded(config.name)" x-cloak class="mt-2">
+                                    <template x-if="getDataloadersForEnvironment(config).length === 0">
+                                        <div class="alert alert-sm alert-warning mb-0">
+                                            No dataloader configurations found for this environment.
+                                        </div>
+                                    </template>
+                                    <template x-if="getDataloadersForEnvironment(config).length > 0">
+                                        <div class="list-group list-group-flush">
+                                            <template x-for="dataloader in getDataloadersForEnvironment(config)" :key="dataloader.path">
+                                                <div class="list-group-item bg-dark-subtle d-flex justify-content-between align-items-center">
+                                                    <div class="flex-grow-1">
+                                                        <div class="d-flex align-items-center gap-2">
+                                                            <i class="fas fa-database text-info"></i>
+                                                            <strong x-text="dataloader.name"></strong>
+                                                            <span class="badge bg-secondary" x-text="`${dataloader.dataset_count || 0} datasets`"></span>
+                                                        </div>
+                                                        <small class="text-muted d-block mt-1" x-text="dataloader.path"></small>
+                                                    </div>
+                                                    <div class="btn-group btn-group-sm">
+                                                        <button type="button"
+                                                                class="btn btn-outline-light"
+                                                                @click="copyDataloaderJSON(dataloader.path)"
+                                                                title="Copy JSON">
+                                                            <i class="fas fa-copy"></i>
+                                                        </button>
+                                                        <button type="button"
+                                                                class="btn btn-outline-danger"
+                                                                @click="deleteDataloader(dataloader.path, dataloader.name)"
+                                                                title="Delete">
+                                                            <i class="fas fa-trash"></i>
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </template>
+                                </div>
                             </div>
                         </div>
                     </div>

@@ -73,14 +73,13 @@
              data-selected-env="{{ field.selected_environment or '' }}"
              data-selected-path="{{ field.selected_path or '' }}">
             <input type="hidden" id="{{ field_id }}" name="{{ field_name }}" value="{{ field_value }}"{% if field_required %} data-required="true"{% endif %}>
-            <button class="btn btn-outline-secondary w-100 dropdown-toggle text-start dataset-toggle"
+            <button class="btn btn-outline-secondary w-100 dropdown-toggle dataset-toggle"
                     type="button"
                     data-bs-toggle="dropdown"
                     aria-expanded="false">
                 <span class="dataset-toggle-label">
                     {% if field.selected_path %}
                         <span class="dataset-env">{{ field.selected_environment }}</span>
-                        <span class="dataset-separator">|</span>
                         <span class="dataset-path">{{ field.selected_path }}</span>
                     {% else %}
                         Select dataset configuration
@@ -89,13 +88,15 @@
             </button>
             <div class="dropdown-menu w-100 dataset-dropdown-menu">
                 {% for option in field.options %}
-                    <button class="dropdown-item dataset-option d-flex justify-content-between align-items-center"
+                    <button class="dropdown-item dataset-option"
                             type="button"
                             data-value="{{ option.value }}"
                             data-environment="{{ option.environment }}"
                             data-path="{{ option.path }}">
-                        <span class="dataset-env">{{ option.environment }}</span>
-                        <span class="dataset-path text-muted">{{ option.path }}</span>
+                        <span class="d-flex justify-content-between align-items-center w-100">
+                            <span class="dataset-env">{{ option.environment }}</span>
+                            <span class="dataset-path">{{ option.path }}</span>
+                        </span>
                     </button>
                 {% endfor %}
             </div>
@@ -120,7 +121,6 @@
                         if (env && path) {
                             toggle.innerHTML = `
                                 <span class="dataset-env">${env}</span>
-                                <span class="dataset-separator">|</span>
                                 <span class="dataset-path">${path}</span>
                             `;
                         } else if (path) {

@@ -48,7 +48,7 @@
                    value="{{ field_value }}"
                    {% if field.required %}data-required="true"{% endif %}>
 
-            <button class="btn btn-outline-secondary w-100 dropdown-toggle text-start dataset-toggle"
+            <button class="btn btn-outline-secondary w-100 dropdown-toggle dataset-toggle"
                     type="button"
                     data-bs-toggle="dropdown"
                     aria-expanded="false">
@@ -64,13 +64,15 @@
 
             <div class="dropdown-menu w-100 dataset-dropdown-menu">
                 {% for option in field.options %}
-                    <button class="dropdown-item dataset-option d-flex justify-content-between align-items-center"
+                    <button class="dropdown-item dataset-option"
                             type="button"
                             data-value="{{ option.value }}"
                             data-environment="{{ option.environment }}"
                             data-path="{{ option.path }}">
-                        <span class="dataset-env">{{ option.environment }}</span>
-                        <span class="dataset-path text-muted">{{ option.path }}</span>
+                        <span class="d-flex justify-content-between align-items-center w-100">
+                            <span class="dataset-env">{{ option.environment }}</span>
+                            <span class="dataset-path">{{ option.path }}</span>
+                        </span>
                     </button>
                 {% endfor %}
             </div>
@@ -95,7 +97,6 @@
                         if (env && path) {
                             toggle.innerHTML = `
                                 <span class="dataset-env">${env}</span>
-                                <span class="dataset-separator">|</span>
                                 <span class="dataset-path">${path}</span>
                             `;
                         } else if (path) {
@@ -600,28 +601,24 @@ select[multiple] {
 }
 
 /* Dataset dropdown styling */
-.dataset-dropdown .dataset-toggle-label {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 0.5rem;
-}
-
-.dataset-dropdown .dataset-env {
-    font-weight: 600;
-    flex: 0 0 auto;
-}
-
-.dataset-dropdown .dataset-path {
-    flex: 1 1 auto;
-    text-align: right;
-    font-family: var(--bs-font-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
-}
-
 .dataset-dropdown .dataset-toggle {
     background-color: rgba(15, 23, 42, 0.65);
     color: #e2e8f0;
     border: 1px solid rgba(148, 163, 184, 0.4);
+    display: flex;
+    align-items: center;
+    padding-right: 2.5rem;
+    position: relative;
+    text-align: left;
+    font-family: var(--bs-font-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+    font-size: 0.9rem;
+}
+
+.dataset-dropdown .dataset-toggle::after {
+    position: absolute;
+    right: 1rem;
+    top: 50%;
+    transform: translateY(-50%);
 }
 
 .dataset-dropdown .dataset-toggle:hover,
@@ -630,6 +627,31 @@ select[multiple] {
     border-color: rgba(148, 163, 184, 0.65);
     color: #f8fafc;
     box-shadow: 0 0 12px rgba(56, 189, 248, 0.25);
+}
+
+.dataset-dropdown .dataset-toggle-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    flex: 1;
+    min-width: 0;
+}
+
+.dataset-dropdown .dataset-env {
+    font-weight: 600;
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+.dataset-dropdown .dataset-path {
+    flex: 1 1 auto;
+    text-align: right;
+    font-family: var(--bs-font-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
 }
 
 .dataset-dropdown .dataset-dropdown-menu {

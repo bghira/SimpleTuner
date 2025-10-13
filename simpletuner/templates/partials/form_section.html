@@ -124,29 +124,45 @@ function formSectionComponent(expanded) {
 
     .dataset-dropdown .dataset-toggle {
         display: flex;
-        justify-content: space-between;
         align-items: center;
-        gap: 0.75rem;
         font-family: var(--bs-font-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
         font-size: 0.9rem;
-        white-space: nowrap;
+        padding-right: 2.5rem;
+        position: relative;
+        text-align: left;
     }
 
-    .dataset-dropdown .dataset-toggle .dataset-path {
+    .dataset-dropdown .dataset-toggle::after {
+        position: absolute;
+        right: 1rem;
+        top: 50%;
+        transform: translateY(-50%);
+    }
+
+    .dataset-dropdown .dataset-toggle-label {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        width: 100%;
+        flex: 1;
+        min-width: 0;
+    }
+
+    .dataset-dropdown .dataset-toggle .dataset-path,
+    .dataset-dropdown .dataset-toggle-label .dataset-path {
         flex: 1 1 auto;
         text-align: right;
         color: var(--bs-secondary-color, #6c757d);
         overflow: hidden;
         text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
     }
 
-    .dataset-dropdown .dataset-toggle .dataset-env {
+    .dataset-dropdown .dataset-toggle .dataset-env,
+    .dataset-dropdown .dataset-toggle-label .dataset-env {
         flex: 0 0 auto;
-    }
-
-    .dataset-dropdown .dataset-separator {
-        flex: 0 0 auto;
-        opacity: 0.7;
+        white-space: nowrap;
     }
 
     .dataset-dropdown-menu {
@@ -158,17 +174,21 @@ function formSectionComponent(expanded) {
     .dataset-dropdown-menu .dataset-option {
         font-family: var(--bs-font-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
         font-size: 0.9rem;
-        gap: 0.75rem;
     }
 
     .dataset-dropdown-menu .dataset-option .dataset-env {
         flex: 0 0 auto;
+        white-space: nowrap;
     }
 
     .dataset-dropdown-menu .dataset-option .dataset-path {
         flex: 1 1 auto;
         text-align: right;
         color: var(--bs-secondary-color, #6c757d);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
     }
 
     .dataset-dropdown-menu .dataset-option.active,

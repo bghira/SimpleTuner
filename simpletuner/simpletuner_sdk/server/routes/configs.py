@@ -183,6 +183,18 @@ async def create_environment_dataloader(name: str, request: EnvironmentDataloade
     return _call_service(CONFIGS_SERVICE.create_environment_dataloader, name, request.path, request.include_defaults)
 
 
+@router.get("/dataloader/content")
+async def get_dataloader_content(path: str) -> Any:
+    """Get the JSON contents of a dataloader configuration file."""
+    return _call_service(CONFIGS_SERVICE.read_data_backend_file, path)
+
+
+@router.delete("/dataloader")
+async def delete_dataloader_config(path: str) -> Dict[str, Any]:
+    """Delete a dataloader configuration file."""
+    return _call_service(CONFIGS_SERVICE.delete_dataloader_config, path)
+
+
 @router.post("/{name}/activate")
 async def activate_config(name: str) -> Dict[str, Any]:
     """Set a configuration as active."""

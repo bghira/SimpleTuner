@@ -629,6 +629,34 @@ class ConfigsService:
             return {"message": f"Configuration '{name}' deleted successfully"}
         raise ConfigServiceError(f"Configuration '{name}' not found", status.HTTP_404_NOT_FOUND)
 
+    def delete_dataloader_config(self, path: str) -> Dict[str, Any]:
+        """Delete a dataloader configuration file by path."""
+        store = self._get_store("model")
+        resolved_path = resolve_config_path(path, config_dir=store.config_dir, check_cwd_first=True)
+        if not resolved_path or not resolved_path.exists():
+            raise ConfigServiceError(
+                f"Dataloader config file not found: {path}",
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        allowed_dirs = self._allowed_directories(store)
+        resolved_real = resolved_path.resolve()
+        if not any(self._is_relative_to(resolved_real, directory.resolve()) for directory in allowed_dirs):
+            raise ConfigServiceError(
+                "Cannot delete files outside allowed directories",
+                status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            resolved_path.unlink()
+            self._invalidate_active_config_cache()
+            return {"message": f"Dataloader configuration deleted: {path}"}
+        except OSError as exc:
+            raise ConfigServiceError(
+                f"Error deleting dataloader config file: {exc}",
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+            ) from exc
+
     def rename_config(self, name: str, new_name: str, config_type: str = "model") -> Dict[str, Any]:
         name = self._validate_config_name(name)
         new_name = self._validate_config_name(new_name)
