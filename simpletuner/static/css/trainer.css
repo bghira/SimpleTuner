@@ -98,7 +98,7 @@ body {
 
 .tab-btn:hover {
     color: var(--text-primary);
-    background: var(--hover-bg);
+    background: var(--sidebar-bg-hover);
 }
 
 .tab-btn.active {
@@ -184,11 +184,31 @@ body {
     margin-bottom: var(--spacing-2xl);
     transition: all 0.3s ease;
     box-shadow: var(--shadow-lg);
+    position: relative;
+}
+
+.config-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: var(--radius-xl);
+    background: linear-gradient(135deg,
+        rgba(102, 126, 234, 0.05) 0%,
+        rgba(168, 85, 247, 0.03) 50%,
+        transparent 100%);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none;
 }
 
 .config-card:hover {
     transform: translateY(-2px);
     box-shadow: 0 15px 50px rgba(102, 126, 234, 0.15);
+    background: var(--card-bg-hover);
+}
+
+.config-card:hover::before {
+    opacity: 1;
 }
 
 .card-title {
@@ -228,8 +248,8 @@ body {
 /* Enhanced form controls */
 .form-control,
 .form-select {
-    background: rgba(255, 255, 255, 0.03) !important;
-    border: 1px solid rgba(255, 255, 255, 0.06) !important;
+    background: var(--glass-bg) !important;
+    border: 1px solid var(--glass-border) !important;
     color: var(--text-primary) !important;
     padding: var(--spacing-md-lg) var(--spacing-lg) !important;
     font-size: 0.95rem;
@@ -239,10 +259,16 @@ body {
 
 .form-control:focus,
 .form-select:focus {
-    background: rgba(255, 255, 255, 0.05) !important;
+    background: var(--card-bg-hover) !important;
     border-color: var(--accent-purple) !important;
     box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1) !important;
     outline: none;
+}
+
+.form-control:hover,
+.form-select:hover {
+    background: var(--card-bg) !important;
+    border-color: rgba(255, 255, 255, 0.15) !important;
 }
 
 .form-label {
@@ -434,9 +460,15 @@ body {
 }
 
 .alert-info {
-    background: rgba(59, 130, 246, 0.1);
+    background: var(--info-bg);
     color: var(--info-text);
     border: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+.alert-warning {
+    background: var(--warning-bg);
+    color: var(--warning-text);
+    border: 1px solid rgba(245, 158, 11, 0.2);
 }
 
 /* Connection status */
