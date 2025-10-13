@@ -852,10 +852,21 @@ function dataloaderSectionComponent() {
         };
         window.addEventListener('caption-filters-updated', handleCaptionFiltersUpdated);
 
+        // Listen for config-saved events to reload dataset builder
+        const handleConfigSaved = async () => {
+            console.log('Config saved, reloading dataset builder');
+            const trainer = Alpine.store('trainer');
+            if (trainer && trainer.loadDatasetsAfterEnvironmentChange) {
+                await trainer.loadDatasetsAfterEnvironmentChange();
+            }
+        };
+        window.addEventListener('config-saved', handleConfigSaved);
+
         // Clean up event listener when component is destroyed
         $el.addEventListener('x-destroy', () => {
             window.removeEventListener('environment-changed', handleEnvironmentChange);
             window.removeEventListener('caption-filters-updated', handleCaptionFiltersUpdated);
+            window.removeEventListener('config-saved', handleConfigSaved);
             if (this._dangerModeHandler) {
                 window.removeEventListener('trainer-danger-mode-changed', this._dangerModeHandler);
                 delete this._dangerModeHandler;

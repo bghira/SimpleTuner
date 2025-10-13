@@ -187,15 +187,48 @@
     <!-- Initialize dataset selector -->
     <script>
     (function() {
+        let retryCount = 0;
+        const maxRetries = 20; // Try for up to 2 seconds
+
         // Wait for Alpine and the global dataset dropdown functions to be ready
         function initDatasetPageSelector() {
-            const selector = document.getElementById('datasets-page-data-backend-config');
+            // Note: ID uses underscores, not hyphens
+            const selector = document.getElementById('datasets_page_data_backend_config');
             const dropdown = document.querySelector('[data-field-id="datasets_page_data_backend_config"]');
             const badge = document.getElementById('current-env-badge');
 
-            if (!selector || !dropdown) {
+            console.log('initDatasetPageSelector called (attempt ' + (retryCount + 1) + ')', { selector, dropdown, badge });
+
+            if (!dropdown) {
+                if (retryCount < maxRetries) {
+                    retryCount++;
+                    console.warn('Dataset dropdown not found, retrying...', {
+                        selectorExists: !!selector,
+                        dropdownExists: !!dropdown,
+                        attempt: retryCount
+                    });
+                    // Retry after a short delay if elements aren't ready
+                    setTimeout(initDatasetPageSelector, 100);
+                    return;
+                } else {
+                    console.error('Dataset dropdown not found after ' + maxRetries + ' attempts. Giving up.');
+                    return;
+                }
+            }
+
+            // Selector might not exist if there are no dataloader configs yet
+            if (!selector) {
+                console.warn('Hidden input not found - may not be rendered by server');
+            }
+
+            console.log('Dataset selector elements found, setting up handlers');
+
+            // Check if already initialized to prevent duplicate handlers
+            if (dropdown.dataset.initialized === 'true') {
+                console.log('Dataset selector already initialized, skipping');
                 return;
             }
+            dropdown.dataset.initialized = 'true';
 
             // Function to sync the environment badge with the trainer store
             function syncEnvironmentBadge() {
@@ -223,13 +256,163 @@
             if (window.__refreshDatasetDropdowns) {
                 window.__refreshDatasetDropdowns();
             }
+
+            // Add environment filter checkbox handler
+            const filterCheckbox = document.getElementById('filterByEnvironment');
+            if (filterCheckbox) {
+                console.log('Adding environment filter checkbox handler');
+
+                const filterOptions = () => {
+                    const trainerStore = Alpine.store('trainer');
+                    const currentEnv = trainerStore ? trainerStore.activeEnvironment : null;
+                    const shouldFilter = filterCheckbox.checked;
+
+                    console.log('Filtering dropdown options', { shouldFilter, currentEnv });
+
+                    const options = dropdownMenu.querySelectorAll('.dataset-option');
+                    options.forEach(option => {
+                        if (!shouldFilter || !currentEnv) {
+                            // Show all options
+                            option.style.display = '';
+                        } else {
+                            // Only show options matching current environment
+                            const optionEnv = option.dataset.environment || '';
+                            if (optionEnv.toLowerCase() === currentEnv.toLowerCase()) {
+                                option.style.display = '';
+                            } else {
+                                option.style.display = 'none';
+                            }
+                        }
+                    });
+                };
+
+                filterCheckbox.addEventListener('change', filterOptions);
+
+                // Filter on initial load if checkbox is checked
+                if (filterCheckbox.checked) {
+                    filterOptions();
+                }
+            } else {
+                console.warn('Filter checkbox not found');
+            }
+
+            // Add click handler specifically for datasets page dropdown options
+            const dropdownMenu = dropdown.querySelector('.dataset-dropdown-menu');
+            if (dropdownMenu) {
+                console.log('Adding click handler to dropdown menu');
+                dropdownMenu.addEventListener('click', async (event) => {
+                    const optionEl = event.target.closest('.dataset-option');
+                    if (!optionEl) {
+                        console.log('Click not on a dataset option');
+                        return;
+                    }
+
+                    console.log('Dataset option clicked!', optionEl);
+
+                    const env = optionEl.dataset.environment || '';
+                    const path = optionEl.dataset.path || '';
+                    const value = optionEl.dataset.value || '';
+
+                    console.log('Dataset config selected:', { env, path, value });
+
+                    // Update the hidden input (get fresh reference in case it was created dynamically)
+                    const hiddenInput = dropdown.querySelector('input[type="hidden"]') || document.getElementById('datasets_page_data_backend_config');
+                    if (hiddenInput) {
+                        console.log('Updating hidden input value');
+                        hiddenInput.value = value;
+                    } else {
+                        console.warn('Hidden input not found');
+                    }
+
+                    // Update the button label
+                    const toggleLabel = dropdown.querySelector('.dataset-toggle-label');
+                    if (toggleLabel && env && path) {
+                        console.log('Updating button label');
+                        toggleLabel.innerHTML = `
+                            <span class="dataset-env">${env}</span>
+                            <span class="dataset-path">${path}</span>
+                        `;
+                    }
+
+                    // Also try using the global function if available
+                    if (window.__setDatasetSelection) {
+                        console.log('Calling __setDatasetSelection');
+                        window.__setDatasetSelection(dropdown, env, path, value);
+                    } else {
+                        console.warn('__setDatasetSelection not available');
+                    }
+
+                    // Update trainer store configValues
+                    const trainerStore = Alpine.store('trainer');
+                    if (trainerStore) {
+                        console.log('Updating trainer store');
+                        // Update the config value in the store
+                        if (!trainerStore.configValues) {
+                            trainerStore.configValues = {};
+                        }
+                        trainerStore.configValues['data_backend_config'] = value;
+                        trainerStore.configValues['--data_backend_config'] = value;
+
+                        // Mark form as dirty
+                        if (trainerStore.markFormDirty) {
+                            console.log('Marking form dirty');
+                            trainerStore.markFormDirty();
+                        }
+
+                        // Trigger dataset builder to reload with new config
+                        if (trainerStore.loadDatasetsFromConfig) {
+                            console.log('Reloading datasets from config:', value);
+                            try {
+                                await trainerStore.loadDatasetsFromConfig(value);
+                                console.log('Datasets reloaded successfully');
+                            } catch (error) {
+                                console.error('Failed to load datasets from config:', error);
+                                window.showToast && window.showToast('Failed to load dataset configuration', 'error');
+                            }
+                        } else {
+                            console.warn('loadDatasetsFromConfig not available on trainer store');
+                        }
+                    } else {
+                        console.warn('Trainer store not available');
+                    }
+
+                    // Close the dropdown
+                    const toggleButton = dropdown.querySelector('.dataset-toggle');
+                    if (toggleButton && window.bootstrap && window.bootstrap.Dropdown) {
+                        try {
+                            const instance = window.bootstrap.Dropdown.getInstance(toggleButton) || new window.bootstrap.Dropdown(toggleButton);
+                            instance.hide();
+                        } catch (err) {
+                            console.debug('dataset dropdown hide failed', err);
+                        }
+                    }
+                });
+            } else {
+                console.warn('Dropdown menu not found');
+            }
         }
 
         // Initialize when Alpine is ready
         if (window.Alpine) {
-            initDatasetPageSelector();
+            console.log('Alpine already loaded, initializing now');
+            // Use setTimeout to ensure DOM is fully ready
+            setTimeout(initDatasetPageSelector, 0);
         } else {
-            document.addEventListener('alpine:init', initDatasetPageSelector);
+            console.log('Waiting for Alpine to initialize');
+            document.addEventListener('alpine:init', () => {
+                console.log('Alpine initialized, setting up dataset selector');
+                initDatasetPageSelector();
+            });
+        }
+
+        // Also try on DOMContentLoaded as fallback
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => {
+                setTimeout(initDatasetPageSelector, 100);
+            });
+        } else {
+            // DOM already loaded
+            setTimeout(initDatasetPageSelector, 100);
         }
     })();
     </script>

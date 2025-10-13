@@ -1039,9 +1039,10 @@ optgroup option {
 }
 
 .trainer-action-btn.btn-outline-secondary.is-active {
-    background: rgba(148, 163, 184, 0.28) !important;
-    border-color: rgba(148, 163, 184, 0.45) !important;
-    color: #e2e8f0 !important;
+    background: rgba(251, 191, 36, 0.15) !important;
+    border: 2px solid rgba(251, 191, 36, 0.75) !important;
+    color: #fbbf24 !important;
+    box-shadow: 0 0 16px rgba(251, 191, 36, 0.35);
 }
 
 .action-buttons--compact .trainer-action-btn.btn-primary {

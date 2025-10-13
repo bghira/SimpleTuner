@@ -223,6 +223,11 @@
 
                         applySelection(dropdown, env, path, value);
 
+                        // Mark form as dirty when dataset config changes
+                        if (window.Alpine && Alpine.store('trainer')) {
+                            Alpine.store('trainer').markFormDirty();
+                        }
+
                         const toggleButton = dropdown.querySelector('.dataset-toggle');
                         if (toggleButton && window.bootstrap && window.bootstrap.Dropdown) {
                             try {

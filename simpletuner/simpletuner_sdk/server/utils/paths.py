@@ -11,15 +11,22 @@ def get_simpletuner_root() -> Path:
     """Get the root directory of SimpleTuner installation.
 
     Returns:
-        Path to SimpleTuner root directory
+        Path to SimpleTuner root directory (package dir for installed, project root for source)
     """
     import simpletuner
 
-    # Get the path to the simpletuner package
-    simpletuner_package = Path(simpletuner.__file__)
+    # Get the path to the simpletuner package directory
+    simpletuner_package = Path(simpletuner.__file__).parent
 
-    # Go up one level to get the project root
-    return simpletuner_package.parent
+    # Check if we're running from a source checkout by looking for pyproject.toml
+    # one level up (this means we're in a development environment)
+    potential_project_root = simpletuner_package.parent
+    if (potential_project_root / "pyproject.toml").exists():
+        # Running from source - return project root, not package dir
+        return potential_project_root
+
+    # Installed as package - return package directory
+    return simpletuner_package
 
 
 def get_config_directory() -> Path:
@@ -35,18 +42,26 @@ def get_template_directory() -> Path:
     """Get the template directory.
 
     Returns:
-        Path to the templates directory relative to SimpleTuner root
+        Path to the templates directory (always in package, not project root)
     """
-    return get_simpletuner_root() / "templates"
+    import simpletuner
+
+    # Templates are always in the package directory, not project root
+    simpletuner_package = Path(simpletuner.__file__).parent
+    return simpletuner_package / "templates"
 
 
 def get_static_directory() -> Path:
     """Get the static files directory.
 
     Returns:
-        Path to the static directory relative to SimpleTuner root
+        Path to the static directory (always in package, not project root)
     """
-    return get_simpletuner_root() / "static"
+    import simpletuner
+
+    # Static files are always in the package directory, not project root
+    simpletuner_package = Path(simpletuner.__file__).parent
+    return simpletuner_package / "static"
 
 
 def resolve_config_path(

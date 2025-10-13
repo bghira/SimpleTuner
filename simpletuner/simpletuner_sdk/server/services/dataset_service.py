@@ -53,11 +53,6 @@ def _normalise_dataset_path(
             candidate_roots.append(candidate)
 
     _add_candidate(configs_dir)
-    if configs_dir:
-        try:
-            _add_candidate(Path(configs_dir).expanduser() / "dataloaders")
-        except Exception:
-            pass
 
     if extra_roots:
         for root in extra_roots:
@@ -135,13 +130,26 @@ def build_data_backend_choices() -> List[Dict[str, str]]:
     option_priorities: Dict[str, int] = {}
     workspace_config_root: Optional[Path] = None
 
+    # Detect workspace config root FIRST before setting default paths
+    try:
+        defaults = WebUIStateStore().load_defaults()
+        if defaults.configs_dir:
+            base = Path(defaults.configs_dir).expanduser()
+            try:
+                workspace_config_root = base.resolve(strict=False)
+            except Exception:
+                workspace_config_root = base
+    except Exception:
+        pass
+
     try:
         simpletuner_root = Path(get_simpletuner_root()).expanduser().resolve(strict=False)
     except Exception:
         simpletuner_root = None
 
+    # Only use project config root if no workspace is configured
     project_config_root: Optional[Path] = None
-    if simpletuner_root is not None:
+    if not workspace_config_root and simpletuner_root is not None:
         candidate_project_root = simpletuner_root.parent / "config"
         try:
             resolved_candidate = candidate_project_root.expanduser().resolve(strict=False)
@@ -150,10 +158,13 @@ def build_data_backend_choices() -> List[Dict[str, str]]:
         except Exception:
             pass
 
-    try:
-        default_config_root = Path(get_config_directory()).expanduser().resolve(strict=False)
-    except Exception:
-        default_config_root = None
+    # Only use SimpleTuner's default config directory if no workspace is configured
+    default_config_root: Optional[Path] = None
+    if not workspace_config_root:
+        try:
+            default_config_root = Path(get_config_directory()).expanduser().resolve(strict=False)
+        except Exception:
+            default_config_root = None
 
     def _is_under(path: Path, root: Optional[Path]) -> bool:
         if not root:
@@ -238,6 +249,7 @@ def build_data_backend_choices() -> List[Dict[str, str]]:
         display_key = f"{(environment or '').strip().lower()}|{rel_path.lower()}"
         priority = _compute_priority(resolved)
         existing_priority = option_priorities.get(display_key)
+
         if existing_priority is not None and priority <= existing_priority:
             return
 
@@ -266,24 +278,21 @@ def build_data_backend_choices() -> List[Dict[str, str]]:
         candidate_dirs.add(resolved_candidate)
         _add_config_root(resolved_candidate)
 
-    # Include user-configured directories from WebUI defaults
-    try:
-        defaults = WebUIStateStore().load_defaults()
-        if defaults.configs_dir:
-            base = Path(defaults.configs_dir).expanduser()
-            try:
-                workspace_config_root = base.resolve(strict=False)
-            except Exception:
-                workspace_config_root = base
-            _add_candidate_dir(base)
-            _add_candidate_dir(base / "dataloaders")
-    except Exception:
-        pass
+    # Include user-configured workspace directory (already detected at top)
+    if workspace_config_root:
+        _add_candidate_dir(workspace_config_root)
 
     # Include ConfigStore-managed dataloader configs and directory
     try:
         dataloader_store = _get_config_store(config_type="dataloader")
-        _add_candidate_dir(Path(dataloader_store.config_dir))
+        # Only add dataloader store config dir if it matches workspace or no workspace is configured
+        dataloader_config_path = Path(dataloader_store.config_dir).resolve()
+        if (
+            not workspace_config_root
+            or dataloader_config_path == workspace_config_root
+            or dataloader_config_path.parent == workspace_config_root
+        ):
+            _add_candidate_dir(dataloader_config_path)
         for metadata in dataloader_store.list_configs():
             name = metadata.get("name")
             if not name:
@@ -302,7 +311,14 @@ def build_data_backend_choices() -> List[Dict[str, str]]:
     # Include dataset plan store path (global plan)
     try:
         dataset_plan_store = DatasetPlanStore()
-        _add_candidate_dir(dataset_plan_store.path.parent)
+        dataset_plan_parent = dataset_plan_store.path.parent.resolve()
+        # Only add dataset plan parent if it's the workspace or no workspace is configured
+        if (
+            not workspace_config_root
+            or dataset_plan_parent == workspace_config_root
+            or dataset_plan_parent.parent == workspace_config_root
+        ):
+            _add_candidate_dir(dataset_plan_parent)
         if dataset_plan_store.path.exists():
             _register_path(dataset_plan_store.path)
     except Exception:
@@ -311,7 +327,10 @@ def build_data_backend_choices() -> List[Dict[str, str]]:
     # Include paths referenced by active configuration
     try:
         model_store = _get_config_store()
-        _add_candidate_dir(Path(model_store.config_dir))
+        # Only add model store config dir if it's the workspace config root or if no workspace is configured
+        model_config_path = Path(model_store.config_dir).resolve()
+        if not workspace_config_root or model_config_path == workspace_config_root:
+            _add_candidate_dir(model_config_path)
         active_name = model_store.get_active_config()
         if active_name:
             config, _ = model_store.load_config(active_name)
@@ -320,23 +339,78 @@ def build_data_backend_choices() -> List[Dict[str, str]]:
                 resolved = resolve_config_path(backend_path, config_dir=model_store.config_dir, check_cwd_first=True)
                 if resolved and resolved.exists():
                     _register_path(resolved)
-                    _add_candidate_dir(resolved.parent)
+                    # Only add parent dir if it's not already under workspace config root
+                    # (workspace will be scanned recursively anyway)
+                    parent_dir = resolved.parent.resolve()
+                    should_add_parent = True
+                    if workspace_config_root:
+                        try:
+                            parent_dir.relative_to(workspace_config_root)
+                            # Parent is under workspace, don't add separately
+                            should_add_parent = False
+                        except ValueError:
+                            # Parent is not under workspace, add it
+                            pass
+                    if should_add_parent:
+                        _add_candidate_dir(parent_dir)
     except Exception:
         pass
 
-    # Always include the default config directory under the SimpleTuner installation
-    try:
-        _add_candidate_dir(Path(get_config_directory()))
-    except Exception:
-        pass
+    # Include the default config directory under SimpleTuner installation
+    # ONLY if no workspace config root is configured (to avoid showing example configs from source tree)
+    if not workspace_config_root:
+        try:
+            _add_candidate_dir(Path(get_config_directory()))
+        except Exception:
+            pass
 
     # Discover dataset configs within the candidate directories
+    # Only search recursively in known config directories, not CWD
+    cwd = Path.cwd().resolve()
+
+    # Determine what are "safe" config directories (not CWD or its random subdirs)
+    safe_config_dirs = set()
+    if workspace_config_root:
+        safe_config_dirs.add(workspace_config_root.resolve())
+    if project_config_root:
+        safe_config_dirs.add(project_config_root.resolve())
+    if default_config_root:
+        safe_config_dirs.add(default_config_root.resolve())
+
     for directory in sorted(candidate_dirs):
         if not directory or not directory.exists():
             continue
         try:
-            for path in directory.glob("**/multidatabackend*.json"):
-                _register_path(path)
+            resolved_dir = directory.resolve()
+
+            # Check if this directory is under one of the safe config roots
+            is_safe = False
+            for safe_root in safe_config_dirs:
+                try:
+                    resolved_dir.relative_to(safe_root)
+                    is_safe = True
+                    break
+                except ValueError:
+                    continue
+
+            if is_safe:
+                # Recursive search in safe config directories
+                for path in directory.glob("**/multidatabackend*.json"):
+                    _register_path(path)
+            else:
+                # For non-safe directories (like CWD or random paths from active config),
+                # only do shallow search to avoid picking up test/example files
+                # Direct files only
+                for path in directory.glob("multidatabackend*.json"):
+                    _register_path(path)
+                # One level of subdirectories
+                try:
+                    for subdir in directory.iterdir():
+                        if subdir.is_dir():
+                            for path in subdir.glob("multidatabackend*.json"):
+                                _register_path(path)
+                except (PermissionError, OSError):
+                    pass
         except Exception:
             continue
 
