@@ -149,11 +149,7 @@ class TestWebhookHandler(unittest.TestCase):
         """Test that SSL verification is enabled by default for HTTPS URLs"""
         config = {"webhook_type": "raw", "callback_url": "https://example.com/webhook", "log_level": "info"}
         handler = WebhookHandler(accelerator=self.mock_accelerator, project_name="TestProject", webhook_config=config)
-        handler.send_raw(
-            structured_data={"message": "Test message"},
-            message_type="notification",
-            message_level="info"
-        )
+        handler.send_raw(structured_data={"message": "Test message"}, message_type="notification", message_level="info")
 
         # Check that verify=True is passed to requests.post
         args, kwargs = mock_post.call_args
@@ -169,11 +165,7 @@ class TestWebhookHandler(unittest.TestCase):
             "ssl_no_verify": True,
         }
         handler = WebhookHandler(accelerator=self.mock_accelerator, project_name="TestProject", webhook_config=config)
-        handler.send_raw(
-            structured_data={"message": "Test message"},
-            message_type="notification",
-            message_level="info"
-        )
+        handler.send_raw(structured_data={"message": "Test message"}, message_type="notification", message_level="info")
 
         # Check that verify=False is passed to requests.post
         args, kwargs = mock_post.call_args
@@ -185,11 +177,7 @@ class TestWebhookHandler(unittest.TestCase):
         """Test that SSL verification can be disabled via environment variable"""
         config = {"webhook_type": "raw", "callback_url": "https://example.com/webhook", "log_level": "info"}
         handler = WebhookHandler(accelerator=self.mock_accelerator, project_name="TestProject", webhook_config=config)
-        handler.send_raw(
-            structured_data={"message": "Test message"},
-            message_type="notification",
-            message_level="info"
-        )
+        handler.send_raw(structured_data={"message": "Test message"}, message_type="notification", message_level="info")
 
         # Check that verify=False is passed to requests.post
         args, kwargs = mock_post.call_args
@@ -200,11 +188,7 @@ class TestWebhookHandler(unittest.TestCase):
         """Test that HTTP URLs don't use SSL verification"""
         config = {"webhook_type": "raw", "callback_url": "http://example.com/webhook", "log_level": "info"}
         handler = WebhookHandler(accelerator=self.mock_accelerator, project_name="TestProject", webhook_config=config)
-        handler.send_raw(
-            structured_data={"message": "Test message"},
-            message_type="notification",
-            message_level="info"
-        )
+        handler.send_raw(structured_data={"message": "Test message"}, message_type="notification", message_level="info")
 
         # HTTP URLs should still have verify=True (requests handles this)
         args, kwargs = mock_post.call_args
@@ -228,11 +212,7 @@ class TestWebhookHandler(unittest.TestCase):
             },
         ]
         handler = WebhookHandler(accelerator=self.mock_accelerator, project_name="TestProject", webhook_config=config)
-        handler.send_raw(
-            structured_data={"message": "Test message"},
-            message_type="notification",
-            message_level="info"
-        )
+        handler.send_raw(structured_data={"message": "Test message"}, message_type="notification", message_level="info")
 
         # Should be called twice, once for each backend
         self.assertEqual(mock_post.call_count, 2)

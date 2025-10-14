@@ -83,9 +83,7 @@ class TestWebhookHTTPSending(unittest.TestCase):
 
         # Send a test message using send_raw (raw webhooks require send_raw)
         handler.send_raw(
-            structured_data={"message": "Test webhook message"},
-            message_type="notification",
-            message_level="info"
+            structured_data={"message": "Test webhook message"}, message_type="notification", message_level="info"
         )
 
         # Give the request time to complete
@@ -151,19 +149,11 @@ class TestWebhookHTTPSending(unittest.TestCase):
         )
 
         # Send an info message (should be filtered out)
-        handler.send_raw(
-            structured_data={"message": "Info message"},
-            message_type="notification",
-            message_level="info"
-        )
+        handler.send_raw(structured_data={"message": "Info message"}, message_type="notification", message_level="info")
         sleep(0.1)
 
         # Send an error message (should be sent)
-        handler.send_raw(
-            structured_data={"message": "Error occurred"},
-            message_type="notification",
-            message_level="error"
-        )
+        handler.send_raw(structured_data={"message": "Error occurred"}, message_type="notification", message_level="error")
         sleep(0.2)
 
         # Only the error should have been sent
@@ -193,9 +183,7 @@ class TestWebhookHTTPSending(unittest.TestCase):
 
         # This should trigger localhost detection and HTTP fallback
         handler.send_raw(
-            structured_data={"message": "Localhost webhook test"},
-            message_type="notification",
-            message_level="info"
+            structured_data={"message": "Localhost webhook test"}, message_type="notification", message_level="info"
         )
         sleep(0.2)
 

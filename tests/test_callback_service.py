@@ -93,10 +93,7 @@ class CallbackServiceTestCase(unittest.TestCase):
         # Verify no events for this job with running status exist
         recent_events = self.service.get_recent(limit=10)
         retry_in_recent = any(
-            e.job_id == "restart-job"
-            and e.data
-            and isinstance(e.data, dict)
-            and e.data.get("status") == "running"
+            e.job_id == "restart-job" and e.data and isinstance(e.data, dict) and e.data.get("status") == "running"
             for e in recent_events
             if e.data
         )
