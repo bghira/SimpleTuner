@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -32,8 +33,13 @@ class PublishingService:
     }
     DEFAULT_LICENSE = "apache-2.0"
 
+    # Cache duration in seconds (5 minutes)
+    CACHE_TTL = 300
+
     def __init__(self) -> None:
         self._api: Optional[HfApi] = None
+        self._orgs_cache: Optional[Dict[str, Any]] = None
+        self._orgs_cache_time: float = 0
 
     @property
     def api(self) -> HfApi:
@@ -201,13 +207,25 @@ class PublishingService:
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
             ) from e
 
-    def get_user_organizations(self) -> Dict[str, Any]:
+    def get_user_organizations(self, force_refresh: bool = False) -> Dict[str, Any]:
         """
         Get list of organizations the user belongs to for namespace selection.
+
+        Uses a 5-minute cache to avoid hitting HuggingFace API rate limits.
+
+        Args:
+            force_refresh: If True, bypass cache and fetch fresh data.
 
         Returns:
             Dictionary with user's username and list of organizations.
         """
+        # Check if we have a valid cache
+        current_time = time.time()
+        cache_age = current_time - self._orgs_cache_time
+
+        if not force_refresh and self._orgs_cache is not None and cache_age < self.CACHE_TTL:
+            return self._orgs_cache
+
         try:
             token = HfFolder.get_token()
             if not token:
@@ -222,7 +240,7 @@ class PublishingService:
                     status.HTTP_401_UNAUTHORIZED,
                 )
 
-            # Get user info
+            # Get user info from HuggingFace API
             user_info = self.api.whoami(token=token)
             username = user_info.get("name")
 
@@ -232,11 +250,17 @@ class PublishingService:
             if orgs_info:
                 organizations = [org.get("name") for org in orgs_info if org.get("name")]
 
-            return {
+            result = {
                 "username": username,
                 "organizations": organizations,
                 "namespaces": [username] + organizations,
             }
+
+            # Update cache
+            self._orgs_cache = result
+            self._orgs_cache_time = current_time
+
+            return result
 
         except PublishingServiceError:
             raise

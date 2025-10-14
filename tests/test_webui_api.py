@@ -369,10 +369,7 @@ class WebUICollapsedSectionsAPITestCase(_WebUIBaseTestCase):
         sections = {"section1": True, "section2": False, "section3": True}
 
         # Save sections
-        response = self.client.post(
-            "/api/webui/ui-state/collapsed-sections/basic",
-            json={"sections": sections}
-        )
+        response = self.client.post("/api/webui/ui-state/collapsed-sections/basic", json={"sections": sections})
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -392,17 +389,11 @@ class WebUICollapsedSectionsAPITestCase(_WebUIBaseTestCase):
         model_sections = {"section_a": False, "section_b": True}
 
         # Save for basic tab
-        response = self.client.post(
-            "/api/webui/ui-state/collapsed-sections/basic",
-            json={"sections": basic_sections}
-        )
+        response = self.client.post("/api/webui/ui-state/collapsed-sections/basic", json={"sections": basic_sections})
         self.assertEqual(response.status_code, 200)
 
         # Save for model tab
-        response = self.client.post(
-            "/api/webui/ui-state/collapsed-sections/model",
-            json={"sections": model_sections}
-        )
+        response = self.client.post("/api/webui/ui-state/collapsed-sections/model", json={"sections": model_sections})
         self.assertEqual(response.status_code, 200)
 
         # Verify basic tab
@@ -419,18 +410,12 @@ class WebUICollapsedSectionsAPITestCase(_WebUIBaseTestCase):
         """Test that updating sections replaces previous values."""
         # Save initial state
         initial_sections = {"section1": True, "section2": False}
-        response = self.client.post(
-            "/api/webui/ui-state/collapsed-sections/basic",
-            json={"sections": initial_sections}
-        )
+        response = self.client.post("/api/webui/ui-state/collapsed-sections/basic", json={"sections": initial_sections})
         self.assertEqual(response.status_code, 200)
 
         # Update with new state
         updated_sections = {"section1": False, "section3": True}
-        response = self.client.post(
-            "/api/webui/ui-state/collapsed-sections/basic",
-            json={"sections": updated_sections}
-        )
+        response = self.client.post("/api/webui/ui-state/collapsed-sections/basic", json={"sections": updated_sections})
         self.assertEqual(response.status_code, 200)
 
         # Verify updated state
@@ -445,10 +430,7 @@ class WebUICollapsedSectionsAPITestCase(_WebUIBaseTestCase):
 
     def test_save_empty_sections(self) -> None:
         """Test that empty sections dict can be saved."""
-        response = self.client.post(
-            "/api/webui/ui-state/collapsed-sections/basic",
-            json={"sections": {}}
-        )
+        response = self.client.post("/api/webui/ui-state/collapsed-sections/basic", json={"sections": {}})
 
         self.assertEqual(response.status_code, 200)
 
@@ -460,10 +442,7 @@ class WebUICollapsedSectionsAPITestCase(_WebUIBaseTestCase):
     def test_save_collapsed_sections_invalid_payload(self) -> None:
         """Test that invalid payload returns 422."""
         # Missing 'sections' key
-        response = self.client.post(
-            "/api/webui/ui-state/collapsed-sections/basic",
-            json={"invalid": "data"}
-        )
+        response = self.client.post("/api/webui/ui-state/collapsed-sections/basic", json={"invalid": "data"})
 
         self.assertEqual(response.status_code, 422)
 
@@ -472,10 +451,7 @@ class WebUICollapsedSectionsAPITestCase(_WebUIBaseTestCase):
         sections = {"section1": True}
 
         # Test with hyphen
-        response = self.client.post(
-            "/api/webui/ui-state/collapsed-sections/advanced-settings",
-            json={"sections": sections}
-        )
+        response = self.client.post("/api/webui/ui-state/collapsed-sections/advanced-settings", json={"sections": sections})
         self.assertEqual(response.status_code, 200)
 
         response = self.client.get("/api/webui/ui-state/collapsed-sections/advanced-settings")
@@ -483,10 +459,7 @@ class WebUICollapsedSectionsAPITestCase(_WebUIBaseTestCase):
         self.assertEqual(response.json(), sections)
 
         # Test with underscore
-        response = self.client.post(
-            "/api/webui/ui-state/collapsed-sections/model_config",
-            json={"sections": sections}
-        )
+        response = self.client.post("/api/webui/ui-state/collapsed-sections/model_config", json={"sections": sections})
         self.assertEqual(response.status_code, 200)
 
         response = self.client.get("/api/webui/ui-state/collapsed-sections/model_config")
@@ -498,10 +471,7 @@ class WebUICollapsedSectionsAPITestCase(_WebUIBaseTestCase):
         sections = {"section1": True, "section2": False}
 
         # Save sections
-        response = self.client.post(
-            "/api/webui/ui-state/collapsed-sections/basic",
-            json={"sections": sections}
-        )
+        response = self.client.post("/api/webui/ui-state/collapsed-sections/basic", json={"sections": sections})
         self.assertEqual(response.status_code, 200)
 
         # Make multiple GET requests

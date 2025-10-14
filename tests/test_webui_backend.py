@@ -327,6 +327,7 @@ class WebUICollapsedSectionsTests(WebUIStateStoreTests):
 
         # Verify file contains expected structure
         import json
+
         with ui_state_file.open("r") as f:
             data = json.load(f)
 
@@ -346,7 +347,7 @@ class WebUICollapsedSectionsTests(WebUIStateStoreTests):
         custom_state = {
             "collapsed_sections": {"basic": {"section1": True}},
             "custom_field": "value",
-            "nested": {"data": [1, 2, 3]}
+            "nested": {"data": [1, 2, 3]},
         }
 
         self.store.save_ui_state(custom_state)
@@ -366,10 +367,7 @@ class WebUICollapsedSectionsTests(WebUIStateStoreTests):
             sections = {section_id: True}
             self.store.save_collapsed_sections(tab_name, sections)
 
-        threads = [
-            threading.Thread(target=save_sections, args=(f"tab_{i}", f"section_{i}"))
-            for i in range(5)
-        ]
+        threads = [threading.Thread(target=save_sections, args=(f"tab_{i}", f"section_{i}")) for i in range(5)]
 
         for thread in threads:
             thread.start()

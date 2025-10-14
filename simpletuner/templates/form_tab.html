@@ -266,6 +266,11 @@
                     const collapsedState = await response.json();
                     console.log('[FormTab] Loaded collapsed state:', collapsedState);
 
+                    // Temporarily disable form dirty tracking while we manipulate sections
+                    if (window.Alpine && Alpine.store('trainer')) {
+                        Alpine.store('trainer')._skipNextClean = true;
+                    }
+
                     // Apply saved state to sections without animation
                     const sections = getSectionCollapses();
                     sections.forEach(section => {
@@ -294,6 +299,11 @@
                             }
                         }
                     });
+
+                    // Re-enable form dirty tracking
+                    if (window.Alpine && Alpine.store('trainer')) {
+                        Alpine.store('trainer')._skipNextClean = false;
+                    }
                 }
             } catch (error) {
                 console.error('[FormTab] Failed to load collapsed state:', error);

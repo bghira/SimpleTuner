@@ -3470,11 +3470,15 @@ function trainerComponent() {
 
              // Ensure active environment config is loaded and form is populated
              if ($data.activeEnvironment) {
+                 // Suppress form dirty marking during initial load
+                 $data._skipNextClean = true;
                  await $data.fetchActiveEnvironmentConfig();
                  // Wait for DOM to be ready before applying values
                  await $nextTick();
                  $data.applyStoredValues();
+                 // Mark form as clean after all initialization
                  $data.markFormClean();
+                 $data._skipNextClean = false;
              }
 
              // Set up form change tracking
@@ -3500,7 +3504,9 @@ function trainerComponent() {
                             if ($data._preservingFormState) {
                                 console.log('Applying stored form values after tab switch');
                                 $data.applyStoredValues();
-                                $data.checkFormDirty();
+                                // Mark clean after tab switch - we just loaded fresh content from server
+                                // Don't call checkFormDirty() because originalFormData is from a different tab
+                                $data.markFormClean();
                             } else if (!$data._skipNextClean) {
                                 $data.markFormClean();
                             }
