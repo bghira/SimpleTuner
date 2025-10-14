@@ -379,6 +379,15 @@ class Trainer:
             import traceback
 
             logger.error(f"Failed to run training: {e}, traceback: {traceback.format_exc()}")
+
+            # Ensure webhook handler is configured before sending error message
+            if not self.webhook_handler:
+                logger.warning("Webhook handler not initialized, attempting to configure it now")
+                try:
+                    self.configure_webhook(send_startup_message=False)
+                except Exception as webhook_err:
+                    logger.error(f"Failed to configure webhook handler: {webhook_err}")
+
             self._send_webhook_msg(
                 message=f"Failed to run training: {e}",
             )
@@ -648,6 +657,15 @@ class Trainer:
             import traceback
 
             logger.error(f"{e}, traceback: {traceback.format_exc()}")
+
+            # Ensure webhook handler is configured before sending error message
+            if not self.webhook_handler:
+                logger.warning("Webhook handler not initialized, attempting to configure it now")
+                try:
+                    self.configure_webhook(send_startup_message=False)
+                except Exception as webhook_err:
+                    logger.error(f"Failed to configure webhook handler: {webhook_err}")
+
             self._send_webhook_msg(
                 message=f"Failed to load data backends: {e}",
                 message_level="critical",
@@ -3058,7 +3076,7 @@ def run_trainer_job(config):
                 train_cli_payload.pop(accel_key, None)
             for webhook_key in ("--webhook_config", "webhook_config"):
                 webhook_value = train_cli_payload.get(webhook_key)
-                if isinstance(webhook_value, dict):
+                if isinstance(webhook_value, (dict, list)):
                     try:
                         train_cli_payload[webhook_key] = json.dumps(webhook_value)
                     except Exception:
