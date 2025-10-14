@@ -1115,6 +1115,15 @@ class ConfigsService:
             if key in excluded_fields:
                 continue
 
+            # Filter out Alpine.js UI state variables that should never reach the backend
+            if (
+                key.startswith("currentDataset.")
+                or key.startswith("--currentDataset.")
+                or key.startswith("datasets_page_")
+                or key.startswith("--datasets_page_")
+            ):
+                continue
+
             if key in {"webhooks_config", "--webhooks_config"}:
                 config_key = "--webhook_config"
             else:
@@ -1158,6 +1167,10 @@ class ConfigsService:
                 if field_type == FieldType.CHECKBOX or field_type == FieldType.MULTI_SELECT:
                     converted_value = ConfigsService.convert_value_by_type(value, field_type, default_value)
                     config_dict[config_key] = converted_value
+                    continue
+                # webhook_config should preserve list structure (can contain multiple webhook configs)
+                if config_key in {"--webhook_config", "webhook_config"}:
+                    config_dict[config_key] = value
                     continue
                 # Filter out empty strings from list before taking last element
                 non_empty = [v for v in value if v not in (None, "")]

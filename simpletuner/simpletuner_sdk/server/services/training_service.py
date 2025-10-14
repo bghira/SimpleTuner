@@ -462,12 +462,27 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         "--accelerate_strategy",
     }
 
+    # Build set of valid field names from registry for validation
+    valid_field_names = set()
+    for registry_field in lazy_field_registry.get_all_fields():
+        valid_field_names.add(registry_field.name)
+        if registry_field.arg_name:
+            valid_field_names.add(registry_field.arg_name)
+            valid_field_names.add(registry_field.arg_name.lstrip("-"))
+
     for key, value in complete_config.items():
         if key in non_persistent_keys:
             continue
         if value is None:
             continue
         clean_key = key[2:] if key.startswith("--") else key
+
+        # Only save fields that are actually registered in the field registry
+        # This prevents UI-only fields from being saved to config files
+        if clean_key not in valid_field_names:
+            logger.debug(f"Skipping unregistered field '{clean_key}' from config save")
+            continue
+
         if save_options.get("preserve_defaults", False):
             default_value = all_defaults.get(key)
             if value != default_value:
