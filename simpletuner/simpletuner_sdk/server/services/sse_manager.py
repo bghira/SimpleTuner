@@ -42,9 +42,9 @@ class SSEManager:
         self,
         max_connections_per_ip: int = 5,
         max_total_connections: int = 100,
-        heartbeat_interval: int = 30,
+        heartbeat_interval: int = 15,  # Send heartbeats more frequently to prevent timeouts
         cleanup_interval: int = 60,
-        connection_timeout: int = 300,  # 5 minutes
+        connection_timeout: int = 600,  # 10 minutes - longer timeout to allow for slow connections
     ):
         self.max_connections_per_ip = max_connections_per_ip
         self.max_total_connections = max_total_connections
