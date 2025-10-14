@@ -178,19 +178,22 @@ class WebhookHandler:
 
         elif webhook_type == "raw":
             # Prepare raw data payload for direct POST
+            # Convert images to base64 for inclusion in JSON
+            converted_images = []
+            if images:
+                for img in images:
+                    converted = self._convert_image_to_base64(img)
+                    if converted:
+                        converted_images.append(converted)
+
             if raw_request:
                 # If already fully formed JSON or dict, sanitize for safe JSON encoding first
                 data = self._sanitize_for_json(message)
+                # Add images to the structured data if they exist
+                if converted_images and isinstance(data, dict):
+                    data["images"] = converted_images
                 files = None
             else:
-                # Convert images to base64 for a generic "raw" JSON
-                # Convert images, filtering out any that fail
-                converted_images = []
-                if images:
-                    for img in images:
-                        converted = self._convert_image_to_base64(img)
-                        if converted:
-                            converted_images.append(converted)
                 data = {
                     "message": message,
                     "images": converted_images,
