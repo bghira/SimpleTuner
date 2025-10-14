@@ -21,6 +21,8 @@ class EventType(str, Enum):
     METRIC = "training.metric"
     ERROR = "error"
     DEBUG = "debug"
+    DEBUG_IMAGE = "debug.image"
+    VALIDATION_IMAGE = "validation.image"
 
 
 class EventSeverity(str, Enum):
@@ -413,6 +415,18 @@ def _coerce_event_type(raw: Mapping[str, Any]) -> EventType:
             return EventType.TRAINING_PROGRESS
         if value.endswith("status"):
             return EventType.TRAINING_STATUS
+
+    # Detect validation images: message contains "validation" and has images
+    message = _safe_str(raw.get("message") or raw.get("body") or raw.get("title") or raw.get("headline"))
+    has_images = bool(raw.get("images"))
+    if has_images and message and "validation" in message.lower():
+        return EventType.VALIDATION_IMAGE
+
+    # Detect debug images: message contains debugging keywords and has images
+    if has_images and message:
+        debug_keywords = ["debug", "pre-processing", "preprocessing", "data backend", "dataset"]
+        if any(keyword in message.lower() for keyword in debug_keywords):
+            return EventType.DEBUG_IMAGE
 
     return EventType.NOTIFICATION
 

@@ -22,6 +22,8 @@ class CallbackPresenter:
         EventType.ERROR.value: "fas fa-exclamation-triangle text-danger",
         EventType.NOTIFICATION.value: "fas fa-bell text-muted",
         EventType.DEBUG.value: "fas fa-bug text-muted",
+        EventType.DEBUG_IMAGE.value: "fas fa-image text-warning",
+        EventType.VALIDATION_IMAGE.value: "fas fa-images text-success",
     }
 
     # Map event types to SSE channel names consumed by the WebUI
@@ -36,6 +38,8 @@ class CallbackPresenter:
         EventType.VALIDATION: "callback:validation",
         EventType.METRIC: "callback:metric",
         EventType.DEBUG: "callback:debug",
+        EventType.DEBUG_IMAGE: "callback:debug",  # Route debug images same as debug
+        EventType.VALIDATION_IMAGE: "callback:validation",  # Route validation images same as validation
     }
 
     @classmethod
@@ -106,16 +110,19 @@ class CallbackPresenter:
         if not images:
             return ""
         rendered: list[str] = []
-        alt_text = html.escape(str(alt)) if alt else "Validation image"
+        alt_text = html.escape(str(alt)) if alt else "Event image"
 
-        for image in images:
+        for idx, image in enumerate(images):
             src = CallbackPresenter._normalise_image_src(image)
             if not src:
                 continue
             rendered.append(
                 (
-                    '<img src="{src}" alt="{alt}" ' 'class="event-image img-fluid rounded border mt-2" ' 'loading="lazy" />'
-                ).format(src=html.escape(src, quote=True), alt=alt_text)
+                    '<img src="{src}" alt="{alt}" '
+                    'class="event-image img-fluid rounded border mt-2 cursor-pointer" '
+                    'loading="lazy" data-lightbox="event-images" data-lightbox-group="event-{group}" '
+                    'data-lightbox-index="{index}" />'
+                ).format(src=html.escape(src, quote=True), alt=alt_text, group=html.escape(str(alt) or "event"), index=idx)
             )
 
         if not rendered:

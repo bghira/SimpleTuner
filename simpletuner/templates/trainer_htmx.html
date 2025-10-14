@@ -4326,9 +4326,9 @@ function trainerComponent() {
                 </div>
                 <div class="event-dock-actions">
                     <button type="button" class="btn btn-sm btn-outline-light"
-                            title="Refresh"
-                            @click="htmx.trigger('#event-list', 'refresh')">
-                        <i class="fas fa-rotate-right"></i>
+                            title="Clear events"
+                            @click="if (window.EventRenderer) { document.getElementById('eventList').innerHTML = ''; }">
+                        <i class="fas fa-trash"></i>
                     </button>
                     <button type="button" class="btn btn-sm btn-outline-light"
                             title="Toggle events panel"
@@ -4365,6 +4365,13 @@ function trainerComponent() {
 <script src="/static/js/dataloader-htmx-init.js"></script>
 <script src="/static/js/event-handler.js"></script>
 <script src="/static/js/services/dependency-manager.js"></script>
+
+<!-- Load event lightbox for event images -->
+<link href="/static/css/event_lightbox.css" rel="stylesheet">
+<script src="/static/js/modules/event_lightbox.js"></script>
+
+<!-- Load event renderer for SSE event display -->
+<script src="/static/js/modules/event-renderer.js"></script>
 
 <script>
 // Enhanced HTMX configuration for trainer
