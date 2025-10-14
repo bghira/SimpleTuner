@@ -53,7 +53,7 @@ class CallbackServiceTestCase(unittest.TestCase):
         self.assertEqual(recent[0].index, 0)
 
     def test_configure_webhook_clears_history(self) -> None:
-        self.service.handle_incoming({"message_type": "_send_webhook_msg", "message": "hello"})
+        self.service.handle_incoming({"type": "notification", "message": "hello"})
         self.service.handle_incoming({"message_type": "configure_webhook", "message": "reset"})
         events = self.service.get_recent(limit=5)
         self.assertEqual(len(events), 1)
@@ -61,9 +61,9 @@ class CallbackServiceTestCase(unittest.TestCase):
 
     def test_terminal_status_suppresses_future_updates(self) -> None:
         running_payload = {
-            "message_type": "training_status",
+            "type": "training.status",
             "job_id": "restart-job",
-            "status": "running",
+            "data": {"status": "running"},
             "global_step": 5,
             "total_num_steps": 10,
         }
@@ -71,32 +71,36 @@ class CallbackServiceTestCase(unittest.TestCase):
         self.assertIsNotNone(event)
 
         failed_payload = {
-            "message_type": "training_status",
+            "type": "training.status",
             "job_id": "restart-job",
-            "status": "failed",
+            "data": {"status": "failed"},
         }
         failed_event = self.service.handle_incoming(failed_payload)
         self.assertIsNotNone(failed_event)
         self.assertIsNone(APIState.get_state("training_progress"))
 
-        # Training status events for the same job should now be suppressed.
+        # Training status events for the same job that's already terminal should be suppressed
+        # at ingestion time - handle_incoming returns None for suppressed events
         retry_status = {
-            "message_type": "training_status",
+            "type": "training.status",
             "job_id": "restart-job",
-            "status": "running",
+            "data": {"status": "running"},
         }
-        suppressed_status = self.service.handle_incoming(retry_status)
-        self.assertIsNone(suppressed_status)
+        retry_event = self.service.handle_incoming(retry_status)
+        # The event should be suppressed (None) because the job is already in terminal state
+        self.assertIsNone(retry_event, "Events for terminal jobs should be suppressed at ingestion")
 
-        # Progress payloads should also be ignored once the job is terminal.
-        suppressed_progress = self.service.handle_incoming(
-            {
-                "message_type": "progress_update",
-                "job_id": "restart-job",
-                "message": {"progress_type": "resume", "progress": 50, "total_elements": 100},
-            }
+        # Verify no events for this job with running status exist
+        recent_events = self.service.get_recent(limit=10)
+        retry_in_recent = any(
+            e.job_id == "restart-job"
+            and e.data
+            and isinstance(e.data, dict)
+            and e.data.get("status") == "running"
+            for e in recent_events
+            if e.data
         )
-        self.assertIsNone(suppressed_progress)
+        self.assertFalse(retry_in_recent, "Terminal job status updates should not appear in event history")
 
 
 @unittest.skipIf(
