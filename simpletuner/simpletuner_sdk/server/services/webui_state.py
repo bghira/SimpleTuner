@@ -400,3 +400,25 @@ class WebUIStateStore:
         onboarding.steps[step_id] = step_state
         self.save_onboarding(onboarding)
         return step_state
+
+    def load_ui_state(self) -> Dict[str, Any]:
+        """Load UI element states (collapsed sections, etc.)."""
+        return self._read_json("ui_state")
+
+    def save_ui_state(self, state: Dict[str, Any]) -> None:
+        """Save UI element states (collapsed sections, etc.)."""
+        self._write_json("ui_state", state)
+
+    def get_collapsed_sections(self, tab_name: str) -> Dict[str, bool]:
+        """Get collapsed state for sections in a specific tab."""
+        ui_state = self.load_ui_state()
+        collapsed = ui_state.get("collapsed_sections", {})
+        return collapsed.get(tab_name, {})
+
+    def save_collapsed_sections(self, tab_name: str, sections: Dict[str, bool]) -> None:
+        """Save collapsed state for sections in a specific tab."""
+        ui_state = self.load_ui_state()
+        if "collapsed_sections" not in ui_state:
+            ui_state["collapsed_sections"] = {}
+        ui_state["collapsed_sections"][tab_name] = sections
+        self.save_ui_state(ui_state)

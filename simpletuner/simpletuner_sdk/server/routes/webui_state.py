@@ -307,3 +307,30 @@ async def update_defaults(payload: DefaultsUpdate) -> Dict[str, object]:
         return _build_state_response(state, _STEP_DEFINITIONS)
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(error)) from error
+
+
+class CollapsedSectionsPayload(BaseModel):
+    """Payload for updating collapsed sections state."""
+
+    sections: Dict[str, bool]
+
+
+@router.get("/ui-state/collapsed-sections/{tab_name}")
+async def get_collapsed_sections(tab_name: str) -> Dict[str, bool]:
+    """Get collapsed state for sections in a specific tab."""
+    store = WebUIStateStore()
+    try:
+        return store.get_collapsed_sections(tab_name)
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(error)) from error
+
+
+@router.post("/ui-state/collapsed-sections/{tab_name}")
+async def save_collapsed_sections(tab_name: str, payload: CollapsedSectionsPayload) -> Dict[str, str]:
+    """Save collapsed state for sections in a specific tab."""
+    store = WebUIStateStore()
+    try:
+        store.save_collapsed_sections(tab_name, payload.sections)
+        return {"status": "success", "message": f"Saved collapsed sections for tab '{tab_name}'"}
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(error)) from error

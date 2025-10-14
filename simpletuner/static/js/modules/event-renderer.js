@@ -9,6 +9,7 @@
     var EventRenderer = (function() {
         var eventList = null;
         var maxEvents = 500;
+        var processedEventIds = new Set(); // Track processed event IDs to prevent duplicates
         var severityIcons = {
             'success': 'fas fa-check-circle text-success',
             'info': 'fas fa-info-circle text-info',
@@ -71,6 +72,25 @@
         }
 
         function renderCallbackEvent(category, payload) {
+            // Check for duplicate events by ID
+            var eventId = payload.id;
+            if (eventId && processedEventIds.has(eventId)) {
+                // Skip duplicate event
+                return;
+            }
+
+            // Mark event as processed
+            if (eventId) {
+                processedEventIds.add(eventId);
+
+                // Limit size of processed IDs set to prevent memory issues
+                if (processedEventIds.size > maxEvents * 2) {
+                    // Remove oldest half of IDs (convert to array, remove first half, convert back to Set)
+                    var idsArray = Array.from(processedEventIds);
+                    processedEventIds = new Set(idsArray.slice(idsArray.length / 2));
+                }
+            }
+
             var eventType = category;
             var message = payload.headline || payload.body || payload.message || '';
             var severity = payload.severity || 'info';

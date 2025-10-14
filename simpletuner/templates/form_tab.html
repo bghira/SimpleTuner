@@ -9,14 +9,24 @@
 
     <!-- Tab Header -->
     <div class="card">
-        <div class="card-header">
-            <h5 class="mb-0">
-                <i class="{{ tab_config.icon if tab_config else 'fas fa-cog' }}"></i>
-                {{ tab_config.title if tab_config else tab_name|title }} Configuration
-            </h5>
-            {% if tab_config and tab_config.description %}
-            <p class="text-muted mb-0">{{ tab_config.description }}</p>
-            {% endif %}
+        <div class="card-header d-flex justify-content-between align-items-start">
+            <div>
+                <h5 class="mb-0">
+                    <i class="{{ tab_config.icon if tab_config else 'fas fa-cog' }}"></i>
+                    {{ tab_config.title if tab_config else tab_name|title }} Configuration
+                </h5>
+                {% if tab_config and tab_config.description %}
+                <p class="text-muted mb-0">{{ tab_config.description }}</p>
+                {% endif %}
+            </div>
+            <div class="btn-group btn-group-sm" role="group">
+                <button type="button" class="btn btn-outline-secondary" id="collapse-all-{{ tab_name }}" title="Collapse all sections">
+                    <i class="fas fa-compress-alt"></i> Collapse All
+                </button>
+                <button type="button" class="btn btn-outline-secondary" id="expand-all-{{ tab_name }}" title="Expand all sections">
+                    <i class="fas fa-expand-alt"></i> Expand All
+                </button>
+            </div>
         </div>
 
         <div class="card-body">
@@ -43,16 +53,15 @@
 
                     {% if not has_parent %}
                         <!-- Main section -->
-                        <div class="form-section mb-4" id="section-{{ section.id }}">
+                        <div class="form-section mb-4" id="section-{{ section.id }}" data-section-type="{% if section.get('advanced') %}advanced{% else %}main{% endif %}">
                             <h6 class="section-title {% if section.get('advanced') %}advanced-section{% endif %}">
-                                {% if section.get('advanced') %}
-                                <button type="button" class="btn btn-sm btn-outline-secondary advanced-toggle me-2"
+                                <!-- Collapse toggle for main sections (not advanced subsections) -->
+                                <button type="button" class="btn btn-sm btn-outline-secondary section-toggle me-2"
                                         data-bs-toggle="collapse"
-                                        data-bs-target="#advanced-content-{{ section.id }}"
-                                        aria-expanded="false">
-                                    <i class="fas fa-chevron-right"></i>
+                                        data-bs-target="#content-{{ section.id }}"
+                                        aria-expanded="true">
+                                    <i class="fas fa-chevron-down"></i>
                                 </button>
-                                {% endif %}
                                 {% if section.icon %}<i class="{{ section.icon }}"></i>{% endif %}
                                 {{ section.title }}
                                 {% if section.get('advanced') %}
@@ -65,8 +74,7 @@
 
                             {% if section.get('template') %}
                                 <!-- Custom template for this section -->
-                                <div class="row {% if section.get('advanced') %}collapse{% endif %}"
-                                     {% if section.get('advanced') %}id="advanced-content-{{ section.id }}"{% endif %}>
+                                <div class="row collapse show" id="content-{{ section.id }}">
                                     {% include section.template %}
                                 </div>
                             {% elif section_fields %}
@@ -80,8 +88,7 @@
                                     {% set _ = subsections[subsection_name].append(field) %}
                                 {% endfor %}
 
-                                <div class="row {% if section.get('advanced') %}collapse{% endif %}"
-                                     {% if section.get('advanced') %}id="advanced-content-{{ section.id }}"{% endif %}>
+                                <div class="row collapse show" id="content-{{ section.id }}">
                                     {% for subsection_name, subsection_fields in subsections.items() %}
                                         {% if subsections|length > 1 and subsection_name != 'general' %}
                                             <!-- Subsection header -->
@@ -204,29 +211,159 @@
 </div>
 
 <script>
-// Tab-specific initialization
-document.addEventListener('DOMContentLoaded', function() {
+(function() {
+    'use strict';
+
     const tabName = '{{ tab_name }}';
 
-    // Initialize conditional fields
-    initializeConditionalFields();
+    function setupSectionCollapse() {
+        const collapseAllBtn = document.getElementById('collapse-all-' + tabName);
+        const expandAllBtn = document.getElementById('expand-all-' + tabName);
+        const tabContent = document.getElementById(tabName + '-tab-content');
 
-    // Initialize tooltips if Bootstrap is available
-    if (typeof bootstrap !== 'undefined') {
-        const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
-        const tooltipList = [...tooltipTriggerList].map(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl));
+        if (!collapseAllBtn || !expandAllBtn || !tabContent) return;
+
+        // Get all main section collapses (not advanced subsections)
+        const getSectionCollapses = () => {
+            return Array.from(tabContent.querySelectorAll('[id^="content-"]')).filter(el => {
+                // Exclude advanced subsections
+                return !el.id.startsWith('advanced-content-');
+            });
+        };
+
+        // Save collapsed state to server (debounced)
+        let saveTimeout = null;
+        const saveCollapsedState = () => {
+            if (saveTimeout) clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(async () => {
+                try {
+                    const sections = getSectionCollapses();
+                    const collapsedState = {};
+
+                    sections.forEach(section => {
+                        const sectionId = section.id.replace('content-', '');
+                        collapsedState[sectionId] = !section.classList.contains('show');
+                    });
+
+                    console.log('[FormTab] Saving collapsed state:', collapsedState);
+
+                    await fetch('/api/webui/ui-state/collapsed-sections/' + tabName, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ sections: collapsedState })
+                    });
+                } catch (error) {
+                    console.error('[FormTab] Failed to save collapsed state:', error);
+                }
+            }, 50);
+        };
+
+        // Load saved collapsed state from server
+        const loadCollapsedState = async () => {
+            try {
+                const response = await fetch('/api/webui/ui-state/collapsed-sections/' + tabName);
+                if (response.ok) {
+                    const collapsedState = await response.json();
+                    console.log('[FormTab] Loaded collapsed state:', collapsedState);
+
+                    // Apply saved state to sections without animation
+                    const sections = getSectionCollapses();
+                    sections.forEach(section => {
+                        const sectionId = section.id.replace('content-', '');
+                        const isCollapsed = collapsedState[sectionId];
+
+                        if (isCollapsed !== undefined) {
+                            if (isCollapsed) {
+                                // Remove 'show' class immediately (no animation)
+                                section.classList.remove('show');
+                                section.classList.remove('collapsing');
+
+                                // Update the toggle button icon
+                                const toggle = tabContent.querySelector(`[data-bs-target="#${section.id}"]`);
+                                if (toggle) {
+                                    const icon = toggle.querySelector('i');
+                                    if (icon) {
+                                        icon.classList.remove('fa-chevron-down');
+                                        icon.classList.add('fa-chevron-right');
+                                    }
+                                    toggle.setAttribute('aria-expanded', 'false');
+                                }
+                            } else {
+                                // Ensure 'show' class is present (already expanded by default)
+                                section.classList.add('show');
+                            }
+                        }
+                    });
+                }
+            } catch (error) {
+                console.error('[FormTab] Failed to load collapsed state:', error);
+            }
+        };
+
+        // Collapse all sections
+        collapseAllBtn.addEventListener('click', function() {
+            const sections = getSectionCollapses();
+            sections.forEach(section => {
+                const bsCollapse = bootstrap.Collapse.getInstance(section) || new bootstrap.Collapse(section, { toggle: false });
+                bsCollapse.hide();
+            });
+            saveCollapsedState();
+        });
+
+        // Expand all sections
+        expandAllBtn.addEventListener('click', function() {
+            const sections = getSectionCollapses();
+            sections.forEach(section => {
+                const bsCollapse = bootstrap.Collapse.getInstance(section) || new bootstrap.Collapse(section, { toggle: false });
+                bsCollapse.show();
+            });
+            saveCollapsedState();
+        });
+
+        // Update chevron icons and save state when sections collapse/expand
+        const sectionToggles = tabContent.querySelectorAll('.section-toggle');
+        sectionToggles.forEach(toggle => {
+            const targetId = toggle.getAttribute('data-bs-target');
+            const targetEl = document.querySelector(targetId);
+
+            if (targetEl) {
+                targetEl.addEventListener('show.bs.collapse', function() {
+                    const icon = toggle.querySelector('i');
+                    if (icon) {
+                        icon.classList.remove('fa-chevron-right');
+                        icon.classList.add('fa-chevron-down');
+                    }
+                    toggle.setAttribute('aria-expanded', 'true');
+                    saveCollapsedState();
+                });
+
+                targetEl.addEventListener('hide.bs.collapse', function() {
+                    const icon = toggle.querySelector('i');
+                    if (icon) {
+                        icon.classList.remove('fa-chevron-down');
+                        icon.classList.add('fa-chevron-right');
+                    }
+                    toggle.setAttribute('aria-expanded', 'false');
+                    saveCollapsedState();
+                });
+            }
+        });
+
+        // Load saved state on initialization
+        loadCollapsedState();
     }
 
-    // Handle field dependencies
     function initializeConditionalFields() {
-        const conditionalFields = document.querySelectorAll('.conditional-field');
+        const tabContent = document.getElementById(tabName + '-tab-content');
+        if (!tabContent) return;
+        const conditionalFields = tabContent.querySelectorAll('.conditional-field');
         conditionalFields.forEach(field => {
             const condition = field.dataset.conditionalOn;
             if (condition) {
                 updateFieldVisibility(field, condition);
 
                 // Listen for changes on the controlling field
-                const controlField = document.querySelector(`[name="${condition}"]`);
+                const controlField = tabContent.querySelector(`[name="${condition}"]`);
                 if (controlField) {
                     controlField.addEventListener('change', () => {
                         updateFieldVisibility(field, condition);
@@ -237,7 +374,9 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function updateFieldVisibility(field, condition) {
-        const controlField = document.querySelector(`[name="${condition}"]`);
+        const tabContent = document.getElementById(tabName + '-tab-content');
+        if (!tabContent) return;
+        const controlField = tabContent.querySelector(`[name="${condition}"]`);
         if (controlField) {
             const isActive = controlField.type === 'checkbox'
                 ? controlField.checked
@@ -249,16 +388,38 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         }
     }
-});
 
-// HTMX event handlers
-document.body.addEventListener('htmx:afterSwap', function(evt) {
-    // Reinitialize any dynamic content after HTMX swap
-    if (evt.detail.target.id && evt.detail.target.id.includes('-tab-content')) {
-        // Tab content was reloaded
-        console.log('Tab content reloaded:', evt.detail.target.id);
+    function initializeTooltips() {
+        if (typeof bootstrap !== 'undefined') {
+            const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+            [...tooltipTriggerList].map(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl));
+        }
     }
-});
+
+    function initTab() {
+        console.log('[FormTab] Initializing tab:', tabName);
+        setupSectionCollapse();
+        initializeConditionalFields();
+        initializeTooltips();
+    }
+
+    // Initialize immediately (for direct page loads)
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initTab);
+    } else {
+        // DOM already loaded, run immediately
+        initTab();
+    }
+
+    // Re-initialize after HTMX swaps (for tab switching)
+    document.body.addEventListener('htmx:afterSwap', function(evt) {
+        if (evt.detail.target.id === tabName + '-tab-content') {
+            console.log('[FormTab] Re-initializing after HTMX swap:', tabName);
+            // Small delay to ensure DOM is ready
+            setTimeout(initTab, 50);
+        }
+    });
+})();
 
 // Handle validation results
 document.body.addEventListener('htmx:afterRequest', function(evt) {
