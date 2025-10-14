@@ -46,6 +46,17 @@ if (!window.checkpointsManager) {
             // SSE listener cleanup
             sseListenerCleanup: null,
 
+            // Lightbox state
+            lightbox: {
+                isOpen: false,
+                currentIndex: 0,
+                images: [],
+                zoom: 1,
+                isDragging: false,
+                dragStart: { x: 0, y: 0 },
+                imagePosition: { x: 0, y: 0 }
+            },
+
             // Lifecycle
             async init() {
                 try {
@@ -951,35 +962,24 @@ if (!window.checkpointsManager) {
                 const event = extras.event;
 
                 if (checkpoint) {
-                    console.log('[Checkpoints] Updating checkpoint UI:', checkpointName, 'event:', event, 'progress:', task.progress);
-                    console.log('[Checkpoints] Current checkpoint state - uploading:', checkpoint.uploading, 'progress:', checkpoint.uploadProgress);
-
-                    // Update checkpoint upload state
                     if (event === 'started') {
                         checkpoint.uploading = true;
                         checkpoint.uploadProgress = 0;
                         checkpoint.uploadMessage = 'Starting upload...';
-                        console.log('[Checkpoints] Set uploading=true, progress=0');
                     } else if (event === 'progress') {
                         checkpoint.uploading = true;
                         checkpoint.uploadProgress = task.progress;
                         checkpoint.uploadMessage = task.message;
-                        console.log('[Checkpoints] Set progress:', task.progress, 'message:', task.message);
                     } else if (event === 'completed') {
-                        checkpoint.uploading = true; // Keep showing the bar
+                        checkpoint.uploading = true;
                         checkpoint.uploadProgress = 100;
                         checkpoint.uploadMessage = 'Upload completed ✓';
 
-                        console.log('[Checkpoints] Upload completed, keeping progress bar visible for 5 seconds');
-
-                        // Show success toast
                         if (window.showToast) {
                             window.showToast(`Successfully uploaded ${checkpointName}`, 'success');
                         }
 
-                        // Clean up task after a longer delay to keep the success state visible
                         setTimeout(() => {
-                            console.log('[Checkpoints] Cleaning up upload UI for', checkpointName);
                             checkpoint.uploading = false;
                             delete this.uploadTasks[taskId];
                             checkpoint.uploadProgress = 0;
@@ -990,12 +990,10 @@ if (!window.checkpointsManager) {
                         checkpoint.uploadProgress = 0;
                         checkpoint.uploadMessage = '';
 
-                        // Show error toast
                         if (window.showToast) {
                             window.showToast(`Upload failed: ${task.error || 'Unknown error'}`, 'error');
                         }
 
-                        // Clean up task
                         delete this.uploadTasks[taskId];
                     }
                 }
@@ -1030,6 +1028,225 @@ if (!window.checkpointsManager) {
                             delete this.uploadTasks[taskId];
                         }, 3000);
                     }
+                }
+            },
+
+            // Lightbox Methods
+            openLightbox(event, imageSrc, caption = '', allImages = [], currentIndex = 0) {
+                event.stopPropagation();
+
+                this.openLightboxDirect(imageSrc, caption, allImages, currentIndex);
+
+                this.lightbox.isOpen = true;
+                this.lightbox.currentIndex = currentIndex;
+                this.lightbox.images = allImages.length > 0 ? allImages : [{ src: imageSrc, caption: caption }];
+                this.lightbox.zoom = 1;
+                this.lightbox.imagePosition = { x: 0, y: 0 };
+                this.lightbox.isDragging = false;
+
+                document.body.style.overflow = 'hidden';
+                this._boundKeydownHandler = this.handleLightboxKeydown.bind(this);
+                document.addEventListener('keydown', this._boundKeydownHandler);
+            },
+
+            openLightboxDirect(imageSrc, caption, allImages, currentIndex) {
+                const testLightbox = document.createElement('div');
+                testLightbox.id = 'test-lightbox';
+                testLightbox.style.cssText = `
+                    position: fixed !important;
+                    top: 0 !important;
+                    left: 0 !important;
+                    width: 100vw !important;
+                    height: 100vh !important;
+                    background: rgba(0, 0, 0, 0.9) !important;
+                    z-index: 999999 !important;
+                    display: flex !important;
+                    align-items: center !important;
+                    justify-content: center !important;
+                    opacity: 1 !important;
+                    visibility: visible !important;
+                `;
+
+                const img = document.createElement('img');
+                img.src = imageSrc;
+                img.style.cssText = `
+                    max-width: 90vw !important;
+                    max-height: 90vh !important;
+                    object-fit: contain !important;
+                `;
+
+                const closeBtn = document.createElement('button');
+                closeBtn.textContent = '✕';
+                closeBtn.style.cssText = `
+                    position: absolute !important;
+                    top: 20px !important;
+                    right: 20px !important;
+                    width: 40px !important;
+                    height: 40px !important;
+                    background: rgba(255, 255, 255, 0.2) !important;
+                    border: none !important;
+                    border-radius: 50% !important;
+                    color: white !important;
+                    font-size: 20px !important;
+                    cursor: pointer !important;
+                    z-index: 10 !important;
+                `;
+
+                closeBtn.onclick = () => {
+                    document.body.removeChild(testLightbox);
+                    document.body.style.overflow = '';
+                };
+
+                testLightbox.onclick = (e) => {
+                    if (e.target === testLightbox) {
+                        document.body.removeChild(testLightbox);
+                        document.body.style.overflow = '';
+                    }
+                };
+
+                img.onclick = (e) => {
+                    e.stopPropagation();
+                };
+
+                testLightbox.appendChild(img);
+                testLightbox.appendChild(closeBtn);
+                document.body.appendChild(testLightbox);
+                document.body.style.overflow = 'hidden';
+            },
+
+            closeLightbox() {
+                this.lightbox.isOpen = false;
+                this.lightbox.zoom = 1;
+                this.lightbox.imagePosition = { x: 0, y: 0 };
+                this.lightbox.isDragging = false;
+
+                document.body.style.overflow = '';
+
+                if (this._boundKeydownHandler) {
+                    document.removeEventListener('keydown', this._boundKeydownHandler);
+                    this._boundKeydownHandler = null;
+                }
+            },
+
+            getLightboxImageStyle() {
+                const transform = `translate(${this.lightbox.imagePosition.x}px, ${this.lightbox.imagePosition.y}px) scale(${this.lightbox.zoom})`;
+                return {
+                    transform: transform,
+                    cursor: this.lightbox.isDragging ? 'grabbing' : 'grab'
+                };
+            },
+
+            navigateLightbox(direction) {
+                const newIndex = this.lightbox.currentIndex + direction;
+                if (newIndex >= 0 && newIndex < this.lightbox.images.length) {
+                    this.lightbox.currentIndex = newIndex;
+                    this.lightbox.zoom = 1;
+                    this.lightbox.imagePosition = { x: 0, y: 0 };
+                }
+            },
+
+            zoomLightbox(action) {
+                switch (action) {
+                    case 'in':
+                        this.lightbox.zoom = Math.min(3, this.lightbox.zoom + 0.25);
+                        break;
+                    case 'out':
+                        this.lightbox.zoom = Math.max(0.5, this.lightbox.zoom - 0.25);
+                        break;
+                    case 'reset':
+                        this.lightbox.zoom = 1;
+                        this.lightbox.imagePosition = { x: 0, y: 0 };
+                        break;
+                }
+            },
+
+            handleLightboxWheel(event) {
+                event.preventDefault();
+                const delta = event.deltaY > 0 ? -0.1 : 0.1;
+                this.lightbox.zoom = Math.max(0.5, Math.min(3, this.lightbox.zoom + delta));
+            },
+
+            startLightboxDrag(event) {
+                if (this.lightbox.zoom <= 1) return;
+
+                this.lightbox.isDragging = true;
+                this.lightbox.dragStart = {
+                    x: event.clientX - this.lightbox.imagePosition.x,
+                    y: event.clientY - this.lightbox.imagePosition.y
+                };
+
+                const handleMouseMove = (e) => {
+                    if (!this.lightbox.isDragging) return;
+
+                    this.lightbox.imagePosition = {
+                        x: e.clientX - this.lightbox.dragStart.x,
+                        y: e.clientY - this.lightbox.dragStart.y
+                    };
+                };
+
+                const handleMouseUp = () => {
+                    this.lightbox.isDragging = false;
+                    document.removeEventListener('mousemove', handleMouseMove);
+                    document.removeEventListener('mouseup', handleMouseUp);
+                };
+
+                document.addEventListener('mousemove', handleMouseMove);
+                document.addEventListener('mouseup', handleMouseUp);
+            },
+
+            handleLightboxKeydown(event) {
+                if (!this.lightbox.isOpen) return;
+
+                switch (event.key) {
+                    case 'Escape':
+                        this.closeLightbox();
+                        break;
+                    case 'ArrowLeft':
+                        this.navigateLightbox(-1);
+                        break;
+                    case 'ArrowRight':
+                        this.navigateLightbox(1);
+                        break;
+                    case '+':
+                    case '=':
+                        this.zoomLightbox('in');
+                        break;
+                    case '-':
+                    case '_':
+                        this.zoomLightbox('out');
+                        break;
+                    case '0':
+                        this.zoomLightbox('reset');
+                        break;
+                }
+            },
+
+            onLightboxImageLoad() {
+                console.log('Lightbox image loaded');
+            },
+
+            getCheckpointImages(checkpoint) {
+                const images = [];
+
+                if (checkpoint.assets && checkpoint.assets.length > 0) {
+                    checkpoint.assets.forEach((asset, index) => {
+                        images.push({
+                            src: asset.data,
+                            caption: asset.name || `Step ${checkpoint.step} - Validation ${index + 1}`
+                        });
+                    });
+                }
+
+                return images;
+            },
+
+            handleImageClick(event, checkpoint, imageIndex = null) {
+                const images = this.getCheckpointImages(checkpoint);
+                const currentIndex = imageIndex !== null ? imageIndex : images.length - 1;
+                const currentImage = images[currentIndex];
+
+                if (currentImage) {
+                    this.openLightbox(event, currentImage.src, currentImage.caption, images, currentIndex);
                 }
             }
         };

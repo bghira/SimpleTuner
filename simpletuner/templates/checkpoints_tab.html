@@ -150,7 +150,9 @@ if (!window.checkpointsManager) {
                             <div class="checkpoint-preview-image" x-show="visibilitySettings.images">
                                 <img x-show="checkpoint.assets && checkpoint.assets.length > 0"
                                      :src="checkpoint.assets[checkpoint.assets.length - 1]?.data"
-                                     :alt="checkpoint.assets[checkpoint.assets.length - 1]?.name">
+                                     :alt="checkpoint.assets[checkpoint.assets.length - 1]?.name"
+                                     @click="handleImageClick($event, checkpoint)"
+                                     style="cursor: pointer;">
                                 <div x-show="!checkpoint.assets || checkpoint.assets.length === 0"
                                      class="no-validation-placeholder">
                                     <i class="fas fa-image text-muted"></i>
@@ -278,9 +280,11 @@ if (!window.checkpointsManager) {
                         <div class="detail-card">
                             <h6 class="mb-3">Validation Gallery</h6>
                             <div class="checkpoint-gallery">
-                                <template x-for="asset in selectedCheckpoint.assets" :key="asset.name">
+                                <template x-for="(asset, index) in selectedCheckpoint.assets" :key="asset.name">
                                     <figure class="gallery-item">
-                                        <img :src="asset.data" :alt="asset.name">
+                                        <img :src="asset.data" :alt="asset.name"
+                                             @click="handleImageClick($event, selectedCheckpoint, index)"
+                                             style="cursor: pointer;">
                                         <figcaption x-text="asset.name"></figcaption>
                                     </figure>
                                 </template>
@@ -497,6 +501,71 @@ if (!window.checkpointsManager) {
                         Start Upload
                     </button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Lightbox Element - inside component scope -->
+    <div id="checkpoint-lightbox"
+         class="lightbox"
+         x-show="lightbox.isOpen"
+         x-transition:enter="transition ease-out duration-300"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-200"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         @click="closeLightbox()">
+        <div class="lightbox-content" @click.stop>
+            <div class="lightbox-loading" x-show="lightbox.loading">
+                <div class="spinner"></div>
+                <div>Loading...</div>
+            </div>
+            <img class="lightbox-image"
+                 :src="lightbox.images[lightbox.currentIndex]?.src"
+                 :alt="lightbox.images[lightbox.currentIndex]?.caption"
+                 :style="getLightboxImageStyle()"
+                 @mousedown="startLightboxDrag($event)"
+                 @wheel="handleLightboxWheel($event)"
+                 @load="onLightboxImageLoad()">
+            <button class="lightbox-close" @click="closeLightbox()">
+                <i class="fas fa-times"></i>
+            </button>
+            <button class="lightbox-nav prev"
+                    @click="navigateLightbox(-1)"
+                    :class="{ 'disabled': lightbox.currentIndex === 0 }">
+                <i class="fas fa-chevron-left"></i>
+            </button>
+            <button class="lightbox-nav next"
+                    @click="navigateLightbox(1)"
+                    :class="{ 'disabled': lightbox.currentIndex === lightbox.images.length - 1 }">
+                <i class="fas fa-chevron-right"></i>
+            </button>
+            <div class="lightbox-counter" x-show="lightbox.images.length > 1">
+                <span x-text="`${lightbox.currentIndex + 1} / ${lightbox.images.length}`"></span>
+            </div>
+            <div class="lightbox-caption" x-show="lightbox.images[lightbox.currentIndex]?.caption">
+                <span x-text="lightbox.images[lightbox.currentIndex]?.caption"></span>
+            </div>
+            <div class="lightbox-zoom">
+                <button class="lightbox-zoom-btn"
+                        @click="zoomLightbox('out')"
+                        :class="{ 'disabled': lightbox.zoom <= 0.5 }">
+                    <i class="fas fa-search-minus"></i>
+                </button>
+                <button class="lightbox-zoom-btn"
+                        @click="zoomLightbox('reset')"
+                        :class="{ 'active': lightbox.zoom === 1 }">
+                    <i class="fas fa-compress"></i>
+                </button>
+                <button class="lightbox-zoom-btn"
+                        @click="zoomLightbox('in')"
+                        :class="{ 'disabled': lightbox.zoom >= 3 }">
+                    <i class="fas fa-search-plus"></i>
+                </button>
+            </div>
+            <div class="lightbox-hint">
+                Use arrow keys to navigate, ESC to close, scroll to zoom, drag to pan
             </div>
         </div>
     </div>

@@ -631,3 +631,307 @@
 [data-bs-toggle="collapse"][aria-expanded="true"] i {
     transform: rotate(180deg);
 }
+
+/* Lightbox Styles */
+.lightbox {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    background: rgba(0, 0, 0, 0.95) !important;
+    backdrop-filter: blur(10px) !important;
+    z-index: 99999 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    opacity: 0 !important;
+    visibility: hidden !important;
+    transition: all 0.3s ease !important;
+}
+
+/* Alpine.js x-show transition classes */
+[x-cloak] {
+    display: none !important;
+}
+
+[x-transition]:enter {
+    opacity: 0;
+}
+
+[x-transition]:enter-start {
+    opacity: 0;
+}
+
+[x-transition]:enter-end {
+    opacity: 1;
+}
+
+[x-transition]:leave {
+    opacity: 1;
+}
+
+[x-transition]:leave-start {
+    opacity: 1;
+}
+
+[x-transition]:leave-end {
+    opacity: 0;
+}
+
+.lightbox-content {
+    position: relative;
+    max-width: 90vw;
+    max-height: 90vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transform: scale(0.9);
+    transition: transform 0.3s ease;
+}
+
+.lightbox.active .lightbox-content {
+    transform: scale(1);
+}
+
+.lightbox-image {
+    max-width: 100%;
+    max-height: 90vh;
+    object-fit: contain;
+    border-radius: var(--radius-md);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8);
+    cursor: grab;
+    user-select: none;
+    transition: transform 0.1s ease;
+}
+
+.lightbox-image.dragging {
+    cursor: grabbing;
+    transition: none;
+}
+
+.lightbox-close {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    width: 40px;
+    height: 40px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--text-primary);
+    font-size: 18px;
+    transition: all 0.2s ease;
+    z-index: 10;
+}
+
+.lightbox-close:hover {
+    background: rgba(255, 255, 255, 0.2);
+    transform: scale(1.1);
+}
+
+.lightbox-nav {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 50px;
+    height: 50px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--text-primary);
+    font-size: 20px;
+    transition: all 0.2s ease;
+    z-index: 10;
+}
+
+.lightbox-nav:hover {
+    background: rgba(255, 255, 255, 0.2);
+    transform: translateY(-50%) scale(1.1);
+}
+
+.lightbox-nav.prev {
+    left: 20px;
+}
+
+.lightbox-nav.next {
+    right: 20px;
+}
+
+.lightbox-nav.disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+.lightbox-nav.disabled:hover {
+    background: rgba(255, 255, 255, 0.1);
+    transform: translateY(-50%) scale(1);
+}
+
+.lightbox-caption {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(10px);
+    color: var(--text-primary);
+    padding: 12px 20px;
+    border-radius: var(--radius-md);
+    font-size: var(--typography-font-size-sm);
+    max-width: 80%;
+    text-align: center;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.lightbox-counter {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(10px);
+    color: var(--text-primary);
+    padding: 8px 16px;
+    border-radius: var(--radius-md);
+    font-size: var(--typography-font-size-sm);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Clickable image indicators */
+.checkpoint-preview-image img,
+.checkpoint-gallery img {
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.checkpoint-preview-image img:hover,
+.checkpoint-gallery img:hover {
+    transform: scale(1.02);
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+}
+
+/* Loading indicator for lightbox */
+.lightbox-loading {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: var(--text-primary);
+    font-size: var(--typography-font-size-lg);
+}
+
+.lightbox-loading .spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid rgba(255, 255, 255, 0.2);
+    border-top: 3px solid var(--accent-purple);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 16px;
+}
+
+/* Zoom controls */
+.lightbox-zoom {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    display: flex;
+    gap: 8px;
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(10px);
+    padding: 8px;
+    border-radius: var(--radius-md);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.lightbox-zoom-btn {
+    width: 36px;
+    height: 36px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--text-primary);
+    font-size: 16px;
+    transition: all 0.2s ease;
+}
+
+.lightbox-zoom-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+    transform: scale(1.1);
+}
+
+.lightbox-zoom-btn.active {
+    background: var(--accent-purple);
+    color: white;
+}
+
+/* Responsive lightbox */
+@media (max-width: 768px) {
+    .lightbox-close,
+    .lightbox-nav {
+        width: 44px;
+        height: 44px;
+        font-size: 18px;
+    }
+
+    .lightbox-nav.prev {
+        left: 10px;
+    }
+
+    .lightbox-nav.next {
+        right: 10px;
+    }
+
+    .lightbox-caption {
+        bottom: 10px;
+        font-size: var(--typography-font-size-xs);
+        max-width: 90%;
+        padding: 8px 12px;
+    }
+
+    .lightbox-counter {
+        top: 10px;
+        left: 10px;
+        font-size: var(--typography-font-size-xs);
+        padding: 6px 12px;
+    }
+
+    .lightbox-zoom {
+        bottom: 60px;
+        right: 10px;
+    }
+
+    .lightbox-zoom-btn {
+        width: 32px;
+        height: 32px;
+        font-size: 14px;
+    }
+}
+
+/* Keyboard navigation hint */
+.lightbox-hint {
+    position: absolute;
+    bottom: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: var(--text-muted);
+    font-size: var(--typography-font-size-xs);
+    opacity: 0.7;
+    transition: opacity 0.2s ease;
+}
+
+.lightbox-hint:hover {
+    opacity: 1;
+}
