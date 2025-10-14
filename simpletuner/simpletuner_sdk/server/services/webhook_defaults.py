@@ -22,12 +22,28 @@ def get_default_callback_url() -> str:
 
 def get_default_webhook_config() -> list:
     """Get the default webhook configuration with SSL verification settings."""
+    callback_url = get_default_callback_url()
+
+    # Determine if SSL verification should be disabled
+    # For localhost HTTPS URLs with self-signed certs, we should skip verification by default
     ssl_no_verify = os.environ.get("SIMPLETUNER_SSL_NO_VERIFY", "false").lower() == "true"
+
+    # Auto-detect: if using HTTPS with localhost, disable verification (self-signed cert)
+    if callback_url.startswith("https://"):
+        try:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(callback_url)
+            hostname = parsed.hostname
+            if hostname in ("localhost", "127.0.0.1", "0.0.0.0", "::1"):
+                ssl_no_verify = True
+        except Exception:
+            pass
 
     return [
         {
             "webhook_type": "raw",
-            "callback_url": get_default_callback_url(),
+            "callback_url": callback_url,
             "log_level": "info",
             "ssl_no_verify": ssl_no_verify,
         }
