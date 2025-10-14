@@ -242,13 +242,21 @@
                     break;
                 }
                 case 'validation': {
-                    var validationMessage = payload.headline || payload.body || 'Validation complete';
+                    var validationMessage = payload.headline || payload.body || payload.message || 'Validation complete';
                     var validationData = {
                         type: 'validation_complete',
                         message: validationMessage,
+                        images: payload.images || [],  // Preserve images from payload
                         payload: payload
                     };
                     handleMessage(validationData);
+                    // Also emit to HTMX if event dock exists
+                    if (window.htmx) {
+                        var eventDock = document.querySelector('#eventList');
+                        if (eventDock) {
+                            htmx.trigger(eventDock, 'new-validation-event', validationData);
+                        }
+                    }
                     break;
                 }
                 case 'alert': {
