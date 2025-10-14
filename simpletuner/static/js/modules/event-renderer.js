@@ -93,18 +93,18 @@
 
             // Remove oldest event if at limit
             while (eventList.children.length >= maxEvents) {
-                eventList.removeChild(eventList.firstChild);
+                eventList.removeChild(eventList.lastChild);
             }
 
-            // Append new event
-            eventList.appendChild(eventItem);
+            // Prepend new event (newest at top)
+            eventList.insertBefore(eventItem, eventList.firstChild);
 
-            // Scroll to bottom
-            eventList.scrollTop = eventList.scrollHeight;
+            // Scroll to top to show newest event
+            eventList.scrollTop = 0;
 
             // Initialize lightbox for any images in this event
-            if (window.EventLightbox && data.images && data.images.length > 0) {
-                window.EventLightbox.initializeImages(eventItem);
+            if (window.eventLightbox && data.images && data.images.length > 0) {
+                window.eventLightbox.initializeImages(eventItem);
             }
         }
 

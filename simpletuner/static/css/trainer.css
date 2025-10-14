@@ -798,7 +798,8 @@ body {
     font-size: 0.8125rem !important; /* Was 0.875rem */
     line-height: 1.4 !important;
     overflow-y: auto !important;
-    height: 100% !important; /* Fill available space in event-dock-body */
+    flex: 1 !important; /* Fill available space and enable scrolling */
+    min-height: 0 !important; /* Allow flex item to shrink below content size */
 }
 
 .event-item {

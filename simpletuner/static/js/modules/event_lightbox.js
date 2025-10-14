@@ -208,11 +208,22 @@ class EventLightbox {
         prevBtn.disabled = false;
         nextBtn.disabled = false;
     }
+
+    /**
+     * Initialize lightbox for images in a container (called by event-renderer)
+     * This is a no-op since we use event delegation, but kept for compatibility
+     */
+    initializeImages(container) {
+        // Event delegation handles all clicks, so no per-element setup needed
+        // This method exists for compatibility with event-renderer.js
+    }
 }
 
 // Initialize the event lightbox when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
     window.eventLightbox = new EventLightbox();
+    // Also expose the class for checking instanceof
+    window.EventLightbox = EventLightbox;
 });
 
 // Export for potential use in other modules
