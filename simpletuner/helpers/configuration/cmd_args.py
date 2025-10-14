@@ -248,44 +248,129 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             except Exception as e:
                 logger.error(f"Could not load controlnet_custom_config: {e}")
                 raise
-    if args.webhook_config is not None and type(args.webhook_config) is str:
-        if args.webhook_config.startswith("{") or args.webhook_config.startswith("["):
-            try:
-                import ast
+    if args.webhook_config is not None:
+        print(f"DEBUG: webhook_config at start = {args.webhook_config} (type: {type(args.webhook_config)})")
+        # Handle different types of webhook_config
+        # First, check if it's an AST object using isinstance (the proper way)
+        import ast
 
-                parsed_config = ast.literal_eval(args.webhook_config)
-                # Normalize single dict to list for consistency
-                if isinstance(parsed_config, dict):
-                    args.webhook_config = [parsed_config]
-                elif isinstance(parsed_config, list):
-                    args.webhook_config = parsed_config
-                else:
-                    logger.error(f"webhook_config must be dict or list, got {type(parsed_config)}")
-                    raise ValueError(f"Invalid webhook_config type: {type(parsed_config)}")
-            except Exception as e:
-                logger.error(f"Could not load webhook_config: {e}")
-                raise
-        else:
-            # try to load from file
-            if os.path.isfile(args.webhook_config):
+        if isinstance(args.webhook_config, (ast.AST, ast.Name, ast.Call, ast.Dict, ast.List, ast.Constant)):
+            # This is an AST object - this indicates a configuration parsing error
+            logger.error("webhook_config is an AST object - this indicates a configuration error")
+            logger.error("webhook_config should be a JSON string or file path, not an AST object")
+            logger.error("This typically happens when the configuration is passed incorrectly from the command line")
+            logger.error("Please ensure webhook_config is properly formatted as a JSON string")
+            # Provide a helpful error message with the AST object info
+            ast_repr = repr(args.webhook_config)
+            logger.error(f"Received AST object: {ast_repr}")
+            raise ValueError(
+                f"webhook_config is an AST object ({ast_repr}) instead of a JSON string or file path. "
+                f"Please check your configuration format. "
+                f'Expected format: \'[{{"webhook_type": "raw", "callback_url": "https://..."}}]\' '
+                f"or a file path to a JSON file."
+            )
+        elif hasattr(args.webhook_config, "__class__") and "ast" in str(type(args.webhook_config)):
+            # This is an AST object - this indicates a configuration parsing error
+            logger.error("webhook_config is an AST object - this indicates a configuration error")
+            logger.error("webhook_config should be a JSON string or file path, not an AST object")
+            logger.error("This typically happens when the configuration is passed incorrectly from the command line")
+            logger.error("Please ensure webhook_config is properly formatted as a JSON string")
+            # Provide a helpful error message with the AST object info
+            ast_repr = repr(args.webhook_config)
+            logger.error(f"Received AST object: {ast_repr}")
+            raise ValueError(
+                f"webhook_config is an AST object ({ast_repr}) instead of a JSON string or file path. "
+                f"Please check your configuration format. "
+                f'Expected format: \'[{{"webhook_type": "raw", "callback_url": "https://..."}}]\' '
+                f"or a file path to a JSON file."
+            )
+        elif isinstance(args.webhook_config, str):
+            # SAFETY CHECK FIRST: Check if the string contains AST object patterns
+            # This catches the case where AST objects get converted to strings BEFORE any other processing
+            config_str = str(args.webhook_config)
+
+            if (
+                "ast." in config_str
+                or "<ast." in config_str
+                or "ast object at" in config_str.lower()
+                or (config_str.strip().startswith("<") and config_str.strip().endswith(">"))
+            ):
+                logger.error("webhook_config contains AST object patterns in string form")
+                logger.error("This indicates a configuration parsing error where AST objects were converted to strings")
+                logger.error(f"Received webhook_config string: {config_str}")
+                raise ValueError(
+                    f"webhook_config contains AST object patterns instead of valid JSON. "
+                    f"Received: {config_str[:200]}... "
+                    f"Please check your configuration format. "
+                    f'Expected format: \'[{{"webhook_type": "raw", "callback_url": "https://..."}}]\' '
+                    f"or a file path to a JSON file."
+                )
+
+            if args.webhook_config.startswith("{") or args.webhook_config.startswith("["):
                 try:
-                    with open(args.webhook_config, "r") as f:
-                        import json
+                    import json
 
-                        loaded_config = json.load(f)
-                        # Normalize single dict to list for consistency
-                        if isinstance(loaded_config, dict):
-                            args.webhook_config = [loaded_config]
-                        elif isinstance(loaded_config, list):
-                            args.webhook_config = loaded_config
-                        else:
-                            logger.error(f"webhook_config must be dict or list, got {type(loaded_config)}")
-                            raise ValueError(f"Invalid webhook_config type: {type(loaded_config)}")
+                    # FINAL SAFETY CHECK: Detect AST object patterns
+                    if (
+                        "ast." in args.webhook_config
+                        or "<ast." in args.webhook_config
+                        or "ast object at" in args.webhook_config.lower()
+                        or (args.webhook_config.strip().startswith("<") and args.webhook_config.strip().endswith(">"))
+                    ):
+                        logger.error("webhook_config contains AST object patterns")
+                        logger.error(f"Received webhook_config: {args.webhook_config}")
+                        raise ValueError(
+                            f"webhook_config contains AST object patterns instead of valid JSON. "
+                            f"Received: {args.webhook_config[:200]}... "
+                            f"Please check your configuration format."
+                        )
+
+                    # Use json.loads() instead of ast.literal_eval() since we're dealing with JSON
+                    # This properly handles JSON booleans (true/false) vs Python (True/False)
+                    parsed_config = json.loads(args.webhook_config)
+                    # Normalize single dict to list for consistency
+                    if isinstance(parsed_config, dict):
+                        args.webhook_config = [parsed_config]
+                    elif isinstance(parsed_config, list):
+                        args.webhook_config = parsed_config
+                    else:
+                        logger.error(f"webhook_config must be dict or list, got {type(parsed_config)}")
+                        raise ValueError(f"Invalid webhook_config type: {type(parsed_config)}")
+                except json.JSONDecodeError as e:
+                    logger.error(f"Could not load webhook_config (invalid JSON): {e}")
+                    raise
                 except Exception as e:
-                    logger.error(f"Could not load webhook_config from file: {e}")
+                    logger.error(f"Could not load webhook_config: {e}")
                     raise
             else:
-                logger.error(f"Could not find webhook_config file: {args.webhook_config}")
+                # try to load from file
+                if os.path.isfile(args.webhook_config):
+                    try:
+                        with open(args.webhook_config, "r") as f:
+                            import json
+
+                            loaded_config = json.load(f)
+                            # Normalize single dict to list for consistency
+                            if isinstance(loaded_config, dict):
+                                args.webhook_config = [loaded_config]
+                            elif isinstance(loaded_config, list):
+                                args.webhook_config = loaded_config
+                            else:
+                                logger.error(f"webhook_config must be dict or list, got {type(loaded_config)}")
+                                raise ValueError(f"Invalid webhook_config type: {type(loaded_config)}")
+                    except Exception as e:
+                        logger.error(f"Could not load webhook_config from file: {e}")
+                        raise
+                else:
+                    logger.error(f"Could not find webhook_config file: {args.webhook_config}")
+        elif isinstance(args.webhook_config, (dict, list)):
+            # Already a dict or list - normalize to list
+            if isinstance(args.webhook_config, dict):
+                args.webhook_config = [args.webhook_config]
+            # list is already good
+        else:
+            logger.error(f"webhook_config has unsupported type: {type(args.webhook_config)}")
+            raise ValueError(f"webhook_config must be string, dict, or list, got {type(args.webhook_config)}")
 
     if args.tread_config is not None and type(args.tread_config) is str:
         if args.tread_config.startswith("{"):

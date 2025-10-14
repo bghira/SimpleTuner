@@ -133,6 +133,17 @@ def mapping_to_cli_args(
                 cli_args.append(_ensure_prefixed(key))
                 continue
 
+        # Special handling for webhook_config: always JSON-serialize dicts/lists
+        if canonical_key == "webhook_config":
+            if isinstance(value, (Mapping, list)):
+                import json
+
+                try:
+                    value = json.dumps(value)
+                except Exception:
+                    extras_dict[key] = value
+                    continue
+
         if isinstance(value, Mapping):
             extras_dict[key] = value
             continue
