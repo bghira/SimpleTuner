@@ -881,6 +881,13 @@
                     const derivedStatus = (payload.status || payload.data?.status || (normalizedMessageType === '_train_initial_msg' ? 'starting' : '')).toLowerCase();
                     const normalizedProgress = normalizeProgressPayload(payload);
 
+                    // Ignore status updates if training is already in a terminal state
+                    const terminalStates = ['cancelled', 'stopped', 'failed', 'completed', 'complete'];
+                    if (terminalStates.includes(currentTrainingStatus) && !terminalStates.includes(derivedStatus)) {
+                        console.log('[SSE-DEBUG] Ignoring status update - training already in terminal state:', currentTrainingStatus);
+                        return;
+                    }
+
                     if (derivedStatus === 'starting' || derivedStatus === 'initializing') {
                         setStatus('Initialising', payload.severity);
                         setTrainingState('starting', { job_id: jobId });
@@ -897,8 +904,10 @@
                         if (payload.message && window.showToast) {
                             window.showToast(`Training failed: ${payload.message}`, 'error');
                         }
-                    } else if (['cancelled', 'stopped'].includes(derivedStatus)) {
-                        setStatus('Stopped', 'warning');
+                    } else if (['cancelled', 'stopped', 'completed', 'complete'].includes(derivedStatus)) {
+                        const displayStatus = derivedStatus === 'completed' || derivedStatus === 'complete' ? 'Completed' : 'Stopped';
+                        const severity = derivedStatus === 'completed' || derivedStatus === 'complete' ? 'success' : 'warning';
+                        setStatus(displayStatus, severity);
                         resetTrainingProgressUI(derivedStatus, jobId);
                     } else {
                         console.log('[SSE-DEBUG] handleCallbackEvent: derivedStatus not starting/failed/stopped, treating as running', {
@@ -967,16 +976,22 @@
             if (!info) return;
             if (info.status === 'connected') {
                 setStatus('Connected', 'success');
+                // Restore training state after reconnection
+                console.log('[SSE-DEBUG] SSE reconnected, restoring training state...');
+                checkInitialTrainingStatus().catch(function(err) {
+                    console.error('[SSE-DEBUG] Failed to restore training status after reconnect:', err);
+                });
             } else if (info.status === 'reconnecting') {
                 setStatus('Reconnecting', 'warning');
             } else if (info.status === 'disconnected') {
                 setStatus('Disconnected', 'secondary');
-                setTrainingState('idle', { job_id: activeJobId });
-                // Clear any startup progress message when connection is lost
-                const trainingStatusEl = document.getElementById('training-status');
-                if (trainingStatusEl) {
-                    trainingStatusEl.innerHTML = '';
-                }
+                // Don't reset training state on disconnect - we want to preserve it for reconnection
+                // setTrainingState('idle', { job_id: activeJobId });
+                // Don't clear startup progress - we'll restore it on reconnect
+                // const trainingStatusEl = document.getElementById('training-status');
+                // if (trainingStatusEl) {
+                //     trainingStatusEl.innerHTML = '';
+                // }
             }
         };
         trackListener('connection-status', connectionStatusHandler);
@@ -1155,6 +1170,20 @@
                         reflectStartupProgressInCard(latestKey, latestStage, data.job_id || startupJobId || activeJobId);
                     }
                 }
+            }
+
+            // Handle terminal states first
+            if (['cancelled', 'stopped', 'completed', 'complete', 'failed'].includes(data.status)) {
+                console.log('[SSE-DEBUG] Training in terminal state:', data.status);
+                const displayStatus = data.status === 'completed' || data.status === 'complete' ? 'Completed' :
+                                     data.status === 'failed' ? 'Failed' : 'Stopped';
+                const severity = data.status === 'completed' || data.status === 'complete' ? 'success' :
+                                data.status === 'failed' ? 'danger' : 'warning';
+                setStatus(displayStatus, severity);
+                setTrainingState(data.status, { job_id: data.job_id });
+
+                // Don't process progress for completed training
+                return;
             }
 
             if (data.status === 'running' || data.status === 'starting') {
