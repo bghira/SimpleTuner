@@ -117,6 +117,7 @@ class TestConfigFieldValidation(unittest.TestCase):
         with patch.dict(os.environ, {"SIMPLETUNER_SSL_ENABLED": "true"}, clear=False):
             # Force re-evaluation of DEFAULT_WEBHOOK_CONFIG
             from importlib import reload
+
             from simpletuner.simpletuner_sdk.server.services import webhook_defaults
 
             reload(webhook_defaults)

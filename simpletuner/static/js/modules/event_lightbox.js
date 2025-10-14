@@ -9,17 +9,17 @@ class EventLightbox {
         this.currentGroup = null;
         this.currentIndex = 0;
         this.images = [];
-        
+
         this.init();
     }
 
     init() {
         // Create lightbox element if it doesn't exist
         this.createLightbox();
-        
+
         // Set up event delegation for event images
         this.setupEventDelegation();
-        
+
         // Set up keyboard navigation
         this.setupKeyboardNavigation();
     }
@@ -56,7 +56,7 @@ class EventLightbox {
         // Append to body
         document.body.insertAdjacentHTML('beforeend', lightboxHTML);
         this.lightboxElement = document.getElementById('event-lightbox');
-        
+
         // Set up event listeners for lightbox controls
         this.setupLightboxControls();
     }
@@ -80,7 +80,7 @@ class EventLightbox {
         // Use event delegation to handle clicks on event images
         document.addEventListener('click', (event) => {
             const target = event.target;
-            
+
             // Check if clicked element is an event image with lightbox data
             if (target.matches('[data-lightbox="event-images"]')) {
                 event.preventDefault();
@@ -140,7 +140,7 @@ class EventLightbox {
         if (this.images.length <= 1) return;
 
         const newIndex = this.currentIndex + direction;
-        
+
         // Handle wrap-around
         let targetIndex;
         if (newIndex < 0) {

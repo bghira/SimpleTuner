@@ -114,6 +114,7 @@ class WebhookHandler:
             self.webhook_type = first_backend["webhook_type"]
             self.message_prefix = first_backend["message_prefix"]
             self.log_level = first_backend["log_level"]
+
         else:
             self.config = None
             self.webhook_url = None
@@ -368,7 +369,8 @@ class WebhookHandler:
         store_response: bool = False,
     ):
         """
-        Send a message through all configured webhooks with optional images/videos.
+        Send a message through Discord webhooks with optional images/videos.
+        Raw webhooks (like WebUI callback) should use send_raw() with typed events.
         If self.send_video is True, `images` is interpreted as `videos`.
         """
         # Only send from main process
@@ -378,17 +380,17 @@ class WebhookHandler:
         if images is not None and not isinstance(images, list):
             images = [images]
 
-        # Send to each backend that meets the log level requirement
+        # Send ONLY to Discord backends - raw backends should use send_raw()
         for backend in self.backends:
+            # Only send to Discord backends
+            if backend["webhook_type"] != "discord":
+                continue
+
             if not self._check_level(message_level, backend["log_level"]):
                 continue
 
             # Skip Discord on non-main process
-            if (
-                backend["webhook_type"] == "discord"
-                and self.accelerator is not None
-                and not self.accelerator.is_main_process
-            ):
+            if self.accelerator is not None and not self.accelerator.is_main_process:
                 continue
 
             # Discord limits: max 10 attachments
@@ -456,3 +458,59 @@ class WebhookHandler:
                 )
             except Exception as e:
                 logging.error(f"Error sending raw webhook to {backend['webhook_url']}: {e}")
+
+    def send_lifecycle_stage(
+        self,
+        stage_key: str,
+        stage_label: str,
+        stage_status: str = "running",
+        message: str | None = None,
+        progress_current: int | None = None,
+        progress_total: int | None = None,
+        progress_percent: float | None = None,
+    ):
+        """
+        Send a lifecycle stage event to raw webhooks.
+
+        Args:
+            stage_key: Unique identifier for the stage (e.g., "validation", "checkpoint_save")
+            stage_label: Human-readable label for the stage
+            stage_status: Status of the stage ("running", "completed", "failed")
+            message: Optional message describing the stage
+            progress_current: Optional current progress value
+            progress_total: Optional total progress value
+            progress_percent: Optional percentage complete
+        """
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        stage_data = {
+            "key": stage_key,
+            "label": stage_label,
+            "status": stage_status,
+            "progress": {
+                "label": stage_label,
+            },
+        }
+
+        if progress_current is not None:
+            stage_data["progress"]["current"] = progress_current
+        if progress_total is not None:
+            stage_data["progress"]["total"] = progress_total
+        if progress_percent is not None:
+            stage_data["progress"]["percent"] = progress_percent
+
+        payload = {
+            "type": "lifecycle.stage",
+            "stage": stage_data,
+        }
+
+        if message:
+            payload["message"] = message
+            payload["title"] = message
+
+        self.send_raw(
+            structured_data=payload,
+            message_type="lifecycle.stage",
+            message_level="info",
+            job_id=StateTracker.get_job_id(),
+        )

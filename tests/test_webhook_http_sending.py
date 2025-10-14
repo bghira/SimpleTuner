@@ -3,7 +3,7 @@
 
 import json
 import unittest
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 from time import sleep
 from unittest.mock import MagicMock
@@ -17,21 +17,23 @@ class TestWebhookHTTPServer(BaseHTTPRequestHandler):
     received_requests = []
 
     def do_POST(self):
-        content_length = int(self.headers['Content-Length'])
+        content_length = int(self.headers["Content-Length"])
         post_data = self.rfile.read(content_length)
 
         try:
-            data = json.loads(post_data.decode('utf-8'))
-            self.received_requests.append({
-                'path': self.path,
-                'data': data,
-                'headers': dict(self.headers),
-            })
+            data = json.loads(post_data.decode("utf-8"))
+            self.received_requests.append(
+                {
+                    "path": self.path,
+                    "data": data,
+                    "headers": dict(self.headers),
+                }
+            )
         except Exception as e:
             print(f"Error parsing request: {e}")
 
         self.send_response(200)
-        self.send_header('Content-type', 'application/json')
+        self.send_header("Content-type", "application/json")
         self.end_headers()
         self.wfile.write(b'{"status": "ok"}')
 
@@ -46,7 +48,7 @@ class TestWebhookHTTPSending(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         """Start test HTTP server."""
-        cls.server = HTTPServer(('127.0.0.1', 8999), TestWebhookHTTPServer)
+        cls.server = HTTPServer(("127.0.0.1", 8999), TestWebhookHTTPServer)
         cls.server_thread = Thread(target=cls.server.serve_forever, daemon=True)
         cls.server_thread.start()
         sleep(0.1)  # Give server time to start
@@ -62,11 +64,13 @@ class TestWebhookHTTPSending(unittest.TestCase):
 
     def test_simple_message_sent(self):
         """Test that a simple text message is sent via HTTP."""
-        webhook_config = [{
-            "webhook_type": "raw",
-            "callback_url": "http://127.0.0.1:8999/callback",
-            "log_level": "info",
-        }]
+        webhook_config = [
+            {
+                "webhook_type": "raw",
+                "callback_url": "http://127.0.0.1:8999/callback",
+                "log_level": "info",
+            }
+        ]
 
         mock_accelerator = MagicMock()
         mock_accelerator.is_main_process = True
@@ -86,16 +90,18 @@ class TestWebhookHTTPSending(unittest.TestCase):
         # Check that request was received
         self.assertEqual(len(TestWebhookHTTPServer.received_requests), 1)
         request = TestWebhookHTTPServer.received_requests[0]
-        self.assertEqual(request['path'], '/callback')
-        self.assertEqual(request['data']['message'], "Test webhook message")
+        self.assertEqual(request["path"], "/callback")
+        self.assertEqual(request["data"]["message"], "Test webhook message")
 
     def test_structured_data_sent(self):
         """Test that structured data is sent correctly."""
-        webhook_config = [{
-            "webhook_type": "raw",
-            "callback_url": "http://127.0.0.1:8999/callback",
-            "log_level": "info",
-        }]
+        webhook_config = [
+            {
+                "webhook_type": "raw",
+                "callback_url": "http://127.0.0.1:8999/callback",
+                "log_level": "info",
+            }
+        ]
 
         mock_accelerator = MagicMock()
         mock_accelerator.is_main_process = True
@@ -109,7 +115,7 @@ class TestWebhookHTTPSending(unittest.TestCase):
         # Send structured data
         handler.send_raw(
             structured_data={"status": "training_started", "epoch": 1},
-            message_type="training_status",
+            message_type="training.status",
             message_level="info",
         )
 
@@ -117,17 +123,19 @@ class TestWebhookHTTPSending(unittest.TestCase):
 
         self.assertEqual(len(TestWebhookHTTPServer.received_requests), 1)
         request = TestWebhookHTTPServer.received_requests[0]
-        self.assertEqual(request['data']['status'], "training_started")
-        self.assertEqual(request['data']['type'], "training_status")
-        self.assertEqual(request['data']['epoch'], 1)
+        self.assertEqual(request["data"]["status"], "training_started")
+        self.assertEqual(request["data"]["type"], "training_status")
+        self.assertEqual(request["data"]["epoch"], 1)
 
     def test_error_message_sent(self):
         """Test that error messages are sent with correct severity."""
-        webhook_config = [{
-            "webhook_type": "raw",
-            "callback_url": "http://127.0.0.1:8999/callback",
-            "log_level": "error",  # Only send errors
-        }]
+        webhook_config = [
+            {
+                "webhook_type": "raw",
+                "callback_url": "http://127.0.0.1:8999/callback",
+                "log_level": "error",  # Only send errors
+            }
+        ]
 
         mock_accelerator = MagicMock()
         mock_accelerator.is_main_process = True
@@ -149,16 +157,18 @@ class TestWebhookHTTPSending(unittest.TestCase):
         # Only the error should have been sent
         self.assertEqual(len(TestWebhookHTTPServer.received_requests), 1)
         request = TestWebhookHTTPServer.received_requests[0]
-        self.assertEqual(request['data']['message'], "Error occurred")
+        self.assertEqual(request["data"]["message"], "Error occurred")
 
     def test_localhost_webhooks_use_http_fallback(self):
         """Test that localhost webhooks fall back to HTTP when callback service unavailable."""
         # Use 0.0.0.0 which triggers localhost detection
-        webhook_config = [{
-            "webhook_type": "raw",
-            "callback_url": "http://127.0.0.1:8999/callback",
-            "log_level": "info",
-        }]
+        webhook_config = [
+            {
+                "webhook_type": "raw",
+                "callback_url": "http://127.0.0.1:8999/callback",
+                "log_level": "info",
+            }
+        ]
 
         mock_accelerator = MagicMock()
         mock_accelerator.is_main_process = True
@@ -176,7 +186,7 @@ class TestWebhookHTTPSending(unittest.TestCase):
         # Request should have been received via HTTP fallback
         self.assertEqual(len(TestWebhookHTTPServer.received_requests), 1)
         request = TestWebhookHTTPServer.received_requests[0]
-        self.assertIn("Localhost webhook test", request['data']['message'])
+        self.assertIn("Localhost webhook test", request["data"]["message"])
 
 
 if __name__ == "__main__":

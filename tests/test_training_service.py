@@ -112,7 +112,24 @@ class TrainingServiceTests(unittest.TestCase):
                     side_effect=lambda config: config,
                 )
             )
-            stack.enter_context(patch.object(training_service.lazy_field_registry, "get_all_fields", return_value=[]))
+
+            # Mock field registry to return common trainer fields
+            # This ensures the field validation check doesn't filter out legitimate fields
+            class MockField:
+                def __init__(self, name, arg_name, webui_only=False):
+                    self.name = name
+                    self.arg_name = arg_name
+                    self.webui_only = webui_only
+
+            mock_fields = [
+                MockField("num_processes", "--num_processes"),
+                MockField("output_dir", "--output_dir"),
+                MockField("learning_rate", "--learning_rate"),
+                MockField("model_family", "--model_family"),
+            ]
+            stack.enter_context(
+                patch.object(training_service.lazy_field_registry, "get_all_fields", return_value=mock_fields)
+            )
             stack.enter_context(patch.object(training_service.lazy_field_registry, "get_field", return_value=None))
             return training_service.build_config_bundle(form_data)
 
@@ -235,6 +252,57 @@ class TrainingServiceTests(unittest.TestCase):
         self.assertEqual(terminated["job_id"], "abc123")
         self.assertIsNone(training_service.APIState.get_state("current_job_id"))
         self.assertEqual(training_service.APIState.get_state("training_status"), "cancelled")
+
+    def test_build_config_bundle_filters_webui_only_fields(self) -> None:
+        """Test that webui_only fields are filtered from config_dict and don't appear in trainer configs."""
+
+        # Create a mock field that has webui_only=True
+        class MockField:
+            def __init__(self, name, webui_only=False):
+                self.name = name
+                self.webui_only = webui_only
+                self.validation_rules = []
+
+        def mock_get_field(name):
+            if name in ("webhook_config", "webhook_reporting_interval", "num_validation_images", "configs_dir"):
+                return MockField(name, webui_only=True)
+            return None
+
+        form_data = {
+            "--webhook_config": '[{"webhook_type": "raw", "callback_url": "https://example.com/webhook"}]',
+            "--webhook_reporting_interval": "60",
+            "--num_validation_images": "5",
+            "--configs_dir": "/custom/configs",
+            "--datasets_dir": "/some/datasets",
+            "--learning_rate": "1e-4",
+            "--output_dir": "/output",
+        }
+
+        with patch.object(training_service.lazy_field_registry, "get_field", side_effect=mock_get_field):
+            bundle = self._build_bundle(form_data)
+
+        # WebUI-only fields should NOT appear in save_config (this prevents them from being saved to disk)
+        # This is the critical check - we don't want WebUI-only fields persisted to config files
+        self.assertNotIn("webhook_config", bundle.save_config)
+        self.assertNotIn("webhook_reporting_interval", bundle.save_config)
+        self.assertNotIn("num_validation_images", bundle.save_config)
+        self.assertNotIn("datasets_dir", bundle.save_config)
+
+        # webhook_config IS in complete_config because it's injected at runtime by the WebUI for trainer use
+        # This is intentional - the trainer needs the webhook config to send callbacks, but it shouldn't
+        # be saved to disk config files
+        self.assertIn("--webhook_config", bundle.complete_config)
+        self.assertEqual(bundle.complete_config["--webhook_config"], training_service.DEFAULT_WEBHOOK_CONFIG)
+
+        # Other WebUI-only fields should NOT appear in complete_config
+        self.assertNotIn("--num_validation_images", bundle.complete_config)
+        self.assertNotIn("num_validation_images", bundle.complete_config)
+        self.assertNotIn("--datasets_dir", bundle.complete_config)
+        self.assertNotIn("datasets_dir", bundle.complete_config)
+
+        # Regular trainer fields should still be present
+        self.assertIn("--learning_rate", bundle.complete_config)
+        self.assertIn("--output_dir", bundle.complete_config)
 
 
 if __name__ == "__main__":

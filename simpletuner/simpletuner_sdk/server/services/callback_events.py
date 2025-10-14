@@ -397,6 +397,12 @@ class CallbackEvent:
 
 
 def _coerce_event_type(raw: Mapping[str, Any]) -> EventType:
+    """
+    Coerce event type from explicit type field in payload.
+
+    All event sources MUST send an explicit 'type' field.
+    No heuristic detection or fallback mappings are performed.
+    """
     candidate = raw.get("type") or raw.get("event_type") or raw.get("message_type") or raw.get("category")
     if isinstance(candidate, EventType):
         return candidate
@@ -405,29 +411,8 @@ def _coerce_event_type(raw: Mapping[str, Any]) -> EventType:
         if value in EventType._value2member_map_:
             return EventType(value)
 
-        legacy = _LEGACY_TYPE_MAP.get(value)
-        if legacy:
-            return legacy
-
-        if value.startswith("init_"):
-            return EventType.LIFECYCLE_STAGE
-        if value.endswith("progress") or value == "progress_update":
-            return EventType.TRAINING_PROGRESS
-        if value.endswith("status"):
-            return EventType.TRAINING_STATUS
-
-    # Detect validation images: message contains "validation" and has images
-    message = _safe_str(raw.get("message") or raw.get("body") or raw.get("title") or raw.get("headline"))
-    has_images = bool(raw.get("images"))
-    if has_images and message and "validation" in message.lower():
-        return EventType.VALIDATION_IMAGE
-
-    # Detect debug images: message contains debugging keywords and has images
-    if has_images and message:
-        debug_keywords = ["debug", "pre-processing", "preprocessing", "data backend", "dataset"]
-        if any(keyword in message.lower() for keyword in debug_keywords):
-            return EventType.DEBUG_IMAGE
-
+    # If no valid type was provided, default to notification
+    # Event sources should be fixed to send explicit types
     return EventType.NOTIFICATION
 
 
@@ -506,24 +491,6 @@ def _prettify_key(value: str) -> str:
 def _derive_title(message: str, *, max_length: int = 120) -> str:
     first_line = message.strip().splitlines()[0]
     return first_line[:max_length]
-
-
-_LEGACY_TYPE_MAP: dict[str, EventType] = {
-    "checkpoint_state_save": EventType.CHECKPOINT,
-    "checkpoint_state_save_completed": EventType.CHECKPOINT,
-    "checkpoint_state_save_distiller": EventType.CHECKPOINT,
-    "checkpoint_state_save_distiller_completed": EventType.CHECKPOINT,
-    "checkpoint_state_save_finalized": EventType.CHECKPOINT,
-    "training_complete": EventType.TRAINING_SUMMARY,
-    "train_status": EventType.TRAINING_STATUS,
-    "training_status": EventType.TRAINING_STATUS,
-    "validation_start": EventType.VALIDATION,
-    "validation_log": EventType.VALIDATION,
-    "fatal_error": EventType.ERROR,
-    "error": EventType.ERROR,
-    "warning": EventType.NOTIFICATION,
-    "_send_webhook_msg": EventType.NOTIFICATION,
-}
 
 
 __all__ = [

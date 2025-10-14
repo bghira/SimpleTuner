@@ -159,6 +159,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             help_text="Root folder SimpleTuner uses to store and load configuration files",
             tooltip="Overrides the default ~/.simpletuner/configs directory when managing saved configs.",
             importance=ImportanceLevel.IMPORTANT,
+            webui_only=True,  # WebUI-specific field, not passed to trainer
             order=6,
         )
     )

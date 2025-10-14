@@ -2983,7 +2983,6 @@ function trainerComponent() {
                 const selector = `[name="${this.cssEscape(name)}"]`;
                 const nodes = form.querySelectorAll(selector);
                 if (!nodes.length) {
-                    console.log(`Field ${name} not found in form`);
                     return;
                 }
 

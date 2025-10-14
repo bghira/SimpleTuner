@@ -24,6 +24,7 @@ from simpletuner.helpers.training import image_file_extensions
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
 from simpletuner.helpers.training.multi_process import rank_info, should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.webhooks.events import lifecycle_stage_event
 from simpletuner.helpers.webhooks.mixin import WebhookMixin
 
 logger = logging.getLogger("VAECache")
@@ -979,7 +980,7 @@ class VAECache(WebhookMixin):
         if self.webhook_handler is not None:
             total_count = len([item for sublist in aspect_bucket_cache.values() for item in sublist])
             self.send_progress_update(
-                type="init_cache_vae_processing_started",
+                type="init_vae_cache",
                 readable_type="VAE Cache initialising",
                 progress=int(len(processed_images) / max(1, total_count) * 100),
                 total=total_count,
@@ -1108,6 +1109,20 @@ class VAECache(WebhookMixin):
                 except Exception as e:
                     logger.error(f"Fatal error when processing bucket {bucket}: {e}")
                     continue
+
+        # Send completion event for VAE cache initialization
+        if self.webhook_handler is not None:
+            event = lifecycle_stage_event(
+                key="init_vae_cache",
+                label="VAE Cache initialising",
+                status="completed",
+                message="VAE cache initialization complete",
+                percent=100,
+                current=1,
+                total=1,
+                job_id=StateTracker.get_job_id(),
+            )
+            self.webhook_handler.send_raw(event, message_level="info", job_id=StateTracker.get_job_id())
 
     def scan_cache_contents(self):
         """

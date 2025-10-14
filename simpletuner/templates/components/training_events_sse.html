@@ -54,6 +54,38 @@
     const completedJobIds = new Set();
     let lastResetJobId = null;
     let suppressAnonymousProgress = false;
+    const TERMINAL_STAGE_STATUSES = new Set(['completed', 'complete', 'failed', 'error', 'cancelled', 'stopped']);
+
+    function isStageActive(stage) {
+        if (!stage) {
+            return false;
+        }
+        const status = String(stage.status || '').toLowerCase();
+        if (!status) {
+            return true;
+        }
+        return !TERMINAL_STAGE_STATUSES.has(status);
+    }
+
+    function hasActiveStartupStages() {
+        for (const stage of startupStages.values()) {
+            if (isStageActive(stage)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function findLatestActiveStageEntry() {
+        const entries = Array.from(startupStages.entries());
+        for (let index = entries.length - 1; index >= 0; index -= 1) {
+            const entry = entries[index];
+            if (entry && isStageActive(entry[1])) {
+                return entry;
+            }
+        }
+        return null;
+    }
 
     function getTrainerStore() {
         if (window.Alpine && typeof window.Alpine.store === 'function') {
@@ -235,28 +267,9 @@
             return;
         }
 
-        const heading = document.createElement('h6');
-        heading.innerHTML = '<i class="fas fa-cog fa-spin"></i> Training Starting';
-        alert.appendChild(heading);
-
-        const body = document.createElement('p');
-        body.textContent = 'Your training job is being initialized.';
-        alert.appendChild(body);
-
-        if (startupJobId) {
-            const jobInfo = document.createElement('p');
-            jobInfo.className = 'mb-0 small text-muted';
-            jobInfo.innerHTML = `<small>Job ID: ${startupJobId}</small>`;
-            alert.appendChild(jobInfo);
-        }
-
         if (startupStages.size === 0) {
             return;
         }
-
-        const divider = document.createElement('hr');
-        divider.className = 'my-2';
-        alert.appendChild(divider);
 
         const listEl = document.createElement('div');
         listEl.className = 'startup-progress-list';
@@ -283,8 +296,25 @@
             }
 
             const badge = document.createElement('span');
-            badge.className = 'badge bg-info text-dark';
-            badge.textContent = `${Math.round(clampPercent(stage.percent))}%`;
+            const normalizedStatus = String(stage.status || '').toLowerCase();
+            const percentValue = Math.round(clampPercent(stage.percent));
+            let badgeClass = 'badge bg-info text-dark';
+            let statusLabel = 'Running';
+            if (normalizedStatus === 'completed' || normalizedStatus === 'complete') {
+                badgeClass = 'badge bg-success';
+                statusLabel = 'Completed';
+            } else if (normalizedStatus === 'failed' || normalizedStatus === 'error') {
+                badgeClass = 'badge bg-danger';
+                statusLabel = 'Failed';
+            } else if (normalizedStatus === 'cancelled' || normalizedStatus === 'stopped') {
+                badgeClass = 'badge bg-warning text-dark';
+                statusLabel = 'Cancelled';
+            } else if (normalizedStatus && normalizedStatus !== 'running') {
+                statusLabel = prettifyStageLabel(normalizedStatus);
+            }
+            badge.className = badgeClass;
+            badge.textContent = `${statusLabel} · ${percentValue}%`;
+            badge.title = `Status: ${statusLabel}`;
 
             headerRow.appendChild(title);
             headerRow.appendChild(badge);
@@ -294,7 +324,16 @@
             progressOuter.className = 'progress progress-sm';
 
             const bar = document.createElement('div');
-            bar.className = 'progress-bar progress-bar-striped progress-bar-animated';
+            bar.className = 'progress-bar';
+            if (isStageActive(stage)) {
+                bar.classList.add('progress-bar-striped', 'progress-bar-animated');
+            } else if (normalizedStatus === 'failed' || normalizedStatus === 'error') {
+                bar.classList.add('bg-danger');
+            } else if (normalizedStatus === 'cancelled' || normalizedStatus === 'stopped') {
+                bar.classList.add('bg-warning', 'text-dark');
+            } else {
+                bar.classList.add('bg-success');
+            }
             bar.setAttribute('role', 'progressbar');
             bar.style.width = `${clampPercent(stage.percent)}%`;
             bar.setAttribute('aria-valuenow', stage.current || 0);
@@ -308,8 +347,8 @@
         });
     }
 
-    function handleStartupProgressUpdate(data) {
-        console.log('[SSE-DEBUG] handleStartupProgressUpdate called with:', JSON.stringify(data, null, 2));
+    function handleLifecycleStageUpdate(data) {
+        console.log('[SSE-DEBUG] handleLifecycleStageUpdate called with:', JSON.stringify(data, null, 2));
 
         if (!data) {
             console.log('[SSE-DEBUG] No data provided, returning');
@@ -317,17 +356,36 @@
         }
 
         console.log('[SSE-DEBUG] Current training status:', currentTrainingStatus);
-        if (currentTrainingStatus === 'running' || currentTrainingStatus === 'completed') {
-            console.log('[SSE-DEBUG] Training already running/completed, ignoring startup progress');
-            return;
+
+        const possibleKey = String((data.stage?.key || data.progress_type || data.label || data.key || ''));
+        const stageStatus = String((data.stage?.status || data.status || 'running')).toLowerCase();
+
+        console.log('[SSE-DEBUG] Stage key:', possibleKey, 'stageStatus:', stageStatus);
+
+        // Check if this is a new job starting
+        if (data.job_id && activeJobId && data.job_id !== activeJobId && currentTrainingStatus === 'completed') {
+            console.log('[SSE-DEBUG] New job detected, resetting training state. Old job:', activeJobId, 'New job:', data.job_id);
+            // Reset the training state for the new job
+            currentTrainingStatus = 'starting';
+            completedJobIds.delete(data.job_id);
+            activeJobId = data.job_id;
+            startupJobId = data.job_id;
+            clearStartupProgress();
         }
 
+        // During SSE replay, show all recent init stages briefly even if completed
+        // This ensures users see what happened during initialization
         if (data.job_id && startupJobId && data.job_id !== startupJobId) {
             console.log('[SSE-DEBUG] Job ID mismatch, clearing progress. Old:', startupJobId, 'New:', data.job_id);
             clearStartupProgress();
         }
         if (data.job_id) {
             startupJobId = data.job_id;
+            // If we don't have an active job ID yet, set it
+            if (!activeJobId) {
+                activeJobId = data.job_id;
+                currentTrainingStatus = 'starting';
+            }
         }
 
         // Extract stage data - it might be nested under 'stage' property
@@ -347,13 +405,13 @@
             }
         }
         const stageJobId = data.job_id || startupJobId || activeJobId;
-        const stagePercent = clampPercent(progressInfo.percent || data.percent || 0);
-        const stageStatus = String(stageInfo.status || data.status || 'running').toLowerCase();
+        const stagePercent = clampPercent(stageInfo.percent || progressInfo.percent || data.percent || 0);
+        // Use the stageStatus already declared above
         const stageData = {
-            label: progressInfo.label || stageInfo.label || data.label || key,
+            label: stageInfo.label || progressInfo.label || data.label || key,
             percent: Math.round(stagePercent),
-            current: Number(progressInfo.current || data.current || 0),
-            total: Number(progressInfo.total || data.total || 0),
+            current: Number(stageInfo.current || progressInfo.current || data.current || 0),
+            total: Number(stageInfo.total || progressInfo.total || data.total || 0),
             status: stageStatus,
         };
         console.log('[SSE-DEBUG] Constructed stage data:', stageData);
@@ -366,37 +424,52 @@
 
         console.log('[SSE-DEBUG] Stage complete?', stageComplete);
 
-        if (stageComplete && stageData.status !== 'failed') {
-            stageData.status = 'completed';
-            stageData.percent = 100;
-            if (stageData.total > 0) {
-                stageData.current = stageData.total;
+        if (stageComplete) {
+            if (stageData.status !== 'failed') {
+                stageData.status = 'completed';
+                stageData.percent = 100;
+                if (stageData.total > 0) {
+                    stageData.current = stageData.total;
+                }
+            } else {
+                stageData.percent = Math.round(stagePercent);
             }
         }
 
-        // Always update/add the stage - don't remove completed ones
-        // They'll be cleared all at once when status transitions to 'running'
+        // Always update/add the stage; completed stages remain until progress is explicitly cleared
         console.log('[SSE-DEBUG] Adding/updating stage:', key, 'status:', stageData.status);
         startupStages.set(key, stageData);
 
         console.log('[SSE-DEBUG] Current startup stages:', Array.from(startupStages.keys()));
         renderStartupProgress();
 
-        // Only update card for active (non-completed) stages
-        if (!stageComplete || stageData.status === 'failed') {
+        const resolvedStageStatus = String(stageData.status || '').toLowerCase();
+        const stageIsActive = isStageActive(stageData);
+        const shouldReflectStage = stageIsActive || resolvedStageStatus === 'failed';
+
+        if (shouldReflectStage) {
             reflectStartupProgressInCard(key, stageData, stageJobId);
-            // Update global training state
+            const targetStatus = 'starting';
+            const statusLabel = 'Starting';
+            setTrainingState(targetStatus, { job_id: stageJobId });
+            setStatus(statusLabel, 'info');
+            return;
+        }
+
+        const nextActiveEntry = findLatestActiveStageEntry();
+        if (nextActiveEntry) {
+            const [nextKey, nextStageData] = nextActiveEntry;
+            reflectStartupProgressInCard(nextKey, nextStageData, stageJobId);
+            const targetStatus = 'starting';
+            const statusLabel = 'Starting';
+            setTrainingState(targetStatus, { job_id: stageJobId });
+            setStatus(statusLabel, 'info');
+            return;
+        }
+
+        if (!['failed', 'error', 'cancelled', 'stopped'].includes(resolvedStageStatus)) {
             setTrainingState('starting', { job_id: stageJobId });
-            setStatus('Initialising', 'info');
-        } else if (startupStages.size > 0) {
-            // Stage just completed, show the next active stage
-            const nextStage = Array.from(startupStages.entries()).pop();
-            if (nextStage) {
-                const [nextKey, nextStageData] = nextStage;
-                reflectStartupProgressInCard(nextKey, nextStageData, stageJobId);
-                setTrainingState('starting', { job_id: stageJobId });
-                setStatus('Initialising', 'info');
-            }
+            setStatus('Starting', 'info');
         }
     }
 
@@ -609,9 +682,7 @@
         const normalizedType = messageType.replace(/\./g, '_');
         const progressType = resolveProgressTypeFromPayload(payload);
         const normalizedPercent = clampPercent(percent);
-        const isStartupProgress = normalizedType === 'progress_update'
-            && typeof progressType === 'string'
-            && progressType.startsWith('init_');
+        const isStartupProgress = false;
 
         return {
             percentage: isStartupProgress ? Math.round(normalizedPercent) : normalizedPercent,
@@ -682,10 +753,7 @@
         const messageType = String(progress.raw?.message_type || '').toLowerCase();
         const normalizedType = messageType.replace(/\./g, '_');
         const progressType = resolveProgressTypeFromPayload(progress.raw);
-        const inferredStartup = normalizedType === 'progress_update'
-            && typeof progressType === 'string'
-            && progressType.startsWith('init_');
-        const isStartupProgress = forceStartup || inferredStartup;
+        const isStartupProgress = forceStartup;
 
         const merged = {
             percent: finalPercent,
@@ -708,6 +776,7 @@
                     startupStages: Array.from(startupStages.keys()),
                     progress: merged
                 });
+                clearStartupProgress();
                 store.showTrainingProgress = true;
             } else if (!revealCard) {
                 console.log('[SSE-DEBUG] syncTrainerProgress hiding card (revealCard=false)');
@@ -718,7 +787,7 @@
         }
 
         window.dispatchEvent(new CustomEvent('training-progress', { detail: merged }));
-        const startupMode = isStartupProgress || startupStatusActive || startupStages.size > 0;
+        const startupMode = isStartupProgress || startupStatusActive || hasActiveStartupStages();
         if (!revealCard && startupMode) {
             setTrainingState('starting', { job_id: targetJobId, progress: merged });
         } else {
@@ -729,7 +798,7 @@
     function setStatus(statusText, severity) {
         // Don't create or update the event dock card during startup
         // The status is shown in the "Training Starting" card instead
-        if (startupStatusActive || startupStages.size > 0) {
+        if (startupStatusActive || hasActiveStartupStages()) {
             return;
         }
 
@@ -754,13 +823,11 @@
         const messageType = String(progress.raw?.message_type || '').toLowerCase();
         const normalizedType = messageType.replace(/\./g, '_');
         const progressType = resolveProgressTypeFromPayload(progress.raw);
-        const isStartupProgress = normalizedType === 'progress_update'
-            && typeof progressType === 'string'
-            && progressType.startsWith('init_');
-        const startupContext = startupStatusActive || startupStages.size > 0;
+        const isStartupProgress = false;
+        const startupContext = startupStatusActive || hasActiveStartupStages();
         const percent = clampPercent(progress.percentage);
 
-        if (isStartupProgress || (startupContext && normalizedType !== 'training_progress')) {
+        if (isStartupProgress || (startupContext && normalizedType !== 'training.progress')) {
             syncTrainerProgress(progress, jobId, { revealCard: false, forceStartup: true });
             setStatus('Initialising', progress.raw?.severity);
             return;
@@ -776,8 +843,6 @@
         if (card.classList.contains('d-none')) {
             card.classList.remove('d-none');
         }
-
-        clearStartupProgress();
 
         if (elements.bar) {
             const newWidth = `${percent}%`;
@@ -877,14 +942,23 @@
                 if (normalizedMessageType === 'configure_webhook') {
                     setStatus('Starting', payload.severity);
                     setTrainingState('starting', { job_id: jobId });
-                } else if (normalizedMessageType === 'training_status' || normalizedMessageType === '_train_initial_msg' || normalizedMessageType === 'train_status') {
+                } else if (normalizedMessageType === 'training.status' || normalizedMessageType === '_train_initial_msg' || normalizedMessageType === 'train_status') {
                     const derivedStatus = (payload.status || payload.data?.status || (normalizedMessageType === '_train_initial_msg' ? 'starting' : '')).toLowerCase();
                     const normalizedProgress = normalizeProgressPayload(payload);
 
-                    // Ignore status updates if training is already in a terminal state
+                    // Check if this is a new job starting
+                    if (jobId && activeJobId && jobId !== activeJobId) {
+                        console.log('[SSE-DEBUG] New job detected in status handler. Old:', activeJobId, 'New:', jobId);
+                        // Clear completed status for new job
+                        completedJobIds.delete(jobId);
+                        activeJobId = jobId;
+                        currentTrainingStatus = 'starting';
+                    }
+
+                    // Only ignore status updates if it's the SAME job in a terminal state
                     const terminalStates = ['cancelled', 'stopped', 'failed', 'completed', 'complete'];
-                    if (terminalStates.includes(currentTrainingStatus) && !terminalStates.includes(derivedStatus)) {
-                        console.log('[SSE-DEBUG] Ignoring status update - training already in terminal state:', currentTrainingStatus);
+                    if (terminalStates.includes(currentTrainingStatus) && !terminalStates.includes(derivedStatus) && jobId === activeJobId) {
+                        console.log('[SSE-DEBUG] Ignoring status update - same job already in terminal state:', currentTrainingStatus);
                         return;
                     }
 
@@ -915,6 +989,7 @@
                             messageType: normalizedMessageType,
                             startupStages: Array.from(startupStages.keys())
                         });
+                        // Clear initialization stages when training actually starts running
                         clearStartupProgress();
                         setStatus('Running', payload.severity);
                         setTrainingState('running', { job_id: jobId });
@@ -985,13 +1060,11 @@
                 setStatus('Reconnecting', 'warning');
             } else if (info.status === 'disconnected') {
                 setStatus('Disconnected', 'secondary');
-                // Don't reset training state on disconnect - we want to preserve it for reconnection
-                // setTrainingState('idle', { job_id: activeJobId });
-                // Don't clear startup progress - we'll restore it on reconnect
-                // const trainingStatusEl = document.getElementById('training-status');
-                // if (trainingStatusEl) {
-                //     trainingStatusEl.innerHTML = '';
-                // }
+                // Only clear lifecycle stages if this is a permanent disconnect (max retries reached)
+                // Don't clear on temporary network issues that will auto-reconnect
+                if (info.message && info.message.includes('Maximum retries')) {
+                    clearStartupProgress();
+                }
             }
         };
         trackListener('connection-status', connectionStatusHandler);
@@ -1019,14 +1092,14 @@
             }
             updateProgressCard(normalized, jobId);
         };
-        trackListener('training_progress', trainingProgressHandler);
+        trackListener('training.progress', trainingProgressHandler);
 
-        var startupProgressHandler = function(data) {
-            console.log('[SSE-DEBUG] startup_progress event received:', data);
-            handleStartupProgressUpdate(data);
+        var lifecycleStageHandler = function(data) {
+            console.log('[SSE-DEBUG] lifecycle.stage event received:', data);
+            handleLifecycleStageUpdate(data);
         };
-        trackListener('startup_progress', startupProgressHandler);
-        console.log('[SSE-DEBUG] Registered startup_progress listener');
+        trackListener('lifecycle.stage', lifecycleStageHandler);
+        console.log('[SSE-DEBUG] Registered lifecycle.stage listener');
 
         var validationCompleteHandler = function(_data) {};
         trackListener('validation_complete', validationCompleteHandler);
@@ -1037,7 +1110,7 @@
         var trainingStatusHandler = function(data) {
             handleCallbackEvent('status', data);
         };
-        trackListener('training_status', trainingStatusHandler);
+        trackListener('training.status', trainingStatusHandler);
 
         var errorHandler = function(data) {
             setStatus('Error', 'danger');
@@ -1063,7 +1136,7 @@
         source.addEventListener('message', function(event) {
             try {
                 const data = JSON.parse(event.data);
-                if (data.type === 'training_progress') {
+                if (data.type === 'training.progress') {
                     const normalized = normalizeProgressPayload({ progress: data });
                     updateProgressCard(normalized, activeJobId);
                 }
@@ -1147,16 +1220,27 @@
                     .filter(([key]) => !(typeof key === 'string' && key.startsWith('stage_') && /^\d+$/.test(key.slice(6))));
 
                 console.log('[SSE-DEBUG] Filtered stage entries:', stageEntries.length);
+
                 stageEntries.forEach(([key, stage]) => {
                     if (!stage) return;
                     const stageStatus = String(stage.status || 'running').toLowerCase();
+                    const percentValue = clampPercent(stage.percent);
+                    const totalValue = Number(stage.total || 0);
+                    const currentValue = Number(stage.current || 0);
                     const stageData = {
                         label: stage.label || key,
-                        percent: clampPercent(stage.percent),
-                        current: Number(stage.current || 0),
-                        total: Number(stage.total || 0),
+                        percent: percentValue,
+                        current: currentValue,
+                        total: totalValue,
                         status: stageStatus,
                     };
+                    if (stageData.status !== 'failed' && (stageData.status === 'completed' || stageData.percent >= 100 || (stageData.total > 0 && stageData.current >= stageData.total))) {
+                        stageData.status = 'completed';
+                        stageData.percent = 100;
+                        if (stageData.total > 0) {
+                            stageData.current = stageData.total;
+                        }
+                    }
                     console.log('[SSE-DEBUG] Restoring stage:', key, stageData);
                     startupStages.set(key, stageData);
                 });
@@ -1165,9 +1249,28 @@
                 if (startupStages.size > 0) {
                     startupJobId = data.job_id || startupJobId;
                     renderStartupProgress();
-                    const [latestKey, latestStage] = Array.from(startupStages.entries()).pop();
+                    let latestKey;
+                    let latestStage;
+                    const activeEntry = findLatestActiveStageEntry();
+                    if (activeEntry) {
+                        [latestKey, latestStage] = activeEntry;
+                    } else {
+                        const fallback = Array.from(startupStages.entries()).pop();
+                        if (fallback) {
+                            [latestKey, latestStage] = fallback;
+                        }
+                    }
                     if (latestKey && latestStage) {
                         reflectStartupProgressInCard(latestKey, latestStage, data.job_id || startupJobId || activeJobId);
+                        if (isStageActive(latestStage)) {
+                            const statusLabel = 'Running';
+                            const trainingStatus = 'running';
+                            setTrainingState(trainingStatus, { job_id: data.job_id || startupJobId || activeJobId });
+                            setStatus(statusLabel, 'info');
+                        } else if (!['failed', 'error', 'cancelled', 'stopped'].includes(String(latestStage.status || '').toLowerCase())) {
+                            setTrainingState('running', { job_id: data.job_id || startupJobId || activeJobId });
+                            setStatus('Running', 'info');
+                        }
                     }
                 }
             }
@@ -1202,11 +1305,11 @@
                     console.log('[SSE-DEBUG] Status is running, checking if we should show training progress...');
 
                     // Only show training progress if there are NO active startup stages
-                    const hasActiveStartupStages = startupStages.size > 0;
-                    console.log('[SSE-DEBUG] Has active startup stages:', hasActiveStartupStages, 'Count:', startupStages.size);
+                    const activeStagesPresent = hasActiveStartupStages();
+                    console.log('[SSE-DEBUG] Has active startup stages:', activeStagesPresent, 'Count:', startupStages.size);
 
-                    if (!hasActiveStartupStages) {
-                        console.log('[SSE-DEBUG] No active startup stages, showing training progress card');
+                    if (!activeStagesPresent) {
+                        console.log('[SSE-DEBUG] No active startup stages, showing training progress card (history will remain visible)');
                         clearStartupProgress();
                         const store = getTrainerStore();
                         if (store) {

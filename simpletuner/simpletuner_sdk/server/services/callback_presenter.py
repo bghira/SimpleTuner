@@ -27,13 +27,14 @@ class CallbackPresenter:
     }
 
     # Map event types to SSE channel names consumed by the WebUI
+    # Use the enum values directly (with dots) for consistency
     _EVENT_TYPE_TO_SSE = {
-        EventType.LIFECYCLE_STAGE: "startup_progress",
-        EventType.TRAINING_PROGRESS: "training_progress",
-        EventType.TRAINING_STATUS: "training_status",
-        EventType.TRAINING_SUMMARY: "training_status",
-        EventType.NOTIFICATION: "notification",
-        EventType.ERROR: "error",
+        EventType.LIFECYCLE_STAGE: EventType.LIFECYCLE_STAGE.value,
+        EventType.TRAINING_PROGRESS: EventType.TRAINING_PROGRESS.value,
+        EventType.TRAINING_STATUS: EventType.TRAINING_STATUS.value,
+        EventType.TRAINING_SUMMARY: EventType.TRAINING_STATUS.value,
+        EventType.NOTIFICATION: EventType.NOTIFICATION.value,
+        EventType.ERROR: EventType.ERROR.value,
         EventType.CHECKPOINT: "callback:checkpoint",
         EventType.VALIDATION: "callback:validation",
         EventType.METRIC: "callback:metric",

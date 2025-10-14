@@ -81,6 +81,9 @@ class FieldService:
     }
     _SNR_GAMMA_FIELDS = {"snr_gamma"}
 
+    # DEPRECATED: WebUI-only fields are now marked with webui_only=True in the field registry
+    # This set is maintained for backward compatibility with code that directly references it
+    # New code should use: getattr(field, "webui_only", False) or check the field registry
     _WEBUI_ONLY_FIELDS = {
         "configs_dir",
         "datasets_dir",
@@ -91,6 +94,8 @@ class FieldService:
         "uploadMode",
         "ui-accelerate-mode",
         "discord_webhooks",
+        "webhook_config",
+        "webhook_reporting_interval",
     }
     # Fields that the WebUI manages internally so users cannot override them
     _WEBUI_FORCED_VALUES = {
@@ -998,7 +1003,8 @@ class FieldService:
                     continue
             name = field.name
 
-            if name in self._WEBUI_ONLY_FIELDS:
+            # Skip WebUI-only fields (fields marked with webui_only=True in the registry)
+            if getattr(field, "webui_only", False):
                 continue
 
             if name in self._VIDEO_ONLY_FIELDS and not is_video_model:

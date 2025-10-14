@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import logging
 from collections import deque
 from threading import Lock
 from typing import Any, Mapping, Sequence
@@ -12,6 +13,8 @@ from ...api_state import APIState
 from .callback_events import CallbackEvent, EventSeverity, EventType, ProgressData, StageData, StageStatus
 from .event_store import EventStore
 from .sse_manager import get_sse_manager
+
+logger = logging.getLogger(__name__)
 
 _default_service: CallbackService | None = None
 _service_lock = Lock()
@@ -35,6 +38,7 @@ class CallbackService:
 
         normalized_payload = dict(raw_payload)
         message_type = str(normalized_payload.get("message_type") or normalized_payload.get("type") or "").lower()
+
         if message_type == "configure_webhook":
             normalized_payload.setdefault("reset_history", True)
 
@@ -238,10 +242,6 @@ class CallbackService:
         stages = dict(stages_state) if isinstance(stages_state, Mapping) else {}
         if job_changed:
             stages = {}
-        else:
-            for existing_key in list(stages.keys()):
-                if existing_key != stage.key:
-                    stages.pop(existing_key, None)
 
         progress = stage.progress or ProgressData()
         percent = progress.normalized_percent
@@ -276,6 +276,7 @@ class CallbackService:
     def _handle_progress_event(self, event: CallbackEvent, job_id: str | None, job_changed: bool) -> None:
         if event.progress is None:
             return
+
         APIState.set_state("training_status", "running")
         if job_id:
             self._job_status[job_id] = "running"
@@ -284,7 +285,6 @@ class CallbackService:
             previous_progress = {}
         merged = self._merge_progress_state(previous_progress, event.progress, event.data)
         APIState.set_state("training_progress", merged)
-        self._clear_startup_stages()
 
     def _handle_status_event(self, event: CallbackEvent, job_id: str | None) -> None:
         raw_status = None
@@ -304,7 +304,7 @@ class CallbackService:
 
         if status in {"failed", "error", "fatal", "cancelled", "stopped"}:
             APIState.set_state("training_progress", None)
-            self._clear_startup_stages()
+            self._clear_startup_stages()  # Clear all stages on error
             self._broadcast_progress_reset(job_id, status=status)
         elif status in {"completed", "success"}:
             progress_state = APIState.get_state("training_progress") or {}
@@ -312,8 +312,9 @@ class CallbackService:
                 progress_state = dict(progress_state)
                 progress_state["percent"] = 100
                 APIState.set_state("training_progress", progress_state)
-            self._clear_startup_stages()
+            self._clear_startup_stages()  # Clear all stages on completion
         elif status == "running":
+            # Training has started running - clear initialization lifecycle stages
             self._clear_startup_stages()
 
     def _handle_summary_event(self, event: CallbackEvent, job_id: str | None) -> None:
@@ -344,11 +345,30 @@ class CallbackService:
             APIState.set_state("current_job_id", job_id)
 
         if event.stage:
+            # Only mark training as complete for the actual training_complete stage
+            stage_key = event.stage.key or ""
+
+            if stage_key == "training_complete":
+                # Training has completed - update API state to reflect this
+                APIState.set_state("training_status", "completed")
+                if job_id:
+                    self._job_status[job_id] = "completed"
+                # Ensure progress shows 100%
+                progress_state = APIState.get_state("training_progress") or {}
+                if isinstance(progress_state, Mapping):
+                    progress_state = dict(progress_state)
+                    progress_state["percent"] = 100
+                    APIState.set_state("training_progress", progress_state)
+                self._clear_startup_stages()
+                self._update_startup_stage(event.stage, job_id=job_id, job_changed=job_changed)
+                return
+
+            # For all other stages, just update the stage tracking
             current_status = str(APIState.get_state("training_status") or "").lower()
             if current_status not in {"running", "completed", "success", "failed", "error", "fatal", "cancelled", "stopped"}:
                 APIState.set_state("training_status", "starting")
                 current_status = "starting"
-            if job_id:
+            if job_id and current_status not in {"completed", "failed", "error", "cancelled", "stopped"}:
                 self._job_status[job_id] = current_status
             self._update_startup_stage(event.stage, job_id=job_id, job_changed=job_changed)
             return
@@ -379,23 +399,29 @@ class CallbackService:
             self._handle_progress_event(event, job_id, job_changed)
 
     def _clear_startup_stages(self) -> None:
+        """Clear all startup stages from state."""
         APIState.set_state("training_startup_stages", {})
 
     def _broadcast_startup_stage(self, job_id: str | None, stage_state: Mapping[str, Any]) -> None:
         payload = {
-            "type": "startup_progress",
+            "type": "lifecycle.stage",
             "job_id": job_id,
-            "progress_type": stage_state.get("progress_type"),
-            "label": stage_state.get("label"),
-            "percent": stage_state.get("percent", 0),
-            "current": stage_state.get("current", 0),
-            "total": stage_state.get("total", 0),
-            "status": stage_state.get("status", "running"),
+            "stage": {
+                "key": stage_state.get("progress_type"),
+                "label": stage_state.get("label"),
+                "status": stage_state.get("status", "running"),
+                "percent": stage_state.get("percent", 0),
+                "current": stage_state.get("current", 0),
+                "total": stage_state.get("total", 0),
+            },
         }
+        logger.debug(
+            f"Broadcasting lifecycle stage: {stage_state.get('progress_type')} (status={stage_state.get('status')}) for job {job_id}"
+        )
 
         async def _broadcast():
             manager = get_sse_manager()
-            await manager.broadcast(payload, event_type="startup_progress")
+            await manager.broadcast(payload, event_type="lifecycle.stage")
 
         try:
             loop = asyncio.get_running_loop()

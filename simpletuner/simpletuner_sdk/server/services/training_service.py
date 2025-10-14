@@ -202,6 +202,38 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         configs_dir=resolved_configs_dir,
     )
 
+    # Filter out webui_only fields from config_dict to prevent them from being merged into trainer configs
+    # This is the primary defense against WebUI-only fields entering the trainer configuration
+    webui_only_keys_to_remove = []
+    for key in list(config_dict.keys()):
+        # Check both with and without "--" prefix
+        lookup_key = key.lstrip("-")
+        field = lazy_field_registry.get_field(lookup_key)
+        if field and getattr(field, "webui_only", False):
+            webui_only_keys_to_remove.append(key)
+            logger.debug(f"Filtering webui_only field from config_dict: {key}")
+
+    # Also remove non-registry WebUI-only fields
+    non_registry_webui_fields = {
+        "datasets_dir",
+        "--datasets_dir",
+        "allow_dataset_paths_outside_dir",
+        "--allow_dataset_paths_outside_dir",
+        "uploadMode",
+        "--uploadMode",
+        "ui-accelerate-mode",
+        "--ui-accelerate-mode",
+        "discord_webhooks",
+        "--discord_webhooks",
+    }
+    for key in config_dict.keys():
+        if key in non_registry_webui_fields:
+            webui_only_keys_to_remove.append(key)
+            logger.debug(f"Filtering non-registry webui_only field from config_dict: {key}")
+
+    for key in webui_only_keys_to_remove:
+        config_dict.pop(key, None)
+
     # Normalize legacy form keys that may still be emitted by older UI states
     legacy_key_map = {
         "maximum_caption_length": "--tokenizer_max_length",

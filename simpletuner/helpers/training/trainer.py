@@ -598,7 +598,7 @@ class Trainer:
         self._send_webhook_msg(message=webhook_msg, emit_event=False)
         self._emit_event(
             lifecycle_stage_event(
-                key="load_base_model",
+                key="init_load_base_model",
                 label="Loading base model",
                 status="running",
                 message=webhook_msg,
@@ -609,7 +609,7 @@ class Trainer:
         self.accelerator.wait_for_everyone()
         self._emit_event(
             lifecycle_stage_event(
-                key="load_base_model",
+                key="init_load_base_model",
                 label="Loading base model",
                 status="completed",
                 message="Base model has loaded.",
@@ -627,7 +627,7 @@ class Trainer:
             self._send_webhook_msg(message="Configuring data backends... (this may take a while!)", emit_event=False)
             self._emit_event(
                 lifecycle_stage_event(
-                    key="data_backend",
+                    key="init_data_backend",
                     label="Configuring data backends",
                     status="running",
                     message="Configuring data backends... (this may take a while!)",
@@ -643,7 +643,7 @@ class Trainer:
             )
             self._emit_event(
                 lifecycle_stage_event(
-                    key="data_backend",
+                    key="init_data_backend",
                     label="Configuring data backends",
                     status="completed",
                     message="Completed configuring data backends.",
@@ -672,7 +672,7 @@ class Trainer:
             )
             self._emit_event(
                 lifecycle_stage_event(
-                    key="data_backend",
+                    key="init_data_backend",
                     label="Configuring data backends",
                     status="failed",
                     message=f"Failed to load data backends: {e}",
@@ -1235,7 +1235,7 @@ class Trainer:
         self._send_webhook_msg(message="Preparing model components...", emit_event=False)
         self._emit_event(
             lifecycle_stage_event(
-                key="prepare_models",
+                key="init_prepare_models",
                 label="Preparing model components",
                 status="running",
                 message="Preparing model components",
@@ -1289,7 +1289,7 @@ class Trainer:
         self.accelerator.wait_for_everyone()
         self._emit_event(
             lifecycle_stage_event(
-                key="prepare_models",
+                key="init_prepare_models",
                 label="Preparing model components",
                 status="completed",
                 message="Completed preparing model components",
@@ -1403,7 +1403,7 @@ class Trainer:
         if path is None:
             logger.info(f"Checkpoint '{self.config.resume_from_checkpoint}' does not exist. Starting a new training run.")
             event = lifecycle_stage_event(
-                key="resume_checkpoint",
+                key="init_resume_checkpoint",
                 label="Resume Checkpoint",
                 status="completed",
                 message="No model to resume. Beginning fresh training run.",
@@ -1440,7 +1440,7 @@ class Trainer:
             )
 
         event = lifecycle_stage_event(
-            key="resume_checkpoint",
+            key="init_resume_checkpoint",
             label="Resume Checkpoint",
             status="running",
             message=f"Resuming model: {path}",
@@ -1463,7 +1463,7 @@ class Trainer:
         StateTracker.set_global_resume_step(self.state["global_resume_step"])
         training_state_in_ckpt = StateTracker.get_training_state()
         event = lifecycle_stage_event(
-            key="resume_checkpoint",
+            key="init_resume_checkpoint",
             label="Resume Checkpoint",
             status="completed",
             message=f"Resumed from global_step {self.state['global_resume_step']}",
@@ -1515,7 +1515,7 @@ class Trainer:
         # Emit completion event for resume checkpoint stage
         if self.config.resume_from_checkpoint:
             completion_event = lifecycle_stage_event(
-                key="resume_checkpoint",
+                key="init_resume_checkpoint",
                 label="Resuming checkpoint",
                 status="completed",
                 percent=100,
@@ -1812,12 +1812,14 @@ class Trainer:
         # Send to Discord webhook but don't emit as event (to avoid cluttering event dock)
         if self.webhook_handler is not None:
             self.webhook_handler.send(message=initial_msg, message_level="info")
+        # Cap global_step to max_train_steps in case of resume on already-completed environment
+        capped_global_step = min(self.state["global_step"], self.config.max_train_steps)
         progress_percent = 0.0
         if self.config.max_train_steps:
-            progress_percent = (self.state["global_step"] / self.config.max_train_steps) * 100
+            progress_percent = (capped_global_step / self.config.max_train_steps) * 100
         progress_payload = {
             "label": "Training initialisation",
-            "current": self.state["global_step"],
+            "current": capped_global_step,
             "total": self.config.max_train_steps,
             "percent": progress_percent,
             "metrics": {
@@ -2463,11 +2465,16 @@ class Trainer:
                     if self.webhook_handler is not None:
                         current_state = self.state.copy()
                         current_state.pop("args")  # we don't need to send the config every time.
+                        # Cap global_step to prevent exceeding total when resuming completed runs
+                        capped_step = min(
+                            current_state.get("global_step", 0),
+                            current_state.get("total_num_steps", float("inf")),
+                        )
                         event = training_status_event(
                             status="running",
                             job_id=self.job_id,
                             progress={
-                                "current": current_state.get("global_step"),
+                                "current": capped_step,
                                 "total": current_state.get("total_num_steps"),
                                 "metrics": {
                                     "loss": self.train_loss,
@@ -2491,11 +2498,16 @@ class Trainer:
                         # Also send structured progress update at checkpoint time
                         current_state = self.state.copy()
                         current_state.pop("args", None)
+                        # Cap global_step to prevent exceeding total when resuming completed runs
+                        capped_step = min(
+                            current_state.get("global_step", 0),
+                            current_state.get("total_num_steps", float("inf")),
+                        )
                         event = training_status_event(
                             status="running",
                             job_id=self.job_id,
                             progress={
-                                "current": current_state.get("global_step"),
+                                "current": capped_step,
                                 "total": current_state.get("total_num_steps"),
                                 "metrics": {
                                     "loss": self.train_loss,
@@ -2530,11 +2542,16 @@ class Trainer:
                         # Also send structured progress update at checkpoint time
                         current_state = self.state.copy()
                         current_state.pop("args", None)
+                        # Cap global_step to prevent exceeding total when resuming completed runs
+                        capped_step = min(
+                            current_state.get("global_step", 0),
+                            current_state.get("total_num_steps", float("inf")),
+                        )
                         event = training_status_event(
                             status="running",
                             job_id=self.job_id,
                             progress={
-                                "current": current_state.get("global_step"),
+                                "current": capped_step,
                                 "total": current_state.get("total_num_steps"),
                                 "metrics": {
                                     "loss": self.train_loss,
@@ -2646,24 +2663,7 @@ class Trainer:
                         f"Training has completed."
                         f"\n -> global_step = {self.state['global_step']}, max_train_steps = {self.config.max_train_steps}, epoch = {epoch}, num_train_epochs = {self.config.num_train_epochs}",
                     )
-                    event = lifecycle_stage_event(
-                        key="training_complete",
-                        label="Training Complete",
-                        status="completed",
-                        message="Training run complete",
-                        job_id=self.job_id,
-                        percent=100,
-                        metrics={
-                            "loss": round(self.train_loss, 4),
-                            "learning_rate": self.lr,
-                            "epoch": epoch,
-                        },
-                        extra={
-                            "state": self.state,
-                            "final_epoch": self.config.num_train_epochs,
-                        },
-                    )
-                    self._emit_event(event)
+                    # Note: training_complete event is emitted after final validation and model save
                     break
             if self.state["global_step"] >= self.config.max_train_steps or (
                 epoch > self.config.num_train_epochs and not self.config.ignore_final_epochs
@@ -2671,24 +2671,7 @@ class Trainer:
                 logger.info(
                     f"Exiting training loop. Beginning model unwind at epoch {epoch}, step {self.state['global_step']}"
                 )
-                event = lifecycle_stage_event(
-                    key="training_complete",
-                    label="Training Complete",
-                    status="completed",
-                    message="Training run complete",
-                    job_id=self.job_id,
-                    percent=100,
-                    metrics={
-                        "loss": round(self.train_loss, 4),
-                        "learning_rate": self.lr,
-                        "epoch": epoch,
-                    },
-                    extra={
-                        "state": self.state,
-                        "final_epoch": self.config.num_train_epochs,
-                    },
-                )
-                self._emit_event(event)
+                # Note: training_complete event is emitted after final validation and model save
                 break
 
         # Create the pipeline using the trained modules and save it.
@@ -2707,12 +2690,30 @@ class Trainer:
             if self.validation is not None:
                 self.enable_sageattention_inference()
                 self.disable_gradient_checkpointing()
+                # Emit validation start lifecycle event for final validations
+                validation_start_event = lifecycle_stage_event(
+                    key="final_validation",
+                    label="Running Final Validations",
+                    status="running",
+                    message="Generating final validation images...",
+                    job_id=self.job_id,
+                )
+                self._emit_event(validation_start_event)
                 validation_images = self.validation.run_validations(
                     validation_type="final",
                     step=self.state["global_step"],
                     force_evaluation=True,
                     skip_execution=True,
                 ).validation_images
+                # Emit validation completed lifecycle event
+                validation_completed_event = lifecycle_stage_event(
+                    key="final_validation",
+                    label="Running Final Validations",
+                    status="completed",
+                    message="Final validation images completed",
+                    job_id=self.job_id,
+                )
+                self._emit_event(validation_completed_event)
                 # we don't have to do this but we will anyway.
                 self.disable_sageattention_inference()
             if self.model.get_trained_component() is not None:
@@ -2785,6 +2786,7 @@ class Trainer:
             if self.hub_manager is not None and self.accelerator.is_main_process:
                 self.hub_manager.upload_model(validation_images, self.webhook_handler)
         self.accelerator.end_training()
+        # Emit training_complete event after all model saving and validation is complete
         event = lifecycle_stage_event(
             key="training_complete",
             label="Training Complete",
@@ -2792,6 +2794,15 @@ class Trainer:
             message="Training run complete.",
             job_id=self.job_id,
             percent=100,
+            metrics={
+                "loss": round(self.train_loss, 4),
+                "learning_rate": self.lr,
+                "epoch": self.state.get("current_epoch", 0),
+            },
+            extra={
+                "state": self.state,
+                "final_epoch": self.config.num_train_epochs,
+            },
         )
         self._emit_event(event)
 
@@ -3165,7 +3176,7 @@ def run_trainer_job(config):
             )
             webhook_handler.send_raw(
                 structured_data={"status": "training_failed", "error": str(exc)},
-                message_type="training_status",
+                message_type="training.status",
                 message_level="error",
                 job_id=StateTracker.get_job_id(),
             )
@@ -3194,7 +3205,7 @@ def run_trainer_job(config):
             )
             webhook_handler.send_raw(
                 structured_data={"status": "training_failed"},
-                message_type="training_status",
+                message_type="training.status",
                 message_level="error",
                 job_id=StateTracker.get_job_id(),
             )

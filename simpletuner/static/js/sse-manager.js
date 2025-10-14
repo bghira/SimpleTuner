@@ -26,7 +26,7 @@
         var heartbeatListener = null;
         var trainingProgressListener = null;
         var validationCompleteListener = null;
-        var startupProgressListener = null;
+        var lifecycleStageListener = null;
         var trainingStatusListener = null;
         var connectionListener = null;
         var callbackEventListeners = {};
@@ -145,13 +145,16 @@
                 }
 
                 return {
-                    type: 'startup_progress',
+                    type: 'lifecycle.stage',
                     job_id: payload.job_id || extras.job_id || null,
-                    progress_type: stage.key || stage.progress_type || stageLabel,
-                    label: stageLabel,
-                    percent: Math.round(stagePercent || 0),
-                    current: stageCurrent || 0,
-                    total: stageTotal || 0,
+                    stage: {
+                        key: stage.key || stage.progress_type || stageLabel,
+                        label: stageLabel,
+                        status: stage.status || 'running',
+                        percent: Math.round(stagePercent || 0),
+                        current: stageCurrent || 0,
+                        total: stageTotal || 0,
+                    },
                     status: stage.status || 'running',
                     raw: payload
                 };
@@ -209,7 +212,7 @@
             var label = progress.label || payload.title || payload.message || payload.headline || payload.readable_type || '';
 
             return {
-                type: 'training_progress',
+                type: 'training.progress',
                 job_id: jobId,
                 percentage: Number(percent || 0),
                 current_step: currentStep || 0,
@@ -329,10 +332,10 @@
             if (eventSource) {
                 // Remove all event listeners before closing
                 eventSource.removeEventListener('heartbeat', heartbeatListener);
-                eventSource.removeEventListener('training_progress', trainingProgressListener);
+                eventSource.removeEventListener('training.progress', trainingProgressListener);
                 eventSource.removeEventListener('validation_complete', validationCompleteListener);
-                eventSource.removeEventListener('startup_progress', startupProgressListener);
-                eventSource.removeEventListener('training_status', trainingStatusListener);
+                eventSource.removeEventListener('lifecycle.stage', lifecycleStageListener);
+                eventSource.removeEventListener('training.status', trainingStatusListener);
                 eventSource.removeEventListener('connection', connectionListener);
 
                 // Remove callback event listeners
@@ -351,7 +354,7 @@
             heartbeatListener = null;
             trainingProgressListener = null;
             validationCompleteListener = null;
-            startupProgressListener = null;
+            lifecycleStageListener = null;
             trainingStatusListener = null;
             connectionListener = null;
             callbackEventListeners = {};
@@ -429,12 +432,12 @@
                     lastHeartbeat = Date.now();
                     try {
                         var data = JSON.parse(event.data);
-                        notifyListeners('training_progress', data);
+                        notifyListeners('training.progress', data);
                     } catch (error) {
                         console.error('Error parsing training progress:', error);
                     }
                 };
-                eventSource.addEventListener('training_progress', trainingProgressListener);
+                eventSource.addEventListener('training.progress', trainingProgressListener);
 
                 validationCompleteListener = function(event) {
                     lastHeartbeat = Date.now();
@@ -447,28 +450,28 @@
                 };
                 eventSource.addEventListener('validation_complete', validationCompleteListener);
 
-                startupProgressListener = function(event) {
+                lifecycleStageListener = function(event) {
                     lastHeartbeat = Date.now();
                     try {
                         var data = JSON.parse(event.data);
-                        notifyListeners('startup_progress', data);
+                        notifyListeners('lifecycle.stage', data);
                         window.dispatchEvent(new CustomEvent('startup-progress', { detail: data }));
                     } catch (error) {
-                        console.error('Error parsing startup progress:', error);
+                        console.error('Error parsing lifecycle stage:', error);
                     }
                 };
-                eventSource.addEventListener('startup_progress', startupProgressListener);
+                eventSource.addEventListener('lifecycle.stage', lifecycleStageListener);
 
                 trainingStatusListener = function(event) {
                     lastHeartbeat = Date.now();
                     try {
                         var data = JSON.parse(event.data);
-                        notifyListeners('training_status', data);
+                        notifyListeners('training.status', data);
                     } catch (error) {
                         console.error('Error parsing training status:', error);
                     }
                 };
-                eventSource.addEventListener('training_status', trainingStatusListener);
+                eventSource.addEventListener('training.status', trainingStatusListener);
 
                 connectionListener = function(event) {
                     lastHeartbeat = Date.now();
@@ -508,7 +511,7 @@
         function handleMessage(data) {
             // Route message based on type
             switch (data.type) {
-                case 'training_progress':
+                case 'training.progress':
                     // Update training progress UI
                     if (window.htmx && !data.reset) {
                         const progressEl = document.querySelector('#training-progress');
@@ -516,11 +519,11 @@
                             htmx.trigger(progressEl, 'update-progress', data);
                         }
                     }
-                    notifyListeners('training_progress', data);
+                    notifyListeners('training.progress', data);
                     break;
 
-                case 'startup_progress':
-                    notifyListeners('startup_progress', data);
+                case 'lifecycle.stage':
+                    notifyListeners('lifecycle.stage', data);
                     window.dispatchEvent(new CustomEvent('startup-progress', { detail: data }));
                     break;
 
@@ -669,7 +672,7 @@
              */
             normalizeProgressPayload: function(payload) {
                 var result = transformProgressPayload(payload);
-                if (!result || result.type === 'startup_progress') {
+                if (!result || result.type === 'lifecycle.stage') {
                     return null;
                 }
                 return result;

@@ -1030,8 +1030,11 @@ class Validation:
                 message="Validations are generating.. this might take a minute! 🖼️",
                 message_level="info",
             )
-            StateTracker.get_webhook_handler().send_raw(
-                {"message": "Validation is starting."}, message_type="validation_start", job_id=StateTracker.get_job_id()
+            StateTracker.get_webhook_handler().send_lifecycle_stage(
+                stage_key="validation",
+                stage_label="Running Validation",
+                stage_status="running",
+                message="Validation is starting.",
             )
 
         if self.accelerator.is_main_process or self.deepspeed:
@@ -1048,6 +1051,13 @@ class Validation:
             if self.evaluation_result is not None:
                 logger.info(f"Evaluation result: {self.evaluation_result}")
             logger.debug("Validation process completed.")
+            if StateTracker.get_webhook_handler() is not None:
+                StateTracker.get_webhook_handler().send_lifecycle_stage(
+                    stage_key="validation",
+                    stage_label="Running Validation",
+                    stage_status="completed",
+                    message="Validation completed.",
+                )
             self.clean_pipeline()
 
         return self
@@ -1879,7 +1889,7 @@ class Validation:
             )
             StateTracker.get_webhook_handler().send_raw(
                 structured_data={"message": f"Validation: {validation_shortname}"},
-                message_type="validation_log",
+                message_type="training.validation",
                 message_level="info",
                 job_id=StateTracker.get_job_id(),
                 images=validation_images[validation_shortname],

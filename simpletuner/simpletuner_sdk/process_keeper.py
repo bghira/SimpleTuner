@@ -600,8 +600,20 @@ def get_process_status(job_id: str) -> str:
             if process.status == "running":
                 # Give the event thread a moment to process final events
                 if process.event_thread and process.event_thread.is_alive():
-                    # Event thread is still running, status will be updated soon
-                    pass
+                    # Event thread is still running, wait briefly for it to finish
+                    # Release lock while waiting to avoid deadlock
+                    event_thread = process.event_thread
+                    lock.release()
+                    try:
+                        event_thread.join(timeout=0.3)
+                    finally:
+                        lock.acquire()
+
+                    # Re-check status after waiting
+                    if process.status == "running":
+                        # Event thread finished but status still running = crashed
+                        process.status = "crashed"
+                        entry["status"] = "crashed"
                 else:
                     # Event thread finished, if still running then it crashed
                     process.status = "crashed"

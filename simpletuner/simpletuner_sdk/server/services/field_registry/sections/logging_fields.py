@@ -298,6 +298,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             help_text="Path to webhook configuration file",
             tooltip="JSON config for external monitoring webhooks. See docs for format.",
             importance=ImportanceLevel.ADVANCED,
+            webui_only=True,  # WebUI manages webhooks internally, trainer receives webhook_config as runtime param
             order=6,
         )
     )
@@ -317,6 +318,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             help_text="Interval for webhook reports (seconds)",
             tooltip="How often to send status updates via webhook. Minimum: 30 seconds.",
             importance=ImportanceLevel.ADVANCED,
+            webui_only=True,  # WebUI manages webhook reporting internally
             order=7,
         )
     )

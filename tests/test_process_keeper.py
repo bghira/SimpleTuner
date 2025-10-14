@@ -161,9 +161,12 @@ class TestProcessLifecycle(ProcessKeeperTestCase):
         status = get_process_status(job_id)
         self.assertIn(status, ["pending", "running"])
 
+        # Wait for task to complete (task takes 0.1s, event thread polls every 0.1s)
+        # get_process_status now actively waits for event thread, so 0.3s should be sufficient
         time.sleep(0.3)
         status = get_process_status(job_id)
         self.assertNotEqual(status, "running")
+        self.assertIn(status, ["completed", "failed"])
 
     @unittest.skip("Requires process fixes")
     def test_force_kill_unresponsive_process(self):

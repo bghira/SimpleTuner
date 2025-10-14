@@ -80,7 +80,7 @@ class HubManager:
             )
             webhook_handler.send_raw(
                 structured_data={"status": "uploading_validation_samples"},
-                message_type="training_status",
+                message_type="training.status",
                 message_level="info",
                 job_id=StateTracker.get_job_id(),
             )
@@ -121,7 +121,7 @@ class HubManager:
             )
             webhook_handler.send_raw(
                 structured_data={"status": "uploading_model"},
-                message_type="training_status",
+                message_type="training.status",
                 message_level="info",
                 job_id=StateTracker.get_job_id(),
             )
@@ -149,7 +149,7 @@ class HubManager:
                     )
                     webhook_handler.send_raw(
                         structured_data={"status": "uploading_model"},
-                        message_type="training_status",
+                        message_type="training.status",
                         message_level="info",
                         job_id=StateTracker.get_job_id(),
                     )
@@ -159,7 +159,7 @@ class HubManager:
             )
             webhook_handler.send_raw(
                 structured_data={"status": "model_available"},
-                message_type="training_status",
+                message_type="training.status",
                 message_level="info",
                 job_id=StateTracker.get_job_id(),
             )
@@ -325,7 +325,7 @@ class HubManager:
                                 )
                                 webhook_handler.send_raw(
                                     structured_data={"status": "uploading_validation_samples"},
-                                    message_type="training_status",
+                                    message_type="training.status",
                                     message_level="info",
                                     job_id=StateTracker.get_job_id(),
                                 )

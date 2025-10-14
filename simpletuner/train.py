@@ -81,7 +81,7 @@ if __name__ == "__main__":
             )
             StateTracker.get_webhook_handler().send_raw(
                 structured_data={"status": "interrupted"},
-                message_type="training_status",
+                message_type="training.status",
                 message_level="info",
                 job_id=StateTracker.get_job_id(),
             )
@@ -94,7 +94,7 @@ if __name__ == "__main__":
             )
             StateTracker.get_webhook_handler().send_raw(
                 structured_data={"status": "failed", "error": str(e), "traceback": traceback.format_exc()},
-                message_type="training_status",
+                message_type="training.status",
                 message_level="error",
                 job_id=StateTracker.get_job_id(),
             )

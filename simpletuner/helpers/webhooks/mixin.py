@@ -20,12 +20,8 @@ class WebhookMixin:
         if not self.webhook_handler:
             return
 
-        stage_key = type
-        if isinstance(stage_key, str) and stage_key.startswith("init_cache_vae_processing"):
-            stage_key = "vae_cache"
-
         event = lifecycle_stage_event(
-            key=stage_key,
+            key=type,
             label=readable_type,
             percent=progress,
             current=current,

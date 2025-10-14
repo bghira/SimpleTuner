@@ -101,5 +101,6 @@ class ConfigField:
     custom_component: Optional[str] = None
     checkbox_label: Optional[str] = None
     webui_onboarding: bool = False
+    webui_only: bool = False  # True if this field is WebUI-specific and should not be passed to the trainer
     disabled: bool = False
     aliases: Optional[List[str]] = None

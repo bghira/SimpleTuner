@@ -81,6 +81,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             help_text="Number of images to generate per validation",
             tooltip="More images give better sense of model performance but take longer to generate",
             importance=ImportanceLevel.ADVANCED,
+            webui_only=True,  # WebUI-specific field, not passed to trainer
             order=3,
             subsection="advanced",
         )
