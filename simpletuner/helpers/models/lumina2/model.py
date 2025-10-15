@@ -20,6 +20,8 @@ else:
 
 class Lumina2(ImageModelFoundation):
     NAME = "Lumina-T2I"
+    MODEL_DESCRIPTION = "Next-gen diffusion with Gemma2 text encoder"
+    ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKL

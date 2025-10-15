@@ -25,6 +25,8 @@ else:
 
 class Wan(VideoModelFoundation):
     NAME = "Wan"
+    MODEL_DESCRIPTION = "Video generation model (text-to-video)"
+    ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKLWan

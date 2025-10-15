@@ -95,6 +95,8 @@ def _encode_sd3_prompt_with_clip(
 
 class SD3(ImageModelFoundation):
     NAME = "Stable Diffusion 3.x"
+    MODEL_DESCRIPTION = "Latest SD3 architecture with improved quality"
+    ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKL

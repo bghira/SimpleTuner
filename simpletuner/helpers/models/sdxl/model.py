@@ -25,6 +25,8 @@ else:
 
 class SDXL(ImageModelFoundation):
     NAME = "Stable Diffusion XL"
+    MODEL_DESCRIPTION = "SDXL 1.0 - high quality 1024px images"
+    ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.EPSILON
     MODEL_TYPE = ModelTypes.UNET
     AUTOENCODER_CLASS = AutoencoderKL

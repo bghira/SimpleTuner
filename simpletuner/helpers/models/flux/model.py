@@ -37,6 +37,8 @@ else:
 
 class Flux(ImageModelFoundation):
     NAME = "Flux.1"
+    MODEL_DESCRIPTION = "High-quality image generation, 12B parameters"
+    ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKL

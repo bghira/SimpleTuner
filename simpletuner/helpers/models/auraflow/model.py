@@ -21,6 +21,8 @@ else:
 
 class Auraflow(ImageModelFoundation):
     NAME = "Auraflow"
+    MODEL_DESCRIPTION = "Open-source flow-based image generation"
+    ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKL

@@ -26,6 +26,8 @@ else:
 
 class PixartSigma(ImageModelFoundation):
     NAME = "PixArt Sigma"
+    MODEL_DESCRIPTION = "Efficient high-resolution image synthesis"
+    ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.EPSILON
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKL

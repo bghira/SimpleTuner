@@ -23,6 +23,8 @@ else:
 
 class StableDiffusion1(ImageModelFoundation):
     NAME = "Stable Diffusion 1.x"
+    MODEL_DESCRIPTION = "Classic stable diffusion for high-quality image generation"
+    ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.EPSILON
     MODEL_TYPE = ModelTypes.UNET
     AUTOENCODER_CLASS = AutoencoderKL
@@ -230,6 +232,8 @@ class StableDiffusion1(ImageModelFoundation):
 
 class StableDiffusion2(StableDiffusion1):
     NAME = "Stable Diffusion 2.x"
+    MODEL_DESCRIPTION = "Enhanced stable diffusion with v-prediction"
+    ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.V_PREDICTION
     DEFAULT_NOISE_SCHEDULER = "euler"
 

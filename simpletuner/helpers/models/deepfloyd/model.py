@@ -22,6 +22,8 @@ else:
 
 class DeepFloydIF(ImageModelFoundation):
     NAME = "DeepFloyd IF"
+    MODEL_DESCRIPTION = "Pixel-space diffusion model with T5 text encoder"
+    ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.EPSILON
     MODEL_TYPE = ModelTypes.UNET
     # DeepFloyd-IF is a pixel space model.

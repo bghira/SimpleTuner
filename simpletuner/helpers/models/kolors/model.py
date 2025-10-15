@@ -20,6 +20,8 @@ else:
 
 class Kolors(ImageModelFoundation):
     NAME = "Kwai Kolors"
+    MODEL_DESCRIPTION = "Bilingual text-to-image model (Chinese/English)"
+    ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.EPSILON
     MODEL_TYPE = ModelTypes.UNET
     AUTOENCODER_CLASS = AutoencoderKL

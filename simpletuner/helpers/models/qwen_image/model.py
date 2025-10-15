@@ -23,6 +23,8 @@ else:
 
 class QwenImage(ImageModelFoundation):
     NAME = "Qwen-Image"
+    MODEL_DESCRIPTION = "Qwen's multimodal image generation model"
+    ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKLQwenImage
