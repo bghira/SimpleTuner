@@ -1,0 +1,373 @@
+<!-- Training Setup Wizard Modal -->
+<div x-data="trainingWizardComponent()"
+     x-show="wizardOpen"
+     @open-training-wizard.window="openWizard()"
+     x-cloak>
+
+    <!-- Backdrop layer -->
+    <div class="modal-backdrop" @click="closeWizard()" @keydown.escape.window="if (wizardOpen) closeWizard()"></div>
+
+    <!-- Modal content - positioned above backdrop -->
+    <div class="modal-dialog modal-xl training-wizard-modal"
+         style="position: fixed; z-index: 10001; top: 50%; left: 50%; transform: translate(-50%, -50%); max-height: 90vh; overflow-y: auto;"
+         @click.stop @mousedown.stop>
+        <!-- Header with title and close button -->
+        <div class="modal-header">
+            <h5 class="modal-title">
+                🧙 <span x-text="currentStep.title"></span>
+            </h5>
+            <button type="button" class="btn-close" aria-label="Close" @click="closeWizard()"></button>
+        </div>
+
+        <!-- Progress indicator -->
+        <div class="wizard-progress">
+            <template x-for="(step, index) in visibleSteps" :key="step.id">
+                <div class="wizard-step"
+                     :class="{
+                         'active': currentStepIndex === index,
+                         'completed': currentStepIndex > index,
+                         'skipped': step.skipped
+                     }">
+                    <div class="step-number" x-text="index + 1"></div>
+                    <div class="step-label" x-text="step.label"></div>
+                </div>
+            </template>
+        </div>
+
+        <!-- Step content area -->
+        <div class="modal-body">
+            <!-- Step 1: Model Family -->
+            <div x-show="currentStep.id === 'model-family'" class="wizard-step-content">
+                <h6 class="wizard-question">What kind of model are you training?</h6>
+                <p class="text-muted mb-4">This determines which model architecture to use.</p>
+
+                <!-- Loading state -->
+                <div x-show="modelsLoading" class="text-center py-4">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading models...</span>
+                    </div>
+                    <p class="text-muted mt-2">Loading available models...</p>
+                </div>
+
+                <!-- Error state -->
+                <div x-show="!modelsLoading && modelsError" class="alert alert-warning">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    <span x-text="'Error loading models: ' + modelsError"></span>
+                </div>
+
+                <!-- Model options -->
+                <div x-show="!modelsLoading && !modelsError" class="wizard-options">
+                    <template x-for="option in modelFamilyOptions" :key="option.value">
+                        <div class="wizard-option-card"
+                             :class="{ 'selected': answers.model_family === option.value }"
+                             @click="selectAnswer('model_family', option.value)">
+                            <h6 x-text="option.label"></h6>
+                            <p class="text-muted small" x-text="option.description"></p>
+                        </div>
+                    </template>
+                </div>
+
+                <div class="wizard-help-text" x-show="answers.model_family && getHelpText('model_family', answers.model_family)">
+                    <i class="fas fa-info-circle me-2"></i>
+                    <span x-text="getHelpText('model_family', answers.model_family)"></span>
+                </div>
+            </div>
+
+            <!-- Step 2: Model Flavor (conditional) -->
+            <div x-show="currentStep.id === 'model-flavour'" class="wizard-step-content">
+                <h6 class="wizard-question">Which model variant do you want to train?</h6>
+                <p class="text-muted mb-4" x-text="`Select a ${answers.model_family} model variant.`"></p>
+
+                <div class="wizard-options">
+                    <template x-for="option in getModelFlavourOptions()" :key="option.value">
+                        <div class="wizard-option-card"
+                             :class="{ 'selected': answers.model_flavour === option.value }"
+                             @click="selectAnswer('model_flavour', option.value)">
+                            <h6 x-text="option.label"></h6>
+                            <p class="text-muted small" x-text="option.description"></p>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Step 3: Training Type -->
+            <div x-show="currentStep.id === 'training-type'" class="wizard-step-content">
+                <h6 class="wizard-question">What type of training do you want to perform?</h6>
+                <p class="text-muted mb-4">Choose between LoRA (parameter-efficient) or full model training.</p>
+
+                <div class="wizard-options">
+                    <div class="wizard-option-card"
+                         :class="{ 'selected': answers.model_type === 'lora' }"
+                         @click="selectAnswer('model_type', 'lora')">
+                        <h6>LoRA (Recommended)</h6>
+                        <p class="text-muted small">Low-Rank Adaptation - Efficient, faster, smaller output files</p>
+                    </div>
+                    <div class="wizard-option-card"
+                         :class="{ 'selected': answers.model_type === 'full' }"
+                         @click="selectAnswer('model_type', 'full')">
+                        <h6>Full Model</h6>
+                        <p class="text-muted small">Train entire model - Higher quality, requires more resources</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 4: Publishing -->
+            <div x-show="currentStep.id === 'publishing'" class="wizard-step-content">
+                <h6 class="wizard-question">Do you want to publish your model to Hugging Face Hub?</h6>
+                <p class="text-muted mb-4">Automatically upload your trained model when complete.</p>
+
+                <div class="wizard-options">
+                    <div class="wizard-option-card"
+                         :class="{ 'selected': answers.push_to_hub === true }"
+                         @click="selectAnswer('push_to_hub', true); wizardNavigateToField('push_to_hub')">
+                        <h6>Yes, publish when complete</h6>
+                    </div>
+                    <div class="wizard-option-card"
+                         :class="{ 'selected': answers.push_to_hub === false }"
+                         @click="selectAnswer('push_to_hub', false)">
+                        <h6>No, keep local only</h6>
+                    </div>
+                </div>
+
+                <div x-show="answers.push_to_hub" class="mt-4">
+                    <h6 class="wizard-question-small">Also publish intermediate checkpoints?</h6>
+                    <div class="wizard-options-inline">
+                        <button class="btn btn-sm"
+                                :class="answers.push_checkpoints_to_hub ? 'btn-primary' : 'btn-outline-secondary'"
+                                @click="selectAnswer('push_checkpoints_to_hub', true)">
+                            Yes
+                        </button>
+                        <button class="btn btn-sm"
+                                :class="!answers.push_checkpoints_to_hub ? 'btn-primary' : 'btn-outline-secondary'"
+                                @click="selectAnswer('push_checkpoints_to_hub', false)">
+                            No
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 5: Checkpoint Frequency -->
+            <div x-show="currentStep.id === 'checkpoints'" class="wizard-step-content">
+                <h6 class="wizard-question">How often should checkpoints be saved?</h6>
+                <p class="text-muted mb-4">Checkpoints let you resume training and pick the best model version.</p>
+
+                <div class="wizard-input-group">
+                    <label>Save every N steps:</label>
+                    <input type="number"
+                           class="form-control"
+                           x-model.number="answers.checkpointing_steps"
+                           @input="wizardNavigateToField('checkpointing_steps')"
+                           min="50"
+                           step="50"
+                           placeholder="100">
+                    <div class="form-text">
+                        Recommended:
+                        <a href="#" @click.prevent="selectAnswer('checkpointing_steps', 50)">50</a> for quick experiments,
+                        <a href="#" @click.prevent="selectAnswer('checkpointing_steps', 100)">100</a> for short runs,
+                        <a href="#" @click.prevent="selectAnswer('checkpointing_steps', 500)">500</a> for more files,
+                        <a href="#" @click.prevent="selectAnswer('checkpointing_steps', 1000)">1000</a> for very long runs with many files
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 6: Validations Enable/Disable -->
+            <div x-show="currentStep.id === 'validations-enable'" class="wizard-step-content">
+                <h6 class="wizard-question">Do you want to run validations during training?</h6>
+                <p class="text-muted mb-4">Validations generate sample images to monitor training progress.</p>
+
+                <div class="wizard-options">
+                    <div class="wizard-option-card"
+                         :class="{ 'selected': answers.enable_validations === true }"
+                         @click="selectAnswer('enable_validations', true); wizardNavigateToField('validation_steps')">
+                        <h6>Yes, enable validations</h6>
+                        <p class="text-muted small">Recommended - helps monitor training quality</p>
+                    </div>
+                    <div class="wizard-option-card"
+                         :class="{ 'selected': answers.enable_validations === false }"
+                         @click="selectAnswer('enable_validations', false); wizardNavigateToField('disable_validations')">
+                        <h6>No, skip validations</h6>
+                        <p class="text-muted small">Faster training, but no progress preview</p>
+                    </div>
+                </div>
+
+                <div x-show="answers.enable_validations" class="mt-4">
+                    <label>Run validation every N steps:</label>
+                    <input type="number"
+                           class="form-control"
+                           x-model.number="answers.validation_steps"
+                           min="10"
+                           step="10"
+                           placeholder="100">
+                </div>
+            </div>
+
+            <!-- Step 7: Validation Prompt (conditional) -->
+            <div x-show="currentStep.id === 'validation-prompt'" class="wizard-step-content">
+                <h6 class="wizard-question">What prompt should be used for validation?</h6>
+                <p class="text-muted mb-4">This prompt generates sample images during training to monitor progress.</p>
+
+                <textarea class="form-control"
+                          x-model="answers.validation_prompt"
+                          @input="wizardNavigateToField('validation_prompt')"
+                          rows="3"
+                          placeholder="e.g., a photo of a cat sitting on a windowsill"></textarea>
+
+                <div class="form-text">
+                    Tip: Use descriptive prompts that represent your training goal. For subject training, include your subject identifier.
+                </div>
+            </div>
+
+            <!-- Step 8: Logging Platform -->
+            <div x-show="currentStep.id === 'logging'" class="wizard-step-content">
+                <h6 class="wizard-question">Enable logging to external platform?</h6>
+                <p class="text-muted mb-4">Track metrics, losses, and generated images externally (optional).</p>
+
+                <div class="wizard-options">
+                    <template x-for="provider in loggingProviders" :key="provider.value">
+                        <div class="wizard-option-card"
+                             :class="{ 'selected': answers.report_to === provider.value }"
+                             @click="selectAnswer('report_to', provider.value); if (provider.value !== 'none') wizardNavigateToField('report_to')">
+                            <h6 x-text="provider.label"></h6>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Step 9: Dataset Configuration -->
+            <div x-show="currentStep.id === 'dataset'" class="wizard-step-content">
+                <h6 class="wizard-question">Configure your training dataset</h6>
+
+                <div x-show="hasExistingDataset" class="alert alert-info">
+                    <i class="fas fa-info-circle me-2"></i>
+                    You have an existing dataset configured. Do you want to:
+                </div>
+
+                <div class="wizard-options">
+                    <div class="wizard-option-card"
+                         @click="wizardNavigateToTab('datasets'); datasetConfigured = true">
+                        <h6>Review existing dataset</h6>
+                        <p class="text-muted small">View and modify your current dataset configuration</p>
+                    </div>
+                    <div class="wizard-option-card"
+                         @click="openDatasetWizard(true)">
+                        <h6>Create new dataset</h6>
+                        <p class="text-muted small">Launch dataset wizard with standalone config option</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 10: Advanced Settings -->
+            <div x-show="currentStep.id === 'advanced'" class="wizard-step-content">
+                <h6 class="wizard-question">Configure learning rate and optimizer?</h6>
+                <p class="text-muted mb-4">Advanced settings - can be skipped to use recommended defaults.</p>
+
+                <div class="wizard-options">
+                    <div class="wizard-option-card"
+                         @click="wizardNavigateToFieldMulti(['learning_rate', 'optimizer'])">
+                        <h6>Manual configuration</h6>
+                        <p class="text-muted small">Navigate to fields for custom settings</p>
+                    </div>
+                    <div class="wizard-option-card"
+                         @click="nextStep()">
+                        <h6>Use recommended defaults</h6>
+                        <p class="text-muted small" x-text="getRecommendedSettings()"></p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 11: Review -->
+            <div x-show="currentStep.id === 'review'" class="wizard-step-content">
+                <h6 class="wizard-question">Review your configuration</h6>
+
+                <div class="review-summary">
+                    <div class="review-item">
+                        <label>Model:</label>
+                        <span x-text="`${answers.model_family || 'Not set'} ${answers.model_flavour ? '(' + answers.model_flavour + ')' : ''}`"></span>
+                        <button class="btn btn-sm btn-link" @click="goToStep(0)">Edit</button>
+                    </div>
+                    <div class="review-item">
+                        <label>Training Type:</label>
+                        <span x-text="answers.model_type || 'Not set'"></span>
+                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 2 : 1)">Edit</button>
+                    </div>
+                    <div class="review-item">
+                        <label>Publishing:</label>
+                        <span x-text="answers.push_to_hub ? 'Enabled' : 'Disabled'"></span>
+                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 3 : 2)">Edit</button>
+                    </div>
+                    <div class="review-item">
+                        <label>Checkpoints:</label>
+                        <span x-text="`Every ${answers.checkpointing_steps || 500} steps`"></span>
+                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 4 : 3)">Edit</button>
+                    </div>
+                    <div class="review-item">
+                        <label>Validations:</label>
+                        <span x-text="answers.enable_validations ? `Enabled (every ${answers.validation_steps || 100} steps)` : 'Disabled'"></span>
+                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 5 : 4)">Edit</button>
+                    </div>
+                    <div class="review-item" x-show="answers.enable_validations">
+                        <label>Validation Prompt:</label>
+                        <span x-text="answers.validation_prompt || 'Not set'" class="text-truncate" style="max-width: 300px;"></span>
+                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 6 : 5)">Edit</button>
+                    </div>
+                    <div class="review-item">
+                        <label>Logging:</label>
+                        <span x-text="answers.report_to || 'none'"></span>
+                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 7 : 6)">Edit</button>
+                    </div>
+                    <div class="review-item">
+                        <label>Dataset:</label>
+                        <span x-text="hasExistingDataset || datasetConfigured ? 'Configured' : 'Not configured'"></span>
+                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 8 : 7)">Edit</button>
+                    </div>
+                </div>
+
+                <div class="alert alert-success mt-4">
+                    <i class="fas fa-check-circle me-2"></i>
+                    Configuration complete! You can now start training or review individual settings in the UI.
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer with navigation buttons -->
+        <div class="modal-footer">
+            <button type="button"
+                    class="btn btn-outline-secondary"
+                    @click="previousStep()"
+                    x-show="currentStepIndex !== 0"
+                    :disabled="false">
+                <i class="fas fa-arrow-left me-2"></i> Back
+            </button>
+
+            <button type="button"
+                    class="btn btn-outline-secondary"
+                    @click="skipStep()"
+                    x-show="!currentStep.required && (currentStepIndex + 1) !== visibleSteps.length">
+                Skip
+            </button>
+
+            <div class="flex-grow-1"></div>
+
+            <button type="button"
+                    class="btn btn-outline-secondary"
+                    @click="closeWizard()">
+                Exit Wizard
+            </button>
+
+            <button type="button"
+                    class="btn btn-primary"
+                    @click="nextStep()"
+                    x-show="(currentStepIndex + 1) !== visibleSteps.length"
+                    :disabled="!canProceed">
+                Next <i class="fas fa-arrow-right ms-2"></i>
+            </button>
+
+            <button type="button"
+                    class="btn btn-success"
+                    @click="finishWizard()"
+                    x-show="(currentStepIndex + 1) === visibleSteps.length">
+                <i class="fas fa-check me-2"></i> Finish
+            </button>
+        </div>
+    </div>
+</div>

@@ -3763,6 +3763,14 @@ function trainerComponent() {
                     </div>
                 </div>
 
+                <!-- Training Setup Wizard Button -->
+                <button type="button"
+                        class="btn btn-primary wizard-launch-btn"
+                        @click="$dispatch('open-training-wizard')"
+                        title="Launch guided training setup wizard">
+                    🧙 Wizard
+                </button>
+
                 {% for tab in tabs %}
                 <button type="button"
                         class="tab-btn"
@@ -4568,5 +4576,8 @@ if (window.shouldUseModules && window.shouldUseModules()) {
 
 <!-- Include SSE component for real-time training updates -->
 {% include 'components/training_events_sse.html' %}
+
+<!-- Include Training Wizard Modal -->
+{% include 'partials/training_wizard_modal.html' %}
 
 {% endblock %}

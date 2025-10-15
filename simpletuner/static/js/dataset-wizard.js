@@ -40,6 +40,8 @@
 
             // Config mode
             createNewConfig: false,
+            deferCommit: false,  // If true, don't save to disk - return plan to caller instead
+            pendingDatasetPlan: null,  // Holds the dataset plan when deferCommit is true
             existingDatasets: [],
             existingTextEmbeds: null,
 
@@ -748,6 +750,19 @@
                         datasetsToSave = this.mergeWithExistingDatasets(datasetsToSave);
                     }
 
+                    // If deferCommit is true, store the plan and close without saving
+                    if (this.deferCommit) {
+                        console.log('[WIZARD] Defer commit mode: storing dataset plan without saving');
+                        this.pendingDatasetPlan = datasetsToSave;
+                        this.showToast(`Dataset plan prepared (${this.datasetQueue.length} dataset(s))`, 'success');
+
+                        // Close wizard - the parent (training wizard) will handle the commit
+                        this.wizardOpen = false;
+                        // Don't reset wizard or clear queue yet - parent might need the data
+                        return;
+                    }
+
+                    // Normal mode: save immediately
                     const response = await fetch('/api/datasets/plan', {
                         method: 'POST',
                         headers: {

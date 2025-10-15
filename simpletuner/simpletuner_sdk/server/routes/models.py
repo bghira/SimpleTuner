@@ -36,6 +36,13 @@ async def get_model_families():
     return _call_service(MODELS_SERVICE.list_families)
 
 
+@router.get("/api/models/wizard")
+@router.get("/models/wizard")
+async def get_wizard_models():
+    """Return model families enabled for the training wizard."""
+    return _call_service(MODELS_SERVICE.list_wizard_models)
+
+
 @router.get("/api/models/{model_family}")
 @router.get("/models/{model_family}")
 async def get_model_details(model_family: str):

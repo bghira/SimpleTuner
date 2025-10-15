@@ -27,6 +27,8 @@ class ModelsService:
 
     _ATTRIBUTE_WHITELIST = {
         "NAME",
+        "MODEL_DESCRIPTION",
+        "ENABLED_IN_WIZARD",
         "MODEL_LICENSE",
         "DEFAULT_MODEL_FLAVOUR",
         "HUGGINGFACE_PATHS",
@@ -52,6 +54,34 @@ class ModelsService:
         self._ensure_models_loaded()
         families = sorted(ModelRegistry.model_families().keys())
         return {"families": families}
+
+    def list_wizard_models(self) -> Dict[str, Any]:
+        """Return model families enabled for the wizard with their descriptions."""
+        self._ensure_models_loaded()
+        wizard_models = []
+
+        for family_name, model_cls in ModelRegistry.model_families().items():
+            # Check if model is enabled in wizard (default to True if not specified)
+            enabled = getattr(model_cls, "ENABLED_IN_WIZARD", True)
+            if not enabled:
+                continue
+
+            # Get model metadata
+            display_name = getattr(model_cls, "NAME", family_name)
+            description = getattr(model_cls, "MODEL_DESCRIPTION", "")
+
+            wizard_models.append(
+                {
+                    "family": family_name,
+                    "name": display_name,
+                    "description": description,
+                }
+            )
+
+        # Sort by display name for consistent ordering
+        wizard_models.sort(key=lambda x: x["name"])
+
+        return {"models": wizard_models}
 
     def get_model_flavours(self, model_family: str) -> Dict[str, Any]:
         model_cls = self._get_model_class(model_family)
