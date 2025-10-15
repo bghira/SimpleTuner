@@ -68,7 +68,7 @@
 .training-wizard-modal .modal-body {
     flex: 1;
     overflow-y: auto;
-    padding: 0;
+    padding: 0 2rem 1.5rem;
 }
 
 .training-wizard-modal .modal-footer {
@@ -196,7 +196,7 @@
 /* Wizard Content */
 .wizard-step-content {
     min-height: 400px;
-    padding: 2rem;
+    padding: 1.5rem 0;
 }
 
 .wizard-question {
