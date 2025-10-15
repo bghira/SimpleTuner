@@ -3138,10 +3138,22 @@ function trainerComponent() {
                 return;
             }
 
+            console.log('[TRAINER] appendConfigValuesToFormData called with config keys:', Object.keys(config));
+
             const metadataMap = window.dependencyManager?.fieldMetadata;
             const appendValue = (name, descriptor) => {
-                if (!descriptor || formData.has(name)) {
+                if (!descriptor) {
                     return;
+                }
+
+                // Delete existing values so we can replace them
+                const hadValue = formData.has(name);
+                if (hadValue) {
+                    const oldValue = formData.get(name);
+                    formData.delete(name);
+                    console.log(`[TRAINER] Replacing ${name}: "${oldValue}" -> "${descriptor.value}"`);
+                } else {
+                    console.log(`[TRAINER] Adding new ${name}: "${descriptor.value}"`);
                 }
 
                 switch (descriptor.kind) {

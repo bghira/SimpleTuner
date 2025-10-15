@@ -27,6 +27,8 @@ function trainingWizardComponent() {
         modelsError: null,
         modelFlavours: [],
         loggingProviders: [],
+        optimizerChoices: [],
+        advancedMode: 'defaults',
         pendingDatasetPlan: null,  // Holds dataset plan from dataset wizard when using deferred commit
         answers: {
             model_family: null,
@@ -40,7 +42,8 @@ function trainingWizardComponent() {
             validation_prompt: '',
             report_to: 'none',
             learning_rate: null,
-            optimizer: null
+            optimizer: null,
+            createNewDataset: false  // Track whether user chose to create new dataset
         },
 
         // Configuration
@@ -118,7 +121,14 @@ function trainingWizardComponent() {
                 label: 'Advanced',
                 title: 'Training Setup Wizard - Step 10: Advanced Settings',
                 required: false,
-                validate: function() { return true; }
+                validate: function() {
+                    if (this.advancedMode === 'manual') {
+                        const lrValid = typeof this.answers.learning_rate === 'number' && this.answers.learning_rate > 0;
+                        const optimizerValid = Boolean(this.answers.optimizer);
+                        return lrValid && optimizerValid;
+                    }
+                    return true;
+                }
             },
             {
                 id: 'review',
@@ -198,6 +208,15 @@ function trainingWizardComponent() {
                     if (config.disable_validations !== undefined) {
                         this.answers.enable_validations = !(config.disable_validations === true || config.disable_validations === 'true');
                     }
+                    if (config.learning_rate !== undefined && config.learning_rate !== null) {
+                        const parsedLr = parseFloat(config.learning_rate);
+                        if (!Number.isNaN(parsedLr)) {
+                            this.answers.learning_rate = parsedLr;
+                        }
+                    }
+                    if (config.optimizer) {
+                        this.answers.optimizer = config.optimizer;
+                    }
 
                     console.log('[TRAINING WIZARD] Loaded current config:', this.answers);
                 }
@@ -232,6 +251,16 @@ function trainingWizardComponent() {
             // Load logging providers if not already loaded
             if (this.loggingProviders.length === 0) {
                 await this.loadLoggingProviders();
+            }
+
+            if (this.optimizerChoices.length === 0) {
+                await this.loadOptimizerChoices();
+            }
+
+            if (typeof this.answers.learning_rate === 'number' && this.answers.learning_rate > 0 && this.answers.optimizer) {
+                this.advancedMode = 'manual';
+            } else {
+                this.advancedMode = 'defaults';
             }
 
             // Re-check dataset on open
@@ -323,12 +352,30 @@ function trainingWizardComponent() {
             // Apply all answers to form
             this.applyAnswersToForm();
 
-            // Save the config to disk
+            // Debug: Log activeEnvironmentConfig to confirm values are set
             const trainerStore = Alpine.store('trainer');
-            if (trainerStore && typeof trainerStore.saveConfig === 'function') {
+            if (trainerStore) {
+                console.log('[TRAINING WIZARD] activeEnvironmentConfig after applying answers:',
+                    JSON.stringify({
+                        model_family: trainerStore.activeEnvironmentConfig?.model_family,
+                        model_flavour: trainerStore.activeEnvironmentConfig?.model_flavour,
+                        model_type: trainerStore.activeEnvironmentConfig?.model_type,
+                        checkpointing_steps: trainerStore.activeEnvironmentConfig?.checkpointing_steps,
+                        push_to_hub: trainerStore.activeEnvironmentConfig?.push_to_hub
+                    }, null, 2)
+                );
+            }
+
+            // Save the config to disk (bypass the dialog, use direct save)
+            if (trainerStore && typeof trainerStore.doSaveConfig === 'function') {
                 console.log('[TRAINING WIZARD] Saving configuration to disk...');
                 try {
-                    await trainerStore.saveConfig();
+                    // Use doSaveConfig to bypass the dialog
+                    const autoPreserve = trainerStore.autoPreserveEnabled ? trainerStore.autoPreserveEnabled() : false;
+                    await trainerStore.doSaveConfig({
+                        createBackup: false,
+                        preserveDefaults: autoPreserve
+                    });
                     console.log('[TRAINING WIZARD] Configuration saved successfully');
                 } catch (error) {
                     console.error('[TRAINING WIZARD] Config save failed:', error);
@@ -336,7 +383,7 @@ function trainingWizardComponent() {
                     return; // Don't continue if config save failed
                 }
             } else {
-                console.warn('[TRAINING WIZARD] saveConfig method not available');
+                console.warn('[TRAINING WIZARD] doSaveConfig method not available');
             }
 
             // If we have a pending dataset plan, save it now
@@ -450,6 +497,40 @@ function trainingWizardComponent() {
             }
         },
 
+        async loadOptimizerChoices() {
+            console.log('[TRAINING WIZARD] Loading optimizer choices from field registry');
+
+            try {
+                const response = await fetch('/api/fields/field/optimizer');
+                if (!response.ok) {
+                    throw new Error(`Failed to load optimizer field: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                if (Array.isArray(data.choices) && data.choices.length > 0) {
+                    this.optimizerChoices = data.choices.map(choice => ({
+                        value: choice.value,
+                        label: choice.label || choice.value
+                    }));
+                    return;
+                }
+
+                console.warn('[TRAINING WIZARD] Optimizer field returned no choices, using fallback list');
+                this.optimizerChoices = this.getOptimizerFallbackChoices();
+            } catch (error) {
+                console.error('[TRAINING WIZARD] Error loading optimizer choices:', error);
+                this.optimizerChoices = this.getOptimizerFallbackChoices();
+            }
+        },
+
+        getOptimizerFallbackChoices() {
+            return [
+                { value: 'adamw_bf16', label: 'adamw_bf16' },
+                { value: 'adamw_schedulefree', label: 'adamw_schedulefree' },
+                { value: 'optimi-lion', label: 'optimi-lion' }
+            ];
+        },
+
         async loadModelFlavours(modelFamily) {
             if (!modelFamily) {
                 this.modelFlavours = [];
@@ -498,26 +579,61 @@ function trainingWizardComponent() {
 
         applyAnswersToForm() {
             const trainerStore = Alpine.store('trainer');
-            if (!trainerStore || !trainerStore.configValues) {
+            if (!trainerStore) {
                 console.warn('[TRAINING WIZARD] Trainer store not available');
                 return;
             }
 
-            // Apply each answer to config
+            console.log('[TRAINING WIZARD] Applying answers to trainer store...', this.answers);
+
+            // Update config values, formValueStore, AND activeEnvironmentConfig
             Object.entries(this.answers).forEach(([key, value]) => {
-                if (value !== null && value !== undefined && key !== 'enable_validations') {
-                    trainerStore.configValues[key] = value;
-                    trainerStore.configValues[`--${key}`] = value;
+                if (value !== null && value !== undefined && key !== 'enable_validations' && key !== 'createNewDataset') {
+                    const fieldName = `--${key}`;
+
+                    // 1. Update configValues
+                    if (trainerStore.configValues) {
+                        trainerStore.configValues[key] = value;
+                        trainerStore.configValues[fieldName] = value;
+                    }
+
+                    // 2. Update formValueStore (used by ensureCompleteFormData)
+                    if (trainerStore.formValueStore) {
+                        trainerStore.formValueStore[fieldName] = {
+                            value: value,
+                            kind: typeof value === 'boolean' ? 'checkbox' : 'text'
+                        };
+                    }
+
+                    // 3. Update activeEnvironmentConfig (this is what appendConfigValuesToFormData uses!)
+                    if (trainerStore.activeEnvironmentConfig) {
+                        trainerStore.activeEnvironmentConfig[key] = value;
+                        trainerStore.activeEnvironmentConfig[fieldName] = value;
+                    }
+
+                    console.log(`[TRAINING WIZARD] Updated ${fieldName} = ${value}`);
                 }
             });
 
             // Special handling for validations
-            if (this.answers.enable_validations === false) {
-                trainerStore.configValues.disable_validations = true;
-                trainerStore.configValues['--disable_validations'] = true;
-            } else {
-                trainerStore.configValues.disable_validations = false;
-                trainerStore.configValues['--disable_validations'] = false;
+            const disableValidations = this.answers.enable_validations === false;
+            const fieldName = '--disable_validations';
+
+            if (trainerStore.configValues) {
+                trainerStore.configValues.disable_validations = disableValidations;
+                trainerStore.configValues[fieldName] = disableValidations;
+            }
+
+            if (trainerStore.formValueStore) {
+                trainerStore.formValueStore[fieldName] = {
+                    value: disableValidations,
+                    kind: 'checkbox'
+                };
+            }
+
+            if (trainerStore.activeEnvironmentConfig) {
+                trainerStore.activeEnvironmentConfig.disable_validations = disableValidations;
+                trainerStore.activeEnvironmentConfig[fieldName] = disableValidations;
             }
 
             // Mark form as dirty
@@ -525,7 +641,7 @@ function trainingWizardComponent() {
                 trainerStore.markFormDirty();
             }
 
-            console.log('[TRAINING WIZARD] Answers applied to form');
+            console.log('[TRAINING WIZARD] Answers applied to all trainer store locations');
         },
 
         // Field navigation using existing search mechanism
@@ -551,11 +667,40 @@ function trainingWizardComponent() {
             }
         },
 
-        wizardNavigateToFieldMulti(fieldNames) {
-            // Navigate to first field
-            if (fieldNames && fieldNames.length > 0) {
-                this.wizardNavigateToField(fieldNames[0]);
+        activateManualAdvanced() {
+            this.advancedMode = 'manual';
+
+            const defaults = this.getRecommendedAdvancedValues();
+
+            if (!(typeof this.answers.learning_rate === 'number' && this.answers.learning_rate > 0)) {
+                this.answers.learning_rate = defaults.learning_rate;
             }
+
+            if (!this.answers.optimizer || !this.isOptimizerChoiceAvailable(this.answers.optimizer)) {
+                this.answers.optimizer = this.resolveOptimizerSelection(defaults.optimizer);
+            }
+        },
+
+        applyAdvancedDefaultsAndContinue() {
+            const defaults = this.getRecommendedAdvancedValues();
+            this.answers.learning_rate = defaults.learning_rate;
+            this.answers.optimizer = this.resolveOptimizerSelection(defaults.optimizer);
+            this.advancedMode = 'defaults';
+            this.nextStep();
+        },
+
+        resolveOptimizerSelection(preferredValue) {
+            if (preferredValue && this.isOptimizerChoiceAvailable(preferredValue)) {
+                return preferredValue;
+            }
+            if (this.optimizerChoices.length > 0) {
+                return this.optimizerChoices[0].value;
+            }
+            return preferredValue || 'adamw_bf16';
+        },
+
+        isOptimizerChoiceAvailable(value) {
+            return this.optimizerChoices.some(choice => choice.value === value);
         },
 
         wizardNavigateToTab(tabName) {
@@ -633,15 +778,33 @@ function trainingWizardComponent() {
             return '';
         },
 
-        getRecommendedSettings() {
-            // Return recommended settings based on model
+        getRecommendedAdvancedValues() {
             if (this.answers.model_family === 'flux' && this.answers.model_type === 'lora') {
-                return 'Learning rate: 1e-4, Optimizer: adamw_bf16';
+                return { learning_rate: 1e-4, optimizer: 'adamw_bf16' };
             }
             if (this.answers.model_family === 'wan') {
-                return 'Learning rate: 5e-5, Optimizer: optimi-lion';
+                return { learning_rate: 5e-5, optimizer: 'optimi-lion' };
             }
-            return 'Learning rate: 1e-4, Optimizer: adamw_bf16';
+            return { learning_rate: 1e-4, optimizer: 'adamw_bf16' };
+        },
+
+        formatLearningRate(value) {
+            if (typeof value !== 'number' || Number.isNaN(value)) {
+                return value;
+            }
+            if (value === 0) {
+                return '0';
+            }
+            if ((value > 0 && value < 0.001) || value >= 1000) {
+                return value.toExponential();
+            }
+            return value.toString();
+        },
+
+        getRecommendedSettings() {
+            const defaults = this.getRecommendedAdvancedValues();
+            const displayLr = this.formatLearningRate(defaults.learning_rate);
+            return `Learning rate: ${displayLr}, Optimizer: ${defaults.optimizer}`;
         },
 
         // Dataset wizard integration
