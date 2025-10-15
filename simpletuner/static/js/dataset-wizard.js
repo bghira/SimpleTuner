@@ -105,6 +105,13 @@
                 return Boolean(context.isVideoModel || context.supportsVideo);
             },
 
+            get hasPrimaryDatasetAvailable() {
+                const excludeId = this.editingQueuedDataset ? this.currentDataset.id : null;
+                const queueHas = this.datasetQueue.some(dataset => this.isPrimaryDataset(dataset, excludeId));
+                const existingHas = this.existingDatasets.some(dataset => this.isPrimaryDataset(dataset, excludeId));
+                return queueHas || existingHas;
+            },
+
             // Dynamic step configuration
             get stepDefinitions() {
                 const steps = [
@@ -211,7 +218,11 @@
                     const response = await fetch('/api/datasets/plan');
                     if (response.ok) {
                         const data = await response.json();
-                        this.existingDatasets = data.datasets || [];
+                        const rawDatasets = data.datasets || [];
+                        this.existingDatasets = rawDatasets.map(dataset => ({
+                            ...dataset,
+                            is_regularisation_data: dataset?.is_regularisation_data === true || dataset?.is_regularisation_data === 'true'
+                        }));
 
                         // Find existing text_embeds dataset
                         this.existingTextEmbeds = this.existingDatasets.find(
@@ -309,6 +320,7 @@
                     id: '',
                     type: 'local',
                     dataset_type: 'image',
+                    is_regularisation_data: false,
                     resolution: 1024,
                     resolution_type: 'pixel_area',
                     crop: false,
@@ -517,6 +529,10 @@
                 // Prepare the dataset with deep clone to avoid shared references
                 const datasetToAdd = this.deepClone(this.currentDataset);
 
+                datasetToAdd.is_regularisation_data =
+                    datasetToAdd.is_regularisation_data === true ||
+                    datasetToAdd.is_regularisation_data === 'true';
+
                 // Clean up parquet config if not using parquet caption strategy
                 if (datasetToAdd.caption_strategy !== 'parquet') {
                     delete datasetToAdd.parquet;
@@ -592,6 +608,7 @@
                 const dataset = this.datasetQueue[index];
                 // Deep clone to avoid mutating the queue during editing
                 this.currentDataset = this.deepClone(dataset);
+                this.currentDataset.is_regularisation_data = this.currentDataset.is_regularisation_data === true || this.currentDataset.is_regularisation_data === 'true';
                 this.editingQueuedDataset = true;
                 this.editingIndex = index;
 
@@ -720,6 +737,13 @@
                         // Append mode: merge with existing datasets
                         console.log('[WIZARD] Append mode: merging with existing datasets');
                         datasetsToSave = this.mergeWithExistingDatasets(datasetsToSave);
+                    }
+
+                    const hasPrimaryDataset = datasetsToSave.some(dataset => this.isPrimaryDataset(dataset));
+                    if (!hasPrimaryDataset) {
+                        this.showToast('Add at least one primary image or video dataset before saving regularisation data.', 'error');
+                        this.saving = false;
+                        return;
                     }
 
                     // Ensure a valid text_embeds dataset is always present
@@ -967,6 +991,33 @@
                 }
 
                 return this.ensureDefaultTextEmbeds(working);
+            },
+
+            isPrimaryDataset(dataset, excludeId = null) {
+                if (!dataset) {
+                    return false;
+                }
+
+                if (excludeId && dataset.id === excludeId) {
+                    return false;
+                }
+
+                const rawType = dataset.dataset_type ?? 'image';
+                const datasetType = typeof rawType === 'string' ? rawType.toLowerCase() : '';
+
+                if (!['image', 'video'].includes(datasetType)) {
+                    return false;
+                }
+
+                const isRegular = dataset.is_regularisation_data === true || dataset.is_regularisation_data === 'true';
+                return !isRegular;
+            },
+
+            handleRegularisationToggle() {
+                if (this.currentDataset.is_regularisation_data && !this.hasPrimaryDatasetAvailable) {
+                    this.currentDataset.is_regularisation_data = false;
+                    this.showToast('Add a primary image or video dataset before configuring regularisation data.', 'warning');
+                }
             },
 
             showToast(message, type = 'info') {

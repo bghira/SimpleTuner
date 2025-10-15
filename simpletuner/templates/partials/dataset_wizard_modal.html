@@ -43,6 +43,26 @@
                         <div x-show="datasetIdError" class="text-danger small mt-1" x-text="datasetIdError"></div>
                     </div>
                     <div class="mb-3">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="regularisationDatasetToggle"
+                                   x-model="currentDataset.is_regularisation_data"
+                                   :disabled="!hasPrimaryDatasetAvailable && !currentDataset.is_regularisation_data"
+                                   @change="handleRegularisationToggle()">
+                            <label class="form-check-label" for="regularisationDatasetToggle">
+                                Treat this as a regularisation dataset
+                            </label>
+                        </div>
+                        <div class="form-text">
+                            Regularisation datasets help preserve the base model's identity. You must also include at least one normal image or video dataset.
+                        </div>
+                        <div class="alert alert-info mt-2 mb-0"
+                             x-show="!hasPrimaryDatasetAvailable && !currentDataset.is_regularisation_data">
+                            Add a primary image or video dataset first. Once one is queued, you can enable regularisation for supporting datasets.
+                        </div>
+                    </div>
+                    <div class="mb-3">
                         <div class="form-check">
                             <input class="form-check-input"
                                    type="checkbox"
@@ -1078,6 +1098,10 @@
                                     <div>
                                         <strong x-text="dataset.id"></strong>
                                         <span class="text-muted ms-2" x-text="`(${dataset.type})`"></span>
+                                        <span class="badge bg-warning text-dark ms-2"
+                                              x-show="dataset.is_regularisation_data">
+                                            Regularisation
+                                        </span>
                                     </div>
                                     <div class="btn-group btn-group-sm">
                                         <button type="button" class="btn btn-outline-secondary" @click="editQueuedDataset(index)">

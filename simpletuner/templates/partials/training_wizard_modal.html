@@ -140,7 +140,7 @@
 
                 <div class="mt-4" x-show="answers.model_type === 'lora'" x-transition>
                     <h6 class="wizard-question-small">Quantization</h6>
-                    <p class="text-muted small">Quantise the base model or text encoders to reduce VRAM usage. Defaults apply automatically for most runs.</p>
+                    <p class="text-muted small">Quantise the base model or text encoders to adjust memory usage. Text encoder quantisation only affects the precaching step—the encoder is unloaded before training—so reserve it for extremely constrained setups or when you need the model to honour quantised encoder outputs. Defaults apply automatically for most runs.</p>
 
                     <div class="text-muted small mb-3" x-show="quantizationLoading">
                         Loading quantization options...
@@ -456,7 +456,7 @@
                          :class="{ 'selected': advancedMode === 'manual' }"
                          @click="activateManualAdvanced()">
                         <h6>Manual configuration</h6>
-                        <p class="text-muted small">Adjust optimizer, learning rate, and batch size directly here</p>
+                        <p class="text-muted small">Adjust optimizer, learning rate, batch size, and gradient accumulation directly here</p>
                     </div>
                 </div>
 
@@ -475,6 +475,7 @@
                                     <span class="text-muted">(LoRA: <span x-text="preset.loraLearningRate"></span>; Full: <span x-text="preset.fullLearningRate"></span>)</span>
                                 </li>
                                 <li><strong>Batch Size:</strong> <span x-text="preset.batchSize"></span></li>
+                                <li><strong>Grad Accum:</strong> <span x-text="preset.gradientAccumulation"></span></li>
                             </ul>
                         </div>
                     </template>
@@ -501,6 +502,19 @@
                                step="1"
                                placeholder="e.g. 2">
                         <div class="form-text">Higher batch sizes increase memory use but can stabilise updates.</div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Gradient Accumulation Steps</label>
+                        <input type="number"
+                               class="form-control"
+                               x-model.number="answers.gradient_accumulation_steps"
+                               min="1"
+                               step="1"
+                               placeholder="e.g. 1 or 4"
+                               @input="wizardNavigateToField('gradient_accumulation_steps')">
+                        <div class="form-text">
+                            Accumulate gradients across multiple mini-batches to simulate larger batch sizes, as recommended in the quickstarts for low VRAM runs.
+                        </div>
                     </div>
 
                     <div class="mb-0">
@@ -553,6 +567,11 @@
                         <label>Publishing:</label>
                         <span x-text="answers.push_to_hub ? 'Enabled' : 'Disabled'"></span>
                         <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 3 : 2)">Edit</button>
+                    </div>
+                    <div class="review-item">
+                        <label>Training Params:</label>
+                        <span x-text="`${answers.train_batch_size || 2} batch × ${answers.gradient_accumulation_steps || 1} grad accum | ${answers.optimizer || 'Optimizer not set'}`"></span>
+                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 8 : 7)">Edit</button>
                     </div>
                     <div class="review-item" x-show="answers.push_to_hub">
                         <label>Hub Repository:</label>

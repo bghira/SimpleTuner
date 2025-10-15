@@ -66,6 +66,7 @@ function trainingWizardComponent() {
             validation_resolution: '1024x1024',
             validation_num_inference_steps: 20,
             train_batch_size: 2,
+            gradient_accumulation_steps: 1,
             tracker_project_name: '',
             tracker_run_name: '',
             lora_rank: 16,
@@ -173,7 +174,8 @@ function trainingWizardComponent() {
                         const lrValid = typeof this.answers.learning_rate === 'number' && this.answers.learning_rate > 0;
                         const optimizerValid = Boolean(this.answers.optimizer);
                         const batchValid = typeof this.answers.train_batch_size === 'number' && this.answers.train_batch_size > 0;
-                        return lrValid && optimizerValid && batchValid;
+                        const gradValid = typeof this.answers.gradient_accumulation_steps === 'number' && this.answers.gradient_accumulation_steps > 0;
+                        return lrValid && optimizerValid && batchValid && gradValid;
                     }
                     return true;
                 }
@@ -353,6 +355,13 @@ function trainingWizardComponent() {
                         const parsedBatch = parseInt(config.train_batch_size);
                         if (!Number.isNaN(parsedBatch)) {
                             this.answers.train_batch_size = parsedBatch;
+                        }
+                    }
+                    const gradValue = config.gradient_accumulation_steps ?? config['--gradient_accumulation_steps'];
+                    if (gradValue !== undefined && gradValue !== null) {
+                        const parsedGrad = parseInt(gradValue);
+                        if (!Number.isNaN(parsedGrad) && parsedGrad > 0) {
+                            this.answers.gradient_accumulation_steps = parsedGrad;
                         }
                     }
                     const projectName = config.tracker_project_name || config['--tracker_project_name'];
@@ -1149,7 +1158,8 @@ function trainingWizardComponent() {
                 optimizer: 'adamw_bf16',
                 fullLearningRate: 1e-5,
                 loraLearningRate: 1e-4,
-                batchSize: 2
+                batchSize: 2,
+                gradientAccumulation: 1
             };
 
             if (!(typeof this.answers.learning_rate === 'number' && this.answers.learning_rate > 0)) {
@@ -1162,6 +1172,14 @@ function trainingWizardComponent() {
                 this.answers.train_batch_size <= 0
             ) {
                 this.answers.train_batch_size = fallback.batchSize;
+            }
+
+            if (
+                typeof this.answers.gradient_accumulation_steps !== 'number' ||
+                Number.isNaN(this.answers.gradient_accumulation_steps) ||
+                this.answers.gradient_accumulation_steps <= 0
+            ) {
+                this.answers.gradient_accumulation_steps = fallback.gradientAccumulation ?? 1;
             }
 
             if (!this.answers.optimizer || !this.isOptimizerChoiceAvailable(this.answers.optimizer)) {
@@ -1182,6 +1200,7 @@ function trainingWizardComponent() {
             this.answers.learning_rate = this.getLearningRateForCurrentModel(preset);
             this.answers.optimizer = this.resolveOptimizerSelection(preset.optimizer);
             this.answers.train_batch_size = preset.batchSize ?? 2;
+            this.answers.gradient_accumulation_steps = preset.gradientAccumulation ?? 1;
 
             this.nextStep();
         },
@@ -1233,6 +1252,7 @@ function trainingWizardComponent() {
                 'learning_rate': 'training',
                 'optimizer': 'training',
                 'train_batch_size': 'basic',
+                'gradient_accumulation_steps': 'training',
                 'lora_rank': 'model'
             };
 
@@ -1294,7 +1314,8 @@ function trainingWizardComponent() {
                     optimizer: 'optimi-lion',
                     fullLearningRate: 1e-5,
                     loraLearningRate: 1e-4,
-                    batchSize: 2
+                    batchSize: 2,
+                    gradientAccumulation: 1
                 },
                 moderate: {
                     key: 'moderate',
@@ -1303,7 +1324,8 @@ function trainingWizardComponent() {
                     optimizer: 'adamw_bf16',
                     fullLearningRate: 1e-5,
                     loraLearningRate: 1e-4,
-                    batchSize: 2
+                    batchSize: 2,
+                    gradientAccumulation: 1
                 },
                 slow_safe: {
                     key: 'slow_safe',
@@ -1312,7 +1334,8 @@ function trainingWizardComponent() {
                     optimizer: 'adamw_bf16',
                     fullLearningRate: 1e-5,
                     loraLearningRate: 1e-4,
-                    batchSize: 4
+                    batchSize: 4,
+                    gradientAccumulation: 2
                 }
             };
 
@@ -1338,6 +1361,7 @@ function trainingWizardComponent() {
                         tagline: preset.tagline,
                         optimizer: preset.optimizer,
                         batchSize: preset.batchSize,
+                        gradientAccumulation: preset.gradientAccumulation ?? 1,
                         displayLearningRate: currentLr,
                         loraLearningRate: loraLr,
                         fullLearningRate: fullLr
