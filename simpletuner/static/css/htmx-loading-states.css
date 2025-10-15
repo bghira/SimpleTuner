@@ -32,7 +32,7 @@
     left: 0;
     width: 100%;
     height: 100%;
-    background-color: rgba(0, 0, 0, 0.5);
+    background-color: var(--overlay-backdrop);
     display: none;
     align-items: center;
     justify-content: center;
@@ -51,7 +51,7 @@
     left: 0;
     width: 100%;
     height: 100%;
-    background-color: rgba(255, 255, 255, 0.8);
+    background-color: var(--overlay-section-light);
     display: none;
     align-items: center;
     justify-content: center;
@@ -65,7 +65,7 @@
 /* Dark mode support */
 @media (prefers-color-scheme: dark) {
     .htmx-section-overlay {
-        background-color: rgba(0, 0, 0, 0.8);
+        background-color: var(--overlay-section-dark);
     }
 }
 
@@ -91,8 +91,8 @@
     left: 50%;
     margin-left: -8px;
     margin-top: -8px;
-    border: 2px solid #f3f3f3;
-    border-top: 2px solid currentColor;
+    border: 2px solid var(--spinner-track);
+    border-top: 2px solid var(--spinner-head, currentColor);
     border-radius: 50%;
     animation: htmx-spin 1s linear infinite;
 }
@@ -144,7 +144,7 @@ form.htmx-request {
 
 /* Skeleton loader for content areas */
 .htmx-loading-skeleton {
-    background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+    background: linear-gradient(90deg, var(--skeleton-base) 25%, var(--skeleton-highlight) 50%, var(--skeleton-base) 75%);
     background-size: 200% 100%;
     animation: htmx-loading 1.5s infinite;
     border-radius: 4px;
@@ -171,8 +171,8 @@ form.htmx-request {
     width: 40px;
     height: 40px;
     margin: -20px 0 0 -20px;
-    border: 3px solid #f3f3f3;
-    border-top: 3px solid #3498db;
+    border: 3px solid var(--spinner-track);
+    border-top: 3px solid var(--spinner-head);
     border-radius: 50%;
     animation: htmx-spin 1s linear infinite;
 }
@@ -185,7 +185,7 @@ form.htmx-request {
 .htmx-progress-bar {
     width: 100%;
     height: 4px;
-    background-color: #f0f0f0;
+    background-color: var(--skeleton-base);
     position: relative;
     overflow: hidden;
     display: none;
@@ -203,7 +203,7 @@ form.htmx-request {
     left: 0;
     height: 100%;
     width: 50%;
-    background-color: #3498db;
+    background-color: var(--spinner-head);
     animation: htmx-progress 1.5s ease-in-out infinite;
 }
 

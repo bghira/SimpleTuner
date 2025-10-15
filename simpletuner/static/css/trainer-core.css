@@ -21,11 +21,11 @@
 }
 
 .tab-fragment .card {
-    background: rgba(18, 21, 30, 0.92);
-    border: 1px solid rgba(148, 163, 184, 0.18);
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
     border-radius: var(--radius-xl);
-    box-shadow: 0 16px 40px rgba(2, 6, 23, 0.35);
-    color: #e2e8f0;
+    box-shadow: var(--shadow-panel);
+    color: var(--text-primary);
 }
 
 /* Extend unified card styling to all custom card variants */
@@ -35,11 +35,11 @@
 .tab-fragment .config-card,
 .tab-fragment .publishing-toggle-card,
 .tab-fragment .preference-card {
-    background: rgba(18, 21, 30, 0.92) !important;
-    border: 1px solid rgba(148, 163, 184, 0.18) !important;
+    background: var(--panel-bg) !important;
+    border: 1px solid var(--panel-border) !important;
     border-radius: var(--radius-xl) !important;
-    box-shadow: 0 16px 40px rgba(2, 6, 23, 0.35) !important;
-    color: #e2e8f0;
+    box-shadow: var(--shadow-panel) !important;
+    color: var(--text-primary);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
 }
@@ -50,7 +50,7 @@
 .tab-fragment .dataset-card:hover,
 .tab-fragment .config-card:hover {
     transform: translateY(-2px);
-    box-shadow: 0 20px 50px rgba(102, 126, 234, 0.2) !important;
+    box-shadow: var(--shadow-panel-hover) !important;
 }
 
 .tab-fragment .card-header,
@@ -63,26 +63,26 @@
 .tab-fragment .form-label,
 .tab-fragment .card-title,
 .tab-fragment .section-title {
-    color: #e2e8f0;
+    color: var(--text-primary);
 }
 
 .tab-fragment .form-text,
 .tab-fragment .text-muted {
-    color: rgba(226, 232, 240, 0.75) !important;
+    color: var(--text-tertiary) !important;
 }
 
 .tab-fragment .form-control,
 .tab-fragment .form-select,
 .tab-fragment .form-control:focus,
 .tab-fragment .form-select:focus {
-    background: rgba(15, 18, 26, 0.85);
-    border: 1px solid rgba(148, 163, 184, 0.2);
-    color: #e2e8f0;
+    background: var(--field-bg);
+    border: 1px solid var(--field-border);
+    color: var(--text-primary);
     box-shadow: none;
 }
 
 .tab-fragment .form-control::placeholder {
-    color: rgba(226, 232, 240, 0.4);
+    color: var(--text-soft);
 }
 
 .danger-mode-locked {
@@ -97,11 +97,11 @@
 
 .tab-fragment .btn,
 .tab-fragment .btn-outline-secondary {
-    color: rgba(226, 232, 240, 0.9);
+    color: var(--text-primary);
 }
 
 .tab-fragment .btn-outline-secondary {
-    border-color: rgba(148, 163, 184, 0.3);
+    border-color: var(--border-soft);
 }
 
 /* Event Dock Styles */
@@ -121,11 +121,11 @@
 .event-dock {
     width: 100%;
     max-width: calc(1400px + 4rem);
-    background: rgba(15, 18, 26, 0.96);
-    border: 1px solid rgba(148, 163, 184, 0.18);
+    background: var(--event-dock-bg);
+    border: 1px solid var(--event-dock-border);
     border-bottom: none;
     border-radius: 12px 12px 0 0;
-    box-shadow: 0 -18px 40px rgba(2, 6, 23, 0.35);
+    box-shadow: var(--shadow-event-dock);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -147,8 +147,8 @@
     align-items: center;
     justify-content: space-between;
     padding: var(--spacing-md) var(--spacing-lg);
-    background: rgba(255, 255, 255, 0.04);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--glass-bg);
+    border-bottom: 1px solid var(--glass-border);
 }
 
 .event-dock-title {
@@ -168,14 +168,14 @@
 }
 
 .event-dock-actions .btn {
-    border-color: rgba(255, 255, 255, 0.18);
-    color: rgba(248, 250, 252, 0.9);
-    background: rgba(255, 255, 255, 0.05);
+    border-color: var(--glass-border);
+    color: var(--text-primary);
+    background: var(--card-bg-hover);
 }
 
 .event-dock-actions .btn:hover {
-    background: rgba(255, 255, 255, 0.14);
-    border-color: rgba(255, 255, 255, 0.28);
+    background: var(--card-bg-elevated);
+    border-color: var(--border-strong);
 }
 
 .event-dock-resize-handle {
@@ -183,15 +183,15 @@
     justify-content: center;
     padding: 0.35rem 0;
     cursor: ns-resize;
-    background: rgba(255, 255, 255, 0.03);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    background: var(--card-bg);
+    border-bottom: 1px solid var(--border-subtle);
 }
 
 .event-dock-resize-handle span {
     width: 48px;
     height: 4px;
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.25);
+    background: var(--border-soft);
 }
 
 .event-dock-body {
@@ -205,7 +205,7 @@
     flex: 1;
     overflow-y: auto;
     padding: var(--spacing-lg);
-    background: rgba(12, 14, 22, 0.65);
+    background: var(--event-list-bg);
 }
 
 /* Event dock responsive styles */
@@ -231,13 +231,13 @@
     display: inline-flex;
     align-items: center;
     gap: var(--spacing-sm);
-    background: rgba(15, 18, 26, 0.85);
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: var(--field-bg);
+    border: 1px solid var(--border-soft);
     border-radius: 999px;
     padding: 0.35rem 0.75rem;
     font-size: 0.85rem;
-    color: #e2e8f0;
-    box-shadow: 0 10px 24px rgba(2, 6, 23, 0.35);
+    color: var(--text-primary);
+    box-shadow: var(--shadow-training-pill);
     margin-left: 1rem;
 }
 
@@ -249,7 +249,7 @@
 .onboarding-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(8, 10, 16, 0.92);
+    background: var(--onboarding-overlay);
     backdrop-filter: blur(6px);
     display: flex;
     align-items: center;
@@ -260,11 +260,11 @@
 
 .onboarding-modal {
     width: min(560px, 100%);
-    background: rgba(13, 16, 24, 0.95);
-    border: 1px solid rgba(148, 163, 184, 0.18);
+    background: var(--onboarding-modal);
+    border: 1px solid var(--panel-border);
     border-radius: 16px;
     padding: var(--spacing-2xl);
-    box-shadow: 0 24px 60px rgba(2, 6, 23, 0.45);
+    box-shadow: var(--shadow-panel);
 }
 
 .onboarding-modal h2 {
@@ -280,17 +280,17 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(8, 10, 16, 0.82);
+    background: var(--overlay-section-dark);
     backdrop-filter: blur(4px);
 }
 
 .save-dataset-modal {
     width: min(480px, 90vw);
-    background: rgba(13, 16, 24, 0.96);
+    background: var(--onboarding-modal);
     border: 1px solid var(--glass-border);
     border-radius: 12px;
     padding: var(--spacing-2xl);
-    box-shadow: 0 24px 48px rgba(2, 6, 23, 0.55);
+    box-shadow: var(--shadow-modal);
     color: var(--text-primary);
 }
 

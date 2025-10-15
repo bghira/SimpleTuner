@@ -120,21 +120,21 @@
 .mode-switcher .btn {
     padding: 0.5rem 1rem;
     border-radius: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    background: rgba(255, 255, 255, 0.05);
-    color: rgba(255, 255, 255, 0.8);
+    border: 1px solid var(--glass-border);
+    background: var(--card-bg-hover);
+    color: var(--text-secondary);
     transition: all 0.3s ease;
     font-size: 0.875rem;
 }
 
 .mode-switcher .btn:hover {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.2);
+    background: var(--card-bg-elevated);
+    border-color: var(--border-soft);
 }
 
 .mode-switcher .btn.active {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
+    background: var(--primary-gradient);
+    color: var(--text-primary);
     border-color: transparent;
 }
 
@@ -212,7 +212,7 @@
 }
 
 .dataset-icon {
-    color: rgba(255, 255, 255, 0.6);
+    color: var(--text-secondary);
     font-size: 1.25rem;
 }
 
@@ -223,14 +223,14 @@
     font-size: 1.1rem;
     flex: 1;
     max-width: 300px;
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--text-primary);
     padding: 0.25rem 0.5rem;
     border-radius: 4px;
 }
 
 .dataset-id-input:focus {
     outline: none;
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--card-bg-hover);
 }
 
 .dataset-type-badge {
@@ -242,28 +242,28 @@
 }
 
 .dataset-type-badge.type-image {
-    background: rgba(59, 130, 246, 0.2);
-    color: #60a5fa;
+    background: var(--dataset-type-image-bg);
+    color: var(--dataset-type-image-text);
 }
 
 .dataset-type-badge.type-video {
-    background: rgba(168, 85, 247, 0.2);
-    color: #a78bfa;
+    background: var(--dataset-type-video-bg);
+    color: var(--dataset-type-video-text);
 }
 
 .dataset-type-badge.type-text_embeds {
-    background: rgba(52, 211, 153, 0.2);
-    color: #34d399;
+    background: var(--dataset-type-text-embeds-bg);
+    color: var(--dataset-type-text-embeds-text);
 }
 
 .dataset-type-badge.type-image_embeds {
-    background: rgba(251, 146, 60, 0.2);
-    color: #fb923c;
+    background: var(--dataset-type-image-embeds-bg);
+    color: var(--dataset-type-image-embeds-text);
 }
 
 .dataset-type-badge.type-conditioning {
-    background: rgba(244, 114, 182, 0.2);
-    color: #f472b6;
+    background: var(--dataset-type-conditioning-bg);
+    color: var(--dataset-type-conditioning-text);
 }
 
 /* Dataset Actions */
@@ -282,21 +282,21 @@
 .btn-icon {
     padding: 0.5rem;
     border: none;
-    background: rgba(255, 255, 255, 0.05);
-    color: rgba(255, 255, 255, 0.6);
+    background: var(--card-bg-hover);
+    color: var(--text-secondary);
     cursor: pointer;
     border-radius: 8px;
     transition: all 0.2s;
 }
 
 .btn-icon:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: rgba(255, 255, 255, 0.9);
+    background: var(--card-bg-elevated);
+    color: var(--text-primary);
 }
 
 .btn-icon.btn-remove:hover {
-    background: rgba(239, 68, 68, 0.2);
-    color: #f87171;
+    background: var(--error-bg);
+    color: var(--error-text);
 }
 
 /* Dataset Content */
@@ -315,7 +315,7 @@
 
 .dataset-section-header {
     padding: var(--spacing-lg) var(--spacing-lg-xl);
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--card-bg);
     font-size: 0.875rem;
     font-weight: 600;
     text-transform: uppercase;
@@ -335,7 +335,7 @@
 }
 
 .dataset-section-advanced .dataset-section-header:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--card-bg-hover);
 }
 
 .dataset-section-advanced:not(.is-open) .dataset-section-body {

@@ -4,11 +4,11 @@
 }
 
 .nav-tabs {
-    border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+    border-bottom: 2px solid var(--glass-border);
 }
 
 .nav-tabs .nav-link {
-    color: #94a3b8;
+    color: var(--text-secondary);
     background-color: transparent;
     border: 1px solid transparent;
     border-bottom: none;
@@ -19,15 +19,15 @@
 }
 
 .nav-tabs .nav-link:hover {
-    color: #e2e8f0;
-    background-color: rgba(255, 255, 255, 0.05);
-    border-color: rgba(255, 255, 255, 0.05);
+    color: var(--text-primary);
+    background-color: var(--card-bg-hover);
+    border-color: var(--glass-border);
 }
 
 .nav-tabs .nav-link.active {
-    color: #f8f9fa;
-    background-color: rgba(102, 126, 234, 0.1);
-    border-color: rgba(255, 255, 255, 0.1) rgba(255, 255, 255, 0.1) transparent;
+    color: var(--text-primary);
+    background-color: var(--tab-basic-bg);
+    border-color: var(--glass-border) var(--glass-border) transparent;
 }
 
 .nav-tabs .nav-link i {
@@ -36,28 +36,28 @@
 
 /* Tab-specific colors */
 #basic-tab-button.active {
-    background-color: rgba(102, 126, 234, 0.1);
-    color: #667eea;
+    background-color: var(--tab-basic-bg);
+    color: var(--tab-basic-indicator);
 }
 
 #model-tab-button.active {
-    background-color: rgba(139, 92, 246, 0.1);
-    color: #8b5cf6;
+    background-color: var(--tab-model-bg);
+    color: var(--tab-model-indicator);
 }
 
 #training-tab-button.active {
-    background-color: rgba(236, 72, 153, 0.1);
-    color: #ec4899;
+    background-color: var(--tab-training-bg);
+    color: var(--tab-training-indicator);
 }
 
 #advanced-tab-button.active {
-    background-color: rgba(245, 158, 11, 0.1);
-    color: #f59e0b;
+    background-color: var(--tab-advanced-bg);
+    color: var(--tab-advanced-indicator);
 }
 
 #validation-tab-button.active {
-    background-color: rgba(34, 197, 94, 0.1);
-    color: #22c55e;
+    background-color: var(--tab-validation-bg);
+    color: var(--tab-validation-indicator);
 }
 
 /* Loading indicators */
@@ -116,21 +116,21 @@
 }
 
 .nav-tabs .nav-link.active::after {
-    background-color: #667eea;
+    background-color: var(--tab-basic-indicator);
 }
 
 #model-tab-button.active::after {
-    background-color: #8b5cf6;
+    background-color: var(--tab-model-indicator);
 }
 
 #training-tab-button.active::after {
-    background-color: #ec4899;
+    background-color: var(--tab-training-indicator);
 }
 
 #advanced-tab-button.active::after {
-    background-color: #f59e0b;
+    background-color: var(--tab-advanced-indicator);
 }
 
 #validation-tab-button.active::after {
-    background-color: #22c55e;
+    background-color: var(--tab-validation-indicator);
 }

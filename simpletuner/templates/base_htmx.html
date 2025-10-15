@@ -56,46 +56,60 @@
     <!-- Dataset wizard component (needs to load before Alpine) -->
     <script src="/static/js/dataset-wizard.js"></script>
 
+    <!-- Training wizard component (needs to load before Alpine) -->
+    <script src="/static/js/training-wizard.js"></script>
+
     <!-- Alpine.js for reactive UI components -->
     <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
 
     <!-- Custom HTMX/Alpine styles -->
     <style>
         /* Dark theme overrides for Bootstrap */
-        body, .modal-content {
-            background-color: #0a0a0a !important;
-            color: #f8f9fa !important;
+        body,
+        .modal-content {
+            background-color: var(--dark-bg) !important;
+            color: var(--text-primary) !important;
         }
 
         /* Fix form labels and text for dark theme */
-        .form-label, label {
-            color: #94a3b8 !important;
+        .form-label,
+        label {
+            color: var(--text-secondary) !important;
             font-weight: 500;
         }
 
-        .form-control, .form-select {
-            background-color: rgba(255, 255, 255, 0.03) !important;
-            border: 1px solid rgba(255, 255, 255, 0.06) !important;
-            color: #f8f9fa !important;
+        .form-control,
+        .form-select {
+            background-color: var(--card-bg) !important;
+            border: 1px solid var(--glass-border) !important;
+            color: var(--text-primary) !important;
         }
 
-        .form-control:focus, .form-select:focus {
-            background-color: rgba(255, 255, 255, 0.05) !important;
-            border-color: #667eea !important;
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1) !important;
-            color: #f8f9fa !important;
+        .form-control:focus,
+        .form-select:focus {
+            background-color: var(--card-bg-elevated) !important;
+            border-color: var(--accent-purple) !important;
+            box-shadow: 0 0 0 3px var(--focus-ring-color) !important;
+            color: var(--text-primary) !important;
         }
 
         .form-control::placeholder {
-            color: rgba(148, 163, 184, 0.5) !important;
+            color: var(--text-soft) !important;
         }
 
-        .form-text, .text-muted {
-            color: #64748b !important;
+        .form-text,
+        .text-muted {
+            color: var(--text-muted) !important;
         }
 
-        .card-title, h1, h2, h3, h4, h5, h6 {
-            color: #f8f9fa !important;
+        .card-title,
+        h1,
+        h2,
+        h3,
+        h4,
+        h5,
+        h6 {
+            color: var(--text-primary) !important;
         }
 
         /* Loading indicator for HTMX requests */
@@ -140,18 +154,18 @@
         }
 
         .connection-status.connected {
-            background-color: rgba(34, 197, 94, 0.9);
-            color: white;
+            background-color: var(--connection-bg-connected);
+            color: var(--text-primary);
         }
 
         .connection-status.disconnected {
-            background-color: rgba(239, 68, 68, 0.9);
-            color: white;
+            background-color: var(--connection-bg-disconnected);
+            color: var(--text-primary);
         }
 
         .connection-status.reconnecting {
-            background-color: rgba(249, 115, 22, 0.9);
-            color: white;
+            background-color: var(--connection-bg-reconnecting);
+            color: var(--text-primary);
         }
 
         /* Toast notifications */
@@ -165,33 +179,36 @@
 
         .toast {
             margin-bottom: 10px;
-            background-color: rgba(33, 37, 41, 0.95);
-            border: 1px solid rgba(255,255,255,0.1);
-            color: #f8f9fa;
+            background-color: var(--toast-bg);
+            border: 1px solid var(--toast-border);
+            color: var(--text-primary);
         }
 
         .toast.success {
-            border-left: 4px solid #198754;
+            border-left: 4px solid var(--toast-success);
         }
 
         .toast.error {
-            border-left: 4px solid #dc3545;
+            border-left: 4px solid var(--toast-error);
         }
 
         .toast.warning {
-            border-left: 4px solid #fd7e14;
+            border-left: 4px solid var(--toast-warning);
         }
 
         .toast.info {
-            border-left: 4px solid #0dcaf0;
+            border-left: 4px solid var(--toast-info);
         }
 
         .toast-header {
             background-color: transparent;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
+            border-bottom: 1px solid var(--toast-border);
             padding: 0.5rem 0.75rem;
         }
     </style>
+
+    <!-- Training Wizard Styles -->
+    <link href="/static/css/training-wizard.css" rel="stylesheet">
 
     {% block extra_css %}{% endblock %}
 </head>
