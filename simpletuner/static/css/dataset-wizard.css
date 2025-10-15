@@ -154,6 +154,19 @@
     pointer-events: auto !important;
 }
 
+.modal-dialog.modal-xl form {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.modal-dialog.modal-xl .wizard-progress,
+.modal-dialog.modal-xl .modal-header,
+.modal-dialog.modal-xl .modal-footer {
+    flex-shrink: 0;
+}
+
 .modal-header {
     padding: 1.25rem 1.5rem;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
@@ -175,6 +188,7 @@
     padding: 1.5rem;
     overflow-y: auto;
     flex: 1;
+    min-height: 0;
 }
 
 .modal-footer {

@@ -63,7 +63,8 @@
             // Separate cache dataset configs
             textEmbedsDataset: {
                 id: 'text-embeds',
-                cache_dir: 'cache/text'
+                cache_dir: 'cache/text',
+                type: 'local'
             },
             vaeCacheDataset: {
                 id: 'vae-cache',
@@ -679,22 +680,8 @@
 
                 try {
                     // Prepare datasets to save
-                    let datasetsToSave = [...this.datasetQueue];
-
-                    // Add separate text embeds dataset if configured
-                    if (this.separateTextEmbeds) {
-                        const hasTextEmbeds = datasetsToSave.some(d => d.dataset_type === 'text_embeds');
-                        if (!hasTextEmbeds) {
-                            console.log('[WIZARD] Adding separate text_embeds dataset');
-                            datasetsToSave.push({
-                                id: this.textEmbedsDataset.id,
-                                type: 'text_embeds',
-                                dataset_type: 'text_embeds',
-                                default: true,
-                                cache_dir: this.textEmbedsDataset.cache_dir
-                            });
-                        }
-                    }
+                    const queueSnapshot = this.datasetQueue.map(dataset => this.deepClone(dataset));
+                    let datasetsToSave = [...queueSnapshot];
 
                     // Add separate VAE cache dataset if configured
                     if (this.separateVaeCache) {
@@ -729,26 +716,14 @@
                         }
                     }
 
-                    // If creating new config, ensure text_embeds dataset is included
-                    if (this.createNewConfig && !this.separateTextEmbeds) {
-                        const hasTextEmbeds = datasetsToSave.some(d => d.dataset_type === 'text_embeds');
-                        if (!hasTextEmbeds && this.currentDataset.cache_dir_text) {
-                            console.log('[WIZARD] Auto-adding text_embeds dataset for new config');
-                            datasetsToSave.push({
-                                id: 'text-embeds',
-                                type: 'text_embeds',
-                                dataset_type: 'text_embeds',
-                                default: true,
-                                cache_dir: this.currentDataset.cache_dir_text
-                            });
-                        }
-                    }
-
                     if (!this.createNewConfig) {
                         // Append mode: merge with existing datasets
                         console.log('[WIZARD] Append mode: merging with existing datasets');
                         datasetsToSave = this.mergeWithExistingDatasets(datasetsToSave);
                     }
+
+                    // Ensure a valid text_embeds dataset is always present
+                    datasetsToSave = this.ensureTextEmbedsDataset(datasetsToSave, queueSnapshot);
 
                     // If deferCommit is true, store the plan and close without saving
                     if (this.deferCommit) {
@@ -838,6 +813,160 @@
                 }
 
                 return merged;
+            },
+
+            ensureDefaultTextEmbeds(datasets) {
+                if (!Array.isArray(datasets) || datasets.length === 0) {
+                    return datasets;
+                }
+
+                const textDatasets = datasets.filter(item => {
+                    return (item?.dataset_type || '').toLowerCase() === 'text_embeds';
+                });
+
+                if (textDatasets.length === 0) {
+                    return datasets;
+                }
+
+                const hasDefault = textDatasets.some(item => item.default !== false);
+                if (!hasDefault) {
+                    textDatasets[0].default = true;
+                }
+
+                return datasets;
+            },
+
+            extractCacheDirFromDatasets(datasets) {
+                if (!Array.isArray(datasets)) {
+                    return '';
+                }
+
+                for (const dataset of datasets) {
+                    const candidate = dataset?.cache_dir_text;
+                    if (typeof candidate === 'string') {
+                        const trimmed = candidate.trim();
+                        if (trimmed.length > 0) {
+                            return trimmed;
+                        }
+                    }
+                }
+
+                return '';
+            },
+
+            getTrainerTextCacheDir() {
+                try {
+                    const trainerStore = Alpine.store('trainer');
+                    if (!trainerStore) {
+                        return '';
+                    }
+
+                    const candidates = [
+                        trainerStore.configValues?.cache_dir_text,
+                        trainerStore.configValues?.['--cache_dir_text'],
+                        trainerStore.activeEnvironmentConfig?.cache_dir_text,
+                        trainerStore.activeEnvironmentConfig?.['--cache_dir_text']
+                    ];
+
+                    for (const value of candidates) {
+                        if (typeof value === 'string') {
+                            const trimmed = value.trim();
+                            if (trimmed.length > 0) {
+                                return trimmed;
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.warn('[WIZARD] Unable to read trainer text cache directory:', error);
+                }
+
+                return '';
+            },
+
+            resolveTextCacheDirectory(existingCacheDir, queueDatasets = []) {
+                const candidates = [];
+                const seen = new Set();
+
+                const addCandidate = (value) => {
+                    if (typeof value !== 'string') {
+                        return;
+                    }
+                    const trimmed = value.trim();
+                    if (!trimmed || seen.has(trimmed)) {
+                        return;
+                    }
+                    candidates.push(trimmed);
+                    seen.add(trimmed);
+                };
+
+                addCandidate(existingCacheDir);
+                addCandidate(this.extractCacheDirFromDatasets(queueDatasets));
+                if (this.existingTextEmbeds?.cache_dir) {
+                    addCandidate(this.existingTextEmbeds.cache_dir);
+                }
+                addCandidate(this.getTrainerTextCacheDir());
+                if (this.textEmbedsDataset?.cache_dir) {
+                    addCandidate(this.textEmbedsDataset.cache_dir);
+                }
+                if (this.currentDataset?.cache_dir_text && this.currentDataset.cache_dir_text !== 'cache/text') {
+                    addCandidate(this.currentDataset.cache_dir_text);
+                }
+                addCandidate('cache/text');
+
+                return candidates.length > 0 ? candidates[0] : 'cache/text';
+            },
+
+            normalizeTextEmbedsDataset(dataset, queueDatasets = []) {
+                const clone = this.deepClone(dataset || {});
+
+                clone.id = (typeof clone.id === 'string' && clone.id.trim().length > 0)
+                    ? clone.id.trim()
+                    : 'text-embeds';
+
+                clone.dataset_type = 'text_embeds';
+                clone.type = (typeof clone.type === 'string' && clone.type.trim().length > 0)
+                    ? clone.type.trim()
+                    : 'local';
+
+                clone.cache_dir = this.resolveTextCacheDirectory(clone.cache_dir, queueDatasets);
+                clone.default = clone.default === undefined ? true : Boolean(clone.default);
+
+                return clone;
+            },
+
+            ensureTextEmbedsDataset(datasets, queueDatasets = []) {
+                const working = Array.isArray(datasets) ? [...datasets] : [];
+
+                const alreadyHasTextEmbeds = working.some(item => {
+                    return (item?.dataset_type || '').toLowerCase() === 'text_embeds';
+                });
+
+                if (alreadyHasTextEmbeds) {
+                    return this.ensureDefaultTextEmbeds(working);
+                }
+
+                let sourceDataset = {};
+                if (this.separateTextEmbeds) {
+                    sourceDataset = this.textEmbedsDataset;
+                } else if (this.existingTextEmbeds) {
+                    sourceDataset = this.existingTextEmbeds;
+                }
+
+                try {
+                    const normalized = this.normalizeTextEmbedsDataset(sourceDataset, queueDatasets);
+                    working.push(normalized);
+                } catch (error) {
+                    console.error('[WIZARD] Failed to normalize text_embeds dataset, using fallback:', error);
+                    working.push({
+                        id: 'text-embeds',
+                        dataset_type: 'text_embeds',
+                        type: 'local',
+                        default: true,
+                        cache_dir: 'cache/text'
+                    });
+                }
+
+                return this.ensureDefaultTextEmbeds(working);
             },
 
             showToast(message, type = 'info') {
