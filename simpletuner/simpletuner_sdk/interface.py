@@ -10,7 +10,7 @@ from simpletuner.helpers.configuration.cmd_args import get_default_config as get
 
 # Import the proper configuration modules
 from simpletuner.helpers.models.all import get_all_model_flavours, model_families
-from simpletuner.helpers.training.optimizer_param import optimizer_choices
+from simpletuner.helpers.training.optimizer_param import available_optimizer_keys, optimizer_choices
 
 
 class WebInterface:
@@ -165,7 +165,8 @@ class WebInterface:
         # Return as grouped structure for optgroup rendering
         categories = {}
 
-        for opt_key, opt_info in optimizer_choices.items():
+        for opt_key in available_optimizer_keys():
+            opt_info = optimizer_choices[opt_key]
             # Create a human-readable label
             label = opt_key
 

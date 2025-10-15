@@ -1,7 +1,7 @@
 import logging
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
-from simpletuner.helpers.training.optimizer_param import optimizer_choices as _optimizer_choices_map
+from simpletuner.helpers.training.optimizer_param import available_optimizer_keys as _available_optimizer_keys
 
 from ..types import ConfigField, FieldDependency, FieldType, ImportanceLevel, ValidationRule, ValidationRuleType
 
@@ -96,9 +96,9 @@ def register_training_fields(registry: "FieldRegistry") -> None:
     )
 
     # Optimizer
-    optimizer_choices = list(_optimizer_choices_map.keys())
+    optimizer_choices = _available_optimizer_keys()
     if not optimizer_choices:
-        raise RuntimeError("optimizer_choices from optimizer_param is empty; expected at least one optimizer option")
+        raise RuntimeError("No optimizers available for the current environment.")
     registry._add_field(
         ConfigField(
             name="optimizer",
