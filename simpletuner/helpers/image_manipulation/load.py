@@ -37,9 +37,7 @@ def decode_image_with_trainingsample(img_bytes: bytes) -> Union[Image.Image, Non
     """Decode image using trainingsample with optimized format conversions."""
     img_tsr = tsr.imdecode_py(img_bytes, 1)  # 1 = IMREAD_COLOR
     if img_tsr is not None:
-        # Use optimized BGR->RGB conversion
-        img_tsr = tsr.cvt_color_py(img_tsr, 4)  # 4 = COLOR_BGR2RGB
-
+        # trainingsample's imdecode already returns RGB tensors, no extra swap needed
         # Handle grayscale with ultra-fast conversion if needed
         if len(img_tsr.shape) == 2:
             # Convert grayscale to RGB using optimized method
