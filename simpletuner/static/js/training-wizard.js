@@ -1,5 +1,5 @@
 /**
- * Training Setup Wizard Component
+ * Training Configuration Wizard Component
  * Guides users through training configuration step-by-step
  */
 
@@ -28,7 +28,27 @@ function trainingWizardComponent() {
         modelFlavours: [],
         loggingProviders: [],
         optimizerChoices: [],
-        advancedMode: 'defaults',
+        advancedMode: 'preset',
+        selectedPreset: null,
+        trackerFieldDefaults: {
+            project: {
+                placeholder: 'simpletuner',
+                defaultValue: 'simpletuner'
+            },
+            run: {
+                placeholder: 'simpletuner-testing',
+                defaultValue: 'simpletuner-testing'
+            }
+        },
+        trackerDefaultsLoaded: false,
+        loraRankOptions: [1, 2, 4, 8, 16, 32, 64, 128, 256],
+        quantizationFields: {
+            base: null,
+            textEncoders: [],
+            quantizeVia: null
+        },
+        quantizationLoading: false,
+        modelDetailsCache: {},
         pendingDatasetPlan: null,  // Holds dataset plan from dataset wizard when using deferred commit
         answers: {
             model_family: null,
@@ -43,6 +63,22 @@ function trainingWizardComponent() {
             report_to: 'none',
             learning_rate: null,
             optimizer: null,
+            validation_resolution: '1024x1024',
+            validation_num_inference_steps: 20,
+            train_batch_size: 2,
+            tracker_project_name: '',
+            tracker_run_name: '',
+            lora_rank: 16,
+            base_model_precision: 'int8-quanto',
+            text_encoder_1_precision: 'no_change',
+            text_encoder_2_precision: 'no_change',
+            text_encoder_3_precision: 'no_change',
+            text_encoder_4_precision: 'no_change',
+            quantize_via: 'accelerator',
+            hub_model_id: '',
+            model_card_note: '',
+            model_card_safe_for_work: false,
+            model_card_private: false,
             createNewDataset: false  // Track whether user chose to create new dataset
         },
 
@@ -54,14 +90,14 @@ function trainingWizardComponent() {
             {
                 id: 'model-family',
                 label: 'Model',
-                title: 'Training Setup Wizard - Step 1: Model Family',
+                title: 'Training Configuration Wizard - Step 1: Model Family',
                 required: true,
                 validate: function() { return this.answers.model_family !== null; }
             },
             {
                 id: 'model-flavour',
                 label: 'Variant',
-                title: 'Training Setup Wizard - Step 2: Model Variant',
+                title: 'Training Configuration Wizard - Step 2: Model Variant',
                 required: false,
                 condition: function() { return this.needsModelFlavour(); },
                 validate: function() { return !this.needsModelFlavour() || this.answers.model_flavour !== null; }
@@ -69,63 +105,75 @@ function trainingWizardComponent() {
             {
                 id: 'training-type',
                 label: 'Type',
-                title: 'Training Setup Wizard - Step 3: Training Type',
+                title: 'Training Configuration Wizard - Step 3: Training Type',
                 required: true,
                 validate: function() { return this.answers.model_type !== null; }
             },
             {
                 id: 'publishing',
                 label: 'Publishing',
-                title: 'Training Setup Wizard - Step 4: Publishing',
+                title: 'Training Configuration Wizard - Step 4: Publishing',
                 required: false,
-                validate: function() { return true; } // Always valid, can skip
+                validate: function() {
+                    if (this.answers.push_to_hub) {
+                        return typeof this.answers.hub_model_id === 'string' && this.answers.hub_model_id.trim().length > 0;
+                    }
+                    return true;
+                }
             },
             {
                 id: 'checkpoints',
                 label: 'Checkpoints',
-                title: 'Training Setup Wizard - Step 5: Checkpoints',
+                title: 'Training Configuration Wizard - Step 5: Checkpoints',
                 required: true,
                 validate: function() { return this.answers.checkpointing_steps > 0; }
             },
             {
                 id: 'validations-enable',
                 label: 'Validations',
-                title: 'Training Setup Wizard - Step 6: Validations',
+                title: 'Training Configuration Wizard - Step 6: Validations',
                 required: true,
-                validate: function() { return this.answers.enable_validations !== null; }
-            },
-            {
-                id: 'validation-prompt',
-                label: 'Prompt',
-                title: 'Training Setup Wizard - Step 7: Validation Prompt',
-                required: false,
-                condition: function() { return this.answers.enable_validations === true; },
-                validate: function() { return !this.answers.enable_validations || this.answers.validation_prompt.trim().length > 0; }
+                validate: function() {
+                    if (this.answers.enable_validations === null) {
+                        return false;
+                    }
+                    if (this.answers.enable_validations) {
+                        const stepsValid = typeof this.answers.validation_steps === 'number' && this.answers.validation_steps > 0;
+                        const promptValid = this.answers.validation_prompt && this.answers.validation_prompt.trim().length > 0;
+                        const resolutionValid = typeof this.answers.validation_resolution === 'string' && this.answers.validation_resolution.trim().length > 0;
+                        const inferenceValid =
+                            typeof this.answers.validation_num_inference_steps === 'number' &&
+                            this.answers.validation_num_inference_steps > 0;
+                        return stepsValid && promptValid && resolutionValid && inferenceValid;
+                    }
+                    return true;
+                }
             },
             {
                 id: 'logging',
                 label: 'Logging',
-                title: 'Training Setup Wizard - Step 8: Logging',
+                title: 'Training Configuration Wizard - Step 7: Logging',
                 required: false,
                 validate: function() { return true; }
             },
             {
                 id: 'dataset',
                 label: 'Dataset',
-                title: 'Training Setup Wizard - Step 9: Dataset',
+                title: 'Training Configuration Wizard - Step 8: Dataset',
                 required: true,
                 validate: function() { return this.hasExistingDataset || this.datasetConfigured; }
             },
             {
                 id: 'advanced',
                 label: 'Advanced',
-                title: 'Training Setup Wizard - Step 10: Advanced Settings',
+                title: 'Training Configuration Wizard - Step 9: Advanced Settings',
                 required: false,
                 validate: function() {
                     if (this.advancedMode === 'manual') {
                         const lrValid = typeof this.answers.learning_rate === 'number' && this.answers.learning_rate > 0;
                         const optimizerValid = Boolean(this.answers.optimizer);
-                        return lrValid && optimizerValid;
+                        const batchValid = typeof this.answers.train_batch_size === 'number' && this.answers.train_batch_size > 0;
+                        return lrValid && optimizerValid && batchValid;
                     }
                     return true;
                 }
@@ -133,7 +181,7 @@ function trainingWizardComponent() {
             {
                 id: 'review',
                 label: 'Review',
-                title: 'Training Setup Wizard - Review Configuration',
+                title: 'Training Configuration Wizard - Review Configuration',
                 required: true,
                 validate: function() { return true; }
             }
@@ -167,6 +215,77 @@ function trainingWizardComponent() {
             return filtered;
         },
 
+        get validationAlignmentDetails() {
+            const checkpointRaw = this.answers.checkpointing_steps;
+            const validationRaw = this.answers.validation_steps;
+            const checkpointingSteps = typeof checkpointRaw === 'number' ? checkpointRaw : parseInt(checkpointRaw);
+            const validationSteps = typeof validationRaw === 'number' ? validationRaw : parseInt(validationRaw);
+
+            const checkpointsValid = Number.isFinite(checkpointingSteps) && checkpointingSteps > 0;
+            const validationsValid = Number.isFinite(validationSteps) && validationSteps > 0;
+
+            if (!checkpointsValid || !validationsValid) {
+                return {
+                    hasData: false,
+                    checkpointingSteps: checkpointsValid ? checkpointingSteps : null,
+                    validationSteps: validationsValid ? validationSteps : null,
+                    aligns: false,
+                    example: null
+                };
+            }
+
+            const aligns =
+                checkpointingSteps === validationSteps ||
+                checkpointingSteps % validationSteps === 0 ||
+                validationSteps % checkpointingSteps === 0;
+
+            let example = validationSteps;
+            if (!aligns) {
+                if (checkpointingSteps > validationSteps) {
+                    example = checkpointingSteps;
+                } else if (validationSteps > checkpointingSteps) {
+                    example = checkpointingSteps;
+                } else {
+                    example = checkpointingSteps;
+                }
+            }
+
+            return {
+                hasData: true,
+                checkpointingSteps,
+                validationSteps,
+                aligns,
+                example
+            };
+        },
+
+        get loggingEnabled() {
+            return this.answers.report_to && this.answers.report_to !== 'none';
+        },
+
+        get trackerProjectDisplay() {
+            const value = (this.answers.tracker_project_name || '').trim();
+            if (value.length > 0) {
+                return value;
+            }
+            return this.trackerFieldDefaults.project.defaultValue || 'simpletuner';
+        },
+
+        get trackerRunDisplay() {
+            const value = (this.answers.tracker_run_name || '').trim();
+            if (value.length > 0) {
+                return value;
+            }
+            return 'Auto-generated';
+        },
+
+        get loggingSummary() {
+            if (!this.loggingEnabled) {
+                return 'Disabled';
+            }
+            return `${this.answers.report_to || 'none'} (Project: ${this.trackerProjectDisplay}, Run: ${this.trackerRunDisplay})`;
+        },
+
         // Initialization
         async init() {
             console.log('[TRAINING WIZARD] Initializing...');
@@ -177,6 +296,10 @@ function trainingWizardComponent() {
 
                 // Check if dataset exists
                 await this.checkDataset();
+
+                if (this.answers.model_type === 'lora') {
+                    await this.loadQuantizationOptions();
+                }
 
                 console.log('[TRAINING WIZARD] Ready');
             } catch (error) {
@@ -204,6 +327,15 @@ function trainingWizardComponent() {
                     if (config.checkpointing_steps) this.answers.checkpointing_steps = parseInt(config.checkpointing_steps);
                     if (config.validation_steps) this.answers.validation_steps = parseInt(config.validation_steps);
                     if (config.validation_prompt) this.answers.validation_prompt = config.validation_prompt;
+                    if (config.validation_resolution !== undefined && config.validation_resolution !== null) {
+                        this.answers.validation_resolution = String(config.validation_resolution);
+                    }
+                    if (config.validation_num_inference_steps !== undefined && config.validation_num_inference_steps !== null) {
+                        const parsedSteps = parseInt(config.validation_num_inference_steps);
+                        if (!Number.isNaN(parsedSteps)) {
+                            this.answers.validation_num_inference_steps = parsedSteps;
+                        }
+                    }
                     if (config.report_to) this.answers.report_to = config.report_to;
                     if (config.disable_validations !== undefined) {
                         this.answers.enable_validations = !(config.disable_validations === true || config.disable_validations === 'true');
@@ -216,6 +348,56 @@ function trainingWizardComponent() {
                     }
                     if (config.optimizer) {
                         this.answers.optimizer = config.optimizer;
+                    }
+                    if (config.train_batch_size) {
+                        const parsedBatch = parseInt(config.train_batch_size);
+                        if (!Number.isNaN(parsedBatch)) {
+                            this.answers.train_batch_size = parsedBatch;
+                        }
+                    }
+                    const projectName = config.tracker_project_name || config['--tracker_project_name'];
+                    if (projectName) {
+                        this.answers.tracker_project_name = projectName;
+                    }
+                    const runName = config.tracker_run_name || config['--tracker_run_name'];
+                    if (runName) {
+                        this.answers.tracker_run_name = runName;
+                    }
+                    const loraRankValue = config.lora_rank || config['--lora_rank'];
+                    if (loraRankValue) {
+                        const parsedRank = parseInt(loraRankValue);
+                        if (!Number.isNaN(parsedRank)) {
+                            this.answers.lora_rank = parsedRank;
+                        }
+                    }
+                    if (config.base_model_precision) {
+                        this.answers.base_model_precision = config.base_model_precision;
+                    }
+                    for (let i = 1; i <= 4; i++) {
+                        const key = `text_encoder_${i}_precision`;
+                        const value = config[key] || config[`--${key}`];
+                        if (value) {
+                            this.answers[key] = value;
+                        }
+                    }
+                    if (config.quantize_via) {
+                        this.answers.quantize_via = config.quantize_via;
+                    }
+                    const hubModelId = config.hub_model_id || config['--hub_model_id'];
+                    if (hubModelId) {
+                        this.answers.hub_model_id = hubModelId;
+                    }
+                    const modelCardNote = config.model_card_note || config['--model_card_note'];
+                    if (modelCardNote) {
+                        this.answers.model_card_note = modelCardNote;
+                    }
+                    const safeForWork = config.model_card_safe_for_work ?? config['--model_card_safe_for_work'];
+                    if (safeForWork !== undefined) {
+                        this.answers.model_card_safe_for_work = safeForWork === true || safeForWork === 'true' || safeForWork === '1';
+                    }
+                    const modelCardPrivate = config.model_card_private ?? config['--model_card_private'];
+                    if (modelCardPrivate !== undefined) {
+                        this.answers.model_card_private = modelCardPrivate === true || modelCardPrivate === 'true' || modelCardPrivate === '1';
                     }
 
                     console.log('[TRAINING WIZARD] Loaded current config:', this.answers);
@@ -257,10 +439,22 @@ function trainingWizardComponent() {
                 await this.loadOptimizerChoices();
             }
 
-            if (typeof this.answers.learning_rate === 'number' && this.answers.learning_rate > 0 && this.answers.optimizer) {
+            if (!this.trackerDefaultsLoaded) {
+                await this.loadTrackerDefaults();
+            }
+
+            this.selectedPreset = null;
+
+            if (
+                typeof this.answers.learning_rate === 'number' &&
+                this.answers.learning_rate > 0 &&
+                this.answers.optimizer &&
+                typeof this.answers.train_batch_size === 'number' &&
+                this.answers.train_batch_size > 0
+            ) {
                 this.advancedMode = 'manual';
             } else {
-                this.advancedMode = 'defaults';
+                this.advancedMode = 'preset';
             }
 
             // Re-check dataset on open
@@ -449,6 +643,28 @@ function trainingWizardComponent() {
                 this.modelFlavours = [];
                 this.answers.model_flavour = null;
                 await this.loadModelFlavours(value);
+                if (this.answers.model_type === 'lora') {
+                    await this.loadQuantizationOptions();
+                }
+            }
+
+            if (key === 'model_type') {
+                if (value === 'lora') {
+                    if (!this.answers.lora_rank || this.answers.lora_rank <= 0) {
+                        this.answers.lora_rank = 16;
+                    }
+                    if (!this.answers.base_model_precision) {
+                        this.answers.base_model_precision = 'int8-quanto';
+                    }
+                    await this.loadQuantizationOptions();
+                } else {
+                    this.answers.base_model_precision = 'no_change';
+                    this.answers.quantize_via = 'accelerator';
+                    for (let i = 1; i <= 4; i++) {
+                        this.answers[`text_encoder_${i}_precision`] = 'no_change';
+                    }
+                    await this.loadQuantizationOptions();
+                }
             }
         },
 
@@ -494,6 +710,261 @@ function trainingWizardComponent() {
                     { value: 'wandb', label: 'Weights & Biases' },
                     { value: 'tensorboard', label: 'TensorBoard' }
                 ];
+            }
+        },
+
+        async loadTrackerDefaults() {
+            console.log('[TRAINING WIZARD] Loading tracking field defaults');
+
+            try {
+                const [projectResponse, runResponse] = await Promise.all([
+                    fetch('/api/fields/field/tracker_project_name'),
+                    fetch('/api/fields/field/tracker_run_name')
+                ]);
+
+                if (projectResponse.ok) {
+                    const projectData = await projectResponse.json();
+                    this.trackerFieldDefaults.project.placeholder =
+                        projectData.placeholder || projectData.default_value || this.trackerFieldDefaults.project.placeholder;
+                    this.trackerFieldDefaults.project.defaultValue =
+                        projectData.default_value || this.trackerFieldDefaults.project.defaultValue;
+                }
+
+                if (runResponse.ok) {
+                    const runData = await runResponse.json();
+                    this.trackerFieldDefaults.run.placeholder =
+                        runData.placeholder || runData.default_value || this.trackerFieldDefaults.run.placeholder;
+                    this.trackerFieldDefaults.run.defaultValue =
+                        runData.default_value || this.trackerFieldDefaults.run.defaultValue;
+                }
+            } catch (error) {
+                console.warn('[TRAINING WIZARD] Unable to load tracking defaults:', error);
+            } finally {
+                this.trackerDefaultsLoaded = true;
+            }
+        },
+
+        async fetchModelDetails(modelFamily) {
+            if (!modelFamily) {
+                return null;
+            }
+            if (this.modelDetailsCache[modelFamily]) {
+                return this.modelDetailsCache[modelFamily];
+            }
+
+            try {
+                const response = await fetch(`/api/models/${modelFamily}`);
+                if (!response.ok) {
+                    throw new Error(`Failed to load model details for ${modelFamily}`);
+                }
+                const data = await response.json();
+                this.modelDetailsCache[modelFamily] = data;
+                return data;
+            } catch (error) {
+                console.warn('[TRAINING WIZARD] Unable to load model details:', error);
+                return null;
+            }
+        },
+
+        async loadQuantizationOptions() {
+            if (this.answers.model_type !== 'lora') {
+                this.quantizationFields = { base: null, textEncoders: [], quantizeVia: null };
+                return;
+            }
+
+            if (this.quantizationLoading) {
+                return;
+            }
+
+            this.quantizationLoading = true;
+
+            try {
+                const params = new URLSearchParams({
+                    include_advanced: 'true',
+                    importance_level: 'experimental',
+                    model_type: 'lora'
+                });
+                if (this.answers.model_family) {
+                    params.set('model_family', this.answers.model_family);
+                }
+
+                const [fieldsResponse, modelDetails] = await Promise.all([
+                    fetch(`/api/fields/tabs/model?${params.toString()}`),
+                    this.fetchModelDetails(this.answers.model_family)
+                ]);
+
+                if (!fieldsResponse.ok) {
+                    throw new Error(`Failed to load quantization fields: ${fieldsResponse.statusText}`);
+                }
+
+                const fieldData = await fieldsResponse.json();
+                const sections = fieldData.fields || {};
+                const flattened = Object.values(sections).flat();
+
+                const findField = (name) => flattened.find(field => field.name === name);
+
+                const baseField = findField('base_model_precision');
+                const quantizeViaField = findField('quantize_via');
+                const textEncoderFields = [];
+                for (let i = 1; i <= 4; i++) {
+                    const field = findField(`text_encoder_${i}_precision`);
+                    if (field) {
+                        textEncoderFields.push(field);
+                    }
+                }
+
+                const supportsTextEncoder = Boolean(modelDetails?.attributes?.supports_text_encoder_training);
+                const encoderConfigRaw = modelDetails?.attributes?.text_encoder_configuration;
+                const encoderConfig = (encoderConfigRaw && typeof encoderConfigRaw === 'object') ? encoderConfigRaw : null;
+                let encoderEntries = [];
+                if (encoderConfig) {
+                    encoderEntries = Object.keys(encoderConfig).map(key => ({
+                        key,
+                        name: encoderConfig[key]?.name || ''
+                    }));
+                }
+                let resolvedEncoderCount = 0;
+                if (encoderEntries.length > 0) {
+                    resolvedEncoderCount = encoderEntries.length;
+                } else if (supportsTextEncoder && textEncoderFields.length > 0) {
+                    resolvedEncoderCount = 1;
+                }
+
+                const formatChoices = (choices) => {
+                    if (!Array.isArray(choices)) {
+                        return [];
+                    }
+                    return choices.map(choice => ({
+                        value: choice.value,
+                        label: choice.label || choice.value
+                    }));
+                };
+
+                const baseInfo = baseField ? {
+                    id: baseField.name,
+                    label: baseField.ui_label || 'Base Model Precision',
+                    choices: formatChoices(baseField.choices),
+                    helpText: baseField.help_text || '',
+                    tooltip: baseField.tooltip || '',
+                    defaultValue: baseField.default_value
+                } : null;
+
+                const textEncoderInfo = textEncoderFields
+                    .map((field, index) => {
+                        const fieldId = field.name;
+                        const currentValue = this.answers[fieldId];
+                        const hasCustomValue = currentValue && currentValue !== 'no_change';
+
+                        const choices = formatChoices(field.choices);
+                        const entry = encoderEntries[index] || null;
+                        const rawLabel = (field.ui_label || '').trim();
+                        const entryName = entry && entry.name ? entry.name.trim() : '';
+                        const isDefaultLabel = /^text encoder \d+ precision$/i.test(rawLabel);
+                        const displayName = entryName || (!isDefaultLabel ? rawLabel : '');
+                        const withinSupportedRange = index < resolvedEncoderCount;
+                        const shouldShow =
+                            withinSupportedRange ||
+                            displayName.length > 0 ||
+                            (!isDefaultLabel && rawLabel.length > 0) ||
+                            hasCustomValue;
+                        if (!shouldShow) {
+                            return null;
+                        }
+
+                        const baseLabel = (() => {
+                            if (displayName) {
+                                return displayName.toLowerCase().includes('precision')
+                                    ? displayName
+                                    : `${displayName} Precision`;
+                            }
+                            if (rawLabel) {
+                                return rawLabel;
+                            }
+                            return `Text Encoder ${index + 1} Precision`;
+                        })();
+
+                        const shortLabel = displayName || rawLabel || `Encoder ${index + 1}`;
+                        const helpText = displayName
+                            ? `Set quantisation precision for the ${displayName} text encoder.`
+                            : (field.help_text || '');
+
+                        return {
+                            id: fieldId,
+                            label: baseLabel,
+                            shortLabel,
+                            choices,
+                            helpText: helpText || '',
+                            tooltip: field.tooltip || ''
+                        };
+                    })
+                    .filter(Boolean);
+
+                const quantizeViaInfo = quantizeViaField ? {
+                    id: quantizeViaField.name,
+                    label: quantizeViaField.ui_label || 'Quantization Device',
+                    choices: formatChoices(quantizeViaField.choices),
+                    helpText: quantizeViaField.help_text || '',
+                    tooltip: quantizeViaField.tooltip || '',
+                    defaultValue: quantizeViaField.default_value
+                } : null;
+
+                this.quantizationFields = {
+                    base: baseInfo,
+                    textEncoders: textEncoderInfo,
+                    quantizeVia: quantizeViaInfo
+                };
+
+                if (!baseInfo) {
+                    this.answers.base_model_precision = 'no_change';
+                }
+
+                if (this.answers.model_type === 'lora' && baseInfo) {
+                    const choiceValues = baseInfo.choices.map(choice => choice.value);
+                    if (!this.answers.base_model_precision || !choiceValues.includes(this.answers.base_model_precision)) {
+                        if (choiceValues.includes('int8-quanto')) {
+                            this.answers.base_model_precision = 'int8-quanto';
+                        } else if (baseInfo.defaultValue && choiceValues.includes(baseInfo.defaultValue)) {
+                            this.answers.base_model_precision = baseInfo.defaultValue;
+                        } else if (choiceValues.length > 0) {
+                            this.answers.base_model_precision = choiceValues[0];
+                        } else {
+                            this.answers.base_model_precision = 'no_change';
+                        }
+                    }
+                }
+
+                if (this.answers.model_type === 'lora' && quantizeViaInfo) {
+                    const choiceValues = quantizeViaInfo.choices.map(choice => choice.value);
+                    if (!choiceValues.includes(this.answers.quantize_via)) {
+                        if (choiceValues.includes('accelerator')) {
+                            this.answers.quantize_via = 'accelerator';
+                        } else if (quantizeViaInfo.defaultValue && choiceValues.includes(quantizeViaInfo.defaultValue)) {
+                            this.answers.quantize_via = quantizeViaInfo.defaultValue;
+                        } else if (choiceValues.length > 0) {
+                            this.answers.quantize_via = choiceValues[0];
+                        }
+                    }
+                }
+
+                // Ensure text encoder defaults exist
+                if (textEncoderInfo.length === 0) {
+                    for (let i = 1; i <= 4; i++) {
+                        this.answers[`text_encoder_${i}_precision`] = 'no_change';
+                    }
+                } else {
+                    textEncoderInfo.forEach(field => {
+                        const key = field.id;
+                        const choiceValues = field.choices.map(choice => choice.value);
+                        if (!choiceValues.includes(this.answers[key])) {
+                            this.answers[key] = 'no_change';
+                        }
+                    });
+                }
+            } catch (error) {
+                console.error('[TRAINING WIZARD] Failed to load quantization options:', error);
+                this.quantizationFields = { base: null, textEncoders: [], quantizeVia: null };
+            } finally {
+                this.quantizationLoading = false;
             }
         },
 
@@ -588,6 +1059,9 @@ function trainingWizardComponent() {
 
             // Update config values, formValueStore, AND activeEnvironmentConfig
             Object.entries(this.answers).forEach(([key, value]) => {
+                if (key === 'lora_rank' && this.answers.model_type !== 'lora') {
+                    return;
+                }
                 if (value !== null && value !== undefined && key !== 'enable_validations' && key !== 'createNewDataset') {
                     const fieldName = `--${key}`;
 
@@ -669,23 +1143,46 @@ function trainingWizardComponent() {
 
         activateManualAdvanced() {
             this.advancedMode = 'manual';
+            this.selectedPreset = null;
 
-            const defaults = this.getRecommendedAdvancedValues();
+            const fallback = this.getPresetDefinition('moderate') || {
+                optimizer: 'adamw_bf16',
+                fullLearningRate: 1e-5,
+                loraLearningRate: 1e-4,
+                batchSize: 2
+            };
 
             if (!(typeof this.answers.learning_rate === 'number' && this.answers.learning_rate > 0)) {
-                this.answers.learning_rate = defaults.learning_rate;
+                this.answers.learning_rate = this.getLearningRateForCurrentModel(fallback);
+            }
+
+            if (
+                typeof this.answers.train_batch_size !== 'number' ||
+                Number.isNaN(this.answers.train_batch_size) ||
+                this.answers.train_batch_size <= 0
+            ) {
+                this.answers.train_batch_size = fallback.batchSize;
             }
 
             if (!this.answers.optimizer || !this.isOptimizerChoiceAvailable(this.answers.optimizer)) {
-                this.answers.optimizer = this.resolveOptimizerSelection(defaults.optimizer);
+                this.answers.optimizer = this.resolveOptimizerSelection(fallback.optimizer);
             }
         },
 
-        applyAdvancedDefaultsAndContinue() {
-            const defaults = this.getRecommendedAdvancedValues();
-            this.answers.learning_rate = defaults.learning_rate;
-            this.answers.optimizer = this.resolveOptimizerSelection(defaults.optimizer);
-            this.advancedMode = 'defaults';
+        applyPreset(presetKey) {
+            const preset = this.getPresetDefinition(presetKey);
+            if (!preset) {
+                console.warn('[TRAINING WIZARD] Unknown preset selected:', presetKey);
+                return;
+            }
+
+            this.advancedMode = 'preset';
+            this.selectedPreset = presetKey;
+
+            this.answers.learning_rate = this.getLearningRateForCurrentModel(preset);
+            this.answers.optimizer = this.resolveOptimizerSelection(preset.optimizer);
+            this.answers.train_batch_size = preset.batchSize ?? 2;
+
             this.nextStep();
         },
 
@@ -723,10 +1220,20 @@ function trainingWizardComponent() {
                 'checkpointing_steps': 'checkpoints',
                 'validation_steps': 'validations',
                 'validation_prompt': 'validations',
+                'validation_resolution': 'validations',
+                'validation_num_inference_steps': 'validations',
                 'disable_validations': 'validations',
                 'report_to': 'publishing',
+                'tracker_project_name': 'basic',
+                'tracker_run_name': 'basic',
+                'hub_model_id': 'publishing',
+                'model_card_note': 'publishing',
+                'model_card_safe_for_work': 'publishing',
+                'model_card_private': 'publishing',
                 'learning_rate': 'training',
-                'optimizer': 'training'
+                'optimizer': 'training',
+                'train_batch_size': 'basic',
+                'lora_rank': 'model'
             };
 
             return fieldToTab[fieldName] || 'basic';
@@ -778,14 +1285,91 @@ function trainingWizardComponent() {
             return '';
         },
 
-        getRecommendedAdvancedValues() {
-            if (this.answers.model_family === 'flux' && this.answers.model_type === 'lora') {
-                return { learning_rate: 1e-4, optimizer: 'adamw_bf16' };
+        getPresetDefinition(key) {
+            const definitions = {
+                aggressive: {
+                    key: 'aggressive',
+                    label: 'Aggressive',
+                    tagline: 'Fast convergence, higher risk of instability.',
+                    optimizer: 'optimi-lion',
+                    fullLearningRate: 1e-5,
+                    loraLearningRate: 1e-4,
+                    batchSize: 2
+                },
+                moderate: {
+                    key: 'moderate',
+                    label: 'Moderate',
+                    tagline: 'Balanced stability with AdamW BF16.',
+                    optimizer: 'adamw_bf16',
+                    fullLearningRate: 1e-5,
+                    loraLearningRate: 1e-4,
+                    batchSize: 2
+                },
+                slow_safe: {
+                    key: 'slow_safe',
+                    label: 'Slow & Safe',
+                    tagline: 'Lower risk, more VRAM due to larger batch size.',
+                    optimizer: 'adamw_bf16',
+                    fullLearningRate: 1e-5,
+                    loraLearningRate: 1e-4,
+                    batchSize: 4
+                }
+            };
+
+            return definitions[key] || null;
+        },
+
+        getAdvancedPresets() {
+            const presetKeys = ['aggressive', 'moderate', 'slow_safe'];
+            return presetKeys
+                .map(key => {
+                    const preset = this.getPresetDefinition(key);
+                    if (!preset) {
+                        return null;
+                    }
+
+                    const currentLr = this.formatLearningRate(this.getLearningRateForCurrentModel(preset));
+                    const loraLr = this.formatLearningRate(preset.loraLearningRate);
+                    const fullLr = this.formatLearningRate(preset.fullLearningRate);
+
+                    return {
+                        key: preset.key,
+                        label: preset.label,
+                        tagline: preset.tagline,
+                        optimizer: preset.optimizer,
+                        batchSize: preset.batchSize,
+                        displayLearningRate: currentLr,
+                        loraLearningRate: loraLr,
+                        fullLearningRate: fullLr
+                    };
+                })
+                .filter(Boolean);
+        },
+
+        getLearningRateForCurrentModel(preset) {
+            if (!preset) {
+                return typeof this.answers.learning_rate === 'number' && this.answers.learning_rate > 0
+                    ? this.answers.learning_rate
+                    : 1e-4;
             }
-            if (this.answers.model_family === 'wan') {
-                return { learning_rate: 5e-5, optimizer: 'optimi-lion' };
+            const isLora = this.answers.model_type === 'lora';
+            return isLora ? preset.loraLearningRate : preset.fullLearningRate;
+        },
+
+        getLoraRankIndex() {
+            const current = parseInt(this.answers.lora_rank);
+            const idx = this.loraRankOptions.indexOf(current);
+            if (idx >= 0) {
+                return idx;
             }
-            return { learning_rate: 1e-4, optimizer: 'adamw_bf16' };
+            const defaultIdx = this.loraRankOptions.indexOf(16);
+            return defaultIdx >= 0 ? defaultIdx : 0;
+        },
+
+        setLoraRankFromIndex(index) {
+            const idx = Math.min(Math.max(parseInt(index), 0), this.loraRankOptions.length - 1);
+            const value = this.loraRankOptions[idx] || 16;
+            this.answers.lora_rank = value;
         },
 
         formatLearningRate(value) {
@@ -801,10 +1385,36 @@ function trainingWizardComponent() {
             return value.toString();
         },
 
-        getRecommendedSettings() {
-            const defaults = this.getRecommendedAdvancedValues();
-            const displayLr = this.formatLearningRate(defaults.learning_rate);
-            return `Learning rate: ${displayLr}, Optimizer: ${defaults.optimizer}`;
+        getBaseQuantizationSummary() {
+            if (this.answers.model_type !== 'lora') {
+                return 'N/A';
+            }
+            if (!this.quantizationFields.base) {
+                return 'Defaults';
+            }
+            const base = this.answers.base_model_precision || 'no_change';
+            const via = this.answers.quantize_via || 'accelerator';
+            return `${base} via ${via}`;
+        },
+
+        getTextEncoderPrecisionSummary() {
+            if (this.answers.model_type !== 'lora') {
+                return 'N/A';
+            }
+            if (!Array.isArray(this.quantizationFields.textEncoders) || this.quantizationFields.textEncoders.length === 0) {
+                return 'Defaults';
+            }
+            const overrides = this.quantizationFields.textEncoders
+                .map(field => {
+                    const value = this.answers[field.id];
+                    if (!value || value === 'no_change') {
+                        return null;
+                    }
+                    const label = field.shortLabel || field.label || field.id;
+                    return `${label}: ${value}`;
+                })
+                .filter(Boolean);
+            return overrides.length > 0 ? overrides.join(', ') : 'Defaults';
         },
 
         // Dataset wizard integration

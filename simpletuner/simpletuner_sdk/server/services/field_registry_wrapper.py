@@ -44,9 +44,12 @@ class LazyFieldRegistry:
             return False
         return (time.time() - self._cache_timestamps[cache_key]) < self._cache_ttl
 
-    def get_fields_for_tab(self, tab_name: str) -> List[Any]:
-        """Get fields for a specific tab with caching and TTL."""
+    def get_fields_for_tab(self, tab_name: str, context: Optional[Dict[str, Any]] = None) -> List[Any]:
+        """Get fields for a specific tab with optional context filtering."""
         cache_key = f"tab_{tab_name}"
+        if context:
+            context_key = tuple(sorted(context.items()))
+            cache_key = f"{cache_key}_{context_key}"
 
         # Check if we have valid cached data
         if cache_key in self._fields_cache and self._is_cache_valid(cache_key):
@@ -60,7 +63,14 @@ class LazyFieldRegistry:
             return []
 
         try:
-            fields = registry.get_fields_for_tab(tab_name)
+            try:
+                if context:
+                    fields = registry.get_fields_for_tab(tab_name, context)
+                else:
+                    fields = registry.get_fields_for_tab(tab_name)
+            except TypeError:
+                # Registry implementation may not accept context parameter
+                fields = registry.get_fields_for_tab(tab_name)
             self._fields_cache[cache_key] = fields
             self._cache_timestamps[cache_key] = time.time()
             logger.debug(f"Cached {len(fields)} fields for tab '{tab_name}'")

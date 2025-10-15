@@ -1,4 +1,4 @@
-<!-- Training Setup Wizard Modal -->
+<!-- Training Configuration Wizard Modal -->
 <div x-data="trainingWizardComponent()"
      x-show="wizardOpen"
      @open-training-wizard.window="openWizard()"
@@ -113,6 +113,80 @@
                         <p class="text-muted small">Train entire model - Higher quality, requires more resources</p>
                     </div>
                 </div>
+
+                <div class="mt-4"
+                     x-show="answers.model_type === 'lora' && (quantizationFields.base || quantizationFields.textEncoders.length > 0 || quantizationFields.quantizeVia)"
+                     x-transition>
+                    <label class="form-label d-flex justify-content-between align-items-center">
+                        LoRA Rank
+                        <span class="badge bg-secondary" x-text="answers.lora_rank"></span>
+                    </label>
+                    <input type="range"
+                           class="form-range"
+                           :min="0"
+                           :max="loraRankOptions.length - 1"
+                           :value="getLoraRankIndex()"
+                           list="lora-rank-options"
+                           @input="setLoraRankFromIndex($event.target.value)">
+                    <datalist id="lora-rank-options">
+                        <template x-for="(rank, idx) in loraRankOptions" :key="rank">
+                            <option :value="idx" x-text="rank"></option>
+                        </template>
+                    </datalist>
+                    <div class="form-text">
+                        Lower ranks produce smaller LoRA files with faster training, higher ranks capture more detail.
+                    </div>
+                </div>
+
+                <div class="mt-4" x-show="answers.model_type === 'lora'" x-transition>
+                    <h6 class="wizard-question-small">Quantization</h6>
+                    <p class="text-muted small">Quantise the base model or text encoders to reduce VRAM usage. Defaults apply automatically for most runs.</p>
+
+                    <div class="text-muted small mb-3" x-show="quantizationLoading">
+                        Loading quantization options...
+                    </div>
+
+                    <div x-show="!quantizationLoading && (quantizationFields.base || quantizationFields.textEncoders.length > 0 || quantizationFields.quantizeVia)">
+                        <div class="mb-3" x-show="quantizationFields.base">
+                            <label class="form-label" x-text="quantizationFields.base ? quantizationFields.base.label : 'Base Model Precision'"></label>
+                            <select class="form-select"
+                                    x-model="answers.base_model_precision">
+                                <template x-for="choice in (quantizationFields.base ? quantizationFields.base.choices : [])" :key="choice.value">
+                                    <option :value="choice.value" x-text="choice.label"></option>
+                                </template>
+                            </select>
+                            <div class="form-text" x-show="quantizationFields.base && quantizationFields.base.helpText" x-text="quantizationFields.base ? quantizationFields.base.helpText : ''"></div>
+                        </div>
+
+                        <template x-for="encoderField in quantizationFields.textEncoders" :key="encoderField.id">
+                            <div class="mb-3">
+                                <label class="form-label" x-text="encoderField.label"></label>
+                                <select class="form-select"
+                                        x-model="answers[encoderField.id]">
+                                    <template x-for="choice in encoderField.choices" :key="choice.value">
+                                        <option :value="choice.value" x-text="choice.label"></option>
+                                    </template>
+                                </select>
+                                <div class="form-text" x-show="encoderField.helpText" x-text="encoderField.helpText"></div>
+                            </div>
+                        </template>
+
+                        <div class="mb-0" x-show="quantizationFields.quantizeVia">
+                            <label class="form-label" x-text="quantizationFields.quantizeVia ? quantizationFields.quantizeVia.label : 'Quantization Device'"></label>
+                            <select class="form-select"
+                                    x-model="answers.quantize_via">
+                                <template x-for="choice in (quantizationFields.quantizeVia ? quantizationFields.quantizeVia.choices : [])" :key="choice.value">
+                                    <option :value="choice.value" x-text="choice.label"></option>
+                                </template>
+                            </select>
+                            <div class="form-text" x-show="quantizationFields.quantizeVia && quantizationFields.quantizeVia.helpText" x-text="quantizationFields.quantizeVia ? quantizationFields.quantizeVia.helpText : ''"></div>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-info mb-0" x-show="!quantizationLoading && !(quantizationFields.base || quantizationFields.textEncoders.length > 0 || quantizationFields.quantizeVia)">
+                        Quantization options are not available for this model configuration.
+                    </div>
+                </div>
             </div>
 
             <!-- Step 4: Publishing -->
@@ -135,6 +209,9 @@
 
                 <div x-show="answers.push_to_hub" class="mt-4">
                     <h6 class="wizard-question-small">Also publish intermediate checkpoints?</h6>
+                    <p class="text-muted small">
+                        Enable this to push every checkpoint to the Hub. This consumes considerably more Hub storage; disable it to upload only the final checkpoint (you can still upload others later from the Checkpoints page).
+                    </p>
                     <div class="wizard-options-inline">
                         <button class="btn btn-sm"
                                 :class="answers.push_checkpoints_to_hub ? 'btn-primary' : 'btn-outline-secondary'"
@@ -146,6 +223,40 @@
                                 @click="selectAnswer('push_checkpoints_to_hub', false)">
                             No
                         </button>
+                    </div>
+
+                    <div class="mt-4">
+                        <label class="form-label">Hub Repository ID</label>
+                        <input type="text"
+                               class="form-control"
+                               x-model="answers.hub_model_id"
+                               placeholder="username/project-name">
+                        <div class="form-text">
+                            Provide the destination repo, e.g. <code>yourname/awesome-lora</code>. Required when publishing.
+                        </div>
+                    </div>
+
+                    <div class="mt-3">
+                        <label class="form-label">Model Card Note (optional)</label>
+                        <textarea class="form-control"
+                                  x-model="answers.model_card_note"
+                                  rows="3"
+                                  placeholder="Add release notes or usage tips..."></textarea>
+                        <div class="form-text">This note appears at the top of the auto-generated model card.</div>
+                    </div>
+
+                    <div class="form-check mt-3">
+                        <input class="form-check-input" type="checkbox" id="model-card-sfw" x-model="answers.model_card_safe_for_work">
+                        <label class="form-check-label" for="model-card-sfw">
+                            Mark model card as safe for work
+                        </label>
+                    </div>
+
+                    <div class="form-check mt-2">
+                        <input class="form-check-input" type="checkbox" id="model-card-private" x-model="answers.model_card_private">
+                        <label class="form-check-label" for="model-card-private">
+                            Make the Hub repo private (requires private access)
+                        </label>
                     </div>
                 </div>
             </div>
@@ -174,7 +285,7 @@
                 </div>
             </div>
 
-            <!-- Step 6: Validations Enable/Disable -->
+            <!-- Step 6: Validations -->
             <div x-show="currentStep.id === 'validations-enable'" class="wizard-step-content">
                 <h6 class="wizard-question">Do you want to run validations during training?</h6>
                 <p class="text-muted mb-4">Validations generate sample images to monitor training progress.</p>
@@ -195,33 +306,78 @@
                 </div>
 
                 <div x-show="answers.enable_validations" class="mt-4">
-                    <label>Run validation every N steps:</label>
-                    <input type="number"
-                           class="form-control"
-                           x-model.number="answers.validation_steps"
-                           min="10"
-                           step="10"
-                           placeholder="100">
+                    <div class="mb-3">
+                        <label class="form-label">Run validation every N steps</label>
+                        <input type="number"
+                               class="form-control"
+                               x-model.number="answers.validation_steps"
+                               min="10"
+                               step="10"
+                               placeholder="100">
+                        <div class="form-text">Choose an interval that matches how frequently you want fresh previews.</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Validation Prompt</label>
+                        <textarea class="form-control"
+                                  x-model="answers.validation_prompt"
+                                  @input="wizardNavigateToField('validation_prompt')"
+                                  rows="3"
+                                  placeholder="Describe the output you expect during normal use"></textarea>
+                        <div class="form-text">
+                            Write the prompt exactly as you would when sampling the trained model. You can add additional prompts later from the Validation tab once the wizard is complete.
+                        </div>
+                    </div>
+
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Validation Resolution</label>
+                            <input type="text"
+                                   class="form-control"
+                                   x-model="answers.validation_resolution"
+                                   placeholder="1024x1024">
+                            <div class="form-text">Match the aspect ratios or sizes you plan to render (supports comma-separated values).</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Validation Inference Steps</label>
+                            <input type="number"
+                                   class="form-control"
+                                   x-model.number="answers.validation_num_inference_steps"
+                                   min="1"
+                                   step="1"
+                                   placeholder="20">
+                            <div class="form-text">Use the same number of steps you typically rely on for quality previews.</div>
+                        </div>
+                    </div>
+
+                    <div class="alert mt-3"
+                         x-show="validationAlignmentDetails.hasData"
+                         :class="validationAlignmentDetails.aligns ? 'alert-success' : 'alert-warning'">
+                        <div>
+                            <strong>Checkpoint interval:</strong>
+                            <span x-text="validationAlignmentDetails.checkpointingSteps"></span> steps.
+                            <strong>Validation interval:</strong>
+                            <span x-text="validationAlignmentDetails.validationSteps"></span> steps.
+                        </div>
+                        <div x-show="validationAlignmentDetails.aligns">
+                            Great! Your intervals align, so validation images will be stored with each checkpoint's model card.
+                        </div>
+                        <div x-show="!validationAlignmentDetails.aligns">
+                            When these intervals align, validation renders are bundled with checkpoint model cards; otherwise they remain in the output directory. Try using
+                            <span x-text="validationAlignmentDetails.example"></span> steps for validations to line things up.
+                        </div>
+                        <div class="small text-muted mt-1">
+                            Alignment is optional; only set it if saving validation images alongside checkpoints matters to you.
+                        </div>
+                    </div>
+
+                    <div class="alert alert-info mt-3" x-show="!validationAlignmentDetails.hasData">
+                        Set both checkpoint and validation intervals to see if they align. Matching values will save your validation images with each checkpoint automatically.
+                    </div>
                 </div>
             </div>
 
-            <!-- Step 7: Validation Prompt (conditional) -->
-            <div x-show="currentStep.id === 'validation-prompt'" class="wizard-step-content">
-                <h6 class="wizard-question">What prompt should be used for validation?</h6>
-                <p class="text-muted mb-4">This prompt generates sample images during training to monitor progress.</p>
-
-                <textarea class="form-control"
-                          x-model="answers.validation_prompt"
-                          @input="wizardNavigateToField('validation_prompt')"
-                          rows="3"
-                          placeholder="e.g., a photo of a cat sitting on a windowsill"></textarea>
-
-                <div class="form-text">
-                    Tip: Use descriptive prompts that represent your training goal. For subject training, include your subject identifier.
-                </div>
-            </div>
-
-            <!-- Step 8: Logging Platform -->
+            <!-- Step 7: Logging Platform -->
             <div x-show="currentStep.id === 'logging'" class="wizard-step-content">
                 <h6 class="wizard-question">Enable logging to external platform?</h6>
                 <p class="text-muted mb-4">Track metrics, losses, and generated images externally (optional).</p>
@@ -235,9 +391,37 @@
                         </div>
                     </template>
                 </div>
+
+                <div class="mt-4">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Project Name (optional)</label>
+                            <input type="text"
+                                   class="form-control"
+                                   x-model="answers.tracker_project_name"
+                                   :placeholder="trackerFieldDefaults.project.placeholder">
+                            <div class="form-text">
+                                Defaults to <span x-text="trackerFieldDefaults.project.defaultValue"></span> when left blank.
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Run Name (optional)</label>
+                            <input type="text"
+                                   class="form-control"
+                                   x-model="answers.tracker_run_name"
+                                   :placeholder="trackerFieldDefaults.run.placeholder">
+                            <div class="form-text">
+                                Leave empty to auto-generate a timestamped name for each run.
+                            </div>
+                        </div>
+                    </div>
+                    <div class="alert alert-info mt-3" x-show="!loggingEnabled">
+                        Logging is currently disabled. These values will be applied automatically once you select a provider.
+                    </div>
+                </div>
             </div>
 
-            <!-- Step 9: Dataset Configuration -->
+            <!-- Step 8: Dataset Configuration -->
             <div x-show="currentStep.id === 'dataset'" class="wizard-step-content">
                 <h6 class="wizard-question">Configure your training dataset</h6>
 
@@ -262,24 +446,38 @@
                 </div>
             </div>
 
-            <!-- Step 10: Advanced Settings -->
+            <!-- Step 9: Advanced Settings -->
             <div x-show="currentStep.id === 'advanced'" class="wizard-step-content">
                 <h6 class="wizard-question">Configure learning rate and optimizer?</h6>
-                <p class="text-muted mb-4">Advanced settings - can be skipped to use recommended defaults.</p>
+                <p class="text-muted mb-4">Pick a preset tailored to your training mode or adjust the values manually.</p>
 
-                <div class="wizard-options">
+                <div class="wizard-options mb-3">
                     <div class="wizard-option-card"
                          :class="{ 'selected': advancedMode === 'manual' }"
                          @click="activateManualAdvanced()">
                         <h6>Manual configuration</h6>
-                        <p class="text-muted small">Adjust learning rate and optimizer directly here</p>
+                        <p class="text-muted small">Adjust optimizer, learning rate, and batch size directly here</p>
                     </div>
-                    <div class="wizard-option-card"
-                         :class="{ 'selected': advancedMode === 'defaults' }"
-                         @click="applyAdvancedDefaultsAndContinue()">
-                        <h6>Use recommended defaults</h6>
-                        <p class="text-muted small" x-text="getRecommendedSettings()"></p>
-                    </div>
+                </div>
+
+                <div class="wizard-options preset-options">
+                    <template x-for="preset in getAdvancedPresets()" :key="preset.key">
+                        <div class="wizard-option-card"
+                             :class="{ 'selected': advancedMode === 'preset' && selectedPreset === preset.key }"
+                             @click="applyPreset(preset.key)">
+                            <h6 x-text="preset.label"></h6>
+                            <p class="text-muted small" x-text="preset.tagline"></p>
+                            <ul class="text-muted small mb-0 ps-3">
+                                <li><strong>Optimizer:</strong> <span x-text="preset.optimizer"></span></li>
+                                <li>
+                                    <strong>Learning Rate:</strong>
+                                    <span x-text="preset.displayLearningRate"></span>
+                                    <span class="text-muted">(LoRA: <span x-text="preset.loraLearningRate"></span>; Full: <span x-text="preset.fullLearningRate"></span>)</span>
+                                </li>
+                                <li><strong>Batch Size:</strong> <span x-text="preset.batchSize"></span></li>
+                            </ul>
+                        </div>
+                    </template>
                 </div>
 
                 <div class="mt-4" x-show="advancedMode === 'manual'" x-transition>
@@ -292,6 +490,17 @@
                                step="any"
                                placeholder="e.g. 0.0001">
                         <div class="form-text">Use small, positive values. Lower rates improve stability.</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Training Batch Size</label>
+                        <input type="number"
+                               class="form-control"
+                               x-model.number="answers.train_batch_size"
+                               min="1"
+                               step="1"
+                               placeholder="e.g. 2">
+                        <div class="form-text">Higher batch sizes increase memory use but can stabilise updates.</div>
                     </div>
 
                     <div class="mb-0">
@@ -310,7 +519,7 @@
                 </div>
             </div>
 
-            <!-- Step 11: Review -->
+            <!-- Step 10: Review -->
             <div x-show="currentStep.id === 'review'" class="wizard-step-content">
                 <h6 class="wizard-question">Review your configuration</h6>
 
@@ -325,9 +534,29 @@
                         <span x-text="answers.model_type || 'Not set'"></span>
                         <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 2 : 1)">Edit</button>
                     </div>
+                    <div class="review-item" x-show="answers.model_type === 'lora'">
+                        <label>LoRA Rank:</label>
+                        <span x-text="answers.lora_rank"></span>
+                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 2 : 1)">Edit</button>
+                    </div>
+                    <div class="review-item" x-show="answers.model_type === 'lora'">
+                        <label>Quantization:</label>
+                        <span x-text="getBaseQuantizationSummary()"></span>
+                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 2 : 1)">Edit</button>
+                    </div>
+                    <div class="review-item" x-show="answers.model_type === 'lora' && quantizationFields.textEncoders.length > 0">
+                        <label>Text Encoder Precision:</label>
+                        <span x-text="getTextEncoderPrecisionSummary()"></span>
+                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 2 : 1)">Edit</button>
+                    </div>
                     <div class="review-item">
                         <label>Publishing:</label>
                         <span x-text="answers.push_to_hub ? 'Enabled' : 'Disabled'"></span>
+                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 3 : 2)">Edit</button>
+                    </div>
+                    <div class="review-item" x-show="answers.push_to_hub">
+                        <label>Hub Repository:</label>
+                        <span x-text="answers.hub_model_id || 'Not set'"></span>
                         <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 3 : 2)">Edit</button>
                     </div>
                     <div class="review-item">
@@ -343,17 +572,17 @@
                     <div class="review-item" x-show="answers.enable_validations">
                         <label>Validation Prompt:</label>
                         <span x-text="answers.validation_prompt || 'Not set'" class="text-truncate" style="max-width: 300px;"></span>
-                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 6 : 5)">Edit</button>
+                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 5 : 4)">Edit</button>
                     </div>
                     <div class="review-item">
                         <label>Logging:</label>
-                        <span x-text="answers.report_to || 'none'"></span>
-                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 7 : 6)">Edit</button>
+                        <span x-text="loggingSummary"></span>
+                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 6 : 5)">Edit</button>
                     </div>
                     <div class="review-item">
                         <label>Dataset:</label>
                         <span x-text="hasExistingDataset || datasetConfigured ? 'Configured' : 'Not configured'"></span>
-                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 8 : 7)">Edit</button>
+                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 7 : 6)">Edit</button>
                     </div>
                 </div>
 
