@@ -1102,10 +1102,167 @@
                     }
 
                     const result = await response.json();
+                    const configNameSnapshot = this.newConfigName;
+                    const dataloaderInfo = result?.dataloader || {};
+                    const returnedPath = dataloaderInfo.path || '';
+                    const fallbackPath = configNameSnapshot
+                        ? `${environmentName}/multidatabackend-${configNameSnapshot}.json`
+                        : '';
+                    const initialPath = returnedPath || fallbackPath;
+                    const environmentLabel =
+                        (result?.environment && (result.environment.name || result.environment.display_name))
+                        || environmentName
+                        || '';
 
                     // Show success message
                     if (window.showToast) {
-                        window.showToast(`Configuration created successfully at ${result.dataloader?.path || this.newConfigName + '.json'}`, 'success');
+                        const successPath = returnedPath || fallbackPath || configNameSnapshot || 'new configuration';
+                        window.showToast(`Configuration created successfully at ${successPath}`, 'success');
+                    }
+
+                    let finalConfigPath = initialPath;
+
+                    // Refresh dataloader config listings so selectors stay in sync
+                    try {
+                        const dataloaderStore = Alpine.store('dataloaderConfigs');
+                        if (dataloaderStore && typeof dataloaderStore.load === 'function') {
+                            await dataloaderStore.load(true);
+                            window.dispatchEvent(new CustomEvent('configs-updated'));
+                        }
+                    } catch (storeError) {
+                        console.warn('[NEW CONFIG] Unable to refresh dataloader configs store:', storeError);
+                    }
+
+                    // Update trainer store state so the new config becomes active immediately
+                    try {
+                        const trainerStore = Alpine.store('trainer');
+                        if (trainerStore) {
+                            if (typeof trainerStore.fetchActiveEnvironmentConfig === 'function') {
+                                try {
+                                    await trainerStore.fetchActiveEnvironmentConfig();
+                                } catch (refreshError) {
+                                    console.warn('[NEW CONFIG] fetchActiveEnvironmentConfig failed:', refreshError);
+                                }
+                            }
+
+                            const activeConfig = trainerStore.activeEnvironmentConfig || {};
+                            const resolvedFromConfig =
+                                activeConfig['--data_backend_config']
+                                || activeConfig.data_backend_config
+                                || '';
+                            if (resolvedFromConfig) {
+                                finalConfigPath = resolvedFromConfig;
+                            }
+
+                            if (!trainerStore.configValues) {
+                                trainerStore.configValues = {};
+                            }
+                            if (finalConfigPath) {
+                                trainerStore.configValues['data_backend_config'] = finalConfigPath;
+                                trainerStore.configValues['--data_backend_config'] = finalConfigPath;
+                            }
+
+                            if (!trainerStore.activeEnvironmentConfig) {
+                                trainerStore.activeEnvironmentConfig = {};
+                            }
+                            if (finalConfigPath) {
+                                trainerStore.activeEnvironmentConfig['data_backend_config'] = finalConfigPath;
+                                trainerStore.activeEnvironmentConfig['--data_backend_config'] = finalConfigPath;
+                            }
+
+                            if (trainerStore.markFormDirty) {
+                                trainerStore.markFormDirty();
+                            }
+
+                            if (finalConfigPath && typeof trainerStore.loadDatasetsFromConfig === 'function') {
+                                try {
+                                    await trainerStore.loadDatasetsFromConfig(finalConfigPath);
+                                } catch (datasetError) {
+                                    console.error('[NEW CONFIG] Failed to load datasets for new config:', datasetError);
+                                }
+                            }
+                        }
+                    } catch (trainerError) {
+                        console.error('[NEW CONFIG] Failed to update trainer store after config creation:', trainerError);
+                    }
+
+                    // Keep the datasets dropdown in sync with the newly-created config
+                    try {
+                        const dropdown = document.querySelector('[data-field-id="datasets_page_data_backend_config"]');
+                        if (dropdown && finalConfigPath) {
+                            const menu = dropdown.querySelector('.dataset-dropdown-menu');
+                            const displayEnv =
+                                environmentLabel
+                                || (finalConfigPath.includes('/') ? finalConfigPath.split('/')[0] : finalConfigPath);
+                            const displayPath = returnedPath || finalConfigPath;
+
+                            if (menu) {
+                                let optionFound = false;
+                                menu.querySelectorAll('.dataset-option').forEach(option => {
+                                    if (optionFound) {
+                                        return;
+                                    }
+                                    if ((option.dataset.value || '') === finalConfigPath) {
+                                        optionFound = true;
+                                        option.dataset.environment = displayEnv;
+                                        option.dataset.path = displayPath;
+                                        option.innerHTML = `
+                                            <span class="d-flex justify-content-between align-items-center w-100">
+                                                <span class="dataset-env">${displayEnv}</span>
+                                                <span class="dataset-path">${displayPath}</span>
+                                            </span>
+                                        `;
+                                    }
+                                });
+
+                                if (!optionFound) {
+                                    const optionButton = document.createElement('button');
+                                    optionButton.type = 'button';
+                                    optionButton.className = 'dropdown-item dataset-option';
+                                    optionButton.dataset.value = finalConfigPath;
+                                    optionButton.dataset.environment = displayEnv;
+                                    optionButton.dataset.path = displayPath;
+                                    optionButton.innerHTML = `
+                                        <span class="d-flex justify-content-between align-items-center w-100">
+                                            <span class="dataset-env">${displayEnv}</span>
+                                            <span class="dataset-path">${displayPath}</span>
+                                        </span>
+                                    `;
+
+                                    const divider = menu.querySelector('.dropdown-divider');
+                                    const manageLink = menu.querySelector('a.dropdown-item');
+                                    if (divider) {
+                                        menu.insertBefore(optionButton, divider);
+                                    } else if (manageLink) {
+                                        menu.insertBefore(optionButton, manageLink);
+                                    } else {
+                                        menu.appendChild(optionButton);
+                                    }
+                                }
+                            }
+
+                            if (typeof window.__setDatasetSelection === 'function') {
+                                window.__setDatasetSelection(dropdown, displayEnv, displayPath, finalConfigPath);
+                            } else {
+                                const hiddenInput = dropdown.querySelector('input[type="hidden"]');
+                                if (hiddenInput) {
+                                    hiddenInput.value = finalConfigPath;
+                                }
+                                const toggleLabel = dropdown.querySelector('.dataset-toggle-label');
+                                if (toggleLabel) {
+                                    toggleLabel.innerHTML = `
+                                        <span class="dataset-env">${displayEnv}</span>
+                                        <span class="dataset-path">${displayPath}</span>
+                                    `;
+                                }
+                            }
+
+                            if (typeof window.__refreshDatasetDropdowns === 'function') {
+                                window.__refreshDatasetDropdowns();
+                            }
+                        }
+                    } catch (dropdownError) {
+                        console.error('[NEW CONFIG] Failed to update dataset dropdown:', dropdownError);
                     }
 
                     // Close the modal
