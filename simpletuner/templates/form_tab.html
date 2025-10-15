@@ -313,21 +313,59 @@
         // Collapse all sections
         collapseAllBtn.addEventListener('click', function() {
             const sections = getSectionCollapses();
+            let completedCount = 0;
+            const totalSections = sections.length;
+
+            if (totalSections === 0) {
+                saveCollapsedState();
+                return;
+            }
+
             sections.forEach(section => {
                 const bsCollapse = bootstrap.Collapse.getInstance(section) || new bootstrap.Collapse(section, { toggle: false });
+
+                // Listen for the collapse animation to complete
+                const onHidden = () => {
+                    completedCount++;
+                    if (completedCount === totalSections) {
+                        // All sections have finished collapsing
+                        saveCollapsedState();
+                    }
+                    section.removeEventListener('hidden.bs.collapse', onHidden);
+                };
+
+                section.addEventListener('hidden.bs.collapse', onHidden);
                 bsCollapse.hide();
             });
-            saveCollapsedState();
         });
 
         // Expand all sections
         expandAllBtn.addEventListener('click', function() {
             const sections = getSectionCollapses();
+            let completedCount = 0;
+            const totalSections = sections.length;
+
+            if (totalSections === 0) {
+                saveCollapsedState();
+                return;
+            }
+
             sections.forEach(section => {
                 const bsCollapse = bootstrap.Collapse.getInstance(section) || new bootstrap.Collapse(section, { toggle: false });
+
+                // Listen for the expand animation to complete
+                const onShown = () => {
+                    completedCount++;
+                    if (completedCount === totalSections) {
+                        // All sections have finished expanding
+                        saveCollapsedState();
+                    }
+                    section.removeEventListener('shown.bs.collapse', onShown);
+                };
+
+                section.addEventListener('shown.bs.collapse', onShown);
                 bsCollapse.show();
             });
-            saveCollapsedState();
         });
 
         // Update chevron icons and save state when sections collapse/expand
@@ -337,6 +375,7 @@
             const targetEl = document.querySelector(targetId);
 
             if (targetEl) {
+                // Update icon at the START of animation (for immediate visual feedback)
                 targetEl.addEventListener('show.bs.collapse', function() {
                     const icon = toggle.querySelector('i');
                     if (icon) {
@@ -344,7 +383,6 @@
                         icon.classList.add('fa-chevron-down');
                     }
                     toggle.setAttribute('aria-expanded', 'true');
-                    saveCollapsedState();
                 });
 
                 targetEl.addEventListener('hide.bs.collapse', function() {
@@ -354,6 +392,14 @@
                         icon.classList.add('fa-chevron-right');
                     }
                     toggle.setAttribute('aria-expanded', 'false');
+                });
+
+                // Save state at the END of animation (when DOM is updated)
+                targetEl.addEventListener('shown.bs.collapse', function() {
+                    saveCollapsedState();
+                });
+
+                targetEl.addEventListener('hidden.bs.collapse', function() {
                     saveCollapsedState();
                 });
             }
