@@ -163,14 +163,19 @@
 }
 
 .wizard-step.completed .step-number {
-    background: rgba(34, 197, 94, 0.2);
-    border-color: #22c55e;
-    color: #22c55e;
+    background: linear-gradient(135deg, #22c55e 0%, #15803d 100%);
+    border-color: #15803d;
+    color: transparent;
+    box-shadow: 0 0 18px rgba(34, 197, 94, 0.45);
 }
 
 .wizard-step.completed .step-number::before {
     content: '✓';
     position: absolute;
+    color: #f0fdf4;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
 }
 
 .step-label {
