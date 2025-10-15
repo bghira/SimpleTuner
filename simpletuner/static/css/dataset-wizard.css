@@ -1,6 +1,6 @@
 /* Dataset Creation Wizard Styles */
 
-.wizard-progress {
+.dataset-wizard-modal .wizard-progress {
     display: flex;
     justify-content: space-between;
     padding: 1.5rem 2rem 1rem;
@@ -8,7 +8,7 @@
     background: rgba(0, 0, 0, 0.2);
 }
 
-.wizard-step {
+.dataset-wizard-modal .wizard-step {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -19,15 +19,15 @@
     transition: opacity 0.3s;
 }
 
-.wizard-step.active {
+.dataset-wizard-modal .wizard-step.active {
     opacity: 1;
 }
 
-.wizard-step.completed {
+.dataset-wizard-modal .wizard-step.completed {
     opacity: 0.8;
 }
 
-.wizard-step:not(:last-child)::after {
+.dataset-wizard-modal .wizard-step:not(:last-child)::after {
     content: '';
     position: absolute;
     top: 18px;
@@ -38,11 +38,11 @@
     z-index: 0;
 }
 
-.wizard-step.completed:not(:last-child)::after {
+.dataset-wizard-modal .wizard-step.completed:not(:last-child)::after {
     background: rgba(56, 189, 248, 0.5);
 }
 
-.step-number {
+.dataset-wizard-modal .step-number {
     width: 36px;
     height: 36px;
     border-radius: 50%;
@@ -59,35 +59,35 @@
     transition: all 0.3s;
 }
 
-.wizard-step.active .step-number {
+.dataset-wizard-modal .wizard-step.active .step-number {
     background: rgba(56, 189, 248, 0.2);
     border-color: #38bdf8;
     color: #38bdf8;
     box-shadow: 0 0 10px rgba(56, 189, 248, 0.3);
 }
 
-.wizard-step.completed .step-number {
+.dataset-wizard-modal .wizard-step.completed .step-number {
     background: rgba(34, 197, 94, 0.2);
     border-color: #22c55e;
     color: #22c55e;
 }
 
-.step-label {
+.dataset-wizard-modal .step-label {
     font-size: 0.75rem;
     text-align: center;
     font-weight: 500;
 }
 
-.wizard-step.active .step-label {
+.dataset-wizard-modal .wizard-step.active .step-label {
     color: #38bdf8;
     font-weight: 600;
 }
 
-.wizard-step-content {
+.dataset-wizard-modal .wizard-step-content {
     padding: 1rem 0;
 }
 
-.backend-card {
+.dataset-wizard-modal .backend-card {
     padding: 1.5rem;
     border-radius: 0.5rem;
     background: rgba(32, 36, 50, 0.9);
@@ -97,29 +97,29 @@
     text-align: center;
 }
 
-.backend-card:hover {
+.dataset-wizard-modal .backend-card:hover {
     border-color: rgba(56, 189, 248, 0.5);
     background: rgba(32, 36, 50, 1);
     transform: translateY(-2px);
 }
 
-.backend-card.selected {
+.dataset-wizard-modal .backend-card.selected {
     border-color: #38bdf8;
     background: rgba(56, 189, 248, 0.1);
     box-shadow: 0 0 15px rgba(56, 189, 248, 0.2);
 }
 
-.backend-icon {
+.dataset-wizard-modal .backend-icon {
     font-size: 2.5rem;
     margin-bottom: 1rem;
     color: rgba(255, 255, 255, 0.7);
 }
 
-.backend-card.selected .backend-icon {
+.dataset-wizard-modal .backend-card.selected .backend-icon {
     color: #38bdf8;
 }
 
-.backend-card h6 {
+.dataset-wizard-modal .backend-card h6 {
     font-weight: 600;
     margin-bottom: 0.5rem;
 }
@@ -138,7 +138,7 @@
     pointer-events: auto !important;
 }
 
-.modal-dialog.modal-xl {
+.dataset-wizard-modal {
     background: #1c1f2e;
     border-radius: 0.75rem;
     width: 100%;
@@ -154,20 +154,20 @@
     pointer-events: auto !important;
 }
 
-.modal-dialog.modal-xl form {
+.dataset-wizard-modal form {
     display: flex;
     flex-direction: column;
     flex: 1 1 auto;
     min-height: 0;
 }
 
-.modal-dialog.modal-xl .wizard-progress,
-.modal-dialog.modal-xl .modal-header,
-.modal-dialog.modal-xl .modal-footer {
+.dataset-wizard-modal .wizard-progress,
+.dataset-wizard-modal .modal-header,
+.dataset-wizard-modal .modal-footer {
     flex-shrink: 0;
 }
 
-.modal-header {
+.dataset-wizard-modal .modal-header {
     padding: 1.25rem 1.5rem;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     display: flex;
@@ -176,7 +176,7 @@
     flex-shrink: 0;
 }
 
-.modal-title {
+.dataset-wizard-modal .modal-title {
     margin: 0;
     font-size: 1.25rem;
     display: flex;
@@ -184,14 +184,14 @@
     gap: 0.5rem;
 }
 
-.modal-body {
+.dataset-wizard-modal .modal-body {
     padding: 1.5rem;
     overflow-y: auto;
     flex: 1;
     min-height: 0;
 }
 
-.modal-footer {
+.dataset-wizard-modal .modal-footer {
     padding: 1rem 1.5rem;
     border-top: 1px solid rgba(255, 255, 255, 0.08);
     display: flex;
@@ -203,11 +203,11 @@
     z-index: 1;
 }
 
-.modal-footer button {
+.dataset-wizard-modal .modal-footer button {
     pointer-events: auto;
 }
 
-.btn-close {
+.dataset-wizard-modal .btn-close {
     background: none;
     border: 0;
     color: rgba(255, 255, 255, 0.6);
@@ -221,11 +221,11 @@
     justify-content: center;
 }
 
-.btn-close:hover {
+.dataset-wizard-modal .btn-close:hover {
     color: #fff;
 }
 
-.btn-close::before {
+.dataset-wizard-modal .btn-close::before {
     content: '×';
     font-size: 1.75rem;
     line-height: 1;
@@ -237,53 +237,53 @@
 }
 
 /* Form elements in wizard */
-.wizard-step-content .form-label {
+.dataset-wizard-modal .wizard-step-content .form-label {
     font-weight: 500;
     margin-bottom: 0.5rem;
     display: block;
 }
 
-.wizard-step-content .form-control,
-.wizard-step-content .form-select {
+.dataset-wizard-modal .wizard-step-content .form-control,
+.dataset-wizard-modal .wizard-step-content .form-select {
     background: rgba(0, 0, 0, 0.3);
     border: 1px solid rgba(255, 255, 255, 0.15);
     color: #fff;
     pointer-events: auto !important;
 }
 
-.wizard-step-content .form-control:focus,
-.wizard-step-content .form-select:focus {
+.dataset-wizard-modal .wizard-step-content .form-control:focus,
+.dataset-wizard-modal .wizard-step-content .form-select:focus {
     background: rgba(0, 0, 0, 0.4);
     border-color: #38bdf8;
     box-shadow: 0 0 0 0.2rem rgba(56, 189, 248, 0.15);
 }
 
-.wizard-step-content input,
-.wizard-step-content select,
-.wizard-step-content button,
-.wizard-step-content textarea {
+.dataset-wizard-modal .wizard-step-content input,
+.dataset-wizard-modal .wizard-step-content select,
+.dataset-wizard-modal .wizard-step-content button,
+.dataset-wizard-modal .wizard-step-content textarea {
     pointer-events: auto !important;
 }
 
-.wizard-step-content .form-text {
+.dataset-wizard-modal .wizard-step-content .form-text {
     color: rgba(255, 255, 255, 0.6);
     font-size: 0.875rem;
     margin-top: 0.25rem;
 }
 
-.wizard-step-content .alert-info {
+.dataset-wizard-modal .wizard-step-content .alert-info {
     background: rgba(56, 189, 248, 0.1);
     border: 1px solid rgba(56, 189, 248, 0.3);
     color: #e0f2fe;
 }
 
 /* Dataset queue cards */
-.wizard-step-content .card {
+.dataset-wizard-modal .wizard-step-content .card {
     background: rgba(32, 36, 50, 0.8);
     border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.wizard-step-content .card-body {
+.dataset-wizard-modal .wizard-step-content .card-body {
     padding: 1rem;
 }
 
@@ -456,15 +456,15 @@
 
 /* Responsive adjustments */
 @media (max-width: 768px) {
-    .wizard-progress {
+    .dataset-wizard-modal .wizard-progress {
         padding: 1rem;
     }
 
-    .step-label {
+    .dataset-wizard-modal .step-label {
         display: none;
     }
 
-    .modal-dialog.modal-xl {
+    .dataset-wizard-modal {
         max-width: 100%;
         margin: 0;
         height: 100vh;
@@ -472,11 +472,11 @@
         border-radius: 0;
     }
 
-    .backend-card {
+    .dataset-wizard-modal .backend-card {
         padding: 1rem;
     }
 
-    .backend-icon {
+    .dataset-wizard-modal .backend-icon {
         font-size: 2rem;
     }
 }
