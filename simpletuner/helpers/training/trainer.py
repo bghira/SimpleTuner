@@ -548,6 +548,14 @@ class Trainer:
             )
             self._emit_event(event, message_level="critical")
 
+            status_event = training_status_event(
+                status="failed",
+                message=f"Training failed: {e}",
+                job_id=self.job_id,
+                severity="error",
+            )
+            self._emit_event(status_event, message_level="critical")
+
             raise e
 
     def _initialize_components_with_signal_check(self, initializers):

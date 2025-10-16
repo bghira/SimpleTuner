@@ -902,6 +902,10 @@ class EventHandler {
             } else if (event.type === 'webhook') {
                 baseEvent.message_type = 'info';
                 baseEvent.message = event.data?.message || '';
+            } else if (event.type === 'training.status') {
+                const statusValue = (event.data?.status || event.status || '').toLowerCase();
+                baseEvent.message_type = this.mapStatusToEventType(statusValue);
+                baseEvent.message = event.message || `Training status updated: ${statusValue}`;
             } else if (event.type === 'notification') {
                 const severity = String(event.severity || '').toLowerCase();
                 if (severity === 'error' || severity === 'fatal') {

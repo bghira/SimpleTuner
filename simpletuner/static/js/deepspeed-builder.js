@@ -15,6 +15,22 @@
         zeroQuantizedGradients: false,
         zeroHpzPartitionSize: 8,
         configFilePath: "",
+        includeOptimizer: true,
+        optimizerType: "auto",
+        optimizerCustomType: "",
+        optimizerLr: 0.0001,
+        optimizerBeta1: 0.9,
+        optimizerBeta2: 0.999,
+        optimizerEps: 1e-6,
+        optimizerWeightDecay: 0.01,
+        optimizerTorchAdam: false,
+        optimizerAdamWMode: true,
+        includeScheduler: true,
+        schedulerType: "WarmupLR",
+        schedulerCustomType: "",
+        schedulerWarmupMinLr: 0,
+        schedulerWarmupMaxLr: 0.0001,
+        schedulerWarmupNumSteps: 0,
     };
 
     function cloneDefaults() {
@@ -39,6 +55,14 @@
             return numeric;
         }
         return fallback;
+    }
+
+    function parseOptionalNumber(value) {
+        if (value === null || value === undefined || value === "") {
+            return undefined;
+        }
+        const numeric = Number(value);
+        return Number.isFinite(numeric) ? numeric : undefined;
     }
 
     function buildInlineConfig(state) {
@@ -137,6 +161,73 @@
             config.zero3_save_16bit_model = true;
         } else {
             delete config.zero3_save_16bit_model;
+        }
+
+        if (state.includeOptimizer) {
+            let optimizerType = state.optimizerType || "auto";
+            if (optimizerType === "auto") {
+                const offloadDevice = zeroOpt.offload_optimizer?.device || "";
+                optimizerType = typeof offloadDevice === "string" && offloadDevice.toLowerCase() === "cpu"
+                    ? "CPUAdam"
+                    : "FusedAdam";
+            } else if (optimizerType === "custom") {
+                optimizerType = (state.optimizerCustomType || "").trim() || "FusedAdam";
+            }
+
+            const optimizerParams = {};
+            const lrValue = parseOptionalNumber(state.optimizerLr);
+            if (lrValue !== undefined) {
+                optimizerParams.lr = lrValue;
+            }
+            const beta1 = parseOptionalNumber(state.optimizerBeta1);
+            const beta2 = parseOptionalNumber(state.optimizerBeta2);
+            if (beta1 !== undefined || beta2 !== undefined) {
+                optimizerParams.betas = [beta1 ?? 0.9, beta2 ?? 0.999];
+            }
+            const epsValue = parseOptionalNumber(state.optimizerEps);
+            if (epsValue !== undefined) {
+                optimizerParams.eps = epsValue;
+            }
+            const weightDecayValue = parseOptionalNumber(state.optimizerWeightDecay);
+            if (weightDecayValue !== undefined) {
+                optimizerParams.weight_decay = weightDecayValue;
+            }
+            if (state.optimizerTorchAdam) {
+                optimizerParams.torch_adam = true;
+            }
+            if (state.optimizerAdamWMode !== undefined && state.optimizerAdamWMode !== true) {
+                optimizerParams.adam_w_mode = Boolean(state.optimizerAdamWMode);
+            }
+
+            config.optimizer = {
+                type: optimizerType,
+                params: optimizerParams,
+            };
+        }
+
+        if (state.includeScheduler) {
+            let schedulerType = state.schedulerType || "WarmupLR";
+            if (schedulerType === "custom") {
+                schedulerType = (state.schedulerCustomType || "").trim() || "WarmupLR";
+            }
+            const schedulerParams = {};
+            const warmupMin = parseOptionalNumber(state.schedulerWarmupMinLr);
+            if (warmupMin !== undefined) {
+                schedulerParams.warmup_min_lr = warmupMin;
+            }
+            const warmupMax = parseOptionalNumber(state.schedulerWarmupMaxLr);
+            if (warmupMax !== undefined) {
+                schedulerParams.warmup_max_lr = warmupMax;
+            }
+            const warmupSteps = parseOptionalNumber(state.schedulerWarmupNumSteps);
+            if (warmupSteps !== undefined) {
+                schedulerParams.warmup_num_steps = warmupSteps;
+            }
+
+            config.scheduler = {
+                type: schedulerType,
+                params: schedulerParams,
+            };
         }
 
         return config;
@@ -267,6 +358,22 @@
             zeroHpzPartitionSize: DEFAULTS.zeroHpzPartitionSize,
             configFilePath: DEFAULTS.configFilePath,
             mode: DEFAULTS.mode,
+            includeOptimizer: DEFAULTS.includeOptimizer,
+            optimizerType: DEFAULTS.optimizerType,
+            optimizerCustomType: DEFAULTS.optimizerCustomType,
+            optimizerLr: DEFAULTS.optimizerLr,
+            optimizerBeta1: DEFAULTS.optimizerBeta1,
+            optimizerBeta2: DEFAULTS.optimizerBeta2,
+            optimizerEps: DEFAULTS.optimizerEps,
+            optimizerWeightDecay: DEFAULTS.optimizerWeightDecay,
+            optimizerTorchAdam: DEFAULTS.optimizerTorchAdam,
+            optimizerAdamWMode: DEFAULTS.optimizerAdamWMode,
+            includeScheduler: DEFAULTS.includeScheduler,
+            schedulerType: DEFAULTS.schedulerType,
+            schedulerCustomType: DEFAULTS.schedulerCustomType,
+            schedulerWarmupMinLr: DEFAULTS.schedulerWarmupMinLr,
+            schedulerWarmupMaxLr: DEFAULTS.schedulerWarmupMaxLr,
+            schedulerWarmupNumSteps: DEFAULTS.schedulerWarmupNumSteps,
 
             init() {
                 window.__deepspeedBuilderInstance = this;
@@ -312,6 +419,22 @@
                 this.isCustom = false;
                 this.warnings = [];
                 this.builtOutput = "";
+                this.includeOptimizer = defaults.includeOptimizer;
+                this.optimizerType = defaults.optimizerType;
+                this.optimizerCustomType = defaults.optimizerCustomType;
+                this.optimizerLr = defaults.optimizerLr;
+                this.optimizerBeta1 = defaults.optimizerBeta1;
+                this.optimizerBeta2 = defaults.optimizerBeta2;
+                this.optimizerEps = defaults.optimizerEps;
+                this.optimizerWeightDecay = defaults.optimizerWeightDecay;
+                this.optimizerTorchAdam = defaults.optimizerTorchAdam;
+                this.optimizerAdamWMode = defaults.optimizerAdamWMode;
+                this.includeScheduler = defaults.includeScheduler;
+                this.schedulerType = defaults.schedulerType;
+                this.schedulerCustomType = defaults.schedulerCustomType;
+                this.schedulerWarmupMinLr = defaults.schedulerWarmupMinLr;
+                this.schedulerWarmupMaxLr = defaults.schedulerWarmupMaxLr;
+                this.schedulerWarmupNumSteps = defaults.schedulerWarmupNumSteps;
             },
 
             open(targetFieldId) {
@@ -445,6 +568,115 @@
                 }
                 if (typeof zeroOpt.zero_hpz_partition_size === "number") {
                     this.zeroHpzPartitionSize = zeroOpt.zero_hpz_partition_size;
+                }
+
+                const optimizerConfig = config.optimizer;
+                if (optimizerConfig && typeof optimizerConfig === "object") {
+                    this.includeOptimizer = true;
+                    const optTypeRaw = optimizerConfig.type || optimizerConfig.name || "FusedAdam";
+                    const normalisedOptType = String(optTypeRaw).toLowerCase();
+                    const knownTypes = {
+                        auto: "auto",
+                        adam: "Adam",
+                        adamw: "AdamW",
+                        fusedadam: "FusedAdam",
+                        cpuadam: "CPUAdam",
+                        onebitadam: "OneBitAdam",
+                        onebitlamb: "OneBitLamb",
+                        zerooneadam: "ZeroOneAdam",
+                    };
+                    if (normalisedOptType in knownTypes) {
+                        this.optimizerType = knownTypes[normalisedOptType];
+                        this.optimizerCustomType = "";
+                    } else {
+                        this.optimizerType = "custom";
+                        this.optimizerCustomType = String(optTypeRaw || "").trim();
+                    }
+                    const params = optimizerConfig.params || {};
+                    if (params.lr !== undefined) {
+                        this.optimizerLr = params.lr;
+                    }
+                    if (Array.isArray(params.betas) && params.betas.length >= 2) {
+                        this.optimizerBeta1 = params.betas[0];
+                        this.optimizerBeta2 = params.betas[1];
+                    } else {
+                        this.optimizerBeta1 = DEFAULTS.optimizerBeta1;
+                        this.optimizerBeta2 = DEFAULTS.optimizerBeta2;
+                    }
+                    if (params.eps !== undefined) {
+                        this.optimizerEps = params.eps;
+                    } else {
+                        this.optimizerEps = DEFAULTS.optimizerEps;
+                    }
+                    if (params.weight_decay !== undefined) {
+                        this.optimizerWeightDecay = params.weight_decay;
+                    } else {
+                        this.optimizerWeightDecay = DEFAULTS.optimizerWeightDecay;
+                    }
+                    if (params.torch_adam !== undefined) {
+                        this.optimizerTorchAdam = Boolean(params.torch_adam);
+                    } else {
+                        this.optimizerTorchAdam = DEFAULTS.optimizerTorchAdam;
+                    }
+                    if (params.adam_w_mode !== undefined) {
+                        this.optimizerAdamWMode = Boolean(params.adam_w_mode);
+                    } else {
+                        this.optimizerAdamWMode = DEFAULTS.optimizerAdamWMode;
+                    }
+                } else {
+                    this.includeOptimizer = DEFAULTS.includeOptimizer;
+                    this.optimizerType = DEFAULTS.optimizerType;
+                    this.optimizerCustomType = DEFAULTS.optimizerCustomType;
+                    this.optimizerLr = DEFAULTS.optimizerLr;
+                    this.optimizerBeta1 = DEFAULTS.optimizerBeta1;
+                    this.optimizerBeta2 = DEFAULTS.optimizerBeta2;
+                    this.optimizerEps = DEFAULTS.optimizerEps;
+                    this.optimizerWeightDecay = DEFAULTS.optimizerWeightDecay;
+                    this.optimizerTorchAdam = DEFAULTS.optimizerTorchAdam;
+                    this.optimizerAdamWMode = DEFAULTS.optimizerAdamWMode;
+                }
+
+                const schedulerConfig = config.scheduler;
+                if (schedulerConfig && typeof schedulerConfig === "object") {
+                    this.includeScheduler = true;
+                    const schedTypeRaw = schedulerConfig.type || "WarmupLR";
+                    const normalisedSched = String(schedTypeRaw).toLowerCase();
+                    const knownSchedulers = {
+                        warmuplr: "WarmupLR",
+                        onecycle: "OneCycle",
+                        polynomial: "Polynomial",
+                        constant: "Constant",
+                    };
+                    if (normalisedSched in knownSchedulers) {
+                        this.schedulerType = knownSchedulers[normalisedSched];
+                        this.schedulerCustomType = "";
+                    } else {
+                        this.schedulerType = "custom";
+                        this.schedulerCustomType = String(schedTypeRaw || "").trim();
+                    }
+                    const params = schedulerConfig.params || {};
+                    if (params.warmup_min_lr !== undefined) {
+                        this.schedulerWarmupMinLr = params.warmup_min_lr;
+                    } else {
+                        this.schedulerWarmupMinLr = DEFAULTS.schedulerWarmupMinLr;
+                    }
+                    if (params.warmup_max_lr !== undefined) {
+                        this.schedulerWarmupMaxLr = params.warmup_max_lr;
+                    } else {
+                        this.schedulerWarmupMaxLr = DEFAULTS.schedulerWarmupMaxLr;
+                    }
+                    if (params.warmup_num_steps !== undefined) {
+                        this.schedulerWarmupNumSteps = params.warmup_num_steps;
+                    } else {
+                        this.schedulerWarmupNumSteps = DEFAULTS.schedulerWarmupNumSteps;
+                    }
+                } else {
+                    this.includeScheduler = DEFAULTS.includeScheduler;
+                    this.schedulerType = DEFAULTS.schedulerType;
+                    this.schedulerCustomType = DEFAULTS.schedulerCustomType;
+                    this.schedulerWarmupMinLr = DEFAULTS.schedulerWarmupMinLr;
+                    this.schedulerWarmupMaxLr = DEFAULTS.schedulerWarmupMaxLr;
+                    this.schedulerWarmupNumSteps = DEFAULTS.schedulerWarmupNumSteps;
                 }
             },
 

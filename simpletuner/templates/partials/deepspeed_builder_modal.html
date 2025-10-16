@@ -209,6 +209,116 @@
                                 </div>
                             </details>
                         </div>
+
+                        <div class="mt-4">
+                            <div class="d-flex align-items-center justify-content-between">
+                                <h6 class="mb-0">Optimizer</h6>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input"
+                                           type="checkbox"
+                                           id="ds-include-optimizer"
+                                           x-model="includeOptimizer"
+                                           @change="recompute()">
+                                    <label class="form-check-label" for="ds-include-optimizer">Include optimizer block</label>
+                                </div>
+                            </div>
+                            <div class="form-text">Control the <code>optimizer</code> section emitted in the DeepSpeed JSON.</div>
+                            <div class="row g-3 mt-1" x-show="includeOptimizer">
+                                <div class="col-md-6">
+                                    <label class="form-label">Optimizer Type</label>
+                                    <select class="form-select" x-model="optimizerType" @change="recompute()">
+                                        <option value="auto">Auto (FusedAdam / CPUAdam)</option>
+                                        <option value="FusedAdam">FusedAdam</option>
+                                        <option value="CPUAdam">CPUAdam</option>
+                                        <option value="Adam">Adam</option>
+                                        <option value="AdamW">AdamW</option>
+                                        <option value="OneBitAdam">OneBitAdam</option>
+                                        <option value="ZeroOneAdam">ZeroOneAdam</option>
+                                        <option value="OneBitLamb">OneBitLamb</option>
+                                        <option value="custom">Custom…</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6" x-show="optimizerType === 'custom'">
+                                    <label class="form-label">Custom Optimizer Name</label>
+                                    <input type="text" class="form-control" x-model="optimizerCustomType" @input="recompute()" placeholder="FusedAdam">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">Learning Rate</label>
+                                    <input type="number" step="any" class="form-control" x-model="optimizerLr" @input="recompute()">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">Beta 1</label>
+                                    <input type="number" step="any" class="form-control" x-model="optimizerBeta1" @input="recompute()">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">Beta 2</label>
+                                    <input type="number" step="any" class="form-control" x-model="optimizerBeta2" @input="recompute()">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">Epsilon</label>
+                                    <input type="number" step="any" class="form-control" x-model="optimizerEps" @input="recompute()">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">Weight Decay</label>
+                                    <input type="number" step="any" class="form-control" x-model="optimizerWeightDecay" @input="recompute()">
+                                </div>
+                                <div class="col-md-3 d-flex align-items-center">
+                                    <div class="form-check mt-4">
+                                        <input class="form-check-input" type="checkbox" id="ds-optimizer-torch" x-model="optimizerTorchAdam" @change="recompute()">
+                                        <label class="form-check-label" for="ds-optimizer-torch">Use Torch Adam kernel</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-3 d-flex align-items-center">
+                                    <div class="form-check mt-4">
+                                        <input class="form-check-input" type="checkbox" id="ds-optimizer-adamw" x-model="optimizerAdamWMode" @change="recompute()">
+                                        <label class="form-check-label" for="ds-optimizer-adamw">AdamW mode</label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mt-4">
+                            <div class="d-flex align-items-center justify-content-between">
+                                <h6 class="mb-0">Scheduler</h6>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input"
+                                           type="checkbox"
+                                           id="ds-include-scheduler"
+                                           x-model="includeScheduler"
+                                           @change="recompute()">
+                                    <label class="form-check-label" for="ds-include-scheduler">Include scheduler block</label>
+                                </div>
+                            </div>
+                            <div class="form-text">Configure the DeepSpeed learning rate scheduler or disable it entirely.</div>
+                            <div class="row g-3 mt-1" x-show="includeScheduler">
+                                <div class="col-md-6">
+                                    <label class="form-label">Scheduler Type</label>
+                                    <select class="form-select" x-model="schedulerType" @change="recompute()">
+                                        <option value="WarmupLR">WarmupLR</option>
+                                        <option value="OneCycle">OneCycle</option>
+                                        <option value="Polynomial">Polynomial</option>
+                                        <option value="Constant">Constant</option>
+                                        <option value="custom">Custom…</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6" x-show="schedulerType === 'custom'">
+                                    <label class="form-label">Custom Scheduler Name</label>
+                                    <input type="text" class="form-control" x-model="schedulerCustomType" @input="recompute()" placeholder="WarmupLR">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Warmup Min LR</label>
+                                    <input type="number" step="any" class="form-control" x-model="schedulerWarmupMinLr" @input="recompute()">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Warmup Max LR</label>
+                                    <input type="number" step="any" class="form-control" x-model="schedulerWarmupMaxLr" @input="recompute()">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Warmup Steps</label>
+                                    <input type="number" step="1" min="0" class="form-control" x-model="schedulerWarmupNumSteps" @input="recompute()">
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <div x-show="mode === 'configFile'" x-transition>

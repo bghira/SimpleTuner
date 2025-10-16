@@ -93,9 +93,17 @@ def prepare_model_for_deepspeed(accelerator, args):
 
         use_deepspeed_optimizer = True
         if "optimizer" not in accelerator.state.deepspeed_plugin.deepspeed_config:
-            logger.info("Using DeepSpeed optimizer (AdamW).")
+            zero_config = accelerator.state.deepspeed_plugin.deepspeed_config.get("zero_optimization", {})
+            optimizer_offload = zero_config.get("offload_optimizer", {})
+            offload_device = str(optimizer_offload.get("device", "")).lower()
+            if offload_device == "cpu":
+                optimizer_type = "CPUAdam"
+                logger.info("Using DeepSpeed optimizer (CPUAdam with CPU offload).")
+            else:
+                optimizer_type = "FusedAdam"
+                logger.info("Using DeepSpeed optimizer (FusedAdam).")
             accelerator.state.deepspeed_plugin.deepspeed_config["optimizer"] = {
-                "type": "AdamW",
+                "type": optimizer_type,
                 "params": {
                     "lr": args.learning_rate,
                     "betas": [args.adam_beta1, args.adam_beta2],
