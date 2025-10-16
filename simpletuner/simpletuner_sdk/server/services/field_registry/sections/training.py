@@ -138,7 +138,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.SELECT,
             tab="training",
             section="learning_rate",
-            default_value="sine",
+            default_value="constant_with_warmup",
             choices=[{"value": s, "label": s.replace("_", " ").title()} for s in lr_scheduler_choices],
             validation_rules=[ValidationRule(ValidationRuleType.CHOICES, value=lr_scheduler_choices)],
             help_text="How learning rate changes during training",
