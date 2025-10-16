@@ -34,7 +34,7 @@ Please fully explore this README before embarking on [the tutorial](/documentati
 
 For a quick start without reading the full documentation, you can use the [Quick Start](/documentation/QUICKSTART.md) guide.
 
-For memory-constrained systems, see the [DeepSpeed document](/documentation/DEEPSPEED.md) which explains how to use 🤗Accelerate to configure Microsoft's DeepSpeed for optimiser state offload.
+For memory-constrained systems, see the [DeepSpeed document](/documentation/DEEPSPEED.md) which explains how to use 🤗Accelerate to configure Microsoft's DeepSpeed for optimiser state offload. For DTensor-based sharding and context parallelism, read the [FSDP2 guide](/documentation/FSDP2.md) which covers the new FullyShardedDataParallel v2 workflow inside SimpleTuner.
 
 For multi-node distributed training, [this guide](/documentation/DISTRIBUTED.md) will help tweak the configurations from the INSTALL and Quickstart guides to be suitable for multi-node training, and optimising for image datasets numbering in the billions of samples.
 
