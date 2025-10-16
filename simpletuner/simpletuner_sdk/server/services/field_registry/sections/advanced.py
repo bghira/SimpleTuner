@@ -1346,6 +1346,45 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="context_parallel_size",
+            arg_name="--context_parallel_size",
+            ui_label="Context Parallel Size",
+            field_type=FieldType.NUMBER,
+            tab="hardware",
+            section="accelerate",
+            default_value=1,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")],
+            help_text="Number of ranks used for Accelerate's context parallel sharding across the sequence dimension.",
+            tooltip="Set to >1 to shard attention across GPUs when using FSDP2. Leave at 1 to disable context parallelism.",
+            importance=ImportanceLevel.ADVANCED,
+            order=19,
+            platform_specific=["cuda"],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="context_parallel_comm_strategy",
+            arg_name="--context_parallel_comm_strategy",
+            ui_label="Context Parallel Rotation",
+            field_type=FieldType.SELECT,
+            tab="hardware",
+            section="accelerate",
+            default_value="allgather",
+            choices=[
+                {"value": "allgather", "label": "All-Gather (recommended)"},
+                {"value": "alltoall", "label": "All-to-All"},
+            ],
+            help_text="Communication primitive used to rotate K/V shards during context parallel attention.",
+            tooltip="All-gather generally offers better overlap; all-to-all may help niche workloads. Requires FSDP2 on CUDA GPUs.",
+            importance=ImportanceLevel.ADVANCED,
+            order=19,
+            platform_specific=["cuda"],
+        )
+    )
+
     # Training Num Processes
     registry._add_field(
         ConfigField(

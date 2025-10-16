@@ -95,7 +95,7 @@ import torch
 import torch.nn.functional as F
 import transformers
 from accelerate import Accelerator, DeepSpeedPlugin, FullyShardedDataParallelPlugin
-from accelerate.utils import DistributedType, set_seed
+from accelerate.utils import DistributedType, ParallelismConfig, TorchContextParallelConfig, set_seed
 from torch.distributions import Beta
 
 from simpletuner.configure import model_classes
@@ -298,6 +298,58 @@ class Trainer:
                 accelerator_kwargs["fsdp_plugin"] = fsdp_plugin
             if deepspeed_plugin is not None:
                 accelerator_kwargs["deepspeed_plugin"] = deepspeed_plugin
+
+            context_parallel_size_raw = getattr(self.config, "context_parallel_size", None)
+            context_parallel_strategy_raw = getattr(self.config, "context_parallel_comm_strategy", None)
+            context_parallel_size = None
+            if context_parallel_size_raw not in (None, "", "None"):
+                try:
+                    context_parallel_size = int(context_parallel_size_raw)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"Context parallel size must be an integer, got {context_parallel_size_raw!r}."
+                    ) from exc
+                setattr(self.config, "context_parallel_size", context_parallel_size)
+
+            if context_parallel_size is not None and context_parallel_size <= 0:
+                raise ValueError("Context parallel size must be greater than 0 when specified.")
+
+            enable_context_parallel = context_parallel_size is not None and context_parallel_size > 1
+            if enable_context_parallel:
+                if not getattr(self.config, "fsdp_enable", False) or fsdp_plugin is None:
+                    raise ValueError(
+                        "Context parallelism requires FSDP2. Enable FSDP in Hardware > Accelerate before setting a context parallel size."
+                    )
+                fsdp_version_value = getattr(self.config, "fsdp_version", 2)
+                try:
+                    fsdp_version = int(fsdp_version_value)
+                except (TypeError, ValueError):
+                    fsdp_version = 2
+                if fsdp_version != 2:
+                    raise ValueError("Context parallelism currently only supports FSDP version 2.")
+
+                context_parallel_strategy = (context_parallel_strategy_raw or "allgather").strip().lower()
+                if context_parallel_strategy not in {"allgather", "alltoall"}:
+                    raise ValueError(
+                        f"Unsupported context parallel rotation '{context_parallel_strategy_raw}'. "
+                        "Valid options are 'allgather' and 'alltoall'."
+                    )
+                setattr(self.config, "context_parallel_comm_strategy", context_parallel_strategy)
+
+                accelerator_kwargs["parallelism_config"] = ParallelismConfig(
+                    cp_size=context_parallel_size,
+                    cp_handler=TorchContextParallelConfig(cp_comm_strategy=context_parallel_strategy),
+                )
+                logger.info(
+                    "Context parallelism enabled (size=%s, rotation=%s).",
+                    context_parallel_size,
+                    context_parallel_strategy,
+                )
+            elif context_parallel_size is not None:
+                # Normalise stored value when users explicitly set 1 to disable sharding
+                strategy_fallback = context_parallel_strategy_raw or "allgather"
+                strategy_text = strategy_fallback.strip().lower() if isinstance(strategy_fallback, str) else "allgather"
+                setattr(self.config, "context_parallel_comm_strategy", strategy_text)
 
             try:
                 self.accelerator = Accelerator(**accelerator_kwargs)

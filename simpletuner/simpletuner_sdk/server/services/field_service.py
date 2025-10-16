@@ -1487,6 +1487,26 @@ class FieldService:
                 extra_classes.append("field-disabled")
                 _append_hint("Available when using Auraflow, SD3, or Wan model families.")
 
+        if field.name in {"context_parallel_size", "context_parallel_comm_strategy"}:
+            disable_reason = None
+            fsdp_enabled = self._coerce_bool(self._get_config_value(config_values, "fsdp_enable"))
+            fsdp_version_raw = self._get_config_value(config_values, "fsdp_version")
+            try:
+                fsdp_version = int(fsdp_version_raw) if fsdp_version_raw is not None else 2
+            except (TypeError, ValueError):
+                fsdp_version = 2
+
+            if not fsdp_enabled:
+                disable_reason = "Enable FSDP v2 to configure context parallelism."
+            elif fsdp_version != 2:
+                disable_reason = "Context parallelism requires FSDP Version set to 2."
+
+            if disable_reason:
+                field_dict["disabled"] = True
+                if "field-disabled" not in extra_classes:
+                    extra_classes.append("field-disabled")
+                _append_hint(disable_reason)
+
         field_dict["extra_classes"] = " ".join(extra_classes)
 
         return field_dict
