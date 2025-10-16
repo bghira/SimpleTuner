@@ -123,7 +123,7 @@ def prepare_model_for_deepspeed(accelerator, args):
             optimizer_offload = zero_config.get("offload_optimizer", {})
             offload_device = str(optimizer_offload.get("device", "")).lower()
             if offload_device == "cpu":
-                optimizer_type = "CPUAdam"
+                optimizer_type = "adamw"
                 logger.info("Using DeepSpeed optimizer (CPUAdam with CPU offload).")
             else:
                 if can_use_fused:
