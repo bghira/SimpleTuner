@@ -577,8 +577,11 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
             logger.debug(f"Skipping unregistered field '{clean_key}' from config save")
             continue
 
-        if save_options.get("preserve_defaults", False):
-            default_value = all_defaults.get(key)
+        arg_lookup = key if key.startswith("--") else f"--{clean_key}"
+        is_required_field = _is_required_field(arg_lookup)
+
+        if save_options.get("preserve_defaults", False) and not is_required_field:
+            default_value = all_defaults.get(arg_lookup, all_defaults.get(key))
             if value != default_value:
                 save_config[clean_key] = value
         else:

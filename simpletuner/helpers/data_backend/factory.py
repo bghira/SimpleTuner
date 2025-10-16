@@ -995,6 +995,18 @@ class FactoryRegistry:
 
         return result if isinstance(result, bool) else False
 
+    def _is_multi_process(self) -> bool:
+        """Return True when accelerator reports multiple processes."""
+        accelerator = getattr(self, "accelerator", None)
+        if accelerator is None:
+            return False
+
+        num_processes = getattr(accelerator, "num_processes", 1)
+        try:
+            return int(num_processes) > 1
+        except (TypeError, ValueError):
+            return False
+
     def _finalize_metrics(self) -> None:
         """Finalize performance metrics."""
         self.metrics["initialization_time"] = time.time() - self.start_time
@@ -1177,13 +1189,15 @@ class FactoryRegistry:
             init_backend["text_embed_cache"].set_webhook_handler(StateTracker.get_webhook_handler())
             logger.debug(f"rank {get_rank()} might skip discovery..")
             main_process_context = (
-                self.accelerator.main_process_first() if getattr(self.accelerator, "num_processes", 1) > 1 else nullcontext()
+                self.accelerator.main_process_first()
+                if self._is_multi_process() and hasattr(self.accelerator, "main_process_first")
+                else nullcontext()
             )
             with main_process_context:
                 logger.debug(f"rank {get_rank()} is discovering all files")
                 init_backend["text_embed_cache"].discover_all_files()
             logger.debug(f"rank {get_rank()} is waiting for other processes")
-            if getattr(self.accelerator, "num_processes", 1) > 1:
+            if self._is_multi_process():
                 self.accelerator.wait_for_everyone()
 
             if backend.get("default", False):
@@ -1194,7 +1208,7 @@ class FactoryRegistry:
                 logger.debug(f"rank {get_rank()} may skip computing the embedding..")
                 main_process_context = (
                     self.accelerator.main_process_first()
-                    if getattr(self.accelerator, "num_processes", 1) > 1
+                    if self._is_multi_process() and hasattr(self.accelerator, "main_process_first")
                     else nullcontext()
                 )
                 with main_process_context:
@@ -1206,7 +1220,7 @@ class FactoryRegistry:
                     logger.debug(f"rank {get_rank()} has completed computing the null embed")
 
                 logger.debug(f"rank {get_rank()} is waiting for other processes")
-                if getattr(self.accelerator, "num_processes", 1) > 1:
+                if self._is_multi_process():
                     self.accelerator.wait_for_everyone()
                 logger.debug(f"rank {get_rank()} is continuing")
 
@@ -1614,7 +1628,7 @@ class FactoryRegistry:
                     )
                     return
 
-        if getattr(self.accelerator, "num_processes", 1) > 1:
+        if self._is_multi_process():
             self.accelerator.wait_for_everyone()
         if (
             not backend.get("auto_generated", False)
@@ -1628,7 +1642,7 @@ class FactoryRegistry:
             if not self.accelerator.is_main_process:
                 info_log(f"(id={init_backend['id']}) Reloading bucket manager cache on subprocesses.")
                 init_backend["metadata_backend"].reload_cache()
-            if getattr(self.accelerator, "num_processes", 1) > 1:
+            if self._is_multi_process():
                 self.accelerator.wait_for_everyone()
             if init_backend["metadata_backend"].has_single_underfilled_bucket():
                 raise Exception(
@@ -1983,7 +1997,7 @@ class FactoryRegistry:
                         f"(id={init_backend['id']}) Skipping VAE cache discovery because data directory was not found: {init_backend.get('instance_data_dir')}"
                     )
                     return
-            if getattr(self.accelerator, "num_processes", 1) > 1:
+            if self._is_multi_process():
                 self.accelerator.wait_for_everyone()
         all_image_files = StateTracker.get_image_files(
             data_backend_id=init_backend["id"],
@@ -2037,7 +2051,7 @@ class FactoryRegistry:
                 )
                 return
 
-        if getattr(self.accelerator, "num_processes", 1) > 1:
+        if self._is_multi_process():
             self.accelerator.wait_for_everyone()
         if not self.accelerator.is_main_process:
             try:
@@ -2047,7 +2061,7 @@ class FactoryRegistry:
                     f"(id={init_backend['id']}) Skipping metadata load because data directory was not found: {init_backend.get('instance_data_dir')}"
                 )
                 return
-        if getattr(self.accelerator, "num_processes", 1) > 1:
+        if self._is_multi_process():
             self.accelerator.wait_for_everyone()
 
     def _connect_conditioning_datasets(self, data_backend_config: List[Dict[str, Any]]) -> bool:
@@ -2231,7 +2245,7 @@ class FactoryRegistry:
                 logger.info(f"Executing VAE cache update..")
                 init_backend["vaecache"].process_buckets()
             logger.debug(f"Encoding images during training: {self.args.vae_cache_ondemand}")
-            if getattr(self.accelerator, "num_processes", 1) > 1:
+            if self._is_multi_process():
                 self.accelerator.wait_for_everyone()
 
         move_text_encoders(self.args, self.text_encoders, self.accelerator.device)

@@ -371,7 +371,7 @@ class Trainer:
 
         original_wait_for_everyone = self.accelerator.wait_for_everyone
 
-        def _safe_wait_for_everyone(*args, **kwargs):
+        def _safe_wait_for_everyone(*fn_args, **fn_kwargs):
             state = getattr(self.accelerator, "state", None)
             distributed_type = getattr(state, "distributed_type", None)
             if distributed_type in (
@@ -389,7 +389,7 @@ class Trainer:
                 if not (torch.distributed.is_available() and torch.distributed.is_initialized()):
                     logger.debug("Skipping accelerator.wait_for_everyone(); distributed process group not initialised.")
                     return
-        return original_wait_for_everyone(*args, **kwargs)
+            return original_wait_for_everyone(*fn_args, **fn_kwargs)
 
         self.accelerator.wait_for_everyone = _safe_wait_for_everyone
         setattr(self.accelerator, "_simpletuner_safe_wait_installed", True)

@@ -87,6 +87,16 @@ class TextEmbeddingCache(WebhookMixin):
     def debug_log(self, msg: str):
         logger.debug(f"{self.rank_info}(id={self.id}) {msg}")
 
+    def _num_processes(self) -> int:
+        """Return accelerator num_processes as an int with safe fallback."""
+        if not self.accelerator:
+            return 1
+        value = getattr(self.accelerator, "num_processes", 1)
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 1
+
     def create_hash(self, caption):
         if caption is None:
             # It's gross, but some images do not have captions.
@@ -348,7 +358,7 @@ class TextEmbeddingCache(WebhookMixin):
                 miniters=50,
                 leave=False,
                 ncols=125,
-                position=get_rank() + self.accelerator.num_processes + 1,
+                position=get_rank() + self._num_processes() + 1,
             ):
                 current_idx += 1
                 filename = os.path.join(self.cache_dir, self.hash_prompt(prompt))
