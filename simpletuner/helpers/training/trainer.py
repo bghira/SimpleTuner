@@ -531,7 +531,8 @@ class Trainer:
 
         offload_param_path = getattr(self.config, "offload_param_path", None)
         if offload_param_path:
-            expanded_offload_path = os.path.expanduser(str(offload_param_path))
+            expanded_offload_path = os.path.abspath(os.path.expanduser(str(offload_param_path)))
+            self._cleanup_deepspeed_offload_artifacts(expanded_offload_path, zero_stage)
             zero_config = normalized.get("zero_optimization")
             if isinstance(zero_config, dict):
                 if self._uses_nvme(zero_config.get("offload_param")):
@@ -584,6 +585,47 @@ class Trainer:
             section = zero_config.get(key)
             if isinstance(section, dict) and self._uses_nvme(section):
                 section.setdefault("nvme_path", expanded_path)
+
+    def _cleanup_deepspeed_offload_artifacts(self, offload_root: str, zero_stage: Optional[int]) -> None:
+        """Remove stale DeepSpeed offload swap directories to avoid corrupted resume state."""
+
+        if not offload_root:
+            return
+        try:
+            resolved_root = os.path.abspath(offload_root)
+        except Exception:
+            logger.debug("Unable to resolve DeepSpeed offload path %s", offload_root, exc_info=True)
+            return
+
+        try:
+            if not os.path.isdir(resolved_root):
+                return
+
+            candidates: List[str] = []
+            if zero_stage is not None:
+                candidates.append(os.path.join(resolved_root, f"zero_stage_{zero_stage}"))
+            else:
+                for entry in os.listdir(resolved_root):
+                    if entry.startswith("zero_stage_"):
+                        candidates.append(os.path.join(resolved_root, entry))
+
+            for candidate in candidates:
+                if not os.path.isdir(candidate):
+                    continue
+                try:
+                    if os.path.commonpath([resolved_root, candidate]) != resolved_root:
+                        logger.debug("Skipping DeepSpeed offload cleanup outside root: %s", candidate)
+                        continue
+                except Exception:
+                    logger.debug("Failed to validate DeepSpeed offload path %s", candidate, exc_info=True)
+                    continue
+                try:
+                    shutil.rmtree(candidate, ignore_errors=True)
+                    logger.info("Cleared DeepSpeed offload artefacts at %s", candidate)
+                except Exception:
+                    logger.debug("Failed to clear DeepSpeed offload directory %s", candidate, exc_info=True)
+        except Exception:
+            logger.debug("Unexpected error while cleaning DeepSpeed offload path %s", resolved_root, exc_info=True)
 
     @staticmethod
     def _extract_zero_stage(config_dict: dict) -> Optional[int]:
