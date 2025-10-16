@@ -126,20 +126,31 @@ It also provides two optimisers that are directed toward Hopper (H100 or better)
 
 #### Torch Dynamo
 
-To enable `torch.compile()`, add the following line to `config/config.env`:
+Enable `torch.compile()` from the WebUI by visiting **Hardware → Accelerate (advanced)** and setting **Torch Dynamo Backend** to your preferred compiler (for example, *inductor*). Additional toggles let you pick an optimisation **mode**, enable **dynamic shape** guards, or opt into **regional compilation** to speed up cold starts on very deep transformer models.
+
+The same configuration can be expressed in `config/config.env`:
+
 ```bash
 TRAINING_DYNAMO_BACKEND=inductor
 ```
 
-If you wish to use added features like max-autotune, run the following:
-
-```bash
-accelerate config
-```
-
-Carefully answer the questions and use bf16 mixed precision training when prompted. Say **yes** to using Dynamo, **no** to fullgraph, and **yes** to max-autotune.
+You can optionally pair this with `--dynamo_mode=max-autotune` or the other Dynamo flags exposed in the UI for finer control.
 
 Note that the first several steps of training will be slower than usual because of compilation occuring in the background.
+
+To persist the settings in `config.json`, add the equivalent keys:
+
+```json
+{
+  "dynamo_backend": "inductor",
+  "dynamo_mode": "max-autotune",
+  "dynamo_fullgraph": false,
+  "dynamo_dynamic": false,
+  "dynamo_use_regional_compilation": true
+}
+```
+
+Omit any entries you want to inherit from Accelerate’s defaults (for example, leave out `dynamo_mode` to use automatic selection).
 
 ### `--attention_mechanism`
 
@@ -399,7 +410,7 @@ A lot of settings are instead set through the [dataloader config](/documentation
 The above options apply for the most part, to `config.json` - but some entries must be set inside `config.env` instead.
 
 - `TRAINING_NUM_PROCESSES` should be set to the number of GPUs in the system. For most use-cases, this is enough to enable DistributedDataParallel (DDP) training
-- `TRAINING_DYNAMO_BACKEND` defaults to `no` but can be set to `inductor` for substantial speed improvements on NVIDIA hardware
+- `TRAINING_DYNAMO_BACKEND` defaults to `no` but can be set to any supported torch.compile backend (e.g. `inductor`, `aot_eager`, `cudagraphs`) and combined with `--dynamo_mode`, `--dynamo_fullgraph`, or `--dynamo_use_regional_compilation` for finer tuning
 - `SIMPLETUNER_LOG_LEVEL` defaults to `INFO` but can be set to `DEBUG` to add more information for issue reports into `debug.log`
 - `VENV_PATH` can be set to the location of your python virtual env, if it is not in the typical `.venv` location
 - `ACCELERATE_EXTRA_ARGS` can be left unset, or, contain extra arguments to add like `--multi_gpu` or FSDP-specific flags
