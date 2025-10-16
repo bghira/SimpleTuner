@@ -3190,8 +3190,45 @@ function trainerComponent() {
             console.log('[TRAINER] appendConfigValuesToFormData called with config keys:', Object.keys(config));
 
             const metadataMap = window.dependencyManager?.fieldMetadata;
+            const hasUserOverride = (name) => {
+                if (!name) {
+                    return false;
+                }
+                const variants = new Set();
+                variants.add(name);
+                const trimmed = name.startsWith('--') ? name.slice(2) : name;
+                if (trimmed) {
+                    variants.add(trimmed);
+                    variants.add(`--${trimmed}`);
+                    const snake = trimmed
+                        .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+                        .replace(/[-\s]+/g, '_');
+                    if (snake) {
+                        variants.add(snake);
+                        variants.add(`--${snake}`);
+                        const lowerSnake = snake.toLowerCase();
+                        variants.add(lowerSnake);
+                        variants.add(`--${lowerSnake}`);
+                    }
+                    const lowerTrimmed = trimmed.toLowerCase();
+                    variants.add(lowerTrimmed);
+                    variants.add(`--${lowerTrimmed}`);
+                }
+
+                for (const variant of variants) {
+                    if (variant && formData.has(variant)) {
+                        return true;
+                    }
+                }
+                return false;
+            };
             const appendValue = (name, descriptor) => {
                 if (!descriptor) {
+                    return;
+                }
+
+                if (hasUserOverride(name)) {
+                    console.log(`[TRAINER] Skipping ${name} – user supplied value present`);
                     return;
                 }
 

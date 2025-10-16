@@ -718,12 +718,6 @@ function trainingWizardComponent() {
                         this.answers[`text_encoder_${i}_precision`] = 'no_change';
                     }
                     await this.loadQuantizationOptions();
-                    if (this.answers.deepspeed_preset === 'disabled') {
-                        this.answers.deepspeed_preset = 'stage2';
-                    }
-                    if (this.answers.deepspeed_offload_param === 'none') {
-                        this.answers.deepspeed_offload_param = 'cpu';
-                    }
                 }
             }
 

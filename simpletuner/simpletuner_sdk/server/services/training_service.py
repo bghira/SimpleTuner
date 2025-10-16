@@ -284,6 +284,44 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
 
     existing_config_cli = ConfigsService._migrate_legacy_keys(existing_config_cli)
 
+    def _extract_form_value(arg_name: str) -> Any:
+        """Return the raw value submitted for a given argument name (with or without --)."""
+        candidates = [arg_name]
+        trimmed = arg_name.lstrip("-")
+        if arg_name.startswith("--"):
+            candidates.append(trimmed)
+        else:
+            candidates.append(f"--{trimmed}")
+        for candidate in candidates:
+            if candidate in form_dict:
+                raw_value = form_dict[candidate]
+                if isinstance(raw_value, (list, tuple)):
+                    non_empty = [item for item in raw_value if item not in (None, "")]
+                    if not non_empty:
+                        return ""
+                    return non_empty[-1]
+                return raw_value
+        return None
+
+    def _field_was_cleared(arg_name: str) -> bool:
+        """Determine whether the user explicitly cleared a field in the submitted form."""
+        raw_value = _extract_form_value(arg_name)
+        if raw_value is None:
+            return False
+        if isinstance(raw_value, str):
+            return raw_value.strip() == ""
+        return raw_value in (None, [], {})
+
+    if _field_was_cleared("--deepspeed_config"):
+        logger.debug("User cleared --deepspeed_config; removing from existing config merge.")
+        for variant in ("--deepspeed_config", "deepspeed_config"):
+            existing_config_cli.pop(variant, None)
+            config_dict.pop(variant, None)
+            alias = variant.lstrip("-")
+            if alias != variant:
+                existing_config_cli.pop(alias, None)
+                config_dict.pop(alias, None)
+
     all_defaults = get_all_field_defaults()
 
     def _has_accelerate_config(*sources: Dict[str, Any]) -> bool:
