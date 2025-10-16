@@ -164,14 +164,55 @@
         }
 
         if (state.includeOptimizer) {
+            const canonicalOptimizers = {
+                adagrad: "Adagrad",
+                adam: "Adam",
+                adamw: "AdamW",
+                lamb: "Lamb",
+                onebitadam: "OneBitAdam",
+                onebitlamb: "OneBitLamb",
+                zerooneadam: "ZeroOneAdam",
+                muadam: "MuAdam",
+                muadamw: "MuAdamW",
+                musgd: "MuSGD",
+                lion: "Lion",
+                muon: "Muon",
+            };
+            const unsupportedOptimizers = new Set(["cpuadam", "fusedadam"]);
+
+            const normalizeOptimizerSelection = (value) => {
+                const raw = (value ?? "").toString().trim();
+                if (!raw) {
+                    return { type: null, fallback: null };
+                }
+                const key = raw.toLowerCase();
+                if (unsupportedOptimizers.has(key)) {
+                    return { type: "AdamW", fallback: raw };
+                }
+                if (canonicalOptimizers[key]) {
+                    return { type: canonicalOptimizers[key], fallback: null };
+                }
+                return { type: "AdamW", fallback: raw };
+            };
+
             let optimizerType = state.optimizerType || "auto";
+            let fallbackSource = null;
             if (optimizerType === "auto") {
-                const offloadDevice = zeroOpt.offload_optimizer?.device || "";
-                optimizerType = typeof offloadDevice === "string" && offloadDevice.toLowerCase() === "cpu"
-                    ? "CPUAdam"
-                    : "FusedAdam";
+                optimizerType = "AdamW";
             } else if (optimizerType === "custom") {
-                optimizerType = (state.optimizerCustomType || "").trim() || "FusedAdam";
+                optimizerType = (state.optimizerCustomType || "").trim() || "AdamW";
+            } else {
+                const normalized = normalizeOptimizerSelection(optimizerType);
+                optimizerType = normalized.type || "AdamW";
+                fallbackSource = normalized.fallback;
+            }
+
+            if (fallbackSource) {
+                console.warn(`[DeepSpeed Builder] Optimizer "${fallbackSource}" is not supported; using ${optimizerType} instead.`);
+                if (state.optimizerType !== "custom") {
+                    state.optimizerType = optimizerType;
+                    state.optimizerCustomType = "";
+                }
             }
 
             const optimizerParams = {};
@@ -573,19 +614,28 @@
                 const optimizerConfig = config.optimizer;
                 if (optimizerConfig && typeof optimizerConfig === "object") {
                     this.includeOptimizer = true;
-                    const optTypeRaw = optimizerConfig.type || optimizerConfig.name || "FusedAdam";
+                    const optTypeRaw = optimizerConfig.type || optimizerConfig.name || "AdamW";
                     const normalisedOptType = String(optTypeRaw).toLowerCase();
                     const knownTypes = {
-                        auto: "auto",
+                        adagrad: "Adagrad",
                         adam: "Adam",
                         adamw: "AdamW",
-                        fusedadam: "FusedAdam",
-                        cpuadam: "CPUAdam",
+                        lamb: "Lamb",
                         onebitadam: "OneBitAdam",
                         onebitlamb: "OneBitLamb",
                         zerooneadam: "ZeroOneAdam",
+                        muadam: "MuAdam",
+                        muadamw: "MuAdamW",
+                        musgd: "MuSGD",
+                        lion: "Lion",
+                        muon: "Muon",
                     };
-                    if (normalisedOptType in knownTypes) {
+                    const unsupportedOptimizers = new Set(["cpuadam", "fusedadam"]);
+                    if (unsupportedOptimizers.has(normalisedOptType)) {
+                        console.warn(`[DeepSpeed Builder] Unsupported optimizer "${optTypeRaw}" detected; converting to AdamW.`);
+                        this.optimizerType = "AdamW";
+                        this.optimizerCustomType = "";
+                    } else if (normalisedOptType in knownTypes) {
                         this.optimizerType = knownTypes[normalisedOptType];
                         this.optimizerCustomType = "";
                     } else {
