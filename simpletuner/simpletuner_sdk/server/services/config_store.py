@@ -398,6 +398,12 @@ class ConfigStore:
         if self.config_type != "model":
             return
 
+        # Treat the special "default" configuration as virtual; avoid creating sidecar files
+        if config_path.suffix == ".json" and (
+            config_path.stem.lower() == "default" or config_path.parent.name.lower() == "default"
+        ):
+            return
+
         metadata_path = self._metadata_file_path(config_path)
         metadata_payload = metadata.model_dump()
         metadata_path.parent.mkdir(parents=True, exist_ok=True)

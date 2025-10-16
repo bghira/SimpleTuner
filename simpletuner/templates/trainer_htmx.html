@@ -2536,6 +2536,8 @@ function trainerComponent() {
                     : '';
                 if (nextStep.input_type === 'accelerate_auto') {
                     await this.prepareAccelerateOnboarding(nextStep.value || fallback || null);
+                } else if (nextStep.input_type === 'environment') {
+                    this.onboardingForm.value = nextStep.value || '';
                 } else {
                     this.onboardingForm.value = nextStep.value || fallback || '';
                 }
@@ -2545,6 +2547,12 @@ function trainerComponent() {
                     if (this.$refs.onboardingInput && nextStep.input_type === 'directory') {
                         this.$refs.onboardingInput.focus();
                         this.$refs.onboardingInput.select();
+                    }
+                    if (nextStep.input_type === 'environment') {
+                        const form = this.$refs.onboardingEnvironmentForm;
+                        if (form && typeof form.prepareForDisplay === 'function') {
+                            form.prepareForDisplay();
+                        }
                     }
                 });
             } else {
@@ -2602,7 +2610,7 @@ function trainerComponent() {
                          targetField.dispatchEvent(new Event('input', { bubbles: true }));
                      }
                 }
-                if (window.showToast) {
+                if (window.showToast && completedStep.input_type !== 'environment') {
                     window.showToast('Saved web UI defaults.', 'success');
                 }
                 if (data) {
@@ -2620,6 +2628,45 @@ function trainerComponent() {
                 this.overlayError = 'Something went wrong. Please try again.';
             } finally {
                  this.overlaySaving = false;
+            }
+        },
+        async handleOnboardingEnvironmentCreated(detail) {
+            const payload = detail?.payload || {};
+            const environment = detail?.environment || null;
+            try {
+                await this.loadEnvironmentConfigs();
+            } catch (error) {
+                console.error('Failed to reload environment configs after onboarding:', error);
+            }
+            const dataloaderStore = Alpine.store('dataloaderConfigs');
+            if (dataloaderStore) {
+                try {
+                    await dataloaderStore.load(true);
+                } catch (error) {
+                    console.error('Failed to refresh dataloader configs after onboarding:', error);
+                }
+            }
+            if (environment && typeof this.switchEnvironment === 'function') {
+                try {
+                    await this.switchEnvironment(environment.name);
+                } catch (error) {
+                    console.error('Failed to switch to new environment after onboarding:', error);
+                }
+            }
+            window.dispatchEvent(new CustomEvent('configs-updated', {
+                detail: {
+                    source: 'environment-create',
+                    name: payload && payload.name ? payload.name : (environment && environment.name ? environment.name : null),
+                    environment: environment
+                }
+            }));
+            this.onboardingForm.value = payload && payload.name ? payload.name : (environment && environment.name ? environment.name : '');
+            await this.submitOnboardingStep();
+            if (!this.activeOnboardingStep || this.activeOnboardingStep.input_type !== 'environment') {
+                const form = this.$refs.onboardingEnvironmentForm;
+                if (form && typeof form.resetForm === 'function') {
+                    form.resetForm();
+                }
             }
         },
          async resetOnboarding() {
@@ -3684,14 +3731,43 @@ function trainerComponent() {
                         <div x-effect="if (onboardingAccelerate.mode === 'manual' && gpuInventory.devices.length) { const selected = (onboardingAccelerate.deviceIds || []).length; if (selected > 0 && onboardingAccelerate.manualCount !== selected) { onboardingAccelerate.manualCount = selected; } }"></div>
                     </div>
                 </template>
+                <template x-if="activeOnboardingStep && activeOnboardingStep.input_type === 'environment'">
+                    <div class="environment-onboarding">
+                        <div x-data="createEnvironmentFormComponent({ resetOnSuccess: false })"
+                             x-ref="onboardingEnvironmentForm"
+                             @environment-created="handleOnboardingEnvironmentCreated($event.detail)">
+                            <div x-show="loadingInitialData" class="alert alert-info d-flex align-items-center gap-2">
+                                <i class="fas fa-spinner fa-spin"></i>
+                                <span>Loading environment templates...</span>
+                            </div>
+                            <div :class="loadingInitialData ? 'opacity-50 pointer-events-none' : ''">
+                                {% include "partials/create_environment_form_fields.html" %}
+                            </div>
+                            <template x-if="error">
+                                <div class="alert alert-danger mt-3 mb-0 py-2 px-3" x-text="error"></div>
+                            </template>
+                            <div class="d-flex justify-content-end gap-2 mt-3">
+                                <button type="button"
+                                        class="btn btn-primary"
+                                        :disabled="submitting || loadingInitialData"
+                                        @click="submit()">
+                                    <span x-show="!submitting">Create environment</span>
+                                    <span x-show="submitting"><i class="fas fa-spinner fa-spin"></i> Creating...</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </template>
                 <template x-if="overlayError">
                     <div class="alert alert-danger py-2 px-3" x-text="overlayError"></div>
                 </template>
                 <div class="onboarding-actions">
-                    <button type="submit" class="btn btn-primary" :disabled="overlaySaving">
-                        <span x-show="!overlaySaving">Save and continue</span>
-                        <span x-show="overlaySaving">Saving...</span>
-                    </button>
+                    <template x-if="activeOnboardingStep && activeOnboardingStep.input_type !== 'environment'">
+                        <button type="submit" class="btn btn-primary" :disabled="overlaySaving">
+                            <span x-show="!overlaySaving">Save and continue</span>
+                            <span x-show="overlaySaving">Saving...</span>
+                        </button>
+                    </template>
                     <button type="button"
                             class="btn btn-outline-secondary"
                             @click="resetOnboarding"

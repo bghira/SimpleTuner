@@ -47,35 +47,7 @@ function environmentsTabComponent() {
          viewMode: localStorage.getItem('environmentsViewMode') || 'cards',
          configType: 'model',  // 'model', 'dataloader', 'webhook', or 'lycoris'
          createEnvironmentModal: false,
-         createEnvironmentLoading: false,
-         newEnvironmentPathTouched: false,
-        newEnvironment: {
-            name: '',
-            model_family: '',
-            model_flavour: null,
-            model_type: 'lora',
-            lora_type: 'standard',
-            dataloader_path: '',
-            description: '',
-            example: ''
-        },
-         modelFamilies: [],
-         modelFlavours: [],
-         modelFlavourCache: {},
-         modelTypes: [
-             { value: 'lora', label: 'LoRA' },
-             { value: 'full', label: 'Full Model' },
-         ],
-         loraTypes: [
-             { value: 'standard', label: 'Standard', disabled: false },
-             { value: 'lycoris', label: 'LyCORIS', disabled: false },
-         ],
-         examples: [],
-         examplesMap: {},
          dataloaderConfigs: [],
-         createNewDataloader: true,
-         selectedDataloaderPath: '',
-         exampleLocked: false,
          expandedEnvironments: {},
         dataloaderModal: {
             open: false,
@@ -342,24 +314,6 @@ function environmentsTabComponent() {
             }
         },
 
-        resetNewEnvironment() {
-            this.newEnvironment = {
-                name: '',
-                model_family: '',
-                model_flavour: null,
-                model_type: 'lora',
-                lora_type: 'standard',
-                dataloader_path: '',
-                description: '',
-                example: ''
-            };
-            this.newEnvironmentPathTouched = false;
-            this.modelFlavours = [];
-            this.createNewDataloader = true;
-            this.selectedDataloaderPath = '';
-            this.exampleLocked = false;
-        },
-
         normalizeConfigNameForType(name) {
             if (name === undefined || name === null) {
                 return '';
@@ -375,310 +329,70 @@ function environmentsTabComponent() {
             return entry;
         },
 
-        updateNewEnvironmentName(value) {
-            const sanitized = localSanitizeConfigName(value || '');
-            this.newEnvironment.name = sanitized;
-            if (this.createNewDataloader && !this.newEnvironmentPathTouched) {
-                this.newEnvironment.dataloader_path = sanitized ? `${sanitized}/multidatabackend.json` : '';
-            }
-        },
-
-        markEnvironmentPathTouched() {
-            this.newEnvironmentPathTouched = true;
-        },
-
-        selectExistingDataloader(path) {
-            this.selectedDataloaderPath = path;
-            if (!this.createNewDataloader) {
-                this.newEnvironment.dataloader_path = path;
-            }
-        },
-
-        handleModelTypeChange(value) {
-            this.newEnvironment.model_type = value;
-            if (value !== 'lora') {
-                this.newEnvironment.lora_type = 'standard';
-            }
-        },
-
-        async handleExampleSelection(value) {
-            this.newEnvironment.example = value;
-            if (!value) {
-                this.exampleLocked = false;
-                this.newEnvironment.description = '';
-                if (this.dataloaderConfigs.length > 0) {
-                    this.createNewDataloader = false;
-                    this.selectedDataloaderPath = this.dataloaderConfigs[0]?.path || '';
-                    if (this.selectedDataloaderPath) {
-                        this.newEnvironment.dataloader_path = this.selectedDataloaderPath;
-                    }
-                } else {
-                    this.createNewDataloader = true;
-                    this.newEnvironmentPathTouched = false;
-                    this.newEnvironment.dataloader_path = this.computeDefaultDataloaderPath();
-                }
-                return;
-            }
-
-            const example = this.examplesMap[value];
-            if (!example || !example.defaults) {
-                this.exampleLocked = false;
-                return;
-            }
-
-            const defaults = example.defaults;
-            if (defaults.model_family) {
-                this.newEnvironment.model_family = defaults.model_family;
-                await this.loadModelFlavours(defaults.model_family);
-            }
-            this.newEnvironment.model_flavour = defaults.model_flavour ?? null;
-
-            const modelType = defaults.model_type || 'lora';
-            this.newEnvironment.model_type = modelType;
-            this.handleModelTypeChange(modelType);
-            if (modelType === 'lora') {
-                this.newEnvironment.lora_type = defaults.lora_type || 'standard';
-            }
-
-            this.newEnvironment.description = example.description || '';
-            this.exampleLocked = true;
-            this.createNewDataloader = true;
-            this.newEnvironmentPathTouched = false;
-            this.newEnvironment.dataloader_path = this.computeDefaultDataloaderPath();
-            this.selectedDataloaderPath = '';
-        },
-
-        async generateProjectName() {
-            try {
-                const response = await fetch('/api/configs/project-name');
-                if (!response.ok) {
-                    throw new Error('Failed to generate name');
-                }
-                const data = await response.json();
-                if (data?.name) {
-                    this.updateNewEnvironmentName(data.name);
-                }
-            } catch (error) {
-                console.error('Failed to generate project name:', error);
-                window.showToast('Could not generate project name', 'error');
-            }
-        },
-
-        async ensureModelFamilies() {
-            if (this.modelFamilies.length > 0) {
-                return;
-            }
-            try {
-                const response = await fetch('/api/models');
-                if (response.ok) {
-                    const data = await response.json();
-                    this.modelFamilies = data.families || [];
-                }
-            } catch (error) {
-                console.error('Failed to load model families:', error);
-            }
-        },
-
-        async loadModelFlavours(family) {
-            if (!family) {
-                this.modelFlavours = [];
-                return;
-            }
-            if (this.modelFlavourCache[family]) {
-                this.modelFlavours = this.modelFlavourCache[family];
-                return;
-            }
-            try {
-                const response = await fetch(`/api/models/${family}/flavours`);
-                if (response.ok) {
-                    const data = await response.json();
-                    const flavours = data.flavours || [];
-                    this.modelFlavourCache[family] = flavours;
-                    this.modelFlavours = flavours;
-                } else {
-                    this.modelFlavours = [];
-                }
-            } catch (error) {
-                console.error('Failed to load model flavours:', error);
-                this.modelFlavours = [];
-            }
-        },
-
-        async ensureExamples() {
-            if (this.examples.length > 0) {
-                return;
-            }
-            try {
-                const response = await fetch('/api/configs/examples');
-                if (response.ok) {
-                    const data = await response.json();
-                    this.examples = data.examples || [];
-                    this.examplesMap = Object.fromEntries((this.examples || []).map(example => [example.name, example]));
-                }
-            } catch (error) {
-                console.error('Failed to load examples:', error);
-            }
-        },
-
-        async ensureDataloaderConfigs() {
-            const store = Alpine.store('dataloaderConfigs');
-            if (store) {
-                await store.load();
-                // Update local cache for backwards compatibility
-                this.dataloaderConfigs = store.configs;
-            }
-        },
-
-        computeDefaultDataloaderPath() {
-            if (!this.newEnvironment.name) {
-                return '';
-            }
-            return `${this.newEnvironment.name}/multidatabackend.json`;
-        },
-
-        toggleCreateNewDataloader(checked) {
-            this.createNewDataloader = checked;
-            if (checked) {
-                if (!this.newEnvironmentPathTouched) {
-                    this.newEnvironment.dataloader_path = this.computeDefaultDataloaderPath();
-                }
-            } else {
-                if (this.dataloaderConfigs.length > 0) {
-                    if (!this.selectedDataloaderPath) {
-                        this.selectedDataloaderPath = this.dataloaderConfigs[0].path;
-                    }
-                    this.newEnvironment.dataloader_path = this.selectedDataloaderPath;
-                } else {
-                    this.createNewDataloader = true;
-                    if (!this.newEnvironmentPathTouched) {
-                        this.newEnvironment.dataloader_path = this.computeDefaultDataloaderPath();
-                    }
-                }
-            }
-        },
-
         async openCreateEnvironmentModal() {
-            this.resetNewEnvironment();
-            await this.ensureModelFamilies();
-            await this.ensureExamples();
-            await this.ensureDataloaderConfigs();
-            if (this.modelFamilies.length > 0) {
-                const defaultFamily = this.modelFamilies[0];
-                this.newEnvironment.model_family = defaultFamily;
-                await this.loadModelFlavours(defaultFamily);
-            }
-            if (this.dataloaderConfigs.length > 0) {
-                this.createNewDataloader = false;
-                this.selectedDataloaderPath = this.dataloaderConfigs[0].path;
-                this.newEnvironment.dataloader_path = this.selectedDataloaderPath;
-            } else {
-                this.createNewDataloader = true;
-                this.newEnvironment.dataloader_path = this.computeDefaultDataloaderPath();
-            }
-            this.exampleLocked = false;
             this.createEnvironmentModal = true;
+            this.$nextTick(async () => {
+                const form = this.$refs.createEnvironmentForm;
+                if (form && typeof form.prepareForDisplay === 'function') {
+                    await form.prepareForDisplay();
+                }
+            });
         },
 
         closeCreateEnvironmentModal() {
             this.createEnvironmentModal = false;
-            this.createEnvironmentLoading = false;
+            const form = this.$refs.createEnvironmentForm;
+            if (form && typeof form.resetForm === 'function') {
+                form.resetForm();
+            }
         },
 
-        async createEnvironmentSubmit() {
-            const sanitizedName = localSanitizeConfigName(this.newEnvironment.name || '');
-            if (!sanitizedName || !this.newEnvironment.model_family) {
-                window.showToast('Name and model family are required', 'warning');
-                return;
+        async handleEnvironmentCreated(detail) {
+            const payload = detail?.payload || null;
+            const environment = detail?.environment || null;
+            this.closeCreateEnvironmentModal();
+            await this.loadConfigs();
+            const dataloaderStore = Alpine.store('dataloaderConfigs');
+            if (dataloaderStore) {
+                await dataloaderStore.load(true);
             }
-            this.newEnvironment.name = sanitizedName;
-            this.createEnvironmentLoading = true;
-            const payload = {
-                name: sanitizedName,
-                model_family: this.newEnvironment.model_family,
-                model_flavour: this.newEnvironment.model_flavour || null,
-                model_type: this.newEnvironment.model_type || 'lora',
-                lora_type: this.newEnvironment.model_type === 'lora' ? this.newEnvironment.lora_type || 'standard' : null,
-                description: this.newEnvironment.description || null,
-                example: this.newEnvironment.example || null,
-                dataloader_path: this.createNewDataloader ? (this.newEnvironment.dataloader_path || null) : (this.selectedDataloaderPath || null),
-                create_dataloader: this.createNewDataloader,
-            };
-            if (!payload.dataloader_path && this.createNewDataloader) {
-                const fallback = this.computeDefaultDataloaderPath();
-                payload.dataloader_path = fallback || null;
-            }
-            if (!payload.dataloader_path && !this.createNewDataloader && this.selectedDataloaderPath) {
-                payload.dataloader_path = this.selectedDataloaderPath;
-            }
-            if (!payload.dataloader_path && !this.createNewDataloader && this.dataloaderConfigs.length > 0) {
-                payload.dataloader_path = this.dataloaderConfigs[0].path;
-            }
-            try {
-                const response = await fetch('/api/configs/environments', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(payload)
-                });
-
-                if (response.ok) {
-                    const result = await response.json().catch(() => null);
-                    this.closeCreateEnvironmentModal();
-                    await this.loadConfigs();
-                    // Force reload shared dataloader store
-                    const dataloaderStore = Alpine.store('dataloaderConfigs');
-                    if (dataloaderStore) {
-                        await dataloaderStore.load(true);
-                    }
-                    this.dataloaderConfigs = [];
-                    const trainerStore = Alpine.store('trainer');
-                    if (trainerStore) {
-                        if (typeof trainerStore.loadEnvironmentConfigs === 'function') {
-                            await trainerStore.loadEnvironmentConfigs();
-                        }
-
-                        if (result && result.environment && Array.isArray(trainerStore.environments)) {
-                            const exists = trainerStore.environments.some(
-                                (entry) => entry && entry.name === result.environment.name
-                            );
-                            if (!exists) {
-                                trainerStore.environments.push(result.environment);
-                            }
-                        }
-
-                        let switched = false;
-                        if (result && result.environment && typeof trainerStore.switchEnvironment === 'function') {
-                            try {
-                                await trainerStore.switchEnvironment(result.environment.name);
-                                switched = true;
-                            } catch (error) {
-                                console.error('Failed to switch to new environment automatically:', error);
-                            }
-                        }
-
-                        if (!switched && typeof trainerStore.updateConfigSelectors === 'function') {
-                            await trainerStore.updateConfigSelectors();
-                        }
-                    }
-                    window.dispatchEvent(new CustomEvent('configs-updated', {
-                        detail: {
-                            source: 'environment-create',
-                            name: payload.name,
-                            environment: result && result.environment ? result.environment : null,
-                        }
-                    }));
-                    window.showToast(`Environment "${payload.name}" created`, 'success');
-                } else {
-                    const error = await response.json().catch(() => ({}));
-                    window.showToast(error.detail || 'Failed to create environment', 'error');
+            this.dataloaderConfigs = [];
+            const trainerStore = Alpine.store('trainer');
+            if (trainerStore) {
+                if (typeof trainerStore.loadEnvironmentConfigs === 'function') {
+                    await trainerStore.loadEnvironmentConfigs();
                 }
-            } catch (error) {
-                console.error('Failed to create environment:', error);
-                window.showToast('Failed to create environment', 'error');
-            } finally {
-                this.createEnvironmentLoading = false;
+
+                if (environment && Array.isArray(trainerStore.environments)) {
+                    const exists = trainerStore.environments.some(
+                        (entry) => entry && entry.name === environment.name
+                    );
+                    if (!exists) {
+                        trainerStore.environments.push(environment);
+                    }
+                }
+
+                let switched = false;
+                if (environment && typeof trainerStore.switchEnvironment === 'function') {
+                    try {
+                        await trainerStore.switchEnvironment(environment.name);
+                        switched = true;
+                    } catch (error) {
+                        console.error('Failed to switch to new environment automatically:', error);
+                    }
+                }
+
+                if (!switched && typeof trainerStore.updateConfigSelectors === 'function') {
+                    await trainerStore.updateConfigSelectors();
+                }
             }
+            window.dispatchEvent(new CustomEvent('configs-updated', {
+                detail: {
+                    source: 'environment-create',
+                    name: payload && payload.name ? payload.name : null,
+                    environment: environment,
+                }
+            }));
         },
 
         openCreateDataloaderModal(environmentName) {
@@ -1790,126 +1504,35 @@ function environmentsTabComponent() {
                 <h5 class="modal-title"><i class="fas fa-plus-circle"></i> Create Environment</h5>
                 <button type="button" class="btn-close" aria-label="Close" @click="closeCreateEnvironmentModal()"></button>
             </div>
-            <form @submit.prevent="createEnvironmentSubmit">
-                <div class="modal-body">
-                    <div class="mb-3">
-                        <label class="form-label">Environment Name</label>
-                        <div class="input-group">
-                            <input type="text"
-                                   class="form-control"
-                                   :value="newEnvironment.name"
-                                   placeholder="my-environment"
-                                   required
-                                   @input="updateNewEnvironmentName($event.target.value)">
-                            <button type="button"
-                                    class="btn btn-outline-secondary"
-                                    title="Generate project name"
-                                    @click="generateProjectName()">
-                                <i class="fas fa-random"></i>
-                            </button>
+            <div x-data="createEnvironmentFormComponent()"
+                 x-ref="createEnvironmentForm"
+                 @environment-created="handleEnvironmentCreated($event.detail)"
+                 @environment-form-cancel="closeCreateEnvironmentModal()">
+                <form @submit.prevent="submit">
+                    <div class="modal-body">
+                        <div x-show="loadingInitialData" class="alert alert-info d-flex align-items-center gap-2">
+                            <i class="fas fa-spinner fa-spin"></i>
+                            <span>Loading model families and examples...</span>
                         </div>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Model Family</label>
-                        <select class="form-select"
-                                x-model="newEnvironment.model_family"
-                                required
-                                :disabled="exampleLocked"
-                                @change="loadModelFlavours($event.target.value); newEnvironment.model_flavour=null;">
-                            <option value="" disabled>Select a model family</option>
-                            <template x-for="family in modelFamilies" :key="family">
-                                <option :value="family" x-text="family"></option>
-                            </template>
-                        </select>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Model Flavour</label>
-                        <select class="form-select" x-model="newEnvironment.model_flavour" :disabled="exampleLocked">
-                            <option value="">Default</option>
-                            <template x-for="flavour in modelFlavours" :key="flavour">
-                                <option :value="flavour" x-text="flavour"></option>
-                            </template>
-                        </select>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Model Type</label>
-                        <select class="form-select"
-                                x-model="newEnvironment.model_type"
-                                :disabled="exampleLocked"
-                                @change="handleModelTypeChange($event.target.value)">
-                            <template x-for="type in modelTypes" :key="type.value">
-                                <option :value="type.value" x-text="type.label"></option>
-                            </template>
-                        </select>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Bootstrap From Example</label>
-                        <select class="form-select"
-                                x-model="newEnvironment.example"
-                                @change="handleExampleSelection($event.target.value)">
-                            <option value="">None</option>
-                            <template x-for="example in examples" :key="example.name">
-                                <option :value="example.name" x-text="example.name"></option>
-                            </template>
-                        </select>
-                    </div>
-                    <div class="mb-3" x-show="newEnvironment.model_type === 'lora'">
-                        <label class="form-label">LoRA Type</label>
-                        <select class="form-select" x-model="newEnvironment.lora_type" :disabled="exampleLocked">
-                            <template x-for="lora in loraTypes" :key="lora.value">
-                                <option :value="lora.value" :disabled="lora.disabled" x-text="lora.label"></option>
-                            </template>
-                        </select>
-                        <small class="text-muted">LyCORIS option is temporarily unavailable for new configs.</small>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Dataset Configuration</label>
-                        <div class="form-check mb-2" x-show="dataloaderConfigs.length > 0">
-                            <input class="form-check-input" type="checkbox" id="createNewDataloader"
-                                   :checked="createNewDataloader"
-                                   @change="toggleCreateNewDataloader($event.target.checked)">
-                            <label class="form-check-label" for="createNewDataloader">
-                                Create new dataloader config for this environment
-                            </label>
+                        <div :class="loadingInitialData ? 'opacity-50 pointer-events-none' : ''">
+                            {% include "partials/create_environment_form_fields.html" %}
                         </div>
-                        <select class="form-select mb-2"
-                                :disabled="createNewDataloader || dataloaderConfigs.length === 0"
-                                x-model="selectedDataloaderPath"
-                                @change="selectExistingDataloader($event.target.value)">
-                            <template x-if="dataloaderConfigs.length === 0">
-                                <option value="">No dataloader configs available</option>
-                            </template>
-                            <template x-for="config in dataloaderConfigs" :key="config.path">
-                                <option :value="config.path"
-                                        x-text="config.dataset_count !== undefined ? `${config.name} (${config.dataset_count} datasets)` : config.name"></option>
-                            </template>
-                        </select>
-                        <input type="text"
-                               class="form-control"
-                               placeholder="my-environment/multidatabackend.json"
-                               :disabled="!createNewDataloader"
-                               :value="newEnvironment.dataloader_path"
-                               @input="markEnvironmentPathTouched(); newEnvironment.dataloader_path = $event.target.value">
-                        <small class="text-muted" x-show="createNewDataloader">
-                            Path is relative to your configs directory. Leave blank to use the default location.
-                        </small>
-                        <small class="text-muted" x-show="!createNewDataloader">
-                            The selected dataloader configuration will be referenced by this environment.
-                        </small>
+                        <template x-if="error">
+                            <div class="alert alert-danger mt-3 mb-0 py-2 px-3" x-text="error"></div>
+                        </template>
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label">Description</label>
-                        <textarea class="form-control" rows="2" x-model="newEnvironment.description" placeholder="Optional description"></textarea>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-outline-secondary" @click="$dispatch('environment-form-cancel')"
+                                :disabled="submitting">
+                            Cancel
+                        </button>
+                        <button type="submit" class="btn btn-primary" :disabled="submitting || loadingInitialData">
+                            <span x-show="!submitting"><i class="fas fa-check"></i> Create</span>
+                            <span x-show="submitting"><i class="fas fa-spinner fa-spin"></i> Creating...</span>
+                        </button>
                     </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-outline-secondary" @click="closeCreateEnvironmentModal()">Cancel</button>
-                    <button type="submit" class="btn btn-primary" :disabled="createEnvironmentLoading">
-                        <span x-show="!createEnvironmentLoading"><i class="fas fa-check"></i> Create</span>
-                        <span x-show="createEnvironmentLoading"><i class="fas fa-spinner fa-spin"></i> Creating...</span>
-                    </button>
-                </div>
-            </form>
+                </form>
+            </div>
         </div>
     </div>
 

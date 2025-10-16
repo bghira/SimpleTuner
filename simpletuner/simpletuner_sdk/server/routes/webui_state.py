@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
+from simpletuner.simpletuner_sdk.server.services.configs_service import CONFIGS_SERVICE, ConfigServiceError
 from simpletuner.simpletuner_sdk.server.services.webui_state import (
     OnboardingStepState,
     WebUIDefaults,
@@ -35,7 +37,7 @@ class OnboardingStepDefinition:
     applies_to_default: Optional[str] = None
 
 
-_STEP_DEFINITIONS: List[OnboardingStepDefinition] = [
+_CORE_STEP_DEFINITIONS: List[OnboardingStepDefinition] = [
     OnboardingStepDefinition(
         id="default_configs_dir",
         title="Default configurations directory",
@@ -73,7 +75,69 @@ _STEP_DEFINITIONS: List[OnboardingStepDefinition] = [
         applies_to_default="accelerate_overrides",
     ),
 ]
-_STEP_INDEX: Dict[str, OnboardingStepDefinition] = {step.id: step for step in _STEP_DEFINITIONS}
+
+_OPTIONAL_STEPS: Dict[str, OnboardingStepDefinition] = {
+    "create_initial_environment": OnboardingStepDefinition(
+        id="create_initial_environment",
+        title="Create your training environment",
+        prompt=(
+            "The Default environment is a safety net. Create the environment you'll use for training "
+            "so SimpleTuner can keep your changes separate."
+        ),
+        input_type="environment",
+        version=1,
+        required=True,
+    )
+}
+
+_ALL_STEPS: Dict[str, OnboardingStepDefinition] = {
+    **{step.id: step for step in _CORE_STEP_DEFINITIONS},
+    **_OPTIONAL_STEPS,
+}
+
+
+def _sanitize_environment_name(candidate: str) -> str:
+    """Normalise environment names similar to the frontend sanitiser."""
+    value = (candidate or "").strip()
+    if value.lower().endswith(".json"):
+        value = value[:-5].strip()
+    return value
+
+
+def _should_include_environment_step() -> bool:
+    """Determine if the environment creation onboarding step should be shown."""
+    try:
+        payload = CONFIGS_SERVICE.list_configs("model")
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "Failed to inspect environments for onboarding step: %s", exc, exc_info=True
+        )
+        return False
+
+    configs = payload.get("configs") if isinstance(payload, dict) else None
+    if not isinstance(configs, list):
+        return False
+
+    non_default_found = False
+    for entry in configs:
+        if not isinstance(entry, dict):
+            continue
+        name = _sanitize_environment_name(str(entry.get("name") or ""))
+        if not name:
+            continue
+        if name.lower() != "default":
+            non_default_found = True
+            break
+
+    return not non_default_found
+
+
+def _resolve_step_definitions() -> List[OnboardingStepDefinition]:
+    """Return the ordered onboarding steps, including optional ones when required."""
+    steps = list(_CORE_STEP_DEFINITIONS)
+    if _should_include_environment_step():
+        steps.append(_OPTIONAL_STEPS["create_initial_environment"])
+    return steps
 
 
 class OnboardingStepUpdate(BaseModel):
@@ -134,7 +198,7 @@ async def get_webui_state() -> Dict[str, object]:
         state = store.load_state()
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(error)) from error
-    return _build_state_response(state, _STEP_DEFINITIONS)
+    return _build_state_response(state, _resolve_step_definitions())
 
 
 def _normalise_value(step: OnboardingStepDefinition, value: object) -> Optional[object]:
@@ -159,6 +223,29 @@ def _normalise_value(step: OnboardingStepDefinition, value: object) -> Optional[
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Accelerator selection must be an object.",
         )
+
+    if step.input_type == "environment":
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Environment name must be a string.",
+            )
+        candidate = _sanitize_environment_name(value)
+        if not candidate:
+            return None
+        try:
+            CONFIGS_SERVICE.get_config(candidate, config_type="model")
+        except ConfigServiceError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Environment '{candidate}' was not found. Please create it before continuing.",
+            ) from exc
+        except Exception:
+            # If we cannot verify, fall back to accepting the candidate.
+            pass
+        return candidate
 
     if value is None:
         return None
@@ -188,7 +275,7 @@ def _apply_step_to_defaults(
 @router.post("/onboarding/steps/{step_id}")
 async def update_onboarding_step(step_id: str, payload: OnboardingStepUpdate) -> Dict[str, object]:
     """Update onboarding progress for a specific step."""
-    definition = _STEP_INDEX.get(step_id)
+    definition = _ALL_STEPS.get(step_id)
     if definition is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Unknown onboarding step '{step_id}'")
 
@@ -224,7 +311,7 @@ async def update_onboarding_step(step_id: str, payload: OnboardingStepUpdate) ->
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(error)) from error
 
-    return _build_state_response(state, _STEP_DEFINITIONS)
+    return _build_state_response(state, _resolve_step_definitions())
 
 
 @router.post("/onboarding/reset")
@@ -238,7 +325,7 @@ async def reset_onboarding() -> Dict[str, object]:
 
         # Return fresh state
         state = store.load_state()
-        return _build_state_response(state, _STEP_DEFINITIONS)
+        return _build_state_response(state, _resolve_step_definitions())
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(error)) from error
 
@@ -304,7 +391,7 @@ async def update_defaults(payload: DefaultsUpdate) -> Dict[str, object]:
 
         # Return updated state
         state = store.load_state()
-        return _build_state_response(state, _STEP_DEFINITIONS)
+        return _build_state_response(state, _resolve_step_definitions())
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(error)) from error
 
