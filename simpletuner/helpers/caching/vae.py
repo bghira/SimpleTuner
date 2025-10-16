@@ -1103,7 +1103,7 @@ class VAECache(WebhookMixin):
                             progress=100,
                             total=statistics["total"],
                             current=statistics["total"],
-                            readable_type=f"VAE Caching (bucket {bucket}) completed",
+                            readable_type=f"VAE Caching (bucket {bucket})",
                         )
                     self.debug_log("Completed process_buckets, all futures have been returned.")
                 except Exception as e:
