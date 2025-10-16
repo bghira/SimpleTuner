@@ -3491,8 +3491,14 @@ def run_trainer_job(config):
                 message=f"Training job failed to start: {exc}",
                 message_level="error",
             )
+            payload = {"status": "training_failed", "error": str(exc)}
+            try:
+                import traceback
+                payload["traceback"] = traceback.format_exc()
+            except Exception:
+                pass
             webhook_handler.send_raw(
-                structured_data={"status": "training_failed", "error": str(exc)},
+                structured_data=payload,
                 message_type="training.status",
                 message_level="error",
                 job_id=StateTracker.get_job_id(),
@@ -3520,8 +3526,14 @@ def run_trainer_job(config):
                 message=f"Training job failed to start: {e}",
                 message_level="error",
             )
+            payload = {"status": "training_failed", "error": str(e)}
+            try:
+                import traceback
+                payload["traceback"] = traceback.format_exc()
+            except Exception:
+                pass
             webhook_handler.send_raw(
-                structured_data={"status": "training_failed"},
+                structured_data=payload,
                 message_type="training.status",
                 message_level="error",
                 job_id=StateTracker.get_job_id(),

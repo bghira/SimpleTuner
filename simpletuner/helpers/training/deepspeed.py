@@ -68,6 +68,23 @@ def prepare_model_for_deepspeed(accelerator, args):
         and getattr(accelerator.state, "deepspeed_plugin") is not None
     ):
         zero_config = accelerator.state.deepspeed_plugin.deepspeed_config.get("zero_optimization") or {}
+
+        fusedadam_available = False
+        can_use_fused = False
+        try:
+            from deepspeed.ops.adam import FusedAdam as _FusedAdam  # noqa: F401
+        except (ImportError, AttributeError):
+            fusedadam_available = False
+        else:
+            fusedadam_available = True
+
+        try:
+            import torch
+
+            device_type = accelerator.device.type if hasattr(accelerator, "device") else None
+            can_use_fused = fusedadam_available and torch.cuda.is_available() and device_type == "cuda"
+        except Exception:
+            can_use_fused = fusedadam_available
         offload_param = zero_config.get("offload_param")
 
         if isinstance(offload_param, dict):
@@ -92,6 +109,13 @@ def prepare_model_for_deepspeed(accelerator, args):
             logger.debug("DeepSpeed config missing zero_optimization.offload_param; skipping NVMe pin configuration.")
 
         use_deepspeed_optimizer = True
+        optimizer_config = accelerator.state.deepspeed_plugin.deepspeed_config.get("optimizer")
+        if optimizer_config:
+            opt_type = str(optimizer_config.get("type", "")).lower()
+            if opt_type == "fusedadam" and not can_use_fused:
+                logger.warning("FusedAdam not supported on this platform; falling back to Adam.")
+                optimizer_config["type"] = "Adam"
+                accelerator.state.deepspeed_plugin.deepspeed_config["optimizer"] = optimizer_config
         if "optimizer" not in accelerator.state.deepspeed_plugin.deepspeed_config:
             optimizer_offload = zero_config.get("offload_optimizer", {})
             offload_device = str(optimizer_offload.get("device", "")).lower()
@@ -99,8 +123,12 @@ def prepare_model_for_deepspeed(accelerator, args):
                 optimizer_type = "CPUAdam"
                 logger.info("Using DeepSpeed optimizer (CPUAdam with CPU offload).")
             else:
-                optimizer_type = "Adam"
-                logger.info("Using DeepSpeed optimizer (Adam).")
+                if can_use_fused:
+                    optimizer_type = "FusedAdam"
+                    logger.info("Using DeepSpeed optimizer (FusedAdam).")
+                else:
+                    optimizer_type = "Adam"
+                    logger.info("Using DeepSpeed optimizer (Adam).")
             accelerator.state.deepspeed_plugin.deepspeed_config["optimizer"] = {
                 "type": optimizer_type,
                 "params": {
