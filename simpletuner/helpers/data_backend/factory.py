@@ -5,6 +5,7 @@ import os
 import sys
 import time
 import tracemalloc
+from contextlib import nullcontext
 from math import sqrt
 from pathlib import Path
 from types import SimpleNamespace
@@ -1152,11 +1153,17 @@ class FactoryRegistry:
 
             init_backend["text_embed_cache"].set_webhook_handler(StateTracker.get_webhook_handler())
             logger.debug(f"rank {get_rank()} might skip discovery..")
-            with self.accelerator.main_process_first():
+            main_process_context = (
+                self.accelerator.main_process_first()
+                if getattr(self.accelerator, "num_processes", 1) > 1
+                else nullcontext()
+            )
+            with main_process_context:
                 logger.debug(f"rank {get_rank()} is discovering all files")
                 init_backend["text_embed_cache"].discover_all_files()
             logger.debug(f"rank {get_rank()} is waiting for other processes")
-            self.accelerator.wait_for_everyone()
+            if getattr(self.accelerator, "num_processes", 1) > 1:
+                self.accelerator.wait_for_everyone()
 
             if backend.get("default", False):
                 StateTracker.set_default_text_embed_cache(init_backend["text_embed_cache"])
@@ -1164,7 +1171,12 @@ class FactoryRegistry:
 
                 info_log("Pre-computing null embedding")
                 logger.debug(f"rank {get_rank()} may skip computing the embedding..")
-                with self.accelerator.main_process_first():
+                main_process_context = (
+                    self.accelerator.main_process_first()
+                    if getattr(self.accelerator, "num_processes", 1) > 1
+                    else nullcontext()
+                )
+                with main_process_context:
                     self.model.get_pipeline()
                     logger.debug(f"rank {get_rank()} is computing the null embed")
                     init_backend["text_embed_cache"].compute_embeddings_for_prompts(
@@ -1173,7 +1185,8 @@ class FactoryRegistry:
                     logger.debug(f"rank {get_rank()} has completed computing the null embed")
 
                 logger.debug(f"rank {get_rank()} is waiting for other processes")
-                self.accelerator.wait_for_everyone()
+                if getattr(self.accelerator, "num_processes", 1) > 1:
+                    self.accelerator.wait_for_everyone()
                 logger.debug(f"rank {get_rank()} is continuing")
 
             if self.args.caption_dropout_probability == 0.0:
