@@ -2543,15 +2543,16 @@ function trainerComponent() {
                 }
                 this.overlayVisible = true;
                 this.overlayError = '';
-                this.$nextTick(() => {
+                this.$nextTick(async () => {
                     if (this.$refs.onboardingInput && nextStep.input_type === 'directory') {
                         this.$refs.onboardingInput.focus();
                         this.$refs.onboardingInput.select();
                     }
                     if (nextStep.input_type === 'environment') {
-                        const form = this.$refs.onboardingEnvironmentForm;
-                        if (form && typeof form.prepareForDisplay === 'function') {
-                            form.prepareForDisplay();
+                        const formEl = this.$refs.onboardingEnvironmentForm;
+                        const component = formEl && formEl.__x ? formEl.__x.$data : null;
+                        if (component && typeof component.prepareForDisplay === 'function') {
+                            await component.prepareForDisplay();
                         }
                     }
                 });
@@ -2663,9 +2664,10 @@ function trainerComponent() {
             this.onboardingForm.value = payload && payload.name ? payload.name : (environment && environment.name ? environment.name : '');
             await this.submitOnboardingStep();
             if (!this.activeOnboardingStep || this.activeOnboardingStep.input_type !== 'environment') {
-                const form = this.$refs.onboardingEnvironmentForm;
-                if (form && typeof form.resetForm === 'function') {
-                    form.resetForm();
+                const formEl = this.$refs.onboardingEnvironmentForm;
+                const component = formEl && formEl.__x ? formEl.__x.$data : null;
+                if (component && typeof component.resetForm === 'function') {
+                    component.resetForm();
                 }
             }
         },

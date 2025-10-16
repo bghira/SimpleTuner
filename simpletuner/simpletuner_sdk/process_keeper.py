@@ -200,6 +200,18 @@ try:
     logger.info("Starting target function")
     result = target_func(wrapped_config)
     send_event("state", {{"status": "completed", "result": str(result)}})
+except SystemExit as exc:
+    exit_code = getattr(exc, "code", None)
+    if isinstance(exit_code, str) and exit_code.strip():
+        exit_message = exit_code.strip()
+    elif isinstance(exit_code, int):
+        exit_message = f"Training process exited during configuration (exit code {exit_code}). Check the logs above for details."
+    else:
+        exit_message = "Training process exited during configuration. Check the logs above for details."
+    logger.error(f"Training terminated via SystemExit: {exit_message}")
+    send_event("error", {{"message": exit_message, "exit_code": exit_code}})
+    send_event("state", {{"status": "failed"}})
+    raise
 except Exception as e:
     logger.error(f"Function error: {{e}}")
     import traceback

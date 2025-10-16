@@ -332,18 +332,20 @@ function environmentsTabComponent() {
         async openCreateEnvironmentModal() {
             this.createEnvironmentModal = true;
             this.$nextTick(async () => {
-                const form = this.$refs.createEnvironmentForm;
-                if (form && typeof form.prepareForDisplay === 'function') {
-                    await form.prepareForDisplay();
+                const formEl = this.$refs.createEnvironmentForm;
+                const component = formEl && formEl.__x ? formEl.__x.$data : null;
+                if (component && typeof component.prepareForDisplay === 'function') {
+                    await component.prepareForDisplay();
                 }
             });
         },
 
         closeCreateEnvironmentModal() {
             this.createEnvironmentModal = false;
-            const form = this.$refs.createEnvironmentForm;
-            if (form && typeof form.resetForm === 'function') {
-                form.resetForm();
+            const formEl = this.$refs.createEnvironmentForm;
+            const component = formEl && formEl.__x ? formEl.__x.$data : null;
+            if (component && typeof component.resetForm === 'function') {
+                component.resetForm();
             }
         },
 
