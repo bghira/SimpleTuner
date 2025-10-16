@@ -227,20 +227,25 @@
                                 <div class="col-md-6">
                                     <label class="form-label">Optimizer Type</label>
                                     <select class="form-select" x-model="optimizerType" @change="recompute()">
-                                        <option value="auto">Auto (FusedAdam / CPUAdam)</option>
-                                        <option value="FusedAdam">FusedAdam</option>
-                                        <option value="CPUAdam">CPUAdam</option>
-                                        <option value="Adam">Adam</option>
+                                        <option value="auto">Auto (AdamW default)</option>
                                         <option value="AdamW">AdamW</option>
+                                        <option value="Adam">Adam</option>
+                                        <option value="Adagrad">Adagrad</option>
+                                        <option value="Lamb">Lamb</option>
                                         <option value="OneBitAdam">OneBitAdam</option>
                                         <option value="ZeroOneAdam">ZeroOneAdam</option>
                                         <option value="OneBitLamb">OneBitLamb</option>
+                                        <option value="MuAdam">MuAdam</option>
+                                        <option value="MuAdamW">MuAdamW</option>
+                                        <option value="MuSGD">MuSGD</option>
+                                        <option value="Lion">Lion</option>
+                                        <option value="Muon">Muon</option>
                                         <option value="custom">Custom…</option>
                                     </select>
                                 </div>
                                 <div class="col-md-6" x-show="optimizerType === 'custom'">
                                     <label class="form-label">Custom Optimizer Name</label>
-                                    <input type="text" class="form-control" x-model="optimizerCustomType" @input="recompute()" placeholder="FusedAdam">
+                                    <input type="text" class="form-control" x-model="optimizerCustomType" @input="recompute()" placeholder="AdamW">
                                 </div>
                                 <div class="col-md-3">
                                     <label class="form-label">Learning Rate</label>

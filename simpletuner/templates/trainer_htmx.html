@@ -117,11 +117,46 @@ function trainerComponent() {
             };
             this._defaultsUpdateHandler = handler;
             window.addEventListener('webui-defaults-updated', handler);
-            window.addEventListener('beforeunload', () => {
+            const beforeUnloadHandler = () => {
                 if (this._defaultsUpdateHandler) {
                     window.removeEventListener('webui-defaults-updated', this._defaultsUpdateHandler);
                 }
-            });
+                if (this._systemStatusTimer) {
+                    window.clearInterval(this._systemStatusTimer);
+                    this._systemStatusTimer = null;
+                }
+                if (this._visibilityChangeHandler) {
+                    document.removeEventListener('visibilitychange', this._visibilityChangeHandler);
+                    this._visibilityChangeHandler = null;
+                }
+            };
+            this._beforeUnloadHandler = beforeUnloadHandler;
+            window.addEventListener('beforeunload', beforeUnloadHandler);
+
+            this.refreshSystemStatus();
+            this._systemStatusTimer = window.setInterval(() => {
+                if (this.isDocumentVisible()) {
+                    this.refreshSystemStatus();
+                }
+            }, 10000);
+
+            const visibilityHandler = () => {
+                if (this.isDocumentVisible()) {
+                    this.refreshSystemStatus();
+                    if (!this._systemStatusTimer) {
+                        this._systemStatusTimer = window.setInterval(() => {
+                            if (this.isDocumentVisible()) {
+                                this.refreshSystemStatus();
+                            }
+                        }, 10000);
+                    }
+                } else if (this._systemStatusTimer) {
+                    window.clearInterval(this._systemStatusTimer);
+                    this._systemStatusTimer = null;
+                }
+            };
+            this._visibilityChangeHandler = visibilityHandler;
+            document.addEventListener('visibilitychange', visibilityHandler);
         },
         autoPreserveEnabled(value) {
             if (value === undefined || value === null) {
@@ -1955,15 +1990,127 @@ function trainerComponent() {
              window.addEventListener('pointermove', onMove);
              window.addEventListener('pointerup', onUp);
          },
-         get eventDockStyle() {
-             return this.eventDockCollapsed
-                 ? `height: ${this.eventDockCollapsedHeight}px;`
-                 : `height: ${this.eventDockHeight}px;`;
-         },
+        get eventDockStyle() {
+            return this.eventDockCollapsed
+                ? `height: ${this.eventDockCollapsedHeight}px;`
+                : `height: ${this.eventDockHeight}px;`;
+        },
         get eventDockPaddingStyle() {
             return this.eventDockCollapsed
                 ? 'padding-bottom: 4rem;'
                 : `padding-bottom: calc(${this.eventDockHeight}px + 3rem);`;
+        },
+        systemStatus: null,
+        systemStatusLoading: false,
+        systemStatusError: null,
+        _systemStatusTimer: null,
+        _beforeUnloadHandler: null,
+        _visibilityChangeHandler: null,
+        async refreshSystemStatus() {
+            if (this.systemStatusLoading) {
+                return;
+            }
+            this.systemStatusLoading = true;
+            try {
+                const response = await fetch('/api/system/status', { cache: 'no-store' });
+                if (!response.ok) {
+                    throw new Error(`Request failed with status ${response.status}`);
+                }
+                const payload = await response.json();
+                this.systemStatus = this.normalizeSystemStatus(payload);
+                this.systemStatusError = null;
+            } catch (error) {
+                console.error('Failed to load system status:', error);
+                if (!this.systemStatus) {
+                    this.systemStatusError = 'Stats unavailable';
+                }
+            } finally {
+                this.systemStatusLoading = false;
+            }
+        },
+        normalizeSystemStatus(payload) {
+            const data = payload || {};
+            const loadValue =
+                typeof data.load_avg_5min === 'number' && Number.isFinite(data.load_avg_5min)
+                    ? Number(data.load_avg_5min)
+                    : null;
+            const memoryValue =
+                typeof data.memory_percent === 'number' && Number.isFinite(data.memory_percent)
+                    ? Number(data.memory_percent)
+                    : null;
+            const gpus = Array.isArray(data.gpus)
+                ? data.gpus.map((gpu, index) => {
+                      const idx = typeof gpu?.index === 'number' ? gpu.index : index;
+                      const name =
+                          typeof gpu?.name === 'string' && gpu.name.trim()
+                              ? gpu.name.trim()
+                              : `GPU ${idx}`;
+                      const utilization =
+                          typeof gpu?.utilization_percent === 'number' && Number.isFinite(gpu.utilization_percent)
+                              ? Number(gpu.utilization_percent)
+                              : null;
+                      return {
+                          index: idx,
+                          name,
+                          backend: gpu?.backend || data.backend || null,
+                          utilization_percent: utilization,
+                      };
+                  })
+                : [];
+            return {
+                load_avg_5min: loadValue,
+                memory_percent: memoryValue,
+                gpus,
+                timestamp: typeof data.timestamp === 'number' && Number.isFinite(data.timestamp) ? data.timestamp : null,
+            };
+        },
+        isDocumentVisible() {
+            return (
+                typeof document === 'undefined' ||
+                typeof document.visibilityState === 'undefined' ||
+                document.visibilityState === 'visible'
+            );
+        },
+        get systemStatusItems() {
+            if (!this.systemStatus) {
+                return [];
+            }
+            const items = [];
+            const load = this.systemStatus.load_avg_5min;
+            items.push({
+                key: 'load',
+                label: 'Load 5m',
+                value: load,
+                formatted: load !== null ? load.toFixed(2) : '—',
+                tooltip: '5 minute system load average',
+            });
+            const memory = this.systemStatus.memory_percent;
+            items.push({
+                key: 'memory',
+                label: 'Mem',
+                value: memory,
+                formatted: memory !== null ? `${Math.round(memory)}%` : '—',
+                tooltip: 'System memory usage',
+            });
+            const gpus = Array.isArray(this.systemStatus.gpus) ? this.systemStatus.gpus : [];
+            gpus.forEach((gpu, index) => {
+                const util = gpu.utilization_percent;
+                const trimmedName = typeof gpu.name === 'string' ? gpu.name.trim() : '';
+                const displayLabel =
+                    trimmedName ||
+                    (typeof gpu.index === 'number' ? `GPU${gpu.index}` : `GPU${index}`);
+                items.push({
+                    key: `gpu-${gpu.index ?? index}`,
+                    label: displayLabel,
+                    value: util,
+                    formatted: util !== null ? `${Math.round(util)}%` : '—',
+                    tooltip: trimmedName || displayLabel,
+                });
+            });
+            return items;
+        },
+        get hasSystemStatus() {
+            return this.systemStatusItems.length > 0;
         },
         async loadDatasets() {
              this.datasetsLoading = true;
@@ -4470,7 +4617,7 @@ function trainerComponent() {
                  'collapsed': eventDockCollapsed,
                  'resizing': eventDockIsResizing
              }"
-             :style="eventDockStyle">
+            :style="eventDockStyle">
             <div class="event-dock-toolbar">
                 <div class="event-dock-title">
                     <i class="fas fa-terminal"></i>
@@ -4483,6 +4630,22 @@ function trainerComponent() {
                               'bg-secondary': !['connected', 'disconnected', 'reconnecting'].includes(connectionStatus)
                           }"
                           x-text="connectionStatus"></span>
+                </div>
+                <div class="event-dock-sysstat">
+                    <template x-if="hasSystemStatus">
+                        <div class="sysstat-items">
+                            <template x-for="item in systemStatusItems" :key="item.key">
+                                <span class="sysstat-item" :title="item.tooltip || ''">
+                                    <span class="label" x-text="item.label"></span>
+                                    <span class="value" x-text="item.formatted"></span>
+                                </span>
+                            </template>
+                        </div>
+                    </template>
+                    <template x-if="!hasSystemStatus">
+                        <span class="sysstat-placeholder"
+                              x-text="systemStatusLoading ? 'Loading...' : (systemStatusError || 'Stats unavailable')"></span>
+                    </template>
                 </div>
                 <div class="event-dock-actions">
                     <button type="button" class="btn btn-sm btn-outline-light"

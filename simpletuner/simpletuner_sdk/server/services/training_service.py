@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
+from simpletuner.helpers.training.deepspeed_optimizers import DEFAULT_OPTIMIZER as DS_DEFAULT_OPTIMIZER
+from simpletuner.helpers.training.deepspeed_optimizers import sanitize_optimizer_mapping
 from simpletuner.helpers.training.trainer import run_trainer_job
 from simpletuner.simpletuner_sdk import process_keeper
 from simpletuner.simpletuner_sdk.api_state import APIState
@@ -284,77 +286,20 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
 
     existing_config_cli = ConfigsService._migrate_legacy_keys(existing_config_cli)
 
-    def _normalize_deepspeed_optimizer_name(raw_name: Any) -> Tuple[Optional[str], Optional[str]]:
-        if raw_name is None:
-            return None, None
-        text = str(raw_name).strip()
-        if not text:
-            return None, None
-        lowered = text.lower()
-        canonical = {
-            "adagrad": "Adagrad",
-            "adam": "Adam",
-            "adamw": "AdamW",
-            "lamb": "Lamb",
-            "onebitadam": "OneBitAdam",
-            "onebitlamb": "OneBitLamb",
-            "zerooneadam": "ZeroOneAdam",
-            "muadam": "MuAdam",
-            "muadamw": "MuAdamW",
-            "musgd": "MuSGD",
-            "lion": "Lion",
-            "muon": "Muon",
-        }
-        if lowered in {"cpuadam", "fusedadam"}:
-            return "AdamW", text
-        if lowered in canonical:
-            return canonical[lowered], None
-        return "AdamW", text
-
-    def _normalize_deepspeed_optimizer_config_section(config_section: Any) -> Any:
-        if not isinstance(config_section, dict):
-            return config_section
-        if "deepspeed_config_file" in config_section:
-            return config_section
-
-        optimizer_block = config_section.get("optimizer")
-        if isinstance(optimizer_block, dict):
-            opt_name = optimizer_block.get("type") or optimizer_block.get("name")
-            normalized_name, fallback_source = _normalize_deepspeed_optimizer_name(opt_name)
-            if normalized_name:
-                if fallback_source:
-                    logger.warning(
-                        "Unsupported DeepSpeed optimizer '%s'; replacing with '%s'.",
-                        opt_name,
-                        normalized_name,
-                    )
-                optimizer_block["type"] = normalized_name
-                optimizer_block.pop("name", None)
-        elif isinstance(optimizer_block, str):
-            normalized_name, fallback_source = _normalize_deepspeed_optimizer_name(optimizer_block)
-            if normalized_name:
-                if fallback_source:
-                    logger.warning(
-                        "Unsupported DeepSpeed optimizer '%s'; replacing with '%s'.",
-                        optimizer_block,
-                        normalized_name,
-                    )
-                config_section["optimizer"] = {"type": normalized_name}
-        return config_section
-
-    def _sanitize_deepspeed_entries(target: Dict[str, Any]) -> None:
-        if not isinstance(target, dict):
-            return
-        for variant in ("--deepspeed_config", "deepspeed_config"):
-            if variant not in target:
-                continue
-            target[variant] = _normalize_deepspeed_optimizer_config_section(target[variant])
-            alias = variant.lstrip("-")
-            if alias != variant:
-                target[alias] = target.get(variant)
-
-    _sanitize_deepspeed_entries(existing_config_cli)
-    _sanitize_deepspeed_entries(config_dict)
+    fallback_existing = sanitize_optimizer_mapping(existing_config_cli)
+    if fallback_existing:
+        logger.warning(
+            "Unsupported DeepSpeed optimizer '%s' detected in active config; replacing with '%s'.",
+            fallback_existing,
+            DS_DEFAULT_OPTIMIZER,
+        )
+    fallback_form = sanitize_optimizer_mapping(config_dict)
+    if fallback_form:
+        logger.warning(
+            "Unsupported DeepSpeed optimizer '%s' detected in submitted config; replacing with '%s'.",
+            fallback_form,
+            DS_DEFAULT_OPTIMIZER,
+        )
 
     def _extract_form_value(arg_name: str) -> Any:
         """Return the raw value submitted for a given argument name (with or without --)."""
@@ -528,7 +473,13 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         base_config.pop("--accelerator_cache_clear_interval", None)
         base_config.pop("accelerator_cache_clear_interval", None)
     complete_config = {**base_config, **existing_config_cli, **config_dict}
-    _sanitize_deepspeed_entries(complete_config)
+    fallback_complete = sanitize_optimizer_mapping(complete_config)
+    if fallback_complete:
+        logger.warning(
+            "Unsupported DeepSpeed optimizer '%s' detected during config merge; replacing with '%s'.",
+            fallback_complete,
+            DS_DEFAULT_OPTIMIZER,
+        )
 
     if not accelerate_config_present:
         if accelerate_visible_devices:

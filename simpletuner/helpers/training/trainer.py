@@ -30,6 +30,8 @@ from simpletuner.helpers.publishing.huggingface import HubManager
 from simpletuner.helpers.training import trainable_parameter_count
 from simpletuner.helpers.training.custom_schedule import get_lr_scheduler
 from simpletuner.helpers.training.deepspeed import prepare_model_for_deepspeed
+from simpletuner.helpers.training.deepspeed_optimizers import DEFAULT_OPTIMIZER as DS_DEFAULT_OPTIMIZER
+from simpletuner.helpers.training.deepspeed_optimizers import sanitize_optimizer_block
 from simpletuner.helpers.training.default_settings.safety_check import safety_check
 from simpletuner.helpers.training.evaluation import ModelEvaluator
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
@@ -508,7 +510,13 @@ class Trainer:
         if normalized is None:
             return None
 
-        self._sanitize_deepspeed_optimizer(normalized)
+        normalized, fallback_optimizer = sanitize_optimizer_block(normalized)
+        if fallback_optimizer:
+            logger.warning(
+                "Unsupported DeepSpeed optimizer '%s'; replacing with '%s'.",
+                fallback_optimizer,
+                DS_DEFAULT_OPTIMIZER,
+            )
         self._apply_deepspeed_overrides(normalized)
         self.config.deepspeed_config = normalized
 
@@ -545,62 +553,6 @@ class Trainer:
         if isinstance(device, str):
             return device.lower() == "nvme"
         return False
-
-    @staticmethod
-    def _normalize_deepspeed_optimizer_name(raw_name):
-        if raw_name is None:
-            return None, None
-        text = str(raw_name).strip()
-        if not text:
-            return None, None
-        lowered = text.lower()
-        canonical = {
-            "adagrad": "Adagrad",
-            "adam": "Adam",
-            "adamw": "AdamW",
-            "lamb": "Lamb",
-            "onebitadam": "OneBitAdam",
-            "onebitlamb": "OneBitLamb",
-            "zerooneadam": "ZeroOneAdam",
-            "muadam": "MuAdam",
-            "muadamw": "MuAdamW",
-            "musgd": "MuSGD",
-            "lion": "Lion",
-            "muon": "Muon",
-        }
-        if lowered in {"cpuadam", "fusedadam"}:
-            return "AdamW", text
-        if lowered in canonical:
-            return canonical[lowered], None
-        return "AdamW", text
-
-    def _sanitize_deepspeed_optimizer(self, config_dict: dict) -> None:
-        if not isinstance(config_dict, dict) or "deepspeed_config_file" in config_dict:
-            return
-
-        optimizer_section = config_dict.get("optimizer")
-        if isinstance(optimizer_section, dict):
-            opt_name = optimizer_section.get("type") or optimizer_section.get("name")
-            normalized, fallback_source = self._normalize_deepspeed_optimizer_name(opt_name)
-            if normalized:
-                if fallback_source:
-                    logger.warning(
-                        "Unsupported DeepSpeed optimizer '%s'; replacing with '%s'.",
-                        opt_name,
-                        normalized,
-                    )
-                optimizer_section["type"] = normalized
-                optimizer_section.pop("name", None)
-        elif isinstance(optimizer_section, str):
-            normalized, fallback_source = self._normalize_deepspeed_optimizer_name(optimizer_section)
-            if normalized:
-                if fallback_source:
-                    logger.warning(
-                        "Unsupported DeepSpeed optimizer '%s'; replacing with '%s'.",
-                        optimizer_section,
-                        normalized,
-                    )
-                config_dict["optimizer"] = {"type": normalized}
 
     def _apply_deepspeed_overrides(self, config_dict: dict) -> None:
         if not isinstance(config_dict, dict):
