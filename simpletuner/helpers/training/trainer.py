@@ -90,7 +90,7 @@ import torch
 import torch.nn.functional as F
 import transformers
 from accelerate import Accelerator, DeepSpeedPlugin
-from accelerate.utils import set_seed
+from accelerate.utils import DistributedType, set_seed
 from torch.distributions import Beta
 
 from simpletuner.configure import model_classes
@@ -297,6 +297,7 @@ class Trainer:
                     self.accelerator = Accelerator(**accelerator_kwargs)
                 else:
                     raise
+            self._setup_accelerator_barrier_guard()
         safety_check(args=self.config, accelerator=self.accelerator)
 
         if self.config.lr_scale:
@@ -343,6 +344,40 @@ class Trainer:
             accelerate_accelerator.is_bf16_available = _always_true
         except ImportError:
             logger.warning("Failed to patch Accelerate bf16 guard; proceeding without override.")
+
+    def _setup_accelerator_barrier_guard(self) -> None:
+        if not self.accelerator:
+            return
+
+        if getattr(self.accelerator, "_simpletuner_safe_wait_installed", False):
+            return
+
+        original_wait_for_everyone = self.accelerator.wait_for_everyone
+
+        def _safe_wait_for_everyone(*args, **kwargs):
+            state = getattr(self.accelerator, "state", None)
+            distributed_type = getattr(state, "distributed_type", None)
+            if distributed_type in (
+                DistributedType.MULTI_GPU,
+                DistributedType.MULTI_MLU,
+                DistributedType.MULTI_SDAA,
+                DistributedType.MULTI_MUSA,
+                DistributedType.MULTI_NPU,
+                DistributedType.MULTI_XPU,
+                DistributedType.MULTI_CPU,
+                DistributedType.MULTI_HPU,
+                DistributedType.DEEPSPEED,
+                DistributedType.FSDP,
+            ):
+                if not (torch.distributed.is_available() and torch.distributed.is_initialized()):
+                    logger.debug(
+                        "Skipping accelerator.wait_for_everyone(); distributed process group not initialised."
+                    )
+                    return
+            return original_wait_for_everyone(*args, **kwargs)
+
+        self.accelerator.wait_for_everyone = _safe_wait_for_everyone
+        setattr(self.accelerator, "_simpletuner_safe_wait_installed", True)
 
     def _load_deepspeed_plugin(self):
         raw_config = getattr(self.config, "deepspeed_config", None)
