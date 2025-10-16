@@ -902,6 +902,18 @@ class EventHandler {
             } else if (event.type === 'webhook') {
                 baseEvent.message_type = 'info';
                 baseEvent.message = event.data?.message || '';
+            } else if (event.type === 'notification') {
+                const severity = String(event.severity || '').toLowerCase();
+                if (severity === 'error' || severity === 'fatal') {
+                    baseEvent.message_type = 'fatal_error';
+                } else if (severity === 'warning') {
+                    baseEvent.message_type = 'warning';
+                } else if (severity === 'success') {
+                    baseEvent.message_type = 'success';
+                } else {
+                    baseEvent.message_type = 'info';
+                }
+                baseEvent.message = event.message || event.title || '';
             } else if (event.type === 'progress') {
                 baseEvent.message_type = 'train';
                 baseEvent.state = event.data;
