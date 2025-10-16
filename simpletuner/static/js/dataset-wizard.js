@@ -215,7 +215,7 @@
 
             async loadExistingConfig() {
                 try {
-                    const response = await fetch('/api/datasets/plan');
+                    const response = await ApiClient.fetch('/api/datasets/plan');
                     if (response.ok) {
                         const data = await response.json();
                         const rawDatasets = data.datasets || [];
@@ -242,7 +242,7 @@
 
             async loadBlueprints() {
                 try {
-                    const response = await fetch('/api/datasets/blueprints');
+                    const response = await ApiClient.fetch('/api/datasets/blueprints');
                     const data = await response.json();
                     this.blueprints = data.blueprints || [];
                     console.log('[WIZARD] Loaded blueprints:', this.blueprints.length);
@@ -762,7 +762,7 @@
                     }
 
                     // Normal mode: save immediately
-                    const response = await fetch('/api/datasets/plan', {
+                    const response = await ApiClient.fetch('/api/datasets/plan', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json'

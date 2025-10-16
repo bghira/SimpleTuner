@@ -3738,10 +3738,12 @@ function trainerComponent() {
                         <div x-data="createEnvironmentFormComponent({ resetOnSuccess: false, autoLoad: false })"
                              x-ref="onboardingEnvironmentForm"
                              @environment-created="handleOnboardingEnvironmentCreated($event.detail)">
-                            <div x-show="loadingInitialData" class="alert alert-info d-flex align-items-center gap-2">
-                                <i class="fas fa-spinner fa-spin"></i>
-                                <span>Loading environment templates...</span>
-                            </div>
+                            <template x-if="loadingInitialData">
+                                <div class="alert alert-info d-flex align-items-center gap-2">
+                                    <i class="fas fa-spinner fa-spin"></i>
+                                    <span>Loading environment templates...</span>
+                                </div>
+                            </template>
                             <div :class="loadingInitialData ? 'opacity-50 pointer-events-none' : ''">
                                 {% include "partials/create_environment_form_fields.html" %}
                             </div>
@@ -4482,6 +4484,7 @@ function trainerComponent() {
 {% block extra_js %}
 <!-- Load dataloader builder scripts -->
 <script src="/static/js/server-config.js"></script>
+<script src="/static/js/utils/api.js"></script>
 <script src="/static/js/dataloader-builder.js"></script>
 <script src="/static/js/dataloader-htmx-init.js"></script>
 <script src="/static/js/event-handler.js"></script>

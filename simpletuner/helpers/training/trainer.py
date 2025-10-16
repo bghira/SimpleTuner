@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import huggingface_hub
+
 import wandb
 from simpletuner.helpers import log_format  # noqa
 from simpletuner.helpers.caching.memory import reclaim_memory
@@ -58,8 +59,10 @@ from simpletuner.simpletuner_sdk.api_state import APIState
 
 
 def _setup_logger(name: str, *, env_var: str | None = None, default_level: str = "INFO") -> logging.Logger:
-    level_value = os.environ.get(env_var, os.environ.get("SIMPLETUNER_LOG_LEVEL", default_level)) if env_var else os.environ.get(
-        "SIMPLETUNER_LOG_LEVEL", default_level
+    level_value = (
+        os.environ.get(env_var, os.environ.get("SIMPLETUNER_LOG_LEVEL", default_level))
+        if env_var
+        else os.environ.get("SIMPLETUNER_LOG_LEVEL", default_level)
     )
     try:
         numeric_level = logging._nameToLevel.get(level_value.upper(), None)
@@ -370,14 +373,126 @@ class Trainer:
                 DistributedType.FSDP,
             ):
                 if not (torch.distributed.is_available() and torch.distributed.is_initialized()):
-                    logger.debug(
-                        "Skipping accelerator.wait_for_everyone(); distributed process group not initialised."
-                    )
+                    logger.debug("Skipping accelerator.wait_for_everyone(); distributed process group not initialised.")
                     return
             return original_wait_for_everyone(*args, **kwargs)
 
         self.accelerator.wait_for_everyone = _safe_wait_for_everyone
         setattr(self.accelerator, "_simpletuner_safe_wait_installed", True)
+
+    def _finalize_deepspeed_config_auto_values(self, model) -> None:
+        if not self.accelerator or model is None:
+            return
+
+        if getattr(self.accelerator.state, "distributed_type", None) != DistributedType.DEEPSPEED:
+            return
+
+        deepspeed_plugin = getattr(self.accelerator.state, "deepspeed_plugin", None)
+        if not deepspeed_plugin:
+            return
+
+        hidden_size_keys = (
+            "zero_optimization.reduce_bucket_size",
+            "zero_optimization.stage3_prefetch_bucket_size",
+            "zero_optimization.stage3_param_persistence_threshold",
+        )
+        pending_auto_keys = [key for key in hidden_size_keys if deepspeed_plugin.is_auto(key)]
+        if not pending_auto_keys:
+            return
+
+        inferred_hidden_size = self._infer_model_hidden_size(model)
+        if not inferred_hidden_size or inferred_hidden_size <= 0:
+            keys_text = ", ".join(pending_auto_keys)
+            raise ValueError(
+                "Unable to infer a representative hidden size from the training model's configuration. "
+                "Please populate the DeepSpeed config with explicit numeric values for "
+                f"{keys_text} or ensure the model config exposes a hidden-size attribute."
+            )
+
+        zero_config = deepspeed_plugin.deepspeed_config.setdefault("zero_optimization", {})
+        if deepspeed_plugin.is_auto("zero_optimization.reduce_bucket_size"):
+            zero_config["reduce_bucket_size"] = int(inferred_hidden_size * inferred_hidden_size)
+        if deepspeed_plugin.is_auto("zero_optimization.stage3_prefetch_bucket_size"):
+            zero_config["stage3_prefetch_bucket_size"] = int(0.9 * inferred_hidden_size * inferred_hidden_size)
+        if deepspeed_plugin.is_auto("zero_optimization.stage3_param_persistence_threshold"):
+            zero_config["stage3_param_persistence_threshold"] = int(10 * inferred_hidden_size)
+
+    @staticmethod
+    def _normalize_numeric_candidate(value):
+        if isinstance(value, (int, float)):
+            return int(value)
+        if isinstance(value, (list, tuple, set)):
+            numeric_values = [int(v) for v in value if isinstance(v, (int, float))]
+            return max(numeric_values) if numeric_values else None
+        if isinstance(value, dict):
+            numeric_values = [int(v) for v in value.values() if isinstance(v, (int, float))]
+            return max(numeric_values) if numeric_values else None
+        return None
+
+    def _infer_model_hidden_size(self, model) -> Optional[int]:
+        if model is None:
+            return None
+
+        config = getattr(model, "config", None)
+        if config is not None:
+            candidate_attributes = (
+                "hidden_size",
+                "hidden_sizes",
+                "encoder_hidden_sizes",
+                "d_model",
+                "model_dim",
+                "embed_dim",
+                "embedding_dim",
+                "cross_attention_dim",
+                "encoder_embed_dim",
+                "inner_dim",
+                "projection_dim",
+                "block_out_channels",
+                "channels",
+            )
+            for attr in candidate_attributes:
+                if hasattr(config, attr):
+                    candidate = self._normalize_numeric_candidate(getattr(config, attr))
+                    if candidate and candidate > 0:
+                        return candidate
+
+            # Some configs expose dimensions via dict-style access
+            if hasattr(config, "to_dict"):
+                config_dict = config.to_dict()
+            elif hasattr(config, "__dict__"):
+                config_dict = config.__dict__
+            else:
+                config_dict = {}
+            if isinstance(config_dict, dict):
+                for attr in candidate_attributes:
+                    if attr in config_dict:
+                        candidate = self._normalize_numeric_candidate(config_dict[attr])
+                        if candidate and candidate > 0:
+                            return candidate
+
+        direct_attributes = (
+            "hidden_size",
+            "d_model",
+            "model_dim",
+            "embed_dim",
+            "inner_dim",
+        )
+        for attr in direct_attributes:
+            if hasattr(model, attr):
+                candidate = self._normalize_numeric_candidate(getattr(model, attr))
+                if candidate and candidate > 0:
+                    return candidate
+
+        try:
+            first_param = next(model.parameters())
+            if first_param is not None and hasattr(first_param, "shape"):
+                dims = [int(dim) for dim in first_param.shape if isinstance(dim, int) and dim > 1]
+                if dims:
+                    return max(dims)
+        except (StopIteration, TypeError, AttributeError):
+            pass
+
+        return None
 
     def _load_deepspeed_plugin(self):
         raw_config = getattr(self.config, "deepspeed_config", None)
@@ -1444,6 +1559,7 @@ class Trainer:
             )
         )
         primary_model = self.model.get_trained_component(unwrap_model=False)
+        self._finalize_deepspeed_config_auto_values(primary_model)
         results = self.accelerator.prepare(primary_model, lr_scheduler, self.optimizer, self.train_dataloaders[0])
         self.model.set_prepared_model(results[0])
 

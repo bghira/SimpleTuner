@@ -1154,9 +1154,7 @@ class FactoryRegistry:
             init_backend["text_embed_cache"].set_webhook_handler(StateTracker.get_webhook_handler())
             logger.debug(f"rank {get_rank()} might skip discovery..")
             main_process_context = (
-                self.accelerator.main_process_first()
-                if getattr(self.accelerator, "num_processes", 1) > 1
-                else nullcontext()
+                self.accelerator.main_process_first() if getattr(self.accelerator, "num_processes", 1) > 1 else nullcontext()
             )
             with main_process_context:
                 logger.debug(f"rank {get_rank()} is discovering all files")

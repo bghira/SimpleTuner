@@ -205,13 +205,13 @@ if (legacyValidateBtn && !buttonUsesHTMX(legacyValidateBtn)) {
         const payload = getPayload();
         if (!payload) return;
 
-        fetch(`${window.location.origin}/training/configuration/check`, {
+        ApiClient.fetch('/training/configuration/check', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify(payload),
-        })
+        }, { forceApi: true })
             .then(response => response.json())
             .then(data => {
                 if (data.detail) {
@@ -238,7 +238,7 @@ if (legacyRunBtn && !buttonUsesHTMX(legacyRunBtn)) {
         const payload = getPayload();
         if (!payload) return;
 
-        fetch(`${window.ServerConfig.apiBaseUrl}/api/training/start`, {
+        ApiClient.fetch('/api/training/start', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

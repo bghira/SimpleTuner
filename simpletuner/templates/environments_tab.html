@@ -1512,10 +1512,12 @@ function environmentsTabComponent() {
                  @environment-form-cancel="closeCreateEnvironmentModal()">
                 <form @submit.prevent="submit">
                     <div class="modal-body">
-                        <div x-show="loadingInitialData" class="alert alert-info d-flex align-items-center gap-2">
-                            <i class="fas fa-spinner fa-spin"></i>
-                            <span>Loading model families and examples...</span>
-                        </div>
+                        <template x-if="loadingInitialData">
+                            <div class="alert alert-info d-flex align-items-center gap-2">
+                                <i class="fas fa-spinner fa-spin"></i>
+                                <span>Loading model families and examples...</span>
+                            </div>
+                        </template>
                         <div :class="loadingInitialData ? 'opacity-50 pointer-events-none' : ''">
                             {% include "partials/create_environment_form_fields.html" %}
                         </div>

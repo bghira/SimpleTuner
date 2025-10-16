@@ -26,7 +26,7 @@ document.addEventListener('alpine:init', () => {
         async checkAuthStatus() {
             this.loading.auth = true;
             try {
-                const response = await fetch('/api/publishing/token/validate');
+                const response = await ApiClient.fetch('/api/publishing/token/validate');
                 if (response.ok) {
                     this.authStatus = await response.json();
                 } else {
@@ -44,7 +44,7 @@ document.addEventListener('alpine:init', () => {
             console.log('[Publishing] Saving token...');
             this.savingToken = true;
             try {
-                const response = await fetch('/api/publishing/token/save', {
+                const response = await ApiClient.fetch('/api/publishing/token/save', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -90,7 +90,7 @@ document.addEventListener('alpine:init', () => {
             console.log('[Publishing] Logging out...');
             this.loggingOut = true;
             try {
-                const response = await fetch('/api/publishing/token/logout', {
+                const response = await ApiClient.fetch('/api/publishing/token/logout', {
                     method: 'POST'
                 });
 
@@ -176,7 +176,7 @@ document.addEventListener('alpine:init', () => {
                     this.error = '';
 
                     try {
-                        const response = await fetch('/api/publishing/namespaces');
+                        const response = await ApiClient.fetch('/api/publishing/namespaces');
                         if (!response.ok) {
                             const detail = await response.json().catch(() => ({}));
                             throw new Error(detail.detail || 'Failed to load namespaces');
@@ -274,7 +274,7 @@ document.addEventListener('alpine:init', () => {
                     this.checkResult = null;
 
                     try {
-                        const response = await fetch('/api/publishing/repository/check', {
+                        const response = await ApiClient.fetch('/api/publishing/repository/check', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ repo_id: this.fullRepo })

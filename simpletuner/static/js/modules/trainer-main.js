@@ -31,8 +31,8 @@ class TrainerMain {
         await window.ServerConfig.waitForReady();
 
         // Set URLs
-        this.apiBaseUrl = window.ServerConfig.apiBaseUrl;
-        this.callbackUrl = window.ServerConfig.callbackUrl;
+        this.apiBaseUrl = window.ApiClient ? window.ApiClient.apiBaseUrl : window.ServerConfig.apiBaseUrl;
+        this.callbackUrl = window.ApiClient ? window.ApiClient.callbackBaseUrl : window.ServerConfig.callbackUrl;
 
         // Initialize modules
         this.validation = new TrainerValidation(this.apiBaseUrl, this.callbackUrl);

@@ -33,7 +33,7 @@ class DependencyManager {
      */
     async fetchFieldMetadata() {
         try {
-            const response = await fetch('/api/fields/metadata');
+            const response = await ApiClient.fetch('/api/fields/metadata');
             if (!response.ok) {
                 throw new Error('Failed to fetch field metadata');
             }

@@ -453,7 +453,7 @@ function trainingWizardComponent() {
 
         async checkDataset() {
             try {
-                const response = await fetch('/api/datasets/plan');
+                const response = await ApiClient.fetch('/api/datasets/plan');
                 if (response.ok) {
                     const data = await response.json();
                     this.hasExistingDataset = (data.datasets && data.datasets.length > 0);
@@ -513,7 +513,7 @@ function trainingWizardComponent() {
             this.modelsError = null;
 
             try {
-                const response = await fetch('/api/models/wizard');
+                const response = await ApiClient.fetch('/api/models/wizard');
                 if (!response.ok) {
                     throw new Error(`Failed to load models: ${response.statusText}`);
                 }
@@ -631,7 +631,7 @@ function trainingWizardComponent() {
                 console.log('[TRAINING WIZARD] Committing pending dataset plan:', this.pendingDatasetPlan);
 
                 try {
-                    const response = await fetch('/api/datasets/plan', {
+                    const response = await ApiClient.fetch('/api/datasets/plan', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json'
@@ -734,7 +734,7 @@ function trainingWizardComponent() {
             console.log('[TRAINING WIZARD] Loading logging providers from field registry');
 
             try {
-                const response = await fetch('/api/fields/field/report_to');
+                const response = await ApiClient.fetch('/api/fields/field/report_to');
                 if (!response.ok) {
                     console.warn('[TRAINING WIZARD] Could not load logging providers');
                     // Fallback to hardcoded options
@@ -780,8 +780,8 @@ function trainingWizardComponent() {
 
             try {
                 const [projectResponse, runResponse] = await Promise.all([
-                    fetch('/api/fields/field/tracker_project_name'),
-                    fetch('/api/fields/field/tracker_run_name')
+                    ApiClient.fetch('/api/fields/field/tracker_project_name'),
+                    ApiClient.fetch('/api/fields/field/tracker_run_name')
                 ]);
 
                 if (projectResponse.ok) {
@@ -1034,7 +1034,7 @@ function trainingWizardComponent() {
             console.log('[TRAINING WIZARD] Loading optimizer choices from field registry');
 
             try {
-                const response = await fetch('/api/fields/field/optimizer');
+                const response = await ApiClient.fetch('/api/fields/field/optimizer');
                 if (!response.ok) {
                     throw new Error(`Failed to load optimizer field: ${response.statusText}`);
                 }

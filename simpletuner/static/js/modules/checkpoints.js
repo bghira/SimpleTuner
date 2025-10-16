@@ -84,7 +84,7 @@ if (!window.checkpointsManager) {
                     return this.environment;
                 }
 
-                const response = await fetch('/api/configs/active');
+                const response = await ApiClient.fetch('/api/configs/active');
                 if (!response.ok) {
                     throw new Error('Failed to get active config');
                 }
@@ -437,7 +437,7 @@ if (!window.checkpointsManager) {
 
                 try {
                     const environment = await this.ensureEnvironment();
-                    const response = await fetch('/api/checkpoints/retention', {
+                    const response = await ApiClient.fetch('/api/checkpoints/retention', {
                         method: 'PUT',
                         headers: {
                             'Content-Type': 'application/json'
@@ -479,7 +479,7 @@ if (!window.checkpointsManager) {
 
                 try {
                     const environment = await this.ensureEnvironment();
-                    const response = await fetch('/api/checkpoints/cleanup/preview', {
+                    const response = await ApiClient.fetch('/api/checkpoints/cleanup/preview', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json'
@@ -541,7 +541,7 @@ if (!window.checkpointsManager) {
 
                 try {
                     const environment = await this.ensureEnvironment();
-                    const response = await fetch('/api/checkpoints/cleanup/execute', {
+                    const response = await ApiClient.fetch('/api/checkpoints/cleanup/execute', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json'
@@ -695,7 +695,7 @@ if (!window.checkpointsManager) {
             // HuggingFace Integration
             async checkHuggingFaceAuth() {
                 try {
-                    const response = await fetch('/api/publishing/token/validate');
+                    const response = await ApiClient.fetch('/api/publishing/token/validate');
                     if (response.ok) {
                         const data = await response.json();
                         this.hfAuthenticated = data.valid === true;
@@ -842,7 +842,7 @@ if (!window.checkpointsManager) {
                     // Get the callback URL for webhook notifications
                     const callbackUrl = `${window.location.origin}/callback`;
 
-                    const response = await fetch('/api/checkpoints/upload', {
+                    const response = await ApiClient.fetch('/api/checkpoints/upload', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({

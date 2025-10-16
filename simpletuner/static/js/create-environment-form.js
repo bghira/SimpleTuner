@@ -14,6 +14,8 @@
             return trimmed.toLowerCase().endsWith(".json") ? trimmed.slice(0, -5).trim() : trimmed;
         };
 
+    console.info("[EnvForm] script loaded", { version: "2025-10-16" });
+
     function createEnvironmentFormComponent(options = {}) {
         return {
             options,
@@ -21,6 +23,7 @@
             submitting: false,
             error: "",
             newEnvironmentPathTouched: false,
+            initialLoadDone: false,
             newEnvironment: {
                 name: "",
                 model_family: "",
@@ -50,8 +53,18 @@
             exampleLocked: false,
 
             async init() {
+                console.info("[EnvForm] init called", { autoLoad: this.options.autoLoad });
                 if (this.options.autoLoad !== false) {
                     await this.prepareForDisplay(this.options.preset || {});
+                } else {
+                    queueMicrotask(async () => {
+                        if (!this.initialLoadDone) {
+                            console.info("[EnvForm] autoLoad disabled; running fallback prepareForDisplay()", {
+                                hasPreset: Boolean(this.options.preset && Object.keys(this.options.preset).length),
+                            });
+                            await this.prepareForDisplay(this.options.preset || {});
+                        }
+                    });
                 }
             },
 
@@ -72,16 +85,25 @@
                 this.selectedDataloaderPath = "";
                 this.exampleLocked = false;
                 this.error = "";
-                this.loadingInitialData = false;
             },
 
             async prepareForDisplay(preset = {}) {
+                this.initialLoadDone = true;
                 this.loadingInitialData = true;
+                console.info("[EnvForm] loadingInitialData -> true");
                 this.resetForm();
                 if (preset && typeof preset === "object" && Object.keys(preset).length > 0) {
                     this.applyPreset(preset);
                 }
                 try {
+                    if (global.ServerConfig && typeof global.ServerConfig.waitForReady === "function") {
+                        await global.ServerConfig.waitForReady();
+                    }
+                    console.info("[EnvForm] Preparing environment form", {
+                        presetApplied: Boolean(preset && Object.keys(preset).length),
+                        apiBaseUrl: global.ApiClient ? global.ApiClient.apiBaseUrl : undefined,
+                        callbackUrl: global.ApiClient ? global.ApiClient.callbackBaseUrl : undefined,
+                    });
                     await Promise.all([this.ensureModelFamilies(), this.ensureExamples(), this.ensureDataloaderConfigs()]);
                     if (this.newEnvironment.model_family) {
                         await this.loadModelFlavours(this.newEnvironment.model_family);
@@ -103,7 +125,9 @@
                     this.error = "";
                     this.$dispatch("environment-form-ready");
                 } finally {
+                    console.info("[EnvForm] prepareForDisplay completed, clearing loading flag");
                     this.loadingInitialData = false;
+                    console.info("[EnvForm] loadingInitialData -> false");
                 }
             },
 
@@ -230,18 +254,45 @@
                 return `${this.newEnvironment.name}/multidatabackend.json`;
             },
 
+            resolveEndpoint(path, options = {}) {
+                const helper = global.ApiClient;
+                if (helper && typeof helper.resolve === "function") {
+                    return helper.resolve(path, options);
+                }
+                const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+                const baseUrl = (global.ServerConfig && global.ServerConfig.apiBaseUrl) || global.location.origin;
+                return `${baseUrl}${normalizedPath}`;
+            },
+
+            apiFetch(path, fetchOptions = {}, resolveOptions = {}) {
+                const helper = global.ApiClient;
+                if (helper && typeof helper.fetch === "function") {
+                    return helper.fetch(path, fetchOptions, { forceApi: true, ...resolveOptions });
+                }
+                const url = this.resolveEndpoint(path, { forceApi: true, ...resolveOptions });
+                return global.fetch(url, fetchOptions);
+            },
+
             async ensureModelFamilies() {
                 if (this.modelFamilies.length > 0) {
                     return;
                 }
+                console.info("[EnvForm] ensureModelFamilies fetching");
                 try {
-                    const response = await fetch("/api/models");
+                    const response = await this.apiFetch("/api/models");
+                    console.info("[EnvForm] /api/models response", response);
                     if (response.ok) {
                         const data = await response.json();
+                        console.info("[EnvForm] model families payload", data);
                         this.modelFamilies = Array.isArray(data.families) ? data.families : [];
+                        if (this.modelFamilies.length > 0) {
+                            this.loadingInitialData = false;
+                            console.info("[EnvForm] Families loaded, loadingInitialData -> false");
+                        }
                     }
                 } catch (error) {
                     console.error("Failed to load model families:", error);
+                    this.loadingInitialData = false;
                 }
             },
 
@@ -255,7 +306,8 @@
                     return;
                 }
                 try {
-                    const response = await fetch(`/api/models/${family}/flavours`);
+                    const response = await this.apiFetch(`/api/models/${family}/flavours`);
+                    console.info("[EnvForm] /api/models/", family, "response", response);
                     if (response.ok) {
                         const data = await response.json();
                         const flavours = Array.isArray(data.flavours) ? data.flavours : [];
@@ -275,7 +327,7 @@
                     return;
                 }
                 try {
-                    const response = await fetch("/api/configs/examples");
+                    const response = await this.apiFetch("/api/configs/examples");
                     if (response.ok) {
                         const data = await response.json();
                         this.examples = Array.isArray(data.examples) ? data.examples : [];
@@ -302,7 +354,7 @@
 
             async generateProjectName() {
                 try {
-                    const response = await fetch("/api/configs/project-name");
+                    const response = await this.apiFetch("/api/configs/project-name");
                     if (!response.ok) {
                         throw new Error("Failed to generate name");
                     }
@@ -366,7 +418,7 @@
                 this.error = "";
                 this.$dispatch("environment-submit-start", { payload });
                 try {
-                    const response = await fetch("/api/configs/environments", {
+                    const response = await this.apiFetch("/api/configs/environments", {
                         method: "POST",
                         headers: {
                             "Content-Type": "application/json",

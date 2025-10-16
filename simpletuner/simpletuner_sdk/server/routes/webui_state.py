@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
-import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, status
@@ -109,9 +109,7 @@ def _should_include_environment_step() -> bool:
     try:
         payload = CONFIGS_SERVICE.list_configs("model")
     except Exception as exc:
-        logging.getLogger(__name__).warning(
-            "Failed to inspect environments for onboarding step: %s", exc, exc_info=True
-        )
+        logging.getLogger(__name__).warning("Failed to inspect environments for onboarding step: %s", exc, exc_info=True)
         return False
 
     configs = payload.get("configs") if isinstance(payload, dict) else None

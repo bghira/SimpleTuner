@@ -22,8 +22,8 @@
         await window.ServerConfig.waitForReady();
 
         // Set URLs based on detected configuration
-        this.apiBaseUrl = window.ServerConfig.apiBaseUrl;
-        this.callbackUrl = window.ServerConfig.callbackUrl;
+        this.apiBaseUrl = window.ApiClient ? window.ApiClient.apiBaseUrl : window.ServerConfig.apiBaseUrl;
+        this.callbackUrl = window.ApiClient ? window.ApiClient.callbackBaseUrl : window.ServerConfig.callbackUrl;
         // TrainerUI configured with API and callback URLs
 
         // Cache root form reference for payload serialization

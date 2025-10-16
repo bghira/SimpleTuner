@@ -89,13 +89,13 @@ class EventHandler {
 
     async checkServerHealth() {
         try {
-            const response = await fetch(`${window.ServerConfig.apiBaseUrl}/health`, {
+            const response = await ApiClient.fetch("/health", {
                 method: 'GET',
                 mode: 'cors',
                 credentials: 'omit',
                 cache: 'no-cache',
                 signal: AbortSignal.timeout(2000) // 2 second timeout
-            });
+            }, { forceApi: true });
             return response.ok;
         } catch (error) {
             return false;
@@ -118,15 +118,16 @@ class EventHandler {
             }
 
             // Fall back to polling if WebSocket not available
-            const response = await fetch(
-                `${window.ServerConfig.apiBaseUrl}/api/training/events?since_index=${this.lastEventIndex}`,
+            const response = await ApiClient.fetch(
+                `/api/training/events?since_index=${this.lastEventIndex}`,
                 {
                     signal: this.abortController.signal,
                     headers: {
                         'Accept': 'application/json',
                     },
                     credentials: 'include', // Include credentials for CORS
-                }
+                },
+                { forceCallback: true }
             );
 
             if (!response.ok) {
@@ -821,7 +822,7 @@ class EventHandler {
                 clearTimeout(this.pollTimeout);
                 this.pollTimeout = null;
             }
-            const wsUrl = window.ServerConfig.apiBaseUrl.replace('http', 'ws') + '/api/training/events/stream';
+            const wsUrl = ApiClient.resolveWebsocket('/api/training/events/stream', { forceCallback: true });
             this.websocket = new WebSocket(wsUrl);
 
             this.websocket.onopen = () => {
